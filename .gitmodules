@@ -1,0 +1,3 @@
+[submodule "nvda"]
+	path = nvda
+	url = git@github.com:nvaccess/nvda.git
