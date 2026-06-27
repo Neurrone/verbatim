@@ -1,3 +1,3 @@
 # verbatim: NVDA-inspired screen reader written in Rust
 
-This is an experiment in LLM assisted development to develop a screen reader based on NVDA. See the [rewrite plan](docs/rewrite-plan.md) for more information.
+This is an experiment in LLM assisted development to develop a screen reader based on NVDA.
