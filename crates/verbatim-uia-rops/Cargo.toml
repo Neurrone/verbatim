@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-uia-rops"
+description = "UIA Remote Operations wrapper: batched in-provider execution for ancestor fetches, text runs, and buffer builds"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

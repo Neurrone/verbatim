@@ -1,0 +1,9 @@
+[package]
+name = "mockapp"
+description = "Scripted UIA and MSAA/IA2 provider host for cross-process client-stack tests"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

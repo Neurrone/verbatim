@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# External dependencies.
+i18n-embed = { version = "0.16", features = ["fluent-system"] }
+i18n-embed-fl = "0.10"
+rust-embed = "8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unic-langid = "0.9"
+wxdragon = "0.9"
+
+# Workspace crates.
+mockapp = { path = "crates/mockapp" }
+verbatim-audio = { path = "crates/verbatim-audio" }
+verbatim-control = { path = "crates/verbatim-control" }
+verbatim-core = { path = "crates/verbatim-core" }
+verbatim-ext = { path = "crates/verbatim-ext" }
+verbatim-ext-api = { path = "crates/verbatim-ext-api" }
+verbatim-gui = { path = "crates/verbatim-gui" }
+verbatim-i18n = { path = "crates/verbatim-i18n" }
+verbatim-ia2 = { path = "crates/verbatim-ia2" }
+verbatim-input = { path = "crates/verbatim-input" }
+verbatim-model = { path = "crates/verbatim-model" }
+verbatim-outpost = { path = "crates/verbatim-outpost" }
+verbatim-speech = { path = "crates/verbatim-speech" }
+verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
+verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }
+verbatim-uia = { path = "crates/verbatim-uia" }
+verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

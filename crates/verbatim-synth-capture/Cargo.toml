@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-synth-capture"
+description = "Capture synth for tests: records utterances and timestamps instead of producing audio"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

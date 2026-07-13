@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-control"
+description = "Control-plane protocol and server: JSON-RPC over named pipe locally, TLS WebSocket for remote support later"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

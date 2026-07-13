@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-inspect"
+description = "Developer inspection CLI over the control plane"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

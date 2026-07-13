@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-input"
+description = "Low-level keyboard hook thread and remappable gesture maps"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

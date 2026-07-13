@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-outpost"
+description = "Per-application outpost process plus the Core-side supervisor"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

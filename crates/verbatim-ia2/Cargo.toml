@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-ia2"
+description = "MSAA/IA2 client stack: out-of-context WinEvents and IAccessible2 acquisition"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

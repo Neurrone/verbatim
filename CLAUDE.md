@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## What this repository is
 
 Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. The project is currently in the planning stage — there is no code yet, only design documents. The authoritative sources are:
@@ -30,10 +28,12 @@ We are using GitHub actions for CI.
 
 ## Commands
 
-No build system exists yet. Per the roadmap, M0 establishes a Cargo workspace with an `xtask` crate as the automation entry point; once that lands, `cargo xtask ci` (build for x64 and ARM64, clippy, unit tests) is the standard check, and `cargo xtask vm <cmd>` drives the Hyper-V E2E harness. Update this section when the workspace exists.
+`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: rustfmt, clippy (pedantic via workspace lints, warnings denied) and unit tests on x64, then a release-profile ARM64 cross-build. ARM64 artifacts are build-verified only, never run on this x64 machine.
 
-The wxDragon GUI dependency uses bindgen. If `libclang.dll` is not already on `PATH`, set `LIBCLANG_PATH` before running workspace build, test, or lint commands. On this machine, use:
+`cargo xtask vm <cmd>` is a stub until the M2 Hyper-V harness lands.
+
+The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual Studio and LLVM install paths for `libclang.dll` automatically; when invoking cargo directly on targets that build `verbatim-gui`, set `LIBCLANG_PATH` yourself if `libclang.dll` is not on `PATH`. On this machine, use:
 
 `$env:LIBCLANG_PATH='C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin'`
 
-Use release profile for the ARM64 workspace build until upstream wxDragon fixes debug-profile ARM64 MSVC builds: https://github.com/AllenDang/wxDragon/issues/162
+Use release profile for the ARM64 workspace build until upstream wxDragon fixes debug-profile ARM64 MSVC builds: https://github.com/AllenDang/wxDragon/issues/162 (`cargo xtask ci` already does this).

@@ -1,9 +1,13 @@
 # Verbatim Roadmap
 
-Milestones are scoped by *risk retired*, not calendar time. Each has explicit
+Milestones are scoped by _risk retired_, not calendar time. Each has explicit
 exit criteria so progress is testable. Ongoing tracks (localization,
 observability, latency budgets) start early and run through every milestone
 rather than being milestones themselves.
+
+## Status
+
+M0 is complete.
 
 ## M0 — Foundations
 

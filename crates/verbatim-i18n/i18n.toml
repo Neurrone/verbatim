@@ -1,0 +1,6 @@
+# Configuration read by i18n-embed's macros (fluent_language_loader! and fl!).
+fallback_language = "en"
+
+[fluent]
+assets_dir = "i18n"
+domain = "verbatim"

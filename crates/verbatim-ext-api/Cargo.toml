@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-ext-api"
+description = "WIT-defined extension API (verbatim:ext) and the guest-side SDK"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -57,6 +57,14 @@ screen reader in both rendered and source form.
   is the only recovery that reclaims everything; per-app processes make that
   exit surgical, remove promotion heuristics, and confine crashes in
   in-client proxy DLLs to one app. Details in section 1.
+- **D10 — Localization is Fluent, via `i18n-embed`.** English resources are
+  compiled into the binary as the permanent fallback; other locales load at
+  startup from a `locale` folder next to the executable, decoupling
+  translation updates from binary releases. Message lookups go through the
+  compile-time-checked `fl!` macro, and no user-visible string may be
+  hardcoded anywhere in the workspace. Rationale: Fluent's grammar handling
+  (plurals, gender, selectors) matters for speech-quality messages, and the
+  ecosystem supports the pseudo-locale testing required from M1.
 
 ## 1. Process and thread model
 
@@ -424,6 +432,8 @@ agent and test suites.
 - `verbatim-speech` and `verbatim-audio` — pipeline; `AudioSink` plus WASAPI.
 - `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers.
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.
+- `verbatim-i18n` — Fluent localization (D10): embedded English fallback,
+  runtime locale-folder loading.
 - `verbatim-input` — hook thread, gesture maps.
 - `verbatim-gui` — wxDragon settings UI.
 - `verbatim-app` — `verbatim.exe` composition root.

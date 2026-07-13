@@ -1,0 +1,26 @@
+# CI per docs/architecture.md D3: GitHub-hosted Windows runners build and run
+# unit and provider tests; E2E stays local in the Hyper-V harness for now.
+#
+# The nvda/ submodule is reference material only and is deliberately not
+# checked out here (actions/checkout does not fetch submodules by default).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the toolchain and installs both MSVC targets
+      # on the first cargo invocation.
+      - uses: Swatinem/rust-cache@v2
+      - name: Run CI checks
+        run: cargo xtask ci

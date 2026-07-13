@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-speech"
+description = "Speech pipeline: speech manager, priority lanes, index marks, dictionary and symbol processing, synth driver trait"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

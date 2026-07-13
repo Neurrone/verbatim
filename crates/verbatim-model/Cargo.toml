@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-model"
+description = "Normalized accessibility model: Verbatim's own vocabulary of roles, states, properties, text ranges, and node identity"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

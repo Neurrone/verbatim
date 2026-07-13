@@ -1,0 +1,12 @@
+[package]
+name = "verbatim-gui"
+description = "wxDragon settings UI, running on its own thread in Core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+wxdragon.workspace = true
+
+[lints]
+workspace = true

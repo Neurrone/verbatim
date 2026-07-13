@@ -1,0 +1,9 @@
+[package]
+name = "verbatim-synth-onecore"
+description = "OneCore synth driver via Windows.Media.SpeechSynthesis"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
