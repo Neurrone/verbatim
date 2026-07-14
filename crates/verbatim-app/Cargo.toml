@@ -10,10 +10,21 @@ name = "verbatim"
 path = "src/main.rs"
 
 [dependencies]
+crossbeam-channel.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+verbatim-audio.workspace = true
+verbatim-config.workspace = true
+verbatim-control.workspace = true
+verbatim-core.workspace = true
+verbatim-gui.workspace = true
 verbatim-i18n.workspace = true
+verbatim-input.workspace = true
 verbatim-model.workspace = true
+verbatim-outpost.workspace = true
+verbatim-speech.workspace = true
+verbatim-synth-onecore.workspace = true
+windows.workspace = true
 
 [lints]
 workspace = true

@@ -2,10 +2,11 @@
 
 ## What this repository is
 
-Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. The project is currently in the planning stage — there is no code yet, only design documents. The authoritative sources are:
+Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. Milestones M0 (foundations) and M1 (the self-voicing prototype) are implemented: `verbatim.exe` reads its own GUI through a real out-of-process outpost over UIA and MSAA, speaks through OneCore and WASAPI, and is drivable and inspectable live through the control plane (`verbatim-inspect`). The authoritative sources are:
 
-- `docs/architecture.md` — decisions of record (D1–D9), process/thread model, crate map, testing strategy, and top risks (R1–R6). Read this before proposing any design or implementation work.
+- `docs/architecture.md` — decisions of record (D1–D10), process/thread model, crate map, testing strategy, and top risks (R1–R6). Read this before proposing any design or implementation work.
 - `docs/roadmap.md` — milestones M0–M12 scoped by risk retired, with explicit exit criteria, plus the NVDA app-module porting track.
+- `docs/overview.md` — the reviewer's guide to the implemented crates: what each does, its public API, and how the intricate parts work. Keep it current when public APIs change.
 
 `nvda/` is the NVDA screen reader vendored as a git submodule **for reference only** (IA2 IDL under `nvda/include/ia2`, app modules under `nvda/source/appModules`, design docs under `nvda/projectDocs`). Never modify anything under `nvda/`; Verbatim is informed by NVDA but not constrained by its architecture.
 

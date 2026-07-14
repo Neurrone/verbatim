@@ -5,5 +5,13 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[dependencies]
+tracing.workspace = true
+verbatim-audio.workspace = true
+verbatim-i18n.workspace = true
+verbatim-model.workspace = true
+verbatim-speech.workspace = true
+windows.workspace = true
+
 [lints]
 workspace = true

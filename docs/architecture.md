@@ -421,6 +421,11 @@ agent and test suites.
 ## 15. Crate map
 
 - `verbatim-model` — normalized tree, events, effects, `NodeId`; no I/O deps.
+- `verbatim-config` — configuration: `settings.toml` next to the executable
+  is the base configuration (global settings plus the base profile's
+  sections, speech first), and a `profiles` folder holds named profiles as
+  sparse overlays, mirroring NVDA's base-plus-diffs model. Profiles cannot
+  carry global settings by construction.
 - `verbatim-core` — the reducer, modes, review cursor, browse-mode projection.
 - `verbatim-uia` and `verbatim-uia-rops` — UIA client stack; remote
   operations.

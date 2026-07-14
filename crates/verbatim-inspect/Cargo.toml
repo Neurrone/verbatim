@@ -5,5 +5,11 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[dependencies]
+clap.workspace = true
+verbatim-control.workspace = true
+verbatim-model.workspace = true
+windows.workspace = true
+
 [lints]
 workspace = true

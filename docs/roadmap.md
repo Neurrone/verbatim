@@ -7,7 +7,11 @@ rather than being milestones themselves.
 
 ## Status
 
-M0 is complete.
+M0 and M1 are complete. M1's exit behavior was verified live during
+development — the menu and every settings-dialog control announced with
+name, role, value, and state through a real outpost, with end-to-end
+latency timelines — and the repeatable, scripted form of that verification
+lands with the M2 harness, which is the next milestone.
 
 ## M0 — Foundations
 
@@ -44,6 +48,18 @@ Exit: `cargo xtask ci` runs clean on both architectures.
   Verbatim+V opens the Verbatim menu. Nothing else is bound in M1.
 - Latency traces visible end-to-end (event observed, speech queued, audio
   started).
+- Amendments recorded during M1 planning. First, a minimal MSAA client and
+  NVDA-style per-window arbitration are pulled forward from M3: wx dialogs
+  are native Win32 controls with no UIA server-side provider, so reading our
+  own GUI takes the MSAA path, exactly as NVDA reads its own; the UIA path
+  is still required and exercised by UIA-native windows. Second, a minimal
+  control-plane v0 and `verbatim-inspect` are pulled forward from M2 so M1
+  work is verifiable live: event and speech streams, gesture and arbitrary
+  key injection, latency queries, and quit. Third, startup replaces any
+  running instance (NVDA's algorithm), and configuration is portable —
+  `settings.toml` next to the executable is the base configuration (globals
+  plus the base profile, where speech lives), and the `profiles` folder
+  holds named profile overlays, none of which are active in M1.
 
 Exit: with Verbatim running, Verbatim+V opens the menu, and every item in
 the menu and every control in the settings dialog is fully announced —
@@ -59,15 +75,26 @@ Make everything after this point verifiable automatically.
   and as MSAA/IA2 providers — plus first tree-construction tests (real
   client stacks against it, cross-process), including backend-arbitration
   cases.
-- Capture synth; reducer replay tests from flight-recorder dumps.
-- Control plane v0 (named pipe): event stream, tree dump, gesture injection,
-  speech capture. `verbatim-inspect` CLI on top.
+- Flight-recorder dumps to disk (crash or user-triggered snapshot) and
+  reducer replay tests built from live dumps; the capture synth and the
+  in-memory replay machinery landed in M1.
+- Control plane v0 and `verbatim-inspect` landed in M1 (event and speech
+  streams, gesture and arbitrary key injection, latency timelines, status,
+  quit). M2 adds the remaining surface the harness needs, starting with
+  tree dumps, and the in-guest agent that speaks the protocol
+  programmatically.
 - Hyper-V harness: `xtask vm create/start/stop/deploy/test/logs`, golden
   checkpoint, in-guest agent; first E2E scenario (own GUI + Notepad) running
   locally. CI automation of E2E deferred per D3.
 
 Exit: a one-command local run boots the VM, deploys a build, runs E2E, and
-reports speech assertions + latency numbers.
+reports speech assertions + latency numbers. The suite must include the M1
+exit behavior as a scripted regression: Verbatim's own menu and its Speech
+settings dialog read correctly — every menu item and dialog control
+announced with name, role, value, and state on focus, plus value and state
+changes while adjusting the rate slider, the voice combo box, and the
+rate-boost check box — with keypress-to-audio latency reported from the
+same run.
 
 ## M3 — Desktop usability core
 

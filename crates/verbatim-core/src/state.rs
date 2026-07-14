@@ -1,0 +1,116 @@
+//! Reducer state (architecture section 2).
+//!
+//! [`SrState`] is the state threaded through [`crate::reduce`]: the
+//! currently focused node (if any), how recently each source application's
+//! event stream has been observed, and any staleness re-fetches still in
+//! flight. It is cheap to clone; the reducer never mutates a caller's state
+//! in place, it produces a new one.
+
+use std::collections::HashMap;
+
+use verbatim_model::{NodeId, NodeSnapshot, Pid, QueryId, SnapshotVersion};
+
+/// What the focused node looked like the last time the reducer actually
+/// spoke about it.
+///
+/// Kept separate from the live snapshot: a silent update (a name change on
+/// the focused node produces no announcement in M1) must not mask a real
+/// content change once a staleness re-fetch comes back and the reducer has
+/// to decide whether anything worth announcing actually changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FocusContext {
+    pub(crate) source: Pid,
+    pub(crate) snapshot: NodeSnapshot,
+    pub(crate) last_announced: NodeSnapshot,
+}
+
+/// Why the reducer asked an outpost to re-read a node.
+///
+/// Only one reason exists in M1; the type keeps the pending-fetch table
+/// self-describing as later milestones add more (ancestor-chain rebuilds,
+/// browse-mode expansion, and so on).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FetchReason {
+    /// An event arrived with a version older than the last one seen for its
+    /// source, so the reducer distrusts the data it carried and asked for a
+    /// fresh read instead of announcing it.
+    Staleness,
+}
+
+/// One outstanding fetch the reducer is waiting on: which node it asked
+/// about, and why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingFetch {
+    pub(crate) source: Pid,
+    pub(crate) node_id: NodeId,
+    pub(crate) reason: FetchReason,
+}
+
+/// Reducer state: focus context, per-source staleness tracking, and
+/// in-flight fetches.
+#[derive(Clone, Debug, Default)]
+pub struct SrState {
+    pub(crate) focus: Option<FocusContext>,
+    pub(crate) versions: HashMap<Pid, SnapshotVersion>,
+    pub(crate) next_query_id: u64,
+    pub(crate) pending_fetches: HashMap<QueryId, PendingFetch>,
+}
+
+impl SrState {
+    /// An initial state with no focus, no version history, and no pending
+    /// fetches.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The currently focused node and the application it came from, if
+    /// anything is focused.
+    #[must_use]
+    pub fn focused(&self) -> Option<(Pid, &NodeSnapshot)> {
+        self.focus.as_ref().map(|f| (f.source, &f.snapshot))
+    }
+
+    /// The most recent event version observed from `source`, if any event
+    /// has been seen from it yet.
+    #[must_use]
+    pub fn last_seen_version(&self, source: Pid) -> Option<SnapshotVersion> {
+        self.versions.get(&source).copied()
+    }
+
+    /// Number of fetches the reducer is currently waiting on.
+    #[must_use]
+    pub fn pending_fetch_count(&self) -> usize {
+        self.pending_fetches.len()
+    }
+
+    /// Whether `version` is older than the last version observed from
+    /// `source` — the out-of-order-delivery case the reducer must not
+    /// announce data for.
+    pub(crate) fn is_stale(&self, source: Pid, version: SnapshotVersion) -> bool {
+        self.versions
+            .get(&source)
+            .is_some_and(|&last| version < last)
+    }
+
+    /// Records `version` as the most recent one seen from `source`. Callers
+    /// only invoke this once [`SrState::is_stale`] has ruled out
+    /// out-of-order delivery.
+    pub(crate) fn record_version(&mut self, source: Pid, version: SnapshotVersion) {
+        self.versions.insert(source, version);
+    }
+
+    /// Whether the focused node is exactly `(source, node_id)`.
+    pub(crate) fn focus_matches(&self, source: Pid, node_id: NodeId) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|f| f.source == source && f.snapshot.id == node_id)
+    }
+
+    /// Allocates a fresh, process-unique-within-this-state `QueryId`.
+    pub(crate) fn allocate_query_id(&mut self) -> QueryId {
+        let id = self.next_query_id;
+        self.next_query_id += 1;
+        QueryId(id)
+    }
+}

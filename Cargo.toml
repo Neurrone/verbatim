@@ -9,9 +9,15 @@ publish = false
 
 [workspace.dependencies]
 # External dependencies.
+arc-swap = "1"
+clap = { version = "4", features = ["derive"] }
+crossbeam-channel = "0.5"
 i18n-embed = { version = "0.16", features = ["fluent-system"] }
 i18n-embed-fl = "0.10"
 rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unic-langid = "0.9"
@@ -20,6 +26,7 @@ wxdragon = "0.9"
 # Workspace crates.
 mockapp = { path = "crates/mockapp" }
 verbatim-audio = { path = "crates/verbatim-audio" }
+verbatim-config = { path = "crates/verbatim-config" }
 verbatim-control = { path = "crates/verbatim-control" }
 verbatim-core = { path = "crates/verbatim-core" }
 verbatim-ext = { path = "crates/verbatim-ext" }
@@ -35,6 +42,45 @@ verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
 verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }
 verbatim-uia = { path = "crates/verbatim-uia" }
 verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
+
+# `windows-core` is a direct dependency because the `windows` crate's
+# `#[implement]` macro emits `::windows_core` paths that only resolve when
+# the implementing crate depends on it directly.
+windows-core = "0.62"
+
+# The `windows` crate goes last because its feature list needs a dedicated
+# table, and a TOML table header would swallow any bare keys that followed
+# it. The feature list is the superset for every workstream (UIA,
+# MSAA/WinEvents, keyboard hook and SendInput, COM, job objects, pipes,
+# WASAPI, OneCore speech), declared once so individual crates never edit
+# this manifest.
+[workspace.dependencies.windows]
+version = "0.62"
+features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Core",
+    "Media_SpeechSynthesis",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+]
 
 [workspace.lints.rust]
 missing_docs = "warn"

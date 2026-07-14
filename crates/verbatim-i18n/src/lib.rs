@@ -181,6 +181,181 @@ pub fn startup_message() -> String {
     i18n_embed_fl::fl!(loader(), "startup-message")
 }
 
+/// Resolves a message by runtime id — the path for ids that arrive as data,
+/// such as setting-descriptor label keys. Statically known ids should use
+/// the typed functions in [`messages`] instead, which are compile-time
+/// checked.
+#[must_use]
+pub fn message(id: &str) -> String {
+    loader().get(id)
+}
+
+/// Typed accessors for the M1 user-visible strings. Each goes through the
+/// compile-time-checked `fl!` macro, so a missing message id fails the
+/// build.
+pub mod messages {
+    use super::loader;
+    use i18n_embed_fl::fl;
+
+    /// Tooltip of the system tray icon.
+    #[must_use]
+    pub fn tray_tooltip() -> String {
+        fl!(loader(), "tray-tooltip")
+    }
+
+    /// The Settings item of the Verbatim menu.
+    #[must_use]
+    pub fn menu_settings() -> String {
+        fl!(loader(), "menu-settings")
+    }
+
+    /// The Exit item of the Verbatim menu.
+    #[must_use]
+    pub fn menu_exit() -> String {
+        fl!(loader(), "menu-exit")
+    }
+
+    /// Base title of the settings dialog.
+    #[must_use]
+    pub fn settings_title() -> String {
+        fl!(loader(), "settings-title")
+    }
+
+    /// Settings dialog title carrying the active category name.
+    #[must_use]
+    pub fn settings_title_with_category(category: &str) -> String {
+        fl!(
+            loader(),
+            "settings-title-with-category",
+            category = category
+        )
+    }
+
+    /// Label of the category list in the settings dialog.
+    #[must_use]
+    pub fn settings_categories_label() -> String {
+        fl!(loader(), "settings-categories-label")
+    }
+
+    /// Name of the Speech settings category.
+    #[must_use]
+    pub fn settings_category_speech() -> String {
+        fl!(loader(), "settings-category-speech")
+    }
+
+    /// The OK button.
+    #[must_use]
+    pub fn button_ok() -> String {
+        fl!(loader(), "button-ok")
+    }
+
+    /// The Cancel button.
+    #[must_use]
+    pub fn button_cancel() -> String {
+        fl!(loader(), "button-cancel")
+    }
+
+    /// The Apply button.
+    #[must_use]
+    pub fn button_apply() -> String {
+        fl!(loader(), "button-apply")
+    }
+
+    /// Label of the synthesizer group on the Speech page.
+    #[must_use]
+    pub fn speech_synthesizer_group() -> String {
+        fl!(loader(), "speech-synthesizer-group")
+    }
+
+    /// The button opening the Select Synthesizer dialog.
+    #[must_use]
+    pub fn speech_change_synth() -> String {
+        fl!(loader(), "speech-change-synth")
+    }
+
+    /// Title of the Select Synthesizer dialog.
+    #[must_use]
+    pub fn select_synth_title() -> String {
+        fl!(loader(), "select-synth-title")
+    }
+
+    /// Label of the synthesizer choice in the Select Synthesizer dialog.
+    #[must_use]
+    pub fn select_synth_label() -> String {
+        fl!(loader(), "select-synth-label")
+    }
+}
+
+/// The localized spoken name of a role, used by the speech pipeline when it
+/// renders utterance tokens.
+#[must_use]
+pub fn role_name(role: verbatim_model::Role) -> String {
+    use verbatim_model::Role;
+    let loader = loader();
+    match role {
+        Role::Window => i18n_embed_fl::fl!(loader, "role-window"),
+        Role::Dialog => i18n_embed_fl::fl!(loader, "role-dialog"),
+        Role::Pane => i18n_embed_fl::fl!(loader, "role-pane"),
+        Role::PropertyPage => i18n_embed_fl::fl!(loader, "role-property-page"),
+        Role::Group => i18n_embed_fl::fl!(loader, "role-group"),
+        Role::MenuBar => i18n_embed_fl::fl!(loader, "role-menu-bar"),
+        Role::Menu => i18n_embed_fl::fl!(loader, "role-menu"),
+        Role::MenuItem => i18n_embed_fl::fl!(loader, "role-menu-item"),
+        Role::Button => i18n_embed_fl::fl!(loader, "role-button"),
+        Role::CheckBox => i18n_embed_fl::fl!(loader, "role-check-box"),
+        Role::RadioButton => i18n_embed_fl::fl!(loader, "role-radio-button"),
+        Role::ComboBox => i18n_embed_fl::fl!(loader, "role-combo-box"),
+        Role::List => i18n_embed_fl::fl!(loader, "role-list"),
+        Role::ListItem => i18n_embed_fl::fl!(loader, "role-list-item"),
+        Role::Slider => i18n_embed_fl::fl!(loader, "role-slider"),
+        Role::SpinButton => i18n_embed_fl::fl!(loader, "role-spin-button"),
+        Role::TabControl => i18n_embed_fl::fl!(loader, "role-tab-control"),
+        Role::Tab => i18n_embed_fl::fl!(loader, "role-tab"),
+        Role::StaticText => i18n_embed_fl::fl!(loader, "role-static-text"),
+        Role::EditableText => i18n_embed_fl::fl!(loader, "role-editable-text"),
+        Role::Link => i18n_embed_fl::fl!(loader, "role-link"),
+        Role::ToolBar => i18n_embed_fl::fl!(loader, "role-tool-bar"),
+        Role::StatusBar => i18n_embed_fl::fl!(loader, "role-status-bar"),
+        _ => i18n_embed_fl::fl!(loader, "role-unknown"),
+    }
+}
+
+/// The localized spoken name of a state, or `None` for states that are
+/// never announced (focused, focusable, selectable, offscreen).
+#[must_use]
+pub fn state_name(state: verbatim_model::State) -> Option<String> {
+    use verbatim_model::State;
+    let loader = loader();
+    Some(match state {
+        State::Selected => i18n_embed_fl::fl!(loader, "state-selected"),
+        State::Checked => i18n_embed_fl::fl!(loader, "state-checked"),
+        State::Mixed => i18n_embed_fl::fl!(loader, "state-mixed"),
+        State::Disabled => i18n_embed_fl::fl!(loader, "state-disabled"),
+        State::ReadOnly => i18n_embed_fl::fl!(loader, "state-read-only"),
+        State::Expanded => i18n_embed_fl::fl!(loader, "state-expanded"),
+        State::Collapsed => i18n_embed_fl::fl!(loader, "state-collapsed"),
+        State::Pressed => i18n_embed_fl::fl!(loader, "state-pressed"),
+        State::HasPopup => i18n_embed_fl::fl!(loader, "state-has-popup"),
+        State::DefaultControl => i18n_embed_fl::fl!(loader, "state-default"),
+        State::Busy => i18n_embed_fl::fl!(loader, "state-busy"),
+        _ => return None,
+    })
+}
+
+/// The localized announcement for the notable absence of a state — "not
+/// checked" for an unchecked check box — or `None` when the absence is not
+/// announced.
+#[must_use]
+pub fn negated_state_name(state: verbatim_model::State) -> Option<String> {
+    use verbatim_model::State;
+    let loader = loader();
+    Some(match state {
+        State::Checked => i18n_embed_fl::fl!(loader, "state-not-checked"),
+        State::Selected => i18n_embed_fl::fl!(loader, "state-not-selected"),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +399,85 @@ mod tests {
             loader.get("startup-message"),
             "Verbatim is starting.",
             "embedded English serves messages the requested language lacks"
+        );
+    }
+
+    /// The English source of every message, for tests that enumerate ids.
+    const ENGLISH_FTL: &str = include_str!("../i18n/en/verbatim.ftl");
+
+    /// Message ids parsed from the embedded English resources. Assumes the
+    /// single-line message convention documented at the top of the file.
+    fn english_message_ids() -> Vec<&'static str> {
+        ENGLISH_FTL
+            .lines()
+            .filter(|line| {
+                line.starts_with(|c: char| c.is_ascii_alphanumeric()) && line.contains('=')
+            })
+            .filter_map(|line| line.split_once('=').map(|(id, _)| id.trim()))
+            .collect()
+    }
+
+    /// The pseudo-locale test required from M1 (roadmap, localization
+    /// track): every message resolves through a generated pseudo-locale,
+    /// proving no string bypasses the loader and every id is translatable.
+    #[test]
+    fn pseudo_locale_covers_every_message() {
+        let ids = english_message_ids();
+        assert!(
+            ids.len() > 40,
+            "the M1 string inventory should be present, found {}",
+            ids.len()
+        );
+
+        // Generate the pseudo-locale: every message value wrapped in
+        // distinctive brackets.
+        let pseudo: String = ENGLISH_FTL
+            .lines()
+            .map(|line| {
+                let is_message =
+                    line.starts_with(|c: char| c.is_ascii_alphanumeric()) && line.contains('=');
+                if is_message {
+                    let (id, value) = line.split_once('=').expect("message line has =");
+                    format!("{id}= [!! {} !!]\n", value.trim())
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect();
+
+        let dir = std::env::temp_dir().join("verbatim-i18n-test-pseudo");
+        std::fs::create_dir_all(dir.join("en-XA")).expect("create pseudo locale dir");
+        std::fs::write(dir.join("en-XA").join("verbatim.ftl"), pseudo).expect("write pseudo ftl");
+
+        let loader = new_loader();
+        let pseudo_locale: LanguageIdentifier = "en-XA".parse().expect("valid language id");
+        load_locale_dir_into(&loader, &dir, &[pseudo_locale]).expect("pseudo locale loads");
+
+        for id in ids {
+            let resolved = loader.get(id);
+            assert!(
+                resolved.starts_with("[!!") || resolved.starts_with("\u{2068}[!!"),
+                "message {id} did not resolve through the pseudo-locale: {resolved:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn role_and_state_names_resolve() {
+        assert_eq!(role_name(verbatim_model::Role::Slider), "slider");
+        assert_eq!(
+            state_name(verbatim_model::State::Checked).as_deref(),
+            Some("checked")
+        );
+        assert_eq!(
+            negated_state_name(verbatim_model::State::Checked).as_deref(),
+            Some("not checked")
+        );
+        assert_eq!(state_name(verbatim_model::State::Focused), None);
+        assert_eq!(
+            messages::settings_title_with_category("Speech"),
+            "Verbatim Settings: \u{2068}Speech\u{2069}",
+            "fluent isolates arguments with directional isolate marks"
         );
     }
 }

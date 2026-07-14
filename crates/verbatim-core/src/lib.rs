@@ -10,5 +10,11 @@
 //! milestone M1.
 
 pub mod flight_recorder;
+mod recorder;
+mod reduce;
+mod state;
 
 pub use flight_recorder::FlightRecorder;
+pub use recorder::{RecordedInput, ReducerRecorder, replay};
+pub use reduce::reduce;
+pub use state::SrState;
