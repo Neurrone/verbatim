@@ -12,18 +12,17 @@
 //! output, so the workspace's no-hardcoded-strings rule (D10) does not
 //! apply to them.
 
-mod client;
 mod timestamp;
 
 use std::io;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use client::Client;
+use verbatim_control::client::{Client, ok_or_error};
 use verbatim_control::protocol::{
     Frame, LatencyRecord, OutpostState, ReplyPayload, Request, StatusInfo,
 };
-use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange};
+use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange, TreeNode};
 
 /// Developer inspection CLI over Verbatim's control plane.
 #[derive(Parser)]
@@ -34,6 +33,10 @@ use verbatim_model::{NodeSnapshot, NormalizedEvent, PropertyChange};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Control-plane address: "tcp:HOST:PORT" for TCP, anything else is a
+    /// pipe path, or omit for the well-known local pipe.
+    #[arg(long, global = true)]
+    connect: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -66,13 +69,20 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         last: u32,
     },
+    /// Dump the foreground application's accessibility tree from its
+    /// top-level window, one node per line, indented two spaces per depth
+    /// level.
+    DumpTree,
+    /// Ask Verbatim to write its flight recorder's current contents to
+    /// disk and print the path it wrote to.
+    DumpRecorder,
     /// Ask Verbatim to exit cleanly.
     Quit,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(cli.command) {
+    match run(cli.command, cli.connect.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
@@ -81,8 +91,21 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(command: Command) -> io::Result<()> {
-    let mut client = Client::connect()?;
+/// Opens a control-plane connection: `address` of the form `tcp:HOST:PORT`
+/// connects over TCP, anything else is treated as a pipe path, and `None`
+/// connects to the well-known local pipe.
+fn connect_client(address: Option<&str>) -> io::Result<Client> {
+    match address {
+        None => Client::connect_pipe(),
+        Some(address) => match address.strip_prefix("tcp:") {
+            Some(host_port) => Client::connect_tcp(host_port),
+            None => Client::connect_pipe_named(address),
+        },
+    }
+}
+
+fn run(command: Command, connect: Option<&str>) -> io::Result<()> {
+    let mut client = connect_client(connect)?;
     match command {
         Command::Status => status(&mut client),
         Command::WatchEvents => watch_events(&mut client),
@@ -91,12 +114,14 @@ fn run(command: Command) -> io::Result<()> {
         Command::SendGesture { identifier } => send_gesture(&mut client, identifier),
         Command::SendKeys { keys } => send_keys(&mut client, keys),
         Command::Latency { last } => latency(&mut client, last),
+        Command::DumpTree => dump_tree(&mut client),
+        Command::DumpRecorder => dump_recorder(&mut client),
         Command::Quit => quit(&mut client),
     }
 }
 
 fn status(client: &mut Client) -> io::Result<()> {
-    let frame = client::ok_or_error(client.request(Request::Status)?)?;
+    let frame = ok_or_error(client.request(Request::Status)?)?;
     let Frame::Reply {
         payload: ReplyPayload::Status(status),
         ..
@@ -139,7 +164,7 @@ fn print_status(status: &StatusInfo) {
 }
 
 fn watch_events(client: &mut Client) -> io::Result<()> {
-    client::ok_or_error(client.request(Request::SubscribeEvents)?)?;
+    ok_or_error(client.request(Request::SubscribeEvents)?)?;
     loop {
         if let Some(line) = event_line(&client.next_frame()?) {
             println!("{line}");
@@ -150,8 +175,8 @@ fn watch_events(client: &mut Client) -> io::Result<()> {
 /// Both subscriptions on one connection; frames print interleaved in
 /// arrival order, so each event reads directly above the speech it caused.
 fn watch_both(client: &mut Client) -> io::Result<()> {
-    client::ok_or_error(client.request(Request::SubscribeEvents)?)?;
-    client::ok_or_error(client.request(Request::SubscribeSpeech)?)?;
+    ok_or_error(client.request(Request::SubscribeEvents)?)?;
+    ok_or_error(client.request(Request::SubscribeSpeech)?)?;
     loop {
         let frame = client.next_frame()?;
         if let Some(line) = event_line(&frame) {
@@ -211,7 +236,7 @@ fn summarize_node(node: &NodeSnapshot) -> String {
 }
 
 fn watch_speech(client: &mut Client) -> io::Result<()> {
-    client::ok_or_error(client.request(Request::SubscribeSpeech)?)?;
+    ok_or_error(client.request(Request::SubscribeSpeech)?)?;
     loop {
         if let Some(line) = speech_line(&client.next_frame()?) {
             println!("{line}");
@@ -264,19 +289,19 @@ fn speech_line(frame: &Frame) -> Option<String> {
 }
 
 fn send_gesture(client: &mut Client, identifier: String) -> io::Result<()> {
-    client::ok_or_error(client.request(Request::SendGesture { identifier })?)?;
+    ok_or_error(client.request(Request::SendGesture { identifier })?)?;
     println!("gesture sent");
     Ok(())
 }
 
 fn send_keys(client: &mut Client, keys: Vec<String>) -> io::Result<()> {
-    client::ok_or_error(client.request(Request::SendKeys { keys })?)?;
+    ok_or_error(client.request(Request::SendKeys { keys })?)?;
     println!("keys sent");
     Ok(())
 }
 
 fn latency(client: &mut Client, last: u32) -> io::Result<()> {
-    let frame = client::ok_or_error(client.request(Request::Latency { last_n: last })?)?;
+    let frame = ok_or_error(client.request(Request::Latency { last_n: last })?)?;
     let Frame::Reply {
         payload: ReplyPayload::Latency(records),
         ..
@@ -312,8 +337,50 @@ fn print_latency_record(record: &LatencyRecord) {
     println!();
 }
 
+fn dump_tree(client: &mut Client) -> io::Result<()> {
+    let frame = ok_or_error(client.request(Request::DumpTree)?)?;
+    let Frame::Reply {
+        payload: ReplyPayload::DumpTree { root, truncated },
+        ..
+    } = frame
+    else {
+        return Err(io::Error::other(format!(
+            "unexpected reply to DumpTree: {frame:?}"
+        )));
+    };
+    print_tree_node(&root, 0);
+    if truncated {
+        println!("(tree truncated: depth or node-count cap reached)");
+    }
+    Ok(())
+}
+
+/// Prints one tree node per line, indented two spaces per depth level,
+/// reusing [`summarize_node`]'s role-and-name formatting.
+fn print_tree_node(node: &TreeNode, depth: usize) {
+    println!("{}{}", "  ".repeat(depth), summarize_node(&node.snapshot));
+    for child in &node.children {
+        print_tree_node(child, depth + 1);
+    }
+}
+
+fn dump_recorder(client: &mut Client) -> io::Result<()> {
+    let frame = ok_or_error(client.request(Request::DumpRecorder)?)?;
+    let Frame::Reply {
+        payload: ReplyPayload::DumpRecorder { path },
+        ..
+    } = frame
+    else {
+        return Err(io::Error::other(format!(
+            "unexpected reply to DumpRecorder: {frame:?}"
+        )));
+    };
+    println!("{path}");
+    Ok(())
+}
+
 fn quit(client: &mut Client) -> io::Result<()> {
-    client::ok_or_error(client.request(Request::Quit)?)?;
+    ok_or_error(client.request(Request::Quit)?)?;
     println!("Verbatim is exiting");
     Ok(())
 }

@@ -5,5 +5,15 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[dependencies]
+# Kept to workspace crates already compiled for other purposes, so the M2
+# Hyper-V harness (`cargo xtask vm`) stays dependency-light: base64 and
+# serde_json are already pulled in by verbatim-agent and verbatim-e2e, and
+# verbatim-config lets `xtask vm deploy` stage settings.toml through the
+# same ConfigStore the app itself uses, rather than hand-writing TOML.
+base64.workspace = true
+serde_json.workspace = true
+verbatim-config.workspace = true
+
 [lints]
 workspace = true

@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Events Fixture",
+  "children": [
+    { "id": "btn1", "role": "button", "name": "Original Name", "states": ["focusable"] },
+    {
+      "id": "slider1",
+      "role": "slider",
+      "name": "Level",
+      "value": "1",
+      "states": ["focusable"]
+    }
+  ]
+}

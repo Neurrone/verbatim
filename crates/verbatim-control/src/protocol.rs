@@ -10,7 +10,7 @@ use std::io::{self, BufRead, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, NormalizedEvent, Pid, SnapshotVersion, TraceId};
+use verbatim_model::{Backend, NormalizedEvent, Pid, SnapshotVersion, TraceId, TreeNode};
 
 /// The protocol version this vocabulary defines.
 pub const PROTOCOL_VERSION: u32 = 0;
@@ -64,6 +64,13 @@ pub enum Request {
         /// At most this many timelines, newest first.
         last_n: u32,
     },
+    /// Asks for a dump of the target application's accessibility tree from
+    /// its top-level window.
+    DumpTree,
+    /// Asks Verbatim to write its flight recorder's current contents to
+    /// disk (architecture section 9): the same snapshot a panic writes
+    /// automatically, taken on demand.
+    DumpRecorder,
     /// Asks Verbatim to exit cleanly.
     Quit,
 }
@@ -134,6 +141,21 @@ pub enum ReplyPayload {
     Status(StatusInfo),
     /// Answer to [`Request::Latency`], newest first.
     Latency(Vec<LatencyRecord>),
+    /// Answer to [`Request::DumpTree`]: the walked tree, and whether the
+    /// depth or node-count cap was hit before the walk covered every node.
+    DumpTree {
+        /// The root of the walked tree.
+        root: TreeNode,
+        /// Whether the walk stopped early against the outpost's depth or
+        /// node-count cap.
+        truncated: bool,
+    },
+    /// Answer to [`Request::DumpRecorder`]: the path the dump was written
+    /// to, in the `dumps` folder next to the executable.
+    DumpRecorder {
+        /// Absolute path of the written dump file.
+        path: String,
+    },
 }
 
 /// A status snapshot.
@@ -218,6 +240,7 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verbatim_model::{NodeId, NodeSnapshot, Role, StateSet};
 
     #[test]
     fn requests_and_frames_round_trip() {
@@ -230,6 +253,84 @@ mod tests {
         let frame = Frame::Reply {
             to: 7,
             payload: ReplyPayload::Ok,
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
+    }
+
+    #[test]
+    fn dump_tree_request_and_reply_round_trip() {
+        let request = RequestEnvelope {
+            id: 42,
+            request: Request::DumpTree,
+        };
+        let tree_root = TreeNode {
+            snapshot: NodeSnapshot {
+                id: NodeId::new(1),
+                backend: Backend::Uia,
+                role: Role::Window,
+                name: Some("test window".to_owned()),
+                value: None,
+                states: StateSet::default(),
+            },
+            children: vec![TreeNode {
+                snapshot: NodeSnapshot {
+                    id: NodeId::new(2),
+                    backend: Backend::Uia,
+                    role: Role::Button,
+                    name: Some("test button".to_owned()),
+                    value: None,
+                    states: StateSet::default(),
+                },
+                children: vec![],
+            }],
+        };
+        let frame = Frame::Reply {
+            to: 42,
+            payload: ReplyPayload::DumpTree {
+                root: tree_root,
+                truncated: false,
+            },
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
+    }
+
+    #[test]
+    fn dump_recorder_request_and_reply_round_trip() {
+        let request = RequestEnvelope {
+            id: 43,
+            request: Request::DumpRecorder,
+        };
+        let frame = Frame::Reply {
+            to: 43,
+            payload: ReplyPayload::DumpRecorder {
+                path: r"C:\verbatim\dumps\flight-2026-07-14T10-42-32-158Z.jsonl".to_owned(),
+            },
         };
 
         let mut buffer = Vec::new();

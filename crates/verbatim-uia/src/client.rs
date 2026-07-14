@@ -15,11 +15,15 @@ use windows::Win32::System::Variant::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    TreeScope_Subtree, UIA_RuntimeIdPropertyId,
+    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_RuntimeIdPropertyId,
 };
+
+use verbatim_model::TreeNode;
 
 use crate::cache::base_cache_request;
 use crate::com::init_mta;
+use crate::map::snapshot_from_cached_element;
+use crate::registry::NodeIdRegistry;
 
 /// A UIA client bound to the current thread's multithreaded apartment.
 pub struct Uia {
@@ -147,4 +151,118 @@ impl Uia {
             }
         }
     }
+
+    /// Walks the raw-view subtree rooted at `element` (already built with
+    /// `cache`), bounded by `max_depth` (the root is depth 0) and
+    /// `max_nodes` (the total number of nodes across the whole walk,
+    /// including the root). Cross-process; query-pool threads only, guarded
+    /// by the caller's deadline since a hung provider can stall any step.
+    /// Returns the walked tree and whether either cap was hit before the
+    /// walk reached every node.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the tree walker cannot be created.
+    ///
+    /// # Safety
+    ///
+    /// `element` must be a live element built with `cache`.
+    pub unsafe fn walk_tree(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+        registry: &NodeIdRegistry,
+        max_depth: u32,
+        max_nodes: usize,
+    ) -> windows::core::Result<(TreeNode, bool)> {
+        // SAFETY: `self.client` is a live IUIAutomation instance.
+        let walker = unsafe { self.client.RawViewWalker() }?;
+        let limits = WalkLimits {
+            cache,
+            registry,
+            max_depth,
+            max_nodes,
+        };
+        let mut state = WalkState {
+            visited: 1, // the root counts as one node.
+            truncated: false,
+        };
+        // SAFETY: `element` and `cache` are valid per the caller's contract;
+        // `walker` was just created and is used only within this call.
+        let root = unsafe { walk_recursive(&walker, element, &limits, 0, &mut state) };
+        Ok((root, state.truncated))
+    }
+}
+
+/// The per-walk parameters threaded through every level of
+/// [`walk_recursive`]: the caching and identity plumbing plus the walk's
+/// caps.
+struct WalkLimits<'a> {
+    cache: &'a IUIAutomationCacheRequest,
+    registry: &'a NodeIdRegistry,
+    max_depth: u32,
+    max_nodes: usize,
+}
+
+/// Mutable state accumulated across the whole walk, shared by every level
+/// of recursion.
+struct WalkState {
+    visited: usize,
+    truncated: bool,
+}
+
+/// Recursive worker for [`Uia::walk_tree`]. `state.visited` already counts
+/// `element` itself; children are counted as they are accepted into the
+/// walk, before recursing into them.
+///
+/// # Safety
+///
+/// `walker` must be a live tree walker; `element` and `limits.cache` must
+/// satisfy [`Uia::walk_tree`]'s contract.
+unsafe fn walk_recursive(
+    walker: &IUIAutomationTreeWalker,
+    element: &IUIAutomationElement,
+    limits: &WalkLimits<'_>,
+    depth: u32,
+    state: &mut WalkState,
+) -> TreeNode {
+    // SAFETY: `element` carries every base-cache-request property, either as
+    // the walk's root (caller's contract) or because every child reached
+    // below is fetched with a `*BuildCache` call using the same cache
+    // request.
+    let snapshot = unsafe { snapshot_from_cached_element(element, limits.registry) };
+
+    if depth >= limits.max_depth {
+        // Peek only: is there a child we are declining to descend into?
+        // SAFETY: forwarded to this function's contract.
+        if unsafe { walker.GetFirstChildElementBuildCache(element, limits.cache) }.is_ok() {
+            state.truncated = true;
+        }
+        return TreeNode {
+            snapshot,
+            children: Vec::new(),
+        };
+    }
+
+    let mut children = Vec::new();
+    // SAFETY: forwarded to this function's contract; a `Err` here means "no
+    // first child", the same convention `element_by_runtime_id` uses for
+    // `FindFirstBuildCache`.
+    let mut next_child =
+        unsafe { walker.GetFirstChildElementBuildCache(element, limits.cache) }.ok();
+    while let Some(current) = next_child {
+        if state.visited >= limits.max_nodes {
+            state.truncated = true;
+            break;
+        }
+        state.visited += 1;
+        // SAFETY: `current` was built with `limits.cache` by the call above
+        // or below; forwarded to this function's own contract otherwise.
+        let child_node = unsafe { walk_recursive(walker, &current, limits, depth + 1, state) };
+        children.push(child_node);
+        // SAFETY: forwarded; `Err` means "no next sibling".
+        next_child = unsafe { walker.GetNextSiblingElementBuildCache(&current, limits.cache) }.ok();
+    }
+
+    TreeNode { snapshot, children }
 }

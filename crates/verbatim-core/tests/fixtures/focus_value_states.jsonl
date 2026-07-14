@@ -1,0 +1,4 @@
+{"format_version":0,"crate_version":"0.1.0","timestamp":"2026-07-14T00:00:00Z"}
+{"input":{"Event":{"trace_id":1,"source":700,"backend":"Uia","version":1,"event":{"FocusChanged":{"node":{"id":1,"backend":"Uia","role":"Slider","name":"Rate","value":"50","states":0}}}}},"effect_count":1}
+{"input":{"Event":{"trace_id":2,"source":700,"backend":"Uia","version":2,"event":{"ValueChanged":{"node_id":1,"value":"55"}}}},"effect_count":1}
+{"input":{"Event":{"trace_id":3,"source":700,"backend":"Uia","version":3,"event":{"PropertyChanged":{"node_id":1,"change":{"States":64}}}}},"effect_count":1}

@@ -213,6 +213,22 @@ pub struct NodeSnapshot {
     pub states: StateSet,
 }
 
+/// One node of a walked accessibility tree: a snapshot plus its children in
+/// tree order.
+///
+/// Carried unchanged by both the outpost protocol (the outpost's answer to
+/// `DumpTree`) and the control protocol (`verbatim-inspect dump-tree`), so a
+/// tree dump travels from the outpost through Core to the CLI without
+/// translation — this is the shared vocabulary crate, so the shape is
+/// defined once here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeNode {
+    /// This node's snapshot.
+    pub snapshot: NodeSnapshot,
+    /// Children, in tree order.
+    pub children: Vec<TreeNode>,
+}
+
 use crate::NodeId;
 
 #[cfg(test)]
@@ -230,6 +246,36 @@ mod tests {
         assert!(!states.contains(State::Disabled));
         states.remove(State::Focused);
         assert!(!states.contains(State::Focused));
+    }
+
+    #[test]
+    fn tree_node_round_trips_through_json() {
+        let leaf = TreeNode {
+            snapshot: NodeSnapshot {
+                id: NodeId::new(2),
+                backend: Backend::Uia,
+                role: Role::Button,
+                name: Some("OK".into()),
+                value: None,
+                states: StateSet::new(),
+            },
+            children: Vec::new(),
+        };
+        let root = TreeNode {
+            snapshot: NodeSnapshot {
+                id: NodeId::new(1),
+                backend: Backend::Uia,
+                role: Role::Dialog,
+                name: Some("Settings".into()),
+                value: None,
+                states: StateSet::new(),
+            },
+            children: vec![leaf],
+        };
+        let json = serde_json::to_string(&root).expect("serializes");
+        let back: TreeNode = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, root);
+        assert_eq!(back.children.len(), 1);
     }
 
     #[test]

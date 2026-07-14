@@ -15,14 +15,15 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_I4};
 use windows::Win32::UI::Accessibility::{
-    AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccessible, WindowFromAccessibleObject,
+    AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccessible,
+    WindowFromAccessibleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GUITHREADINFO, GetGUIThreadInfo, GetWindowThreadProcessId, OBJID_CLIENT,
 };
 use windows::core::Interface;
 
-use verbatim_model::{Backend, NodeSnapshot, Role};
+use verbatim_model::{Backend, NodeSnapshot, Role, TreeNode};
 
 use crate::com::{CHILDID_SELF, bstr_to_option, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
@@ -103,6 +104,204 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
         let node_hwnd = window_of(&acc).unwrap_or(hwnd.0 as isize);
         let key = (node_hwnd, OBJID_CLIENT.0, child_id_of(&child));
         Some(read_snapshot(&acc, &child, key, registry))
+    }
+}
+
+/// Walks the MSAA tree from `hwnd`'s client accessible object, bounded by
+/// `max_depth` (the root is depth 0) and `max_nodes` (the total node count
+/// across the whole walk, including the root). Unlike UIA there are no
+/// cache requests on this backend, so every step is its own cross-process
+/// COM round trip (architecture section 4's IA2 cost model); blocking,
+/// query pool only, guarded by the caller's deadline. Returns `None` if the
+/// window has no accessible client object.
+#[must_use]
+pub fn walk_tree(
+    hwnd: isize,
+    registry: &NodeIdRegistry,
+    max_depth: u32,
+    max_nodes: usize,
+) -> Option<(TreeNode, bool)> {
+    // SAFETY: `hwnd` is a caller-supplied handle; `accessible_from_window`
+    // fails safely on an invalid one.
+    let acc = unsafe { accessible_from_window(HWND(hwnd as *mut c_void)) }?;
+    let limits = WalkLimits {
+        registry,
+        max_depth,
+        max_nodes,
+    };
+    let mut state = WalkState {
+        visited: 1, // the root counts as one node.
+        truncated: false,
+    };
+    let key = (hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+    // SAFETY: `acc` was just acquired and is live; `CHILDID_SELF` addresses
+    // the object itself, a valid child variant for it.
+    let root = unsafe {
+        walk_recursive(
+            &acc,
+            &child_variant(CHILDID_SELF),
+            hwnd,
+            key,
+            &limits,
+            0,
+            &mut state,
+        )
+    };
+    Some((root, state.truncated))
+}
+
+/// The per-walk parameters threaded through every level of
+/// [`walk_recursive`]: node-identity plumbing plus the walk's caps.
+struct WalkLimits<'a> {
+    registry: &'a NodeIdRegistry,
+    max_depth: u32,
+    max_nodes: usize,
+}
+
+/// Mutable state accumulated across the whole walk, shared by every level
+/// of recursion.
+struct WalkState {
+    visited: usize,
+    truncated: bool,
+}
+
+/// Recursive worker for [`walk_tree`]. `state.visited` already counts the
+/// node named by `acc`/`child`. A simple element (addressed purely by a
+/// child id, not its own `IAccessible`) is always a leaf per the MSAA
+/// model, so only `CHILDID_SELF` nodes are ever expanded.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible` and `child` a valid child-id `VARIANT`
+/// for it.
+unsafe fn walk_recursive(
+    acc: &IAccessible,
+    child: &VARIANT,
+    hwnd: isize,
+    key: MsaaKey,
+    limits: &WalkLimits<'_>,
+    depth: u32,
+    state: &mut WalkState,
+) -> TreeNode {
+    // SAFETY: forwarded to this function's contract.
+    let snapshot = unsafe { read_snapshot(acc, child, key, limits.registry) };
+
+    // SAFETY: `child` is valid for `acc` per the caller's contract.
+    if unsafe { child_id_of(child) } != CHILDID_SELF {
+        return TreeNode {
+            snapshot,
+            children: Vec::new(),
+        };
+    }
+
+    if depth >= limits.max_depth {
+        // SAFETY: `acc` is live per the caller's contract; only peeks
+        // whether there is a child we are declining to descend into.
+        let has_children = unsafe { acc.accChildCount() }.is_ok_and(|count| count > 0);
+        if has_children {
+            state.truncated = true;
+        }
+        return TreeNode {
+            snapshot,
+            children: Vec::new(),
+        };
+    }
+
+    // SAFETY: `acc` is live per the caller's contract.
+    let child_count = match unsafe { acc.accChildCount() } {
+        Ok(count) if count > 0 => count,
+        _ => {
+            return TreeNode {
+                snapshot,
+                children: Vec::new(),
+            };
+        }
+    };
+    let Ok(child_count) = usize::try_from(child_count) else {
+        return TreeNode {
+            snapshot,
+            children: Vec::new(),
+        };
+    };
+
+    let mut buffer: Vec<VARIANT> = (0..child_count).map(|_| VARIANT::default()).collect();
+    let mut obtained = 0i32;
+    // SAFETY: `acc` is live; `buffer` holds exactly `child_count` freshly
+    // zeroed VARIANTs, which is what AccessibleChildren fills (writing at
+    // most that many entries and reporting the actual count in `obtained`).
+    if unsafe { AccessibleChildren(acc, 0, &mut buffer, &raw mut obtained) }.is_err() {
+        return TreeNode {
+            snapshot,
+            children: Vec::new(),
+        };
+    }
+    let obtained = usize::try_from(obtained).unwrap_or(0).min(buffer.len());
+
+    let mut children = Vec::new();
+    for entry in &buffer[..obtained] {
+        if state.visited >= limits.max_nodes {
+            state.truncated = true;
+            break;
+        }
+        // SAFETY: `entry` is one VARIANT written by AccessibleChildren above.
+        let (child_acc, child_child, child_hwnd) = unsafe { resolve_child(acc, entry, hwnd) };
+        state.visited += 1;
+        // SAFETY: `child_child` is valid for `child_acc` per
+        // `resolve_child`'s construction.
+        let child_key = (child_hwnd, OBJID_CLIENT.0, unsafe {
+            child_id_of(&child_child)
+        });
+        // SAFETY: `child_acc` is a live IAccessible and `child_child` a
+        // valid child variant for it, per `resolve_child`.
+        let child_node = unsafe {
+            walk_recursive(
+                &child_acc,
+                &child_child,
+                child_hwnd,
+                child_key,
+                limits,
+                depth + 1,
+                state,
+            )
+        };
+        children.push(child_node);
+    }
+
+    TreeNode { snapshot, children }
+}
+
+/// Resolves one entry from `AccessibleChildren` into `(accessible, child
+/// variant, hwnd)` to recurse into: a `VT_I4` entry is a simple element
+/// addressed by child id on `parent`; a `VT_DISPATCH` entry carries its own
+/// `IAccessible`, addressed by `CHILDID_SELF`, and may belong to a distinct
+/// window (a nested control), resolved the same way `resolve_focus` does.
+///
+/// # Safety
+///
+/// `parent` must be a live `IAccessible`; `entry` must be one `VARIANT`
+/// produced by `AccessibleChildren` on it.
+unsafe fn resolve_child(
+    parent: &IAccessible,
+    entry: &VARIANT,
+    parent_hwnd: isize,
+) -> (IAccessible, VARIANT, isize) {
+    // SAFETY: the variant type is checked before any union field is read.
+    unsafe {
+        let vt = entry.Anonymous.Anonymous.vt;
+        if vt == VT_DISPATCH {
+            if let Some(dispatch) = entry.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()
+                && let Ok(child_acc) = dispatch.cast::<IAccessible>()
+            {
+                let hwnd = window_of(&child_acc).unwrap_or(parent_hwnd);
+                return (child_acc, child_variant(CHILDID_SELF), hwnd);
+            }
+            (parent.clone(), child_variant(CHILDID_SELF), parent_hwnd)
+        } else if vt == VT_I4 {
+            let child_id = entry.Anonymous.Anonymous.Anonymous.lVal;
+            (parent.clone(), child_variant(child_id), parent_hwnd)
+        } else {
+            (parent.clone(), child_variant(CHILDID_SELF), parent_hwnd)
+        }
     }
 }
 

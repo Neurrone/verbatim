@@ -12,7 +12,7 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, FetchResult, NormalizedEvent, Pid, Query, QueryId, SnapshotVersion, TraceId,
+    Backend, FetchResult, NormalizedEvent, Pid, Query, QueryId, SnapshotVersion, TraceId, TreeNode,
 };
 
 /// Messages from the Core-side supervisor to an outpost.
@@ -43,6 +43,15 @@ pub enum SupervisorToOutpost {
     Ping {
         /// Echoed in the matching pong.
         seq: u64,
+    },
+    /// Asks the outpost to walk the target application's tree from its
+    /// top-level window and return it; answered by
+    /// [`OutpostToSupervisor::DumpTreeReply`]. Runs on a query-pool thread
+    /// with a deadline, so a hung application abandons the call rather than
+    /// wedging the outpost.
+    DumpTree {
+        /// Trace ID of the request that caused this dump.
+        trace_id: TraceId,
     },
     /// Asks the outpost to exit cleanly.
     Shutdown,
@@ -90,12 +99,33 @@ pub enum OutpostToSupervisor {
         /// The probed sequence number.
         seq: u64,
     },
+    /// Answer to [`SupervisorToOutpost::DumpTree`].
+    DumpTreeReply {
+        /// Trace ID carried through from the request.
+        trace_id: TraceId,
+        /// `Ok` with the walked tree, or `Err` with a human-readable reason
+        /// the walk could not complete (no accessible top-level window, or
+        /// the query-pool deadline expired against a hung application).
+        result: Result<DumpedTree, String>,
+    },
     /// A backend error worth reporting without dying — a failed event
     /// registration, an arbitration probe that keeps timing out.
     Fault {
         /// Human-readable detail for logs and diagnostics.
         detail: String,
     },
+}
+
+/// One completed tree walk from a target application's top-level window
+/// (architecture section 1). The walk is bounded by a depth cap of 64 and a
+/// node-count cap of 4096; `truncated` notes when it stopped early against
+/// either cap rather than reaching every node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DumpedTree {
+    /// The root node reached.
+    pub root: TreeNode,
+    /// Whether the walk stopped early against the depth or node-count cap.
+    pub truncated: bool,
 }
 
 /// Writes one message as a single JSON line and flushes.
@@ -178,5 +208,54 @@ mod tests {
         let mut reader: &[u8] = b"not json\n";
         let result: io::Result<Option<SupervisorToOutpost>> = read_message(&mut reader);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn dump_tree_request_and_reply_round_trip() {
+        let request = SupervisorToOutpost::DumpTree {
+            trace_id: TraceId::mint(),
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: SupervisorToOutpost = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, request);
+
+        let success = OutpostToSupervisor::DumpTreeReply {
+            trace_id: TraceId::mint(),
+            result: Ok(DumpedTree {
+                root: TreeNode {
+                    snapshot: NodeSnapshot {
+                        id: NodeId::new(1),
+                        backend: Backend::Uia,
+                        role: Role::Window,
+                        name: Some("Verbatim".into()),
+                        value: None,
+                        states: StateSet::new(),
+                    },
+                    children: Vec::new(),
+                },
+                truncated: true,
+            }),
+        };
+        let failure = OutpostToSupervisor::DumpTreeReply {
+            trace_id: TraceId::mint(),
+            result: Err("no accessible top-level window".to_owned()),
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &success).expect("writes");
+        write_message(&mut buffer, &failure).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_success: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_failure: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_success, success);
+        assert_eq!(read_failure, failure);
     }
 }

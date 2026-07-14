@@ -23,6 +23,7 @@ verbatim-input.workspace = true
 verbatim-model.workspace = true
 verbatim-outpost.workspace = true
 verbatim-speech.workspace = true
+verbatim-synth-capture.workspace = true
 verbatim-synth-onecore.workspace = true
 windows.workspace = true
 

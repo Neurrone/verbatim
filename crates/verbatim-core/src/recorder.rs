@@ -6,6 +6,7 @@
 //! which is what turns a flight-recorder dump from a live session into a
 //! regression test.
 
+use serde::{Deserialize, Serialize};
 use verbatim_model::{Effect, Input};
 
 use crate::flight_recorder::FlightRecorder;
@@ -13,8 +14,9 @@ use crate::reduce::reduce;
 use crate::state::SrState;
 
 /// One input recorded from a live reducer thread, alongside how many
-/// effects reducing it produced.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// effects reducing it produced. Serializable so it survives the trip to
+/// disk in a flight-recorder dump (see [`crate::dump`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedInput {
     /// The input as it was fed to the reducer.
     pub input: Input,

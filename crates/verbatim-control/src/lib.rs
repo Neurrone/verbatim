@@ -12,6 +12,7 @@
 //! change is verifiable live: this module freezes the vocabulary; the
 //! server lands with workstream WS-E.
 
+pub mod client;
 pub mod protocol;
 mod send_keys;
 pub mod server;

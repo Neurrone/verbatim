@@ -24,3 +24,76 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run CI checks
         run: cargo xtask ci
+
+  # Milestone M2's runner-direct E2E suite (docs/roadmap.md): builds the
+  # debug binaries the suite drives, starts verbatim-agent.exe bound to
+  # loopback, points crates/verbatim-e2e at it, and runs the suite serially
+  # (one live Verbatim at a time, per crates/verbatim-e2e's Scenario type).
+  # A separate job from `ci` so a live-suite failure is easy to tell apart
+  # from a build or lint failure; GitHub's Windows runners execute jobs in
+  # an interactive session, which is what lets SendInput-based key
+  # injection and real window focus work here.
+  e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Locate libclang for wxDragon's bindgen
+        shell: pwsh
+        run: |
+          # `cargo xtask ci` probes these same candidates automatically;
+          # this job calls cargo directly (see CLAUDE.md's Commands
+          # section for why), so the wxDragon bindgen build needs
+          # LIBCLANG_PATH set by hand.
+          $candidates = @(
+            "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin",
+            "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin",
+            "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin",
+            "C:\Program Files\LLVM\bin"
+          )
+          $found = $candidates | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if ($found) {
+            Write-Output "found libclang.dll under $found"
+            Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$found"
+          } else {
+            Write-Warning "libclang.dll not found in known locations; relying on PATH"
+          }
+      - name: Build verbatim-app and verbatim-agent (debug)
+        run: cargo build -p verbatim-app -p verbatim-agent
+      - name: Start verbatim-agent on loopback
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "target\debug\verbatim-agent.exe" `
+            -ArgumentList "--bind-address 127.0.0.1 --port 44001" `
+            -RedirectStandardOutput "verbatim-agent-stdout.log" `
+            -RedirectStandardError "verbatim-agent-stderr.log"
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            $probe = Test-NetConnection -ComputerName 127.0.0.1 -Port 44001 -WarningAction SilentlyContinue
+            if ($probe.TcpTestSucceeded) {
+              $ready = $true
+              break
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $ready) {
+            Write-Error "verbatim-agent never started listening on 127.0.0.1:44001"
+            exit 1
+          }
+      - name: Run the E2E suite
+        env:
+          VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
+        shell: pwsh
+        run: |
+          cargo test -p verbatim-e2e -- --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+          exit $LASTEXITCODE
+      - name: Upload E2E output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verbatim-e2e-logs
+          path: |
+            verbatim-e2e-test-output.log
+            verbatim-agent-stdout.log
+            verbatim-agent-stderr.log
+          if-no-files-found: ignore

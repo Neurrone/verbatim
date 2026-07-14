@@ -1,6 +1,6 @@
 # Crate Overview
 
-A reviewer's guide to the workspace as of the end of milestone M1. Crates
+A reviewer's guide to the workspace as of the end of milestone M2. Crates
 appear in dependency order — each one uses only concepts explained before
 it — so the document reads front to back. `docs/architecture.md` holds the
 decisions of record this code implements; `docs/roadmap.md` holds the
@@ -32,6 +32,11 @@ Public API:
   matches.
 - `NodeSnapshot` — everything needed to announce one node: id, backend,
   role, optional name and value, states.
+- `TreeNode` — a `NodeSnapshot` plus its children in tree order: the
+  shared vocabulary for a walked tree, carried unchanged by the outpost
+  protocol's `DumpTree` reply and the control protocol's `DumpTree` reply,
+  so a tree dump travels from the outpost through Core to
+  `verbatim-inspect` without translation.
 - `NormalizedEvent` — `FocusChanged` (carrying a full snapshot),
   `PropertyChanged` (name, value, or the complete new `States` set), and
   `ValueChanged`.
@@ -182,8 +187,8 @@ The `AudioSink` seam (decision D5) and its WASAPI implementation.
 
 Public API: `PcmFormat` (rate and channel count; samples are 16-bit
 throughout M1), `AudioError`, the `AudioSink` trait (`begin` with a
-`TraceId`, blocking `write`, draining `end`, discarding `stop`), and
-`WasapiSink`.
+`TraceId`, blocking `write`, draining `end`, discarding `stop`),
+`WasapiSink`, and `NullSink`.
 
 Implementation notes, `WasapiSink`: event-driven shared mode with a small
 (roughly 40 ms) buffer, initialized with the auto-convert-PCM flags so any
@@ -194,6 +199,15 @@ the same format. COM is initialized per thread as MTA, tolerating
 `audio_started` tracing event tagged with the utterance's trace ID — the
 final leg of the latency timeline. `stop` issues Stop plus Reset to discard
 buffered audio immediately, which is how speech interruption sounds instant.
+
+Implementation notes, `NullSink`: a device-free sink for test and CI runs
+with no sound card, active only when `verbatim-app` sees
+`VERBATIM_TEST_AUDIO=null` at startup (test-only; documented there).
+Accepts any format and discards every sample, but still emits the
+`audio_started` tracing event on the first `write` of each utterance,
+exactly when `WasapiSink` would emit it on its first real buffer, so
+`LatencyLedger` still records a complete timeline with nothing actually
+playing.
 
 ## verbatim-speech
 
@@ -274,7 +288,8 @@ the settings host is exercised too.
 
 ## verbatim-core
 
-The pure reducer (architecture section 2) and the flight recorder.
+The pure reducer (architecture section 2), the flight recorder, and its
+on-disk dump format.
 
 Public API:
 
@@ -285,7 +300,29 @@ Public API:
 - `FlightRecorder<T>` — a bounded ring buffer; `ReducerRecorder` and
   `RecordedInput` specialize it for reducer inputs; `replay(initial,
   inputs)` re-runs a recorded sequence and returns the effects per step,
-  proven deterministic by test.
+  proven deterministic by test. `RecordedInput` derives `Serialize` and
+  `Deserialize` so it survives the trip to disk.
+- `dump` — the flight-recorder dump format (milestone M2): a versioned
+  JSON-lines file, a header line (`DumpHeader`: format version, the writing
+  crate's version, and a caller-supplied timestamp string — this module
+  never reads a clock itself) followed by one compact-JSON `RecordedInput`
+  per line. `write_dump(writer, crate_version, timestamp, inputs)` writes
+  one; `read_dump(reader)` reads one back as `DumpContents` (header, the
+  inputs that parsed completely, and whether the file ended mid-line).
+  `DumpReadError` distinguishes a missing header, a malformed header, an
+  unsupported format version, and a malformed *complete* line — a
+  malformed final line with no trailing newline is not an error: the
+  writer always terminates a complete line with a newline, so an
+  unterminated tail can only be a crash-time dump cut off mid-write, and
+  `read_dump` reports it as `DumpContents::truncated` instead of failing,
+  keeping every record parsed before the cut. `crates/verbatim-core/tests/
+  replay_fixture.rs` commits a dump captured from a scripted focus-change,
+  value-change, states-change session under `tests/fixtures/` and replays
+  it on every test run, asserting the per-step effect counts match what
+  was recorded and that a second replay is identical — the template every
+  future live-dump regression follows; its `regenerate_fixture` test
+  (`#[ignore]`d) is how the fixture was produced and how an intentional
+  change to the scripted shapes regenerates it.
 
 Implementation notes, `reduce`:
 
@@ -337,6 +374,23 @@ Public API:
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
   as callable only from deadline-guarded query threads.
+- `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:
+  resolves the native window handle of `element` itself, or of its nearest
+  ancestor that has one, in one cross-process round trip
+  (`NormalizeElementBuildCache` against a tree walker whose condition
+  excludes every element without a native window handle). If `element`
+  already has a window handle the call still works, since `NormalizeElement`
+  degenerates to returning the starting element unchanged. Like the probe
+  above, this sends a cross-process COM call and can block on a hung
+  application; unlike the probe, it is documented as callable from UIA
+  event-callback threads specifically because each outpost watches a single
+  application (decision D9), so a hang here stalls only that application's
+  own outpost, which the recovery ladder already covers — the same trade
+  NVDA makes running this same walk on its own UIA event-handler thread.
+  Backed by a thread-local `IUIAutomation` instance, walker, and cache
+  request, lazily built the first time a given thread calls it and reused
+  after that, matching `Uia`'s one-client-per-thread rule so nothing COM
+  here crosses a thread boundary.
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s; takes an
   injected shared counter so the UIA and MSAA registries in one outpost
   never hand out the same id. `init_mta()`, role and state mapping in
@@ -383,11 +437,14 @@ sections 1 and 4, decision D9).
 
 Public API:
 
-- `protocol` — the wire vocabulary, frozen in phase 1 of M1.
+- `protocol` — the wire vocabulary the supervisor and each outpost speak.
   `SupervisorToOutpost`: `Configure` (set or retarget the watched
-  application), `Fetch`, `Ping`, `Shutdown`. `OutpostToSupervisor`:
-  `Ready`, `Event` (trace id, observation timestamp, backend, snapshot
-  version, normalized event), `FetchReply`, `Pong`, `Fault`. Framing is
+  application), `Fetch`, `Ping`, `DumpTree` (walk the target's tree from
+  its top-level window), `Shutdown`. `OutpostToSupervisor`: `Ready`,
+  `Event` (trace id, observation timestamp, backend, snapshot version,
+  normalized event), `FetchReply`, `Pong`, `DumpTreeReply` (a `DumpedTree`
+  — the root `verbatim_model::TreeNode` plus whether the walk was
+  truncated — or a human-readable failure reason), `Fault`. Framing is
   newline-delimited compact JSON via `write_message` and `read_message`.
 - `Arbitrator` — NVDA's per-window backend decision:
   `resolve_with(hwnd, class, probe)` walks the ladder (good class list, bad
@@ -424,17 +481,184 @@ Implementation notes:
   close the supervisor answers by respawning.
 - Event flow (runtime): the event thread hosts the WinEvent hooks and a
   rebind message; UIA registration lives on its own thread; both funnel
-  through the cross-filter (an MSAA event whose window arbitrates to UIA is
-  dropped, and vice versa for UIA focus) so exactly one backend survives
-  per window. Because every Win32 and wx control is its own window handle,
-  per-window arbitration is per-control there, while a WinUI top level
-  resolves once for its whole subtree. Trace IDs are minted when the OS
-  event first arrives, snapshot versions increment per emitted event, and
-  each event carries its observation timestamp for the latency ledger.
+  through the cross-filter so exactly one backend survives per window.
+  Because every Win32 and wx control is its own window handle, per-window
+  arbitration is per-control there, while a WinUI top level resolves once
+  for its whole subtree. Trace IDs are minted when the OS event first
+  arrives, snapshot versions increment per emitted event, and each event
+  carries its observation timestamp for the latency ledger.
+  - MSAA side (`handle_msaa_event`): the event's own hwnd is exact — MSAA
+    events always carry the real window, never an inferred one — so the
+    filter just arbitrates it directly. A UIA verdict drops the MSAA event;
+    a non-UIA verdict or no verdict yet delivers it, scheduling a probe in
+    the no-verdict case. Delivering on an unresolved verdict is what makes
+    dropping safe on the UIA side below: MSAA is the backend of record
+    whenever arbitration has not yet decided.
+  - UIA side (`uia_passes_filter`): most elements that raise UIA events are
+    not windows themselves — a menu item or a list item is a descendant of
+    one — so the cached native window handle is usually 0. Attribution
+    resolves the window in three tiers: the cached handle when the element
+    is itself a window, otherwise `verbatim_uia::nearest_window_handle`
+    (NVDA's `getNearestWindowHandle`, one cross-process call that walks up
+    to the nearest ancestor with a real handle), and only if that itself
+    fails, the window holding keyboard focus as a last resort; finding no
+    window at all keeps the event, since there is nothing to arbitrate on.
+    Once a window is attributed, a UIA verdict delivers, a non-UIA verdict
+    drops, and no verdict yet drops while scheduling a probe — symmetric
+    with the MSAA side's delivery in that case, because the MSAA hook for
+    the same logical element carries the event instead. This replaced an
+    M1 heuristic that used the keyboard-focus window unconditionally, which
+    is wrong for a popup menu: a popup never takes keyboard focus, so the
+    heuristic found the menu's *owner* window while the MSAA event for the
+    same menu item carried the popup window itself, and the two backends
+    could both defer on their two different windows, losing the
+    announcement entirely (found by the M2 E2E suite against the VM). The
+    heuristic's compensation was to keep every event on an unresolved
+    verdict rather than risk that silence, at the cost of occasional
+    duplicate announcements. `nearest_window_handle` resolves a popup menu
+    item straight to the popup window itself — the same window the MSAA
+    event for that item carries — so both backends now arbitrate on one
+    shared hwnd and the compensation is no longer needed.
 - On `Configure`, the outpost rebinds its hooks, then queries the currently
   focused element on a query-pool thread and emits a synthetic
   `FocusChanged` — announcing the focus change that caused its own spawn
   without having witnessed it.
+- `DumpTree` (runtime): answered on a query-pool thread guarded by a five
+  second deadline (`QueryPool::run`), the same pattern the synthetic-focus
+  query uses, so a hung target abandons the call rather than wedging the
+  outpost. Finds the target's currently active top-level window (falling
+  back to its first top-level window), arbitrates its backend, then walks
+  it: UIA via `Uia::walk_tree`, a raw-view `IUIAutomationTreeWalker` driven
+  with the same cache request as every other UIA read, so no step of the
+  walk blocks on an uncached property; MSAA via
+  `verbatim_ia2::acquire::walk_tree`, recursing through `AccessibleChildren`
+  since this backend has no cache requests to prefetch with. Both walkers
+  share the same caps — depth 64, node count 4096 across the whole walk —
+  and report whether either cap cut the walk short.
+
+## mockapp
+
+The scripted UIA and MSAA provider test host (architecture section 13,
+layer 2): a real, separate-process Win32 application that answers
+`WM_GETOBJECT` as a genuine out-of-process accessibility *provider* over a
+JSON-scripted tree, so `verbatim-uia` and `verbatim-ia2`'s real client
+stacks — and the outpost's arbitration — are exercised cross-process with
+zero real applications, on plain CI Windows runners. `mockapp`'s own binary
+depends only on `verbatim-model` (for `Role`, `State`, and `StateSet`); the
+client crates it is built to be tested against (`verbatim-uia`,
+`verbatim-ia2`, `verbatim-outpost`) are dev-dependencies, used only by its
+own integration tests.
+
+CLI: `mockapp --fixture <path.json> --backend <uia|msaa> [--title
+<window title>]` (default title `mockapp`). It creates one real top-level
+Win32 window titled per `--title`, prints `ready` (flushed) once the window
+exists and the provider is answering, then processes stdin commands until
+`quit`.
+
+Fixture format: one JSON object per node — `id` (unique string), `role` (a
+`Role` name in snake case, e.g. `check_box`), optional `name` and `value`
+strings, `states` (an array of `State` names in snake case, e.g.
+`read_only`), and `children` (nested nodes). The root node conceptually
+corresponds to the window itself. `fixture::role_from_fixture_str` and
+`state_from_fixture_str` hold the complete name tables.
+
+Stdin commands, one per line: `focus <id>` (raises the backend's
+focus-changed notification — `UiaRaiseAutomationEvent` for UIA,
+`NotifyWinEvent(EVENT_OBJECT_FOCUS, ...)` for MSAA), `set-name <id> <text>`
+and `set-value <id> <text>` (update the tree and raise the matching
+property-change or name/value-change notification), and `quit`.
+
+Public API is otherwise internal (`mockapp` is a binary, not a library);
+its crate-internal modules are the reviewable surface:
+
+- `fixture` — JSON parsing and role/state name validation.
+- `tree` — the owned, mutable scripted tree: a flat arena (`Tree`, shared as
+  `SharedTree` behind `Arc<Mutex<_>>`) so provider COM objects and stdin
+  command handling can both reach it without borrowing from the window's
+  state; index 0 is always the root.
+- `window` — Win32 class registration, window creation, and the message
+  loop; dispatches `WM_GETOBJECT` to whichever backend is active and drains
+  stdin commands posted from the reader thread.
+- `uia` — the UIA provider. Every node gets its own COM object on demand:
+  the root is a `RootProvider` (also the fragment root), every other node a
+  `ChildProvider`; only the root implements `IRawElementProviderFragmentRoot`,
+  so non-root elements never misreport themselves as fragment roots. Role
+  and property mapping is the inverse of `verbatim_uia::map`.
+- `msaa` — the MSAA provider. Every node is its own full `IAccessible`
+  object (never a numbered "simple child"), addressed two ways: the
+  window's default client object (`OBJID_CLIENT`) is always the root, and
+  every node additionally answers `WM_GETOBJECT` under a custom positive
+  object id (`index + 1`) so `NotifyWinEvent` can address any node directly.
+  Deliberately never answers the UIA root object id, so the arbitration
+  probe finds nothing and the window arbitrates to MSAA. Role and state
+  mapping is the inverse of `verbatim_ia2::map`.
+- `stdin` — command parsing and the reader thread.
+
+Implementation notes:
+
+- **Threading.** The window thread joins a single-threaded apartment
+  (`COINIT_APARTMENTTHREADED`); every provider COM object is built with
+  `Agile = false`, so cross-process calls into them are marshaled back onto
+  this thread's message queue — which is why the message loop must keep
+  pumping for the process's whole lifetime. Stdin is read on a separate
+  thread (reading blocks, which the message loop cannot afford) and handed
+  to the window thread over a channel, woken by a payload-free posted
+  message rather than by smuggling a pointer through `LPARAM`.
+- **`idObject` recovery.** `WM_GETOBJECT`'s `lParam` carries `idObject`
+  zero-extended into the full pointer width on at least some code paths
+  (observed from `oleacc`'s `AccessibleObjectFromWindow`, whose probes
+  arrive as a huge positive `lParam` rather than sign-extended), so
+  recovering the standard negative object ids (`OBJID_CLIENT` and friends)
+  requires truncating back to 32 bits and reinterpreting (`lparam.0 as
+  i32`), not a checked conversion — `i32::try_from` silently rejects
+  exactly the values this needs to recognize, which was the root cause of
+  an early "the window answers, but with the wrong data" failure mode.
+- **Null interface results.** UIA's `IRawElementProviderFragment`/
+  `IRawElementProviderFragmentRoot`/`IRawElementProviderSimple` methods
+  that can legitimately return "no such element" (`Navigate` at a tree
+  boundary, `GetPatternProvider` for an unsupported pattern,
+  `HostRawElementProvider` for a non-root node) cannot represent a null
+  interface pointer safely in `windows-core`'s `NonNull`-backed interface
+  types. `Err(windows_core::Error::empty())` is the documented escape
+  hatch: the generated COM glue turns it into `S_OK` with an untouched
+  (effectively null) out-parameter, exactly the UIA contract for "nothing
+  here."
+- **Toggle, expand-collapse, and value need real pattern objects.**
+  `GetPropertyValue` overrides for pattern-availability and pattern-value
+  properties are documented as an optional shortcut, but empirically
+  `IUIAutomationCacheRequest`'s cache-building still calls
+  `GetPatternProvider` for `TogglePattern`, `ExpandCollapsePattern`, and
+  `ValuePattern` before trusting a cached value — which is exactly the path
+  `verbatim-uia`'s base cache request always uses. mockapp therefore
+  implements small `IToggleProvider`, `IExpandCollapseProvider`, and
+  `IValueProvider` objects (returned from `GetPatternProvider`, gated on
+  role for toggle and on the fixture's `expanded`/`collapsed` states or
+  presence of a `value` for the other two) alongside the `GetPropertyValue`
+  overrides, rather than relying on the shortcut alone.
+- **Raw-view host furniture.** A real `hwnd`'s UIA raw tree (`TreeScope_Children`
+  with a true condition) can include host-provided native elements — for
+  example window-chrome furniture merged in via `HostRawElementProvider` —
+  alongside the fixture's own children. This is expected UIA behavior for
+  any real top-level window, not a mockapp gap; the UIA tree-construction
+  test tolerates unrecognized nodes only among the window's direct children
+  for exactly this reason, while still requiring every fixture node to be
+  found somewhere.
+
+The cross-process integration tests in `tests/` spawn the compiled binary
+via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
+`tests/fixtures/`, and a shared `tests/common/mod.rs` harness
+(`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
+`wait_until` with a generous timeout). `uia_tree.rs` and `msaa_tree.rs` walk
+a rich scripted tree through each real client stack and assert normalized
+roles, names, values, and states match the fixture. `arbitration.rs` asserts
+`verbatim_uia::has_server_side_provider` and `verbatim_outpost::Arbitrator`
+resolve a `uia`-backend window to UIA and a `msaa`-backend one to MSAA.
+`events.rs` asserts that `set-name`/`set-value` commands are observed by
+`verbatim_uia::PropertyRegistration` and `verbatim_ia2::WinEventHook`
+respectively — property and value changes are used rather than focus, so
+the tests never depend on real keyboard focus or `SetForegroundWindow`
+succeeding, and pass headless on GitHub `windows-latest` runners.
+
 
 ## verbatim-control
 
@@ -445,16 +669,32 @@ verifiable live.
 Public API:
 
 - `protocol` — `Request` (`Hello`, `Status`, `SubscribeEvents`,
-  `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `Quit`) in a
-  `RequestEnvelope` with a correlation id; `Frame` (`Reply`, `Error`,
-  `Event`, `Speech`); `StatusInfo`, `OutpostStatus`, `LatencyRecord`;
-  `PIPE_NAME`, `PROTOCOL_VERSION`; the same newline-JSON framing helpers.
-  A speech frame carries the trace id, rendered text, the observation
-  timestamp of the triggering event when there is one, the queue time, and
-  the audio-start time once known.
+  `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `DumpTree`,
+  `DumpRecorder`, `Quit`) in a `RequestEnvelope` with a correlation id;
+  `Frame` (`Reply`, `Error`, `Event`, `Speech`); `StatusInfo`,
+  `OutpostStatus`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
+  same newline-JSON framing helpers. A speech frame carries the trace id,
+  rendered text, the observation timestamp of the triggering event when
+  there is one, the queue time, and the audio-start time once known.
+  `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
+  tree (`verbatim_model::TreeNode`) and whether the outpost's depth or
+  node-count cap cut it short; a walk that could not complete at all comes
+  back as `Frame::Error`, the same convention `SendGesture` uses.
+  `ReplyPayload::DumpRecorder` answers `Request::DumpRecorder` (milestone
+  M2) with the path Core wrote its flight recorder's contents to.
+- `client` — the control-plane client, promoted here from
+  `verbatim-inspect` so any client, not just the CLI, can share it:
+  `Client::connect_pipe()` on the well-known pipe, `connect_pipe_named(name)`
+  for tests, and `connect_tcp(addr)` for a Verbatim reached over TCP (a
+  remote session, or from inside a VM host); `request` completes the
+  `Hello` handshake and matches replies by correlation id, discarding
+  stream frames that arrive while a reply is pending; `next_frame` reads
+  any frame, for subscription loops. Single-threaded by design, which is
+  why its shared-handle `try_clone` is safe where the server needed
+  overlapped I/O.
 - `ServerHandlers` — the app-injected callbacks answering status, gesture
-  routing, latency queries, and quit, keeping this crate ignorant of the
-  application's internals.
+  routing, latency queries, tree dumps, flight-recorder dumps, and quit,
+  keeping this crate ignorant of the application's internals.
 - `ControlServer` — `start(handlers)` on the well-known pipe name,
   `start_on(name, handlers)` for tests; `broadcast_event(..)` and
   `broadcast_speech(..)` fan frames out to subscribed connections; drop
@@ -487,21 +727,211 @@ and in no job object; it attaches through the pipe like any client. Output
 is plain text, one fact per line — no tables, no spinners — so it reads
 well piped, redirected, or through a screen reader.
 
+Every subcommand accepts a global `--connect <ADDRESS>` option: an address
+of the form `tcp:HOST:PORT` selects TCP, anything else is treated as a
+named-pipe path, and omitting it connects to the well-known local pipe —
+the same three transports `verbatim-control`'s promoted `Client` exposes.
+
 Subcommands: `status`; `watch-events`; `watch-speech`; `watch` (both
 subscriptions on one connection, lines prefixed `event` or `speech`,
 interleaved in arrival order so an event reads directly above the speech
-it caused); `send-gesture`; `send-keys`; `latency --last N`; `quit`. Each
-speech line shows the queue-time delta since the triggering event, and a
-follow-up line appears when audio actually starts, carrying the true
-event-to-audio latency; an interrupted utterance simply never gets the
-follow-up. Timestamps render as local wall-clock time
+it caused); `send-gesture`; `send-keys`; `latency --last N`; `dump-tree`
+(prints the foreground application's accessibility tree from its
+top-level window, one node per line, indented two spaces per depth level
+and reusing the same role-and-name summary the event stream uses; a
+trailing line notes when the outpost's depth or node-count cap truncated
+the tree); `dump-recorder` (milestone M2: asks Core to write its flight
+recorder's current contents to disk and prints the path it wrote to);
+`quit`. Each speech line shows the queue-time delta since the triggering
+event, and a follow-up line appears when audio actually starts, carrying
+the true event-to-audio latency; an interrupted utterance simply never
+gets the follow-up. Timestamps render as local wall-clock time
 (`2026-07-14T10:42:32.158`, no zone suffix) via the Win32 conversion that
 is correct across DST transitions.
 
-The `Client` type completes the `Hello` handshake and matches replies by
-correlation id, discarding stream frames that arrive while a reply is
-pending. It is single-threaded by design, which is why its shared-handle
-`try_clone` is safe where the server needed overlapped I/O.
+## verbatim-agent
+
+The in-guest test agent for the M2 VM harness. Runs inside the interactive
+session of a Hyper-V guest, or reachable over loopback on a CI runner, and
+is the only externally reachable doorway into that machine: host-side E2E
+tests reach it over TCP to manage processes and to tunnel through to
+Verbatim's own control-plane named pipe, which deliberately never listens
+on the network itself (architecture section 10, decision D8).
+
+Public API:
+
+- `protocol` — the agent's own wire vocabulary, versioned separately from
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 0) and framed
+  with the same newline-JSON helpers the control plane uses
+  (`verbatim_control::protocol::write_message`/`read_message`), reused
+  rather than reinvented. Deliberately a distinct vocabulary from
+  `verbatim_control::protocol`: this crate's pids are raw OS process ids
+  naming a process a test is driving (Notepad, `verbatim.exe` itself), not
+  `verbatim_model::Pid`, which names an application Verbatim is
+  *observing*. `Request`: `Hello` (must be first, refused outright on any
+  version mismatch), `LaunchProcess`, `KillProcess`, `ProcessStatus`,
+  `SessionInfo`, `ReadFile`, `OpenControlTunnel`. `KillOutcome` makes
+  "the process was already gone" a first-class non-error reply
+  (`AlreadyExited`) distinct from `Terminated`, rather than an error.
+- `server::serve(listener, pipe_name)` — the TCP accept loop, one thread
+  per connection; blocking, so callers needing to do other work run it on
+  a background thread.
+- `session::current()` — session id, whether the process's window station
+  is interactive, and the input desktop's name when it can be opened. This
+  is what `Request::SessionInfo` answers, and what the binary checks at
+  its own startup: a screen reader test driven from a non-interactive
+  session (the "session 0" problem WinRM and PowerShell Direct create) can
+  never work, so the agent refuses to even bind a socket in that case,
+  with a diagnosis printed instead of a downstream mystery.
+
+Implementation notes: process management (private `process` module)
+launches via `std::process::Command`, inheriting the agent's own
+interactive session and stdio (never captured) — the reason this exists
+at all rather than something reachable over WinRM or PowerShell Direct.
+Lookup and termination act on raw pids via `OpenProcess`,
+`TerminateProcess`, and `GetExitCodeProcess` rather than tracking handles
+from launch, so a test can manage a process it did not itself spawn.
+`KillProcess`'s tolerance for an already-exited process handles two
+distinct races: a pid that cannot be opened at all, and one that opens
+fine but has already exited — the latter discovered because
+`TerminateProcess` on a zombie process object returns access denied
+rather than "not found," so the exit code is checked both before
+attempting termination and after a failure.
+
+The control-plane tunnel (private `tunnel` module) is the crate's most
+intricate corner. Opening the pipe is split from running the relay so a
+failure to open is reported in `OpenControlTunnel`'s own reply, before any
+byte relaying begins. The pipe handle is opened with
+`FILE_FLAG_OVERLAPPED` and uses the identical overlapped-read/write
+pattern `verbatim_control::server`'s pipe transport uses on the other end
+of the same kind of pipe, for the identical reason documented there: a
+synchronous handle serializes reads and writes at the driver level even
+across independent handles to the same instance, which would deadlock a
+full-duplex relay needing one thread reading and another writing at once.
+Two threads copy bytes in each direction; whichever direction finishes
+first cancels the pipe's pending I/O (`CancelIoEx`) and shuts down the TCP
+socket, so the other thread also unwinds instead of hanging.
+
+## verbatim-e2e
+
+The milestone M2 end-to-end suite: drives a real, running Verbatim (and
+target applications such as Notepad) through `verbatim-agent` and, tunneled
+through it, Verbatim's own control plane. Dev-only; a library rather than
+only test binaries because both `crates/verbatim-e2e/tests/` and
+`xtask vm test` drive it. See `docs/tooling.md` for how to run it by hand
+and how to read a failure.
+
+Public API:
+
+- `endpoint()` — reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`), the
+  live-suite skip guard every test in this crate checks first; `None` means
+  no agent is reachable, and callers print a one-line skip notice and
+  return rather than failing. This is what keeps `cargo test` and
+  `cargo xtask ci` green with no agent anywhere.
+- `AgentClient` — a typed host-side client for `verbatim_agent::protocol`:
+  connects over TCP, completes the agent's `Hello` handshake, and exposes
+  `launch_process`, `kill_process`, `process_status`, `session_info`,
+  `read_file`, and `open_control_tunnel` as plain methods.
+  `open_control_tunnel` is the seam into Verbatim's own control plane: it
+  asks the agent to stop speaking its own protocol on the connection and
+  relay Verbatim's control-plane pipe instead, then completes the control
+  protocol's own `Hello` on the same socket and hands back a ready
+  `verbatim_control::client::Client`.
+- `Scenario` — the lifecycle owner for one live, agent-driven Verbatim run:
+  a guard struct, not a manual-cleanup checklist. `Scenario::launch` writes
+  a `settings.toml` selecting the capture synthesizer next to
+  `verbatim.exe` (audio-free, no installed voices needed — deliberately
+  not `OneCore`, whose `new` fails outright with none installed), launches
+  Verbatim through the agent with `VERBATIM_TEST_AUDIO=null`, waits for its
+  control plane to answer over the agent's tunnel, opens a *second*,
+  dedicated tunnel connection for speech collection, and pauses briefly
+  (`GUI_SETTLE_DELAY`) for the GUI thread's gesture handle to exist before
+  returning — see `docs/tooling.md`'s troubleshooting section for what
+  happens to a gesture sent before that pause. `control()` and `speech()`
+  expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
+  `kill_target`, `process_status`, `quit_verbatim`, and `report_latency`
+  drive the running instance. Its `Drop` impl kills every process it
+  launched, unconditionally, even after a panic — because every live test
+  here launches a real `verbatim.exe` on the real desktop. A
+  same-process `Mutex` (`live_instance_lock`) enforces one live instance
+  per test *process*, not per machine; `--test-threads=1` (mandatory,
+  documented on the type) is what makes that sufficient, since Windows has
+  no notion of "only one verbatim.exe" and `single_instance
+  ::acquire_replacing` inside `verbatim.exe` *replaces* a running instance
+  rather than refusing to start.
+- `SpeechCollector` — subscribes to `Frame::Speech` on its own dedicated
+  control-plane connection (never reused for `request` calls, which discard
+  non-matching frames including speech ones — reusing a request connection
+  would silently lose utterances in flight). `expect_in_order` waits for a
+  list of substring matchers to appear across utterances, in order,
+  tolerating unrelated utterances in between, and panics with every
+  utterance heard so far on failure; `try_expect_in_order` is the
+  non-panicking form for a caller that wants to retry a flaky first
+  interaction; `transcript()` is the debugging artifact both print.
+- `latency::report` — fetches the most recent `last_n` latency timelines,
+  asserts every one carries an audio-start timestamp (guaranteed under
+  `NullSink`, so a missing one is itself a bug), and prints one fact per
+  line.
+
+Implementation notes: `REMOTE_ENV` (`VERBATIM_E2E_REMOTE`) marks a run where
+Verbatim lives in a guest rather than sharing this process's filesystem —
+set by `xtask vm test`, not normally by hand — and skips the two ordinary
+host-filesystem steps (`verbatim.exe` existence check, writing
+`settings.toml`) that `xtask vm deploy` has already done inside the guest
+instead. `crates/verbatim-e2e/tests/` holds three tests: `session_info`
+(the agent reports an interactive session — the precondition everything
+else depends on), `notepad_focus` (Notepad's focus reaches Verbatim, and
+Verbatim survives Notepad exiting), and `m1_exit_regression` (the scripted
+walk of the M1 exit criteria that `docs/roadmap.md`'s M2 section describes,
+including exactly what it does and does not assert about the capture
+synth's Speech page).
+
+## xtask VM harness
+
+`xtask/src/vm/` implements `cargo xtask vm <verb>` (`docs/architecture.md`
+section 14, decision D3): building and importing the golden Hyper-V VM,
+deploying builds into it, and running `verbatim-e2e`'s suite against it.
+See `docs/tooling.md` for the full verb reference and the steps to rebuild
+the golden image from scratch; this section is the code-level map.
+
+Public structure (all `pub(crate)`; this is a binary target's internal
+module tree, not a library):
+
+- `host` — the `Host` trait: every Hyper-V (or, later, other hypervisor)
+  operation a verb needs, abstract enough that a non-Hyper-V implementation
+  is plausible (`vm_exists`, `import_vm`, `rename_vm`,
+  `ensure_guest_file_transfer`, `start_vm`/`stop_vm`/`restart_vm`,
+  `checkpoint_vm`, `restore_checkpoint`, `delete_vm`, `guest_ip`,
+  `copy_file_to_guest`, `run_in_guest`, `read_guest_file`,
+  `list_guest_dir`). `HyperVHost` is the only implementation, over Hyper-V's
+  PowerShell module; every method drives `powershell.exe -File` against a
+  temp script (never `-Command`, so arguments only ever cross one layer of
+  parsing) and, where a value must come back, wraps it in unique text
+  markers rather than trusting a cmdlet's own stdout is clean (some Hyper-V
+  cmdlets write incidental text to the success stream). `wait_for_agent`
+  is free-standing rather than a trait method: it is pure orchestration
+  over other `Host` calls (poll `guest_ip`, then raw-TCP-probe the agent's
+  port), so a future non-Hyper-V host gets it for free.
+- `create`, `deploy`, `test`, `lifecycle` (`start`/`stop`/`restart`
+  /`restore`/`delete`), `logs` — one module per verb or verb family, each
+  orchestrating `Host` calls; `mod.rs` dispatches `cargo xtask vm <verb>`
+  to them.
+- `dotenv` — a minimal hand-rolled `.env` reader (`KEY=VALUE` lines,
+  comments, quoting) for `VERBATIM_VM_USERNAME`/`VERBATIM_VM_PASSWORD` from
+  the repository-root `.env`, deliberately not a crate dependency for a
+  format this small.
+- `packer_build` — wraps `vm/scripts/Build-VerbatimWindows11Image.ps1` and
+  locates the `.vmcx` it exports (reading `output_directory` out of
+  `vm/local.pkrvars.hcl` with a minimal line-oriented HCL reader, the same
+  approach `dotenv` takes) so `create` can hand it to `Import-VM`.
+
+Constants worth knowing when reading any of the above: `VM_NAME` is always
+`verbatim`; `CHECKPOINT_NAME` is `golden`; `AGENT_PORT` is 44001, duplicated
+from `verbatim_agent::protocol::DEFAULT_PORT` rather than depending on that
+crate for one constant; `VERBATIM_DIR` (`C:\VerbatimLab\verbatim`) and
+`AGENT_DIR` (`C:\VerbatimLab\agent`) are the guest install paths `deploy`
+writes into and `logs` reads out of, matching
+`vm/scripts/Initialize-VerbatimHarness.ps1`'s own paths.
 
 ## verbatim-gui
 
@@ -568,31 +998,58 @@ knowing for review:
   follow-up frame at audio start, and it answers the `latency` command
   newest first. Core-originated speech with no event reports its queue time
   as the timeline start.
-- `run` wires everything: the speech pipeline (OneCore through WASAPI,
-  configured from the base profile, observed by the ledger), the settings
-  host with a persist callback writing through the config store, the
-  supervisor plus foreground trigger (targeting the current foreground
-  immediately, since the trigger only fires on changes), the reducer thread
-  (drains outpost messages, feeds `reduce`, executes effects — `Speak` to
-  the pipeline, `Fetch` back to the outpost), the gesture router (bound
-  gestures to `GuiCommand`s, never into the reducer), the control server
-  with its injected handlers, the keyboard hook last among input paths, the
-  startup announcement, and finally the GUI loop on the main thread. When
-  the loop exits — Exit item, control-plane quit, or a replacing instance's
-  `WM_QUIT` — teardown drops the hooks and lets job objects reclaim the
-  outposts.
+- `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` clones the
+  shared `Arc<Mutex<ReducerRecorder>>`'s retained entries under a brief
+  lock (recovering a poisoned lock rather than propagating it, since the
+  reducer thread panicking while holding it is exactly the case the panic
+  hook below exists for), then writes them through
+  `verbatim_core::dump::write_dump` to `dumps_dir` as
+  `flight-<UTC timestamp>.jsonl`, creating the folder if needed and logging
+  the path. `install_panic_hook(recorder, dumps_dir)` chains the previous
+  panic hook and wraps its own dump attempt in `catch_unwind`, so the hook
+  itself can never turn a panic into a second, masking panic; it logs and
+  swallows any failure before calling the previous hook.
+- `run` wires everything: the flight recorder (`Arc<Mutex<ReducerRecorder>>`,
+  shared by the reducer thread, the control plane's `DumpRecorder` handler,
+  and the panic hook installed as early as possible so it covers every
+  thread spawned after it), the speech pipeline (`build_speech_manager`:
+  OneCore through WASAPI by default, configured from the base profile,
+  observed by the ledger — `VERBATIM_TEST_AUDIO=null` at startup is a
+  test-only escape hatch that registers the capture synth from
+  `verbatim-synth-capture` alongside OneCore and swaps in `NullSink` for
+  `WasapiSink`, logging a warning, so E2E and CI runs work with no sound
+  card), the settings host with a persist callback writing through the
+  config store, the supervisor plus foreground trigger (targeting the
+  current foreground immediately, since the trigger only fires on
+  changes), the reducer thread (drains outpost messages via
+  `incoming_input`, feeds `reduce`, records each input into the shared
+  flight recorder, executes effects — `Speak` to the pipeline, `Fetch`
+  back to the outpost; a `DumpTreeReply` is routed around the reducer
+  entirely, straight into whatever one-shot sender is parked in the
+  `PendingDumpTree` slot, since a tree dump is a one-shot diagnostic query
+  rather than reducer-shaped input), the gesture router (bound gestures to
+  `GuiCommand`s, never into the reducer), the control server with its
+  injected handlers (`dump_tree` registers that one-shot sender, sends
+  `DumpTree` to the outpost through the supervisor, and waits with a five
+  second timeout, a second concurrent request finding the slot already
+  occupied and failing immediately rather than queuing; `dump_recorder`
+  calls `flight_dump::dump_now` directly, no outpost round trip needed),
+  the keyboard hook last among input paths, the startup announcement, and
+  finally the GUI loop on the main thread. When the loop exits — Exit item,
+  control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
+  the hooks and lets job objects reclaim the outposts.
 
 ## Placeholders and tooling
 
 - `verbatim-uia-rops` — UIA remote operations, lands in M4.
 - `verbatim-ext` and `verbatim-ext-api` — the Wasm extension host and WIT
   contract, land in M5.
-- `mockapp` — the scripted UIA and MSAA provider host for provider-level
-  tests, lands in M2.
 - `xtask` — workspace automation. `cargo xtask ci` is the standard check
   and exactly what GitHub Actions runs: rustfmt, pedantic clippy with
   warnings denied, unit tests on x64, then a release-profile ARM64
   cross-build (build-verified only; never run on this x64 machine). It
   probes known Visual Studio and LLVM locations for `libclang.dll` so
   wxDragon's bindgen works without manual environment setup. `cargo xtask
-  vm` is a stub until the M2 Hyper-V harness.
+  vm` is the milestone M2 Hyper-V harness (build, deploy, and E2E-test a
+  real VM) — see this document's "xtask VM harness" section above and
+  `docs/tooling.md` for the full verb reference.

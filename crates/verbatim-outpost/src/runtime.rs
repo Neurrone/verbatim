@@ -7,6 +7,7 @@
 //! any given change. Trace IDs are minted the moment an OS event is observed;
 //! the snapshot version increments on every emitted event.
 
+use std::ffi::c_void;
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,11 +33,13 @@ use verbatim_model::{
 use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
 use verbatim_uia::{
     FocusRegistration, NodeIdRegistry as UiaRegistry, PropertyRegistration,
-    has_server_side_provider,
+    has_server_side_provider, nearest_window_handle,
 };
 
 use crate::arbitration::{Arbitrator, window_class_name};
-use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost, read_message, write_message};
+use crate::protocol::{
+    DumpedTree, OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
+};
 use crate::query_pool::{QueryPool, Worker};
 
 /// The deadline for a single deadline-guarded query-pool call (fetch, probe,
@@ -46,6 +49,18 @@ const QUERY_DEADLINE: Duration = Duration::from_millis(300);
 /// A slightly longer deadline for the synthetic focus query, which chains an
 /// arbitration decision and a cross-process fetch.
 const FOCUS_DEADLINE: Duration = Duration::from_millis(400);
+
+/// Deadline for a `DumpTree` walk: generous relative to a single query call
+/// since it chains an arbitration decision with a subtree walk of up to
+/// [`MAX_DUMP_NODES`] nodes; a hung provider still abandons the call rather
+/// than wedging the outpost.
+const DUMP_TREE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Depth cap for a `DumpTree` walk (the root is depth 0).
+const MAX_DUMP_DEPTH: u32 = 64;
+
+/// Node-count cap for a `DumpTree` walk, across the whole tree.
+const MAX_DUMP_NODES: usize = 4096;
 
 /// Custom thread message: re-read the desired target pid and rebind hooks.
 const WM_REBIND: u32 = WM_APP + 1;
@@ -176,8 +191,34 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
     }
 }
 
-/// Applies the UIA cross-filter for an element on a callback thread, using only
-/// cached (non-blocking) reads. Returns whether the event should be delivered.
+/// Applies the UIA cross-filter for an element on a callback thread. Returns
+/// whether the event should be delivered.
+///
+/// Most elements that raise events are not windows in their own right — a
+/// menu item and a list item are children of one — so
+/// [`cached_native_window_handle`] reads 0 for them, and arbitration is
+/// per-window: something has to say which window's verdict a non-window
+/// element's event falls under.
+///
+/// The M1 heuristic used the window holding the keyboard focus. That is
+/// wrong for a popup menu specifically, because a popup menu never takes
+/// keyboard focus: the "focused window" it found was always the menu's
+/// *owner*, while the MSAA hook's event for the very same menu item carries
+/// the popup window itself. The two backends then arbitrated on two
+/// different windows and could both decide to defer, so nobody announced the
+/// menu item at all — found by the M2 E2E suite against the VM. The
+/// heuristic's compensation was to keep the event whenever no verdict was
+/// cached yet for an inferred window, accepting a duplicate announcement
+/// from both backends rather than risk losing it.
+///
+/// The real fix is attribution, not compensation: [`nearest_window_handle`]
+/// is UIA's own answer to "which window is this element's", a single
+/// cross-process call that walks up from the element (NVDA's
+/// `getNearestWindowHandle`) rather than guessing from keyboard focus. For
+/// the popup-menu case it resolves the menu item straight to the popup
+/// window itself — the same window the MSAA event for that item carries — so
+/// both backends arbitrate on one shared hwnd and the duplicate-avoidance
+/// concession below is safe again.
 ///
 /// # Safety
 ///
@@ -185,19 +226,31 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
 unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> bool {
     // SAFETY: forwarded to the caller's contract; the cached native window
     // handle read does not block.
-    let hwnd = unsafe { cached_native_window_handle(element) };
-    if hwnd == 0 {
-        // Element is not itself a window; nearest-window arbitration needs a
-        // tree walk we cannot afford here, so accept as best-effort for M1.
+    let cached_hwnd = unsafe { cached_native_window_handle(element) };
+    let hwnd = if cached_hwnd != 0 {
+        Some(cached_hwnd)
+    } else {
+        nearest_window_handle(element)
+    };
+    // `nearest_window_handle` can itself fail (a COM error, or the element's
+    // whole process already gone); fall back to the keyboard-focus window as
+    // a last resort rather than losing the event outright, and if even that
+    // finds nothing, there is no window to arbitrate on at all, so keep it.
+    let Some(hwnd) = hwnd.or_else(foreground_focus_window) else {
         return true;
-    }
+    };
     let class = window_class_name(hwnd);
     match shared.lock_arbitrator().verdict(hwnd, &class) {
         Some(true) => true,
         Some(false) => false,
         None => {
             shared.schedule_probe(hwnd, class);
-            false // provisionally non-UIA: let MSAA carry it this time.
+            // No verdict cached yet for a window attribution now trusts:
+            // drop. The MSAA hook sees the same window (per the popup-menu
+            // reasoning above) and carries the event instead, so this costs
+            // nothing; keeping it here would be the doubled-announcement bug
+            // the M1 heuristic had to compensate for.
+            false
         }
     }
 }
@@ -482,6 +535,38 @@ impl Outpost {
         });
     }
 
+    /// Answers a `DumpTree` request by walking the target application's
+    /// tree from its top-level window, on a deadline-guarded query-pool
+    /// thread — the same pattern [`Self::emit_synthetic_focus`] uses — so a
+    /// hung application abandons the call rather than wedging the outpost.
+    fn handle_dump_tree(&self, trace: TraceId) {
+        let Some(target_pid) = self.target_pid else {
+            let _ = self
+                .shared
+                .outbound
+                .send(OutpostToSupervisor::DumpTreeReply {
+                    trace_id: trace,
+                    result: Err("outpost has no target application configured".to_owned()),
+                });
+            return;
+        };
+        let shared = self.shared.clone();
+        let result = self
+            .shared
+            .pool
+            .run(DUMP_TREE_DEADLINE, move |worker| {
+                dump_tree(worker, target_pid, &shared)
+            })
+            .unwrap_or_else(|| Err("tree walk timed out".to_owned()));
+        let _ = self
+            .shared
+            .outbound
+            .send(OutpostToSupervisor::DumpTreeReply {
+                trace_id: trace,
+                result,
+            });
+    }
+
     /// Dispatches one supervisor command. Returns `false` on `Shutdown`.
     pub fn handle_command(&mut self, command: &SupervisorToOutpost) -> bool {
         match command {
@@ -503,8 +588,56 @@ impl Outpost {
                     .send(OutpostToSupervisor::Pong { seq: *seq });
                 true
             }
+            SupervisorToOutpost::DumpTree { trace_id } => {
+                self.handle_dump_tree(*trace_id);
+                true
+            }
             SupervisorToOutpost::Shutdown => false,
         }
+    }
+}
+
+/// Runs on a query-pool thread: finds the target's top-level window (its
+/// currently active window, falling back to the first top-level window
+/// found), arbitrates its backend, and walks its tree, bounded by
+/// [`MAX_DUMP_DEPTH`] and [`MAX_DUMP_NODES`].
+fn dump_tree(worker: &mut Worker, target_pid: u32, shared: &Shared) -> Result<DumpedTree, String> {
+    let hwnd = focused_window(target_pid)
+        .or_else(|| top_level_windows(target_pid).into_iter().next())
+        .ok_or_else(|| "the target application has no top-level window".to_owned())?;
+    let class = window_class_name(hwnd);
+    let is_uia = decide_backend(shared, hwnd, &class);
+    if is_uia {
+        let uia = worker
+            .uia()
+            .ok_or_else(|| "could not create a UIA client".to_owned())?;
+        let cache = uia
+            .base_cache_request()
+            .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
+        let element = uia
+            .element_from_handle(hwnd, &cache)
+            .map_err(|error| format!("could not fetch the top-level UIA element: {error}"))?;
+        // SAFETY: `element` was built with `cache` immediately above.
+        let (root, truncated) = unsafe {
+            uia.walk_tree(
+                &element,
+                &cache,
+                &shared.uia_registry,
+                MAX_DUMP_DEPTH,
+                MAX_DUMP_NODES,
+            )
+        }
+        .map_err(|error| format!("UIA tree walk failed: {error}"))?;
+        Ok(DumpedTree { root, truncated })
+    } else {
+        let (root, truncated) = verbatim_ia2::acquire::walk_tree(
+            hwnd,
+            &shared.msaa_registry,
+            MAX_DUMP_DEPTH,
+            MAX_DUMP_NODES,
+        )
+        .ok_or_else(|| "could not acquire the top-level MSAA object".to_owned())?;
+        Ok(DumpedTree { root, truncated })
     }
 }
 
@@ -564,7 +697,24 @@ fn decide_backend(shared: &Shared, hwnd: isize, class: &str) -> bool {
 /// Returns the focused window of `target_pid`, or `None` if the foreground
 /// focus is not in that process.
 fn focused_window(target_pid: u32) -> Option<isize> {
-    // SAFETY: `info` has cbSize set before the call; each call fails safely.
+    let hwnd = foreground_focus_window()?;
+    // SAFETY: `hwnd` came from `GetGUIThreadInfo`; the call fails safely on a
+    // window that has since been destroyed.
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(HWND(hwnd as *mut c_void), Some(&raw mut pid));
+    }
+    (pid == target_pid).then_some(hwnd)
+}
+
+/// The window with the keyboard focus right now (falling back to the active
+/// window), whatever process it belongs to.
+///
+/// A pure Win32 query: no COM, no cross-process call, and it cannot block on a
+/// hung application, which is what makes it safe to call from an event-callback
+/// thread — see [`uia_passes_filter`], its reason for existing.
+fn foreground_focus_window() -> Option<isize> {
+    // SAFETY: `info` has cbSize set before the call; the call fails safely.
     unsafe {
         let mut info = GUITHREADINFO {
             cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
@@ -576,12 +726,7 @@ fn focused_window(target_pid: u32) -> Option<isize> {
         } else {
             info.hwndFocus
         };
-        if hwnd.0.is_null() {
-            return None;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&raw mut pid));
-        (pid == target_pid).then_some(hwnd.0 as isize)
+        (!hwnd.0.is_null()).then_some(hwnd.0 as isize)
     }
 }
 

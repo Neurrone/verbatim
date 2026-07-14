@@ -18,6 +18,9 @@
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
 //! - [`has_server_side_provider`] — the arbitration probe (blocking; see its
 //!   docs and run it only on a deadline-guarded query-pool thread).
+//! - [`nearest_window_handle`] — NVDA's `getNearestWindowHandle`: resolves the
+//!   window an arbitrary element belongs to, for elements (menu items, list
+//!   items) that are not windows themselves. Also blocking; see its docs.
 //! - [`map`] — control-type and cached-property mapping into the model.
 
 mod cache;
@@ -26,6 +29,7 @@ mod com;
 mod events;
 mod focus;
 pub mod map;
+mod nearest;
 mod probe;
 mod registry;
 
@@ -34,5 +38,6 @@ pub use client::Uia;
 pub use com::init_mta;
 pub use events::{PropertyCallback, PropertyRegistration};
 pub use focus::{FocusCallback, FocusRegistration};
+pub use nearest::nearest_window_handle;
 pub use probe::has_server_side_provider;
 pub use registry::NodeIdRegistry;

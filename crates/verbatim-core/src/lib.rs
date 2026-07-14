@@ -6,14 +6,19 @@
 //! state, input sequence, and fetch replies replays to identical effects,
 //! which is what turns field bugs into unit tests.
 //!
-//! M0 ships the flight-recorder skeleton; the reducer itself lands with
-//! milestone M1.
+//! M0 shipped the flight-recorder skeleton and M1 the reducer; M2 adds
+//! [`dump`], the on-disk format that turns a live flight-recorder ring into
+//! a committed replay fixture.
 
+pub mod dump;
 pub mod flight_recorder;
 mod recorder;
 mod reduce;
 mod state;
 
+pub use dump::{
+    DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, read_dump, write_dump,
+};
 pub use flight_recorder::FlightRecorder;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::reduce;

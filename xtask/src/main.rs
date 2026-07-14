@@ -5,11 +5,16 @@
 //! for x64, then a release-profile ARM64 cross-build. ARM64 artifacts are
 //! build-verified only; they are never executed on x64 machines.
 //!
-//! `vm` will drive the Hyper-V E2E harness from milestone M2.
+//! `vm` drives the milestone M2 Hyper-V E2E harness (`docs/architecture.md`
+//! section 14): building and importing the golden VM, deploying builds into
+//! it, and running `crates/verbatim-e2e`'s suite against it. See
+//! `xtask/src/vm/mod.rs` for the verb list.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+
+mod vm;
 
 const TARGET_X64: &str = "x86_64-pc-windows-msvc";
 const TARGET_ARM64: &str = "aarch64-pc-windows-msvc";
@@ -23,17 +28,12 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
-        Some("vm") => {
-            eprintln!(
-                "cargo xtask vm is not implemented yet; the Hyper-V harness arrives with milestone M2."
-            );
-            ExitCode::from(2)
-        }
+        Some("vm") => vm::run(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
             eprintln!("  ci    rustfmt + clippy + unit tests (x64), release build (ARM64)");
-            eprintln!("  vm    Hyper-V E2E harness (not until milestone M2)");
+            eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
             ExitCode::from(2)
         }
     }

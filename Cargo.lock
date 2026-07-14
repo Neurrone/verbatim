@@ -974,6 +974,17 @@ dependencies = [
 [[package]]
 name = "mockapp"
 version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "verbatim-ia2",
+ "verbatim-model",
+ "verbatim-outpost",
+ "verbatim-uia",
+ "windows",
+ "windows-core",
+]
 
 [[package]]
 name = "native-tls"
@@ -1883,6 +1894,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "verbatim-agent"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "clap",
+ "serde",
+ "serde_json",
+ "tracing",
+ "verbatim-control",
+ "verbatim-model",
+ "windows",
+]
+
+[[package]]
 name = "verbatim-app"
 version = "0.1.0"
 dependencies = [
@@ -1899,6 +1924,7 @@ dependencies = [
  "verbatim-model",
  "verbatim-outpost",
  "verbatim-speech",
+ "verbatim-synth-capture",
  "verbatim-synth-onecore",
  "windows",
 ]
@@ -1937,7 +1963,20 @@ dependencies = [
 name = "verbatim-core"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "verbatim-model",
+]
+
+[[package]]
+name = "verbatim-e2e"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "tracing",
+ "verbatim-agent",
+ "verbatim-config",
+ "verbatim-control",
 ]
 
 [[package]]
@@ -2345,6 +2384,11 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde_json",
+ "verbatim-config",
+]
 
 [[package]]
 name = "yoke"

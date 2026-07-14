@@ -94,6 +94,11 @@ pub struct ServerHandlers {
     pub send_gesture: SendGestureHandler,
     /// Answers [`Request::Latency`], given `last_n`.
     pub latency: Box<dyn Fn(u32) -> Vec<LatencyRecord> + Send + Sync>,
+    /// Answers [`Request::DumpTree`].
+    pub dump_tree: Box<dyn Fn() -> Result<(verbatim_model::TreeNode, bool), String> + Send + Sync>,
+    /// Answers [`Request::DumpRecorder`] with the path the dump was written
+    /// to.
+    pub dump_recorder: Box<dyn Fn() -> Result<String, String> + Send + Sync>,
     /// Answers [`Request::Quit`] by asking the application to exit.
     pub quit: Box<dyn Fn() + Send + Sync>,
 }
@@ -271,6 +276,20 @@ fn dispatch_request(
         Request::Latency { last_n } => Frame::Reply {
             to: id,
             payload: ReplyPayload::Latency((handlers.latency)(last_n)),
+        },
+        Request::DumpTree => match (handlers.dump_tree)() {
+            Ok((root, truncated)) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::DumpTree { root, truncated },
+            },
+            Err(message) => Frame::Error { to: id, message },
+        },
+        Request::DumpRecorder => match (handlers.dump_recorder)() {
+            Ok(path) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::DumpRecorder { path },
+            },
+            Err(message) => Frame::Error { to: id, message },
         },
         Request::Quit => {
             (handlers.quit)();
@@ -957,6 +976,8 @@ mod tests {
                 }
             }),
             latency: Box::new(|_last_n| Vec::new()),
+            dump_tree: Box::new(|| Err("dump_tree not exercised by this test".to_owned())),
+            dump_recorder: Box::new(|| Err("dump_recorder not exercised by this test".to_owned())),
             quit: Box::new(|| {}),
         }
     }

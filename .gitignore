@@ -1,1 +1,6 @@
 /target
+/iso/
+/artifacts/
+/vm/local.pkrvars.hcl
+/.env
+/dumps/

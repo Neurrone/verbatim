@@ -410,13 +410,19 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
 
 ## 14. VM harness (local-first, per D3)
 
-`cargo xtask vm <cmd>` wraps Hyper-V PowerShell: `create` (unattended Win11
-install from autounattend.xml, checkpoint a golden image), `start/stop/
-restart`, `deploy` (artifacts via PowerShell Direct), `test` (run E2E suite via
-an in-guest agent speaking the control plane), `logs`. Enhanced Session for
-audio. The harness API is deliberately host-agnostic so the deferred CI story
-(QEMU/KVM on Linux runners, or whatever we choose) reuses the same in-guest
-agent and test suites.
+`cargo xtask vm <cmd>` wraps Hyper-V PowerShell behind a `Host` trait;
+`HyperVHost` is its only implementation today, so the deferred CI story
+(QEMU/KVM on Linux runners, or whatever we choose) can add a second
+implementation later and reuse the same in-guest agent and test suites
+without rewriting verb logic. Verbs: `create` (Packer builds the base image
+from an unattended `autounattend.xml` install, then the VM is imported and
+checkpointed as a golden image), `start`/`stop`/`restart`/`restore
+[checkpoint]`, `deploy` (artifacts copied in and the in-guest agent
+restarted via PowerShell Direct), `test` (restore the golden checkpoint,
+deploy, then run the E2E suite via the in-guest agent tunneling Verbatim's
+control plane), `logs`, `delete`. A Scream virtual audio device gives the
+guest a real WASAPI render endpoint with no host RDP session attached, so
+audio-dependent scenarios need no Enhanced Session.
 
 ## 15. Crate map
 

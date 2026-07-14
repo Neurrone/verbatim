@@ -1,0 +1,21 @@
+[package]
+name = "verbatim-agent"
+description = "In-guest test agent for the M2 VM harness: process management and control-plane tunneling, reachable over TCP"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+verbatim-control.workspace = true
+windows.workspace = true
+
+[dev-dependencies]
+verbatim-model.workspace = true
+
+[lints]
+workspace = true

@@ -6,12 +6,14 @@
 //! budget. The WASAPI sink lands with workstream WS-A of milestone M1; this
 //! module freezes the seam the pipeline and the synth threads code against.
 
+mod null;
 mod wasapi;
 
 use std::fmt;
 
 use verbatim_model::TraceId;
 
+pub use null::NullSink;
 pub use wasapi::WasapiSink;
 
 /// The PCM stream format a synth driver produces and a sink consumes.

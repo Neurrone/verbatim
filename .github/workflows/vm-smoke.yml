@@ -1,0 +1,125 @@
+# Manual-dispatch-only smoke test: does GitHub's larger Windows runner tier
+# actually support nested virtualization at all? This is the empirical
+# question that decides whether running the milestone M2 Hyper-V harness
+# (docs/architecture.md section 14, decision D3) in CI is even worth
+# investigating further, before this project spends any real design effort
+# depending on it.
+#
+# This workflow deliberately does NOT run the Packer build from vm/ — that
+# takes far too long and produces far too much data for a CI job whose only
+# question is "can Hyper-V create and start a VM here." Instead it creates a
+# minimal VM with a small blank virtual disk and no operating system,
+# starts it, confirms it reaches the Running state, reports how long that
+# took, then deletes it.
+#
+# runs-on below names a GitHub larger-runner label. Larger runners are not
+# available by default: the label must be created first under the
+# repository's (or organization's) Settings, Actions, Runners, "Larger
+# runners" page, and larger runners are billable per minute even for a
+# short job like this one. That is the whole reason this workflow triggers
+# only on workflow_dispatch and never on push or pull_request.
+
+name: VM smoke test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  vm-smoke:
+    # This label must already exist as a larger runner in this
+    # repository's (or its organization's) settings; see the header
+    # comment above. Adjust the name here to match whatever label was
+    # actually provisioned.
+    runs-on: windows-latest-8-cores
+    timeout-minutes: 20
+    steps:
+      - name: Check the Hyper-V PowerShell module is present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hyperVModule = Get-Module -ListAvailable -Name Hyper-V
+          if (-not $hyperVModule) {
+            Write-Output "RESULT: Hyper-V PowerShell module not found on this runner."
+            Write-Output "Nested virtualization is not available here; this runner cannot host the M2 VM harness."
+            exit 1
+          }
+          Write-Output "Hyper-V PowerShell module found, version $($hyperVModule.Version)"
+
+      - name: Check the Hyper-V hypervisor is actually running
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vmms = Get-Service -Name vmms -ErrorAction SilentlyContinue
+          if (-not $vmms -or $vmms.Status -ne 'Running') {
+            $status = if ($vmms) { $vmms.Status } else { 'service not found' }
+            Write-Output "RESULT: Hyper-V Virtual Machine Management service is not running (status: $status)."
+            Write-Output "Nested virtualization is not usable on this runner even though the PowerShell module is installed."
+            exit 1
+          }
+          Write-Output "Hyper-V Virtual Machine Management service is running"
+
+      - name: Create a minimal blank VM (no operating system)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vmName = "vm-smoke-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+          $vhdPath = Join-Path $env:RUNNER_TEMP "$vmName.vhdx"
+
+          Add-Content -Path $env:GITHUB_ENV -Value "VM_SMOKE_VM_NAME=$vmName"
+          Add-Content -Path $env:GITHUB_ENV -Value "VM_SMOKE_VHD_PATH=$vhdPath"
+
+          Write-Output "creating a 1 GB blank VHDX at $vhdPath"
+          New-VHD -Path $vhdPath -SizeBytes 1GB -Dynamic | Out-Null
+
+          Write-Output "creating VM $vmName (generation 1, 512 MB, no OS attached)"
+          New-VM -Name $vmName -MemoryStartupBytes 512MB -Generation 1 -VHDPath $vhdPath | Out-Null
+          Set-VMProcessor -VMName $vmName -Count 1
+          Set-VM -Name $vmName -AutomaticStartAction Nothing -AutomaticStopAction TurnOff
+          Write-Output "VM $vmName created"
+
+      - name: Start the VM and time how long it takes to reach Running
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vmName = $env:VM_SMOKE_VM_NAME
+          $startedAt = Get-Date
+          Start-VM -Name $vmName
+
+          $deadline = $startedAt.AddMinutes(2)
+          $state = (Get-VM -Name $vmName).State
+          while ($state -ne 'Running' -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 1
+            $state = (Get-VM -Name $vmName).State
+          }
+          $elapsedSeconds = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 1)
+
+          if ($state -ne 'Running') {
+            Write-Output "RESULT: VM $vmName did not reach the Running state within 2 minutes (last observed state: $state)."
+            Write-Output "Nested virtualization appears not to work on this runner even though Hyper-V itself is present."
+            exit 1
+          }
+          Write-Output "RESULT: VM $vmName reached the Running state in $elapsedSeconds seconds"
+
+      - name: Delete the VM and its virtual disk
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $vmName = $env:VM_SMOKE_VM_NAME
+          if ($vmName -and (Get-VM -Name $vmName -ErrorAction SilentlyContinue)) {
+            Write-Output "stopping and removing VM $vmName"
+            Stop-VM -Name $vmName -TurnOff -Force -ErrorAction SilentlyContinue
+            Remove-VM -Name $vmName -Force -ErrorAction SilentlyContinue
+          }
+          $vhdPath = $env:VM_SMOKE_VHD_PATH
+          if ($vhdPath -and (Test-Path -LiteralPath $vhdPath)) {
+            Write-Output "removing $vhdPath"
+            Remove-Item -LiteralPath $vhdPath -Force -ErrorAction SilentlyContinue
+          }
+          Write-Output "cleanup complete"
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output "vm-smoke: nested virtualization check finished. See the earlier RESULT lines above for the outcome."

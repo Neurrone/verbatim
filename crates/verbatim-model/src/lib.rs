@@ -19,7 +19,7 @@ pub use event::{
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use speech::{SegmentContent, SpeechPriority, Utterance, UtteranceSegment};
-pub use tree::{Backend, NodeSnapshot, Role, State, StateSet};
+pub use tree::{Backend, NodeSnapshot, Role, State, StateSet, TreeNode};
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};

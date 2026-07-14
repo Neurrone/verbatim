@@ -2,11 +2,12 @@
 
 ## What this repository is
 
-Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. Milestones M0 (foundations) and M1 (the self-voicing prototype) are implemented: `verbatim.exe` reads its own GUI through a real out-of-process outpost over UIA and MSAA, speaks through OneCore and WASAPI, and is drivable and inspectable live through the control plane (`verbatim-inspect`). The authoritative sources are:
+Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. Milestones M0 (foundations), M1 (the self-voicing prototype), and M2 (the test harness and VM) are implemented: `verbatim.exe` reads its own GUI through a real out-of-process outpost over UIA and MSAA, speaks through OneCore and WASAPI, and is drivable and inspectable live through the control plane (`verbatim-inspect`); `mockapp` exercises both client stacks cross-process against scripted providers, and an end-to-end suite drives a real Verbatim through an in-guest agent, either on the local machine or in a Hyper-V VM. The authoritative sources are:
 
 - `docs/architecture.md` — decisions of record (D1–D10), process/thread model, crate map, testing strategy, and top risks (R1–R6). Read this before proposing any design or implementation work.
 - `docs/roadmap.md` — milestones M0–M12 scoped by risk retired, with explicit exit criteria, plus the NVDA app-module porting track.
 - `docs/overview.md` — the reviewer's guide to the implemented crates: what each does, its public API, and how the intricate parts work. Keep it current when public APIs change.
+- `docs/tooling.md` — how to actually drive this project: `verbatim-inspect` against a running instance, `mockapp`, the end-to-end suite, every `cargo xtask vm` verb, rebuilding the golden image, and the traps that cost us time (the interactive-session rule above all).
 
 `nvda/` is the NVDA screen reader vendored as a git submodule **for reference only** (IA2 IDL under `nvda/include/ia2`, app modules under `nvda/source/appModules`, design docs under `nvda/projectDocs`). Never modify anything under `nvda/`; Verbatim is informed by NVDA but not constrained by its architecture.
 
@@ -31,7 +32,9 @@ We are using GitHub actions for CI.
 
 `cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: rustfmt, clippy (pedantic via workspace lints, warnings denied) and unit tests on x64, then a release-profile ARM64 cross-build. ARM64 artifacts are build-verified only, never run on this x64 machine.
 
-`cargo xtask vm <cmd>` is a stub until the M2 Hyper-V harness lands.
+`cargo xtask vm <cmd>` drives the Hyper-V harness: `create` (Packer-built golden image, imported, deployed to, checkpointed), `start`, `stop`, `restart`, `restore`, `deploy`, `test` (the end-to-end suite against the VM), `logs`, and `delete`. Guest credentials come from a `.env` at the repo root, which is never committed. See `docs/tooling.md`.
+
+The end-to-end suite also runs without a VM, against this machine, by pointing it at a locally running `verbatim-agent`. It launches a real Verbatim and injects real keystrokes, so it takes over the desktop while it runs and does nothing useful on a locked one; `docs/tooling.md` has the details.
 
 The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual Studio and LLVM install paths for `libclang.dll` automatically; when invoking cargo directly on targets that build `verbatim-gui`, set `LIBCLANG_PATH` yourself if `libclang.dll` is not on `PATH`. On this machine, use:
 

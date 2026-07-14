@@ -10,11 +10,18 @@ publish = false
 [workspace.dependencies]
 # External dependencies.
 arc-swap = "1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 i18n-embed = { version = "0.16", features = ["fluent-system"] }
 i18n-embed-fl = "0.10"
-rust-embed = "8"
+# debug-embed: without it, debug builds do not embed at all — rust-embed
+# reads the files from the source tree's absolute path at runtime, which
+# works on the machine that compiled the binary and nowhere else. Verbatim
+# deploys debug builds into a VM (cargo xtask vm deploy), where that path
+# does not exist; the first in-guest launch panicked in verbatim-i18n's
+# "embedded English must load" assertion for exactly this reason.
+rust-embed = { version = "8", features = ["debug-embed"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
@@ -25,6 +32,7 @@ wxdragon = "0.9"
 
 # Workspace crates.
 mockapp = { path = "crates/mockapp" }
+verbatim-agent = { path = "crates/verbatim-agent" }
 verbatim-audio = { path = "crates/verbatim-audio" }
 verbatim-config = { path = "crates/verbatim-config" }
 verbatim-control = { path = "crates/verbatim-control" }
@@ -63,6 +71,7 @@ features = [
     "Media_SpeechSynthesis",
     "Storage_Streams",
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -74,6 +83,8 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Ole",
     "Win32_System_Pipes",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
     "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_System_Variant",

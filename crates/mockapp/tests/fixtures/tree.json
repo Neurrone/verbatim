@@ -1,0 +1,97 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Tree Fixture",
+  "children": [
+    {
+      "id": "group1",
+      "role": "group",
+      "name": "Group One",
+      "children": [
+        { "id": "btn_ok", "role": "button", "name": "OK", "states": ["focusable"] },
+        {
+          "id": "btn_cancel",
+          "role": "button",
+          "name": "Cancel",
+          "states": ["focusable", "disabled"]
+        },
+        {
+          "id": "chk_enable",
+          "role": "check_box",
+          "name": "Enable feature",
+          "states": ["focusable", "checked"]
+        },
+        {
+          "id": "chk_mixed",
+          "role": "check_box",
+          "name": "Partial",
+          "states": ["focusable", "mixed"]
+        },
+        {
+          "id": "radio1",
+          "role": "radio_button",
+          "name": "Option A",
+          "states": ["focusable", "checked"]
+        }
+      ]
+    },
+    {
+      "id": "list1",
+      "role": "list",
+      "name": "Items",
+      "children": [
+        { "id": "item1", "role": "list_item", "name": "First", "states": ["focusable"] },
+        {
+          "id": "item2",
+          "role": "list_item",
+          "name": "Second",
+          "states": ["focusable", "offscreen"]
+        }
+      ]
+    },
+    {
+      "id": "combo1",
+      "role": "combo_box",
+      "name": "Choices",
+      "states": ["focusable", "expanded"],
+      "children": [
+        { "id": "opt1", "role": "menu_item", "name": "Alpha", "children": [] }
+      ]
+    },
+    {
+      "id": "edit1",
+      "role": "editable_text",
+      "name": "Notes",
+      "value": "Hello world",
+      "states": ["focusable"]
+    },
+    {
+      "id": "slider1",
+      "role": "slider",
+      "name": "Volume",
+      "value": "50",
+      "states": ["focusable"]
+    },
+    {
+      "id": "spin1",
+      "role": "spin_button",
+      "name": "Count",
+      "value": "3",
+      "states": ["focusable"]
+    },
+    {
+      "id": "tabs1",
+      "role": "tab_control",
+      "name": "Sections",
+      "states": ["collapsed"],
+      "children": [
+        { "id": "tab1", "role": "tab", "name": "General", "states": ["focusable"] },
+        { "id": "tab2", "role": "tab", "name": "Advanced", "states": ["focusable"] }
+      ]
+    },
+    { "id": "link1", "role": "link", "name": "Learn more", "states": ["focusable"] },
+    { "id": "toolbar1", "role": "tool_bar", "name": "Main Toolbar" },
+    { "id": "status1", "role": "status_bar", "name": "Ready" },
+    { "id": "menu1", "role": "menu", "name": "Popup" }
+  ]
+}

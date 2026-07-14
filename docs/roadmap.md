@@ -7,11 +7,14 @@ rather than being milestones themselves.
 
 ## Status
 
-M0 and M1 are complete. M1's exit behavior was verified live during
+M0, M1, and M2 are complete. M1's exit behavior was verified live during
 development — the menu and every settings-dialog control announced with
 name, role, value, and state through a real outpost, with end-to-end
 latency timelines — and the repeatable, scripted form of that verification
-lands with the M2 harness, which is the next milestone.
+now runs as `crates/verbatim-e2e`'s `m1_exit_regression` test: locally
+runner-direct, in CI runner-direct on plain GitHub-hosted Windows runners,
+and locally against the Hyper-V VM harness via `cargo xtask vm test`. See
+`docs/tooling.md` for how to run any of these by hand.
 
 ## M0 — Foundations
 
@@ -83,18 +86,30 @@ Make everything after this point verifiable automatically.
   quit). M2 adds the remaining surface the harness needs, starting with
   tree dumps, and the in-guest agent that speaks the protocol
   programmatically.
-- Hyper-V harness: `xtask vm create/start/stop/deploy/test/logs`, golden
-  checkpoint, in-guest agent; first E2E scenario (own GUI + Notepad) running
-  locally. CI automation of E2E deferred per D3.
+- Hyper-V harness: `xtask vm create/start/stop/restart/restore/deploy/test
+  /logs/delete`, golden checkpoint, in-guest agent (`verbatim-agent`); E2E
+  scenarios (own GUI plus Speech dialog, and Notepad focus) running locally
+  against the VM. CI runs the E2E suite runner-direct — the in-guest agent
+  bound to loopback on a plain GitHub-hosted Windows runner — alongside
+  unit and provider tests. Automating the *VM* itself in CI is still
+  deferred per D3: `.github/workflows/vm-smoke.yml`, manual-dispatch only,
+  checks whether GitHub's larger Windows runners can host nested
+  virtualization at all, ahead of ever depending on it.
 
 Exit: a one-command local run boots the VM, deploys a build, runs E2E, and
 reports speech assertions + latency numbers. The suite must include the M1
 exit behavior as a scripted regression: Verbatim's own menu and its Speech
 settings dialog read correctly — every menu item and dialog control
-announced with name, role, value, and state on focus, plus value and state
-changes while adjusting the rate slider, the voice combo box, and the
-rate-boost check box — with keypress-to-audio latency reported from the
-same run.
+announced with name, role, value, and state on focus, plus value changes
+while adjusting the rate slider (both directions) and the voice combo box
+(changed and changed back) — with keypress-to-audio latency reported from
+the same run. The regression drives the capture synthesizer, whose Speech
+page offers a voice combo box and a rate slider but no toggle at all, so it
+asserts value changes only, not a check-box state change; the reducer's
+checked and not-checked announcements are covered by `verbatim-core`'s unit
+tests and, cross-process, by `mockapp`'s scripted state-change events. A
+state-change assertion belongs in this E2E regression too, the day a
+drivable synthesizer page offers a toggle.
 
 ## M3 — Desktop usability core
 
@@ -107,6 +122,44 @@ Verbatim becomes usable as a daily driver for basic Windows navigation.
   for real); WinEvent routing and per-app backend arbitration (UIA vs
   MSAA/IA2). Measure per-outpost working set and spawn latency on the
   low-end VM profile (risk R2).
+- Arbitration attribution landed at the end of M2 rather than here, once the
+  M2 E2E suite exposed the defect and NVDA's reference implementation
+  (`getNearestWindowHandle` in `nvda/source/UIAHandler/__init__.py`) showed
+  the mechanism was one call, not a design problem: a UIA event's element is
+  usually not a window itself (menu items, list items), so
+  `verbatim_uia::nearest_window_handle` resolves its nearest windowed
+  ancestor with a single `NormalizeElementBuildCache` round trip, and both
+  backends then arbitrate the same window for the same logical element — the
+  popup-menu case included, since the MSAA event carries the popup's own
+  handle and the UIA walk resolves to that same popup. The decision half
+  never needed changing: NVDA's `isUIAWindow` is the same ladder Verbatim's
+  `Arbitrator` already implements. What remains for M3 is exercising this
+  under the multi-outpost generalization above, plus the deliberate residual
+  risk: the normalize call is a cross-process call made inline on the event
+  callback thread (NVDA's own trade), which per-app outpost isolation (D9)
+  contains — bouncing it to a deadline-guarded query worker is the fallback
+  if it misbehaves in practice.
+- Focus and foreground timing races, observed as intermittent E2E failures
+  (roughly one run in three fails on one of these; the M2 suite is how they
+  were found and is the regression net for fixing them). Two known shapes.
+  First, opening the Verbatim menu intermittently announces the hidden main
+  frame ("Verbatim", role unknown) and can delay or displace the menu
+  announcement — the prePopup show, raise, and force-foreground dance in
+  `verbatim-gui` racing the popup; the hidden frame should likely never be
+  announced at all, and a role reading as "unknown" is poor speech in any
+  case. Second, a freshly launched application's focus announcement can
+  fail to arrive entirely — the foreground trigger's retarget and the
+  outpost's synthetic focus query racing the new process's window creation,
+  within the 400 millisecond focus deadline. Both belong to this
+  milestone's outpost-lifecycle and focus-tracking work; the arbitration
+  mechanism is not the cause of either.
+- Announce a focused list's selected item. Focus landing on a list currently
+  speaks only the list's own name and role; the selected entry is not spoken,
+  which is not how a screen reader should read a category list or a list box.
+  This gap was masked until M2: the spurious UIA events described above were
+  announcing the selected item by accident, and fixing the arbitration bug
+  revealed it. Belongs with this milestone's selection and object-navigation
+  work.
 - Focus/foreground tracking across apps; object navigation and review cursor;
   input-help mode; remappable gesture map; symbol/dictionary processing v1.
 - eSpeak NG built-in synth (statically linked, x64 and ARM64) as regular
@@ -277,4 +330,6 @@ Tiers, gated by the capabilities each module needs:
   each addition needs a consumer.
 - **Deferred**: CI automation for VM E2E (D3); revisit once local harness is
   stable — candidates are QEMU/KVM Win11 guests on Linux runners or
-  self-hosted runners.
+  self-hosted runners. `.github/workflows/vm-smoke.yml` (manual dispatch
+  only) checks whether GitHub's larger Windows runners can host nested
+  virtualization at all, a precondition for any of those candidates.
