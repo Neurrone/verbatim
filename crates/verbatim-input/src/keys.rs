@@ -23,6 +23,18 @@ pub struct KeyName {
 
 /// Named keys, following NVDA. Letters and digits are handled procedurally
 /// by [`vk_from_name`] and [`name_from_vk`], not listed here.
+///
+/// The bare numpad digits (`numpad0` through `numpad9`) are the non-extended
+/// twins of the navigation cluster, exactly like `insert`/`numpadinsert` and
+/// `delete`/`numpaddelete` above: with Num Lock off, the physical numpad key
+/// reports the same virtual-key code as its navigation-cluster counterpart,
+/// distinguished only by the extended flag being clear. `numpad5` has no
+/// navigation-cluster counterpart (that physical key does nothing there) and
+/// reports `VK_CLEAR` instead, so it carries no twin to disambiguate against
+/// and needs no required extended flag. The four numpad operator keys
+/// (`numpadminus`, `numpadplus`, `numpaddivide`, `numpadmultiply`) and
+/// `period` are ordinary single-vk keys with no twin, following the same
+/// `None` convention as `escape` or `tab` above.
 const NAMED_KEYS: &[(&str, u16, Option<bool>)] = &[
     ("backspace", 0x08, None),
     ("tab", 0x09, None),
@@ -36,21 +48,36 @@ const NAMED_KEYS: &[(&str, u16, Option<bool>)] = &[
     ("escape", 0x1B, None),
     ("space", 0x20, None),
     ("pageup", 0x21, Some(true)),
+    ("numpad9", 0x21, Some(false)),
     ("pagedown", 0x22, Some(true)),
+    ("numpad3", 0x22, Some(false)),
     ("end", 0x23, Some(true)),
+    ("numpad1", 0x23, Some(false)),
     ("home", 0x24, Some(true)),
+    ("numpad7", 0x24, Some(false)),
     ("leftarrow", 0x25, Some(true)),
+    ("numpad4", 0x25, Some(false)),
     ("uparrow", 0x26, Some(true)),
+    ("numpad8", 0x26, Some(false)),
     ("rightarrow", 0x27, Some(true)),
+    ("numpad6", 0x27, Some(false)),
     ("downarrow", 0x28, Some(true)),
+    ("numpad2", 0x28, Some(false)),
+    ("numpad5", 0x0C, None),
     ("printscreen", 0x2C, None),
     ("insert", 0x2D, Some(true)),
     ("numpadinsert", 0x2D, Some(false)),
+    ("numpad0", 0x2D, Some(false)),
     ("delete", 0x2E, Some(true)),
     ("numpaddelete", 0x2E, Some(false)),
     ("leftwindows", 0x5B, None),
     ("rightwindows", 0x5C, None),
     ("applications", 0x5D, None),
+    ("numpadmultiply", 0x6A, None),
+    ("numpadplus", 0x6B, None),
+    ("numpadminus", 0x6D, None),
+    ("numpaddivide", 0x6F, None),
+    ("period", 0xBE, None),
     ("f1", 0x70, None),
     ("f2", 0x71, None),
     ("f3", 0x72, None),
@@ -178,6 +205,121 @@ mod tests {
             let back = vk_from_name(round_tripped).expect("round-tripped name resolves");
             assert_eq!(back.vk, vk);
         }
+    }
+
+    #[test]
+    fn numpad_digits_share_vks_with_navigation_cluster_twins() {
+        // With Num Lock off, the physical numpad digit reports the same vk as
+        // its navigation-cluster counterpart, non-extended — the M3 desktop
+        // layout's review-cursor keys.
+        let cases = [
+            ("numpad7", "home", 0x24),
+            ("numpad8", "uparrow", 0x26),
+            ("numpad9", "pageup", 0x21),
+            ("numpad4", "leftarrow", 0x25),
+            ("numpad6", "rightarrow", 0x27),
+            ("numpad1", "end", 0x23),
+            ("numpad2", "downarrow", 0x28),
+            ("numpad3", "pagedown", 0x22),
+            ("numpad0", "insert", 0x2D),
+        ];
+        for (numpad_name, nav_name, vk) in cases {
+            assert_eq!(
+                vk_from_name(numpad_name),
+                Some(KeyName {
+                    vk,
+                    extended: Some(false)
+                }),
+                "{numpad_name} should be the non-extended twin of {nav_name}"
+            );
+            assert_eq!(
+                vk_from_name(nav_name),
+                Some(KeyName {
+                    vk,
+                    extended: Some(true)
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn numpad5_has_no_navigation_cluster_twin() {
+        // Numpad 5 with Num Lock off reports VK_CLEAR, which has no
+        // navigation-cluster counterpart, so it needs no required extended
+        // flag.
+        assert_eq!(
+            vk_from_name("numpad5"),
+            Some(KeyName {
+                vk: 0x0C,
+                extended: None
+            })
+        );
+        assert_eq!(name_from_vk(0x0C, false), Some("numpad5"));
+    }
+
+    #[test]
+    fn numpad_operator_keys_resolve() {
+        assert_eq!(
+            vk_from_name("numpadminus"),
+            Some(KeyName {
+                vk: 0x6D,
+                extended: None
+            })
+        );
+        assert_eq!(
+            vk_from_name("numpadplus"),
+            Some(KeyName {
+                vk: 0x6B,
+                extended: None
+            })
+        );
+        assert_eq!(
+            vk_from_name("numpaddivide"),
+            Some(KeyName {
+                vk: 0x6F,
+                extended: None
+            })
+        );
+        assert_eq!(
+            vk_from_name("numpadmultiply"),
+            Some(KeyName {
+                vk: 0x6A,
+                extended: None
+            })
+        );
+    }
+
+    #[test]
+    fn period_resolves() {
+        assert_eq!(
+            vk_from_name("period"),
+            Some(KeyName {
+                vk: 0xBE,
+                extended: None
+            })
+        );
+        assert_eq!(name_from_vk(0xBE, false), Some("period"));
+    }
+
+    #[test]
+    fn numpad_enter_and_delete_already_present() {
+        // Pinned so a future refactor cannot silently drop these M3-required
+        // names; both existed before M3 and are re-checked here alongside
+        // the new additions.
+        assert_eq!(
+            vk_from_name("numpadenter"),
+            Some(KeyName {
+                vk: 0x0D,
+                extended: Some(true)
+            })
+        );
+        assert_eq!(
+            vk_from_name("numpaddelete"),
+            Some(KeyName {
+                vk: 0x2E,
+                extended: Some(false)
+            })
+        );
     }
 
     #[test]

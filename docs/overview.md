@@ -166,7 +166,15 @@ Public API:
   `name_from_vk` (letters and digits resolve procedurally, everything else
   through a table where the extended flag distinguishes twins like insert
   and numpad insert), plus `VERBATIM_MODIFIER_NAME`. Shared with the
-  control plane's key injection so both sides speak identical names.
+  control plane's key injection so both sides speak identical names. M3
+  filled out the numpad and navigation-cluster vocabulary the object- and
+  review-navigation bindings need: `numpad0` through `numpad9` are the
+  non-extended twins of the navigation cluster (Num Lock off reports the
+  same vk as `home`, `uparrow`, and so on), matching the existing
+  `insert`/`numpadinsert` pattern; `numpad5` has no navigation-cluster twin
+  and names `VK_CLEAR` instead; `numpadminus`, `numpadplus`,
+  `numpaddivide`, `numpadmultiply`, and `period` are ordinary untwinned
+  keys.
 - `DecisionConfig`, `DecisionMachine`, `Decision`, `EmittedGesture` — the
   pure state machine. `on_key(event, now)` takes a caller-supplied clock,
   so tests script entire key streams with fake time.
