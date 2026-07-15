@@ -22,6 +22,7 @@ mod hidden_frame;
 pub mod list_dialog;
 mod plan;
 pub mod shell_items;
+mod tray_list;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -36,6 +37,7 @@ use verbatim_i18n::messages;
 use verbatim_speech::SpeechSettingsHost;
 
 pub use plan::{ControlPlan, DialogGuard, OpenAction};
+pub use shell_items::ShellItemKind;
 
 /// Menu item ids for the tray menu, based above the standard id range so they
 /// never collide with wxWidgets' own ids.
@@ -49,6 +51,10 @@ pub enum GuiCommand {
     ShowMenu,
     /// Open the settings dialog, or focus it if it is already open.
     OpenSettings,
+    /// Open the system tray or taskbar items list dialog (the systrayList
+    /// replica): enumerate the shell items on a worker thread, then present
+    /// the list. Focuses the existing dialog if one is already open.
+    OpenShellItemList(ShellItemKind),
     /// Tear down the tray and exit the GUI event loop.
     Shutdown,
 }
@@ -127,6 +133,11 @@ struct GuiState {
     host: Arc<dyn SpeechSettingsHost>,
     events: Sender<GuiEvent>,
     settings: Option<Dialog>,
+    /// The open shell item list dialog (singleton, like `settings`).
+    shell_list: Option<Dialog>,
+    /// Whether a shell item enumeration is in flight; a second request
+    /// while one is pending is dropped rather than queued.
+    shell_list_pending: bool,
 }
 
 thread_local! {
@@ -209,6 +220,8 @@ fn init(app: App, host: Arc<dyn SpeechSettingsHost>, events: Sender<GuiEvent>) {
             host,
             events,
             settings: None,
+            shell_list: None,
+            shell_list_pending: false,
         });
     });
 }
@@ -272,6 +285,7 @@ fn dispatch(command: GuiCommand) {
     match command {
         GuiCommand::ShowMenu => show_menu(),
         GuiCommand::OpenSettings => open_settings(),
+        GuiCommand::OpenShellItemList(kind) => open_shell_item_list(kind),
         GuiCommand::Shutdown => shutdown(),
     }
 }
@@ -294,11 +308,12 @@ fn pre_popup(frame: Frame) {
 /// Cleans up after a popup, NVDA's `postPopup`: hide the frame again so we keep
 /// no visible window, and let the foreground fall back to the previous app.
 ///
-/// Skipped while the settings dialog is open: the dialog is an owned window of
-/// the frame, and hiding an owner can take its owned windows with it.
-/// [`close_settings`] hides the frame once the dialog is gone.
-fn post_popup(frame: Frame, settings_open: bool) {
-    if !settings_open {
+/// Skipped while any owned dialog (settings or the shell item list) is
+/// open: hiding an owner can take its owned windows with it.
+/// [`close_settings`] and [`close_shell_list`] hide the frame once the
+/// last dialog is gone.
+fn post_popup(frame: Frame, dialog_open: bool) {
+    if !dialog_open {
         frame.hide();
     }
 }
@@ -333,7 +348,10 @@ fn show_menu() {
     GUI.with(|cell| {
         if let Some(state) = cell.borrow_mut().as_mut() {
             state.menu = Some(menu);
-            post_popup(frame, state.settings.is_some());
+            post_popup(
+                frame,
+                state.settings.is_some() || state.shell_list.is_some(),
+            );
         }
     });
 }
@@ -376,6 +394,71 @@ fn open_settings() {
     });
 }
 
+/// Opens the shell item list dialog for `kind`: focuses the existing one
+/// when open (singleton, mirroring [`open_settings`]), otherwise starts an
+/// enumeration on a worker thread and presents the list when the results
+/// arrive. The GUI thread never blocks on the shell — see
+/// [`shell_items`]' module documentation for the threading and deadline
+/// story.
+fn open_shell_item_list(kind: ShellItemKind) {
+    let Some((existing, pending)) = GUI.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|state| (state.shell_list, state.shell_list_pending))
+    }) else {
+        return;
+    };
+    if let Some(existing) = existing
+        && existing.is_valid()
+    {
+        focus_foreground(existing);
+        return;
+    }
+    if pending {
+        tracing::debug!("a shell item enumeration is already in flight; request dropped");
+        return;
+    }
+    GUI.with(|cell| {
+        if let Some(state) = cell.borrow_mut().as_mut() {
+            state.shell_list_pending = true;
+        }
+    });
+    shell_items::request_shell_items(kind, move |items| present_shell_item_list(kind, items));
+}
+
+/// Presents an enumeration outcome: clears the pending flag, then builds
+/// and shows the dialog on success. A failed or timed-out enumeration
+/// (already logged by the worker) presents nothing. Runs on the GUI thread
+/// via the call-after queue.
+fn present_shell_item_list(kind: ShellItemKind, items: Option<Vec<shell_items::ShellItem>>) {
+    let Some(frame) = GUI.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let state = borrow.as_mut()?;
+        state.shell_list_pending = false;
+        Some(state.frame)
+    }) else {
+        return;
+    };
+    if gui_is_shutting_down() {
+        return;
+    }
+    let Some(items) = items else {
+        return;
+    };
+
+    // Same discipline as open_settings: take the foreground before the
+    // dialog exists, so the process already owns it when the dialog asks.
+    pre_popup(frame);
+    let dialog = tray_list::build_shell_list_dialog(frame, kind, items);
+    dialog.show(true);
+    focus_foreground(dialog);
+    GUI.with(|cell| {
+        if let Some(state) = cell.borrow_mut().as_mut() {
+            state.shell_list = Some(dialog);
+        }
+    });
+}
+
 /// Raises a dialog, takes the foreground for it, and focuses it, so its controls
 /// are read as they gain focus.
 fn focus_foreground(dialog: Dialog) {
@@ -399,14 +482,14 @@ fn shutdown() {
     let torn_down = GUI.with(|cell| {
         cell.borrow_mut().as_mut().map(|state| {
             state.tray.remove_icon();
-            (state.frame, state.settings.take())
+            (state.frame, state.settings.take(), state.shell_list.take())
         })
     });
-    if let Some((frame, dialog)) = torn_down {
-        if let Some(dialog) = dialog
-            && dialog.is_valid()
-        {
-            dialog.destroy();
+    if let Some((frame, settings, shell_list)) = torn_down {
+        for dialog in [settings, shell_list].into_iter().flatten() {
+            if dialog.is_valid() {
+                dialog.destroy();
+            }
         }
         if let Some(hwnd) = foreground::hwnd_of(frame.get_handle()) {
             hidden_frame::unmark(hwnd);
@@ -421,18 +504,39 @@ fn shutdown() {
 /// Closes the settings dialog and clears the singleton so the next open builds
 /// a fresh one. Called by the dialog's own OK, Cancel, and Enter/Escape paths.
 ///
-/// With the dialog gone there is nothing owned by the frame left to show, so
-/// this is where the deferred `postPopup` hide happens: we drop back to no
-/// visible window and the foreground returns to the previous application.
+/// With the dialog gone, the deferred `postPopup` hide happens here — unless
+/// the shell item list dialog is still open and needs the frame as its
+/// visible owner; then [`close_shell_list`] hides it later.
 pub(crate) fn close_settings(dialog: Dialog) {
-    let frame = GUI.with(|cell| {
+    let after = GUI.with(|cell| {
         cell.borrow_mut().as_mut().map(|state| {
             state.settings = None;
-            state.frame
+            (state.frame, state.shell_list.is_some())
         })
     });
     dialog.destroy();
-    if let Some(frame) = frame {
+    if let Some((frame, shell_list_open)) = after
+        && !shell_list_open
+    {
+        frame.hide();
+    }
+}
+
+/// Closes the shell item list dialog and clears its singleton: the shared
+/// dismissal path for Cancel, Escape, window close, and every click button.
+/// The deferred `postPopup` hide happens here on the same terms as
+/// [`close_settings`], deferring to the settings dialog when it is open.
+pub(crate) fn close_shell_list(dialog: Dialog) {
+    let after = GUI.with(|cell| {
+        cell.borrow_mut().as_mut().map(|state| {
+            state.shell_list = None;
+            (state.frame, state.settings.is_some())
+        })
+    });
+    dialog.destroy();
+    if let Some((frame, settings_open)) = after
+        && !settings_open
+    {
         frame.hide();
     }
 }

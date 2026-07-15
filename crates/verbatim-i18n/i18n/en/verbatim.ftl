@@ -28,6 +28,16 @@ speech-change-synth = C&hange...
 select-synth-title = Select Synthesizer
 select-synth-label = &Synthesizer:
 
+## The system tray and taskbar list dialogs (the systrayList replica).
+
+tray-list-title = System Tray Icons
+tray-list-label = &Icons
+taskbar-list-title = Taskbar Buttons
+taskbar-list-label = &Buttons
+tray-list-left-click = &Left Click
+tray-list-left-double-click = Left &Double Click
+tray-list-right-click = &Right Click
+
 ## Synthesizer display names.
 
 synth-name-onecore = Windows OneCore voices

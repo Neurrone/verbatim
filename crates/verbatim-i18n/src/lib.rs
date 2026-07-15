@@ -280,6 +280,48 @@ pub mod messages {
         fl!(loader(), "speech-change-synth")
     }
 
+    /// Title of the system tray items list dialog.
+    #[must_use]
+    pub fn tray_list_title() -> String {
+        fl!(loader(), "tray-list-title")
+    }
+
+    /// Label above the list in the system tray items dialog.
+    #[must_use]
+    pub fn tray_list_label() -> String {
+        fl!(loader(), "tray-list-label")
+    }
+
+    /// Title of the taskbar items list dialog.
+    #[must_use]
+    pub fn taskbar_list_title() -> String {
+        fl!(loader(), "taskbar-list-title")
+    }
+
+    /// Label above the list in the taskbar items dialog.
+    #[must_use]
+    pub fn taskbar_list_label() -> String {
+        fl!(loader(), "taskbar-list-label")
+    }
+
+    /// The Left Click button of the tray and taskbar list dialogs.
+    #[must_use]
+    pub fn tray_list_left_click() -> String {
+        fl!(loader(), "tray-list-left-click")
+    }
+
+    /// The Left Double Click button of the tray and taskbar list dialogs.
+    #[must_use]
+    pub fn tray_list_left_double_click() -> String {
+        fl!(loader(), "tray-list-left-double-click")
+    }
+
+    /// The Right Click button of the tray and taskbar list dialogs.
+    #[must_use]
+    pub fn tray_list_right_click() -> String {
+        fl!(loader(), "tray-list-right-click")
+    }
+
     /// Title of the Select Synthesizer dialog.
     #[must_use]
     pub fn select_synth_title() -> String {
@@ -507,6 +549,20 @@ mod tests {
             "no bidi isolation marks: the loader disables Fluent's argument \
              isolation because this output is primarily spoken (see new_loader)"
         );
+    }
+
+    #[test]
+    fn tray_list_messages_resolve() {
+        assert_eq!(messages::tray_list_title(), "System Tray Icons");
+        assert_eq!(messages::tray_list_label(), "&Icons");
+        assert_eq!(messages::taskbar_list_title(), "Taskbar Buttons");
+        assert_eq!(messages::taskbar_list_label(), "&Buttons");
+        assert_eq!(messages::tray_list_left_click(), "&Left Click");
+        assert_eq!(
+            messages::tray_list_left_double_click(),
+            "Left &Double Click"
+        );
+        assert_eq!(messages::tray_list_right_click(), "&Right Click");
     }
 
     #[test]
