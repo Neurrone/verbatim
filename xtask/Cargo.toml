@@ -17,11 +17,16 @@ publish.workspace = true
 # interactive session — see xtask/src/vm/recording.rs. Depending on these
 # two crates directly, rather than on verbatim-e2e's own `AgentClient`,
 # avoids pulling a test-only crate into this binary for three request kinds.
+# verbatim-e2e itself is now also a direct dependency (M3 Track B): `xtask
+# vm test` reads the scenario registry (names, groups, artifact paths) to
+# implement --scenario, --group, --list, and per-scenario recording and
+# artifact collection, rather than duplicating that catalog here.
 base64.workspace = true
 serde_json.workspace = true
 verbatim-agent.workspace = true
 verbatim-config.workspace = true
 verbatim-control.workspace = true
+verbatim-e2e.workspace = true
 
 [lints]
 workspace = true

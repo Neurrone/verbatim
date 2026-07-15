@@ -1,9 +1,10 @@
 # Tooling guide
 
 The practical companion to `docs/architecture.md` and `docs/roadmap.md`: how
-to actually drive this project day to day, as of milestone M2. Where the
-architecture doc explains why something exists and the roadmap says when it
-landed, this doc says which command to type.
+to actually drive this project day to day, as of milestone M2 plus the M3
+Track B restructuring of the end-to-end suite into a scenario registry.
+Where the architecture doc explains why something exists and the roadmap
+says when it landed, this doc says which command to type.
 
 Like every doc in this repository, this one avoids ASCII diagrams, box
 drawings, arrow chains, and pipe tables, so it reads well with a screen
@@ -249,12 +250,39 @@ Two more environment variables matter for less common cases:
   paced runner-direct run (only meaningful alongside `VERBATIM_E2E_AUDIBLE`,
   since the capture synth produces no audio to wait on).
 
-The suite currently has three tests: `session_info` (the agent reports an
-interactive session — the precondition everything else depends on),
-`notepad_focus` (launching Notepad reaches Verbatim and Verbatim survives
-Notepad exiting), and `m1_exit_regression` (the scripted walk of the M1 exit
-criteria — see `docs/roadmap.md`'s M2 section for exactly what it asserts
-and does not assert).
+The suite is a scenario registry (`crates/verbatim-e2e/src/registry.rs`,
+milestone M3 Track B): every scenario is a named, grouped setup/body/teardown
+definition, and `crates/verbatim-e2e/tests/` holds one thin `#[test]`
+wrapper per scenario calling `registry::run_named("that scenario's name")`,
+plus `session_info` (the agent reports an interactive session — the
+precondition everything else depends on, not itself a scenario). The
+scenarios today: `notepad_focus` (launching Notepad reaches Verbatim and
+Verbatim survives Notepad exiting), `multi_outpost_switch` (switching
+foreground between Notepad and Verbatim's own menu keeps both outposts
+alive and re-announces correctly), and `m1_exit_regression` (the scripted
+walk of the M1 exit criteria — see `docs/roadmap.md`'s M2 section for
+exactly what it asserts and does not assert). A scenario's name is also its
+`#[test]` function name, so `cargo test -p verbatim-e2e <name> -- --exact
+--test-threads=1` runs exactly that one scenario runner-direct, the same
+selection mechanism `cargo xtask vm test --scenario <name>` uses against the
+VM (see "cargo xtask vm verbs" below).
+
+Every scenario run, pass or fail, writes a one-line-per-fact summary (name,
+pass or fail, latency counts) to `target/e2e-artifacts/<scenario name>/
+summary.txt` under the workspace root (`VERBATIM_E2E_ARTIFACTS_DIR`
+overrides the root), whether run runner-direct or through `cargo xtask vm
+test`; `xtask vm test` reads this back to build its own run summary rather
+than parsing test output. A *failed* scenario additionally writes, into the
+same directory, the interleaved timeline
+(`timeline.txt` — the same account an `expect_*` panic already prints),
+Verbatim's captured stderr log (`stderr.log`), and a flight-recorder dump
+(`flight-recorder.jsonl`, fetched via the control plane's `DumpRecorder`
+request and read back through the agent) — collected by
+`Scenario::collect_failure_artifacts` from inside the scenario's own process,
+where the live control and agent connections it needs still exist. None of
+this is a retry mechanism: a failed scenario is reported failed exactly
+once, with these artifacts left for root-causing, never re-run
+automatically by anything in this crate or by `xtask`.
 
 Reading a speech-assertion failure: `SpeechCollector::expect_in_order`
 panics with a message naming which matcher, by position, it was waiting for
@@ -389,11 +417,11 @@ ffmpeg exits immediately after being launched with an audio input, that is
 treated as the expected fallout of a connected RDP session having hidden
 the capture device — not aborted on. `cargo xtask vm test --record` prints
 a clear warning and retries with a video-only ffmpeg launch instead, so the
-suite still runs and a video (with no audio track) is still pulled at the
-end; the output filename gets a `-no-audio` suffix in that case, decided by
-probing the pulled file with ffprobe rather than trusted from which launch
-path was taken, so any other way a recording ends up without real audio is
-caught the same way.
+scenario still runs and a video (with no audio track) is still pulled once
+it finishes; the output filename gets a `-no-audio` suffix in that case,
+decided by probing the pulled file with ffprobe rather than trusted from
+which launch path was taken, so any other way a recording ends up without
+real audio is caught the same way.
 
 The recording is written inside the guest as fragmented MP4
 (`+frag_keyframe+empty_moov+default_base_moof`), so terminating ffmpeg the
@@ -401,14 +429,26 @@ same blunt way `Scenario`'s own cleanup terminates everything else (no
 graceful stdin `q`, just the agent's existing `KillProcess`) still leaves a
 playable file: each completed video/audio fragment stands on its own, so
 the worst a kill mid-fragment costs is a couple of seconds off the tail,
-never the whole recording. After the suite finishes (whether it passed or
-failed — a failing run's video is exactly what is useful to look at),
-`cargo xtask vm test` stops ffmpeg, pulls the result out of the guest over
-the same PowerShell Direct file-read `cargo xtask vm logs` already uses for
-flight-recorder dumps (`Copy-VMFile` only copies host-to-guest, never the
-other direction), and writes it to `artifacts/vm-recordings` on the host as
-`verbatim-e2e-<unix-seconds>.mp4` (or `verbatim-e2e-<unix-seconds>-no-audio.mp4`),
-printing the path once it lands.
+never the whole recording. Milestone M3 Track B moved the recording
+boundary from the whole run to one scenario at a time: `--record` starts
+ffmpeg immediately before that scenario's own `cargo test -p verbatim-e2e
+<name> -- --exact` subprocess (covering its `Scenario::launch`, setup,
+body, and teardown, deliberately, since setup and teardown are exactly
+where a target application appears or a target application's window closes
+— useful context for debugging, not noise to trim) and stops it as soon as
+that subprocess exits, whether it passed or failed (a failing scenario's
+video is exactly what is useful to look at). `cargo xtask vm test` pulls
+each scenario's result out of the guest over the same PowerShell Direct
+file-read `cargo xtask vm logs` already uses for flight-recorder dumps
+(`Copy-VMFile` only copies host-to-guest, never the other direction), and
+writes it to `artifacts/vm-recordings` on the host as one file per
+scenario: `<scenario name>-<unix-seconds>.mp4` (or
+`<scenario name>-<unix-seconds>-no-audio.mp4`), printing each path as it
+lands. A multi-scenario `--record` run therefore produces one recording per
+scenario, never one recording covering the whole run — the point of the
+restructuring: a recording that only ever needs to show one scenario's
+behavior is far easier to review than one long recording someone has to
+scrub through.
 
 `cargo xtask vm test` needs `LIBCLANG_PATH` for wxDragon's bindgen, exactly
 as `cargo xtask ci` does (see this repository's `CLAUDE.md`) — building
@@ -469,30 +509,56 @@ arguments for the full verb list printed from the source of truth.
   recording a run" above), then restores `golden`, stages and copies that
   build onto it (always with the real `OneCore` synthesizer — no more
   capture-synth choice on the VM path), discovers the guest's IP address,
-  then runs `crates/verbatim-e2e`'s suite on the host with
-  `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
+  runs `session_info`'s own test once as a precondition (not itself a
+  scenario, not recorded, and not affected by `--scenario`/`--group` — a
+  failure here aborts the whole run, since nothing downstream can work from
+  a non-interactive agent session), and then runs the selected scenarios
+  from `crates/verbatim-e2e/src/registry.rs`, one at a time. Each scenario
+  runs as its own `cargo test -p verbatim-e2e <name> -- --exact` subprocess
+  on the host with `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
   `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path,
-  `VERBATIM_E2E_REMOTE=1`, and `VERBATIM_E2E_AUDIBLE=1` set. Building first,
-  ahead of the restore, is deliberate: a compile failure is then caught with
-  zero VM state changes, rather than after a restore that then has to be
-  paid for again on the next attempt. `--no-restore` does not change this —
-  the build still runs first either way. This is the one-command loop
-  `docs/roadmap.md`'s M2 exit criteria describes. `cargo xtask vm test
-  --no-restore` skips the checkpoint restore (and its post-restore agent
-  wait) entirely, deploying straight onto whatever the guest is currently
-  running, and prints a prominent line stating the guest was not restored
-  and its state may be dirty. Combined with `deploy`'s hash-skipping, this
-  makes a rerun after a small code change fast — restore plus its agent
-  wait is most of an ordinary run's wall-clock cost. Never use
-  `--no-restore` for an acceptance run: only a run that actually restored
-  `golden` first demonstrates the harness's real exit criteria. `--record`
-  additionally captures the run as a video with audio into
-  `artifacts/vm-recordings`; see "Hearing and recording a run" above for the
-  key constraint that recording audio and a connected RDP session are
-  mutually exclusive, and how `--record` degrades to a video-only,
-  `-no-audio`-tagged recording with a warning rather than aborting when a
-  session is connected anyway. Both flags may be given together, in either
-  order.
+  `VERBATIM_E2E_REMOTE=1`, and `VERBATIM_E2E_AUDIBLE=1` set — this is what
+  gives `--record` a clean, one-scenario-at-a-time recording boundary (see
+  "Hearing and recording a run" above) with no new machinery inside
+  `verbatim-e2e` itself. Building first, ahead of the restore, is
+  deliberate: a compile failure is then caught with zero VM state changes,
+  rather than after a restore that then has to be paid for again on the
+  next attempt. `--no-restore` does not change this — the build still runs
+  first either way. This is the one-command loop `docs/roadmap.md`'s M2
+  exit criteria describes.
+  - `--scenario <name>` (repeatable) and `--group <name>` (repeatable, one
+    of `speech`, `shell`, `legacy`, `navigation`) select which scenarios
+    run; with neither given, every registered scenario runs, the same as
+    before milestone M3 Track B's restructuring. An unrecognized name is
+    reported and the run aborts before anything touches the VM.
+  - `--list` prints the scenario registry (name and group, one per line)
+    and exits immediately — no build, no restore, no deploy, nothing
+    touches the VM at all.
+  - `cargo xtask vm test --no-restore` skips the checkpoint restore (and
+    its post-restore agent wait) entirely, deploying straight onto whatever
+    the guest is currently running, and prints a prominent line stating the
+    guest was not restored and its state may be dirty. Combined with
+    `deploy`'s hash-skipping, this makes a rerun after a small code change
+    fast — restore plus its agent wait is most of an ordinary run's
+    wall-clock cost. Never use `--no-restore` for an acceptance run: only a
+    run that actually restored `golden` first demonstrates the harness's
+    real exit criteria.
+  - `--record` additionally captures each scenario as its own video with
+    audio into `artifacts/vm-recordings`, one file per scenario named after
+    it; see "Hearing and recording a run" above for the key constraint that
+    recording audio and a connected RDP session are mutually exclusive, and
+    how `--record` degrades to a video-only, `-no-audio`-tagged recording
+    with a warning rather than aborting when a session is connected anyway.
+  - Every flag may be given together, in any order (aside from `--list`,
+    which short-circuits before any of the others matter).
+  - At the end of a run selecting more than one scenario, `cargo xtask vm
+    test` prints a run summary: one line per scenario, pass or fail, and how
+    many of that scenario's latency timelines reached audio — read back from
+    the `verbatim_e2e::artifacts::ScenarioSummary` each scenario's own
+    subprocess wrote (see the note on failure artifacts above), not scraped
+    from subprocess output. There is no retry of any kind anywhere in this
+    path: a scenario that fails is reported failed, once, and the run moves
+    on to the next selected scenario.
 - `logs [dir]` pulls flight-recorder dumps (from the guest's
   `C:\VerbatimLab\verbatim\dumps`), the agent's own log
   (`C:\VerbatimLab\agent\agent.log`), and a launched Verbatim's captured

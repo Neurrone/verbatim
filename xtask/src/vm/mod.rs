@@ -77,7 +77,11 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("deploy") => deploy_verb(&host, &repo_root),
         Some("test") => match parse_test_flags(&args[1..]) {
             Ok(flags) => test::test(&host, &repo_root, flags),
-            Err(other) => return unknown_arg("test", &other),
+            Err(message) => {
+                eprintln!("xtask vm test: {message}");
+                print_usage();
+                return ExitCode::from(2);
+            }
         },
         Some("logs") => logs_verb(&host, &repo_root, args.get(1)),
         Some("connect") => match args.get(1).map(String::as_str) {
@@ -108,19 +112,34 @@ fn unknown_arg(verb: &str, arg: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Parses `test`'s flags — `--no-restore`, `--record`, and `--paced` —
-/// accepted in any order and independently. Returns a [`test::TestFlags`], or
-/// the first unrecognized argument as `Err`. There is no `--audible` flag
-/// anymore: `test` is audible by default now — see `test::test`'s own doc
-/// comment for why.
+/// Parses `test`'s flags — `--no-restore`, `--record`, `--paced`, `--list`,
+/// and the repeatable `--scenario <name>` and `--group <name>` — accepted in
+/// any order and independently. Returns a [`test::TestFlags`], or the first
+/// unrecognized argument (or a `--scenario`/`--group` missing its value) as
+/// `Err`. There is no `--audible` flag anymore: `test` is audible by default
+/// now — see `test::test`'s own doc comment for why.
 fn parse_test_flags(args: &[String]) -> Result<test::TestFlags, String> {
     let mut flags = test::TestFlags::default();
-    for arg in args {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--no-restore" => flags.no_restore = true,
             "--record" => flags.record = true,
             "--paced" => flags.paced = true,
-            other => return Err(other.to_owned()),
+            "--list" => flags.list = true,
+            "--scenario" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--scenario requires a value".to_owned())?;
+                flags.scenarios.push(value.clone());
+            }
+            "--group" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--group requires a value".to_owned())?;
+                flags.groups.push(value.clone());
+            }
+            other => return Err(format!("unknown argument '{other}'")),
         }
     }
     Ok(flags)
@@ -201,7 +220,22 @@ fn print_usage() {
     );
     eprintln!("                   than aborting; --paced waits for each utterance's audio to");
     eprintln!("                   finish before the next keystroke so speech is heard in full");
-    eprintln!("                   (implied by --record); all flags may be given, in any order");
+    eprintln!(
+        "                   (implied by --record; recording, when on, is per scenario, not per"
+    );
+    eprintln!(
+        "                   whole run); --scenario <name> and --group <name> (each repeatable)"
+    );
+    eprintln!(
+        "                   select which scenarios run; with neither given, every registered"
+    );
+    eprintln!(
+        "                   scenario runs; --list prints the scenario registry (name and group)"
+    );
+    eprintln!(
+        "                   and exits without touching the VM; all flags may be given, in any"
+    );
+    eprintln!("                   order");
     eprintln!("  logs [dir]       pull flight-recorder dumps and the agent log out of the guest");
     eprintln!("                   (default dir: artifacts/vm-logs)");
     eprintln!(

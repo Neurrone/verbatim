@@ -37,6 +37,7 @@ verbatim-audio = { path = "crates/verbatim-audio" }
 verbatim-config = { path = "crates/verbatim-config" }
 verbatim-control = { path = "crates/verbatim-control" }
 verbatim-core = { path = "crates/verbatim-core" }
+verbatim-e2e = { path = "crates/verbatim-e2e" }
 verbatim-ext = { path = "crates/verbatim-ext" }
 verbatim-ext-api = { path = "crates/verbatim-ext-api" }
 verbatim-gui = { path = "crates/verbatim-gui" }

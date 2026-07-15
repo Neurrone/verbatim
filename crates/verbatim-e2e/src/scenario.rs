@@ -29,12 +29,19 @@ use std::time::{Duration, Instant};
 use verbatim_agent::protocol::{KillOutcome, ProcessState};
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
-use verbatim_control::protocol::{LatencyRecord, Request};
+use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 
 use crate::agent_client::AgentClient;
 use crate::speech::SpeechCollector;
 use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
+
+/// File names [`Scenario::collect_failure_artifacts`] writes a failed
+/// scenario's diagnostics under, inside the directory
+/// [`crate::artifacts::scenario_dir`] names.
+const FAILURE_TIMELINE_FILE_NAME: &str = "timeline.txt";
+const FAILURE_STDERR_FILE_NAME: &str = "stderr.log";
+const FAILURE_FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
 /// `target/debug/verbatim.exe` under the workspace root — the ordinary
@@ -142,13 +149,6 @@ const QUIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// slow CI runner.
 const GUI_SETTLE_DELAY: Duration = Duration::from_secs(1);
 
-/// Image (executable file) names of target applications this suite's
-/// scenarios launch, swept clean by [`Scenario::launch`] before doing
-/// anything else — see the sweep's own code comment for why this matters
-/// beyond ordinary Drop-time cleanup. Grows as new scenarios add target
-/// applications; just Notepad today.
-const SWEPT_TARGET_IMAGE_NAMES: &[&str] = &["notepad.exe"];
-
 /// Enforces one live Verbatim instance at a time within this process.
 ///
 /// This is a same-process guard, not a cross-process one: tests must also
@@ -186,6 +186,11 @@ pub struct Scenario {
     /// that method's doc comment) — killed on drop unless already removed
     /// by [`Scenario::kill_target`].
     launched: Vec<(u32, String)>,
+    /// The path this launch's Verbatim has its stdout and stderr captured
+    /// into (see [`verbatim_stderr_log_path`]), readable back through
+    /// [`process_agent`](Self::process_agent)'s `read_file` — what
+    /// [`Scenario::collect_failure_artifacts`] pulls on a scenario failure.
+    stderr_log_path: String,
 }
 
 impl Scenario {
@@ -207,9 +212,10 @@ impl Scenario {
     /// [`VERBATIM_EXE_ENV`]'s path directly instead.
     ///
     /// Either way, before any of that, this first sweeps
-    /// [`SWEPT_TARGET_IMAGE_NAMES`] on the agent's guest, so every scenario
-    /// begins from as clean a state as possible even after a prior run
-    /// aborted before its own [`Drop`] cleanup ran. Once Verbatim itself is
+    /// [`crate::registry::swept_target_image_names`] on the agent's guest,
+    /// so every scenario begins from as clean a state as possible even after
+    /// a prior run aborted before its own [`Drop`] cleanup ran. Once
+    /// Verbatim itself is
     /// launched, this waits for its control plane to answer over the
     /// agent's tunnel and opens a second, dedicated tunnel connection for
     /// speech collection (see [`crate::speech::SpeechCollector`] for why it
@@ -291,7 +297,7 @@ impl Scenario {
         // cleanup (a killed test process, a Ctrl+C, a panic that unwound
         // past Scenario somehow). Best-effort: a sweep failure here is
         // logged, not fatal to the launch.
-        for name in SWEPT_TARGET_IMAGE_NAMES {
+        for name in crate::registry::swept_target_image_names() {
             if let Err(error) = process_agent.kill_processes_by_name(name) {
                 tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
             }
@@ -343,6 +349,7 @@ impl Scenario {
             speech,
             timeline,
             launched: Vec::new(),
+            stderr_log_path: stderr_path,
         })
     }
 
@@ -526,6 +533,94 @@ impl Scenario {
     pub fn report_latency(&mut self, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
         crate::latency::report(&mut self.control, last_n)
     }
+
+    /// Fetches the scenario's recent latency timelines with no printing and
+    /// no assertion; see [`crate::latency::fetch`]. Used by
+    /// [`crate::registry::run`] to fill in every scenario's run summary
+    /// (`docs/roadmap.md`'s M3 Track B item), regardless of whether that
+    /// scenario itself calls [`report_latency`](Self::report_latency).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn latency_snapshot(&mut self, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
+        crate::latency::fetch(&mut self.control, last_n)
+    }
+
+    /// Collects failure diagnostics into `dir` (created if missing): the
+    /// interleaved [`crate::timeline::Timeline`] (also printed on an
+    /// `expect_*` panic — this additionally writes it to a file), Verbatim's
+    /// captured stderr log (via the agent's `read_file`, from the path this
+    /// launch already told the agent to capture into), and a flight-recorder
+    /// dump (`Request::DumpRecorder` returns the path Core wrote it to —
+    /// same machine as [`stderr_log_path`](Self::stderr_log_path) in either
+    /// mode, since Core and Verbatim's own stderr capture are the same
+    /// process — read back the same way).
+    ///
+    /// Best-effort throughout, deliberately never itself a source of test
+    /// failure: called from [`crate::registry::run`] only after a scenario
+    /// has already failed, where the control connection or the agent may
+    /// themselves be in a degraded state (Verbatim crashed, the tunnel
+    /// dropped). Each of the three pieces is attempted independently and a
+    /// failure on one is logged to stderr rather than aborting the other
+    /// two.
+    pub fn collect_failure_artifacts(&mut self, dir: &Path) {
+        if let Err(error) = fs::create_dir_all(dir) {
+            eprintln!(
+                "could not create failure-artifacts directory {}: {error}",
+                dir.display()
+            );
+            return;
+        }
+
+        if let Err(error) = fs::write(dir.join(FAILURE_TIMELINE_FILE_NAME), self.timeline.render())
+        {
+            eprintln!("could not write the failure timeline: {error}");
+        }
+
+        match self.control.request(Request::DumpRecorder) {
+            Ok(frame) => match ok_or_error(frame) {
+                Ok(Frame::Reply {
+                    payload: ReplyPayload::DumpRecorder { path },
+                    ..
+                }) => match self.process_agent.read_file(&path) {
+                    Ok(bytes) => {
+                        if let Err(error) =
+                            fs::write(dir.join(FAILURE_FLIGHT_RECORDER_FILE_NAME), bytes)
+                        {
+                            eprintln!("could not write the fetched flight-recorder dump: {error}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "could not read the flight-recorder dump at {path} back through the agent: {error}"
+                        );
+                    }
+                },
+                Ok(other) => {
+                    eprintln!(
+                        "unexpected reply to DumpRecorder while collecting failure artifacts: {other:?}"
+                    );
+                }
+                Err(error) => eprintln!("DumpRecorder was refused: {error}"),
+            },
+            Err(error) => eprintln!("could not request a flight-recorder dump: {error}"),
+        }
+
+        match self.process_agent.read_file(&self.stderr_log_path) {
+            Ok(bytes) => {
+                if let Err(error) = fs::write(dir.join(FAILURE_STDERR_FILE_NAME), bytes) {
+                    eprintln!("could not write Verbatim's fetched stderr log: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "could not read Verbatim's stderr log at {} back through the agent: {error}",
+                    self.stderr_log_path
+                );
+            }
+        }
+    }
 }
 
 impl Drop for Scenario {
@@ -589,8 +684,11 @@ fn wait_for_control_tunnel(agent_addr: &str, deadline: Instant) -> io::Result<Co
 
 /// The workspace root, computed from this crate's own manifest directory
 /// (`<root>/crates/verbatim-e2e`), so the default `verbatim.exe` location
-/// does not depend on the caller's working directory.
-fn workspace_root() -> PathBuf {
+/// does not depend on the caller's working directory. `pub(crate)` because
+/// [`crate::artifacts::artifacts_root`] reuses it for the same reason:
+/// `target/e2e-artifacts` sits next to `target/e2e-stage`, both under the
+/// same workspace root.
+pub(crate) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)

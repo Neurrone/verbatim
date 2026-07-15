@@ -1977,6 +1977,7 @@ dependencies = [
  "verbatim-agent",
  "verbatim-config",
  "verbatim-control",
+ "verbatim-model",
 ]
 
 [[package]]
@@ -2391,6 +2392,7 @@ dependencies = [
  "verbatim-agent",
  "verbatim-config",
  "verbatim-control",
+ "verbatim-e2e",
 ]
 
 [[package]]

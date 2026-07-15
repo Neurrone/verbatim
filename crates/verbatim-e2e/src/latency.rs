@@ -21,11 +21,38 @@ use std::io;
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 
-/// Fetches the most recent `last_n` latency timelines, prints one fact per
-/// line (trace id, event-to-queue and event-to-audio milliseconds, and
-/// whether the utterance was interrupted before audio began), and asserts
-/// that at least one timeline reached audio — proof the whole path from an
-/// observed event to a playing utterance works end to end.
+/// Fetches the most recent `last_n` latency timelines with no printing and
+/// no assertion — the raw building block [`report`] wraps, and what
+/// [`crate::scenario::Scenario::latency_snapshot`] calls for the registry's
+/// generic, best-effort per-scenario summary (`crate::registry`'s own doc
+/// comment): every scenario's run summary carries latency counts this way,
+/// not just scenarios (like `m1_exit_regression`) that call [`report`]
+/// themselves as part of what they assert.
+///
+/// # Errors
+///
+/// Returns an error if the request fails or the reply is not a `Latency`
+/// reply.
+pub fn fetch(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
+    let frame = ok_or_error(control.request(Request::Latency { last_n })?)?;
+    let Frame::Reply {
+        payload: ReplyPayload::Latency(records),
+        ..
+    } = frame
+    else {
+        return Err(io::Error::other(format!(
+            "unexpected reply to Latency: {frame:?}"
+        )));
+    };
+    Ok(records)
+}
+
+/// Fetches the most recent `last_n` latency timelines ([`fetch`]), prints
+/// one fact per line (trace id, event-to-queue and event-to-audio
+/// milliseconds, and whether the utterance was interrupted before audio
+/// began), and asserts that at least one timeline reached audio — proof the
+/// whole path from an observed event to a playing utterance works end to
+/// end.
 ///
 /// # Errors
 ///
@@ -46,16 +73,7 @@ use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 /// [`crate::scenario::is_audible`]; the timelines are still fetched and
 /// printed.
 pub fn report(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
-    let frame = ok_or_error(control.request(Request::Latency { last_n })?)?;
-    let Frame::Reply {
-        payload: ReplyPayload::Latency(records),
-        ..
-    } = frame
-    else {
-        return Err(io::Error::other(format!(
-            "unexpected reply to Latency: {frame:?}"
-        )));
-    };
+    let records = fetch(control, last_n)?;
 
     let mut reached_audio = 0usize;
     for record in &records {

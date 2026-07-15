@@ -1,7 +1,16 @@
 //! `cargo xtask vm test --record`: launches ffmpeg inside the guest's
 //! interactive session to capture desktop video and VB-CABLE loopback
-//! audio for the duration of an E2E run, then pulls the result back to the
-//! host as a playable file.
+//! audio for the duration of one scenario, then pulls the result back to
+//! the host as a playable file named after that scenario.
+//!
+//! Milestone M3 Track B moved the recording boundary from the whole suite
+//! to one scenario at a time: `xtask::vm::test` now starts and stops a
+//! recording around each scenario's own `cargo test` subprocess
+//! individually — which is also that scenario's setup and teardown, since
+//! both run inside the same subprocess — rather than one recording
+//! wrapping every scenario in the run. [`pull_recording`] takes the
+//! scenario's name for exactly this reason: it is the file name prefix
+//! `docs/tooling.md` documents, not an afterthought.
 //!
 //! ffmpeg must be launched through the in-guest agent's `LaunchProcess`,
 //! not PowerShell Direct: `gdigrab` needs a real interactive desktop to
@@ -284,13 +293,15 @@ pub(crate) fn stop_recording(agent_addr: &str, pid: u32) -> VmResult<()> {
 /// (`Host::read_guest_file`, the same mechanism `xtask vm logs` already
 /// uses for flight-recorder dumps — Hyper-V's `Copy-VMFile` only copies
 /// host-to-guest, never the other direction), writing it to
-/// `artifacts/vm-recordings` under `repo_root`. Returns the host path
-/// written.
+/// `artifacts/vm-recordings` under `repo_root`, named after `scenario_name`
+/// — the scenario this particular recording covers (milestone M3 Track B:
+/// one recording per scenario, not one per whole run). Returns the host
+/// path written.
 ///
 /// Before pulling, this probes the guest-side file with ffprobe (over the
 /// same PowerShell Direct channel — no host-side ffprobe dependency) to
-/// decide the filename: `verbatim-e2e-<unix-seconds>.mp4` when a real audio
-/// stream was found, or `verbatim-e2e-<unix-seconds>-no-audio.mp4`
+/// decide the filename: `<scenario_name>-<unix-seconds>.mp4` when a real
+/// audio stream was found, or `<scenario_name>-<unix-seconds>-no-audio.mp4`
 /// otherwise, so a silently video-only recording is never mistaken for a
 /// complete one just by its name. For the VM `--record` path this should
 /// essentially always resolve to the plain name, since
@@ -319,6 +330,7 @@ pub(crate) fn pull_recording(
     host: &dyn Host,
     credentials: &GuestCredentials,
     repo_root: &Path,
+    scenario_name: &str,
 ) -> VmResult<PathBuf> {
     let has_audio = match probe_has_audio(host, credentials) {
         Ok(has_audio) => has_audio,
@@ -337,7 +349,10 @@ pub(crate) fn pull_recording(
     fs::create_dir_all(&out_dir)
         .map_err(|error| format!("could not create {}: {error}", out_dir.display()))?;
     let suffix = if has_audio { "" } else { "-no-audio" };
-    let out_path = out_dir.join(format!("verbatim-e2e-{}{suffix}.mp4", unix_seconds_now()));
+    let out_path = out_dir.join(format!(
+        "{scenario_name}-{}{suffix}.mp4",
+        unix_seconds_now()
+    ));
     fs::write(&out_path, bytes)
         .map_err(|error| format!("could not write {}: {error}", out_path.display()))?;
     Ok(out_path)
