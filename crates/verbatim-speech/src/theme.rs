@@ -47,41 +47,11 @@ impl Theme for PlainTheme {
     /// The language tag is taken from the first segment that overrides it,
     /// if any.
     fn flatten(&self, utterance: &Utterance) -> SpeechRequest {
-        let mut parts: Vec<String> = Vec::with_capacity(utterance.segments.len());
-        for segment in &utterance.segments {
-            match &segment.content {
-                SegmentContent::Text(text)
-                | SegmentContent::Label(text)
-                | SegmentContent::Value(text)
-                | SegmentContent::Description(text) => {
-                    if !text.is_empty() {
-                        parts.push(text.clone());
-                    }
-                }
-                SegmentContent::Role(role) => parts.push(role_name(*role)),
-                SegmentContent::State(state) => {
-                    if let Some(name) = state_name(*state) {
-                        parts.push(name);
-                    }
-                }
-                SegmentContent::NegatedState(state) => {
-                    if let Some(name) = negated_state_name(*state) {
-                        parts.push(name);
-                    }
-                }
-                SegmentContent::Position { position, set_size } => {
-                    // A bare position without a set size has no useful
-                    // spoken form and contributes nothing.
-                    if let Some(set_size) = set_size {
-                        parts.push(position_in_set(*position, *set_size));
-                    }
-                }
-                SegmentContent::Level(depth) => parts.push(level(*depth)),
-                // `SegmentContent` is non-exhaustive; a future variant
-                // renders as nothing until it is given a spoken form here.
-                _ => {}
-            }
-        }
+        let parts: Vec<String> = utterance
+            .segments
+            .iter()
+            .filter_map(|segment| spoken_form(&segment.content))
+            .collect();
 
         let language = utterance
             .segments
@@ -94,6 +64,28 @@ impl Theme for PlainTheme {
             language,
             marks: Vec::new(),
         }
+    }
+}
+
+/// The plain spoken form of one span, or `None` for spans with nothing to
+/// say: empty text, states that are never announced, a bare position
+/// without a set size (which has no useful spoken form), and any future
+/// variant until it is given a spoken form here (`SegmentContent` is
+/// non-exhaustive).
+fn spoken_form(content: &SegmentContent) -> Option<String> {
+    match content {
+        SegmentContent::Text(text)
+        | SegmentContent::Label(text)
+        | SegmentContent::Value(text)
+        | SegmentContent::Description(text) => (!text.is_empty()).then(|| text.clone()),
+        SegmentContent::Role(role) => Some(role_name(*role)),
+        SegmentContent::State(state) => state_name(*state),
+        SegmentContent::NegatedState(state) => negated_state_name(*state),
+        SegmentContent::Position { position, set_size } => {
+            set_size.map(|set_size| position_in_set(*position, set_size))
+        }
+        SegmentContent::Level(depth) => Some(level(*depth)),
+        _ => None,
     }
 }
 
