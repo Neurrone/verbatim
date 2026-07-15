@@ -251,7 +251,7 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verbatim_model::{NodeId, NodeSnapshot, Role, StateSet};
+    use verbatim_model::{NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
     #[test]
     fn requests_and_frames_round_trip() {
@@ -295,6 +295,7 @@ mod tests {
                 name: Some("test window".to_owned()),
                 value: None,
                 states: StateSet::default(),
+                details: NodeDetails::default(),
             },
             children: vec![TreeNode {
                 snapshot: NodeSnapshot {
@@ -304,6 +305,7 @@ mod tests {
                     name: Some("test button".to_owned()),
                     value: None,
                     states: StateSet::default(),
+                    details: NodeDetails::default(),
                 },
                 children: vec![],
             }],

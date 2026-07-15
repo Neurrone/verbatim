@@ -141,6 +141,21 @@ pub enum Input {
     Tick,
 }
 
+/// A non-speech sound the reducer can ask for, named semantically so
+/// presentation themes (milestone M11) decide what it actually sounds like.
+///
+/// Reserved vocabulary grows variant by variant as policies land; the first
+/// consumer is the recovery ladder's not-responding cue (milestone M3
+/// outpost hardening).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Earcon {
+    /// A deadline expired inside a cross-process accessibility call: the
+    /// application is not responding and the reducer proceeded with stale
+    /// data (architecture section 1, recovery ladder rung one).
+    AppNotResponding,
+}
+
 /// One effect emitted by the reducer and executed by the imperative shell.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -152,4 +167,6 @@ pub enum Effect {
     /// Ask an outpost for more data; completion re-enters as
     /// [`Input::FetchCompleted`].
     Fetch(Query),
+    /// Play a non-speech sound (decision D12; themed in milestone M11).
+    PlayEarcon(Earcon),
 }

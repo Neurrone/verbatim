@@ -31,6 +31,7 @@ fn speaks_test_through_wasapi() {
         trace_id: TraceId::mint(),
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text("test")],
+        source: None,
     });
 
     // Give synthesis and playback time to finish before the manager drops.

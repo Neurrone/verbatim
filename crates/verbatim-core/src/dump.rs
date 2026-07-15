@@ -230,8 +230,8 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 mod tests {
     use super::*;
     use verbatim_model::{
-        Backend, Input, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role, SnapshotVersion,
-        StateSet, TraceId,
+        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role,
+        SnapshotVersion, StateSet, TraceId,
     };
 
     fn sample_inputs() -> Vec<RecordedInput> {
@@ -250,6 +250,7 @@ mod tests {
                             name: Some("OK".to_owned()),
                             value: None,
                             states: StateSet::new(),
+                            details: NodeDetails::default(),
                         },
                     },
                 },

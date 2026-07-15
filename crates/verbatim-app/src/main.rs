@@ -239,6 +239,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         trace_id: TraceId::mint(),
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
+        source: None,
     });
     target_current_foreground(&supervisor, &outposts, &current_foreground);
 

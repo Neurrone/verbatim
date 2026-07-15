@@ -23,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::Interface;
 
-use verbatim_model::{Backend, NodeSnapshot, Role, TreeNode};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, TreeNode};
 
 use crate::com::{CHILDID_SELF, bstr_to_option, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
@@ -352,6 +352,7 @@ unsafe fn read_snapshot(
             name,
             value,
             states,
+            details: NodeDetails::default(),
         }
     }
 }

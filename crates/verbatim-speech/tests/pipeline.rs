@@ -153,6 +153,7 @@ fn utterance(text: &str, priority: SpeechPriority) -> Utterance {
         trace_id: TraceId::mint(),
         priority,
         segments: vec![UtteranceSegment::text(text)],
+        source: None,
     }
 }
 
@@ -320,6 +321,7 @@ fn renders_tokens_through_capture_synth() {
             UtteranceSegment::text("Settings"),
             UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
         ],
+        source: None,
     });
 
     let deadline = Instant::now() + STEP_TIMEOUT;

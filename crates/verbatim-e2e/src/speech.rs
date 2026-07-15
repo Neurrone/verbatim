@@ -138,8 +138,9 @@ impl SpeechCollector {
             matchers[next],
             self.timeline.render()
         );
-        let text = captured
-            .expect("advance_through returns the completing utterance once every matcher is satisfied");
+        let text = captured.expect(
+            "advance_through returns the completing utterance once every matcher is satisfied",
+        );
         self.wait_for_audio_finished();
         text
     }

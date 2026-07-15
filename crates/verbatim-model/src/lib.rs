@@ -14,12 +14,12 @@ mod speech;
 mod tree;
 
 pub use event::{
-    Effect, FetchResult, Input, NormalizedEvent, Pid, PropertyChange, Query, QueryId, QueryKind,
-    SnapshotVersion,
+    Earcon, Effect, FetchResult, Input, NormalizedEvent, Pid, PropertyChange, Query, QueryId,
+    QueryKind, SnapshotVersion,
 };
 pub use gesture::{GestureId, GestureParseError};
-pub use speech::{SegmentContent, SpeechPriority, Utterance, UtteranceSegment};
-pub use tree::{Backend, NodeSnapshot, Role, State, StateSet, TreeNode};
+pub use speech::{SegmentContent, SpeechPriority, Utterance, UtteranceSegment, UtteranceSource};
+pub use tree::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet, TreeNode};
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};

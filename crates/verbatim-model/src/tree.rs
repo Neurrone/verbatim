@@ -192,6 +192,51 @@ impl FromIterator<State> for StateSet {
     }
 }
 
+/// A node's bounding rectangle in screen coordinates, as Windows reports
+/// them: origin at the top-left of the primary monitor, y growing downward.
+///
+/// Carried on snapshots (inside [`NodeDetails`]) and on utterances (inside
+/// `UtteranceSource`) so presentation themes can position audio by where a
+/// control sits on screen (decision D12; milestone M11 consumes it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Rect {
+    /// Screen x of the left edge, in pixels.
+    pub left: i32,
+    /// Screen y of the top edge, in pixels.
+    pub top: i32,
+    /// Width in pixels.
+    pub width: i32,
+    /// Height in pixels.
+    pub height: i32,
+}
+
+/// The optional per-node properties beyond name, role, value, and states —
+/// grouped so [`NodeSnapshot`] literals name one field and so later
+/// milestones grow this struct instead of the snapshot itself.
+///
+/// Everything here defaults to "not reported": backends fill in what they
+/// can (UIA from cached properties, MSAA from its per-property calls), and
+/// absence never suppresses an announcement — the reducer simply says less.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeDetails {
+    /// Accessible description, when it adds information beyond the name
+    /// (UIA `FullDescription`/`HelpText`, MSAA `accDescription`).
+    pub description: Option<String>,
+    /// The keyboard shortcut the node advertises (UIA access and
+    /// accelerator keys, MSAA `accKeyboardShortcut`).
+    pub keyboard_shortcut: Option<String>,
+    /// One-based position within the containing set, when the backend
+    /// reports it (UIA `PositionInSet`; IA2 `groupPosition` later).
+    pub position_in_set: Option<u32>,
+    /// Size of the containing set, reported alongside
+    /// [`position_in_set`](Self::position_in_set).
+    pub set_size: Option<u32>,
+    /// One-based nesting level (tree items, headings), when reported.
+    pub level: Option<u32>,
+    /// Bounding rectangle in screen coordinates, when reported.
+    pub rect: Option<Rect>,
+}
+
 /// Everything the reducer needs to announce one node, captured in one place.
 ///
 /// Snapshots are produced by outposts (from cached backend properties, never
@@ -211,6 +256,11 @@ pub struct NodeSnapshot {
     pub value: Option<String>,
     /// Current states.
     pub states: StateSet,
+    /// The optional properties beyond the core four. `#[serde(default)]`
+    /// keeps snapshots recorded before this field existed (M2 flight
+    /// recorder dumps) deserializing unchanged.
+    #[serde(default)]
+    pub details: NodeDetails,
 }
 
 /// One node of a walked accessibility tree: a snapshot plus its children in
@@ -258,6 +308,7 @@ mod tests {
                 name: Some("OK".into()),
                 value: None,
                 states: StateSet::new(),
+                details: NodeDetails::default(),
             },
             children: Vec::new(),
         };
@@ -269,6 +320,7 @@ mod tests {
                 name: Some("Settings".into()),
                 value: None,
                 states: StateSet::new(),
+                details: NodeDetails::default(),
             },
             children: vec![leaf],
         };

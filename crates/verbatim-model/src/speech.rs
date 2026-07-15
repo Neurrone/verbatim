@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::TraceId;
-use crate::tree::{Role, State};
+use crate::tree::{Rect, Role, State};
 
 /// Priority lane for an utterance (architecture section 6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,12 +21,26 @@ pub enum SpeechPriority {
     Queued,
 }
 
-/// The content of one utterance segment.
+/// The content of one utterance segment: a semantic span, per decision D12.
+///
+/// Spans stay typed all the way to the presentation stage at the end of the
+/// speech pipeline, where a theme flattens them — to plain words in the
+/// default theme, or (milestone M11) to earcons and voice changes keyed by
+/// exactly these span kinds. The reducer never pre-flattens: a control's
+/// label travels as [`Label`](Self::Label), never as anonymous text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SegmentContent {
-    /// Literal text: a name, a value, typed characters.
+    /// Literal text with no more specific meaning: typed characters, a
+    /// spoken time, free-form message text.
     Text(String),
+    /// A control's accessible name or label.
+    Label(String),
+    /// A control's current value — slider position, combo selection.
+    Value(String),
+    /// A control's accessible description, when it adds information beyond
+    /// the label.
+    Description(String),
     /// A role, rendered to its localized spoken name.
     Role(Role),
     /// A state, rendered to its localized spoken name.
@@ -34,6 +48,16 @@ pub enum SegmentContent {
     /// The absence of a state that is worth announcing, rendered to its
     /// localized negative form — "not checked" for an unchecked check box.
     NegatedState(State),
+    /// Position within a set — "2 of 5" — from the node's reported
+    /// position-in-set and set-size details.
+    Position {
+        /// One-based position within the set.
+        position: u32,
+        /// Set size, when reported; a position can arrive without one.
+        set_size: Option<u32>,
+    },
+    /// One-based nesting level (tree items, headings).
+    Level(u32),
 }
 
 /// One segment of an utterance, with an optional language override.
@@ -61,6 +85,33 @@ impl UtteranceSegment {
     pub fn text(text: impl Into<String>) -> Self {
         Self::new(SegmentContent::Text(text.into()))
     }
+
+    /// A label segment in the utterance's default language.
+    #[must_use]
+    pub fn label(text: impl Into<String>) -> Self {
+        Self::new(SegmentContent::Label(text.into()))
+    }
+
+    /// A value segment in the utterance's default language.
+    #[must_use]
+    pub fn value(text: impl Into<String>) -> Self {
+        Self::new(SegmentContent::Value(text.into()))
+    }
+}
+
+/// The node an utterance describes, carried alongside its segments.
+///
+/// This exists for presentation themes (decision D12): an earcon theme keys
+/// sounds off the source node's role, and a positional-audio theme (milestone
+/// M11, in the audio-themes add-on tradition) pans them by its screen
+/// rectangle. Core-originated speech with no source node — the startup
+/// announcement, the spoken time — carries none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UtteranceSource {
+    /// The described node's role.
+    pub role: Role,
+    /// Its bounding rectangle in screen coordinates, when reported.
+    pub rect: Option<Rect>,
 }
 
 /// A structured utterance flowing from the reducer into the speech pipeline.
@@ -72,6 +123,11 @@ pub struct Utterance {
     pub priority: SpeechPriority,
     /// Segments, spoken in order.
     pub segments: Vec<UtteranceSegment>,
+    /// The node this utterance describes, when there is one, for
+    /// presentation themes. `#[serde(default)]` keeps utterances recorded
+    /// before this field existed deserializing unchanged.
+    #[serde(default)]
+    pub source: Option<UtteranceSource>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! [`snapshot_from_cached_element`] reads only cached values, so it never makes
 //! a cross-process call and is safe to run on a UIA event-callback thread.
 
-use verbatim_model::{Backend, NodeSnapshot, Role, State, StateSet};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded, IUIAutomationElement,
     ToggleState_Indeterminate, ToggleState_On, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
@@ -242,6 +242,7 @@ pub unsafe fn snapshot_from_cached_element(
             name: cached_string(element, UIA_NamePropertyId.0),
             value: cached_string(element, UIA_ValueValuePropertyId.0),
             states: states_from_cached(element),
+            details: NodeDetails::default(),
         }
     }
 }

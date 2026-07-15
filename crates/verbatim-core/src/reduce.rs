@@ -117,6 +117,7 @@ fn reduce_value_changed(
         trace_id,
         priority: SpeechPriority::Interrupt,
         segments: vec![UtteranceSegment::text(text)],
+        source: None,
     })]
 }
 
@@ -191,6 +192,7 @@ fn reduce_states_changed(
         trace_id,
         priority: SpeechPriority::Interrupt,
         segments,
+        source: None,
     })]
 }
 
@@ -284,6 +286,7 @@ fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapsho
         trace_id,
         priority,
         segments,
+        source: None,
     }
 }
 

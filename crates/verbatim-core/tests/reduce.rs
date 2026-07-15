@@ -4,7 +4,7 @@
 
 use verbatim_core::{ReducerRecorder, SrState, reduce, replay};
 use verbatim_model::{
-    Backend, Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Pid,
+    Backend, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid,
     PropertyChange, Query, QueryId, QueryKind, Role, SegmentContent, SnapshotVersion,
     SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
 };
@@ -23,6 +23,7 @@ fn node(
         name: name.map(str::to_string),
         value: value.map(str::to_string),
         states,
+        details: NodeDetails::default(),
     }
 }
 
@@ -280,6 +281,7 @@ fn property_changed_name_on_focused_node_updates_silently() {
         name: Some("Old name".to_string()),
         value: None,
         states: StateSet::new(),
+        details: NodeDetails::default(),
     };
     let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 1, focused));
 
@@ -470,6 +472,7 @@ fn focused_static_text() -> (SrState, Pid, NodeId, NodeSnapshot) {
         name: Some("Status".to_string()),
         value: Some("Ready".to_string()),
         states: StateSet::new(),
+        details: NodeDetails::default(),
     };
     let (state, _) = reduce(
         &SrState::new(),

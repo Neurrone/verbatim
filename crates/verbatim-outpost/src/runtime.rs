@@ -34,8 +34,8 @@ use verbatim_ia2::{
     CHILDID_SELF, NodeIdRegistry as MsaaRegistry, WinEventCallback, WinEventHook, WinEventKind,
 };
 use verbatim_model::{
-    Backend, HIDDEN_FRAME_WINDOW_PROP, NodeSnapshot, NormalizedEvent, Pid, PropertyChange,
-    SnapshotVersion, TraceId,
+    Backend, HIDDEN_FRAME_WINDOW_PROP, NodeDetails, NodeSnapshot, NormalizedEvent, Pid,
+    PropertyChange, SnapshotVersion, TraceId,
 };
 use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
 use verbatim_uia::{
@@ -889,6 +889,7 @@ fn msaa_window_snapshot(hwnd: isize, registry: &MsaaRegistry) -> Option<NodeSnap
         name,
         value,
         states,
+        details: NodeDetails::default(),
     })
 }
 

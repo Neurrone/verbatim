@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use verbatim_core::{RecordedInput, SrState, dump, reduce, replay};
 use verbatim_model::{
-    Backend, Input, NodeId, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, Role,
+    Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, Role,
     SnapshotVersion, State, StateSet, TraceId,
 };
 
@@ -33,6 +33,7 @@ fn scripted_inputs() -> Vec<Input> {
         name: Some("Rate".to_owned()),
         value: Some("50".to_owned()),
         states: StateSet::new(),
+        details: NodeDetails::default(),
     };
     vec![
         Input::Event {

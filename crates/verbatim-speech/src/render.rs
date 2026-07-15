@@ -77,6 +77,7 @@ mod tests {
                 UtteranceSegment::text("Settings"),
                 UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
             ],
+            source: None,
         };
         let request = render_utterance(&utterance);
         assert_eq!(request.text, "Settings menu item");
@@ -94,6 +95,7 @@ mod tests {
                 UtteranceSegment::new(SegmentContent::State(State::Focused)),
                 UtteranceSegment::new(SegmentContent::NegatedState(State::Checked)),
             ],
+            source: None,
         };
         let request = render_utterance(&utterance);
         assert_eq!(request.text, "Bold not checked");
@@ -107,6 +109,7 @@ mod tests {
             trace_id: TraceId::mint(),
             priority: SpeechPriority::Queued,
             segments: vec![segment],
+            source: None,
         };
         let request = render_utterance(&utterance);
         assert_eq!(request.language.as_deref(), Some("es"));

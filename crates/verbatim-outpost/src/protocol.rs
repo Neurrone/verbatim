@@ -180,7 +180,7 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verbatim_model::{NodeId, NodeSnapshot, Role, State, StateSet};
+    use verbatim_model::{NodeDetails, NodeId, NodeSnapshot, Role, State, StateSet};
 
     #[test]
     fn messages_round_trip_over_a_byte_stream() {
@@ -197,6 +197,7 @@ mod tests {
                     name: Some("Settings...".into()),
                     value: None,
                     states: StateSet::new().with(State::Focused),
+                    details: NodeDetails::default(),
                 },
             },
         };
@@ -253,6 +254,7 @@ mod tests {
                         name: Some("Verbatim".into()),
                         value: None,
                         states: StateSet::new(),
+                        details: NodeDetails::default(),
                     },
                     children: Vec::new(),
                 },

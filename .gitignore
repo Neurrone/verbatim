@@ -4,3 +4,5 @@
 /vm/local.pkrvars.hcl
 /.env
 /dumps/
+/packer_cache/
+/.claude/
