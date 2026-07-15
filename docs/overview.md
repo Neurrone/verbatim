@@ -409,7 +409,8 @@ scopes lint allowances to generated code only.
 ## verbatim-ia2
 
 The minimal MSAA client (IA2 interface acquisition is an explicit seam
-left for M3).
+left for M6, landing with the browsers that motivate it; M3's backend
+parity work covers MSAA and UIA only).
 
 Public API:
 

@@ -273,7 +273,8 @@ M13) for Java applications.
   then the IA2 text, hypertext, and relation interfaces as needed
   (`nvda/include/ia2` vendors the IDL). The IA2 proxy/stub (marshaling)
   story from Rust — registered or reg-free — is settled during the first
-  IA2 implementation work.
+  IA2 implementation work, which lands with the browsers in M6; before
+  then MSAA-only apps are read through plain MSAA.
 - **Cost model**: unlike UIA there are no cache requests and no remote ops;
   every property is a cross-process COM round trip. Mitigations, in order:
   fetch discipline (only what the reducer asked for), aggressive outpost-side

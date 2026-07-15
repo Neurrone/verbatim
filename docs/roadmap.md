@@ -198,6 +198,10 @@ and the D9 outpost generalization — were finished early, at the end of M2
   speech pipeline flattens spans to text through a default theme. This is
   what later makes M11's earcons and voice styling a theme swap rather
   than a rewrite; the `PlayEarcon` effect already exists in the model.
+  Utterances also carry optional source-node metadata — role and bounding
+  rectangle — so M11 positional audio themes (the audio-themes add-on
+  family plays role sounds panned by the object's on-screen position)
+  have their data without a pipeline change.
 - Announce a focused list's selected item. Focus landing on a list currently
   speaks only the list's own name and role; the selected entry is not
   spoken, which is not how a screen reader should read a category list or a
@@ -209,7 +213,51 @@ and the D9 outpost generalization — were finished early, at the end of M2
   inflate: navigate to parent, next and previous sibling, and first child;
   report the current object; the review cursor follows focus, with a
   command to return it to focus; navigate through the review cursor to read text; activate the current object. Enough to
-  reach everything the tab order cannot.
+  reach everything the tab order cannot. Gestures are NVDA's, with the
+  Verbatim modifier in NVDA's place. The active layout is a proper global
+  setting from the start: a `keyboard` section in `settings.toml` whose
+  `layout` is either `desktop` (the default) or `laptop` — exposed only in
+  the file in M3; its GUI surface arrives with M8's gesture-remapping
+  work. Deliberately excluded: NVDA's simple review mode (Verbatim's
+  review cursor always sees the full tree) and review-mode switching,
+  which arrives with screen review in M6.
+
+  The object-navigation bindings, desktop then laptop:
+
+  - Report current object: Verbatim+numpad5, Verbatim+shift+o, with
+    NVDA's full press semantics: once reports it, twice spells it, three
+    times copies its name and value to the clipboard. M3's spelling
+    speaks bare characters; punctuation names and character descriptions
+    arrive with M4's character table, and configurable symbol handling
+    with M8.
+  - Move to parent: Verbatim+numpad8, Verbatim+shift+upArrow.
+  - Move to next sibling: Verbatim+numpad6, Verbatim+shift+rightArrow.
+  - Move to previous sibling: Verbatim+numpad4, Verbatim+shift+leftArrow.
+  - Move to first child: Verbatim+numpad2, Verbatim+shift+downArrow.
+  - Move review cursor back to focus: Verbatim+numpadMinus,
+    Verbatim+backspace.
+  - Activate current object: Verbatim+numpadEnter, Verbatim+enter.
+
+  The review-cursor text-reading bindings, desktop then laptop:
+
+  - Top of review area: shift+numpad7, Verbatim+control+home.
+  - Previous line: numpad7, Verbatim+upArrow.
+  - Current line: numpad8, Verbatim+shift+period.
+  - Next line: numpad9, Verbatim+downArrow.
+  - Previous word: numpad4, Verbatim+control+leftArrow.
+  - Current word: numpad5, Verbatim+control+period.
+  - Next word: numpad6, Verbatim+control+rightArrow.
+  - Start of line: shift+numpad1, Verbatim+home.
+  - Previous character: numpad1, Verbatim+leftArrow.
+  - Current character: numpad2, Verbatim+period.
+  - Next character: numpad3, Verbatim+rightArrow.
+  - End of line: shift+numpad3, Verbatim+end.
+  - Bottom of review area: shift+numpad9, Verbatim+control+end.
+
+  Also excluded from M3, beyond simple review: NVDA's review-mode
+  next/previous (Verbatim+numpad7 and Verbatim+numpad1 — document and
+  screen review land in M6), move focus to navigator object
+  (Verbatim+shift+numpadMinus), say-all (M4), and the mouse commands.
 - Windows shell support expressed as generic core policy, not per-app
   patches. NVDA's live Windows 11 Explorer fixes reduce almost entirely to
   capabilities Verbatim needs anyway: window-classification arbitration
@@ -225,19 +273,37 @@ and the D9 outpost generalization — were finished early, at the end of M2
   and inexpressible as generic policy, the fix is pulling a minimal
   extension host forward from M5, not a built-in quirk layer.
 - Time and date command: Verbatim+F12 speaks the time, twice quickly for
-  the date. A system tray and taskbar icons list (the function of NVDA's
-  systrayList add-on): a Verbatim-owned dialog listing tray and taskbar
-  items, Enter to click, a context-menu action for right-click, built on
-  the existing UIA client over the shell windows. The list dialog is a
-  reusable component — M6's elements list presents through the same one.
-  Both are core features.
+  the date. A system tray and taskbar icons list replicating the
+  systrayList NVDA add-on exactly, including its GUI: Verbatim+F11 opens
+  the system tray list, pressed twice quickly the taskbar list; the dialog
+  is a label over a single-selection list box of item names with four
+  buttons — Left Click, Left Double Click, Right Click, and Cancel — where
+  each click action moves the pointer to the center of the selected item's
+  screen rectangle and injects the matching mouse events. Enumeration goes
+  through the existing UIA client over the shell windows, not the add-on's
+  per-Windows-build window-class walks, which predate usable UIA there.
+  The list dialog is a reusable component — M6's elements list presents
+  through the same one. Both are core features.
 - Latency budget enforcement starts here: the pipeline budget via the
   capture synthesizer (deterministic, measures everything except
   synthesis), plus an end-to-end OneCore smoke number with a looser
   threshold. The eSpeak reference budget takes over when eSpeak lands
-  in M8.
+  in M8. The OneCore smoke number is contingent on first root-causing the
+  known audible-path anomaly (in an audible E2E run no utterance ever
+  records an audio start, even with settle pauses of several seconds —
+  see the M1 exit regression's module doc), which reads as a defect in
+  the OneCore-to-WASAPI path or its instrumentation, not slowness; if
+  OneCore then proves too variable for any stable threshold, its smoke
+  check waits for eSpeak.
+- Generic backend parity with NVDA, scoped to MSAA and UIA only: object
+  presentation on focus (property order, spoken and negated state sets,
+  description, positional info), the WinEvent and UIA event sets with
+  NVDA's acceptance filtering, and the arbitration class lists. IA2
+  interface acquisition (the `QueryService` seam left in `verbatim-ia2`)
+  is deliberately deferred to M6, where the browsers that motivate it
+  land; until then MSAA-only apps are read through plain MSAA.
 - E2E scenarios: Explorer, Settings, Start menu, task switching, at least
-  one MSAA/IA2-only legacy app;
+  one MSAA-only legacy app;
 
 - Cleanup / improvement of the E2e: currently everything runs together in one recording but this won't be feasible once we have more, we need to be able to group them and run all of them, or only a subset. Each recording should only cover one scenario for ease of debugging, scenarios should have before and after commands for setting up and teardown of state (e.g, open / close notepad)
 - Deferred to M8: eSpeak NG, input help mode, and the configuration
@@ -294,6 +360,13 @@ continuously alongside every later milestone.
 - Document projection / incremental virtual buffer over the normalized tree;
   quick-nav keys, elements list (presented through the M3 list dialog),
   switching between focus and browse modes.
+- IA2 lands here, deferred from M3 because browsers are what motivate it:
+  interface acquisition (`IServiceProvider::QueryService` from the
+  WinEvent's `IAccessible` to `IAccessible2` and the IA2 text, hypertext,
+  and relation interfaces), the proxy/stub marshaling story from Rust, and
+  IA2 roles and states preferred over MSAA in the normalized mapping.
+  `mockapp`'s MSAA mode grows an IA2 answering path so the client stack is
+  testable cross-process without a browser.
 - Firefox and Chromium (Edge/Chrome) via IA2 as the primary source, with a
   UIA comparison where relevant.
 - The D2 injection helper lands here, staged inside the milestone:
