@@ -61,6 +61,33 @@ impl Default for VerbatimKeys {
     }
 }
 
+/// Which keyboard layout's gesture bindings are active — NVDA's desktop
+/// (numpad-based) and laptop (no numpad assumed, shift/control chords on the
+/// main key block instead) layouts. `verbatim-input`'s `bindings_for` reads
+/// this to choose a binding table; that crate redeclares its own layout
+/// enum to stay decoupled from configuration, the same pattern `VerbatimKeys`
+/// and `DecisionConfig` already follow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyboardLayout {
+    /// The numpad-based layout, and the default.
+    #[default]
+    Desktop,
+    /// The layout for keyboards without a numpad.
+    Laptop,
+}
+
+/// Keyboard configuration within `settings.toml`. Global, like
+/// [`VerbatimKeys`]: [`Profile`] has no field for it, so no profile can
+/// override the active layout. Exposed only in the file for M3; a GUI
+/// choice arrives with M8's gesture-remapping work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeyboardConfig {
+    /// The active gesture-binding layout.
+    pub layout: KeyboardLayout,
+}
+
 /// The speech rate the E2E suite runs at, on every synthesizer's shared
 /// `0..=100` numeric scale. Deliberately brisk so a recorded run is quick to
 /// review; applied uniformly by [`Settings::for_e2e`] so the VM (`OneCore`)
@@ -133,6 +160,8 @@ pub struct Settings {
     pub log_filter: Option<String>,
     /// The Verbatim modifier keys. Global.
     pub verbatim_keys: VerbatimKeys,
+    /// The active keyboard layout. Global.
+    pub keyboard: KeyboardConfig,
     /// The base profile's speech configuration; named profiles override it
     /// per setting.
     pub speech: SpeechConfig,
@@ -446,6 +475,34 @@ mod tests {
             "locale = \"de\"\n[verbatim_keys]\ncaps_lock = false\n[speech]\nsynthesizer = \"onecore\"\n",
         )
         .expect("parses, ignoring global keys");
+        assert_eq!(profile.speech.synthesizer.as_deref(), Some("onecore"));
+    }
+
+    #[test]
+    fn keyboard_layout_defaults_to_desktop() {
+        assert_eq!(Settings::default().keyboard.layout, KeyboardLayout::Desktop);
+    }
+
+    #[test]
+    fn keyboard_layout_round_trips_through_toml() {
+        let root = temp_root("keyboard-roundtrip");
+        let mut store = ConfigStore::load(&root).expect("loads");
+        store.settings_mut().keyboard.layout = KeyboardLayout::Laptop;
+        store.save_settings().expect("saves settings");
+
+        let reloaded = ConfigStore::load(&root).expect("reloads");
+        assert_eq!(reloaded.settings().keyboard.layout, KeyboardLayout::Laptop);
+    }
+
+    #[test]
+    fn a_profile_file_cannot_carry_a_keyboard_section() {
+        // Unknown sections in a profile are ignored by the schema, so a
+        // profile cannot smuggle in a keyboard layout override; Profile has
+        // no field for it at all.
+        let profile: Profile = toml::from_str(
+            "[keyboard]\nlayout = \"laptop\"\n[speech]\nsynthesizer = \"onecore\"\n",
+        )
+        .expect("parses, ignoring the keyboard section");
         assert_eq!(profile.speech.synthesizer.as_deref(), Some("onecore"));
     }
 
