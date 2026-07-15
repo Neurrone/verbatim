@@ -174,6 +174,14 @@ pub fn cycle_index(current: usize, len: usize, forward: bool) -> usize {
     }
 }
 
+/// The list selection a freshly opened list dialog starts with: the first
+/// item when the list is non-empty, so keyboard users land on a selected
+/// item rather than an unselected list (mirroring NVDA's systrayList).
+#[must_use]
+pub fn initial_list_selection(item_count: usize) -> Option<usize> {
+    (item_count > 0).then_some(0)
+}
+
 /// The singleton guard for the modeless settings dialog.
 ///
 /// A second request to open settings must focus the existing window rather
@@ -351,6 +359,17 @@ mod tests {
             cycle_index(5, 1, true),
             0,
             "a single category maps to itself"
+        );
+    }
+
+    #[test]
+    fn list_selection_starts_on_the_first_item() {
+        assert_eq!(initial_list_selection(3), Some(0));
+        assert_eq!(initial_list_selection(1), Some(0));
+        assert_eq!(
+            initial_list_selection(0),
+            None,
+            "an empty list has nothing to select"
         );
     }
 

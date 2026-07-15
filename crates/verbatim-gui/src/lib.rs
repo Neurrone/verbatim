@@ -19,6 +19,7 @@
 mod dialog;
 mod foreground;
 mod hidden_frame;
+pub mod list_dialog;
 mod plan;
 
 use std::cell::RefCell;
