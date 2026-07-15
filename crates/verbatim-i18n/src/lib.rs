@@ -51,6 +51,13 @@ pub fn new_loader() -> FluentLanguageLoader {
     loader
         .load_fallback_language(&EmbeddedLocalizations)
         .expect("embedded English localization must load");
+    // Fluent wraps interpolated arguments in Unicode bidi isolation marks
+    // (U+2068 and U+2069) by default, which protects visual rendering of
+    // mixed-direction text. Verbatim's Fluent output is primarily *spoken*:
+    // invisible marks embedded in speech text would leak into dictionary
+    // and symbol processing, character navigation, and braille, so they are
+    // disabled globally.
+    loader.set_use_isolating(false);
     loader
 }
 
@@ -356,6 +363,26 @@ pub fn negated_state_name(state: verbatim_model::State) -> Option<String> {
     })
 }
 
+/// The localized "2 of 5" phrase for a position within a set.
+///
+/// Both numbers pass as pre-rendered strings, not Fluent numbers, so no
+/// locale applies digit grouping to what is an ordinal position.
+#[must_use]
+pub fn position_in_set(position: u32, set_size: u32) -> String {
+    i18n_embed_fl::fl!(
+        loader(),
+        "object-position-in-set",
+        position = position.to_string(),
+        set_size = set_size.to_string()
+    )
+}
+
+/// The localized "level 3" phrase for a nesting level.
+#[must_use]
+pub fn level(level: u32) -> String {
+    i18n_embed_fl::fl!(loader(), "object-level", level = level.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,8 +503,15 @@ mod tests {
         assert_eq!(state_name(verbatim_model::State::Focused), None);
         assert_eq!(
             messages::settings_title_with_category("Speech"),
-            "Verbatim Settings: \u{2068}Speech\u{2069}",
-            "fluent isolates arguments with directional isolate marks"
+            "Verbatim Settings: Speech",
+            "no bidi isolation marks: the loader disables Fluent's argument \
+             isolation because this output is primarily spoken (see new_loader)"
         );
+    }
+
+    #[test]
+    fn object_detail_phrases_resolve_without_isolation_marks() {
+        assert_eq!(position_in_set(2, 5), "2 of 5");
+        assert_eq!(level(3), "level 3");
     }
 }

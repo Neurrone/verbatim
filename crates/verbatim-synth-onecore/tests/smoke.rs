@@ -24,6 +24,7 @@ fn speaks_test_through_wasapi() {
         initial_settings: Vec::new(),
         sink: Box::new(WasapiSink::new()),
         events: None,
+        theme: None,
     })
     .expect("OneCore pipeline starts");
 

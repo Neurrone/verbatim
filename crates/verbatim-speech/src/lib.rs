@@ -13,16 +13,16 @@ mod events;
 mod host;
 mod manager;
 mod registry;
-mod render;
 mod settings;
+mod theme;
 
 pub use driver::{IndexMark, RequestMark, SpeechRequest, SynthDriver, SynthError, SynthSink};
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};
 pub use manager::{SpeechManager, SpeechManagerConfig};
 pub use registry::{SynthFactory, SynthRegistry};
-pub use render::render_utterance;
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
+pub use theme::{PlainTheme, Theme};
 
 /// The live handle the settings GUI uses to inspect and adjust speech.
 ///

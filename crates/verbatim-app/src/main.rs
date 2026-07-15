@@ -350,6 +350,7 @@ fn build_speech_manager(
         initial_settings,
         sink,
         events: Some(Arc::clone(ledger) as Arc<dyn verbatim_speech::SpeechEvents>),
+        theme: None,
     })?))
 }
 

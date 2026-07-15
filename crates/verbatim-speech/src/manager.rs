@@ -29,8 +29,8 @@ use verbatim_model::{TraceId, Utterance};
 use crate::driver::{IndexMark, SpeechRequest, SynthDriver, SynthError, SynthSink};
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
-use crate::render::render_utterance;
 use crate::settings::{SettingId, SettingValue, SynthChoice, SynthId};
+use crate::theme::{PlainTheme, Theme};
 
 /// The current settings snapshot of the active driver, returned when the
 /// manager builds or switches drivers so the settings host can mirror it.
@@ -80,6 +80,9 @@ pub struct SpeechManagerConfig {
     pub sink: Box<dyn AudioSink>,
     /// Optional observer for the queue and audio-start milestones.
     pub events: Option<Arc<dyn SpeechEvents>>,
+    /// The presentation theme flattening utterances (decision D12);
+    /// `None` selects [`PlainTheme`], plain speech.
+    pub theme: Option<Box<dyn Theme>>,
 }
 
 /// Commands the queue thread accepts, from the manager, the settings host, and
@@ -151,7 +154,9 @@ impl SpeechManager {
             initial_settings,
             sink,
             events,
+            theme,
         } = config;
+        let theme = theme.unwrap_or_else(|| Box::new(PlainTheme));
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (queue_tx, queue_rx) = unbounded::<QueueEvent>();
@@ -208,7 +213,7 @@ impl SpeechManager {
             std::thread::Builder::new()
                 .name("verbatim-speech-queue".to_owned())
                 .spawn(move || {
-                    queue_thread(queue_rx, synth_tx, cancel, events);
+                    queue_thread(queue_rx, synth_tx, cancel, events, theme);
                 })
                 .map_err(|error| {
                     SynthError::Unavailable(format!("failed to start queue thread: {error}"))
@@ -270,6 +275,7 @@ fn queue_thread(
     synth_tx: Sender<SynthCommand>,
     cancel: Arc<AtomicBool>,
     events: Option<Arc<dyn SpeechEvents>>,
+    theme: Box<dyn Theme>,
 ) {
     let mut next_lane: VecDeque<SpeechRequest> = VecDeque::new();
     let mut queued_lane: VecDeque<SpeechRequest> = VecDeque::new();
@@ -294,7 +300,7 @@ fn queue_thread(
         match event {
             QueueEvent::Speak(utterance) => {
                 let priority = utterance.priority;
-                let request = render_utterance(&utterance);
+                let request = theme.flatten(&utterance);
                 let at = Instant::now();
                 if let Some(observer) = &events {
                     observer.utterance_queued(request.trace_id, &request.text, at);

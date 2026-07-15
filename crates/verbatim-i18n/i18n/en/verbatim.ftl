@@ -84,3 +84,8 @@ state-pressed = pressed
 state-has-popup = submenu
 state-default = default
 state-busy = busy
+
+## Spoken object details.
+
+object-position-in-set = { $position } of { $set_size }
+object-level = level { $level }

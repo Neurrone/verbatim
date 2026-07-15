@@ -191,6 +191,7 @@ fn control_manager() -> ControlHarness {
         initial_settings: Vec::new(),
         sink: Box::new(sink.clone()),
         events: None,
+        theme: None,
     })
     .expect("pipeline starts");
 
@@ -311,6 +312,7 @@ fn renders_tokens_through_capture_synth() {
         initial_settings: Vec::new(),
         sink: Box::new(RecordingSink::default()),
         events: None,
+        theme: None,
     })
     .expect("pipeline starts");
 
@@ -352,6 +354,7 @@ fn settings_host_get_set_commit_revert() {
         initial_settings: Vec::new(),
         sink: Box::new(RecordingSink::default()),
         events: None,
+        theme: None,
     })
     .expect("pipeline starts");
 
