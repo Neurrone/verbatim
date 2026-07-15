@@ -28,6 +28,24 @@ struct Expected {
     child_count: usize,
 }
 
+/// The nodes whose fixture carries the detail properties plain MSAA can
+/// express — `accDescription` and `accKeyboardShortcut` — keyed by name
+/// like [`expected_tree`]. Every node absent from this map must read back
+/// neither (an `S_FALSE` failure, the MSAA convention for "not supported",
+/// which `bstr_to_option`-style handling maps to `None`). The fixture's
+/// `position_in_set`, `set_size`, and `level` never appear on this backend
+/// at all: plain MSAA has no accessor for them (IA2's `groupPosition` is
+/// the M6 source), so there is nothing to assert about them here.
+fn expected_details() -> HashMap<&'static str, (Option<&'static str>, Option<&'static str>)> {
+    HashMap::from([(
+        "OK",
+        (
+            Some("Applies the changes and closes the dialog"),
+            Some("Alt+O"),
+        ),
+    )])
+}
+
 #[allow(clippy::too_many_lines)]
 fn expected_tree() -> HashMap<&'static str, Expected> {
     HashMap::from([
@@ -298,7 +316,12 @@ fn root_accessible(hwnd: windows::Win32::Foundation::HWND) -> IAccessible {
     acc.expect("AccessibleObjectFromWindow returned no object")
 }
 
-fn walk(acc: &IAccessible, expected: &HashMap<&str, Expected>, visited: &mut usize) {
+fn walk(
+    acc: &IAccessible,
+    expected: &HashMap<&str, Expected>,
+    details: &HashMap<&str, (Option<&'static str>, Option<&'static str>)>,
+    visited: &mut usize,
+) {
     let self_var = self_variant();
     // SAFETY: `acc` is a live IAccessible; `self_var` is CHILDID_SELF.
     let name = unsafe { acc.get_accName(&self_var) }
@@ -343,6 +366,31 @@ fn walk(acc: &IAccessible, expected: &HashMap<&str, Expected>, visited: &mut usi
         );
     }
 
+    // Details: the same accDescription and accKeyboardShortcut reads
+    // verbatim-ia2's acquisition makes; nodes outside the details map must
+    // read back neither (an S_FALSE failure, mapped to None here).
+    // SAFETY: `acc` is live; `self_var` is CHILDID_SELF.
+    let description = unsafe { acc.get_accDescription(&self_var) }
+        .ok()
+        .map(|b| b.to_string())
+        .filter(|s| !s.is_empty());
+    let shortcut = unsafe { acc.get_accKeyboardShortcut(&self_var) }
+        .ok()
+        .map(|b| b.to_string())
+        .filter(|s| !s.is_empty());
+    let (expected_description, expected_shortcut) =
+        details.get(name.as_str()).copied().unwrap_or((None, None));
+    assert_eq!(
+        description.as_deref(),
+        expected_description,
+        "description mismatch for {name:?}"
+    );
+    assert_eq!(
+        shortcut.as_deref(),
+        expected_shortcut,
+        "keyboard shortcut mismatch for {name:?}"
+    );
+
     // SAFETY: `acc` is live.
     let count = unsafe { acc.accChildCount() }.unwrap_or(0);
     assert_eq!(
@@ -355,7 +403,7 @@ fn walk(acc: &IAccessible, expected: &HashMap<&str, Expected>, visited: &mut usi
         // `accChildCount`'s range.
         let dispatch = unsafe { acc.get_accChild(&child_variant(i)) }.expect("get_accChild");
         let child: IAccessible = dispatch.cast().expect("child is an IAccessible");
-        walk(&child, expected, visited);
+        walk(&child, expected, details, visited);
     }
 }
 
@@ -368,8 +416,9 @@ fn msaa_client_reads_the_scripted_tree() {
 
     let root = root_accessible(hwnd);
     let expected = expected_tree();
+    let details = expected_details();
     let mut visited = 0;
-    walk(&root, &expected, &mut visited);
+    walk(&root, &expected, &details, &mut visited);
 
     assert_eq!(
         visited,

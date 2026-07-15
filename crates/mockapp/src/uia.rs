@@ -17,15 +17,17 @@
 use verbatim_model::Role;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IRawElementProviderSimple, UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId,
-    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_EditControlTypeId,
-    UIA_GroupControlTypeId, UIA_HyperlinkControlTypeId, UIA_ListControlTypeId,
-    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
-    UIA_RadioButtonControlTypeId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
+    IRawElementProviderSimple, NotificationKind_Other, NotificationProcessing_All,
+    UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    UIA_ComboBoxControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
+    UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
     UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_ValueValuePropertyId,
     UIA_WindowControlTypeId, UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent,
+    UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -62,6 +64,12 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
                 raise_property_changed(tree, hwnd, index, UIA_ValueValuePropertyId);
             }
         }
+        Command::Select(id) => {
+            if let Some(index) = select_node(tree, &id) {
+                raise_selection(tree, hwnd, index);
+            }
+        }
+        Command::Notify(text) => raise_notification(tree, hwnd, &text),
         Command::Quit => {}
     }
 }
@@ -100,6 +108,24 @@ fn set_value(tree: &SharedTree, id: &str, text: String) -> Option<usize> {
     Some(index)
 }
 
+/// Marks the node selected, moving the `Selected` state off any previously
+/// selected node — the single-selection model `select` scripts.
+fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
+    let mut guard = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let index = guard.index_of(id)?;
+    if let Some(previous) = guard.selected.replace(index) {
+        guard.nodes[previous]
+            .states
+            .remove(verbatim_model::State::Selected);
+    }
+    guard.nodes[index]
+        .states
+        .insert(verbatim_model::State::Selected);
+    Some(index)
+}
+
 fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) {
     let fragment = props::provider_for(tree.clone(), hwnd, index);
     // `IRawElementProviderFragment` and `IRawElementProviderSimple` are
@@ -112,6 +138,41 @@ fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) {
     // SAFETY: `provider` is a live COM object for the just-updated node.
     unsafe {
         let _ = UiaRaiseAutomationEvent(&provider, UIA_AutomationFocusChangedEventId);
+    }
+}
+
+fn raise_selection(tree: &SharedTree, hwnd: HWND, index: usize) {
+    let fragment = props::provider_for(tree.clone(), hwnd, index);
+    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
+        return;
+    };
+    // SAFETY: `provider` is a live COM object for the just-selected node.
+    unsafe {
+        let _ = UiaRaiseAutomationEvent(&provider, UIA_SelectionItem_ElementSelectedEventId);
+    }
+}
+
+/// Raises a UIA `AutomationNotification` from the root provider, carrying
+/// `text` as the display string and a fixed mockapp activity id. Kind and
+/// processing are `Other` and `All` — the values a generic app-initiated
+/// announcement (a snap-layout hint, say) would use.
+fn raise_notification(tree: &SharedTree, hwnd: HWND, text: &str) {
+    let fragment = props::provider_for(tree.clone(), hwnd, 0);
+    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
+        return;
+    };
+    let display = windows_core::BSTR::from(text);
+    let activity = windows_core::BSTR::from("mockapp-notify");
+    // SAFETY: `provider` is a live COM object for the root; the BSTRs live
+    // across the call.
+    unsafe {
+        let _ = UiaRaiseNotificationEvent(
+            &provider,
+            NotificationKind_Other,
+            NotificationProcessing_All,
+            &display,
+            &activity,
+        );
     }
 }
 
@@ -184,12 +245,14 @@ mod props {
         IRawElementProviderFragment, IRawElementProviderSimple, NavigateDirection,
         NavigateDirection_FirstChild, NavigateDirection_LastChild, NavigateDirection_NextSibling,
         NavigateDirection_Parent, NavigateDirection_PreviousSibling, ToggleState,
-        ToggleState_Indeterminate, ToggleState_On, UIA_ControlTypePropertyId,
-        UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_HasKeyboardFocusPropertyId,
-        UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
-        UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId,
-        UIA_IsTogglePatternAvailablePropertyId, UIA_NamePropertyId,
-        UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_ProcessIdPropertyId,
+        ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
+        UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
+        UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
+        UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
+        UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
+        UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
+        UIA_ProcessIdPropertyId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
         UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId, UiaAppendRuntimeId,
         UiaHostProviderFromHwnd,
     };
@@ -280,6 +343,13 @@ mod props {
         states.contains(State::Expanded) || states.contains(State::Collapsed)
     }
 
+    /// Whether `states` reports `SelectionItemPattern` availability. Driven
+    /// by the fixture's `selectable` (or already-`selected`) states, like
+    /// [`expand_available`].
+    pub(super) fn selection_available(states: verbatim_model::StateSet) -> bool {
+        states.contains(State::Selectable) || states.contains(State::Selected)
+    }
+
     pub(super) fn get_property_value(
         tree: &SharedTree,
         hwnd: HWND,
@@ -325,9 +395,37 @@ mod props {
             bool_variant(expand_available(node.states))
         } else if id == UIA_ExpandCollapseExpandCollapseStatePropertyId.0 {
             i32_variant(expand_collapse_state_value(node.states).0)
+        } else if id == UIA_IsSelectionItemPatternAvailablePropertyId.0 {
+            bool_variant(selection_available(node.states))
+        } else if id == UIA_SelectionItemIsSelectedPropertyId.0 {
+            bool_variant(node.states.contains(State::Selected))
+        } else if id == UIA_FullDescriptionPropertyId.0 {
+            node.description
+                .as_deref()
+                .map_or_else(empty_variant, bstr_variant)
+        } else if id == UIA_AccessKeyPropertyId.0 {
+            node.keyboard_shortcut
+                .as_deref()
+                .map_or_else(empty_variant, bstr_variant)
+        } else if id == UIA_PositionInSetPropertyId.0 {
+            one_based_variant(node.position_in_set)
+        } else if id == UIA_SizeOfSetPropertyId.0 {
+            one_based_variant(node.set_size)
+        } else if id == UIA_LevelPropertyId.0 {
+            one_based_variant(node.level)
         } else {
             empty_variant()
         }
+    }
+
+    /// A one-based integer detail (`PositionInSet`, `SizeOfSet`, `Level`) as
+    /// a `VT_I4` variant. `None` answers an empty variant, which UIA turns
+    /// into the property's zero default on the client side — exactly the
+    /// "not reported" convention `verbatim-uia`'s mapping treats as absent.
+    fn one_based_variant(value: Option<u32>) -> VARIANT {
+        value.map_or_else(empty_variant, |value| {
+            i32_variant(i32::try_from(value).unwrap_or(0))
+        })
     }
 
     /// The `ToggleState` for `states`, independent of whether the pattern is
@@ -455,10 +553,11 @@ mod handler {
         IExpandCollapseProvider, IExpandCollapseProvider_Impl, IRawElementProviderFragment,
         IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
         IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
-        IRawElementProviderSimple_Impl, IToggleProvider, IToggleProvider_Impl, NavigateDirection,
-        ProviderOptions, ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
-        UIA_ExpandCollapsePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_TogglePatternId,
-        UIA_ValuePatternId, UiaRect,
+        IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl,
+        IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
+        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
+        UIA_ExpandCollapsePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionItemPatternId,
+        UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
     use windows::core::Result as WinResult;
     use windows_core::{Error, IUnknown, implement};
@@ -646,6 +745,14 @@ mod handler {
             .into();
             return Ok(provider);
         }
+        if pattern_id == UIA_SelectionItemPatternId && props::selection_available(states) {
+            let provider: IUnknown = SelectionItemProvider {
+                tree: tree.clone(),
+                index,
+            }
+            .into();
+            return Ok(provider);
+        }
         Err(Error::empty())
     }
 
@@ -744,6 +851,48 @@ mod handler {
                 .states
                 .contains(verbatim_model::State::ReadOnly);
             Ok(read_only.into())
+        }
+    }
+
+    /// The `SelectionItemPattern` provider for a node whose fixture states
+    /// include `selectable` or `selected`. The mutating methods are no-ops
+    /// for the same reason `Toggle` is: mockapp's scripted state changes
+    /// only via stdin commands (`select`), never through pattern
+    /// invocation. Like toggle and expand-collapse above, a real pattern
+    /// object exists because `IUIAutomationCacheRequest`'s cache building
+    /// asks `GetPatternProvider` before trusting a cached
+    /// `SelectionItemIsSelected` value.
+    #[implement(ISelectionItemProvider, Agile = false)]
+    struct SelectionItemProvider {
+        tree: SharedTree,
+        index: usize,
+    }
+
+    impl ISelectionItemProvider_Impl for SelectionItemProvider_Impl {
+        fn Select(&self) -> WinResult<()> {
+            Ok(())
+        }
+        fn AddToSelection(&self) -> WinResult<()> {
+            Ok(())
+        }
+        fn RemoveFromSelection(&self) -> WinResult<()> {
+            Ok(())
+        }
+        fn IsSelected(&self) -> WinResult<windows_core::BOOL> {
+            let selected = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[self.index]
+                .states
+                .contains(verbatim_model::State::Selected);
+            Ok(selected.into())
+        }
+        fn SelectionContainer(&self) -> WinResult<IRawElementProviderSimple> {
+            // The containing list is reachable through ordinary navigation;
+            // a null container is the UIA contract for "not exposed", same
+            // as the other legitimate-null results this module documents.
+            Err(Error::empty())
         }
     }
 }

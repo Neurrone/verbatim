@@ -10,6 +10,25 @@
       "name": "Level",
       "value": "1",
       "states": ["focusable"]
+    },
+    {
+      "id": "list1",
+      "role": "list",
+      "name": "Options",
+      "children": [
+        {
+          "id": "item1",
+          "role": "list_item",
+          "name": "First",
+          "states": ["focusable", "selectable"]
+        },
+        {
+          "id": "item2",
+          "role": "list_item",
+          "name": "Second",
+          "states": ["focusable", "selectable"]
+        }
+      ]
     }
   ]
 }

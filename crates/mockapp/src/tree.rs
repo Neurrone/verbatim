@@ -19,16 +19,33 @@ pub(crate) struct NodeData {
     pub(crate) name: Option<String>,
     pub(crate) value: Option<String>,
     pub(crate) states: StateSet,
+    /// Accessible description (UIA `FullDescription`, MSAA `accDescription`).
+    pub(crate) description: Option<String>,
+    /// Advertised keyboard shortcut (UIA `AccessKey`, MSAA
+    /// `accKeyboardShortcut`).
+    pub(crate) keyboard_shortcut: Option<String>,
+    /// One-based position within the containing set (UIA `PositionInSet`;
+    /// plain MSAA cannot express it).
+    pub(crate) position_in_set: Option<u32>,
+    /// Size of the containing set (UIA `SizeOfSet`).
+    pub(crate) set_size: Option<u32>,
+    /// One-based nesting level (UIA `Level`).
+    pub(crate) level: Option<u32>,
     pub(crate) parent: Option<usize>,
     pub(crate) children: Vec<usize>,
 }
 
 /// The whole scripted tree: an arena of [`NodeData`] plus a lookup from
-/// fixture id to arena index, and the currently focused node if any.
+/// fixture id to arena index, and the currently focused and selected nodes
+/// if any.
 pub(crate) struct Tree {
     pub(crate) nodes: Vec<NodeData>,
     by_fixture_id: HashMap<String, usize>,
     pub(crate) focused: Option<usize>,
+    /// The currently selected node (single-selection model, mirroring
+    /// [`Self::focused`]): set by the `select` stdin command, which moves
+    /// the `Selected` state here from any previously selected node.
+    pub(crate) selected: Option<usize>,
 }
 
 /// A tree shared between the window thread (which owns every provider COM
@@ -49,6 +66,7 @@ impl Tree {
             nodes,
             by_fixture_id,
             focused: None,
+            selected: None,
         }
     }
 
@@ -82,6 +100,11 @@ fn insert(
         name: node.name,
         value: node.value,
         states: node.states,
+        description: node.description,
+        keyboard_shortcut: node.keyboard_shortcut,
+        position_in_set: node.position_in_set,
+        set_size: node.set_size,
+        level: node.level,
         parent,
         children: Vec::new(),
     });
@@ -98,39 +121,37 @@ fn insert(
 mod tests {
     use super::*;
 
-    fn sample() -> FixtureNode {
+    fn node(id: &str, role: Role, name: &str, children: Vec<FixtureNode>) -> FixtureNode {
         FixtureNode {
-            id: "root".to_owned(),
-            role: Role::Window,
-            name: Some("Root".to_owned()),
+            id: id.to_owned(),
+            role,
+            name: Some(name.to_owned()),
             value: None,
             states: StateSet::new(),
-            children: vec![
-                FixtureNode {
-                    id: "a".to_owned(),
-                    role: Role::Button,
-                    name: Some("A".to_owned()),
-                    value: None,
-                    states: StateSet::new(),
-                    children: vec![],
-                },
-                FixtureNode {
-                    id: "b".to_owned(),
-                    role: Role::Button,
-                    name: Some("B".to_owned()),
-                    value: None,
-                    states: StateSet::new(),
-                    children: vec![FixtureNode {
-                        id: "b1".to_owned(),
-                        role: Role::StaticText,
-                        name: Some("B1".to_owned()),
-                        value: None,
-                        states: StateSet::new(),
-                        children: vec![],
-                    }],
-                },
-            ],
+            description: None,
+            keyboard_shortcut: None,
+            position_in_set: None,
+            set_size: None,
+            level: None,
+            children,
         }
+    }
+
+    fn sample() -> FixtureNode {
+        node(
+            "root",
+            Role::Window,
+            "Root",
+            vec![
+                node("a", Role::Button, "A", vec![]),
+                node(
+                    "b",
+                    Role::Button,
+                    "B",
+                    vec![node("b1", Role::StaticText, "B1", vec![])],
+                ),
+            ],
+        )
     }
 
     #[test]

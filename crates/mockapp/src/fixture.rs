@@ -3,8 +3,13 @@
 //! A fixture is one JSON object per node: `id` (unique string), `role` (a
 //! [`Role`] name in snake case, e.g. `check_box`), optional `name` and
 //! `value` strings, `states` (an array of [`State`] names in snake case,
-//! e.g. `read_only`), and `children` (an array of nested nodes). The root
-//! node conceptually corresponds to the host window itself.
+//! e.g. `read_only`), optional detail properties — `description` and
+//! `keyboard_shortcut` strings, and one-based `position_in_set`,
+//! `set_size`, and `level` integers (the M3
+//! [`NodeDetails`](verbatim_model::NodeDetails) vocabulary; each backend
+//! serves the subset its API can express) — and `children` (an array of
+//! nested nodes). The root node conceptually corresponds to the host
+//! window itself.
 
 use std::fmt;
 use std::path::Path;
@@ -59,6 +64,16 @@ struct RawNode {
     #[serde(default)]
     states: Vec<String>,
     #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    keyboard_shortcut: Option<String>,
+    #[serde(default)]
+    position_in_set: Option<u32>,
+    #[serde(default)]
+    set_size: Option<u32>,
+    #[serde(default)]
+    level: Option<u32>,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -71,6 +86,11 @@ pub(crate) struct FixtureNode {
     pub(crate) name: Option<String>,
     pub(crate) value: Option<String>,
     pub(crate) states: StateSet,
+    pub(crate) description: Option<String>,
+    pub(crate) keyboard_shortcut: Option<String>,
+    pub(crate) position_in_set: Option<u32>,
+    pub(crate) set_size: Option<u32>,
+    pub(crate) level: Option<u32>,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -118,6 +138,11 @@ fn convert(
         name: raw.name,
         value: raw.value,
         states,
+        description: raw.description,
+        keyboard_shortcut: raw.keyboard_shortcut,
+        position_in_set: raw.position_in_set,
+        set_size: raw.set_size,
+        level: raw.level,
         children,
     })
 }

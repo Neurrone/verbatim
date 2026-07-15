@@ -12,7 +12,7 @@ mod common;
 
 use std::collections::HashMap;
 
-use verbatim_model::{NodeSnapshot, Role, State};
+use verbatim_model::{NodeDetails, NodeSnapshot, Role, State};
 use verbatim_uia::{NodeIdRegistry, Uia, map};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, TreeScope_Children};
 
@@ -252,6 +252,44 @@ fn expected_tree() -> HashMap<&'static str, Expected> {
     ])
 }
 
+/// The nodes whose fixture carries detail properties (description, keyboard
+/// shortcut, position in set, set size, level), keyed by name like
+/// [`expected_tree`]. Every node absent from this map must read back with
+/// default (all-`None`) details, so both presence and absence of every M3
+/// detail are asserted across the whole tree. Rectangles are excluded from
+/// the comparison: mockapp scripts no geometry (its providers answer a zero
+/// rectangle, which the client maps to `None`), but the root element is
+/// hwnd-hosted, so UIA merges the real window's rectangle into it.
+fn expected_details() -> HashMap<&'static str, NodeDetails> {
+    HashMap::from([
+        (
+            "OK",
+            NodeDetails {
+                description: Some("Applies the changes and closes the dialog".to_owned()),
+                keyboard_shortcut: Some("Alt+O".to_owned()),
+                ..NodeDetails::default()
+            },
+        ),
+        (
+            "First",
+            NodeDetails {
+                position_in_set: Some(1),
+                set_size: Some(2),
+                ..NodeDetails::default()
+            },
+        ),
+        (
+            "Second",
+            NodeDetails {
+                position_in_set: Some(2),
+                set_size: Some(2),
+                level: Some(1),
+                ..NodeDetails::default()
+            },
+        ),
+    ])
+}
+
 /// Walks one element and its descendants, comparing against `expected`.
 ///
 /// `tolerate_unmatched` is set by the caller for the *window's direct
@@ -269,6 +307,7 @@ fn walk(
     element: &IUIAutomationElement,
     registry: &NodeIdRegistry,
     expected: &HashMap<&str, Expected>,
+    details: &HashMap<&str, NodeDetails>,
     visited: &mut usize,
     tolerate_unmatched: bool,
 ) {
@@ -309,6 +348,17 @@ fn walk(
         );
     }
 
+    // Details: nodes in the details map must read back exactly what the
+    // fixture scripted; every other node must read back all-`None` details.
+    // Rectangles are excluded per `expected_details`'s doc comment.
+    let mut read_details = snapshot.details.clone();
+    read_details.rect = None;
+    let expected_details = details.get(name.as_str()).cloned().unwrap_or_default();
+    assert_eq!(
+        read_details, expected_details,
+        "details mismatch for {name:?}"
+    );
+
     let cache = uia.base_cache_request().expect("base cache request");
     // SAFETY: `element` is a live, cached element on this client's own
     // apartment thread.
@@ -341,7 +391,7 @@ fn walk(
     for i in 0..count {
         // SAFETY: `i` is within `[0, count)`.
         let child = unsafe { children.GetElement(i) }.expect("GetElement");
-        walk(uia, &child, registry, expected, visited, is_window);
+        walk(uia, &child, registry, expected, details, visited, is_window);
     }
 }
 
@@ -359,8 +409,9 @@ fn uia_client_reads_the_scripted_tree() {
 
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     let expected = expected_tree();
+    let details = expected_details();
     let mut visited = 0;
-    walk(&uia, &root, &registry, &expected, &mut visited, true);
+    walk(&uia, &root, &registry, &expected, &details, &mut visited, true);
 
     assert_eq!(
         visited,

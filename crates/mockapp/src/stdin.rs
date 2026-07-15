@@ -1,10 +1,11 @@
 //! Stdin command parsing and the reader thread.
 //!
 //! Commands are one per line: `focus <id>`, `set-name <id> <text>`,
-//! `set-value <id> <text>`, and `quit`. Parsing runs on a dedicated thread
-//! (reading stdin blocks, and the window thread must keep pumping its
-//! message loop); parsed commands are handed to the window thread over a
-//! channel, woken by a lightweight posted message.
+//! `set-value <id> <text>`, `select <id>`, `notify <text>`, and `quit`.
+//! Parsing runs on a dedicated thread (reading stdin blocks, and the window
+//! thread must keep pumping its message loop); parsed commands are handed
+//! to the window thread over a channel, woken by a lightweight posted
+//! message.
 
 use std::io::BufRead;
 use std::sync::mpsc::Sender;
@@ -18,6 +19,16 @@ pub(crate) enum Command {
     SetName(String, String),
     /// `set-value <id> <text>`, same empty-text convention as `SetName`.
     SetValue(String, String),
+    /// `select <id>`: marks the node selected (moving the state off any
+    /// previously selected node) and raises the backend-appropriate
+    /// selection notification — `SelectionItem_ElementSelected` for UIA,
+    /// `EVENT_OBJECT_SELECTION` for MSAA.
+    Select(String),
+    /// `notify <text>`: raises a UIA `AutomationNotification` carrying
+    /// `text` as its display string, from the root provider. UIA-only; the
+    /// MSAA backend reports it as unsupported, since MSAA has no
+    /// notification event.
+    Notify(String),
     /// `quit`.
     Quit,
 }
@@ -35,6 +46,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     match verb {
         "quit" => Some(Command::Quit),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
+        "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
+        "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "set-name" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetName(id.to_owned(), text.trim().to_owned()))
@@ -122,10 +135,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_select_and_notify() {
+        match parse_command("select item1") {
+            Some(Command::Select(id)) => assert_eq!(id, "item1"),
+            _ => panic!("expected Select"),
+        }
+        match parse_command("notify Window snapped to the left") {
+            Some(Command::Notify(text)) => assert_eq!(text, "Window snapped to the left"),
+            _ => panic!("expected Notify"),
+        }
+    }
+
+    #[test]
     fn blank_and_unknown_lines_are_none() {
         assert!(parse_command("").is_none());
         assert!(parse_command("   ").is_none());
         assert!(parse_command("frobnicate").is_none());
         assert!(parse_command("focus").is_none());
+        assert!(parse_command("select").is_none());
+        assert!(parse_command("notify").is_none());
     }
 }

@@ -8,7 +8,14 @@
       "role": "group",
       "name": "Group One",
       "children": [
-        { "id": "btn_ok", "role": "button", "name": "OK", "states": ["focusable"] },
+        {
+          "id": "btn_ok",
+          "role": "button",
+          "name": "OK",
+          "states": ["focusable"],
+          "description": "Applies the changes and closes the dialog",
+          "keyboard_shortcut": "Alt+O"
+        },
         {
           "id": "btn_cancel",
           "role": "button",
@@ -40,12 +47,22 @@
       "role": "list",
       "name": "Items",
       "children": [
-        { "id": "item1", "role": "list_item", "name": "First", "states": ["focusable"] },
+        {
+          "id": "item1",
+          "role": "list_item",
+          "name": "First",
+          "states": ["focusable"],
+          "position_in_set": 1,
+          "set_size": 2
+        },
         {
           "id": "item2",
           "role": "list_item",
           "name": "Second",
-          "states": ["focusable", "offscreen"]
+          "states": ["focusable", "offscreen"],
+          "position_in_set": 2,
+          "set_size": 2,
+          "level": 1
         }
       ]
     },

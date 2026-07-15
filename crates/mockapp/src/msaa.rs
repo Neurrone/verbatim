@@ -16,7 +16,7 @@ use verbatim_model::{Role, State, StateSet};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_VALUECHANGE,
+    EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_VALUECHANGE,
 };
 
 use crate::stdin::Command;
@@ -68,6 +68,16 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
                 notify(hwnd, EVENT_OBJECT_VALUECHANGE, index);
             }
         }
+        Command::Select(id) => {
+            if let Some(index) = select_node(tree, &id) {
+                notify(hwnd, EVENT_OBJECT_SELECTION, index);
+            }
+        }
+        Command::Notify(_) => {
+            // MSAA has no notification event; `notify` is a UIA-backend
+            // command (see crate::stdin::Command::Notify).
+            eprintln!("mockapp: notify is not supported on the msaa backend");
+        }
         Command::Quit => {}
     }
 }
@@ -81,6 +91,20 @@ fn focus_node(tree: &SharedTree, id: &str) -> Option<usize> {
         guard.nodes[previous].states.remove(State::Focused);
     }
     guard.nodes[index].states.insert(State::Focused);
+    Some(index)
+}
+
+/// Marks the node selected, moving the `Selected` state off any previously
+/// selected node — the single-selection model `select` scripts.
+fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
+    let mut guard = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let index = guard.index_of(id)?;
+    if let Some(previous) = guard.selected.replace(index) {
+        guard.nodes[previous].states.remove(State::Selected);
+    }
+    guard.nodes[index].states.insert(State::Selected);
     Some(index)
 }
 
@@ -373,8 +397,19 @@ mod handler {
             Ok(guard.nodes[target].value.as_deref().unwrap_or("").into())
         }
 
-        fn get_accDescription(&self, _varchild: &VARIANT) -> WinResult<BSTR> {
-            Err(Error::from_hresult(S_FALSE))
+        fn get_accDescription(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            let target = resolve_child(&self.tree, self.index, varchild)
+                .ok_or_else(|| Error::from_hresult(S_FALSE))?;
+            let guard = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.nodes[target].description.as_deref() {
+                Some(description) => Ok(description.into()),
+                // S_FALSE is MSAA's "this object has no description",
+                // distinct from an empty string.
+                None => Err(Error::from_hresult(S_FALSE)),
+            }
         }
 
         fn get_accRole(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
@@ -431,8 +466,18 @@ mod handler {
             Err(Error::from_hresult(S_FALSE))
         }
 
-        fn get_accKeyboardShortcut(&self, _varchild: &VARIANT) -> WinResult<BSTR> {
-            Err(Error::from_hresult(S_FALSE))
+        fn get_accKeyboardShortcut(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            let target = resolve_child(&self.tree, self.index, varchild)
+                .ok_or_else(|| Error::from_hresult(S_FALSE))?;
+            let guard = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.nodes[target].keyboard_shortcut.as_deref() {
+                Some(shortcut) => Ok(shortcut.into()),
+                // S_FALSE is MSAA's "this object has no shortcut".
+                None => Err(Error::from_hresult(S_FALSE)),
+            }
         }
 
         fn accFocus(&self) -> WinResult<VARIANT> {
