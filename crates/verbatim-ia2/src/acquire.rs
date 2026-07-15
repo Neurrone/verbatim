@@ -23,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::Interface;
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, TreeNode};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Rect, Role, TreeNode};
 
 use crate::com::{CHILDID_SELF, bstr_to_option, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
@@ -314,7 +314,11 @@ fn acquire_ia2() {
     // Intentionally empty: the IA2 QueryService path lands in M3.
 }
 
-/// Reads name, role, value, and state from an accessible and its child id.
+/// Reads name, role, value, state, and the M3 [`NodeDetails`] properties
+/// plain MSAA offers (`accDescription`, `accKeyboardShortcut`, `accLocation`)
+/// from an accessible and its child id. Position-in-set and level stay
+/// `None` on this backend until IA2 lands in M6 (architecture section 4;
+/// `IServiceProvider::QueryService` is the seam, not touched here).
 ///
 /// # Safety
 ///
@@ -345,6 +349,15 @@ unsafe fn read_snapshot(
             .and_then(|v| variant_i32(&v))
             .map(|s| states_from_msaa(s.cast_unsigned()))
             .unwrap_or_default();
+        let description = acc
+            .get_accDescription(child)
+            .ok()
+            .and_then(|b| bstr_to_option(&b));
+        let keyboard_shortcut = acc
+            .get_accKeyboardShortcut(child)
+            .ok()
+            .and_then(|b| bstr_to_option(&b));
+        let rect = location_of(acc, child);
         NodeSnapshot {
             id: registry.id_for(key),
             backend: Backend::Msaa,
@@ -352,9 +365,44 @@ unsafe fn read_snapshot(
             name,
             value,
             states,
-            details: NodeDetails::default(),
+            details: NodeDetails {
+                description,
+                keyboard_shortcut,
+                position_in_set: None,
+                set_size: None,
+                level: None,
+                rect,
+            },
         }
     }
+}
+
+/// Reads `accLocation` (screen coordinates, already left/top/width/height —
+/// no conversion needed, unlike UIA's `BoundingRectangle`). `None` when the
+/// call fails, which is how MSAA reports "not supported" here (unlike UIA,
+/// plain MSAA has no documented default-value trap for this property).
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible` and `child` a valid child-id `VARIANT`
+/// for it.
+unsafe fn location_of(acc: &IAccessible, child: &VARIANT) -> Option<Rect> {
+    let mut left = 0i32;
+    let mut top = 0i32;
+    let mut width = 0i32;
+    let mut height = 0i32;
+    // SAFETY: forwarded to the caller's contract; the four out-parameters are
+    // local, fully owned `i32`s written by `accLocation` on success.
+    unsafe {
+        acc.accLocation(&raw mut left, &raw mut top, &raw mut width, &raw mut height, child)
+            .ok()?;
+    }
+    Some(Rect {
+        left,
+        top,
+        width,
+        height,
+    })
 }
 
 /// Obtains the client `IAccessible` for a window.
