@@ -13,6 +13,8 @@
 
 use verbatim_model::GestureId;
 
+use crate::map::GestureMap;
+
 /// Which physical keyboard layout's gesture bindings are active — NVDA's
 /// desktop (numpad-based) and laptop (no numpad assumed) layouts.
 ///
@@ -203,6 +205,26 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
         .collect()
 }
 
+/// Builds the hook's bound-gesture set from a binding table, ready to wrap
+/// in a [`crate::SharedGestureMap`] (or store into an existing one).
+///
+/// This is the seam the application uses to activate a layout: read the
+/// configured layout from `Settings.keyboard.layout`, map it to this
+/// crate's [`KeyboardLayout`], call [`bindings_for`], build the hook's map
+/// here, and keep the same `Vec<(GestureId, ScriptAction)>` (or a `HashMap`
+/// built from it) on the application side to resolve an emitted gesture to
+/// its action in the router — [`GestureMap`] is a plain membership set, not
+/// generic over the bound action, so the action half of each pair lives
+/// with the consumer. Rebinding, for example on a layout change, is one
+/// atomic [`store`](arc_swap::ArcSwapAny::store) of the map built here on
+/// the existing [`crate::SharedGestureMap`]; the hook picks up the new
+/// snapshot on its next keystroke with no restart. Wiring this into
+/// `verbatim-app` is the reducer-side consumer's job, not this crate's.
+#[must_use]
+pub fn gesture_map_for(bindings: &[(GestureId, ScriptAction)]) -> GestureMap {
+    GestureMap::new(bindings.iter().map(|(gesture, _)| gesture.clone()))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -275,6 +297,18 @@ mod tests {
                     .iter()
                     .all(|(gesture, _)| *gesture != menu)
             );
+        }
+    }
+
+    #[test]
+    fn gesture_map_for_contains_exactly_the_bound_gestures() {
+        for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
+            let bindings = bindings_for(layout);
+            let map = gesture_map_for(&bindings);
+            assert_eq!(map.len(), bindings.len());
+            for (gesture, _) in &bindings {
+                assert!(map.contains(gesture));
+            }
         }
     }
 }

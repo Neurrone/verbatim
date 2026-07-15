@@ -191,9 +191,15 @@ Public API:
   `docs/roadmap.md`'s M3 object-navigation bullet. `GestureMap` is a plain
   membership set, not generic over the bound action, so `bindings_for`
   returns gesture-and-action pairs the application adapts itself: build the
-  hook's `GestureMap` from the gestures, and keep a separate lookup (the
-  same pairs, or a `HashMap` built from them) on the application side to
-  resolve an emitted gesture to its action in the router.
+  hook's `GestureMap` from the gestures with `gesture_map_for(bindings)`,
+  and keep a separate lookup (the same pairs, or a `HashMap` built from
+  them) on the application side to resolve an emitted gesture to its action
+  in the router. The intended activation path, wired in by `verbatim-app`'s
+  reducer-side consumer rather than this crate: read
+  `Settings.keyboard.layout`, map it to this crate's `KeyboardLayout`, call
+  `bindings_for`, and store `gesture_map_for`'s result — rebinding, for
+  example on a layout change, is one atomic store on the existing
+  `SharedGestureMap`, picked up by the hook on its next keystroke.
 
 Implementation notes, `DecisionMachine::on_key` (the intricate one — the
 semantics follow NVDA's `keyboardHandler`):
