@@ -13,6 +13,7 @@ windows.workspace = true
 verbatim-i18n.workspace = true
 verbatim-model.workspace = true
 verbatim-speech.workspace = true
+verbatim-uia.workspace = true
 
 [lints]
 workspace = true

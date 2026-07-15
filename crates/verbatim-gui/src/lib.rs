@@ -21,6 +21,7 @@ mod foreground;
 mod hidden_frame;
 pub mod list_dialog;
 mod plan;
+pub mod shell_items;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
