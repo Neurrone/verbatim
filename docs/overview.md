@@ -923,18 +923,18 @@ socket, so the other thread also unwinds instead of hanging.
 
 ## verbatim-e2e
 
-The milestone M2 end-to-end suite: drives a real, running Verbatim (and
-target applications such as Notepad) through `verbatim-agent` and, tunneled
-through it, Verbatim's own control plane. Dev-only; a library rather than
-only test binaries because both `crates/verbatim-e2e/tests/` and
-`xtask vm test` drive it. See `docs/tooling.md` for how to run it by hand
-and how to read a failure.
+The end-to-end suite, restructured in milestone M3 Track B into a scenario
+registry: drives a real, running Verbatim (and target applications such as
+Notepad) through `verbatim-agent` and, tunneled through it, Verbatim's own
+control plane. Dev-only; a library rather than only test binaries because
+both `crates/verbatim-e2e/tests/` and `xtask vm test` drive it. See
+`docs/tooling.md` for how to run it by hand and how to read a failure.
 
 Public API:
 
 - `endpoint()` — reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`), the
-  live-suite skip guard every test in this crate checks first; `None` means
-  no agent is reachable, and callers print a one-line skip notice and
+  live-suite skip guard every scenario in this crate checks first; `None`
+  means no agent is reachable, and callers print a one-line skip notice and
   return rather than failing. This is what keeps `cargo test` and
   `cargo xtask ci` green with no agent anywhere.
 - `AgentClient` — a typed host-side client for `verbatim_agent::protocol`:
@@ -959,55 +959,104 @@ Public API:
   happens to a gesture sent before that pause. `control()` and `speech()`
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
   `kill_target`, `process_status`, `quit_verbatim`, and `report_latency`
-  drive the running instance. Its `Drop` impl kills every process it
-  launched, unconditionally, even after a panic — because every live test
-  here launches a real `verbatim.exe` on the real desktop. A
+  drive the running instance; `latency_snapshot` is the non-asserting,
+  non-printing fetch the registry's run summary uses (see `registry`
+  below), and `collect_failure_artifacts` is what a failed scenario calls to
+  save its diagnostics (see `artifacts` below). Its `Drop` impl kills every
+  process it launched, unconditionally, even after a panic — because every
+  live scenario here launches a real `verbatim.exe` on the real desktop. A
   same-process `Mutex` (`live_instance_lock`) enforces one live instance
   per test *process*, not per machine; `--test-threads=1` (mandatory,
   documented on the type) is what makes that sufficient, since Windows has
   no notion of "only one verbatim.exe" and `single_instance
   ::acquire_replacing` inside `verbatim.exe` *replaces* a running instance
-  rather than refusing to start.
-- `SpeechCollector` — subscribes to `Frame::Speech` on its own dedicated
-  control-plane connection (never reused for `request` calls, which discard
-  non-matching frames including speech ones — reusing a request connection
-  would silently lose utterances in flight). `expect_in_order` waits for a
-  list of substring matchers to appear across utterances, in order,
-  tolerating unrelated utterances in between, and panics on failure with the
-  run's `Timeline` — the injected gestures and keys interleaved with the
-  spoken utterances in time order, so the command that provoked (or failed
-  to provoke) each utterance is visible next to it; `try_expect_in_order` is
-  the non-panicking form for a caller that wants to retry a flaky first
-  interaction. The `Timeline` is a cheaply cloneable `Arc<Mutex<_>>` shared
-  between the `Scenario` (which records each injected gesture and key) and
-  the collector (which records each utterance), which is how the two produce
-  one merged, ordered account.
-- `latency::report` — fetches the most recent `last_n` latency timelines,
-  prints one fact per line, and asserts at least one reached audio — but
-  only outside audible mode, since a real synthesizer is legitimately
-  interrupted before playback at this suite's pace (a capture-synth
-  invariant, not a real-synth one).
+  rather than refusing to start. The hardcoded `SWEPT_TARGET_IMAGE_NAMES`
+  constant this pre-launch sweep once read from is gone: it now reads
+  `registry::swept_target_image_names()`, derived from every registered
+  scenario's own declared target images instead of a name maintained by
+  hand.
+- `registry` — the scenario registry itself. `ScenarioDef` is one named,
+  grouped scenario: `name` (also its `#[test]` function name, its
+  `cargo xtask vm test --scenario` selector, its artifacts directory name,
+  and its recording file name prefix — one identifier, everywhere),
+  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, or `Navigation`, a coarse
+  `--group` selector, not a strict taxonomy — see the module's own doc
+  comment for what each currently holds), `target_images` (image names its
+  `setup`/`teardown` may launch or kill, unioned by
+  `swept_target_image_names`), and `setup`/`body`/`teardown` function
+  pointers. `SCENARIOS` is the fixed, ordered list of every registered
+  scenario — today `m1_exit_regression`, `notepad_focus`, and
+  `multi_outpost_switch`, each implemented in `crates/verbatim-e2e/src/
+  scenarios/`. `find` looks one up by name; `select` resolves
+  `--scenario`/`--group` filters (both repeatable, unioned, deduplicated,
+  registry order preserved, empty means "every scenario") into a list,
+  erroring on any unrecognized name; `run_named` is the thin entry point
+  every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
+  `run_named`'s internal `run` launches, runs `setup` then `body` then
+  `teardown` — `body` and `teardown` each in their own
+  `std::panic::catch_unwind`, so a panicking `body` still lets `teardown`
+  run with whatever `setup` produced (borrowed, not moved, so the panic
+  leaves it intact) rather than skipping cleanup — asserts a clean
+  `quit_verbatim` only when both succeeded (an already-failed scenario's
+  Verbatim is in an unknown state, and `Scenario::drop` kills it regardless,
+  so nothing more is proved by also demanding a graceful quit), collects
+  failure artifacts on any failure, always writes a `ScenarioSummary`, then
+  re-raises whatever panic occurred so `cargo test` still reports the
+  original failure. None of this weakens `Scenario`'s own guard-struct
+  discipline; `setup`/`body`/`teardown` are structure on top of it for
+  scenario-specific state `Scenario` itself does not track, not a
+  replacement for it. `crates/verbatim-e2e/src/scenarios/` holds the actual
+  setup/body/teardown logic per scenario — the scripted walks themselves are
+  otherwise unchanged from before the restructuring, just moved out of
+  `#[test]` functions into free functions the registry wires together.
+- `artifacts` — the host-side seam both a scenario subprocess and
+  `cargo xtask vm test` read through without any argument passing between
+  them, since both independently compute the same paths.
+  `artifacts_root()` is `VERBATIM_E2E_ARTIFACTS_DIR` when set, otherwise
+  `target/e2e-artifacts` under the workspace root; `scenario_dir(root,
+  name)` joins in the scenario's name. `ScenarioSummary` (`name`, `passed`,
+  `latency_records`, `latency_reached_audio`) is written by
+  `ScenarioSummary::write` at the end of every scenario run, pass or fail,
+  as plain `key: value` lines, and read back by `ScenarioSummary::read` —
+  `xtask vm test`'s own run summary is built from this file, never by
+  parsing a subprocess's stdout.
+- `latency::fetch` — fetches the most recent `last_n` latency timelines with
+  no printing and no assertion, the raw building block `report` (below) and
+  `Scenario::latency_snapshot` both use.
+- `latency::report` — `fetch`, then prints one fact per line and asserts at
+  least one timeline reached audio — but only outside audible mode, since a
+  real synthesizer is legitimately interrupted before playback at this
+  suite's pace (a capture-synth invariant, not a real-synth one).
 
 Implementation notes: `REMOTE_ENV` (`VERBATIM_E2E_REMOTE`) marks a run where
 Verbatim lives in a guest rather than sharing this process's filesystem —
 set by `xtask vm test`, not normally by hand — and skips the two ordinary
 host-filesystem steps (`verbatim.exe` existence check, writing
 `settings.toml`) that `xtask vm deploy` has already done inside the guest
-instead. `crates/verbatim-e2e/tests/` holds three tests: `session_info`
-(the agent reports an interactive session — the precondition everything
-else depends on), `notepad_focus` (Notepad's focus reaches Verbatim, and
-Verbatim survives Notepad exiting), and `m1_exit_regression` (the scripted
-walk of the M1 exit criteria that `docs/roadmap.md`'s M2 section describes,
-including exactly what it does and does not assert about the capture
-synth's Speech page).
+instead. `crates/verbatim-e2e/tests/` holds one thin `#[test]` wrapper per
+registered scenario (`m1_exit_regression`, `notepad_focus`,
+`multi_outpost_switch`, each just calling `registry::run_named` with its own
+name) plus `session_info` (the agent reports an interactive session — a
+precondition every scenario depends on, not itself a scenario, so it stays a
+plain `#[test]` outside the registry). The thin wrappers are what keep
+runner-direct CI (`.github/workflows/ci.yml`'s `e2e` job) and plain libtest
+filtering (`cargo test -p verbatim-e2e <name> -- --exact`) working
+unchanged: `cargo test -p verbatim-e2e -- --test-threads=1` still discovers
+and runs every one of them exactly as before the restructuring.
+`m1_exit_regression` is the scripted walk of the M1 exit criteria that
+`docs/roadmap.md`'s M2 section describes, including exactly what it does and
+does not assert about the capture synth's Speech page; `notepad_focus` and
+`multi_outpost_switch` are described in `registry`'s own `Group` doc comment
+above.
 
 ## xtask VM harness
 
 `xtask/src/vm/` implements `cargo xtask vm <verb>` (`docs/architecture.md`
 section 14, decision D3): building and importing the golden Hyper-V VM,
-deploying builds into it, and running `verbatim-e2e`'s suite against it.
-See `docs/tooling.md` for the full verb reference and the steps to rebuild
-the golden image from scratch; this section is the code-level map.
+deploying builds into it, and running `verbatim-e2e`'s registered scenarios
+against it, one at a time (milestone M3 Track B). See `docs/tooling.md` for
+the full verb reference and the steps to rebuild the golden image from
+scratch; this section is the code-level map.
 
 Public structure (all `pub(crate)`; this is a binary target's internal
 module tree, not a library):
@@ -1038,22 +1087,54 @@ module tree, not a library):
   probes for `libclang.dll` before its `cargo build` the same way
   `xtask`'s own `ci` command does (reusing `find_libclang`), since building
   `verbatim-app` pulls in `verbatim-gui`'s wxDragon dependency.
-- `recording` — `test`'s `--record` flag: a small client speaking
-  `verbatim_agent::protocol` directly (`Hello`, `LaunchProcess`,
-  `ProcessStatus`, `KillProcess`; not `Host`, and not `verbatim-e2e`'s own
-  fuller `AgentClient` — see the module's doc comment for why) to pin
-  VB-CABLE as the guest's default render device, launch ffmpeg inside the
-  guest's interactive session, confirm it is still running a moment later,
-  terminate it once the suite finishes, and pull the fragmented-MP4 result
-  back to `artifacts/vm-recordings` on the host via `Host::read_guest_file`
-  (the same PowerShell Direct mechanism `logs` uses, since `Copy-VMFile`
-  only copies host-to-guest). Recording audio and a connected RDP session
-  are mutually exclusive (`docs/tooling.md` has the full constraint and
-  why); `test`'s own `start_recording_with_fallback` treats a failure to
+- `test` (milestone M3 Track B: per-scenario selection and boundaries,
+  replacing "the whole suite runs as one blob with one recording"). `xtask`
+  now depends on `verbatim-e2e` directly, reading `registry::SCENARIOS` and
+  `registry::select` rather than duplicating the scenario catalog.
+  `--list` prints the registry (name and group) and exits, touching neither
+  build nor VM. Otherwise `test::test` resolves `--scenario`/`--group` via
+  `registry::select` (erroring out before any build or restore on an
+  unrecognized name), builds, restores (unless `--no-restore`), deploys,
+  then runs `session_info`'s own test as a precondition — once, unrecorded,
+  regardless of selection — before entering `run_one_scenario`'s per-scenario
+  loop: `--record` (when set) brackets exactly that scenario's own `cargo
+  test -p verbatim-e2e <name> -- --exact` subprocess with
+  `recording::start_recording_with_fallback`/`stop_recording`/
+  `pull_recording`, so the recording's boundary is exactly one scenario's
+  `Scenario::launch`, setup, body, and teardown — all of which run inside
+  that one subprocess — never spilling into a neighboring scenario's
+  recording; this is the module's own answer to "how does `xtask` control
+  scenario boundaries" (a dedicated multi-scenario runner mode inside
+  `verbatim-e2e` was the other option considered — see the module's doc
+  comment for why a fresh, exactly-filtered subprocess per scenario was
+  chosen instead: it gets a process-lifetime boundary for free, no new IPC).
+  After each subprocess exits, `run_one_scenario` reads back the
+  `verbatim_e2e::artifacts::ScenarioSummary` that scenario's own run wrote,
+  rather than parsing the subprocess's stdout; `print_run_summary` prints
+  the final one-line-per-scenario pass/fail-plus-latency report. No retry of
+  any kind exists at this level either: one scenario's failure is
+  accumulated into the run's error list and the loop continues to the next
+  scenario, never re-running the one that failed.
+- `recording` — `test`'s `--record` flag, now started and stopped around
+  one scenario at a time (see `test` above) rather than once for the whole
+  run: a small client speaking `verbatim_agent::protocol` directly (`Hello`,
+  `LaunchProcess`, `ProcessStatus`, `KillProcess`; not `Host`, and not
+  `verbatim-e2e`'s own fuller `AgentClient` — see the module's doc comment
+  for why) to pin VB-CABLE as the guest's default render device, launch
+  ffmpeg inside the guest's interactive session, confirm it is still running
+  a moment later, terminate it once that scenario's subprocess finishes, and
+  pull the fragmented-MP4 result back to `artifacts/vm-recordings` on the
+  host via `Host::read_guest_file` (the same PowerShell Direct mechanism
+  `logs` uses, since `Copy-VMFile` only copies host-to-guest).
+  `pull_recording` now takes the scenario's name and names the file after
+  it (`<scenario_name>-<unix-seconds>[-no-audio].mp4`), one recording per
+  scenario instead of one per run. Recording audio and a connected RDP
+  session are mutually exclusive (`docs/tooling.md` has the full constraint
+  and why); `test`'s own `start_recording_with_fallback` treats a failure to
   pin the render device, or ffmpeg exiting immediately after an
   audio-capturing launch, as the expected fallout of a connected session —
   not fatal — and retries `recording::start_recording` with
-  `with_audio: false` instead, so the suite still runs and a video-only
+  `with_audio: false` instead, so the scenario still runs and a video-only
   recording is still pulled. `recording::pull_recording`'s own
   ffprobe-based check, not which launch path was taken, is what decides the
   pulled file's `-no-audio` filename tag.
