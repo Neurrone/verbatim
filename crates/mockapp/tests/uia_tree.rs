@@ -411,7 +411,15 @@ fn uia_client_reads_the_scripted_tree() {
     let expected = expected_tree();
     let details = expected_details();
     let mut visited = 0;
-    walk(&uia, &root, &registry, &expected, &details, &mut visited, true);
+    walk(
+        &uia,
+        &root,
+        &registry,
+        &expected,
+        &details,
+        &mut visited,
+        true,
+    );
 
     assert_eq!(
         visited,

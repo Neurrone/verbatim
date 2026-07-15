@@ -176,8 +176,13 @@ pub use notification_handler::NotificationHandler;
 /// notification kind and processing hint, and the optional display string
 /// and activity id UIA carries alongside them.
 pub type NotificationCallback = Arc<
-    dyn Fn(&IUIAutomationElement, NotificationKind, NotificationProcessing, Option<String>, Option<String>)
-        + Send
+    dyn Fn(
+            &IUIAutomationElement,
+            NotificationKind,
+            NotificationProcessing,
+            Option<String>,
+            Option<String>,
+        ) + Send
         + Sync,
 >;
 

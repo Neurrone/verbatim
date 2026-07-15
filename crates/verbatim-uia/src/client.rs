@@ -16,8 +16,8 @@ use windows::Win32::System::Variant::{
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern, IUIAutomationTogglePattern,
-    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId, UIA_LegacyIAccessiblePatternId,
-    UIA_RuntimeIdPropertyId, UIA_TogglePatternId,
+    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId,
+    UIA_LegacyIAccessiblePatternId, UIA_RuntimeIdPropertyId, UIA_TogglePatternId,
 };
 
 use verbatim_model::{NodeSnapshot, TreeNode};
@@ -237,8 +237,7 @@ impl Uia {
         for _ in 0..max_hops {
             // SAFETY: `current` is either the caller's `element` (per its
             // contract) or a parent built with `cache` by the previous hop.
-            let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) })
-            else {
+            let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) }) else {
                 break;
             };
             // SAFETY: `parent` was just built with `cache`.

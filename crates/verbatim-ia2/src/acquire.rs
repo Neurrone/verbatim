@@ -42,9 +42,7 @@ pub fn snapshot_from_event(
     let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
     // SAFETY: `acc` and `child` were just acquired together and are valid
     // for each other.
-    Some(unsafe {
-        read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry)
-    })
+    Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry) })
 }
 
 /// Acquires the `IAccessible` and child variant named by a `WinEvent`
@@ -111,8 +109,9 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
             let self_hwnd = unsafe { window_of(&current) }.unwrap_or(hwnd);
             let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             // SAFETY: `current` is live; CHILDID_SELF addresses it directly.
-            let snapshot =
-                unsafe { read_snapshot(&current, &child_variant(CHILDID_SELF), self_key, registry) };
+            let snapshot = unsafe {
+                read_snapshot(&current, &child_variant(CHILDID_SELF), self_key, registry)
+            };
             chain.push(snapshot);
             at_self = true;
             continue;
@@ -129,7 +128,12 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
         let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
         // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
         let snapshot = unsafe {
-            read_snapshot(&parent_acc, &child_variant(CHILDID_SELF), parent_key, registry)
+            read_snapshot(
+                &parent_acc,
+                &child_variant(CHILDID_SELF),
+                parent_key,
+                registry,
+            )
         };
         chain.push(snapshot);
         current = parent_acc;
@@ -193,7 +197,12 @@ pub fn navigate(
         let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
         // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
         return Some(unsafe {
-            read_snapshot(&parent_acc, &child_variant(CHILDID_SELF), parent_key, registry)
+            read_snapshot(
+                &parent_acc,
+                &child_variant(CHILDID_SELF),
+                parent_key,
+                registry,
+            )
         });
     }
 
@@ -571,8 +580,14 @@ unsafe fn location_of(acc: &IAccessible, child: &VARIANT) -> Option<Rect> {
     // SAFETY: forwarded to the caller's contract; the four out-parameters are
     // local, fully owned `i32`s written by `accLocation` on success.
     unsafe {
-        acc.accLocation(&raw mut left, &raw mut top, &raw mut width, &raw mut height, child)
-            .ok()?;
+        acc.accLocation(
+            &raw mut left,
+            &raw mut top,
+            &raw mut width,
+            &raw mut height,
+            child,
+        )
+        .ok()?;
     }
     Some(Rect {
         left,

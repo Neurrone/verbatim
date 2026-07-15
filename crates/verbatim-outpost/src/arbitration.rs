@@ -319,10 +319,7 @@ mod tests {
             "XamlExplorerHostIslandWindow",
             "TopLevelWindowForOverflowXamlIsland",
         ];
-        let expected: Vec<&str> = uia_handler_good
-            .into_iter()
-            .chain(explorer_shell)
-            .collect();
+        let expected: Vec<&str> = uia_handler_good.into_iter().chain(explorer_shell).collect();
         assert_eq!(GOOD_UIA_CLASSES, expected.as_slice());
     }
 

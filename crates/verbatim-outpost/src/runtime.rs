@@ -751,10 +751,13 @@ impl Outpost {
                 navigate_query(worker, &shared, node_id, direction)
             })
             .unwrap_or_else(|| Err("navigation timed out".to_owned()));
-        let _ = self.shared.outbound.send(OutpostToSupervisor::NavigateReply {
-            trace_id: trace,
-            result,
-        });
+        let _ = self
+            .shared
+            .outbound
+            .send(OutpostToSupervisor::NavigateReply {
+                trace_id: trace,
+                result,
+            });
     }
 
     /// Answers an `Activate` request, on a deadline-guarded query-pool
@@ -768,10 +771,13 @@ impl Outpost {
                 activate_query(worker, &shared, node_id)
             })
             .unwrap_or_else(|| Err("activation timed out".to_owned()));
-        let _ = self.shared.outbound.send(OutpostToSupervisor::ActivateReply {
-            trace_id: trace,
-            result,
-        });
+        let _ = self
+            .shared
+            .outbound
+            .send(OutpostToSupervisor::ActivateReply {
+                trace_id: trace,
+                result,
+            });
     }
 
     /// Dispatches one supervisor command. Returns `false` on `Shutdown`.
