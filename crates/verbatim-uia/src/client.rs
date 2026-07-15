@@ -15,10 +15,12 @@ use windows::Win32::System::Variant::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_RuntimeIdPropertyId,
+    IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern, IUIAutomationTogglePattern,
+    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId, UIA_LegacyIAccessiblePatternId,
+    UIA_RuntimeIdPropertyId, UIA_TogglePatternId,
 };
 
-use verbatim_model::TreeNode;
+use verbatim_model::{NodeSnapshot, TreeNode};
 
 use crate::cache::base_cache_request;
 use crate::com::init_mta;
@@ -192,6 +194,165 @@ impl Uia {
         let root = unsafe { walk_recursive(&walker, element, &limits, 0, &mut state) };
         Ok((root, state.truncated))
     }
+
+    /// Walks the chain of ancestors of `element`, nearest first, via
+    /// [`IUIAutomationTreeWalker::GetParentElementBuildCache`]: one hop at a
+    /// time, each hop its own cross-process round trip using `cache` — the
+    /// same per-hop walk NVDA shipped for years. Capped at `max_hops`
+    /// ancestors; stops early (without error) when a hop finds no further
+    /// parent. Cross-process; query-pool threads only, guarded by the
+    /// caller's deadline since a hung provider can stall any hop.
+    ///
+    /// This is deliberately the simplest correct implementation, behind this
+    /// method as a seam: milestone M4's remote-operations work
+    /// (architecture section 4) replaces the per-hop walk with a single
+    /// batched round trip executed inside the provider process. Callers
+    /// should depend only on the result — the ordered ancestor list — never
+    /// on how many round trips producing it took.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the tree walker itself cannot be created;
+    /// a hop that finds no parent is not an error, it simply ends the walk.
+    ///
+    /// # Safety
+    ///
+    /// `element` must be a live element built with `cache`.
+    pub unsafe fn ancestor_chain(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+        registry: &NodeIdRegistry,
+        max_hops: u32,
+    ) -> windows::core::Result<Vec<NodeSnapshot>> {
+        // SAFETY: `self.client` is a live IUIAutomation instance.
+        let walker = unsafe { self.client.RawViewWalker() }?;
+        let mut chain = Vec::new();
+        let mut current = element.clone();
+        for _ in 0..max_hops {
+            // SAFETY: `current` is either the caller's `element` (per its
+            // contract) or a parent built with `cache` by the previous hop.
+            let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) })
+            else {
+                break;
+            };
+            // SAFETY: `parent` was just built with `cache`.
+            let snapshot = unsafe { snapshot_from_cached_element(&parent, registry) };
+            chain.push(snapshot);
+            current = parent;
+        }
+        chain.reverse();
+        Ok(chain)
+    }
+
+    /// Navigates one step from `element` in `direction`, via the raw-view
+    /// tree walker's per-hop `*BuildCache` methods — a single cross-process
+    /// round trip. Returns `Ok(None)` for a genuine "no such neighbor" (a
+    /// root's parent, a last child's next sibling), a first-class outcome
+    /// distinct from an error — the same convention [`Uia::walk_tree`]'s
+    /// child-walk already relies on. Cross-process; query-pool threads only,
+    /// guarded by the caller's deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the tree walker itself cannot be created.
+    ///
+    /// # Safety
+    ///
+    /// `element` must be a live element built with `cache`.
+    pub unsafe fn navigate(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+        registry: &NodeIdRegistry,
+        direction: NavigateDirection,
+    ) -> windows::core::Result<Option<NodeSnapshot>> {
+        // SAFETY: `self.client` is a live IUIAutomation instance.
+        let walker = unsafe { self.client.RawViewWalker() }?;
+        // SAFETY: `element` and `cache` are valid per the caller's contract.
+        let neighbor = unsafe {
+            match direction {
+                NavigateDirection::Parent => walker.GetParentElementBuildCache(element, cache),
+                NavigateDirection::NextSibling => {
+                    walker.GetNextSiblingElementBuildCache(element, cache)
+                }
+                NavigateDirection::PreviousSibling => {
+                    walker.GetPreviousSiblingElementBuildCache(element, cache)
+                }
+                NavigateDirection::FirstChild => {
+                    walker.GetFirstChildElementBuildCache(element, cache)
+                }
+            }
+        };
+        match neighbor {
+            // SAFETY: `neighbor` was just built with `cache`.
+            Ok(neighbor) => Ok(Some(unsafe {
+                snapshot_from_cached_element(&neighbor, registry)
+            })),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Activates `element`: tries `Invoke`, then `Toggle`, then the legacy
+    /// `DoDefaultAction` pattern, in that order — the same fallback ladder
+    /// NVDA uses for "press the current object" against arbitrary UIA
+    /// controls. Each pattern is fetched live (`GetCurrentPatternAs`, not a
+    /// cached read), since activation is an infrequent, user-triggered
+    /// action rather than something the base cache request prefetches.
+    /// Cross-process; query-pool threads only, guarded by the caller's
+    /// deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error from whichever pattern fetch or invocation
+    /// failed, or a "not implemented" error if `element` exposes none of the
+    /// three patterns.
+    ///
+    /// # Safety
+    ///
+    /// `element` must be a live element.
+    pub unsafe fn activate(&self, element: &IUIAutomationElement) -> windows::core::Result<()> {
+        // SAFETY: `element` is live per the caller's contract; each pattern
+        // fetch fails safely (an error) when the pattern is unsupported.
+        unsafe {
+            if let Ok(invoke) =
+                element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+            {
+                return invoke.Invoke();
+            }
+            if let Ok(toggle) =
+                element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+            {
+                return toggle.Toggle();
+            }
+            if let Ok(legacy) = element
+                .GetCurrentPatternAs::<IUIAutomationLegacyIAccessiblePattern>(
+                    UIA_LegacyIAccessiblePatternId,
+                )
+            {
+                return legacy.DoDefaultAction();
+            }
+        }
+        Err(windows::core::Error::new(
+            windows::Win32::Foundation::E_NOTIMPL,
+            "element exposes no Invoke, Toggle, or legacy DoDefaultAction pattern",
+        ))
+    }
+}
+
+/// A direction to navigate from an element with [`Uia::navigate`], mirroring
+/// the object-navigation commands milestone M3 adds (roadmap: parent, next
+/// and previous sibling, first child).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigateDirection {
+    /// The element's parent.
+    Parent,
+    /// The next sibling in tree order.
+    NextSibling,
+    /// The previous sibling in tree order.
+    PreviousSibling,
+    /// The first child.
+    FirstChild,
 }
 
 /// The per-walk parameters threaded through every level of

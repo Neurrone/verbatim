@@ -72,8 +72,70 @@ pub enum SupervisorToOutpost {
         /// Trace ID of the request that caused this dump.
         trace_id: TraceId,
     },
+    /// Asks for the chain of ancestors of a node, outermost first, as
+    /// [`NodeSnapshot`]s; answered by
+    /// [`OutpostToSupervisor::AncestorChainReply`]. Runs on a query-pool
+    /// thread with a deadline (the same pattern as
+    /// [`DumpTree`](Self::DumpTree)), so a hung application abandons the
+    /// call rather than wedging the outpost. Capped at 64 hops.
+    AncestorChain {
+        /// Trace ID of the request that caused this walk.
+        trace_id: TraceId,
+        /// The node whose ancestors are wanted.
+        node_id: verbatim_model::NodeId,
+    },
+    /// Asks for a node found by navigating from `node_id`; answered by
+    /// [`OutpostToSupervisor::NavigateReply`]. Runs on a query-pool thread
+    /// with a deadline, the same pattern as [`DumpTree`](Self::DumpTree).
+    Navigate {
+        /// Trace ID of the request that caused this navigation.
+        trace_id: TraceId,
+        /// The node to navigate from.
+        node_id: verbatim_model::NodeId,
+        /// Which direction to navigate.
+        direction: NavigateDirection,
+    },
+    /// Asks the outpost to activate a node (UIA `Invoke`/`Toggle`/legacy
+    /// `DoDefaultAction`; MSAA `accDoDefaultAction`); answered by
+    /// [`OutpostToSupervisor::ActivateReply`]. Runs on a query-pool thread
+    /// with a deadline, the same pattern as [`DumpTree`](Self::DumpTree).
+    Activate {
+        /// Trace ID of the request that caused this activation.
+        trace_id: TraceId,
+        /// The node to activate.
+        node_id: verbatim_model::NodeId,
+    },
     /// Asks the outpost to exit cleanly.
     Shutdown,
+}
+
+/// A direction to navigate from a node, for [`SupervisorToOutpost::Navigate`]
+/// (roadmap M3's object-navigation bullet: parent, next and previous
+/// sibling, and first child).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NavigateDirection {
+    /// The node's parent.
+    Parent,
+    /// The next sibling in tree order.
+    NextSibling,
+    /// The previous sibling in tree order.
+    PreviousSibling,
+    /// The first child.
+    FirstChild,
+}
+
+/// The answer to a [`SupervisorToOutpost::Navigate`] or an
+/// [`SupervisorToOutpost::AncestorChain`] hop's single-node counterpart: a
+/// found node is distinguished from "no such neighbor" as a first-class
+/// outcome, never conflated with an error (a genuinely absent parent of a
+/// root node, or a list's last item asked for its next sibling, are not
+/// failures).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NavigateOutcome {
+    /// A node was found in that direction.
+    Found(verbatim_model::NodeSnapshot),
+    /// There is no neighbor in that direction (not an error).
+    NoNeighbor,
 }
 
 /// Messages from an outpost to the Core-side supervisor.
@@ -126,6 +188,33 @@ pub enum OutpostToSupervisor {
         /// the walk could not complete (no accessible top-level window, or
         /// the query-pool deadline expired against a hung application).
         result: Result<DumpedTree, String>,
+    },
+    /// Answer to [`SupervisorToOutpost::AncestorChain`].
+    AncestorChainReply {
+        /// Trace ID carried through from the request.
+        trace_id: TraceId,
+        /// `Ok` with the ancestor chain (outermost first, possibly empty for
+        /// a root node), or `Err` with a human-readable reason the walk
+        /// could not complete.
+        result: Result<Vec<verbatim_model::NodeSnapshot>, String>,
+    },
+    /// Answer to [`SupervisorToOutpost::Navigate`].
+    NavigateReply {
+        /// Trace ID carried through from the request.
+        trace_id: TraceId,
+        /// `Ok` with the navigation outcome (a found node, or a first-class
+        /// "no such neighbor"), or `Err` with a human-readable reason the
+        /// navigation could not complete.
+        result: Result<NavigateOutcome, String>,
+    },
+    /// Answer to [`SupervisorToOutpost::Activate`].
+    ActivateReply {
+        /// Trace ID carried through from the request.
+        trace_id: TraceId,
+        /// `Ok(())` if the activation was invoked, or `Err` with a
+        /// human-readable reason it could not be (the node has no
+        /// activation action, or the call failed).
+        result: Result<(), String>,
     },
     /// A backend error worth reporting without dying — a failed event
     /// registration, an arbitration probe that keeps timing out.
@@ -266,6 +355,132 @@ mod tests {
             result: Err("no accessible top-level window".to_owned()),
         };
 
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &success).expect("writes");
+        write_message(&mut buffer, &failure).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_success: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_failure: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_success, success);
+        assert_eq!(read_failure, failure);
+    }
+
+    #[test]
+    fn ancestor_chain_request_and_reply_round_trip() {
+        let request = SupervisorToOutpost::AncestorChain {
+            trace_id: TraceId::mint(),
+            node_id: NodeId::new(7),
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: SupervisorToOutpost = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, request);
+
+        let ancestor = NodeSnapshot {
+            id: NodeId::new(1),
+            backend: Backend::Uia,
+            role: Role::Window,
+            name: Some("Verbatim".into()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        };
+        let success = OutpostToSupervisor::AncestorChainReply {
+            trace_id: TraceId::mint(),
+            result: Ok(vec![ancestor]),
+        };
+        let failure = OutpostToSupervisor::AncestorChainReply {
+            trace_id: TraceId::mint(),
+            result: Err("the node no longer exists".to_owned()),
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &success).expect("writes");
+        write_message(&mut buffer, &failure).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_success: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_failure: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_success, success);
+        assert_eq!(read_failure, failure);
+    }
+
+    #[test]
+    fn navigate_request_and_reply_round_trip() {
+        let request = SupervisorToOutpost::Navigate {
+            trace_id: TraceId::mint(),
+            node_id: NodeId::new(3),
+            direction: NavigateDirection::NextSibling,
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: SupervisorToOutpost = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, request);
+
+        let found = OutpostToSupervisor::NavigateReply {
+            trace_id: TraceId::mint(),
+            result: Ok(NavigateOutcome::Found(NodeSnapshot {
+                id: NodeId::new(4),
+                backend: Backend::Msaa,
+                role: Role::Button,
+                name: Some("OK".into()),
+                value: None,
+                states: StateSet::new(),
+                details: NodeDetails::default(),
+            })),
+        };
+        let no_neighbor = OutpostToSupervisor::NavigateReply {
+            trace_id: TraceId::mint(),
+            result: Ok(NavigateOutcome::NoNeighbor),
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &found).expect("writes");
+        write_message(&mut buffer, &no_neighbor).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_found: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_no_neighbor: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_found, found);
+        assert_eq!(read_no_neighbor, no_neighbor);
+    }
+
+    #[test]
+    fn activate_request_and_reply_round_trip() {
+        let request = SupervisorToOutpost::Activate {
+            trace_id: TraceId::mint(),
+            node_id: NodeId::new(9),
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: SupervisorToOutpost = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, request);
+
+        let success = OutpostToSupervisor::ActivateReply {
+            trace_id: TraceId::mint(),
+            result: Ok(()),
+        };
+        let failure = OutpostToSupervisor::ActivateReply {
+            trace_id: TraceId::mint(),
+            result: Err("element exposes no activation pattern".to_owned()),
+        };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &success).expect("writes");
         write_message(&mut buffer, &failure).expect("writes");

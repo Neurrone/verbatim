@@ -16,7 +16,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccessible,
-    WindowFromAccessibleObject,
+    NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, WindowFromAccessibleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GUITHREADINFO, GetGUIThreadInfo, GetWindowThreadProcessId, OBJID_CLIENT,
@@ -38,6 +38,28 @@ pub fn snapshot_from_event(
     id_child: i32,
     registry: &NodeIdRegistry,
 ) -> Option<NodeSnapshot> {
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
+    // SAFETY: `acc` and `child` were just acquired together and are valid
+    // for each other.
+    Some(unsafe {
+        read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry)
+    })
+}
+
+/// Acquires the `IAccessible` and child variant named by a `WinEvent`
+/// address, the shared first step behind [`snapshot_from_event`] and
+/// [`ancestor_chain`]. Returns `None` if the object cannot be acquired.
+///
+/// # Safety
+///
+/// `hwnd` may be any handle value (an invalid one fails safely, per
+/// `AccessibleObjectFromEvent`'s own contract).
+unsafe fn accessible_and_child(
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+) -> Option<(IAccessible, VARIANT)> {
     // SAFETY: AccessibleObjectFromEvent tolerates a stale address by failing;
     // `acc` and `child` are initialized by the call before use.
     unsafe {
@@ -51,14 +73,169 @@ pub fn snapshot_from_event(
             &raw mut child,
         )
         .ok()?;
-        let acc = acc?;
-        Some(read_snapshot(
-            &acc,
-            &child,
-            (hwnd, id_object, id_child),
-            registry,
-        ))
+        Some((acc?, child))
     }
+}
+
+/// Walks the chain of ancestors of the node named by `key`, nearest first,
+/// as [`NodeSnapshot`]s. Every hop is its own cross-process round trip
+/// (architecture section 4's IA2 cost model: no cache requests on this
+/// backend), via `IAccessible::accParent` — except the first hop for a node
+/// addressed as a "simple child" (a bare child id, not its own `IDispatch`),
+/// whose immediate parent is the object it is a child of, since plain MSAA
+/// has no `accParent` for a child id, only for a full object. Capped at
+/// `max_hops` ancestors; stops early, without error, once a hop finds no
+/// further parent or fails. Blocking; query pool only.
+///
+/// This is deliberately the simplest correct implementation, behind this
+/// function as a seam: milestone M4's remote-operations work replaces
+/// UIA's equivalent per-hop walk with a single batched round trip, and MSAA
+/// has no remote-operations analog to migrate to, so this stays the
+/// permanent MSAA implementation — but callers should still depend only on
+/// the result, never on how many round trips producing it took.
+#[must_use]
+pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) -> Vec<NodeSnapshot> {
+    let (hwnd, id_object, id_child) = key;
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let Some((acc, child)) = (unsafe { accessible_and_child(hwnd, id_object, id_child) }) else {
+        return Vec::new();
+    };
+    let mut chain = Vec::new();
+    let mut current = acc;
+    // SAFETY: `child` is valid for `current`, just acquired together above.
+    let mut at_self = unsafe { child_id_of(&child) } == CHILDID_SELF;
+    for _ in 0..max_hops {
+        if !at_self {
+            // SAFETY: `current` is a live IAccessible from a prior successful
+            // acquisition.
+            let self_hwnd = unsafe { window_of(&current) }.unwrap_or(hwnd);
+            let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            // SAFETY: `current` is live; CHILDID_SELF addresses it directly.
+            let snapshot =
+                unsafe { read_snapshot(&current, &child_variant(CHILDID_SELF), self_key, registry) };
+            chain.push(snapshot);
+            at_self = true;
+            continue;
+        }
+        // SAFETY: `current` is a live IAccessible.
+        let Ok(parent_dispatch) = (unsafe { current.accParent() }) else {
+            break;
+        };
+        let Ok(parent_acc) = parent_dispatch.cast::<IAccessible>() else {
+            break;
+        };
+        // SAFETY: `parent_acc` was just acquired above.
+        let parent_hwnd = unsafe { window_of(&parent_acc) }.unwrap_or(hwnd);
+        let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+        // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
+        let snapshot = unsafe {
+            read_snapshot(&parent_acc, &child_variant(CHILDID_SELF), parent_key, registry)
+        };
+        chain.push(snapshot);
+        current = parent_acc;
+    }
+    chain.reverse();
+    chain
+}
+
+/// A direction to navigate from a node with [`navigate`], mirroring
+/// [`verbatim_uia`]'s equivalent (the crates do not depend on each other, so
+/// each carries its own copy) and the object-navigation commands milestone
+/// M3 adds (roadmap: parent, next and previous sibling, first child).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigateDirection {
+    /// The node's parent.
+    Parent,
+    /// The next sibling in tree order.
+    NextSibling,
+    /// The previous sibling in tree order.
+    PreviousSibling,
+    /// The first child.
+    FirstChild,
+}
+
+/// Navigates one step from the node named by `key` in `direction`. Parent
+/// goes through `IAccessible::accParent` (with the same "simple child's
+/// immediate parent is the object it is a child of" handling
+/// [`ancestor_chain`] uses, since plain MSAA has no `accParent` for a child
+/// id); the other three directions go through `IAccessible::accNavigate`.
+/// Returns `None` for a genuine "no such neighbor" as well as for an
+/// acquisition failure — MSAA does not distinguish the two at this call
+/// boundary, unlike UIA's tree walker. Blocking; query pool only.
+#[must_use]
+pub fn navigate(
+    key: MsaaKey,
+    registry: &NodeIdRegistry,
+    direction: NavigateDirection,
+) -> Option<NodeSnapshot> {
+    let (hwnd, id_object, id_child) = key;
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
+
+    if direction == NavigateDirection::Parent {
+        // SAFETY: `child` is valid for `acc`, just acquired together above.
+        if unsafe { child_id_of(&child) } != CHILDID_SELF {
+            // The immediate parent of a simple child (addressed only by a
+            // child id, not its own IDispatch) is the object it is a child
+            // of; see this module's `ancestor_chain` doc for the same case.
+            // SAFETY: `acc` is live.
+            let self_hwnd = unsafe { window_of(&acc) }.unwrap_or(hwnd);
+            let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            // SAFETY: `acc` is live; CHILDID_SELF addresses it directly.
+            return Some(unsafe {
+                read_snapshot(&acc, &child_variant(CHILDID_SELF), self_key, registry)
+            });
+        }
+        // SAFETY: `acc` is live.
+        let parent_acc: IAccessible = unsafe { acc.accParent() }.ok()?.cast().ok()?;
+        // SAFETY: `parent_acc` was just acquired above.
+        let parent_hwnd = unsafe { window_of(&parent_acc) }.unwrap_or(hwnd);
+        let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+        // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
+        return Some(unsafe {
+            read_snapshot(&parent_acc, &child_variant(CHILDID_SELF), parent_key, registry)
+        });
+    }
+
+    let navdir = match direction {
+        NavigateDirection::NextSibling => NAVDIR_NEXT,
+        NavigateDirection::PreviousSibling => NAVDIR_PREVIOUS,
+        NavigateDirection::FirstChild => NAVDIR_FIRSTCHILD,
+        NavigateDirection::Parent => unreachable!("handled above"),
+    };
+    // SAFETY: `acc` is live; `child` is valid for it.
+    let result = unsafe { acc.accNavigate(navdir.cast_signed(), &child) }.ok()?;
+    // SAFETY: `result` is the VARIANT `accNavigate` just returned; `acc` is
+    // live, matching `resolve_child`'s contract even though this result did
+    // not come from `AccessibleChildren` — both follow the same MSAA
+    // VT_DISPATCH/VT_I4 convention for naming a related object.
+    let (target_acc, target_child, target_hwnd) = unsafe { resolve_child(&acc, &result, hwnd) };
+    // SAFETY: `target_child` is valid for `target_acc`, per `resolve_child`.
+    let target_key = (target_hwnd, OBJID_CLIENT.0, unsafe {
+        child_id_of(&target_child)
+    });
+    // SAFETY: `target_acc` is live and `target_child` valid for it, per
+    // `resolve_child`.
+    Some(unsafe { read_snapshot(&target_acc, &target_child, target_key, registry) })
+}
+
+/// Activates the node named by `key`: `IAccessible::accDoDefaultAction`, the
+/// only activation MSAA offers (UIA's richer `Invoke`/`Toggle` ladder has no
+/// MSAA equivalent). Blocking; query pool only.
+///
+/// # Errors
+///
+/// Returns a human-readable reason if the node cannot be acquired or the
+/// call fails (including "not implemented", MSAA's answer for a node with no
+/// default action).
+pub fn activate(key: MsaaKey) -> Result<(), String> {
+    let (hwnd, id_object, id_child) = key;
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }
+        .ok_or_else(|| "could not acquire the node".to_owned())?;
+    // SAFETY: `acc` is live; `child` is valid for it.
+    unsafe { acc.accDoDefaultAction(&child) }
+        .map_err(|error| format!("accDoDefaultAction failed: {error}"))
 }
 
 /// Re-reads a node previously seen at `key`. Returns `None` if it can no longer

@@ -45,7 +45,8 @@ use verbatim_uia::{
 
 use crate::arbitration::{Arbitrator, window_class_name};
 use crate::protocol::{
-    DumpedTree, OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
+    DumpedTree, NavigateOutcome, OutpostToSupervisor, SupervisorToOutpost, read_message,
+    write_message,
 };
 use crate::query_pool::{QueryPool, Worker};
 
@@ -68,6 +69,15 @@ const MAX_DUMP_DEPTH: u32 = 64;
 
 /// Node-count cap for a `DumpTree` walk, across the whole tree.
 const MAX_DUMP_NODES: usize = 4096;
+
+/// Deadline for an `AncestorChain` walk: generous relative to a single query
+/// call since it chains up to [`MAX_ANCESTOR_HOPS`] per-hop round trips (the
+/// same reasoning as [`DUMP_TREE_DEADLINE`]), but a hung provider still
+/// abandons the call rather than wedging the outpost.
+const ANCESTOR_CHAIN_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Cap on the number of ancestors an `AncestorChain` walk returns.
+const MAX_ANCESTOR_HOPS: u32 = 64;
 
 /// How many times [`Outpost::handle_announce_focus`] retries the
 /// focused-control query when nothing is found yet (a control that has not
@@ -602,6 +612,66 @@ impl Outpost {
             });
     }
 
+    /// Answers an `AncestorChain` request by walking the node's ancestors,
+    /// on a deadline-guarded query-pool thread — the same pattern
+    /// [`Self::handle_dump_tree`] uses.
+    fn handle_ancestor_chain(&self, trace: TraceId, node_id: verbatim_model::NodeId) {
+        let shared = self.shared.clone();
+        let result = self
+            .shared
+            .pool
+            .run(ANCESTOR_CHAIN_DEADLINE, move |worker| {
+                ancestor_chain_query(worker, &shared, node_id)
+            })
+            .unwrap_or_else(|| Err("ancestor-chain walk timed out".to_owned()));
+        let _ = self
+            .shared
+            .outbound
+            .send(OutpostToSupervisor::AncestorChainReply {
+                trace_id: trace,
+                result,
+            });
+    }
+
+    /// Answers a `Navigate` request, on a deadline-guarded query-pool
+    /// thread — the same pattern [`Self::handle_dump_tree`] uses.
+    fn handle_navigate(
+        &self,
+        trace: TraceId,
+        node_id: verbatim_model::NodeId,
+        direction: crate::protocol::NavigateDirection,
+    ) {
+        let shared = self.shared.clone();
+        let result = self
+            .shared
+            .pool
+            .run(QUERY_DEADLINE, move |worker| {
+                navigate_query(worker, &shared, node_id, direction)
+            })
+            .unwrap_or_else(|| Err("navigation timed out".to_owned()));
+        let _ = self.shared.outbound.send(OutpostToSupervisor::NavigateReply {
+            trace_id: trace,
+            result,
+        });
+    }
+
+    /// Answers an `Activate` request, on a deadline-guarded query-pool
+    /// thread — the same pattern [`Self::handle_dump_tree`] uses.
+    fn handle_activate(&self, trace: TraceId, node_id: verbatim_model::NodeId) {
+        let shared = self.shared.clone();
+        let result = self
+            .shared
+            .pool
+            .run(QUERY_DEADLINE, move |worker| {
+                activate_query(worker, &shared, node_id)
+            })
+            .unwrap_or_else(|| Err("activation timed out".to_owned()));
+        let _ = self.shared.outbound.send(OutpostToSupervisor::ActivateReply {
+            trace_id: trace,
+            result,
+        });
+    }
+
     /// Dispatches one supervisor command. Returns `false` on `Shutdown`.
     pub fn handle_command(&mut self, command: &SupervisorToOutpost) -> bool {
         match command {
@@ -626,6 +696,22 @@ impl Outpost {
             }
             SupervisorToOutpost::DumpTree { trace_id } => {
                 self.handle_dump_tree(*trace_id);
+                true
+            }
+            SupervisorToOutpost::AncestorChain { trace_id, node_id } => {
+                self.handle_ancestor_chain(*trace_id, *node_id);
+                true
+            }
+            SupervisorToOutpost::Navigate {
+                trace_id,
+                node_id,
+                direction,
+            } => {
+                self.handle_navigate(*trace_id, *node_id, *direction);
+                true
+            }
+            SupervisorToOutpost::Activate { trace_id, node_id } => {
+                self.handle_activate(*trace_id, *node_id);
                 true
             }
             SupervisorToOutpost::Shutdown => false,
@@ -781,6 +867,156 @@ fn refetch_node(
         return verbatim_ia2::acquire::resnapshot(key, &shared.msaa_registry);
     }
     None
+}
+
+/// Walks the ancestor chain of a node by id, on a query worker: UIA via
+/// [`verbatim_uia::Uia::ancestor_chain`], MSAA via
+/// [`verbatim_ia2::acquire::ancestor_chain`] — whichever registry knows the
+/// id, the same dispatch [`refetch_node`] uses.
+fn ancestor_chain_query(
+    worker: &mut Worker,
+    shared: &Shared,
+    node_id: verbatim_model::NodeId,
+) -> Result<Vec<NodeSnapshot>, String> {
+    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+        let uia = worker
+            .uia()
+            .ok_or_else(|| "could not create a UIA client".to_owned())?;
+        let cache = uia
+            .base_cache_request()
+            .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
+        let element = uia
+            .element_by_runtime_id(&runtime_id, &cache)
+            .map_err(|error| format!("could not re-fetch the node: {error}"))?
+            .ok_or_else(|| "the node no longer exists".to_owned())?;
+        // SAFETY: `element` was built with `cache` immediately above.
+        let chain = unsafe {
+            uia.ancestor_chain(&element, &cache, &shared.uia_registry, MAX_ANCESTOR_HOPS)
+        }
+        .map_err(|error| format!("UIA ancestor walk failed: {error}"))?;
+        return Ok(chain);
+    }
+    if let Some(key) = shared.msaa_registry.key_of(node_id) {
+        return Ok(verbatim_ia2::acquire::ancestor_chain(
+            key,
+            &shared.msaa_registry,
+            MAX_ANCESTOR_HOPS,
+        ));
+    }
+    Err("unknown node id".to_owned())
+}
+
+/// Navigates from a node by id in `direction`, on a query worker: UIA via
+/// [`verbatim_uia::Uia::navigate`], MSAA via [`verbatim_ia2::acquire::navigate`].
+/// "No such neighbor" is reported as `Ok(NavigateOutcome::NoNeighbor)`, never
+/// conflated with the `Err` an acquisition failure produces.
+fn navigate_query(
+    worker: &mut Worker,
+    shared: &Shared,
+    node_id: verbatim_model::NodeId,
+    direction: crate::protocol::NavigateDirection,
+) -> Result<NavigateOutcome, String> {
+    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+        let uia = worker
+            .uia()
+            .ok_or_else(|| "could not create a UIA client".to_owned())?;
+        let cache = uia
+            .base_cache_request()
+            .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
+        let element = uia
+            .element_by_runtime_id(&runtime_id, &cache)
+            .map_err(|error| format!("could not re-fetch the node: {error}"))?
+            .ok_or_else(|| "the node no longer exists".to_owned())?;
+        // SAFETY: `element` was built with `cache` immediately above.
+        let found = unsafe {
+            uia.navigate(
+                &element,
+                &cache,
+                &shared.uia_registry,
+                uia_navigate_direction(direction),
+            )
+        }
+        .map_err(|error| format!("UIA navigation failed: {error}"))?;
+        return Ok(found.map_or(NavigateOutcome::NoNeighbor, NavigateOutcome::Found));
+    }
+    if let Some(key) = shared.msaa_registry.key_of(node_id) {
+        let found = verbatim_ia2::acquire::navigate(
+            key,
+            &shared.msaa_registry,
+            msaa_navigate_direction(direction),
+        );
+        return Ok(found.map_or(NavigateOutcome::NoNeighbor, NavigateOutcome::Found));
+    }
+    Err("unknown node id".to_owned())
+}
+
+/// Maps the outpost protocol's [`crate::protocol::NavigateDirection`] to
+/// `verbatim-uia`'s own copy of the same four variants (the crates do not
+/// depend on each other, so each carries its own).
+fn uia_navigate_direction(
+    direction: crate::protocol::NavigateDirection,
+) -> verbatim_uia::NavigateDirection {
+    match direction {
+        crate::protocol::NavigateDirection::Parent => verbatim_uia::NavigateDirection::Parent,
+        crate::protocol::NavigateDirection::NextSibling => {
+            verbatim_uia::NavigateDirection::NextSibling
+        }
+        crate::protocol::NavigateDirection::PreviousSibling => {
+            verbatim_uia::NavigateDirection::PreviousSibling
+        }
+        crate::protocol::NavigateDirection::FirstChild => {
+            verbatim_uia::NavigateDirection::FirstChild
+        }
+    }
+}
+
+/// Maps the outpost protocol's [`crate::protocol::NavigateDirection`] to
+/// `verbatim-ia2`'s own copy of the same four variants.
+fn msaa_navigate_direction(
+    direction: crate::protocol::NavigateDirection,
+) -> verbatim_ia2::acquire::NavigateDirection {
+    match direction {
+        crate::protocol::NavigateDirection::Parent => {
+            verbatim_ia2::acquire::NavigateDirection::Parent
+        }
+        crate::protocol::NavigateDirection::NextSibling => {
+            verbatim_ia2::acquire::NavigateDirection::NextSibling
+        }
+        crate::protocol::NavigateDirection::PreviousSibling => {
+            verbatim_ia2::acquire::NavigateDirection::PreviousSibling
+        }
+        crate::protocol::NavigateDirection::FirstChild => {
+            verbatim_ia2::acquire::NavigateDirection::FirstChild
+        }
+    }
+}
+
+/// Activates a node by id, on a query worker: UIA via
+/// [`verbatim_uia::Uia::activate`], MSAA via [`verbatim_ia2::acquire::activate`].
+fn activate_query(
+    worker: &mut Worker,
+    shared: &Shared,
+    node_id: verbatim_model::NodeId,
+) -> Result<(), String> {
+    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+        let uia = worker
+            .uia()
+            .ok_or_else(|| "could not create a UIA client".to_owned())?;
+        let cache = uia
+            .base_cache_request()
+            .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
+        let element = uia
+            .element_by_runtime_id(&runtime_id, &cache)
+            .map_err(|error| format!("could not re-fetch the node: {error}"))?
+            .ok_or_else(|| "the node no longer exists".to_owned())?;
+        // SAFETY: `element` was built with `cache` immediately above.
+        return unsafe { uia.activate(&element) }
+            .map_err(|error| format!("UIA activation failed: {error}"));
+    }
+    if let Some(key) = shared.msaa_registry.key_of(node_id) {
+        return verbatim_ia2::acquire::activate(key);
+    }
+    Err("unknown node id".to_owned())
 }
 
 /// Reads a single node's own snapshot for `hwnd` (no children), arbitrating

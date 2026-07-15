@@ -9,7 +9,12 @@
 //! The pieces:
 //!
 //! - [`Uia`] — a per-thread client wrapper; each outpost thread that talks to
-//!   UIA owns one.
+//!   UIA owns one. Beyond focus/query lookups, it walks a node's ancestor
+//!   chain and navigates to a neighbor ([`NavigateDirection`]) via the
+//!   raw-view tree walker's per-hop `*BuildCache` methods (one cross-process
+//!   round trip per hop; M4's remote-ops work replaces the per-hop walk with
+//!   a single batched round trip), and activates a node through the
+//!   `Invoke`/`Toggle`/legacy-`DoDefaultAction` pattern ladder.
 //! - [`FocusRegistration`] — the self-contained global focus-change handler
 //!   (its narrow seam is what the M3 sentinel split relocates).
 //! - [`PropertyRegistration`] — name/value change handlers scoped to the target
@@ -34,7 +39,7 @@ mod probe;
 mod registry;
 
 pub use cache::base_cache_request;
-pub use client::Uia;
+pub use client::{NavigateDirection, Uia};
 pub use com::init_mta;
 pub use events::{PropertyCallback, PropertyRegistration};
 pub use focus::{FocusCallback, FocusRegistration};
