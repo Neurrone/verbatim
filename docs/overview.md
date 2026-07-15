@@ -43,8 +43,14 @@ Public API:
   so a tree dump travels from the outpost through Core to
   `verbatim-inspect` without translation.
 - `NormalizedEvent` — `FocusChanged` (carrying a full snapshot),
-  `PropertyChanged` (name, value, or the complete new `States` set), and
-  `ValueChanged`.
+  `PropertyChanged` (name, value, or the complete new `States` set),
+  `ValueChanged`, `SelectionChanged` (a node was selected within its
+  container, carrying its snapshot), and `Notification` (UIA's
+  app-initiated announcement channel, carrying a `Notification` payload of
+  `NotificationKind`, `NotificationProcessing`, and optional display string
+  and activity id). The last two are emitted by outposts but deliberately
+  not yet announced: the reducer's wildcard arm drops them until M3's
+  selection-announcement policy work lands.
 - `Input` and `Effect` — the reducer's contract. Inputs are strictly
   accessibility-shaped: events, fetch completions, timer ticks. Effects are
   strictly `Speak`, `StopSpeech`, `Fetch`, and `PlayEarcon` (an `Earcon`
@@ -435,11 +441,35 @@ Public API:
 
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
   instance; nothing COM crosses threads): `focused_element`,
-  `element_from_handle`, `element_by_runtime_id`, `base_cache_request`.
+  `element_from_handle`, `element_by_runtime_id`, `base_cache_request`,
+  plus the M3 node-relative operations `ancestor_chain`, `navigate`, and
+  `activate` described below. The coclass is `CUIAutomation8`, not the
+  older `CUIAutomation`: only the former's objects implement the newer
+  client interfaces, and querying `IUIAutomation5` (the notification-event
+  registration) on a plain `CUIAutomation` object fails with
+  `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
+- `Uia::ancestor_chain` — the chain of ancestors of an element, outermost
+  first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
+  (one cross-process round trip per ancestor, the walk NVDA shipped for
+  years), capped by the caller. Deliberately the simplest correct
+  implementation behind this method as a seam: M4's remote-operations work
+  replaces the per-hop walk with a single batched round trip inside the
+  provider process, so callers must depend only on the resulting list.
+- `Uia::navigate` — one tree-walker step (parent, next or previous
+  sibling, first child; the `NavigateDirection` enum) returning the
+  neighbor's snapshot, with `Ok(None)` as the first-class "no such
+  neighbor" outcome distinct from an error.
+- `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
+  then the legacy `DoDefaultAction` pattern, each fetched live since
+  activation is an infrequent user action, not something the cache
+  prefetches.
 - `base_cache_request(client)` — the property set prefetched with every
   event and fetch: name, control type, value, process id, native window
-  handle, enabled, focus states, toggle and expand-collapse state, and the
-  two pattern-availability flags described below.
+  handle, enabled, focus states, toggle, expand-collapse, and
+  selection-item state with their three pattern-availability flags (see
+  the implementation note below), and the `NodeDetails` properties —
+  `FullDescription` and `HelpText`, `AccessKey` and `AcceleratorKey`,
+  `PositionInSet`, `SizeOfSet`, `Level`, and `BoundingRectangle`.
 - `FocusRegistration::new(target_pid, callback)` — the self-contained
   global focus listener, filtered to a target pid; drop unregisters and
   tears down its own thread. Deliberately a sealed module: UIA's focus
@@ -449,6 +479,15 @@ Public API:
 - `PropertyRegistration::new(hwnds, callback)` — name, value, toggle-state,
   enabled, and expand-collapse property changes, scoped to the target's
   top-level windows with subtree scope.
+- `SelectionRegistration::new(hwnds, callback)` and
+  `NotificationRegistration::new(hwnds, callback)` — the M3 event
+  additions, following `PropertyRegistration`'s pattern exactly (own
+  thread, apartment, client, and handler; unregister on drop; windows that
+  fail to resolve are skipped rather than failing the rest).
+  `SelectionRegistration` subscribes `SelectionItem_ElementSelected`;
+  `NotificationRegistration` subscribes `AutomationNotification` via
+  `IUIAutomation5::AddNotificationEventHandler`, delivering the raising
+  element plus kind, processing, display string, and activity id.
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
   as callable only from deadline-guarded query threads.
@@ -472,17 +511,26 @@ Public API:
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s; takes an
   injected shared counter so the UIA and MSAA registries in one outpost
   never hand out the same id. `init_mta()`, role and state mapping in
-  `map`.
+  `map`, plus `map`'s total `notification_kind_from_uia` and
+  `notification_processing_from_uia` tables for the notification payload.
 
-Implementation note on states: UIA returns default values for pattern
-properties on elements that lack the pattern — `ToggleState` reads as
-Indeterminate on a plain pane, which briefly made everything announce
-"half checked". The state rebuild therefore gates on the cached
-`IsTogglePatternAvailable` and `IsExpandCollapsePatternAvailable` flags and
-only interprets those properties when the pattern is genuinely there. The
-event handlers are COM objects generated by `windows-core`'s `#[implement]`
-macro, with the macro's generated glue wrapped in a small module that
-scopes lint allowances to generated code only.
+Implementation note on default values: UIA returns default values for
+properties on elements that do not support them, rather than an error, and
+every mapping here has to treat the default as "not reported". For pattern
+state properties — `ToggleState` reads as Indeterminate on a plain pane,
+which briefly made everything announce "half checked" — the state rebuild
+gates on the cached `IsTogglePatternAvailable`,
+`IsExpandCollapsePatternAvailable`, and `IsSelectionItemPatternAvailable`
+flags and only interprets those properties when the pattern is genuinely
+there (selection-item availability itself maps to `Selectable`, mirroring
+MSAA's selectable bit). For the `NodeDetails` properties the defaults are
+the empty string and zero, both mapped to `None` — including a genuine
+`0` answered for `PositionInSet`/`SizeOfSet`/`Level` by an hwnd-hosted
+root element through its host provider, where a pure fixture element just
+leaves the variant empty. The event handlers are COM objects generated by
+`windows-core`'s `#[implement]` macro, with the macro's generated glue
+wrapped in a small module that scopes lint allowances to generated code
+only.
 
 ## verbatim-ia2
 
@@ -493,15 +541,29 @@ parity work covers MSAA and UIA only).
 Public API:
 
 - `WinEventHook::install(target_pid, callback)` — out-of-context WinEvent
-  hooks scoped to one process id, for focus, value, state, and name
-  changes; callbacks are delivered on the installing thread's message loop
-  and must never make blocking calls into the target. `WinEventKind` names
-  the event; drop unhooks.
+  hooks scoped to one process id, for focus, value, state, name, and
+  selection changes (the four `EVENT_OBJECT_SELECTION*` events collapse to
+  one `WinEventKind::Selection`, since all four report "the selection
+  within a container changed" and acquisition reads the affected node from
+  the event's own address either way); callbacks are delivered on the
+  installing thread's message loop and must never make blocking calls into
+  the target. `WinEventKind` names the event; drop unhooks.
 - `acquire` — the query-pool side: `snapshot_from_event` (from
-  `AccessibleObjectFromEvent` through name, role, value, and state reads to
-  a `NodeSnapshot`), `resnapshot` for fetches, and `focused_snapshot`,
-  which answers "what is focused right now" via `GetGUIThreadInfo` for the
-  synthetic focus event an outpost emits after retargeting.
+  `AccessibleObjectFromEvent` through name, role, value, state,
+  description, keyboard-shortcut, and location reads to a `NodeSnapshot` —
+  the `NodeDetails` half plain MSAA can express; position-in-set and level
+  stay `None` on this backend until IA2's `groupPosition` lands in M6,
+  never faked by counting siblings), `resnapshot` for fetches,
+  `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
+  for the synthetic focus event an outpost emits after a foreground
+  change), and the M3 node-relative operations: `ancestor_chain`
+  (per-hop `accParent` walks, outermost first, with the simple-child
+  special case its doc explains — a bare child id has no `accParent` of
+  its own, so its first hop is the object it is a child of; MSAA has no
+  remote-ops analog, so unlike UIA's equivalent this stays the permanent
+  implementation), `navigate` (parent via `accParent`, siblings and first
+  child via `accNavigate`), and `activate` (`accDoDefaultAction`, MSAA's
+  only activation primitive).
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, pinned by unit tests against
   raw state words captured from live controls.
@@ -531,17 +593,36 @@ Public API:
   `Configure`'s implicit synthetic-focus half, now explicit and reusable
   across the outpost's whole life, not just at spawn), `Fetch`, `Ping`,
   `DumpTree` (walk the target's tree from its top-level window),
+  `AncestorChain` (the chain of ancestors of a node, outermost first, as
+  `NodeSnapshot`s, capped at 64 hops), `Navigate` (one step from a node —
+  parent, next or previous sibling, or first child, the protocol's own
+  `NavigateDirection`), `Activate` (invoke the node's activation action),
   `Shutdown`. `OutpostToSupervisor`: `Ready`, `Event` (trace id,
   observation timestamp, backend, snapshot version, normalized event),
   `FetchReply`, `Pong`, `DumpTreeReply` (a `DumpedTree` — the root
   `verbatim_model::TreeNode` plus whether the walk was truncated — or a
-  human-readable failure reason), `Fault`. Framing is newline-delimited
-  compact JSON via `write_message` and `read_message`.
+  human-readable failure reason), `AncestorChainReply`, `NavigateReply`
+  (whose success payload is a `NavigateOutcome`: a found snapshot, or a
+  first-class `NoNeighbor` distinct from an error — a root's missing
+  parent is not a failure), `ActivateReply`, `Fault`. The three M3 query
+  pairs are deliberately outpost-protocol-only rather than carried by the
+  reducer-facing `Fetch`: none of them re-reads one already-known node's
+  own snapshot (the one thing `QueryKind::NodeSnapshot` answers), and each
+  needs input `Query`'s node-id-only shape does not carry. Framing is
+  newline-delimited compact JSON via `write_message` and `read_message`.
 - `Arbitrator` — NVDA's per-window backend decision:
   `resolve_with(hwnd, class, probe)` walks the ladder (good class list, bad
-  class list seeded from NVDA's, then the injected probe), caches verdicts
-  per window handle for 500 ms, and supports a forced override from
-  `SetBackendOverride`. The probe is a closure so tests fake it.
+  class list, then the injected probe), caches verdicts per window handle
+  for 500 ms, and supports a forced override from `SetBackendOverride`.
+  The probe is a closure so tests fake it. Both class lists are lifted
+  from NVDA and pinned by unit tests naming their exact NVDA source
+  locations, so a future NVDA sync is a diff of two lists: the bad list is
+  `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and
+  the good list concatenates `goodUIAWindowClassNames` from the same file
+  with the Windows 11 shell tuple from the Explorer app module's
+  `isGoodUIAWindow` (`nvda/source/appModules/explorer.py`): taskbar,
+  input switcher, Task View and snap layouts, and the systray overflow —
+  the roadmap's shell window-classification rules as generic policy.
 - `QueryPool` — the deadline-guarded workers: `run(deadline, work)` blocks
   the caller up to the deadline and abandons the call on expiry (the worker
   stays parked, a counter increments, and a replacement spawns — recovery
@@ -714,6 +795,26 @@ Implementation notes:
   prefetch with. Both walkers share the same caps — depth 64, node count
   4096 across the whole walk — and report whether either cap cut the walk
   short.
+- `AncestorChain`, `Navigate`, and `Activate` (runtime): each answered on
+  a deadline-guarded query-pool thread exactly like `DumpTree`
+  (`AncestorChain` shares its five-second deadline, since it chains up to
+  64 per-hop round trips; `Navigate` and `Activate` use the standard
+  single-query deadline), dispatched to whichever backend's registry knows
+  the node id — the same dispatch a `Fetch` re-read uses. UIA hops go
+  through the raw-view tree walker with the base cache request; MSAA
+  through `accParent`, `accNavigate`, and `accDoDefaultAction`.
+- Selection and notification events (runtime): the outpost installs
+  `verbatim-uia`'s `SelectionRegistration` and `NotificationRegistration`
+  alongside the focus and property registrations, and the MSAA hook set
+  includes the four selection WinEvents. Both backends' selection events
+  emit `NormalizedEvent::SelectionChanged` (the selected node's full
+  snapshot) and UIA notifications emit `NormalizedEvent::Notification`,
+  all through the same per-window arbitration cross-filter as every other
+  event — but the reducer does not announce either yet; its wildcard arm
+  drops them until the M3 selection-announcement policy lands.
+- `OutpostMessage::Event` boxes its `OutpostToSupervisor` payload: the M3
+  replies grew the message enum well past the bare-pid `Retired` variant,
+  and boxing keeps every channel send small.
 
 ## mockapp
 
@@ -737,15 +838,25 @@ exists and the provider is answering, then processes stdin commands until
 Fixture format: one JSON object per node — `id` (unique string), `role` (a
 `Role` name in snake case, e.g. `check_box`), optional `name` and `value`
 strings, `states` (an array of `State` names in snake case, e.g.
-`read_only`), and `children` (nested nodes). The root node conceptually
-corresponds to the window itself. `fixture::role_from_fixture_str` and
-`state_from_fixture_str` hold the complete name tables.
+`read_only`), optional detail properties (`description` and
+`keyboard_shortcut` strings, one-based `position_in_set`, `set_size`, and
+`level` integers — the M3 `NodeDetails` vocabulary; each backend serves
+the subset its API can express), and `children` (nested nodes). The root
+node conceptually corresponds to the window itself.
+`fixture::role_from_fixture_str` and `state_from_fixture_str` hold the
+complete name tables.
 
 Stdin commands, one per line: `focus <id>` (raises the backend's
 focus-changed notification — `UiaRaiseAutomationEvent` for UIA,
 `NotifyWinEvent(EVENT_OBJECT_FOCUS, ...)` for MSAA), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
-property-change or name/value-change notification), and `quit`.
+property-change or name/value-change notification), `select <id>` (marks
+the node selected, moving the state off any previous selection, and raises
+`SelectionItem_ElementSelected` for UIA or `EVENT_OBJECT_SELECTION` for
+MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
+root provider with `text` as the display string, kind `Other`, processing
+`All`, and a fixed `mockapp-notify` activity id; reported as unsupported
+on the MSAA backend, which has no notification event), and `quit`.
 
 Public API is otherwise internal (`mockapp` is a binary, not a library);
 its crate-internal modules are the reviewable surface:
@@ -802,18 +913,20 @@ Implementation notes:
   hatch: the generated COM glue turns it into `S_OK` with an untouched
   (effectively null) out-parameter, exactly the UIA contract for "nothing
   here."
-- **Toggle, expand-collapse, and value need real pattern objects.**
-  `GetPropertyValue` overrides for pattern-availability and pattern-value
-  properties are documented as an optional shortcut, but empirically
-  `IUIAutomationCacheRequest`'s cache-building still calls
-  `GetPatternProvider` for `TogglePattern`, `ExpandCollapsePattern`, and
-  `ValuePattern` before trusting a cached value — which is exactly the path
-  `verbatim-uia`'s base cache request always uses. mockapp therefore
-  implements small `IToggleProvider`, `IExpandCollapseProvider`, and
-  `IValueProvider` objects (returned from `GetPatternProvider`, gated on
-  role for toggle and on the fixture's `expanded`/`collapsed` states or
-  presence of a `value` for the other two) alongside the `GetPropertyValue`
-  overrides, rather than relying on the shortcut alone.
+- **Toggle, expand-collapse, value, and selection need real pattern
+  objects.** `GetPropertyValue` overrides for pattern-availability and
+  pattern-value properties are documented as an optional shortcut, but
+  empirically `IUIAutomationCacheRequest`'s cache-building still calls
+  `GetPatternProvider` for `TogglePattern`, `ExpandCollapsePattern`,
+  `ValuePattern`, and `SelectionItemPattern` before trusting a cached
+  value — which is exactly the path `verbatim-uia`'s base cache request
+  always uses. mockapp therefore implements small `IToggleProvider`,
+  `IExpandCollapseProvider`, `IValueProvider`, and
+  `ISelectionItemProvider` objects (returned from `GetPatternProvider`,
+  gated on role for toggle, on the fixture's `expanded`/`collapsed` states
+  or presence of a `value` for the middle two, and on its
+  `selectable`/`selected` states for selection) alongside the
+  `GetPropertyValue` overrides, rather than relying on the shortcut alone.
 - **Raw-view host furniture.** A real `hwnd`'s UIA raw tree (`TreeScope_Children`
   with a true condition) can include host-provided native elements — for
   example window-chrome furniture merged in via `HostRawElementProvider` —
@@ -829,14 +942,24 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). `uia_tree.rs` and `msaa_tree.rs` walk
 a rich scripted tree through each real client stack and assert normalized
-roles, names, values, and states match the fixture. `arbitration.rs` asserts
-`verbatim_uia::has_server_side_provider` and `verbatim_outpost::Arbitrator`
-resolve a `uia`-backend window to UIA and a `msaa`-backend one to MSAA.
-`events.rs` asserts that `set-name`/`set-value` commands are observed by
-`verbatim_uia::PropertyRegistration` and `verbatim_ia2::WinEventHook`
-respectively — property and value changes are used rather than focus, so
-the tests never depend on real keyboard focus or `SetForegroundWindow`
-succeeding, and pass headless on GitHub `windows-latest` runners.
+roles, names, values, states, and detail properties match the fixture —
+every node's details must read back exactly what was scripted, and
+all-`None` for every node the fixture left plain, so both presence and
+absence are pinned (rectangles excluded: mockapp scripts no geometry, but
+UIA merges the real window's rectangle into the hwnd-hosted root).
+`arbitration.rs` asserts `verbatim_uia::has_server_side_provider` and
+`verbatim_outpost::Arbitrator` resolve a `uia`-backend window to UIA and a
+`msaa`-backend one to MSAA. `events.rs` asserts that
+`set-name`/`set-value` commands are observed by
+`verbatim_uia::PropertyRegistration` and `verbatim_ia2::WinEventHook`,
+that `select` is observed by `verbatim_uia::SelectionRegistration` (with
+the delivered element's mapped snapshot carrying its name and `Selected`
+state) and by the WinEvent hook as `WinEventKind::Selection`, and that
+`notify` is observed by `verbatim_uia::NotificationRegistration` with its
+full payload — property, value, selection, and notification changes are
+used rather than focus, so the tests never depend on real keyboard focus
+or `SetForegroundWindow` succeeding, and pass headless on GitHub
+`windows-latest` runners.
 
 
 ## verbatim-control
