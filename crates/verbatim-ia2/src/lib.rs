@@ -25,5 +25,6 @@ mod hook;
 pub mod map;
 mod registry;
 
+pub use com::CHILDID_SELF;
 pub use hook::{WinEventCallback, WinEventHook, WinEventKind};
 pub use registry::{MsaaKey, NodeIdRegistry};

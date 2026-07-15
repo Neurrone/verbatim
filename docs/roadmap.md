@@ -115,51 +115,53 @@ drivable synthesizer page offers a toggle.
 
 Verbatim becomes usable as a daily driver for basic Windows navigation.
 
-- Outposts generalized from M1's single instance to many concurrent per-app
-  processes (D9): outpost lifecycle across focus changes, the full recovery
-  ladder (call deadlines, thread abandonment, kill-and-respawn), idle
-  retirement, stale-cache policy (the architecture's responsiveness story,
-  for real); WinEvent routing and per-app backend arbitration (UIA vs
-  MSAA/IA2). Measure per-outpost working set and spawn latency on the
-  low-end VM profile (risk R2).
-- Arbitration attribution landed at the end of M2 rather than here, once the
-  M2 E2E suite exposed the defect and NVDA's reference implementation
-  (`getNearestWindowHandle` in `nvda/source/UIAHandler/__init__.py`) showed
-  the mechanism was one call, not a design problem: a UIA event's element is
-  usually not a window itself (menu items, list items), so
-  `verbatim_uia::nearest_window_handle` resolves its nearest windowed
-  ancestor with a single `NormalizeElementBuildCache` round trip, and both
-  backends then arbitrate the same window for the same logical element — the
-  popup-menu case included, since the MSAA event carries the popup's own
-  handle and the UIA walk resolves to that same popup. The decision half
-  never needed changing: NVDA's `isUIAWindow` is the same ladder Verbatim's
-  `Arbitrator` already implements. What remains for M3 is exercising this
-  under the multi-outpost generalization above, plus the deliberate residual
-  risk: the normalize call is a cross-process call made inline on the event
-  callback thread (NVDA's own trade), which per-app outpost isolation (D9)
-  contains — bouncing it to a deadline-guarded query worker is the fallback
-  if it misbehaves in practice.
-- Focus and foreground timing races, observed as intermittent E2E failures
-  (roughly one run in three fails on one of these; the M2 suite is how they
-  were found and is the regression net for fixing them). Two known shapes.
-  First, opening the Verbatim menu intermittently announces the hidden main
-  frame ("Verbatim", role unknown) and can delay or displace the menu
-  announcement — the prePopup show, raise, and force-foreground dance in
-  `verbatim-gui` racing the popup; the hidden frame should likely never be
-  announced at all, and a role reading as "unknown" is poor speech in any
-  case. Second, a freshly launched application's focus announcement can
-  fail to arrive entirely — the foreground trigger's retarget and the
-  outpost's synthetic focus query racing the new process's window creation,
-  within the 400 millisecond focus deadline. Both belong to this
-  milestone's outpost-lifecycle and focus-tracking work; the arbitration
-  mechanism is not the cause of either.
+- Carried out of this milestone early: the two largest items below landed at
+  the end of M2, driven by the new E2E suite exposing their absence as
+  intermittent failures and by an explicit decision to fix causes rather
+  than symptoms. First, arbitration attribution: a UIA event's element is
+  usually not a window itself, so `verbatim_uia::nearest_window_handle`
+  (NVDA's `getNearestWindowHandle` mechanism, one
+  `NormalizeElementBuildCache` round trip) resolves its nearest windowed
+  ancestor, and both backends arbitrate the same window for the same
+  logical element; the decision ladder itself never needed changing. The
+  residual risk stands: the normalize call is a cross-process call made
+  inline on the event callback thread (NVDA's own trade), contained by
+  per-app outpost isolation, with a deadline-guarded query worker as the
+  fallback if it misbehaves. Second, the D9 outpost generalization itself:
+  one outpost per application, spawned on first foreground and kept alive
+  in the background (so the cross-pid retarget path — and the WinEvent
+  rebind gap it carried — no longer exists), per-pid respawn on death,
+  idle retirement on a two-minute threshold (never the current foreground's
+  outpost, never Core's own, which is pre-warmed at startup because a cold
+  spawn provably races an immediately following keystroke), and Core-side
+  gating so only the foreground application's outpost is heard. Foreground
+  changes now announce the new window and then its focused control — NVDA's
+  model — with bounded, generation-checked retries absorbing slow-starting
+  applications; that made the previously flaky application-switch
+  announcements deterministic, verified by a dedicated multi-app E2E
+  scenario plus five consecutive green suite runs.
+- What remains here from that work: the recovery ladder beyond respawn (call
+  deadlines and thread abandonment exist; the full kill-and-respawn policy
+  for a wedged-but-alive outpost does not), the stale-cache policy, WinEvent
+  routing refinements, and measuring per-outpost working set and spawn
+  latency on the low-end VM profile (risk R2), which needs a VM profile the
+  M2 harness does not yet define. Residual E2E flakes also remain, distinct
+  from the fixed races and much rarer: an occasional missed announcement
+  deep in a long tab-through-dialog sequence, an occasional slow first
+  launch on a cold guest, and transient agent-tunnel network hiccups — all
+  now self-documenting, since every launched Verbatim writes stderr to a
+  collected log and panics dump the flight recorder, and the quit-path
+  panic that muddied earlier evidence (a re-entrant borrow of the GUI
+  thread-local, fired on nearly every clean exit, silently) is fixed.
+  Worth root-causing during this milestone's responsiveness work rather
+  than papering over in the tests.
 - Announce a focused list's selected item. Focus landing on a list currently
   speaks only the list's own name and role; the selected entry is not spoken,
   which is not how a screen reader should read a category list or a list box.
-  This gap was masked until M2: the spurious UIA events described above were
-  announcing the selected item by accident, and fixing the arbitration bug
-  revealed it. Belongs with this milestone's selection and object-navigation
-  work.
+  This gap was masked until M2: spurious cross-backend UIA events were
+  announcing the selected item by accident, and fixing arbitration
+  attribution revealed it. Belongs with this milestone's selection and
+  object-navigation work.
 - Focus/foreground tracking across apps; object navigation and review cursor;
   input-help mode; remappable gesture map; symbol/dictionary processing v1.
 - eSpeak NG built-in synth (statically linked, x64 and ARM64) as regular

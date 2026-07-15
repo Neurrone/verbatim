@@ -1,11 +1,15 @@
 //! The outpost runtime: the event thread, the UIA registrations, the query
 //! pool, and the command loop that ties them together (architecture section 1).
 //!
-//! One outpost watches one application. Its UIA focus and property handlers and
-//! its out-of-context MSAA `WinEvent` hooks run simultaneously; the arbitration
-//! cross-filter (see [`crate::arbitration`]) ensures only one backend announces
-//! any given change. Trace IDs are minted the moment an OS event is observed;
-//! the snapshot version increments on every emitted event.
+//! One outpost watches one application, fixed for its whole life (decision
+//! D9): its target pid arrives at spawn (the command line in production mode,
+//! an argument in dev-attach mode), hooks and UIA registrations install once
+//! during construction, and there is no later retarget. Its UIA focus and
+//! property handlers and its out-of-context MSAA `WinEvent` hooks run
+//! simultaneously; the arbitration cross-filter (see [`crate::arbitration`])
+//! ensures only one backend announces any given change. Trace IDs are minted
+//! the moment an OS event is observed; the snapshot version increments on
+//! every emitted event.
 
 use std::ffi::c_void;
 use std::io::{self, BufReader, Write};
@@ -21,14 +25,17 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_NamePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GUITHREADINFO, GetGUIThreadInfo, GetMessageW,
-    GetWindowThreadProcessId, MSG, PostThreadMessageW, TranslateMessage, WM_APP,
+    DispatchMessageW, EnumWindows, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo,
+    GetMessageW, GetPropW, GetWindowThreadProcessId, MSG, PostThreadMessageW, TranslateMessage,
 };
-use windows::core::BOOL;
+use windows::core::{BOOL, HSTRING};
 
-use verbatim_ia2::{NodeIdRegistry as MsaaRegistry, WinEventCallback, WinEventHook, WinEventKind};
+use verbatim_ia2::{
+    CHILDID_SELF, NodeIdRegistry as MsaaRegistry, WinEventCallback, WinEventHook, WinEventKind,
+};
 use verbatim_model::{
-    Backend, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, SnapshotVersion, TraceId,
+    Backend, HIDDEN_FRAME_WINDOW_PROP, NodeSnapshot, NormalizedEvent, Pid, PropertyChange,
+    SnapshotVersion, TraceId,
 };
 use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
 use verbatim_uia::{
@@ -46,7 +53,7 @@ use crate::query_pool::{QueryPool, Worker};
 /// synthetic focus): architecture section 1's per-call deadline.
 const QUERY_DEADLINE: Duration = Duration::from_millis(300);
 
-/// A slightly longer deadline for the synthetic focus query, which chains an
+/// A slightly longer deadline for a synthetic focus query, which chains an
 /// arbitration decision and a cross-process fetch.
 const FOCUS_DEADLINE: Duration = Duration::from_millis(400);
 
@@ -62,8 +69,15 @@ const MAX_DUMP_DEPTH: u32 = 64;
 /// Node-count cap for a `DumpTree` walk, across the whole tree.
 const MAX_DUMP_NODES: usize = 4096;
 
-/// Custom thread message: re-read the desired target pid and rebind hooks.
-const WM_REBIND: u32 = WM_APP + 1;
+/// How many times [`Outpost::handle_announce_focus`] retries the
+/// focused-control query when nothing is found yet (a control that has not
+/// focused itself between the foreground change and this outpost's first
+/// attempt — the second race `docs/roadmap.md`'s M3 section names).
+const ANNOUNCE_RETRY_ATTEMPTS: u32 = 5;
+
+/// Spacing between focused-control retry attempts. Four gaps across five
+/// attempts spread the whole retry window across roughly two seconds.
+const ANNOUNCE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Shared state cloned into every callback and query. All fields are cheap to
 /// clone (channels, atomics, and `Arc`-backed registries and the arbitrator).
@@ -75,6 +89,13 @@ struct Shared {
     pool: QueryPool,
     uia_registry: UiaRegistry,
     msaa_registry: MsaaRegistry,
+    /// Bumped by every `AnnounceFocus`; an in-flight retry loop compares its
+    /// captured generation against the current value before each attempt
+    /// and before emitting, so a superseding announce aborts stale retries
+    /// (a rapid re-foreground, or Notepad's own bursty startup events —
+    /// see this crate's supervisor docs for the retry-starvation history
+    /// this guards against).
+    generation: Arc<AtomicU64>,
 }
 
 impl Shared {
@@ -139,6 +160,18 @@ impl Shared {
     }
 }
 
+/// Whether `hwnd` carries Core's hidden-main-frame marker property (decision
+/// D9; see [`verbatim_model::HIDDEN_FRAME_WINDOW_PROP`]). `GetPropW`
+/// tolerates any handle, including an invalid one, so this never blocks and
+/// is safe to call from an event-callback thread as well as a query worker.
+fn window_is_hidden_frame(hwnd: isize) -> bool {
+    let name = HSTRING::from(HIDDEN_FRAME_WINDOW_PROP);
+    // SAFETY: GetPropW reads a window property by name; an invalid or
+    // property-less window simply yields a null handle.
+    let value = unsafe { GetPropW(HWND(hwnd as *mut c_void), &name) };
+    !value.0.is_null()
+}
+
 /// The MSAA `WinEvent` callback body: cross-filter on the event thread, then
 /// hand acquisition to the query pool. Never blocks.
 fn handle_msaa_event(
@@ -148,6 +181,13 @@ fn handle_msaa_event(
     id_object: i32,
     id_child: i32,
 ) {
+    // Hidden-frame suppression (decision D9) applies only to the window's
+    // own focus event (`id_child == CHILDID_SELF`), never to a child
+    // element's event on some other window that merely shares an hwnd by
+    // coincidence of enumeration order.
+    if kind == WinEventKind::Focus && id_child == CHILDID_SELF && window_is_hidden_frame(hwnd) {
+        return;
+    }
     let class = window_class_name(hwnd);
     match shared.lock_arbitrator().verdict(hwnd, &class) {
         Some(true) => return, // UIA window: MSAA is suppressed for it.
@@ -191,8 +231,11 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
     }
 }
 
-/// Applies the UIA cross-filter for an element on a callback thread. Returns
-/// whether the event should be delivered.
+/// Resolves the window an arbitrary UIA `element` belongs to and applies the
+/// arbitration cross-filter in one pass, returning both the delivery verdict
+/// and the resolved window handle — the handle is reused by the focus
+/// callback for hidden-frame suppression instead of resolving it a second
+/// time.
 ///
 /// Most elements that raise events are not windows in their own right — a
 /// menu item and a list item are children of one — so
@@ -223,7 +266,10 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
 /// # Safety
 ///
 /// `element` must be a cached element from the base cache request.
-unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> bool {
+unsafe fn resolve_window_and_filter(
+    shared: &Shared,
+    element: &IUIAutomationElement,
+) -> (bool, Option<isize>) {
     // SAFETY: forwarded to the caller's contract; the cached native window
     // handle read does not block.
     let cached_hwnd = unsafe { cached_native_window_handle(element) };
@@ -237,10 +283,10 @@ unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> 
     // a last resort rather than losing the event outright, and if even that
     // finds nothing, there is no window to arbitrate on at all, so keep it.
     let Some(hwnd) = hwnd.or_else(foreground_focus_window) else {
-        return true;
+        return (true, None);
     };
     let class = window_class_name(hwnd);
-    match shared.lock_arbitrator().verdict(hwnd, &class) {
+    let deliver = match shared.lock_arbitrator().verdict(hwnd, &class) {
         Some(true) => true,
         Some(false) => false,
         None => {
@@ -252,44 +298,43 @@ unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> 
             // the M1 heuristic had to compensate for.
             false
         }
-    }
+    };
+    (deliver, Some(hwnd))
 }
 
-/// The event thread: installs the MSAA hooks and pumps messages so the
-/// out-of-context callbacks are delivered, rebinding to a new pid on request.
+/// Applies the UIA cross-filter for an element on a callback thread, for
+/// callers (the property-change path) that do not also need the resolved
+/// window handle. See [`resolve_window_and_filter`] for the full reasoning.
+///
+/// # Safety
+///
+/// `element` must be a cached element from the base cache request.
+unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> bool {
+    // SAFETY: forwarded.
+    unsafe { resolve_window_and_filter(shared, element).0 }
+}
+
+/// The event thread: installs the MSAA hooks for the fixed target pid once,
+/// then pumps messages so the out-of-context callbacks are delivered.
 struct EventThread {
     thread_id: u32,
-    desired_pid: Arc<Mutex<Option<u32>>>,
     join: Option<JoinHandle<()>>,
 }
 
 impl EventThread {
-    fn spawn(make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync>) -> Self {
-        let desired_pid = Arc::new(Mutex::new(None));
+    fn spawn(
+        target_pid: u32,
+        make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync>,
+    ) -> Self {
         let (id_tx, id_rx) = unbounded::<u32>();
-        let thread_desired = desired_pid.clone();
         let join = thread::Builder::new()
             .name("verbatim-event".to_owned())
-            .spawn(move || event_thread_main(&id_tx, &thread_desired, &make_callback))
+            .spawn(move || event_thread_main(target_pid, &id_tx, &make_callback))
             .expect("spawn event thread");
         let thread_id = id_rx.recv().unwrap_or(0);
         Self {
             thread_id,
-            desired_pid,
             join: Some(join),
-        }
-    }
-
-    /// Rebinds the hooks to `pid`. The message loop reinstalls on the next
-    /// [`WM_REBIND`].
-    fn rebind(&self, pid: u32) {
-        *self
-            .desired_pid
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(pid);
-        // SAFETY: posting a thread message to our own event thread.
-        unsafe {
-            let _ = PostThreadMessageW(self.thread_id, WM_REBIND, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -312,30 +357,31 @@ impl Drop for EventThread {
 }
 
 fn event_thread_main(
+    target_pid: u32,
     id_tx: &Sender<u32>,
-    desired_pid: &Arc<Mutex<Option<u32>>>,
     make_callback: &Arc<dyn Fn() -> WinEventCallback + Send + Sync>,
 ) {
     // SAFETY: GetCurrentThreadId is always sound.
     let thread_id = unsafe { GetCurrentThreadId() };
     let _ = id_tx.send(thread_id);
-    let mut hook: Option<WinEventHook> = None;
+    // Installed once, for the whole life of the outpost (decision D9): a
+    // second live hook set on the same thread while a first is still
+    // registered has been observed to permanently kill WinEvent delivery on
+    // that thread for the rest of the process, which is exactly why this
+    // pid is fixed at spawn instead of rebindable.
+    let hook = match WinEventHook::install(target_pid, make_callback()) {
+        Ok(installed) => Some(installed),
+        Err(error) => {
+            tracing::warn!(error, target_pid, "failed to install WinEvent hooks");
+            None
+        }
+    };
     let mut message = MSG::default();
     loop {
         // SAFETY: standard message loop; `message` is fully owned here.
         let result = unsafe { GetMessageW(&raw mut message, None, 0, 0) };
         if result.0 <= 0 {
             break; // WM_QUIT (0) or error (-1).
-        }
-        if message.message == WM_REBIND {
-            let pid = *desired_pid.lock().unwrap_or_else(PoisonError::into_inner);
-            hook = None; // Unhook the previous target before rebinding.
-            if let Some(pid) = pid {
-                match WinEventHook::install(pid, make_callback()) {
-                    Ok(installed) => hook = Some(installed),
-                    Err(error) => tracing::warn!(error, "failed to install WinEvent hooks"),
-                }
-            }
         }
         // SAFETY: dispatching a fully owned message.
         unsafe {
@@ -346,29 +392,30 @@ fn event_thread_main(
     drop(hook);
 }
 
-/// The outpost: owns the shared state, event thread, and UIA registrations for
-/// one target application.
+/// The outpost: owns the shared state, event thread, and UIA registrations
+/// for one target application, fixed for the outpost's whole life.
 pub struct Outpost {
     pid: u32,
+    target_pid: u32,
     shared: Shared,
-    event_thread: EventThread,
+    _event_thread: EventThread,
     focus_registration: Option<FocusRegistration>,
     property_registration: Option<PropertyRegistration>,
-    target_pid: Option<u32>,
     _writer: JoinHandle<()>,
 }
 
 impl Outpost {
-    /// Creates an outpost that writes outbound messages through `writer` (the
-    /// pipe to Core, or stdout in dev-attach mode). Spawns the writer thread,
-    /// the query pool, and the event thread.
+    /// Creates an outpost watching `target_pid` for its whole life: installs
+    /// the MSAA hooks and UIA registrations once, writes outbound messages
+    /// through `writer` (the pipe to Core, or stdout in dev-attach mode),
+    /// and announces readiness.
     ///
     /// # Panics
     ///
     /// Panics if the outbound writer or event thread cannot be spawned, which
     /// indicates the process is out of OS thread resources.
     #[must_use]
-    pub fn new(writer: Box<dyn Write + Send>) -> Self {
+    pub fn new(writer: Box<dyn Write + Send>, target_pid: u32) -> Self {
         let (outbound, outbound_rx) = unbounded::<OutpostToSupervisor>();
         let writer_join = thread::Builder::new()
             .name("verbatim-outbound".to_owned())
@@ -390,6 +437,7 @@ impl Outpost {
             pool: QueryPool::new(2),
             uia_registry: UiaRegistry::new(id_counter.clone()),
             msaa_registry: MsaaRegistry::new(id_counter),
+            generation: Arc::new(AtomicU64::new(0)),
         };
 
         let callback_shared = shared.clone();
@@ -399,53 +447,44 @@ impl Outpost {
                 handle_msaa_event(&shared, kind, hwnd, id_object, id_child);
             })
         });
-        let event_thread = EventThread::spawn(make_callback);
+        let event_thread = EventThread::spawn(target_pid, make_callback);
 
-        Self {
+        let mut outpost = Self {
             pid: std::process::id(),
+            target_pid,
             shared,
-            event_thread,
+            _event_thread: event_thread,
             focus_registration: None,
             property_registration: None,
-            target_pid: None,
             _writer: writer_join,
-        }
-    }
+        };
+        outpost.install_uia_registrations(target_pid);
 
-    /// (Re)targets the outpost: rebinds MSAA hooks, rebuilds UIA registrations,
-    /// announces readiness, and emits a synthetic focus event for the currently
-    /// focused element so the focus change that triggered this is announced.
-    pub fn configure(&mut self, target_pid: u32, backend_override: Option<Backend>) {
-        self.target_pid = Some(target_pid);
-        self.shared
-            .lock_arbitrator()
-            .set_forced(backend_override.map(|backend| backend == Backend::Uia));
-
-        // Rebind MSAA hooks to the new target.
-        self.event_thread.rebind(target_pid);
-
-        // Rebuild UIA registrations unless MSAA is forced.
-        self.focus_registration = None;
-        self.property_registration = None;
-        if backend_override != Some(Backend::Msaa) {
-            self.install_uia_registrations(target_pid);
-        }
-
-        let _ = self.shared.outbound.send(OutpostToSupervisor::Ready {
-            outpost_pid: Pid(self.pid),
+        let _ = outpost.shared.outbound.send(OutpostToSupervisor::Ready {
+            outpost_pid: Pid(outpost.pid),
             target_pid: Pid(target_pid),
         });
 
-        self.emit_synthetic_focus(target_pid);
+        outpost
+    }
+
+    /// Sets or clears a forced backend override for every window of the
+    /// target application, overriding arbitration.
+    fn handle_set_backend_override(&self, backend_override: Option<Backend>) {
+        self.shared
+            .lock_arbitrator()
+            .set_forced(backend_override.map(|backend| backend == Backend::Uia));
     }
 
     fn install_uia_registrations(&mut self, target_pid: u32) {
         let focus_shared = self.shared.clone();
         let focus_callback = Arc::new(move |element: &IUIAutomationElement| {
             // SAFETY: `element` is a cached focus element from the base cache
-            // request, so the filter and mapping read only cached values.
+            // request, so the filter, hidden-frame check, and mapping read
+            // only cached values.
             unsafe {
-                if !uia_passes_filter(&focus_shared, element) {
+                let (deliver, hwnd) = resolve_window_and_filter(&focus_shared, element);
+                if !deliver || hwnd.is_some_and(window_is_hidden_frame) {
                     return;
                 }
                 let node = snapshot_from_cached_element(element, &focus_shared.uia_registry);
@@ -503,18 +542,23 @@ impl Outpost {
         }
     }
 
-    fn emit_synthetic_focus(&self, target_pid: u32) {
+    /// Announces a foreground change to this outpost's target application
+    /// (architecture section 1, decision D9): a synthetic `FocusChanged` for
+    /// the top-level foreground window (single deadline-guarded attempt,
+    /// suppressed if it is Core's hidden main frame), then the synthetic
+    /// focus for the focused control, retried up to
+    /// [`ANNOUNCE_RETRY_ATTEMPTS`] times across roughly two seconds when
+    /// nothing is found yet. Runs off the command loop (its own thread) so
+    /// `Ping` and `Fetch` stay responsive while retries are in flight; a
+    /// generation counter bumped on every call means a superseding announce
+    /// aborts any retry loop still running from a previous one.
+    fn handle_announce_focus(&self, _trace_id: TraceId) {
+        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let shared = self.shared.clone();
-        let result = self.shared.pool.run(FOCUS_DEADLINE, move |worker| {
-            focused_snapshot(worker, target_pid, &shared)
-        });
-        if let Some(Some((backend, node))) = result {
-            self.shared.emit(
-                TraceId::mint(),
-                backend,
-                NormalizedEvent::FocusChanged { node },
-            );
-        }
+        let target_pid = self.target_pid;
+        let _ = thread::Builder::new()
+            .name("verbatim-announce".to_owned())
+            .spawn(move || run_announce(&shared, target_pid, generation));
     }
 
     /// Answers a fetch by re-reading the node from whichever backend owns it.
@@ -537,19 +581,10 @@ impl Outpost {
 
     /// Answers a `DumpTree` request by walking the target application's
     /// tree from its top-level window, on a deadline-guarded query-pool
-    /// thread — the same pattern [`Self::emit_synthetic_focus`] uses — so a
+    /// thread — the same pattern [`Self::handle_announce_focus`] uses — so a
     /// hung application abandons the call rather than wedging the outpost.
     fn handle_dump_tree(&self, trace: TraceId) {
-        let Some(target_pid) = self.target_pid else {
-            let _ = self
-                .shared
-                .outbound
-                .send(OutpostToSupervisor::DumpTreeReply {
-                    trace_id: trace,
-                    result: Err("outpost has no target application configured".to_owned()),
-                });
-            return;
-        };
+        let target_pid = self.target_pid;
         let shared = self.shared.clone();
         let result = self
             .shared
@@ -570,11 +605,12 @@ impl Outpost {
     /// Dispatches one supervisor command. Returns `false` on `Shutdown`.
     pub fn handle_command(&mut self, command: &SupervisorToOutpost) -> bool {
         match command {
-            SupervisorToOutpost::Configure {
-                target_pid,
-                backend_override,
-            } => {
-                self.configure(target_pid.0, *backend_override);
+            SupervisorToOutpost::SetBackendOverride { backend_override } => {
+                self.handle_set_backend_override(*backend_override);
+                true
+            }
+            SupervisorToOutpost::AnnounceFocus { trace_id } => {
+                self.handle_announce_focus(*trace_id);
                 true
             }
             SupervisorToOutpost::Fetch { trace_id, query } => {
@@ -597,13 +633,100 @@ impl Outpost {
     }
 }
 
+/// The retry driver behind [`Outpost::handle_announce_focus`], run on its own
+/// thread. `generation` is the value captured when this call was scheduled;
+/// every attempt and every emission is guarded by comparing it against
+/// `shared.generation`'s live value, so a superseding `AnnounceFocus` aborts
+/// this loop without any explicit cancellation channel.
+///
+/// Both the window announcement and the focused-control announcement share
+/// one retry budget — up to [`ANNOUNCE_RETRY_ATTEMPTS`] attempts across
+/// roughly two seconds — rather than the window getting a single attempt.
+/// It initially seemed safe to assume the top-level window always exists by
+/// the time Core observes a foreground change at all (Windows raises the
+/// foreground event only once the window does), and that held for the
+/// common case, but live testing against the VM under load found it does
+/// not always hold: `EnumWindows` can still race a window's own creation
+/// closely enough that neither `GetForegroundWindow` nor enumeration finds
+/// it on the very first attempt, losing the window announcement outright
+/// with no later chance to recover it. The window step now participates in
+/// the same retry loop as the control step, stopping once it succeeds (or
+/// is deliberately skipped, for a hidden-frame-only process).
+///
+/// The two steps are independent, not sequential: a first version of this
+/// loop returned as soon as the control was found, which on Windows 11
+/// Notepad — whose edit control focuses essentially instantly, per this
+/// crate's supervisor docs — routinely happened on the very first attempt,
+/// before the window step had a chance to retry a first attempt that missed
+/// (confirmed live: the control announcement arrived every time, but the
+/// window announcement was silently lost whenever its own first attempt
+/// raced the window's creation). The loop now keeps going, attempt by
+/// attempt, until *both* steps have succeeded or the attempts run out,
+/// tracking each step's own completion so a step that already succeeded is
+/// never attempted again.
+fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
+    let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
+    let mut window_done = false;
+    let mut control_done = false;
+
+    for attempt in 0..ANNOUNCE_RETRY_ATTEMPTS {
+        if !still_current() {
+            return;
+        }
+
+        if !window_done && let Some(hwnd) = active_top_level_window(target_pid) {
+            let shared_for_window = shared.clone();
+            let window = shared.pool.run(FOCUS_DEADLINE, move |worker| {
+                window_snapshot(worker, hwnd, &shared_for_window)
+            });
+            if let Some(Some((backend, node))) = window {
+                window_done = true;
+                if still_current() {
+                    shared.emit(
+                        TraceId::mint(),
+                        backend,
+                        NormalizedEvent::FocusChanged { node },
+                    );
+                }
+            }
+        }
+        // A window search that found nothing this attempt (every top-level
+        // window is Core's own hidden frame, or the process has none yet)
+        // is not a terminal failure; `window_done` stays false and the next
+        // attempt tries again alongside the control step.
+
+        if !control_done && still_current() {
+            let shared_for_focus = shared.clone();
+            let found = shared.pool.run(FOCUS_DEADLINE, move |worker| {
+                focused_snapshot(worker, target_pid, &shared_for_focus)
+            });
+            if let Some(Some((backend, node))) = found {
+                control_done = true;
+                if still_current() {
+                    shared.emit(
+                        TraceId::mint(),
+                        backend,
+                        NormalizedEvent::FocusChanged { node },
+                    );
+                }
+            }
+        }
+
+        if window_done && control_done {
+            return;
+        }
+        if attempt + 1 < ANNOUNCE_RETRY_ATTEMPTS {
+            thread::sleep(ANNOUNCE_RETRY_INTERVAL);
+        }
+    }
+}
+
 /// Runs on a query-pool thread: finds the target's top-level window (its
 /// currently active window, falling back to the first top-level window
 /// found), arbitrates its backend, and walks its tree, bounded by
 /// [`MAX_DUMP_DEPTH`] and [`MAX_DUMP_NODES`].
 fn dump_tree(worker: &mut Worker, target_pid: u32, shared: &Shared) -> Result<DumpedTree, String> {
-    let hwnd = focused_window(target_pid)
-        .or_else(|| top_level_windows(target_pid).into_iter().next())
+    let hwnd = active_top_level_window(target_pid)
         .ok_or_else(|| "the target application has no top-level window".to_owned())?;
     let class = window_class_name(hwnd);
     let is_uia = decide_backend(shared, hwnd, &class);
@@ -660,14 +783,128 @@ fn refetch_node(
     None
 }
 
+/// Reads a single node's own snapshot for `hwnd` (no children), arbitrating
+/// its backend first. Used for the top-level-window announcement, where only
+/// the window's own name/role/state matters. Runs on a query worker
+/// (blocking allowed).
+fn window_snapshot(
+    worker: &mut Worker,
+    hwnd: isize,
+    shared: &Shared,
+) -> Option<(Backend, NodeSnapshot)> {
+    let class = window_class_name(hwnd);
+    let is_uia = decide_backend(shared, hwnd, &class);
+    if is_uia {
+        let uia = worker.uia()?;
+        let cache = uia.base_cache_request().ok()?;
+        let element = uia.element_from_handle(hwnd, &cache).ok()?;
+        // SAFETY: `element` was built with the base cache request.
+        let node = unsafe { snapshot_from_cached_element(&element, &shared.uia_registry) };
+        Some((Backend::Uia, node))
+    } else {
+        let node = msaa_window_snapshot(hwnd, &shared.msaa_registry)?;
+        Some((Backend::Msaa, node))
+    }
+}
+
+/// Reads the MSAA accessible object for the window itself — `OBJID_WINDOW`,
+/// not the client area [`verbatim_ia2::acquire::walk_tree`]'s root starts
+/// from (`OBJID_CLIENT`) — for the top-level-window announcement
+/// specifically. `OBJID_CLIENT`'s role reads as "client" (unmapped, so
+/// "unknown" once spoken), not "window"; confirmed live against Windows 11
+/// Notepad, whose top-level-window announcement read "Untitled - Notepad,
+/// unknown" until this queried `OBJID_WINDOW` instead. A small amount of
+/// direct MSAA access duplicated here rather than added to
+/// `verbatim-ia2::acquire` (out of scope for this change) — `verbatim-ia2`
+/// already exposes everything else this needs: `map::role_from_msaa`,
+/// `map::states_from_msaa`, and the shared `NodeIdRegistry`.
+fn msaa_window_snapshot(hwnd: isize, registry: &MsaaRegistry) -> Option<NodeSnapshot> {
+    use std::mem::ManuallyDrop;
+    use windows::Win32::System::Variant::{
+        VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4, VariantToInt32,
+    };
+    use windows::Win32::UI::Accessibility::{AccessibleObjectFromWindow, IAccessible};
+    use windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW;
+    use windows::core::Interface;
+
+    // SAFETY: AccessibleObjectFromWindow tolerates an invalid handle by
+    // failing; `acc` is read only once the call has succeeded.
+    let acc: IAccessible = unsafe {
+        let mut acc: Option<IAccessible> = None;
+        AccessibleObjectFromWindow(
+            HWND(hwnd as *mut c_void),
+            OBJID_WINDOW.0.cast_unsigned(),
+            &IAccessible::IID,
+            (&raw mut acc).cast::<*mut c_void>(),
+        )
+        .ok()?;
+        acc?
+    };
+    // CHILDID_SELF as a VT_I4 VARIANT, addressing the window object itself
+    // rather than one of its children.
+    let child = VARIANT {
+        Anonymous: VARIANT_0 {
+            Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                vt: VT_I4,
+                wReserved1: 0,
+                wReserved2: 0,
+                wReserved3: 0,
+                Anonymous: VARIANT_0_0_0 { lVal: CHILDID_SELF },
+            }),
+        },
+    };
+    // SAFETY: `acc` is a live IAccessible just acquired above; `child` is a
+    // valid VT_I4 VARIANT for it; each accessor tolerates an unsupported
+    // property by returning an error, mapped to a neutral default.
+    let (name, value, role, states) = unsafe {
+        let name = acc
+            .get_accName(&child)
+            .ok()
+            .map(|b| b.to_string())
+            .filter(|s| !s.is_empty());
+        let value = acc
+            .get_accValue(&child)
+            .ok()
+            .map(|b| b.to_string())
+            .filter(|s| !s.is_empty());
+        let role = acc
+            .get_accRole(&child)
+            .ok()
+            .and_then(|v| VariantToInt32(&raw const v).ok())
+            .map_or(verbatim_model::Role::Unknown, |r| {
+                verbatim_ia2::map::role_from_msaa(r.cast_unsigned())
+            });
+        let states = acc
+            .get_accState(&child)
+            .ok()
+            .and_then(|v| VariantToInt32(&raw const v).ok())
+            .map(|s| verbatim_ia2::map::states_from_msaa(s.cast_unsigned()))
+            .unwrap_or_default();
+        (name, value, role, states)
+    };
+    Some(NodeSnapshot {
+        id: registry.id_for((hwnd, OBJID_WINDOW.0, CHILDID_SELF)),
+        backend: Backend::Msaa,
+        role,
+        name,
+        value,
+        states,
+    })
+}
+
 /// Reads and arbitrates the currently focused element of `target_pid`, using
-/// UIA or MSAA per the verdict. Runs on a query worker (blocking allowed).
+/// UIA or MSAA per the verdict. Treats Core's hidden main frame as "nothing
+/// focused" (decision D9), so a caller retrying on `None` naturally retries
+/// past it. Runs on a query worker (blocking allowed).
 fn focused_snapshot(
     worker: &mut Worker,
     target_pid: u32,
     shared: &Shared,
 ) -> Option<(Backend, NodeSnapshot)> {
     let hwnd = focused_window(target_pid)?;
+    if window_is_hidden_frame(hwnd) {
+        return None;
+    }
     let class = window_class_name(hwnd);
     let is_uia = decide_backend(shared, hwnd, &class);
     if is_uia {
@@ -694,6 +931,51 @@ fn decide_backend(shared: &Shared, hwnd: isize, class: &str) -> bool {
     is_uia
 }
 
+/// Finds the target's currently foreground top-level window, falling back to
+/// its first top-level window — skipping Core's hidden main frame in both
+/// cases (decision D9), so resolution naturally lands on a real window (a
+/// popup menu, a dialog) when the frame happens to be transiently active or
+/// first in enumeration order.
+///
+/// Deliberately `GetForegroundWindow`, not [`focused_window`]'s
+/// `GetGUIThreadInfo`-based resolution: `GetForegroundWindow` is guaranteed
+/// to name a genuine top-level window, while `hwndFocus` can legitimately
+/// name a non-top-level descendant that still belongs to the target
+/// process — observed live against Windows 11's modern Notepad, whose text
+/// area is hosted in its own child `hwnd` distinct from the frame, which
+/// made the window-level announcement below read the edit control's own
+/// snapshot ("Text Area", role edit) instead of the window's ("Notepad",
+/// role window). [`focused_snapshot`] below still wants `hwndFocus`
+/// specifically — it is answering "what control is focused", not "what is
+/// the top-level window", and those are genuinely different questions for
+/// an app like this one.
+fn active_top_level_window(target_pid: u32) -> Option<isize> {
+    genuine_foreground_window(target_pid)
+        .filter(|&hwnd| !window_is_hidden_frame(hwnd))
+        .or_else(|| {
+            top_level_windows(target_pid)
+                .into_iter()
+                .find(|&hwnd| !window_is_hidden_frame(hwnd))
+        })
+}
+
+/// Returns `GetForegroundWindow()` if it belongs to `target_pid`, else
+/// `None`. Always a genuine top-level window when it returns `Some` — see
+/// [`active_top_level_window`]'s doc comment for why that guarantee matters.
+fn genuine_foreground_window(target_pid: u32) -> Option<isize> {
+    // SAFETY: GetForegroundWindow and GetWindowThreadProcessId both fail
+    // safely (a null or stale handle) rather than blocking or crashing.
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&raw mut pid));
+        (pid == target_pid).then_some(hwnd.0 as isize)
+    }
+}
+
 /// Returns the focused window of `target_pid`, or `None` if the foreground
 /// focus is not in that process.
 fn focused_window(target_pid: u32) -> Option<isize> {
@@ -712,7 +994,7 @@ fn focused_window(target_pid: u32) -> Option<isize> {
 ///
 /// A pure Win32 query: no COM, no cross-process call, and it cannot block on a
 /// hung application, which is what makes it safe to call from an event-callback
-/// thread — see [`uia_passes_filter`], its reason for existing.
+/// thread — see [`resolve_window_and_filter`], its reason for existing.
 fn foreground_focus_window() -> Option<isize> {
     // SAFETY: `info` has cbSize set before the call; the call fails safely.
     unsafe {
@@ -763,8 +1045,9 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     BOOL(1)
 }
 
-/// Runs an outpost driven by the Core pipes: reads commands from `pipe_in`,
-/// writes outbound messages to `pipe_out`, until `Shutdown` or end of stream.
+/// Runs an outpost driven by the Core pipes, watching `target_pid` for its
+/// whole life: reads commands from `pipe_in`, writes outbound messages to
+/// `pipe_out`, until `Shutdown` or end of stream.
 ///
 /// # Errors
 ///
@@ -772,8 +1055,9 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
 pub fn run_pipe(
     pipe_in: Box<dyn io::Read + Send>,
     pipe_out: Box<dyn Write + Send>,
+    target_pid: u32,
 ) -> io::Result<()> {
-    let mut outpost = Outpost::new(pipe_out);
+    let mut outpost = Outpost::new(pipe_out, target_pid);
     let mut reader = BufReader::new(pipe_in);
     while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
         if !outpost.handle_command(&command) {
@@ -784,16 +1068,17 @@ pub fn run_pipe(
 }
 
 /// Runs an outpost in dev-attach mode: writes outbound messages as JSON lines
-/// to stdout, configures the given target, and streams events until the process
-/// is killed. Does not return under normal operation.
+/// to stdout, watches the given target for its whole life, and immediately
+/// announces its focus, streaming events until the process is killed. Does
+/// not return under normal operation.
 ///
 /// # Errors
 ///
 /// Returns an I/O error only if dev-mode setup fails before the event loop
 /// begins; once running it blocks until the process is terminated.
 pub fn run_attach(target_pid: u32) -> io::Result<()> {
-    let mut outpost = Outpost::new(Box::new(io::stdout()));
-    outpost.configure(target_pid, None);
+    let outpost = Outpost::new(Box::new(io::stdout()), target_pid);
+    outpost.handle_announce_focus(TraceId::mint());
     loop {
         thread::park();
     }

@@ -157,6 +157,7 @@ impl Scenario {
         let exe_dir_str = exe_dir
             .to_str()
             .ok_or_else(|| io::Error::other("verbatim.exe directory is not valid UTF-8"))?;
+        let stderr_path = verbatim_stderr_log_path(exe_dir, remote)?;
 
         let mut process_agent = AgentClient::connect(&agent_addr)?;
         let verbatim_pid = process_agent.launch_process(
@@ -164,6 +165,7 @@ impl Scenario {
             &[],
             Some(exe_dir_str),
             &[("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())],
+            Some(&stderr_path),
         )?;
 
         let deadline = Instant::now() + LAUNCH_TIMEOUT;
@@ -254,7 +256,7 @@ impl Scenario {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
         let pid = self
             .process_agent
-            .launch_process(command, &args, None, &[])?;
+            .launch_process(command, &args, None, &[], None)?;
         self.launched.push(pid);
         Ok(pid)
     }
@@ -302,9 +304,20 @@ impl Scenario {
             Ok(frame) => {
                 ok_or_error(frame)?;
             }
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                // Verbatim tore down before the reply arrived: the intended
-                // outcome, just observed from the losing side of the race.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                // Verbatim tore down before the reply arrived (end of file),
+                // or the reply outlasted the socket's fixed read timeout on a
+                // slow teardown — both observed live. Either way the reply is
+                // not the authority on whether the quit worked; the process
+                // poll below is, so a lost reply is tolerated and a process
+                // that will not die still fails.
             }
             Err(error) => return Err(error),
         }
@@ -406,6 +419,27 @@ fn verbatim_exe_path() -> PathBuf {
         .join("target")
         .join("debug")
         .join("verbatim.exe")
+}
+
+/// The path a launched Verbatim's stdout and stderr are captured into (see
+/// [`crate::agent_client::AgentClient::launch_process`]'s `stderr_to`),
+/// truncated fresh on every launch so each scenario's log is its own and
+/// never a stale mix of a previous run's crash.
+///
+/// In a remote run this is a fixed guest-side path matching what
+/// `cargo xtask vm logs` pulls back out (`xtask/src/vm/logs.rs`); `exe_dir`
+/// is ignored in that case since it names a location on this host, not the
+/// guest. In runner-direct mode it sits next to the launched `verbatim.exe`
+/// itself, alongside its `settings.toml`.
+fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> {
+    if remote {
+        return Ok(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned());
+    }
+    exe_dir
+        .join("stderr-e2e.log")
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| io::Error::other("stderr log path is not valid UTF-8"))
 }
 
 /// Writes `settings.toml` in `exe_dir` selecting the capture synthesizer

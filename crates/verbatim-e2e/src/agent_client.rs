@@ -94,7 +94,11 @@ impl AgentClient {
 
     /// Spawns `command` on the agent's guest, inheriting its interactive
     /// session. `env` is added to, not replacing, the agent's own
-    /// environment. Returns the spawned process's OS pid.
+    /// environment. `stderr_to`, when set, asks the agent to capture the
+    /// child's stdout and stderr into that path (truncated first) instead
+    /// of leaving them uncaptured — see
+    /// `verbatim_agent::protocol::Request::LaunchProcess`. Returns the
+    /// spawned process's OS pid.
     ///
     /// # Errors
     ///
@@ -106,12 +110,14 @@ impl AgentClient {
         args: &[String],
         working_dir: Option<&str>,
         env: &[(String, String)],
+        stderr_to: Option<&str>,
     ) -> io::Result<u32> {
         match self.request(Request::LaunchProcess {
             command: command.to_owned(),
             args: args.to_vec(),
             working_dir: working_dir.map(str::to_owned),
             env: env.to_vec(),
+            stderr_to: stderr_to.map(str::to_owned),
         })? {
             Frame::Reply {
                 payload: ReplyPayload::Launched { pid },

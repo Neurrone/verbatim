@@ -16,20 +16,39 @@ use verbatim_model::{
 };
 
 /// Messages from the Core-side supervisor to an outpost.
+///
+/// An outpost's target application is fixed at spawn (decision D9: one
+/// outpost per application, for its whole life) and passed on its command
+/// line, not by any message here — there is no cross-pid retarget in this
+/// protocol. What remains after that split are three genuinely independent
+/// concerns the old M1 `Configure` conflated: backend-override
+/// configuration ([`SetBackendOverride`](Self::SetBackendOverride)),
+/// announcing a foreground change ([`AnnounceFocus`](Self::AnnounceFocus)),
+/// and everything else this outpost already answered on its own.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SupervisorToOutpost {
-    /// Sets or retargets the watched application. The outpost (re)binds its
-    /// event hooks, then queries the currently focused element on a
-    /// query-pool thread and emits a synthetic focus event, so the focus
-    /// change that caused this message is announced without having been
-    /// witnessed.
-    Configure {
-        /// The application to watch.
-        target_pid: Pid,
-        /// Forces one backend for every window, overriding arbitration;
-        /// used by tests and per-app config overrides.
+    /// Forces one backend for every window of the target application,
+    /// overriding arbitration; used by tests and per-app config overrides.
+    /// `None` restores normal arbitration.
+    SetBackendOverride {
+        /// The forced backend, or `None` for normal arbitration.
         backend_override: Option<Backend>,
+    },
+    /// Announces the target application's foreground: the newly
+    /// authoritative outpost for this pid (freshly spawned, or one Core
+    /// already had running for it) emits a synthetic `FocusChanged` for the
+    /// application's top-level foreground window, then the synthetic focus
+    /// for its focused control, retrying the control query a bounded number
+    /// of times against a control that has not focused itself yet. Sent on
+    /// every foreground change to this pid, including the first (spawn
+    /// triggers one implicitly by way of the supervisor sending this right
+    /// after; see `verbatim-outpost::supervisor`).
+    AnnounceFocus {
+        /// Trace ID of the foreground-change observation that caused this
+        /// announcement, for diagnostics; the emitted events mint their own
+        /// trace IDs, since each is its own observably-caused utterance.
+        trace_id: TraceId,
     },
     /// Asks for more data about a node; answered by
     /// [`OutpostToSupervisor::FetchReply`].

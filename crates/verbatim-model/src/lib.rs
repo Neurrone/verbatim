@@ -64,6 +64,19 @@ impl fmt::Display for TraceId {
     }
 }
 
+/// Name of the window property `verbatim-gui` stamps on Core's hidden 1x1
+/// main frame (decision D9) so every outpost can recognize and suppress it.
+///
+/// The frame transits real focus during the prePopup show/raise/foreground
+/// dance around the Verbatim menu and the settings dialog; without this
+/// marker it can be announced as a nameless "Verbatim" window with role
+/// unknown, a race described in `docs/roadmap.md`'s M3 section.
+/// `verbatim-gui` sets this property (`SetPropW`) on the frame at creation
+/// and clears it (`RemovePropW`) at shutdown; every outpost checks it
+/// (`GetPropW`) before emitting any `FocusChanged` — the MSAA event path,
+/// the UIA focus callback, and the synthetic focus query alike.
+pub const HIDDEN_FRAME_WINDOW_PROP: &str = "VerbatimHiddenFrame";
+
 /// Stable identity of one node in an outpost's normalized tree fragment.
 ///
 /// Backend runtime identifiers (UIA runtime IDs, MSAA object and child IDs)

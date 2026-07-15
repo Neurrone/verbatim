@@ -177,7 +177,14 @@ fn dispatch(id: u64, request: Request) -> Frame {
             args,
             working_dir,
             env,
-        } => match process::launch(&command, &args, working_dir.as_deref(), &env) {
+            stderr_to,
+        } => match process::launch(
+            &command,
+            &args,
+            working_dir.as_deref(),
+            &env,
+            stderr_to.as_deref(),
+        ) {
             Ok(pid) => Frame::Reply {
                 to: id,
                 payload: ReplyPayload::Launched { pid },
@@ -364,6 +371,7 @@ mod tests {
             ],
             working_dir: None,
             env: vec![],
+            stderr_to: None,
         });
         let Frame::Reply {
             payload: ReplyPayload::Launched { pid },

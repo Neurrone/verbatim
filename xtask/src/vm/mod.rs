@@ -67,7 +67,16 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("restart") => lifecycle::restart(&host),
         Some("restore") => lifecycle::restore(&host, args.get(1).map(String::as_str)),
         Some("deploy") => deploy_verb(&host, &repo_root),
-        Some("test") => test::test(&host, &repo_root),
+        Some("test") => {
+            let no_restore = match args.get(1).map(String::as_str) {
+                Some("--no-restore") => true,
+                Some(other) => {
+                    return unknown_arg("test", other);
+                }
+                None => false,
+            };
+            test::test(&host, &repo_root, no_restore)
+        }
         Some("logs") => logs_verb(&host, &repo_root, args.get(1)),
         Some("delete") => lifecycle::delete(&host),
         Some(other) => Err(format!("unknown verb '{other}'")),
@@ -136,7 +145,12 @@ fn print_usage() {
         "  deploy           build verbatim.exe, verbatim-outpost.exe, and the agent, and copy"
     );
     eprintln!("                   them (plus settings.toml) into the guest");
-    eprintln!("  test             restore 'golden', deploy, then run the E2E suite against it");
+    eprintln!("  test             restore 'golden', deploy, then run the E2E suite against it;");
+    eprintln!(
+        "                   --no-restore skips the restore and reuses the live guest as-is —"
+    );
+    eprintln!("                   faster for iteration, but the guest may carry state from a");
+    eprintln!("                   previous run; never use it for an acceptance run");
     eprintln!("  logs [dir]       pull flight-recorder dumps and the agent log out of the guest");
     eprintln!("                   (default dir: artifacts/vm-logs)");
     eprintln!("  delete           remove the VM and its disks, for a clean rebuild");

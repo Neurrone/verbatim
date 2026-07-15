@@ -9,6 +9,14 @@
 //! guest, so this verb sets `VERBATIM_E2E_REMOTE` as well, which tells
 //! `verbatim_e2e::Scenario::launch` to skip both: [`super::deploy::run`]
 //! has already staged that same configuration inside the guest.
+//!
+//! `--no-restore` (`no_restore` here) skips the checkpoint restore and its
+//! post-restore agent wait entirely, deploying straight onto whatever the
+//! guest is currently running. This exists purely for fast local iteration
+//! on top of [`deploy::run`]'s own hash-skipping — restore plus its agent
+//! wait is most of a normal run's wall-clock cost. It is never appropriate
+//! for an acceptance run, since the guest may carry state left over from a
+//! previous test.
 
 use std::path::Path;
 use std::process::Command;
@@ -18,15 +26,22 @@ use super::{AGENT_PORT, CHECKPOINT_NAME, VERBATIM_DIR, VM_NAME, VmResult, deploy
 
 /// # Errors
 ///
-/// Returns an error if the checkpoint restore, the deploy, IP discovery, or
-/// the E2E suite itself fails.
-pub(crate) fn test(host: &dyn Host, repo_root: &Path) -> VmResult<()> {
+/// Returns an error if the checkpoint restore (when not skipped), the
+/// deploy, IP discovery, or the E2E suite itself fails.
+pub(crate) fn test(host: &dyn Host, repo_root: &Path, no_restore: bool) -> VmResult<()> {
     let credentials = dotenv::load_guest_credentials(repo_root)?;
 
-    println!("xtask vm test: restoring checkpoint '{CHECKPOINT_NAME}'");
-    host.restore_checkpoint(VM_NAME, CHECKPOINT_NAME)?;
-    host.start_vm(VM_NAME)?;
-    wait_for_agent(host, VM_NAME)?;
+    if no_restore {
+        println!(
+            "xtask vm test: --no-restore set — SKIPPING the checkpoint restore; guest state \
+             may be dirty from a previous run; do not use --no-restore for an acceptance run"
+        );
+    } else {
+        println!("xtask vm test: restoring checkpoint '{CHECKPOINT_NAME}'");
+        host.restore_checkpoint(VM_NAME, CHECKPOINT_NAME)?;
+        host.start_vm(VM_NAME)?;
+        wait_for_agent(host, VM_NAME)?;
+    }
 
     println!("xtask vm test: deploying the current build");
     deploy::run(host, repo_root, &credentials)?;

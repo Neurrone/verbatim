@@ -70,7 +70,7 @@ pub fn resnapshot(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapsho
 }
 
 /// Reads the currently focused object of `target_pid` for the synthetic focus
-/// event a `Configure` triggers. Uses `GetGUIThreadInfo` then `accFocus`, with
+/// event an `AnnounceFocus` triggers. Uses `GetGUIThreadInfo` then `accFocus`, with
 /// a fallback to the focused window itself. Blocking; query pool only.
 ///
 /// M1 keys the focused node by its window and child id; a focused child exposed

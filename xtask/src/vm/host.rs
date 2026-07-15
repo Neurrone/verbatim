@@ -326,9 +326,18 @@ impl Host for HyperVHost {
         credentials: &GuestCredentials,
         remote_path: &str,
     ) -> VmResult<Vec<u8>> {
+        // Plain File.ReadAllBytes opens with FileShare.Read, which still
+        // fails when the file's writer (the agent itself, for its own
+        // agent.log, or a launched Verbatim for its captured stderr log)
+        // has the handle open without allowing readers. Opening explicitly
+        // with FileShare.ReadWrite lets this read succeed against a file a
+        // live process still holds open for writing.
         let escaped = remote_path.replace('\'', "''");
         let block = format!(
-            "if (Test-Path -LiteralPath '{escaped}') {{ [Convert]::ToBase64String([System.IO.File]::ReadAllBytes('{escaped}')) }} else {{ '' }}"
+            "if (Test-Path -LiteralPath '{escaped}') {{ \
+             $stream = [System.IO.File]::Open('{escaped}', [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite); \
+             try {{ $ms = New-Object System.IO.MemoryStream; $stream.CopyTo($ms); [Convert]::ToBase64String($ms.ToArray()) }} finally {{ $stream.Dispose() }} \
+             }} else {{ '' }}"
         );
         let base64_text = self.run_in_guest(name, credentials, &block)?;
         if base64_text.is_empty() {
@@ -393,8 +402,30 @@ fn probe_port(ip: &str) -> VmResult<()> {
 /// Wraps `value` in single quotes for interpolation into a PowerShell
 /// script, doubling any embedded single quotes (PowerShell's own escaping
 /// rule for single-quoted string literals).
-fn ps_quote(value: &str) -> String {
+pub(crate) fn ps_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+/// Computes the SHA-256 hash of a local (host-side) file via PowerShell's
+/// `Get-FileHash`, returned as uppercase hex. Used by `xtask vm deploy`'s
+/// hash-skipping check; PowerShell rather than a dedicated hashing crate
+/// keeps this dependency-free, matching this module's existing style of
+/// shelling out for anything Hyper-V or the local Windows toolchain already
+/// provides.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be hashed (does not exist, is
+/// locked, or similar).
+pub(crate) fn local_file_hash_sha256(path: &Path) -> VmResult<String> {
+    let script = format!(
+        "$hash = (Get-FileHash -LiteralPath {path} -Algorithm SHA256).Hash\n{begin}\n$hash | ConvertTo-Json -Compress\n{end}",
+        path = ps_quote(&path.display().to_string()),
+        begin = RESULT_BEGIN_STMT,
+        end = RESULT_END_STMT,
+    );
+    let stdout = run_ps(&format!("hashing {}", path.display()), &script)?;
+    extract_json_string(&stdout)
 }
 
 fn extract_between<'text>(text: &'text str, begin: &str, end: &str) -> VmResult<&'text str> {

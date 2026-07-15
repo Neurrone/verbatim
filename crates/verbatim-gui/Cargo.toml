@@ -11,6 +11,7 @@ crossbeam-channel.workspace = true
 tracing.workspace = true
 windows.workspace = true
 verbatim-i18n.workspace = true
+verbatim-model.workspace = true
 verbatim-speech.workspace = true
 
 [lints]

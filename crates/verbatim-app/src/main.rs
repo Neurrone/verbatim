@@ -14,6 +14,7 @@ mod single_instance;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -38,6 +39,14 @@ use verbatim_speech::{
 use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
+
+/// Tracks the current foreground application's pid (0 for none yet), shared
+/// between the foreground trigger and the reducer thread so the reducer can
+/// drop events from outposts whose application does not currently hold
+/// foreground (the stale-cache policy: an outpost that keeps running in the
+/// background per decision D9 still emits events, which must not be spoken
+/// as though they were happening on screen right now).
+type CurrentForeground = Arc<AtomicU32>;
 
 /// The one keyboard binding milestone M1 ships: Verbatim+V opens the menu.
 const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
@@ -129,20 +138,27 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let store = Arc::new(Mutex::new(config));
     let settings_host = manager.settings_host(persist_fn(Arc::clone(&store)));
 
-    // Supervisor plus the foreground trigger that retargets the single M1
-    // outpost; outpost status is mirrored for the control plane.
+    // Supervisor (one outpost process per application, decision D9) plus the
+    // foreground trigger that spawns or re-announces the right one on every
+    // foreground change; outpost status is mirrored for the control plane.
     let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
     let supervisor = Arc::new(Supervisor::new(outpost_tx)?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
+    let current_foreground: CurrentForeground = Arc::new(AtomicU32::new(0));
+
+    warm_own_outpost(&supervisor, &outposts, own_pid);
+
     let trigger = {
         let supervisor = Arc::clone(&supervisor);
         let outposts = Arc::clone(&outposts);
+        let current_foreground = Arc::clone(&current_foreground);
         ForegroundTrigger::new(Arc::new(move |pid, _hwnd| {
             if pid == 0 {
                 return;
             }
-            mark_outpost_starting(&outposts, Pid(pid));
-            if let Err(error) = supervisor.target(Pid(pid)) {
+            current_foreground.store(pid, Ordering::SeqCst);
+            note_targeted_pid(&outposts, Pid(pid));
+            if let Err(error) = supervisor.note_foreground(Pid(pid)) {
                 tracing::warn!(%error, pid, "failed to target foreground application");
             }
         }))
@@ -158,6 +174,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             outposts: Arc::clone(&outposts),
             pending_dump_tree: Arc::clone(&pending_dump_tree),
             recorder: Arc::clone(&recorder),
+            current_foreground: Arc::clone(&current_foreground),
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
@@ -202,6 +219,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         pending_dump_tree: Arc::clone(&pending_dump_tree),
         recorder: Arc::clone(&recorder),
         dumps_dir: dumps_dir.clone(),
+        current_foreground: Arc::clone(&current_foreground),
     }))?;
     server_slot
         .set(server)
@@ -222,7 +240,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
     });
-    target_current_foreground(&supervisor, &outposts);
+    target_current_foreground(&supervisor, &outposts, &current_foreground);
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
@@ -413,19 +431,40 @@ fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
     }
 }
 
-/// Marks an outpost as starting in the status mirror; M1 runs one outpost,
-/// so any previous entry is replaced.
-fn mark_outpost_starting(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, target: Pid) {
+/// Notes that `target` is (or is about to be) watched by an outpost, adding a
+/// `Starting` placeholder to the status mirror only if this pid is not
+/// already known. Multiple outposts coexist under decision D9, so unlike
+/// M1's single-outpost policy this must never clear existing entries: a
+/// foreground change to a pid Core already has an outpost for re-announces
+/// through that outpost (see `Supervisor::note_foreground`) rather than
+/// starting a new one, and its existing status entry is left alone.
+fn note_targeted_pid(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, target: Pid) {
     let mut outposts = outposts.lock().expect("outposts lock");
-    outposts.clear();
-    outposts.insert(
-        target,
-        OutpostStatus {
-            target_pid: target,
-            outpost_pid: None,
-            state: OutpostState::Starting,
-        },
-    );
+    outposts.entry(target).or_insert(OutpostStatus {
+        target_pid: target,
+        outpost_pid: None,
+        state: OutpostState::Starting,
+    });
+}
+
+/// Warms an outpost for Core's own process as early in startup as possible,
+/// well before the first gesture can plausibly arrive: Verbatim reading its
+/// own GUI is a first-class scenario, and a cold outpost spawn (process
+/// creation, `WinEvent` hook install, UIA registration) measurably races a
+/// real keypress sent immediately after the popup menu takes foreground —
+/// see `Supervisor::ensure_spawned`'s doc comment for the live VM failure
+/// this fixes. Does not touch foreground tracking; that still happens
+/// through the ordinary `ForegroundTrigger` path when Core's window actually
+/// takes foreground.
+fn warm_own_outpost(
+    supervisor: &Arc<Supervisor>,
+    outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
+    own_pid: u32,
+) {
+    note_targeted_pid(outposts, Pid(own_pid));
+    if let Err(error) = supervisor.ensure_spawned(Pid(own_pid)) {
+        tracing::warn!(%error, "failed to pre-spawn Core's own outpost");
+    }
 }
 
 /// Targets whatever is in the foreground right now, so the first outpost
@@ -433,6 +472,7 @@ fn mark_outpost_starting(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, tar
 fn target_current_foreground(
     supervisor: &Arc<Supervisor>,
     outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
+    current_foreground: &CurrentForeground,
 ) {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     // SAFETY: reading the current foreground window and its process id.
@@ -445,8 +485,9 @@ fn target_current_foreground(
     if pid == 0 {
         return;
     }
-    mark_outpost_starting(outposts, Pid(pid));
-    if let Err(error) = supervisor.target(Pid(pid)) {
+    current_foreground.store(pid, Ordering::SeqCst);
+    note_targeted_pid(outposts, Pid(pid));
+    if let Err(error) = supervisor.note_foreground(Pid(pid)) {
         tracing::warn!(%error, pid, "failed to target the initial foreground application");
     }
 }
@@ -461,13 +502,24 @@ struct ReducerContext {
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     pending_dump_tree: PendingDumpTree,
     recorder: SharedRecorder,
+    current_foreground: CurrentForeground,
+}
+
+/// Whether `source` is the application currently holding foreground — the
+/// stale-cache policy's routing gate (architecture section 1; decision D9's
+/// outposts keep running in the background, so their events must be dropped
+/// before the reducer rather than spoken as though on screen right now).
+/// Pure and unit-tested in isolation below.
+fn is_current_foreground(source: Pid, current_foreground: u32) -> bool {
+    source.0 == current_foreground
 }
 
 /// Turns one message from an outpost into a reducer [`Input`], handling the
 /// side effects (status mirroring, event broadcast, routing a `DumpTree`
 /// reply into its one-shot slot) that happen either way. `None` for message
 /// kinds that carry nothing for the reducer: `Ready`, `Fault`,
-/// `DumpTreeReply`, `Pong`, and any future kind.
+/// `DumpTreeReply`, `Pong`, an event from a non-foreground outpost (the
+/// stale-cache policy), and any future kind.
 fn incoming_input(
     source: Pid,
     message: OutpostToSupervisor,
@@ -475,6 +527,7 @@ fn incoming_input(
     server_slot: &OnceLock<ControlServer>,
     outposts: &Mutex<HashMap<Pid, OutpostStatus>>,
     pending_dump_tree: &PendingDumpTree,
+    current_foreground: &CurrentForeground,
 ) -> Option<Input> {
     match message {
         OutpostToSupervisor::Event {
@@ -484,6 +537,9 @@ fn incoming_input(
             version,
             event,
         } => {
+            if !is_current_foreground(source, current_foreground.load(Ordering::SeqCst)) {
+                return None;
+            }
             ledger.event_observed(trace_id, observed_at_ms);
             if let Some(server) = server_slot.get() {
                 server.broadcast_event(trace_id, source, backend, version, event.clone());
@@ -510,11 +566,7 @@ fn incoming_input(
             target_pid,
         } => {
             tracing::info!(%outpost_pid, %target_pid, "outpost ready");
-            let mut outposts = outposts.lock().expect("outposts lock");
-            // M1 runs one outpost; a Ready for a retargeted outpost
-            // replaces any entry for its previous target.
-            outposts.retain(|_, status| status.outpost_pid != Some(outpost_pid));
-            outposts.insert(
+            outposts.lock().expect("outposts lock").insert(
                 target_pid,
                 OutpostStatus {
                     target_pid,
@@ -562,10 +614,18 @@ fn reducer_loop(outpost_rx: &Receiver<OutpostMessage>, context: &ReducerContext)
         outposts,
         pending_dump_tree,
         recorder,
+        current_foreground,
     } = context;
     let mut state = SrState::new();
 
-    while let Ok((source, message)) = outpost_rx.recv() {
+    while let Ok(message) = outpost_rx.recv() {
+        let (source, message) = match message {
+            OutpostMessage::Event(source, message) => (source, message),
+            OutpostMessage::Retired(pid) => {
+                outposts.lock().expect("outposts lock").remove(&pid);
+                continue;
+            }
+        };
         let Some(input) = incoming_input(
             source,
             message,
@@ -573,6 +633,7 @@ fn reducer_loop(outpost_rx: &Receiver<OutpostMessage>, context: &ReducerContext)
             server_slot,
             outposts,
             pending_dump_tree,
+            current_foreground,
         ) else {
             continue;
         };
@@ -597,9 +658,10 @@ fn reducer_loop(outpost_rx: &Receiver<OutpostMessage>, context: &ReducerContext)
                     tracing::debug!("StopSpeech effect ignored in M1");
                 }
                 Effect::Fetch(query) => {
-                    if let Err(error) =
-                        supervisor.send(&SupervisorToOutpost::Fetch { trace_id, query })
-                    {
+                    if let Err(error) = supervisor.send_to(
+                        query.source,
+                        &SupervisorToOutpost::Fetch { trace_id, query },
+                    ) {
                         tracing::warn!(%error, "fetch could not reach the outpost");
                     }
                 }
@@ -659,6 +721,7 @@ struct ControlHandlersConfig {
     pending_dump_tree: PendingDumpTree,
     recorder: SharedRecorder,
     dumps_dir: PathBuf,
+    current_foreground: CurrentForeground,
 }
 
 /// Builds the control-plane handlers over the app's live pieces.
@@ -675,6 +738,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         pending_dump_tree,
         recorder,
         dumps_dir,
+        current_foreground,
     } = config;
     ServerHandlers {
         status: Box::new(move || StatusInfo {
@@ -701,7 +765,9 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .map_err(|_| "the gesture router is gone".to_owned())
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
-        dump_tree: Box::new(move || request_dump_tree(&supervisor, &pending_dump_tree)),
+        dump_tree: Box::new(move || {
+            request_dump_tree(&supervisor, &pending_dump_tree, &current_foreground)
+        }),
         dump_recorder: Box::new(move || {
             flight_dump::dump_now(&recorder, &dumps_dir)
                 .map(|path| path.display().to_string())
@@ -713,14 +779,20 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
 
 /// Answers [`Request::DumpTree`](verbatim_control::protocol::Request::DumpTree):
 /// registers a one-shot reply sender in `pending_dump_tree`, sends
-/// `DumpTree` to the outpost through `supervisor`, and waits with a
-/// timeout. `reducer_loop` routes the outpost's answer into the slot. A
-/// second concurrent request while one is already pending is rejected
-/// immediately rather than queued.
+/// `DumpTree` to the current foreground application's outpost through
+/// `supervisor`, and waits with a timeout. `reducer_loop` routes the
+/// outpost's answer into the slot. A second concurrent request while one is
+/// already pending is rejected immediately rather than queued.
 fn request_dump_tree(
     supervisor: &Arc<Supervisor>,
     pending_dump_tree: &PendingDumpTree,
+    current_foreground: &CurrentForeground,
 ) -> Result<(TreeNode, bool), String> {
+    let foreground = current_foreground.load(Ordering::SeqCst);
+    if foreground == 0 {
+        return Err("no foreground application is known yet".to_owned());
+    }
+
     let (reply_tx, reply_rx) = bounded(1);
     {
         let mut slot = pending_dump_tree
@@ -733,7 +805,9 @@ fn request_dump_tree(
     }
 
     let trace_id = TraceId::mint();
-    if let Err(error) = supervisor.send(&SupervisorToOutpost::DumpTree { trace_id }) {
+    if let Err(error) =
+        supervisor.send_to(Pid(foreground), &SupervisorToOutpost::DumpTree { trace_id })
+    {
         *pending_dump_tree
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
@@ -747,4 +821,27 @@ fn request_dump_tree(
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = None;
     Err("tree dump timed out".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn events_from_the_foreground_application_pass() {
+        assert!(is_current_foreground(Pid(1234), 1234));
+    }
+
+    #[test]
+    fn events_from_a_backgrounded_application_are_dropped() {
+        assert!(!is_current_foreground(Pid(1234), 5678));
+    }
+
+    #[test]
+    fn events_before_any_foreground_is_known_are_dropped() {
+        // current_foreground starts at 0 until the first foreground change
+        // (or the startup target_current_foreground call) sets it; no
+        // outpost's pid is ever 0, so this can never spuriously pass.
+        assert!(!is_current_foreground(Pid(1234), 0));
+    }
 }

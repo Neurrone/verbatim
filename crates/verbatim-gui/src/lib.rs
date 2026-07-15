@@ -18,11 +18,13 @@
 
 mod dialog;
 mod foreground;
+mod hidden_frame;
 mod plan;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use wxdragon::prelude::*;
@@ -123,12 +125,25 @@ struct GuiState {
     host: Arc<dyn SpeechSettingsHost>,
     events: Sender<GuiEvent>,
     settings: Option<Dialog>,
-    shutting_down: bool,
 }
 
 thread_local! {
     static GUI: RefCell<Option<GuiState>> = const { RefCell::new(None) };
 }
+
+/// Whether shutdown has been commanded.
+///
+/// Deliberately not a field of [`GuiState`]: `shutdown` sets this and then
+/// calls `frame.close(true)`, which synchronously re-enters the frame's
+/// close handler (wxWidgets' `Close` always invokes it; `force` only
+/// controls whether the handler may veto) on the same call stack, and that
+/// handler reads this flag through [`gui_is_shutting_down`]. Routing the
+/// read through the `GUI` thread-local's `RefCell`, as before, collided
+/// with `shutdown`'s own borrow and panicked with "already mutably
+/// borrowed" on every clean quit. A plain atomic has no borrow to collide
+/// with, so it is the honest type for a flag that must be legible from a
+/// reentrant context.
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// Builds the hidden frame, tray icon, and shared menu, then stores them in the
 /// GUI thread-local. Runs once, on the GUI thread, during initialization.
@@ -136,6 +151,7 @@ fn init(app: App, host: Arc<dyn SpeechSettingsHost>, events: Sender<GuiEvent>) {
     // We control the loop lifetime explicitly (Shutdown), so deleting a dialog
     // or the hidden frame must not end the loop on its own.
     app.set_exit_on_frame_delete(false);
+    SHUTTING_DOWN.store(false, Ordering::SeqCst);
 
     // The hidden main frame doubles as the dialog parent and the single-instance
     // rendezvous window (found later by its title). It is never shown and never
@@ -148,6 +164,11 @@ fn init(app: App, host: Arc<dyn SpeechSettingsHost>, events: Sender<GuiEvent>) {
         })
         .with_style(FrameStyle::Default | FrameStyle::NoTaskbar)
         .build();
+    // Mark the frame so every outpost can recognize and suppress announcing
+    // it (decision D9); see `hidden_frame`'s module doc.
+    if let Some(hwnd) = foreground::hwnd_of(frame.get_handle()) {
+        hidden_frame::mark(hwnd);
+    }
     frame.on_close(move |event| {
         // Closing the hidden window hides it; only a commanded Shutdown lets it
         // be destroyed.
@@ -186,18 +207,15 @@ fn init(app: App, host: Arc<dyn SpeechSettingsHost>, events: Sender<GuiEvent>) {
             host,
             events,
             settings: None,
-            shutting_down: false,
         });
     });
 }
 
-/// Whether shutdown has been commanded (read from the GUI thread-local).
+/// Whether shutdown has been commanded. Safe to call from a reentrant
+/// context (see [`SHUTTING_DOWN`]'s doc comment), including from inside a
+/// borrow of [`GUI`].
 fn gui_is_shutting_down() -> bool {
-    GUI.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .is_some_and(|state| state.shutting_down)
-    })
+    SHUTTING_DOWN.load(Ordering::SeqCst)
 }
 
 /// Routes a tray/menu item id to its command.
@@ -319,24 +337,40 @@ fn show_menu() {
 }
 
 /// Opens the settings dialog, or focuses the existing one (singleton guard).
+///
+/// Reads out what it needs and drops the borrow before calling into wx, on
+/// the same principle as [`show_menu`] and [`shutdown`]: none of
+/// `pre_popup`, `build_settings_dialog`, `dialog.show`, or
+/// `focus_foreground` re-enter `GUI` today, but holding the borrow across
+/// calls into wx is exactly the shape that panicked in `shutdown` once one
+/// of them did.
 fn open_settings() {
+    let Some((frame, existing, host)) = GUI.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|state| (state.frame, state.settings, state.host.clone()))
+    }) else {
+        return;
+    };
+
+    if let Some(existing) = existing
+        && existing.is_valid()
+    {
+        focus_foreground(existing);
+        return;
+    }
+
+    // Take the foreground before the dialog exists, so the process already
+    // owns it when the dialog asks for it.
+    pre_popup(frame);
+    let dialog = dialog::build_settings_dialog(frame, &host);
+    dialog.show(true);
+    focus_foreground(dialog);
+
     GUI.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let Some(state) = borrow.as_mut() else { return };
-        let frame = state.frame;
-        if let Some(existing) = state.settings
-            && existing.is_valid()
-        {
-            focus_foreground(existing);
-            return;
+        if let Some(state) = cell.borrow_mut().as_mut() {
+            state.settings = Some(dialog);
         }
-        // Take the foreground before the dialog exists, so the process already
-        // owns it when the dialog asks for it.
-        pre_popup(frame);
-        let dialog = dialog::build_settings_dialog(frame, &state.host);
-        dialog.show(true);
-        focus_foreground(dialog);
-        state.settings = Some(dialog);
     });
 }
 
@@ -351,19 +385,32 @@ fn focus_foreground(dialog: Dialog) {
 }
 
 /// Tears down the tray and settings dialog and exits the event loop.
+///
+/// Takes what it needs out of the thread-local and drops the borrow before
+/// calling into wx, matching [`show_menu`]'s discipline: `frame.close`
+/// below synchronously re-enters the close handler registered in [`init`]
+/// on this same call stack (see [`SHUTTING_DOWN`]'s doc comment), and
+/// holding a borrow of `GUI` across that call is exactly what used to
+/// panic here on every clean quit.
 fn shutdown() {
-    GUI.with(|cell| {
-        if let Some(state) = cell.borrow_mut().as_mut() {
-            state.shutting_down = true;
+    SHUTTING_DOWN.store(true, Ordering::SeqCst);
+    let torn_down = GUI.with(|cell| {
+        cell.borrow_mut().as_mut().map(|state| {
             state.tray.remove_icon();
-            if let Some(dialog) = state.settings.take()
-                && dialog.is_valid()
-            {
-                dialog.destroy();
-            }
-            state.frame.close(true);
-        }
+            (state.frame, state.settings.take())
+        })
     });
+    if let Some((frame, dialog)) = torn_down {
+        if let Some(dialog) = dialog
+            && dialog.is_valid()
+        {
+            dialog.destroy();
+        }
+        if let Some(hwnd) = foreground::hwnd_of(frame.get_handle()) {
+            hidden_frame::unmark(hwnd);
+        }
+        frame.close(true);
+    }
     if let Some(app) = wxdragon::get_app_instance() {
         app.exit_main_loop();
     }

@@ -12,9 +12,14 @@
 //! through `WxWidget::get_handle` and call Win32 directly.
 
 use std::ffi::c_void;
+use std::mem::size_of;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+    VK_CONTROL,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SW_SHOW, SetForegroundWindow,
     ShowWindow,
@@ -29,17 +34,60 @@ pub(crate) fn hwnd_of(handle: *mut c_void) -> Option<HWND> {
     }
 }
 
+/// Injects a bare `VK_CONTROL` down-then-up tap, satisfying Windows'
+/// foreground-lock heuristic (which cares only that *some* key event was
+/// just seen from this process, not what it was) before
+/// [`force_foreground`] attempts `SetForegroundWindow`.
+///
+/// A gesture that arrived via the control plane — every E2E test, and any
+/// future remote-support session — has no physical input behind it, so
+/// without this nudge `SetForegroundWindow` fails the heuristic outright and
+/// falls back to the slow `AttachThreadInput` path below, observed live at
+/// roughly two seconds; the tap cuts that to roughly 150 to 450 ms.
+/// Deliberately `VK_CONTROL`, not `VK_MENU`: a lone Alt press activates menu
+/// bars and bounces foreground straight back, also confirmed live.
+fn nudge_foreground_lock() {
+    let down = KEYBDINPUT {
+        wVk: VK_CONTROL,
+        dwFlags: KEYBD_EVENT_FLAGS(0),
+        ..Default::default()
+    };
+    let up = KEYBDINPUT {
+        wVk: VK_CONTROL,
+        dwFlags: KEYEVENTF_KEYUP,
+        ..Default::default()
+    };
+    let inputs = [
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 { ki: down },
+        },
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 { ki: up },
+        },
+    ];
+    // SAFETY: `inputs` is a fully initialized, correctly sized array of
+    // INPUT structures; SendInput copies from it and does not retain a
+    // reference afterward.
+    unsafe {
+        SendInput(&inputs, i32::try_from(size_of::<INPUT>()).unwrap_or(0));
+    }
+}
+
 /// Brings `hwnd` to the foreground, working around Windows' foreground lock.
 ///
 /// `SetForegroundWindow` only succeeds for a process that already owns the
-/// foreground or the last input event. Verbatim usually qualifies (the popup
-/// follows a keypress our hook just saw), so the direct call is tried first.
-/// When it fails, we borrow the right the standard way: attaching our input
-/// queue to the current foreground thread's makes Windows treat the two as one
-/// for foreground purposes, so the call is then permitted. The attachment is
-/// undone immediately — leaving it in place would tie our input state to
-/// another process.
+/// foreground or the last input event. A control-plane-originated gesture has
+/// no physical input behind it, so [`nudge_foreground_lock`] injects one
+/// first; the direct call is then tried. When it still fails, we borrow the
+/// right the standard way: attaching our input queue to the current
+/// foreground thread's makes Windows treat the two as one for foreground
+/// purposes, so the call is then permitted. The attachment is undone
+/// immediately — leaving it in place would tie our input state to another
+/// process.
 pub(crate) fn force_foreground(hwnd: HWND) {
+    nudge_foreground_lock();
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = BringWindowToTop(hwnd);

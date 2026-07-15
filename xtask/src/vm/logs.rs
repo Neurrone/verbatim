@@ -14,6 +14,14 @@ use super::{AGENT_DIR, VERBATIM_DIR, VM_NAME, VmResult};
 
 const AGENT_LOG_NAME: &str = "agent.log";
 
+/// Name (and, joined with [`VERBATIM_DIR`], guest path) of the stdout and
+/// stderr capture file a launched Verbatim's `LaunchProcess.stderr_to`
+/// names, matching `crates/verbatim-e2e/src/scenario.rs`'s remote-mode
+/// path. This is exactly what a crash-diagnosis pull needs: the flight
+/// recorder proves a panic happened, this file says what the panic message
+/// was.
+const VERBATIM_STDERR_LOG_NAME: &str = "stderr-e2e.log";
+
 /// # Errors
 ///
 /// Returns an error if `out_dir` cannot be created. Individual file
@@ -44,6 +52,20 @@ pub(crate) fn run(host: &dyn Host, credentials: &GuestCredentials, out_dir: &Pat
                 .map_err(|error| format!("could not write {}: {error}", path.display()))?;
         }
         Err(error) => println!("xtask vm logs: could not fetch the agent log: {error}"),
+    }
+
+    println!("xtask vm logs: fetching Verbatim's captured stderr log");
+    match host.read_guest_file(
+        VM_NAME,
+        credentials,
+        &format!(r"{VERBATIM_DIR}\{VERBATIM_STDERR_LOG_NAME}"),
+    ) {
+        Ok(bytes) => {
+            let path = out_dir.join(VERBATIM_STDERR_LOG_NAME);
+            fs::write(&path, bytes)
+                .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        }
+        Err(error) => println!("xtask vm logs: could not fetch Verbatim's stderr log: {error}"),
     }
 
     println!("xtask vm logs: wrote logs to {}", out_dir.display());

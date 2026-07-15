@@ -21,18 +21,29 @@ use windows::Win32::System::Threading::{
 
 use crate::protocol::{KillOutcome, ProcessState};
 
-/// Spawns `command` with `args`, inheriting the agent's stdio (never
-/// captured) and environment (extended, not replaced, by `env`).
+/// Spawns `command` with `args`, and environment (extended, not replaced,
+/// by `env`).
+///
+/// When `stderr_to` is `None`, stdio is inherited from the agent exactly as
+/// before (never captured). When it is `Some(path)`, `path` is created
+/// (truncating any existing content, so each launch starts its own fresh
+/// log) and the child's stderr is redirected into it; stdout is redirected
+/// to the same file too, via a cloned handle — a single `File` cannot back
+/// two separate `Stdio` conversions, since each takes ownership of it — so
+/// a panic message on stderr and any surrounding stdout diagnostics land
+/// together in one combined, chronologically ordered log rather than two.
 ///
 /// # Errors
 ///
 /// Returns an error if the process cannot be spawned (bad path, permission
-/// denied, and so on).
+/// denied, and so on), or if `stderr_to` is set and the capture file cannot
+/// be created.
 pub fn launch(
     command: &str,
     args: &[String],
     working_dir: Option<&str>,
     env: &[(String, String)],
+    stderr_to: Option<&str>,
 ) -> io::Result<u32> {
     let mut cmd = Command::new(command);
     cmd.args(args);
@@ -41,6 +52,12 @@ pub fn launch(
     }
     for (key, value) in env {
         cmd.env(key, value);
+    }
+    if let Some(path) = stderr_to {
+        let capture_file = std::fs::File::create(path)?;
+        let stdout_handle = capture_file.try_clone()?;
+        cmd.stderr(capture_file);
+        cmd.stdout(stdout_handle);
     }
     // The child keeps running independently of this handle; dropping it
     // only releases our reference, it does not terminate the process.
@@ -168,6 +185,7 @@ mod tests {
             ],
             None,
             &[],
+            None,
         )
         .expect("spawns powershell");
         assert!(pid > 0, "pid is a valid nonzero process id");
@@ -196,6 +214,53 @@ mod tests {
         // Killing an already-exited process is tolerated, not an error.
         let second_kill = kill(pid).expect("kills a second time without error");
         assert_eq!(second_kill, KillOutcome::AlreadyExited);
+    }
+
+    /// Exercises `stderr_to`: a child that writes to stderr and exits, with
+    /// stdout and stderr captured into a file that outlives the process.
+    #[test]
+    fn launch_with_stderr_to_captures_the_childs_stderr() {
+        let path = std::env::temp_dir().join(format!(
+            "verbatim-agent-test-stderr-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path_str = path.to_str().expect("utf8 temp path").to_owned();
+
+        let pid = launch(
+            "powershell",
+            &[
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                "[Console]::Error.WriteLine('agent stderr capture test')".to_owned(),
+            ],
+            None,
+            &[],
+            Some(&path_str),
+        )
+        .expect("spawns powershell with a stderr capture path");
+
+        let mut final_state = ProcessState::Running;
+        for _ in 0..100 {
+            final_state = status(pid).expect("queries status");
+            if final_state != ProcessState::Running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            matches!(final_state, ProcessState::Exited { .. }),
+            "expected the child to have exited, got {final_state:?}"
+        );
+
+        let captured =
+            std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
+        assert!(
+            captured.contains("agent stderr capture test"),
+            "expected the captured file to contain the child's stderr, got: {captured}"
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

@@ -264,25 +264,60 @@ arguments for the full verb list printed from the source of truth.
   waits for the agent — the fast way back to a known-clean state between
   runs, instead of a full `create`.
 - `deploy` builds `verbatim-app`, `verbatim-agent`, and `verbatim-outpost`
-  (debug profile, matching the CI job), then copies `verbatim.exe` and
-  `verbatim-outpost.exe` into `C:\VerbatimLab\verbatim`, a staged
-  capture-synth `settings.toml` alongside them, and
-  `verbatim-agent.exe` into `C:\VerbatimLab\agent`, then restarts the
-  `VerbatimAgent` scheduled task so the freshly deployed agent is the one
-  actually running. Use this on its own when you want to push a fresh
-  build into an already-running guest without touching checkpoints at all.
+  (debug profile, matching the CI job), then compares a SHA-256 hash of
+  each of the four artifacts it would place in the guest (`verbatim.exe`
+  and `verbatim-outpost.exe` in `C:\VerbatimLab\verbatim`, a staged
+  capture-synth `settings.toml` alongside them, and `verbatim-agent.exe` in
+  `C:\VerbatimLab\agent`) against the guest's existing copy, fetching all
+  four guest-side hashes in a single PowerShell Direct call. Only artifacts
+  whose hash differs are copied; each is reported as either "unchanged;
+  skipping" or "changed; will copy". The guest's `VerbatimAgent` scheduled
+  task and any running Verbatim are stopped first, but only when at least
+  one executable (never `settings.toml` alone) actually needs copying, and
+  the task is restarted afterward only if it was stopped or
+  `verbatim-agent.exe` itself was among the copied artifacts. When every
+  hash already matches, the guest is left completely untouched — no stop,
+  no copy, no restart — which is the common case in a tight edit-test loop
+  where nothing changed since the last deploy. Use this on its own when you
+  want to push a fresh build into an already-running guest without touching
+  checkpoints at all.
 - `test` restores `golden`, deploys the current build on top of it,
   discovers the guest's IP address, then runs `crates/verbatim-e2e`'s suite
   on the host with `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
   `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path, and
   `VERBATIM_E2E_REMOTE=1` set. This is the one-command loop
-  `docs/roadmap.md`'s M2 exit criteria describes.
+  `docs/roadmap.md`'s M2 exit criteria describes. `cargo xtask vm test
+  --no-restore` skips the checkpoint restore (and its post-restore agent
+  wait) entirely, deploying straight onto whatever the guest is currently
+  running, and prints a prominent line stating the guest was not restored
+  and its state may be dirty. Combined with `deploy`'s hash-skipping, this
+  makes a rerun after a small code change fast — restore plus its agent
+  wait is most of an ordinary run's wall-clock cost. Never use
+  `--no-restore` for an acceptance run: only a run that actually restored
+  `golden` first demonstrates the harness's real exit criteria.
 - `logs [dir]` pulls flight-recorder dumps (from the guest's
-  `C:\VerbatimLab\verbatim\dumps`) and the agent's own log
-  (`C:\VerbatimLab\agent\agent.log`) out over PowerShell Direct, into
-  `artifacts/vm-logs` by default. A missing dumps folder or no agent log
-  yet is logged and skipped, not a failure — an ordinary state early in a
-  VM's life.
+  `C:\VerbatimLab\verbatim\dumps`), the agent's own log
+  (`C:\VerbatimLab\agent\agent.log`), and a launched Verbatim's captured
+  stdout and stderr (`C:\VerbatimLab\verbatim\stderr-e2e.log` — see the next
+  paragraph) out over PowerShell Direct, into `artifacts/vm-logs` by
+  default. A missing dumps folder, no agent log yet, or no stderr log yet
+  is logged and skipped, not a failure — an ordinary state early in a VM's
+  life. Every guest file this verb reads is opened with read/write sharing
+  on the guest side, so a log the agent or Verbatim still has open for
+  writing is still readable rather than failing with a sharing violation.
+
+Every scenario `crates/verbatim-e2e` launches asks the agent to capture the
+launched Verbatim's combined stdout and stderr into a file, truncated fresh
+on each launch: `C:\VerbatimLab\verbatim\stderr-e2e.log` in a VM run (see
+`Scenario::launch` and `verbatim_agent::protocol::Request::LaunchProcess`'s
+`stderr_to` field), or a file named `stderr-e2e.log` next to `verbatim.exe`
+in a runner-direct run. Verbatim intermittently crashes at launch inside the
+guest with no other trace of why — the flight recorder proves a panic
+happened but never captures its message, since flight-recorder dumps are
+written by Verbatim's own graceful teardown path, which a panic does not
+reach. This capture file is exactly the corner that closes: pull it with
+`cargo xtask vm logs` and its tail is normally the Rust panic message and
+backtrace that would otherwise be lost with the process.
 - `delete` stops the VM, removes every checkpoint, removes the VM
   registration, and deletes its virtual hard disks, clearing the way for a
   clean `create`.

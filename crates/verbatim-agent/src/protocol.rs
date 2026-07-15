@@ -59,7 +59,7 @@ pub enum Request {
     /// Spawns a process via `std::process::Command`, inheriting the
     /// agent's own interactive session — the reason this request exists at
     /// all rather than something `WinRM` or PowerShell Direct could do.
-    /// Stdio is not captured.
+    /// Stdio is inherited (not captured) unless `stderr_to` is set.
     LaunchProcess {
         /// The executable to run.
         command: String,
@@ -70,6 +70,15 @@ pub enum Request {
         /// Additional environment variables, added to (not replacing) the
         /// agent's own environment.
         env: Vec<(String, String)>,
+        /// When set, a path the agent creates (truncating any existing
+        /// file) and redirects the child's stdout and stderr into, so a
+        /// panic message that would otherwise vanish with the process is
+        /// captured for a later `ReadFile` (or `cargo xtask vm logs`) pull.
+        /// `None` (the default on the wire, via `serde(default)`, so an
+        /// older client omitting this field still deserializes) inherits
+        /// the agent's own stdio exactly as before.
+        #[serde(default)]
+        stderr_to: Option<String>,
     },
     /// Terminates a process by pid.
     KillProcess {
@@ -213,6 +222,7 @@ mod tests {
                 args: vec![],
                 working_dir: None,
                 env: vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())],
+                stderr_to: Some(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned()),
             },
         };
         let frame = Frame::Reply {
@@ -233,6 +243,26 @@ mod tests {
             .expect("not end of stream");
         assert_eq!(read_request, request);
         assert_eq!(read_frame, frame);
+    }
+
+    /// A `LaunchProcess` request written by an older client that predates
+    /// `stderr_to` — the field must be optional on the wire so such a
+    /// client stays compatible with a newer agent.
+    #[test]
+    fn launch_process_without_stderr_to_deserializes_as_none() {
+        let json = r#"{"id":1,"request":{"LaunchProcess":{"command":"notepad.exe","args":[],"working_dir":null,"env":[]}}}"#;
+        let mut buffer = json.as_bytes().to_vec();
+        buffer.push(b'\n');
+        let mut reader = buffer.as_slice();
+        let envelope: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        match envelope.request {
+            Request::LaunchProcess { stderr_to, .. } => {
+                assert_eq!(stderr_to, None);
+            }
+            other => panic!("expected LaunchProcess, got {other:?}"),
+        }
     }
 
     #[test]

@@ -433,42 +433,71 @@ Public API:
 
 The per-application outpost process, the Core-side supervisor, the
 foreground trigger, and the private protocol between them (architecture
-sections 1 and 4, decision D9).
+sections 1 and 4, decision D9, implemented in full — generalized from M1's
+single instance to the many-concurrent-processes design, pulled forward
+from M3).
+
+An outpost's target application is fixed at spawn and never retargeted:
+the pid arrives on its command line (`--target-pid`), hooks and UIA
+registrations install once during construction, and there is no rebind
+path. Outposts stay alive when their application loses foreground — a
+foreground change to an application Core already has an outpost for sends
+that outpost an `AnnounceFocus`, never a respawn.
 
 Public API:
 
 - `protocol` — the wire vocabulary the supervisor and each outpost speak.
-  `SupervisorToOutpost`: `Configure` (set or retarget the watched
-  application), `Fetch`, `Ping`, `DumpTree` (walk the target's tree from
-  its top-level window), `Shutdown`. `OutpostToSupervisor`: `Ready`,
-  `Event` (trace id, observation timestamp, backend, snapshot version,
-  normalized event), `FetchReply`, `Pong`, `DumpTreeReply` (a `DumpedTree`
-  — the root `verbatim_model::TreeNode` plus whether the walk was
-  truncated — or a human-readable failure reason), `Fault`. Framing is
-  newline-delimited compact JSON via `write_message` and `read_message`.
+  `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
+  window of the target, or restores normal arbitration — the old
+  `Configure`'s backend-override half), `AnnounceFocus` (the old
+  `Configure`'s implicit synthetic-focus half, now explicit and reusable
+  across the outpost's whole life, not just at spawn), `Fetch`, `Ping`,
+  `DumpTree` (walk the target's tree from its top-level window),
+  `Shutdown`. `OutpostToSupervisor`: `Ready`, `Event` (trace id,
+  observation timestamp, backend, snapshot version, normalized event),
+  `FetchReply`, `Pong`, `DumpTreeReply` (a `DumpedTree` — the root
+  `verbatim_model::TreeNode` plus whether the walk was truncated — or a
+  human-readable failure reason), `Fault`. Framing is newline-delimited
+  compact JSON via `write_message` and `read_message`.
 - `Arbitrator` — NVDA's per-window backend decision:
   `resolve_with(hwnd, class, probe)` walks the ladder (good class list, bad
   class list seeded from NVDA's, then the injected probe), caches verdicts
   per window handle for 500 ms, and supports a forced override from
-  `Configure`. The probe is a closure so tests fake it.
+  `SetBackendOverride`. The probe is a closure so tests fake it.
 - `QueryPool` — the deadline-guarded workers: `run(deadline, work)` blocks
   the caller up to the deadline and abandons the call on expiry (the worker
   stays parked, a counter increments, and a replacement spawns — recovery
   ladder rung two, since a thread blocked in a hung app's COM call cannot
   be safely killed); `submit` is fire-and-forget. Workers lazily own their
   own `Uia` client.
-- `Outpost`, `run_pipe`, `run_attach` — the runtime. `run_pipe` is the
-  production mode over inherited pipe handles; `run_attach` watches a pid
-  directly and prints outbound messages as JSON lines to stdout, the
+- `Outpost`, `run_pipe`, `run_attach` — the runtime. `Outpost::new(writer,
+  target_pid)` installs hooks and UIA registrations for the fixed pid and
+  announces `Ready`; `run_pipe` is the production mode over inherited pipe
+  handles; `run_attach` watches a pid directly, immediately announces its
+  focus, and prints outbound messages as JSON lines to stdout, the
   standalone dev mode.
-- `Supervisor` — `new(events_tx)`, `target(pid)` (spawn or retarget; the
-  call to make on every foreground change), `send(command)`. State is a map
-  keyed by target pid — N-ready by construction, with an M1 policy of one
-  entry — and a reader thread per outpost forwards messages into the
-  channel, respawning on end of stream if that outpost is still current.
+- `Supervisor` — `new(events_tx)`, `note_foreground(pid)` (spawn if this
+  pid has no outpost yet, otherwise send the existing one an
+  `AnnounceFocus`; the call to make on every foreground change),
+  `ensure_spawned(pid)` (warm an outpost without touching foreground
+  tracking — used once, at Core startup, for Core's own pid; see its doc
+  comment), `send_to(pid, command)`. State is a map keyed by target pid,
+  genuinely N-ready now: a reader thread per outpost forwards messages into
+  the channel as `OutpostMessage::Event(pid, message)`, respawning on end
+  of stream only if that pid's map entry still has the same generation
+  *and* the watched application's process is itself still alive (checked
+  via `OpenProcess`/`GetExitCodeProcess`) — otherwise the entry is dropped
+  and Core is told via `OutpostMessage::Retired(pid)`. A background sweep
+  (every foreground change, plus a coarse 30-second timer) retires any
+  outpost whose application has not held foreground for two minutes
+  (`IDLE_RETIREMENT`, risk R2's memory-use mitigation), skipping whichever
+  pid currently holds foreground; retirement removes the map entry *before*
+  sending `Shutdown`, which is what makes the ordinary respawn path
+  correctly do nothing for a deliberate retirement instead of resurrecting
+  it.
 - `ForegroundTrigger::new(callback)` — the one global WinEvent hook in
   Core: a dedicated thread reporting only the new foreground window's pid
-  and handle, no property fetches, wired to `Supervisor::target`.
+  and handle, no property fetches, wired to `Supervisor::note_foreground`.
 
 Implementation notes:
 
@@ -477,12 +506,84 @@ Implementation notes:
   in a job object carrying kill-on-job-close and a 200 MB memory cap, and
   only then resumed — inside the job before executing a single
   instruction. Core holds the only job handle, so kernel teardown of Core,
-  however it dies, kills every outpost; the reverse direction is a pipe
-  close the supervisor answers by respawning.
-- Event flow (runtime): the event thread hosts the WinEvent hooks and a
-  rebind message; UIA registration lives on its own thread; both funnel
-  through the cross-filter so exactly one backend survives per window.
-  Because every Win32 and wx control is its own window handle, per-window
+  however it dies, kills every outpost. The command line also carries
+  `--target-pid`, fixing the watched application for the outpost's whole
+  life; immediately after resuming, the supervisor writes the spawn's own
+  implicit `AnnounceFocus` down the pipe (buffered by the OS; the outpost
+  need not be reading yet).
+- Foreground announcements (`AnnounceFocus`, `run_announce`): the newly
+  authoritative outpost announces the top-level foreground window, then the
+  focused control, both sharing one retry budget — up to five attempts
+  across roughly two seconds. The window step stops retrying once it
+  succeeds (or is deliberately skipped, when every top-level window is
+  Core's own hidden frame); the control step keeps going until it succeeds
+  or the attempts run out. A single deadline-guarded attempt for the window
+  step was tried first, reasoned as safe because Windows raises the
+  foreground event only once the application's top-level window already
+  exists — true in the common case, but live testing against the VM under
+  load found `EnumWindows` and `GetForegroundWindow` can still race a
+  window's own creation closely enough to miss it on the very first
+  attempt, losing the window announcement outright with no later chance to
+  recover it; the window step now retries for exactly that reason. It
+  reads the window's own accessible object specifically: UIA via
+  `element_from_handle`, MSAA via a direct `OBJID_WINDOW` query (not
+  `OBJID_CLIENT`, which is what `DumpTree`'s walk starts from and which
+  reads back as role "client", unmapped to anything nameable — confirmed
+  live against Windows 11 Notepad, whose window announcement read "Untitled
+  - Notepad, unknown" until this was fixed). The window itself is located
+  by `GetForegroundWindow`, deliberately not `GetGUIThreadInfo`'s
+  `hwndFocus`: the latter can legitimately name a non-top-level descendant
+  that still belongs to the target process (Windows 11 Notepad hosts its
+  text area in its own child `hwnd` distinct from the frame), which made an
+  earlier version of this code read the edit control's own snapshot instead
+  of the window's. The control step's retries answer a different race —
+  the second focus-timing race `docs/roadmap.md`'s M3 section names, the
+  foreground trigger and this query racing the target process's own
+  control creation — using `GetGUIThreadInfo`'s `hwndFocus` specifically,
+  since that question ("what control is focused") is genuinely different
+  from "what is the top-level window". The whole loop runs off the command
+  loop on its own thread so `Ping` and `Fetch` stay responsive during the
+  retry window; a per-outpost generation counter, bumped on every
+  `AnnounceFocus`, is compared before every attempt and before every
+  emission, so a superseding announce (a rapid re-foreground, or several in
+  Notepad's own bursty startup events) aborts a stale retry loop rather
+  than letting it starve real event acquisition or emit late.
+- Hidden-frame suppression (decision D9): Core's hidden 1x1 main frame is
+  marked with the `verbatim_model::HIDDEN_FRAME_WINDOW_PROP` window
+  property by `verbatim-gui` (see that crate's section) and must never be
+  announced — it transits real focus during the prePopup show/raise/force-
+  foreground dance and would otherwise read as a nameless "Verbatim"
+  window with role unknown, the first of the two M3 focus-timing races.
+  Every `FocusChanged` emission path checks the property (`GetPropW`, which
+  tolerates any handle and never blocks) before emitting: the MSAA event
+  path (scoped to `id_child == verbatim_ia2::CHILDID_SELF`, re-exported
+  from that crate's `com` module for exactly this check, so a child
+  element's event on some unrelated window is never accidentally
+  suppressed by hwnd coincidence), the UIA focus callback (reusing the
+  window handle the arbitration filter already resolved, rather than
+  resolving it twice), and the synthetic focus query (`focused_snapshot`
+  treats the hidden frame as "nothing focused", so a caller retrying on
+  `None` naturally retries past it). The top-level-window announcement's
+  own window search additionally skips hidden-frame windows when choosing
+  among a process's top-level windows, so resolution lands on a real window
+  (a popup menu, a dialog) instead.
+- `verbatim-gui`'s `force_foreground` (see that crate's section) injects a
+  bare `VK_CONTROL` tap before attempting `SetForegroundWindow`: a gesture
+  that arrived via the control plane (no physical input, as every E2E test
+  and any future remote session sends) fails Windows' foreground-lock
+  heuristic and falls back to the slow `AttachThreadInput` path, observed
+  at roughly two seconds; the tap satisfies the heuristic directly, cutting
+  that to roughly 150 to 450 ms. `VK_MENU` was tried and rejected — a lone
+  Alt press activates menu bars and bounces foreground straight back.
+- Event flow (runtime): the event thread hosts the WinEvent hooks,
+  installed once for the fixed target pid before the message loop starts
+  (never rebound — a second live `WINEVENT_OUTOFCONTEXT` hook set on a
+  thread that already has one has been observed to permanently kill
+  WinEvent delivery on that thread for the rest of the process, which decision
+  D9's one-pid-per-outpost-for-life design sidesteps entirely rather than
+  risking); UIA registration lives on its own thread; both funnel through
+  the cross-filter so exactly one backend survives per window. Because
+  every Win32 and wx control is its own window handle, per-window
   arbitration is per-control there, while a WinUI top level resolves once
   for its whole subtree. Trace IDs are minted when the OS event first
   arrives, snapshot versions increment per emitted event, and each event
@@ -519,22 +620,22 @@ Implementation notes:
     item straight to the popup window itself — the same window the MSAA
     event for that item carries — so both backends now arbitrate on one
     shared hwnd and the compensation is no longer needed.
-- On `Configure`, the outpost rebinds its hooks, then queries the currently
-  focused element on a query-pool thread and emits a synthetic
-  `FocusChanged` — announcing the focus change that caused its own spawn
-  without having witnessed it.
 - `DumpTree` (runtime): answered on a query-pool thread guarded by a five
-  second deadline (`QueryPool::run`), the same pattern the synthetic-focus
-  query uses, so a hung target abandons the call rather than wedging the
-  outpost. Finds the target's currently active top-level window (falling
-  back to its first top-level window), arbitrates its backend, then walks
-  it: UIA via `Uia::walk_tree`, a raw-view `IUIAutomationTreeWalker` driven
-  with the same cache request as every other UIA read, so no step of the
-  walk blocks on an uncached property; MSAA via
-  `verbatim_ia2::acquire::walk_tree`, recursing through `AccessibleChildren`
-  since this backend has no cache requests to prefetch with. Both walkers
-  share the same caps — depth 64, node count 4096 across the whole walk —
-  and report whether either cap cut the walk short.
+  second deadline (`QueryPool::run`), the same pattern the foreground
+  announcement's queries use, so a hung target abandons the call rather
+  than wedging the outpost. Finds the target's currently active top-level
+  window the same way the announcement's window step does (`GetForegroundWindow`,
+  falling back to its first non-hidden-frame top-level window), arbitrates
+  its backend, then walks it: UIA via `Uia::walk_tree`, a raw-view
+  `IUIAutomationTreeWalker` driven with the same cache request as every
+  other UIA read, so no step of the walk blocks on an uncached property;
+  MSAA via `verbatim_ia2::acquire::walk_tree` (rooted at `OBJID_CLIENT`,
+  unlike the window announcement's `OBJID_WINDOW` query — a tree dump wants
+  the client subtree, not the window's own accessible object), recursing
+  through `AccessibleChildren` since this backend has no cache requests to
+  prefetch with. Both walkers share the same caps — depth 64, node count
+  4096 across the whole walk — and report whether either cap cut the walk
+  short.
 
 ## mockapp
 
@@ -773,6 +874,14 @@ Public API:
   `SessionInfo`, `ReadFile`, `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
+  `LaunchProcess` inherits the launched child's stdio (uncaptured) by
+  default; its `stderr_to` field, an `Option<String>` defaulted via
+  `serde(default)` so an older client that omits it on the wire still
+  deserializes, names a path the agent creates (truncating any existing
+  content) and redirects both the child's stdout and stderr into, so a
+  Verbatim that panics at launch leaves its message somewhere a host-side
+  test or `cargo xtask vm logs` can actually read, instead of vanishing
+  with the process.
 - `server::serve(listener, pipe_name)` — the TCP accept loop, one thread
   per connection; blocking, so callers needing to do other work run it on
   a background thread.
@@ -957,21 +1066,36 @@ Public API:
   `DialogGuard` is the settings-dialog singleton state machine.
 
 Implementation notes: the hidden one-by-one frame titled "Verbatim" is the
-single-instance rendezvous and dialog parent. One localized menu object
-serves both the tray icon and the Verbatim+V popup. Showing the menu or the
-dialog performs NVDA's prePopup dance — show the frame, raise it, and force
-it foreground through the native window handle (falling back to the
-attach-thread-input maneuver when Windows' foreground lock refuses) —
-because a popup from a hidden background window never receives foreground
-or keyboard focus, and Verbatim's own outpost would never retarget to it.
-The frame hides again after the menu closes or the dialog is dismissed. The
-settings dialog mirrors NVDA's shape: a labeled single-column report list
-of categories on the left, a lazily built panel on the right, OK, Cancel,
-and Apply buttons, hand-rolled Enter, Ctrl+S, and Ctrl+Tab handling
-(wxDragon binds no accelerator tables), and a title that tracks the active
-category. The Speech panel is generated from the settings host's
-descriptors; every control change applies live, OK and Apply persist,
-Cancel reverts. Escape and window close follow the dialog's escape id.
+single-instance rendezvous and dialog parent. It is stamped, right after
+creation, with the `verbatim_model::HIDDEN_FRAME_WINDOW_PROP` window
+property (`hidden_frame::mark`, `SetPropW`) and unstamped at shutdown
+(`hidden_frame::unmark`, `RemovePropW`) — the marker every outpost checks
+before announcing a `FocusChanged` (decision D9; see `verbatim-outpost`'s
+section), so the frame's transit through real focus during the popup dance
+below is never spoken as a nameless "Verbatim" window with role unknown.
+One localized menu object serves both the tray icon and the Verbatim+V
+popup. Showing the menu or the dialog performs NVDA's prePopup dance — show
+the frame, raise it, and force it foreground through the native window
+handle — because a popup from a hidden background window never receives
+foreground or keyboard focus, and no outpost would ever be watching it (D9:
+outposts are per-application, spawned or re-announced by Core's foreground
+trigger). `force_foreground` tries `SetForegroundWindow` directly first,
+but a gesture that arrived via the control plane (no physical input, as
+every E2E test and any future remote session sends) fails Windows'
+foreground-lock heuristic outright; a bare `VK_CONTROL` tap injected first
+satisfies the heuristic directly (confirmed live: roughly 150 to 450 ms,
+versus roughly two seconds for the `AttachThreadInput` fallback the code
+still keeps for the case even the tap does not help). `VK_MENU` was tried
+and rejected as the nudge — a lone Alt press activates menu bars and
+bounces foreground straight back. The frame hides again after the menu
+closes or the dialog is dismissed. The settings dialog mirrors NVDA's
+shape: a labeled single-column report list of categories on the left, a
+lazily built panel on the right, OK, Cancel, and Apply buttons, hand-rolled
+Enter, Ctrl+S, and Ctrl+Tab handling (wxDragon binds no accelerator
+tables), and a title that tracks the active category. The Speech panel is
+generated from the settings host's descriptors; every control change
+applies live, OK and Apply persist, Cancel reverts. Escape and window close
+follow the dialog's escape id.
 
 ## verbatim-app
 

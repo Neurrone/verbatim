@@ -38,8 +38,8 @@ pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
     cache: HashMap<isize, (bool, Instant)>,
-    /// A `Configure` backend override forcing every window: `Some(true)` for
-    /// UIA, `Some(false)` for MSAA, `None` for normal arbitration.
+    /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
+    /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
 }
 
@@ -68,8 +68,9 @@ impl Arbitrator {
         }
     }
 
-    /// Sets a `Configure` backend override: `Some(true)` forces UIA for every
-    /// window, `Some(false)` forces MSAA, `None` restores normal arbitration.
+    /// Sets a `SetBackendOverride` command's forced backend: `Some(true)`
+    /// forces UIA for every window, `Some(false)` forces MSAA, `None`
+    /// restores normal arbitration.
     pub fn set_forced(&mut self, forced: Option<bool>) {
         self.forced = forced;
     }

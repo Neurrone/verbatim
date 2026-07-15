@@ -8,9 +8,11 @@
 //!
 //! Two ways to run:
 //!
-//! - `--pipe-in <handle> --pipe-out <handle>`: the production mode, spawned by
-//!   the Core supervisor with two inherited anonymous-pipe handle values passed
-//!   as decimal. Commands are read from `--pipe-in`, messages written to
+//! - `--pipe-in <handle> --pipe-out <handle> --target-pid <pid>`: the
+//!   production mode, spawned by the Core supervisor with two inherited
+//!   anonymous-pipe handle values passed as decimal and the application this
+//!   outpost watches for its whole life (decision D9: fixed at spawn, never
+//!   retargeted). Commands are read from `--pipe-in`, messages written to
 //!   `--pipe-out`.
 //! - `--attach <pid>`: a dev mode that watches `<pid>` directly and prints
 //!   outbound messages as JSON lines to stdout, for standalone testing without
@@ -29,12 +31,16 @@ fn main() -> ExitCode {
     verbatim_model::TraceId::namespace(std::process::id());
     let args: Vec<String> = std::env::args().collect();
     match parse_args(&args) {
-        Some(Mode::Pipe { pipe_in, pipe_out }) => {
+        Some(Mode::Pipe {
+            pipe_in,
+            pipe_out,
+            target_pid,
+        }) => {
             // SAFETY: the handle values name pipe ends the supervisor created
             // and this process inherited; each is owned by exactly one File.
             let reader = unsafe { File::from_raw_handle(pipe_in as *mut c_void) };
             let writer = unsafe { File::from_raw_handle(pipe_out as *mut c_void) };
-            match run_pipe(Box::new(reader), Box::new(writer)) {
+            match run_pipe(Box::new(reader), Box::new(writer), target_pid) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("outpost pipe loop ended with error: {error}");
@@ -52,7 +58,7 @@ fn main() -> ExitCode {
         None => {
             eprintln!(
                 "verbatim-outpost is spawned by verbatim.exe. Usage:\n  \
-                 verbatim-outpost --pipe-in <handle> --pipe-out <handle>\n  \
+                 verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid>\n  \
                  verbatim-outpost --attach <pid>   (dev mode: prints JSON to stdout)"
             );
             ExitCode::FAILURE
@@ -61,8 +67,14 @@ fn main() -> ExitCode {
 }
 
 enum Mode {
-    Pipe { pipe_in: usize, pipe_out: usize },
-    Attach { pid: u32 },
+    Pipe {
+        pipe_in: usize,
+        pipe_out: usize,
+        target_pid: u32,
+    },
+    Attach {
+        pid: u32,
+    },
 }
 
 /// Parses the command line into a run [`Mode`]. Returns `None` on unrecognized
@@ -70,12 +82,14 @@ enum Mode {
 fn parse_args(args: &[String]) -> Option<Mode> {
     let mut pipe_in = None;
     let mut pipe_out = None;
+    let mut target_pid = None;
     let mut attach = None;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
             "--pipe-in" => pipe_in = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--pipe-out" => pipe_out = args.get(index + 1).and_then(|v| v.parse().ok()),
+            "--target-pid" => target_pid = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--attach" => attach = args.get(index + 1).and_then(|v| v.parse().ok()),
             _ => {}
         }
@@ -84,8 +98,12 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     if let Some(pid) = attach {
         return Some(Mode::Attach { pid });
     }
-    match (pipe_in, pipe_out) {
-        (Some(pipe_in), Some(pipe_out)) => Some(Mode::Pipe { pipe_in, pipe_out }),
+    match (pipe_in, pipe_out, target_pid) {
+        (Some(pipe_in), Some(pipe_out), Some(target_pid)) => Some(Mode::Pipe {
+            pipe_in,
+            pipe_out,
+            target_pid,
+        }),
         _ => None,
     }
 }

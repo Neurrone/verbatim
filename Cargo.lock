@@ -1994,6 +1994,7 @@ dependencies = [
  "crossbeam-channel",
  "tracing",
  "verbatim-i18n",
+ "verbatim-model",
  "verbatim-speech",
  "windows",
  "wxdragon",
