@@ -1,6 +1,52 @@
 //! `cargo xtask vm test`: builds the current source, restores the golden
 //! checkpoint, stages and copies the build onto it, discovers the guest's
-//! IP, then runs `crates/verbatim-e2e`'s suite on the host against it.
+//! IP, then runs `crates/verbatim-e2e`'s scenarios on the host against it,
+//! one at a time.
+//!
+//! Milestone M3 Track B replaced "the whole suite runs as one blob with one
+//! recording" with per-scenario selection and boundaries:
+//!
+//! - `--scenario <name>` (repeatable) and `--group <name>` (repeatable)
+//!   choose which of `verbatim_e2e::registry::SCENARIOS` to run; with
+//!   neither given, every registered scenario runs, the same as before.
+//!   `--list` prints the registry (name and group, one per line) and exits
+//!   without touching the VM at all — no build, no restore, no deploy.
+//! - `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is not a
+//!   scenario — a precondition every scenario depends on — so it always
+//!   runs first, once, regardless of `--scenario`/`--group`, and a failure
+//!   there aborts the whole run before any scenario is attempted: nothing
+//!   downstream can work from a non-interactive agent session.
+//! - Each selected scenario runs as its own `cargo test -p verbatim-e2e
+//!   <name> -- --exact` subprocess ([`run_scenario_subprocess`]), not one
+//!   shared invocation covering every scenario. This is the design choice
+//!   for controlling scenario boundaries from here (`docs/roadmap.md`'s M3
+//!   Track B item asks for one or the other): reusing the existing
+//!   `#[test]`-per-scenario libtest binaries this way needs no new runner
+//!   mode inside `verbatim-e2e` itself, and it is what makes `--record`'s
+//!   per-scenario recording trivial — start ffmpeg, spawn the subprocess,
+//!   stop ffmpeg, exactly bracketing that scenario's `Scenario::launch`,
+//!   setup, body, and teardown (all of which happen inside that one
+//!   subprocess), never spilling into a neighboring scenario's recording.
+//!   The alternative (a dedicated runner mode inside `verbatim-e2e` driving
+//!   several scenarios in one process) would still need `xtask` to signal
+//!   scenario boundaries across a process it does not own line-by-line;
+//!   spawning a fresh, exactly-filtered subprocess per scenario gives that
+//!   boundary for free, from process start to process exit, with no new
+//!   IPC.
+//! - After every selected scenario's subprocess exits, this reads back the
+//!   [`verbatim_e2e::artifacts::ScenarioSummary`] that scenario's own run
+//!   wrote to its artifacts directory (`verbatim_e2e::artifacts`) — rather
+//!   than parsing the subprocess's stdout — and prints one line per
+//!   scenario at the end: pass or fail, and how many of its latency
+//!   timelines reached audio. On failure, the same artifacts directory also
+//!   holds the interleaved timeline, Verbatim's captured stderr log, and a
+//!   flight-recorder dump — collected by `verbatim_e2e::registry::run`
+//!   itself, inside the subprocess, since that is where the live control
+//!   and agent connections needed to fetch them still exist.
+//! - There is still no retry of any kind, at any level: a scenario that
+//!   fails is reported failed, once, with its artifacts left for a human to
+//!   root-cause — never re-run automatically by this module or by
+//!   `verbatim-e2e` itself.
 //!
 //! The build ([`deploy::build`]) deliberately runs *before* the checkpoint
 //! restore, not after: [`deploy::run`]'s original ordering built only after
@@ -90,41 +136,80 @@
 //! with a warning printed, rather than aborting the whole run: the suite
 //! still runs and its video is still pulled either way.
 
+use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
+
+use verbatim_e2e::artifacts::{self, ScenarioSummary};
+use verbatim_e2e::registry;
 
 use super::host::{Host, wait_for_agent};
 use super::recording;
 use super::{AGENT_PORT, CHECKPOINT_NAME, VERBATIM_DIR, VM_NAME, VmResult, deploy, dotenv};
 
-/// The flags `cargo xtask vm test` accepts, all defaulting to off:
-/// `--no-restore` skips the checkpoint restore, `--record` captures a video,
-/// and `--paced` waits for each utterance to finish before the next input.
-/// See this module's own doc comment for the details, and `parse_test_flags`
-/// in `super` for the parsing.
-#[derive(Clone, Copy, Default)]
+/// `session_info`'s own test function name
+/// (`crates/verbatim-e2e/tests/session_info.rs`) — not a registered
+/// scenario, but the precondition [`test`] always runs first, once, before
+/// any scenario. Named literally here rather than looked up, since it
+/// deliberately has no [`registry::ScenarioDef`] to look up.
+const SESSION_INFO_TEST_NAME: &str = "agent_reports_an_interactive_window_station";
+
+/// The flags `cargo xtask vm test` accepts, all defaulting to off or empty:
+/// `--no-restore` skips the checkpoint restore, `--record` captures a video
+/// per scenario, `--paced` waits for each utterance to finish before the
+/// next input, `--list` prints the scenario registry and exits, and
+/// `--scenario`/`--group` (each repeatable) select which scenarios run. See
+/// this module's own doc comment for the details, and `parse_test_flags` in
+/// `super` for the parsing.
+#[derive(Clone, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent, orthogonal command-line flag parsed straight off argv; a state machine or enum would not make any combination of them clearer"
+)]
 pub(crate) struct TestFlags {
     pub no_restore: bool,
     pub record: bool,
     pub paced: bool,
+    pub list: bool,
+    pub scenarios: Vec<String>,
+    pub groups: Vec<String>,
 }
 
 /// # Errors
 ///
-/// Returns an error if the checkpoint restore (when not skipped), the
-/// deploy, IP discovery, or the E2E suite itself fails. A recording failure
-/// never aborts the run — see this module's own doc comment — so `record`
-/// contributes no new error case of its own; recording problems are printed
-/// as warnings and, if a video was at least pulled, folded into the
-/// accumulated error message alongside a suite failure, never in place of
-/// running the suite.
+/// Returns an error if `--scenario`/`--group` name something unregistered,
+/// the checkpoint restore (when not skipped), the deploy, IP discovery, the
+/// `session_info` precondition, or any selected scenario itself fails. A
+/// recording failure never aborts the run — see this module's own doc
+/// comment — so `record` contributes no new error case of its own;
+/// recording problems are printed as warnings and, if a video was at least
+/// pulled, folded into the accumulated error message alongside any scenario
+/// failures, never in place of running the scenarios.
 pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmResult<()> {
     let TestFlags {
         no_restore,
         record,
         paced,
+        list,
+        scenarios,
+        groups,
     } = flags;
-    // `--record` implies pacing: a recording nobody can follow because each
+
+    if list {
+        print_scenario_list();
+        return Ok(());
+    }
+
+    let selected = registry::select(registry::SCENARIOS, &scenarios, &groups)?;
+    if selected.is_empty() {
+        return Err(
+            "no scenarios matched the given --scenario/--group filters (a --group with no \
+             scenarios registered under it yet selects nothing)"
+                .to_owned(),
+        );
+    }
+
+    // --record implies pacing: a recording nobody can follow because each
     // utterance is cut off by the next keystroke defeats the point of
     // recording (see this module's own doc comment and `verbatim_e2e`'s
     // `PACED_ENV`).
@@ -157,8 +242,9 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     );
     if record {
         println!(
-            "xtask vm test: --record set — capturing desktop video and VB-CABLE audio to \
-             artifacts/vm-recordings; this requires no RDP session to be connected right now"
+            "xtask vm test: --record set — capturing desktop video and VB-CABLE audio per \
+             scenario to artifacts/vm-recordings; this requires no RDP session to be connected \
+             right now"
         );
     }
 
@@ -170,29 +256,211 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     let endpoint = format!("{ip}:{AGENT_PORT}");
     let guest_exe = format!(r"{VERBATIM_DIR}\verbatim.exe");
 
+    println!(
+        "xtask vm test: checking the session_info precondition (agent reports an interactive \
+         session)"
+    );
+    let session_status = run_scenario_subprocess(
+        repo_root,
+        &endpoint,
+        &guest_exe,
+        paced,
+        SESSION_INFO_TEST_NAME,
+    )
+    .map_err(|error| {
+        format!("could not launch cargo test for the session_info precondition: {error}")
+    })?;
+    if !session_status.success() {
+        return Err(format!(
+            "session_info precondition failed ({session_status}); the agent is not reporting an \
+             interactive session, so no scenario downstream can work — see docs/tooling.md's \
+             Troubleshooting section before looking at anything else"
+        ));
+    }
+
+    // Every failure from here on is accumulated rather than returned
+    // immediately: one scenario's failure must not skip the rest — with
+    // several scenarios and occasional environment flakes, a run should
+    // always report the complete picture, with no retry of anything. This
+    // also holds recording failures, exactly as before the restructuring: a
+    // failing scenario's video is exactly what a human wants to look at, so
+    // stopping and pulling the recording is never skipped over an already
+    // failed scenario.
+    let mut errors = Vec::new();
+    let mut summaries: Vec<(String, bool, Option<ScenarioSummary>)> = Vec::new();
+
+    for def in &selected {
+        let (process_ok, summary) = run_one_scenario(
+            host,
+            &credentials,
+            repo_root,
+            &endpoint,
+            &guest_exe,
+            paced,
+            record,
+            def.name,
+            &mut errors,
+        );
+        summaries.push((def.name.to_owned(), process_ok, summary));
+    }
+
+    print_run_summary(&summaries);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Runs one scenario's subprocess ([`run_scenario_subprocess`]), with a
+/// `--record` recording bracketing it when `record` is set, and reads back
+/// whatever [`ScenarioSummary`] its own run wrote. Every failure along the
+/// way (the subprocess itself, stopping the recording, pulling the
+/// recording) is pushed onto `errors` rather than returned, so one
+/// scenario's trouble never skips the ones after it — see [`test`]'s own
+/// doc comment.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site, threading the same run-wide context (host, credentials, endpoint, ...) through per scenario; a struct would only rename these same fields"
+)]
+fn run_one_scenario(
+    host: &dyn Host,
+    credentials: &dotenv::GuestCredentials,
+    repo_root: &Path,
+    endpoint: &str,
+    guest_exe: &str,
+    paced: bool,
+    record: bool,
+    scenario_name: &str,
+    errors: &mut Vec<String>,
+) -> (bool, Option<ScenarioSummary>) {
+    println!("xtask vm test: running scenario '{scenario_name}'");
+
     let recording_pid = if record {
-        start_recording_with_fallback(host, &credentials, &endpoint)
+        start_recording_with_fallback(host, credentials, endpoint)
     } else {
         None
     };
 
-    println!("xtask vm test: running the E2E suite against {endpoint}");
+    let scenario_process =
+        run_scenario_subprocess(repo_root, endpoint, guest_exe, paced, scenario_name);
+    let process_ok = match scenario_process {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            errors.push(format!("scenario '{scenario_name}' failed: {status}"));
+            false
+        }
+        Err(error) => {
+            errors.push(format!(
+                "scenario '{scenario_name}': could not launch cargo test: {error}"
+            ));
+            false
+        }
+    };
+
+    if let Some(pid) = recording_pid {
+        println!("xtask vm test: stopping the recording for '{scenario_name}'");
+        if let Err(error) = recording::stop_recording(endpoint, pid) {
+            errors.push(format!(
+                "scenario '{scenario_name}': could not stop the recording cleanly: {error}"
+            ));
+        }
+        match recording::pull_recording(host, credentials, repo_root, scenario_name) {
+            Ok(path) => println!(
+                "xtask vm test: recording for '{scenario_name}' saved to {}",
+                path.display()
+            ),
+            Err(error) => errors.push(format!(
+                "scenario '{scenario_name}': could not pull the recording: {error}"
+            )),
+        }
+    }
+
+    // Read back what the scenario's own subprocess wrote, rather than
+    // parsing its stdout — see this module's own doc comment. Missing (the
+    // subprocess never got far enough to write one, e.g. launching Verbatim
+    // itself failed) is tolerated; the run summary falls back to the
+    // process exit status alone in that case.
+    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), scenario_name);
+    let summary = ScenarioSummary::read(&dir).ok();
+    (process_ok, summary)
+}
+
+/// Prints [`registry::SCENARIOS`], one line per scenario naming it and its
+/// group — `cargo xtask vm test --list`. Touches nothing else: no build, no
+/// restore, no deploy.
+fn print_scenario_list() {
+    println!("available E2E scenarios (name, group):");
+    for def in registry::SCENARIOS {
+        println!("  {:<24} {}", def.name, def.group.name());
+    }
+}
+
+/// The one-line-per-scenario report `cargo xtask vm test` prints at the end
+/// of a multi-scenario run: pass or fail, and how many of that scenario's
+/// latency timelines reached audio, when known.
+fn print_run_summary(results: &[(String, bool, Option<ScenarioSummary>)]) {
+    println!("xtask vm test: run summary");
+    for (name, process_ok, summary) in results {
+        let (result_word, latency_text) = summary.as_ref().map_or_else(
+            || {
+                (
+                    if *process_ok { "pass" } else { "fail" },
+                    "latency: no data (the scenario did not write a summary)".to_owned(),
+                )
+            },
+            |summary| {
+                (
+                    if summary.passed { "pass" } else { "fail" },
+                    format!(
+                        "latency: {} of {} timelines reached audio",
+                        format_optional_count(summary.latency_reached_audio),
+                        format_optional_count(summary.latency_records),
+                    ),
+                )
+            },
+        );
+        println!("  {result_word:<4} {name:<28} {latency_text}");
+    }
+}
+
+fn format_optional_count(value: Option<usize>) -> String {
+    value.map_or_else(|| "?".to_owned(), |count| count.to_string())
+}
+
+/// Runs one scenario (or, for [`SESSION_INFO_TEST_NAME`], the `session_info`
+/// precondition) as its own `cargo test -p verbatim-e2e <test_name> --
+/// --exact --test-threads=1` subprocess against the guest, with the
+/// environment `verbatim_e2e::Scenario::launch` needs for a remote, audible
+/// run. See this module's own doc comment for why one subprocess per
+/// scenario is the scenario-boundary design this harness uses.
+///
+/// # Errors
+///
+/// Returns an error if the subprocess cannot be launched at all (the
+/// subprocess's own test failure is reported through its `ExitStatus`
+/// instead, not this `Err`).
+fn run_scenario_subprocess(
+    repo_root: &Path,
+    endpoint: &str,
+    guest_exe: &str,
+    paced: bool,
+    test_name: &str,
+) -> io::Result<ExitStatus> {
     let mut command = Command::new(env!("CARGO"));
-    // --no-fail-fast: a failure in one test binary must not hide the others'
-    // results — with several scenarios and occasional environment flakes,
-    // one run should always report the complete picture. The overall exit
-    // status still fails if anything failed.
     command
         .args([
             "test",
             "-p",
             "verbatim-e2e",
-            "--no-fail-fast",
+            test_name,
             "--",
+            "--exact",
             "--test-threads=1",
         ])
-        .env("VERBATIM_E2E_ENDPOINT", &endpoint)
-        .env("VERBATIM_E2E_VERBATIM_EXE", &guest_exe)
+        .env("VERBATIM_E2E_ENDPOINT", endpoint)
+        .env("VERBATIM_E2E_VERBATIM_EXE", guest_exe)
         .env("VERBATIM_E2E_REMOTE", "1")
         .env("VERBATIM_E2E_AUDIBLE", "1")
         .current_dir(repo_root);
@@ -202,38 +470,7 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
         // utterance in full (verbatim_e2e's PACED_ENV).
         command.env("VERBATIM_E2E_PACED", "1");
     }
-    let status = command
-        .status()
-        .map_err(|error| format!("failed to launch cargo test: {error}"))?;
-
-    // Every failure from here on is accumulated rather than returned
-    // immediately: a failing suite must not skip stopping and pulling the
-    // recording (the video of a failing run is exactly what a human wants
-    // to look at), and a recording failure must not hide a suite failure
-    // that already happened.
-    let mut errors = Vec::new();
-    if status.success() {
-        println!("xtask vm test: E2E suite passed");
-    } else {
-        errors.push(format!("E2E suite failed: {status}"));
-    }
-
-    if let Some(pid) = recording_pid {
-        println!("xtask vm test: stopping the recording");
-        if let Err(error) = recording::stop_recording(&endpoint, pid) {
-            errors.push(format!("could not stop the recording cleanly: {error}"));
-        }
-        match recording::pull_recording(host, &credentials, repo_root) {
-            Ok(path) => println!("xtask vm test: recording saved to {}", path.display()),
-            Err(error) => errors.push(format!("could not pull the recording: {error}")),
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+    command.status()
 }
 
 /// Starts the `--record` capture, tolerating exactly the failure mode this
