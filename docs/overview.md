@@ -219,6 +219,22 @@ semantics follow NVDA's `keyboardHandler`):
 - Chords normalize modifiers to generic names (left and right control both
   become `control`), and gesture assembly relies on `GestureId::parse` for
   ordering, so press order never matters.
+- Multi-press counting (NVDA semantics, M3): every `EmittedGesture` carries
+  a `repeat` count — 0 for the first press, 1 for the second, 2 for the
+  third, saturating rather than overflowing. Pressing the same bound
+  gesture again within `multi_press_timeout` (500 ms) of its previous
+  genuine press increments the count; a different gesture or the window
+  elapsing resets it to 0. Consumers dispatch on it: report-current
+  (report, spell, copy), Verbatim+F12 (time, date), Verbatim+F11 (tray
+  list, taskbar list). Auto-repeat — holding the gesture's key, which
+  re-fires key-downs with no intervening key-up — does not advance the
+  count; NVDA does not treat auto-repeat as a multi-press for
+  script-repeat purposes, and every auto-repeated emission carries the
+  same count as the genuine press that started the hold. The machine
+  detects auto-repeat as a key-down of a key that is still trapped.
+  Control-plane gesture injection (which builds an `EmittedGesture`
+  directly in `verbatim-app`, bypassing the machine) always injects
+  `repeat: 0`, a single first press.
 
 The hook shell (`hook.rs`) keeps the machine in a thread-local on the hook
 thread, forwards emitted gestures with a non-blocking `try_send` that drops

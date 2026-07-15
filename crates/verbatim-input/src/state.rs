@@ -87,6 +87,20 @@ pub struct EmittedGesture {
     pub trace_id: TraceId,
     /// The bound gesture that fired.
     pub gesture: GestureId,
+    /// The multi-press repeat count: 0 for the first press, 1 for the
+    /// second, 2 for the third, and so on, saturating rather than
+    /// overflowing. Incremented when the same gesture fires again within
+    /// `multi_press_timeout` of its previous genuine press; a different
+    /// gesture or the window elapsing resets it to 0. NVDA semantics —
+    /// consumers dispatch on it for report-current (report, spell, copy),
+    /// speak time (time, then date), and show tray list (tray, then
+    /// taskbar). Auto-repeat (holding the gesture's key down, which
+    /// re-fires the gesture on every OS auto-repeat tick with no
+    /// intervening key-up) does not advance this count — NVDA does not
+    /// treat auto-repeat as a multi-press for script-repeat purposes, and
+    /// every auto-repeated emission of a held gesture carries the same
+    /// count as its initiating genuine press.
+    pub repeat: u8,
 }
 
 /// The outcome of feeding one [`KeyEvent`] to the state machine.
@@ -157,6 +171,14 @@ type KeyCode = (u16, bool);
 ///   transitions pass down the hook chain instead of being swallowed, so a
 ///   screen reader hooked behind Verbatim can use the same modifier for the
 ///   chords Verbatim leaves unbound.
+/// - Multi-press counting: each [`EmittedGesture`] carries a `repeat` count.
+///   Pressing the same bound gesture again within `multi_press_timeout` of
+///   its previous genuine press increments the count (0, 1, 2, ...,
+///   saturating); a different gesture or the window elapsing resets it to
+///   0. Holding a gesture's key down auto-repeats key-downs with no
+///   intervening key-up; each auto-repeated emission carries the same count
+///   as the genuine press that started the hold, matching NVDA, which does
+///   not treat auto-repeat as a multi-press for script-repeat purposes.
 ///
 /// # Deliberate differences from NVDA
 ///
@@ -184,6 +206,13 @@ pub struct DecisionMachine {
     /// Whether the modifier's special behaviour is currently bypassed (the
     /// double-tap passthrough), until the next key-up ends the repeats.
     bypass: bool,
+    /// The gesture and observation time of the most recent genuine (not
+    /// auto-repeated) bound-gesture press, for multi-press counting.
+    last_gesture: Option<(GestureId, Instant)>,
+    /// The multi-press repeat count of
+    /// [`last_gesture`](Self::last_gesture); carried unchanged across
+    /// auto-repeats of the same held gesture.
+    repeat_count: u8,
 }
 
 impl DecisionMachine {
@@ -199,6 +228,8 @@ impl DecisionMachine {
             last_verbatim_modifier: None,
             last_release: None,
             bypass: false,
+            last_gesture: None,
+            repeat_count: 0,
         }
     }
 
@@ -258,10 +289,32 @@ impl DecisionMachine {
         if let Some(gesture) = self.build_gesture(key, main_name)
             && self.map.load().contains(&gesture)
         {
+            // Auto-repeat: the OS keeps sending key-down for a held key with
+            // no intervening key-up, so a still-trapped key means this
+            // down is a repeat of the press already in progress, not a new
+            // one. NVDA does not count auto-repeat toward a script's
+            // multi-press repeat count, so the count carried on
+            // `last_gesture` from the initiating genuine press is reused
+            // unchanged rather than recomputed here.
+            let auto_repeat = self.trapped.contains(&key);
             self.trapped.insert(key);
+            if !auto_repeat {
+                self.repeat_count = match &self.last_gesture {
+                    Some((last, at))
+                        if *last == gesture
+                            && now.saturating_duration_since(*at)
+                                < self.config.multi_press_timeout =>
+                    {
+                        self.repeat_count.saturating_add(1)
+                    }
+                    _ => 0,
+                };
+                self.last_gesture = Some((gesture.clone(), now));
+            }
             return Decision::swallow_emit(EmittedGesture {
                 trace_id: TraceId::mint(),
                 gesture,
+                repeat: self.repeat_count,
             });
         }
 
@@ -709,5 +762,121 @@ mod tests {
             v.emitted.expect("emitted").gesture.as_str(),
             "kb:v+verbatim"
         );
+    }
+
+    /// Presses and releases `kb:v+verbatim` once as a genuine (non-repeated)
+    /// press at time `t`, returning the repeat count it carried.
+    fn press_v_verbatim(m: &mut DecisionMachine, t: Instant) -> u8 {
+        m.on_key(down(CAPS, false), t);
+        let v = m.on_key(down(V, false), t);
+        let repeat = v.emitted.expect("emitted").repeat;
+        m.on_key(up(V, false), t);
+        m.on_key(up(CAPS, false), t);
+        repeat
+    }
+
+    #[test]
+    fn first_press_carries_repeat_zero() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        assert_eq!(press_v_verbatim(&mut m, t), 0);
+    }
+
+    #[test]
+    fn second_press_within_window_increments_repeat() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        assert_eq!(press_v_verbatim(&mut m, t), 0);
+        let t2 = t + Duration::from_millis(100);
+        assert_eq!(press_v_verbatim(&mut m, t2), 1);
+    }
+
+    #[test]
+    fn third_press_within_window_increments_again() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        assert_eq!(press_v_verbatim(&mut m, t), 0);
+        let t2 = t + Duration::from_millis(100);
+        assert_eq!(press_v_verbatim(&mut m, t2), 1);
+        let t3 = t2 + Duration::from_millis(100);
+        assert_eq!(press_v_verbatim(&mut m, t3), 2);
+    }
+
+    #[test]
+    fn press_after_window_elapses_resets_to_zero() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        assert_eq!(press_v_verbatim(&mut m, t), 0);
+        let t2 = t + Duration::from_millis(100);
+        assert_eq!(press_v_verbatim(&mut m, t2), 1);
+        // Well past the 500 ms multi-press timeout since the second press.
+        let t3 = t2 + Duration::from_millis(600);
+        assert_eq!(press_v_verbatim(&mut m, t3), 0);
+    }
+
+    #[test]
+    fn a_different_gesture_resets_the_streak() {
+        let mut m = machine(
+            DecisionConfig::default(),
+            &["kb:v+verbatim", "kb:a+verbatim"],
+        );
+        let t = Instant::now();
+        assert_eq!(press_v_verbatim(&mut m, t), 0);
+
+        // Press a different bound gesture within the window.
+        let t2 = t + Duration::from_millis(100);
+        m.on_key(down(CAPS, false), t2);
+        let a = m.on_key(down(A, false), t2);
+        assert_eq!(a.emitted.expect("emitted").repeat, 0);
+        m.on_key(up(A, false), t2);
+        m.on_key(up(CAPS, false), t2);
+
+        // verbatim+v again, still within the original window: the streak
+        // was broken by the different gesture, so this is a fresh press.
+        let t3 = t2 + Duration::from_millis(100);
+        assert_eq!(press_v_verbatim(&mut m, t3), 0);
+    }
+
+    #[test]
+    fn auto_repeat_does_not_advance_the_repeat_count() {
+        // Holding the gesture's own key down auto-repeats its key-down with
+        // no intervening key-up (unlike press_v_verbatim's up/down pairs,
+        // which are genuine separate presses). NVDA does not treat
+        // auto-repeat as a multi-press for script-repeat purposes, so every
+        // auto-repeated emission must carry the same count as the press
+        // that started the hold.
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        m.on_key(down(CAPS, false), t);
+
+        let first = m.on_key(down(V, false), t);
+        assert_eq!(first.emitted.expect("emitted").repeat, 0);
+
+        // Auto-repeat: V goes down again with no key-up in between.
+        let repeat1 = m.on_key(down(V, false), t);
+        assert_eq!(repeat1.emitted.expect("emitted").repeat, 0);
+        let repeat2 = m.on_key(down(V, false), t);
+        assert_eq!(repeat2.emitted.expect("emitted").repeat, 0);
+
+        m.on_key(up(V, false), t);
+        m.on_key(up(CAPS, false), t);
+
+        // A genuine second press afterward, within the window, still counts
+        // as the second press (1), not a fourth (3): the auto-repeats above
+        // never advanced the count.
+        let t2 = t + Duration::from_millis(50);
+        assert_eq!(press_v_verbatim(&mut m, t2), 1);
+    }
+
+    #[test]
+    fn repeat_count_saturates_instead_of_overflowing() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let mut t = Instant::now();
+        let mut last = 0;
+        for _ in 0..=300 {
+            last = press_v_verbatim(&mut m, t);
+            t += Duration::from_millis(10);
+        }
+        assert_eq!(last, u8::MAX);
     }
 }

@@ -763,6 +763,10 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .send(EmittedGesture {
                     trace_id: TraceId::mint(),
                     gesture,
+                    // An injected gesture is always a single, first press;
+                    // multi-press counting applies to real key streams in
+                    // the decision machine, not control-plane injection.
+                    repeat: 0,
                 })
                 .map_err(|_| "the gesture router is gone".to_owned())
         }),
