@@ -181,12 +181,43 @@ pub fn window_class_name(hwnd: isize) -> String {
     String::from_utf16_lossy(&buffer[..len])
 }
 
-/// Classes that are always treated as UIA (NVDA's `goodUIAWindowClassNames`).
+/// Classes that are always treated as UIA, before any probe runs. Two
+/// NVDA-lifted lists concatenated, each pinned by its own unit test so a
+/// future NVDA sync is a diff of two lists:
+///
+/// - NVDA's `goodUIAWindowClassNames` tuple
+///   (`nvda/source/UIAHandler/__init__.py`): classes whose windows are
+///   always native UIA even when the probe would miss them.
+/// - The Windows 11 shell set from NVDA's Explorer app module's
+///   `isGoodUIAWindow` (`nvda/source/appModules/explorer.py`): the shell
+///   root and top-level shell feature windows — taskbar, systray overflow,
+///   Task View and snap layouts, and the input switcher — that NVDA
+///   reclassifies as UIA on Windows 11 (roadmap M3's shell-support bullet:
+///   window-classification rules as generic core policy, not per-app
+///   patches). NVDA checks these against the event window's *root ancestor*
+///   class; Verbatim's per-window arbitration checks the window's own class,
+///   which covers the same windows because each named class is itself the
+///   top-level window of its shell surface. NVDA's `ApplicationFrameWindow`
+///   entry (the emoji-panel workaround) and its `Start`-class exclusion are
+///   deliberately not carried: the former predates the probe handling those
+///   windows correctly, and the latter only matters under NVDA's
+///   IAccessible-first event handling.
 const GOOD_UIA_CLASSES: &[&str] = &[
-    // Windows Defender Application Guard windows are always native UIA.
+    // NVDA goodUIAWindowClassNames: Windows Defender Application Guard
+    // windows are always native UIA.
     "RAIL_WINDOW",
-    // WinUI 3 top-level pane.
+    // NVDA goodUIAWindowClassNames: WinUI 3 top-level pane.
     "Microsoft.UI.Content.DesktopChildSiteBridge",
+    // NVDA explorer.py isGoodUIAWindow: Windows 11 shell UI root — Start,
+    // Search, Widgets, and the taskbar's own elements.
+    "Shell_TrayWnd",
+    // NVDA explorer.py isGoodUIAWindow: the language/input switcher.
+    "Shell_InputSwitchTopLevelWindow",
+    // NVDA explorer.py isGoodUIAWindow: Task View and snap layouts.
+    "XamlExplorerHostIslandWindow",
+    // NVDA explorer.py isGoodUIAWindow: the redesigned systray overflow
+    // (Windows 11 22H2 and later).
+    "TopLevelWindowForOverflowXamlIsland",
 ];
 
 /// Classes whose UIA implementations interfere with MSAA and are forced to
@@ -269,5 +300,77 @@ mod tests {
         let resolution = arb.resolve_with(7, "AnotherClass", |_| None);
         assert!(!resolution.is_uia);
         assert!(resolution.probe_timed_out);
+    }
+
+    /// Pins the good-class list to its two NVDA sources, so a future NVDA
+    /// sync is a diff of two lists: `goodUIAWindowClassNames` in
+    /// `nvda/source/UIAHandler/__init__.py`, and the Windows 11 shell class
+    /// tuple inside `isGoodUIAWindow` in
+    /// `nvda/source/appModules/explorer.py`.
+    #[test]
+    fn good_class_list_matches_its_nvda_sources() {
+        // nvda/source/UIAHandler/__init__.py, goodUIAWindowClassNames.
+        let uia_handler_good = ["RAIL_WINDOW", "Microsoft.UI.Content.DesktopChildSiteBridge"];
+        // nvda/source/appModules/explorer.py, isGoodUIAWindow's Windows 11
+        // shell tuple (checked there against the root ancestor's class).
+        let explorer_shell = [
+            "Shell_TrayWnd",
+            "Shell_InputSwitchTopLevelWindow",
+            "XamlExplorerHostIslandWindow",
+            "TopLevelWindowForOverflowXamlIsland",
+        ];
+        let expected: Vec<&str> = uia_handler_good
+            .into_iter()
+            .chain(explorer_shell)
+            .collect();
+        assert_eq!(GOOD_UIA_CLASSES, expected.as_slice());
+    }
+
+    /// Pins the bad-class list to NVDA's `badUIAWindowClassNames` in
+    /// `nvda/source/UIAHandler/__init__.py`, order and all, so a future
+    /// NVDA sync is a straight diff.
+    #[test]
+    fn bad_class_list_matches_nvda_bad_uia_window_class_names() {
+        let expected = [
+            "Microsoft.IME.CandidateWindow.View",
+            "SysTreeView32",
+            "WuDuiListView",
+            "ComboBox",
+            "msctls_progress32",
+            "msctls_trackbar32",
+            "Edit",
+            "CommonPlacesWrapperWndClass",
+            "SysMonthCal32",
+            "SUPERGRID",
+            "RichEdit",
+            "RichEdit20",
+            "RICHEDIT50W",
+            "Button",
+            "FoxitDocWnd",
+            "MozillaWindowClass",
+            "MozillaDropShadowWindowClass",
+            "MozillaDialogClass",
+            "MozillaContentWindowClass",
+        ];
+        assert_eq!(BAD_UIA_CLASSES, expected.as_slice());
+    }
+
+    #[test]
+    fn shell_classes_arbitrate_to_uia_without_probing() {
+        let mut arb = Arbitrator::new(&[]);
+        for class in [
+            "Shell_TrayWnd",
+            "Shell_InputSwitchTopLevelWindow",
+            "XamlExplorerHostIslandWindow",
+            "TopLevelWindowForOverflowXamlIsland",
+        ] {
+            let mut probed = false;
+            let resolution = arb.resolve_with(1, class, |_| {
+                probed = true;
+                Some(false)
+            });
+            assert!(resolution.is_uia, "{class} must arbitrate to UIA");
+            assert!(!probed, "{class} must not invoke the probe");
+        }
     }
 }
