@@ -2392,6 +2392,7 @@ dependencies = [
  "verbatim-agent",
  "verbatim-config",
  "verbatim-control",
+ "verbatim-e2e",
 ]
 
 [[package]]
