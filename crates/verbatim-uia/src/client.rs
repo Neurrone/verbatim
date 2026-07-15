@@ -14,7 +14,7 @@ use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
+    CUIAutomation8, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern, IUIAutomationTogglePattern,
     IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId, UIA_LegacyIAccessiblePatternId,
     UIA_RuntimeIdPropertyId, UIA_TogglePatternId,
@@ -42,9 +42,14 @@ impl Uia {
     /// fails.
     pub fn new() -> windows::core::Result<Self> {
         init_mta()?;
-        // SAFETY: CUIAutomation is a registered in-process COM server; the
-        // requested interface matches the class.
-        let client = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)? };
+        // SAFETY: CUIAutomation8 is a registered in-process COM server; the
+        // requested interface matches the class. CUIAutomation8 rather than
+        // the older CUIAutomation coclass because only the former's objects
+        // implement the newer client interfaces — IUIAutomation5's
+        // notification-event registration in particular, where querying a
+        // plain CUIAutomation object fails with E_NOINTERFACE (observed
+        // live; NVDA likewise creates CUIAutomation8).
+        let client = unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
         Ok(Self { client })
     }
 

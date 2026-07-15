@@ -17,11 +17,12 @@ use windows::Win32::UI::Accessibility::{
     UIA_FullDescriptionPropertyId, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
     UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId,
-    UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId,
-    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId,
-    UIA_ProcessIdPropertyId, UIA_RadioButtonControlTypeId, UIA_SizeOfSetPropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
+    UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
+    UIA_PaneControlTypeId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
+    UIA_RadioButtonControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
     UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
     UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
     UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId, UIA_ValueValuePropertyId,
@@ -133,6 +134,11 @@ struct RawUiaStates {
     /// Whether the element actually exposes `ExpandCollapsePattern`.
     expand_available: bool,
     expand_state: Option<i32>,
+    /// Whether the element actually exposes `SelectionItemPattern` — which
+    /// is also what makes it [`State::Selectable`], mirroring how MSAA's
+    /// `STATE_SYSTEM_SELECTABLE` bit reads.
+    selection_available: bool,
+    selected: bool,
 }
 
 /// Pure mapping from raw cached UIA state inputs to a normalized [`StateSet`].
@@ -167,6 +173,12 @@ fn states_from_uia(raw: &RawUiaStates) -> StateSet {
             states.insert(State::Collapsed);
         }
     }
+    if raw.selection_available {
+        states.insert(State::Selectable);
+        if raw.selected {
+            states.insert(State::Selected);
+        }
+    }
     states
 }
 
@@ -191,6 +203,11 @@ unsafe fn states_from_cached(element: &IUIAutomationElement) -> StateSet {
                 UIA_IsExpandCollapsePatternAvailablePropertyId.0,
             ),
             expand_state: cached_i32(element, UIA_ExpandCollapseExpandCollapseStatePropertyId.0),
+            selection_available: cached_bool(
+                element,
+                UIA_IsSelectionItemPatternAvailablePropertyId.0,
+            ),
+            selected: cached_bool(element, UIA_SelectionItemIsSelectedPropertyId.0),
         }
     };
     states_from_uia(&raw)
@@ -210,7 +227,12 @@ unsafe fn states_from_cached(element: &IUIAutomationElement) -> StateSet {
 /// `property`.
 unsafe fn cached_one_based(element: &IUIAutomationElement, property: i32) -> Option<u32> {
     // SAFETY: forwarded to the caller's contract.
-    unsafe { cached_i32(element, property) }.and_then(|value| u32::try_from(value).ok())
+    unsafe { cached_i32(element, property) }
+        .and_then(|value| u32::try_from(value).ok())
+        // Zero is UIA's "not supported" default for these one-based
+        // properties, observed live on an hwnd-hosted root element, where
+        // the host provider answers 0 rather than leaving the variant empty.
+        .filter(|&value| value > 0)
 }
 
 /// Reads the cached `BoundingRectangle` as a [`Rect`], `None` when UIA
@@ -429,6 +451,8 @@ mod tests {
             toggle_state: Some(ToggleState_Indeterminate.0),
             expand_available: false,
             expand_state: Some(3), // LeafNode default for non-expandable elements.
+            selection_available: false,
+            selected: false,
         };
         let states = states_from_uia(&raw);
         assert!(states.contains(State::Focused));
@@ -453,6 +477,8 @@ mod tests {
             toggle_state: Some(ToggleState_On.0),
             expand_available: false,
             expand_state: None,
+            selection_available: false,
+            selected: false,
         };
         assert!(states_from_uia(&base).contains(State::Checked));
 
@@ -482,6 +508,8 @@ mod tests {
             toggle_state: None,
             expand_available: true,
             expand_state: Some(ExpandCollapseState_Expanded.0),
+            selection_available: false,
+            selected: false,
         };
         assert!(states_from_uia(&expanded).contains(State::Expanded));
         let collapsed = RawUiaStates {
@@ -502,10 +530,56 @@ mod tests {
             toggle_state: None,
             expand_available: false,
             expand_state: None,
+            selection_available: false,
+            selected: false,
         };
         let states = states_from_uia(&raw);
         assert!(states.contains(State::Disabled));
         assert!(states.contains(State::Offscreen));
+    }
+
+    /// `SelectionItemIsSelected` reads as a default `false` on elements
+    /// without `SelectionItemPattern`, and (like toggle and expand above)
+    /// must be honored only when the pattern is available. Availability
+    /// itself maps to `Selectable`, mirroring MSAA's
+    /// `STATE_SYSTEM_SELECTABLE` bit.
+    #[test]
+    fn selection_states_gate_on_pattern_availability() {
+        let base = RawUiaStates {
+            has_focus: false,
+            focusable: true,
+            enabled: true,
+            offscreen: false,
+            toggle_available: false,
+            toggle_state: None,
+            expand_available: false,
+            expand_state: None,
+            selection_available: true,
+            selected: true,
+        };
+        let states = states_from_uia(&base);
+        assert!(states.contains(State::Selectable));
+        assert!(states.contains(State::Selected));
+
+        let unselected = RawUiaStates {
+            selected: false,
+            ..base
+        };
+        let states = states_from_uia(&unselected);
+        assert!(states.contains(State::Selectable));
+        assert!(!states.contains(State::Selected));
+
+        let unavailable = RawUiaStates {
+            selection_available: false,
+            selected: true,
+            ..base
+        };
+        let states = states_from_uia(&unavailable);
+        assert!(!states.contains(State::Selectable));
+        assert!(
+            !states.contains(State::Selected),
+            "a stray selected value without the pattern must be ignored"
+        );
     }
 
     #[test]

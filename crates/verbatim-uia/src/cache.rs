@@ -9,21 +9,24 @@ use windows::Win32::UI::Accessibility::{
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
     UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId,
-    UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId, UIA_PositionInSetPropertyId,
-    UIA_ProcessIdPropertyId, UIA_SizeOfSetPropertyId, UIA_ToggleToggleStatePropertyId,
-    UIA_ValueValuePropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
+    UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
+    UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
 };
 
 /// The properties prefetched for every event and query. Kept in one place
 /// so the focus handler, property-change handler, and query pool all cache the
 /// same set and mapping never faces an unexpectedly absent property.
 ///
-/// The `IsTogglePatternAvailable` and `IsExpandCollapsePatternAvailable` flags
-/// are cached alongside the state values they gate: an element that lacks a
-/// pattern still returns a value for its state property (UIA reports a default,
-/// e.g. `ToggleState_Indeterminate` for a non-toggle control), so the value is
-/// only meaningful when the pattern is actually available.
+/// The `IsTogglePatternAvailable`, `IsExpandCollapsePatternAvailable`, and
+/// `IsSelectionItemPatternAvailable` flags are cached alongside the state
+/// values they gate: an element that lacks a pattern still returns a value
+/// for its state property (UIA reports a default, e.g.
+/// `ToggleState_Indeterminate` for a non-toggle control, or `false` for
+/// `SelectionItemIsSelected`), so the value is only meaningful when the
+/// pattern is actually available.
 ///
 /// `FullDescription`, `HelpText`, `AccessKey`, `AcceleratorKey`,
 /// `PositionInSet`, `SizeOfSet`, `Level`, and `BoundingRectangle` feed
@@ -47,6 +50,8 @@ pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PRO
     UIA_ToggleToggleStatePropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_IsSelectionItemPatternAvailablePropertyId,
+    UIA_SelectionItemIsSelectedPropertyId,
     UIA_FullDescriptionPropertyId,
     UIA_HelpTextPropertyId,
     UIA_AccessKeyPropertyId,
