@@ -7,6 +7,7 @@
 //! this, the process main thread, until shutdown is requested from the menu,
 //! the control plane, or a replacing instance.
 
+mod datetime;
 mod flight_dump;
 mod latency;
 mod single_instance;
@@ -25,7 +26,7 @@ use verbatim_config::{ConfigStore, ConfigValue};
 use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
-use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, run_gui};
+use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, EmittedGesture, GestureMap, InputHook, SharedGestureMap};
 use verbatim_model::{
     Effect, GestureId, Input, Pid, SpeechPriority, TraceId, TreeNode, Utterance, UtteranceSegment,
@@ -48,8 +49,16 @@ use latency::LatencyLedger;
 /// as though they were happening on screen right now).
 type CurrentForeground = Arc<AtomicU32>;
 
-/// The one keyboard binding milestone M1 ships: Verbatim+V opens the menu.
+/// The M1 keyboard binding: Verbatim+V opens the menu.
 const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
+
+/// M3: Verbatim+F12 speaks the current time (twice quickly for the date,
+/// once multi-press counting lands — see [`router_loop`]'s seam note).
+const SPEAK_TIME_GESTURE: &str = "kb:verbatim+f12";
+
+/// M3: Verbatim+F11 opens the system tray items list (twice quickly for
+/// the taskbar list, once multi-press counting lands — same seam).
+const SHELL_LIST_GESTURE: &str = "kb:verbatim+f11";
 
 /// How long a `DumpTree` control-plane request waits for the outpost's
 /// answer before giving up.
@@ -187,9 +196,10 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let (gesture_tx, gesture_rx) = bounded::<EmittedGesture>(64);
     {
         let gui_handle = Arc::clone(&gui_handle);
+        let manager = Arc::clone(&manager);
         thread::Builder::new()
             .name("verbatim-router".to_owned())
-            .spawn(move || router_loop(&gesture_rx, &gui_handle))?;
+            .spawn(move || router_loop(&gesture_rx, &gui_handle, &manager))?;
     }
 
     // GUI events out of the GUI thread: Exit requests shutdown.
@@ -202,9 +212,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // The gesture map shared by the hook and the control plane's validation.
-    let bound_gestures: SharedGestureMap =
-        GestureMap::new([GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")])
-            .into_shared();
+    let bound_gestures = bound_gestures();
 
     // Control plane.
     let server = ControlServer::start(control_handlers(ControlHandlersConfig {
@@ -673,19 +681,90 @@ fn reducer_loop(outpost_rx: &Receiver<OutpostMessage>, context: &ReducerContext)
     }
 }
 
-/// The router thread body: bound gestures become imperative commands sent
-/// straight to the GUI — never reducer inputs.
-fn router_loop(gesture_rx: &Receiver<EmittedGesture>, gui_handle: &Arc<OnceLock<GuiHandle>>) {
+/// The router thread body: bound gestures become imperative commands —
+/// GUI commands or direct speech — never reducer inputs.
+///
+/// Multi-press seam: the M3 double-press variants (Verbatim+F12 twice
+/// quickly speaks the date, Verbatim+F11 twice quickly lists the taskbar)
+/// depend on the multi-press gesture counting under construction in
+/// `verbatim-input` (M3 Track D). Until that lands, this router calls
+/// [`speak_time_or_date`] and [`shell_list_kind`] with `repeat` 0; passing
+/// the real press count into those two calls is the only integration
+/// needed here.
+fn router_loop(
+    gesture_rx: &Receiver<EmittedGesture>,
+    gui_handle: &Arc<OnceLock<GuiHandle>>,
+    manager: &Arc<SpeechManager>,
+) {
     let show_menu = GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding");
+    let speak_time = GestureId::parse(SPEAK_TIME_GESTURE).expect("valid binding");
+    let shell_list = GestureId::parse(SHELL_LIST_GESTURE).expect("valid binding");
     while let Ok(emitted) = gesture_rx.recv() {
         tracing::info!(trace_id = %emitted.trace_id, gesture = %emitted.gesture, "gesture");
         if emitted.gesture == show_menu {
-            if let Some(handle) = gui_handle.get() {
-                handle.send(GuiCommand::ShowMenu);
-            } else {
-                tracing::warn!("gesture before the GUI was ready; dropped");
-            }
+            send_gui_command(gui_handle, GuiCommand::ShowMenu);
+        } else if emitted.gesture == speak_time {
+            speak_time_or_date(manager, 0);
+        } else if emitted.gesture == shell_list {
+            send_gui_command(
+                gui_handle,
+                GuiCommand::OpenShellItemList(shell_list_kind(0)),
+            );
         }
+    }
+}
+
+/// The keyboard bindings this milestone ships, as the shared gesture map
+/// the hook consults and the control plane validates against.
+fn bound_gestures() -> SharedGestureMap {
+    GestureMap::new(
+        [SHOW_MENU_GESTURE, SPEAK_TIME_GESTURE, SHELL_LIST_GESTURE]
+            .map(|gesture| GestureId::parse(gesture).expect("valid binding")),
+    )
+    .into_shared()
+}
+
+/// Sends one command to the GUI when it is up; during the startup window
+/// before `run_gui`'s ready callback fires, the command is dropped with a
+/// warning (there is no GUI to act on it yet).
+fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) {
+    if let Some(handle) = gui_handle.get() {
+        handle.send(command);
+    } else {
+        tracing::warn!(?command, "gesture before the GUI was ready; dropped");
+    }
+}
+
+/// Speaks the localized current time (`repeat` 0) or date (any higher
+/// count) at Interrupt priority, as a plain text span with no source node.
+/// `repeat` is the number of extra quick presses — the multi-press seam
+/// described on [`router_loop`]; today it always arrives as 0.
+fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
+    let formatted = if repeat == 0 {
+        datetime::local_time()
+    } else {
+        datetime::local_date()
+    };
+    let Some(text) = formatted else {
+        tracing::warn!(repeat, "the system time or date could not be formatted");
+        return;
+    };
+    manager.speak(Utterance {
+        trace_id: TraceId::mint(),
+        priority: SpeechPriority::Interrupt,
+        segments: vec![UtteranceSegment::text(text)],
+        source: None,
+    });
+}
+
+/// The shell surface Verbatim+F11 lists: the system tray on a single press
+/// (`repeat` 0), the taskbar on a double press — the same multi-press seam
+/// as [`speak_time_or_date`]. Pure, and unit tested below.
+fn shell_list_kind(repeat: u8) -> ShellItemKind {
+    if repeat == 0 {
+        ShellItemKind::SystemTray
+    } else {
+        ShellItemKind::Taskbar
     }
 }
 
@@ -841,6 +920,20 @@ mod tests {
     #[test]
     fn events_from_a_backgrounded_application_are_dropped() {
         assert!(!is_current_foreground(Pid(1234), 5678));
+    }
+
+    #[test]
+    fn a_single_press_lists_the_system_tray() {
+        assert_eq!(shell_list_kind(0), ShellItemKind::SystemTray);
+    }
+
+    #[test]
+    fn a_repeated_press_lists_the_taskbar() {
+        // The multi-press seam: today the router always passes 0; once
+        // verbatim-input's press counting is wired, any repeat selects the
+        // taskbar list.
+        assert_eq!(shell_list_kind(1), ShellItemKind::Taskbar);
+        assert_eq!(shell_list_kind(3), ShellItemKind::Taskbar);
     }
 
     #[test]
