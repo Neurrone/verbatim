@@ -3,18 +3,21 @@
 //! [`snapshot_from_cached_element`] reads only cached values, so it never makes
 //! a cross-process call and is safe to run on a UIA event-callback thread.
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded, IUIAutomationElement,
-    ToggleState_Indeterminate, ToggleState_On, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    ToggleState_Indeterminate, ToggleState_On, UIA_AcceleratorKeyPropertyId,
+    UIA_AccessKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
     UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
-    UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_GroupControlTypeId,
-    UIA_HasKeyboardFocusPropertyId, UIA_HyperlinkControlTypeId, UIA_IsEnabledPropertyId,
+    UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_FullDescriptionPropertyId, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
+    UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsTogglePatternAvailablePropertyId, UIA_ListControlTypeId,
-    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PaneControlTypeId, UIA_ProcessIdPropertyId, UIA_RadioButtonControlTypeId,
+    UIA_IsOffscreenPropertyId, UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId,
+    UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId,
+    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId,
+    UIA_ProcessIdPropertyId, UIA_RadioButtonControlTypeId, UIA_SizeOfSetPropertyId,
     UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
     UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
     UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId, UIA_ValueValuePropertyId,
@@ -189,6 +192,78 @@ unsafe fn states_from_cached(element: &IUIAutomationElement) -> StateSet {
     states_from_uia(&raw)
 }
 
+/// Reads a cached one-based property (`PositionInSet`, `SizeOfSet`, `Level`)
+/// as `None` when UIA reports its "not supported" default of zero or
+/// negative — the same trap [`cached_bool`]'s doc comment on pattern
+/// availability describes, applied here to plain integer properties instead
+/// of pattern-gated ones: UIA returns a default value for a property an
+/// element does not support rather than an error, and every one of these
+/// properties is documented as one-based when it is genuinely reported.
+///
+/// # Safety
+///
+/// `element` must be a live element built with a cache request that included
+/// `property`.
+unsafe fn cached_one_based(element: &IUIAutomationElement, property: i32) -> Option<u32> {
+    // SAFETY: forwarded to the caller's contract.
+    unsafe { cached_i32(element, property) }.and_then(|value| u32::try_from(value).ok())
+}
+
+/// Reads the cached `BoundingRectangle` as a [`Rect`], `None` when UIA
+/// reports its "not supported" default of an all-zero rectangle (the same
+/// trap as every other cached property here) or the read fails outright —
+/// an element with a genuine zero-area rectangle is not a case Verbatim's
+/// positional-audio consumer (milestone M11) needs to distinguish from
+/// "unreported".
+///
+/// # Safety
+///
+/// `element` must be a live element built with a cache request that included
+/// [`windows::Win32::UI::Accessibility::UIA_BoundingRectanglePropertyId`].
+unsafe fn cached_rect(element: &IUIAutomationElement) -> Option<Rect> {
+    // SAFETY: forwarded to the caller's contract; `CachedBoundingRectangle`
+    // reads the same cached property `UIA_BoundingRectanglePropertyId` names,
+    // through UIA's dedicated typed accessor rather than a generic VARIANT.
+    let rect = unsafe { element.CachedBoundingRectangle() }.ok()?;
+    if rect.left == 0 && rect.top == 0 && rect.right == 0 && rect.bottom == 0 {
+        return None;
+    }
+    Some(Rect {
+        left: rect.left,
+        top: rect.top,
+        width: rect.right - rect.left,
+        height: rect.bottom - rect.top,
+    })
+}
+
+/// Builds a [`NodeDetails`] from an element's cached properties: description
+/// (`FullDescription`, falling back to `HelpText`), keyboard shortcut
+/// (`AccessKey`, falling back to `AcceleratorKey`), `PositionInSet`,
+/// `SizeOfSet`, `Level`, and `BoundingRectangle`. Every field maps UIA's
+/// "not supported" default (an empty string or zero) to `None`.
+///
+/// # Safety
+///
+/// `element` must be a live element built with the base cache request.
+unsafe fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
+    // SAFETY: every property below is in the base cache request; each read is
+    // forwarded to the cached_* helpers' contract.
+    unsafe {
+        let description = cached_string(element, UIA_FullDescriptionPropertyId.0)
+            .or_else(|| cached_string(element, UIA_HelpTextPropertyId.0));
+        let keyboard_shortcut = cached_string(element, UIA_AccessKeyPropertyId.0)
+            .or_else(|| cached_string(element, UIA_AcceleratorKeyPropertyId.0));
+        NodeDetails {
+            description,
+            keyboard_shortcut,
+            position_in_set: cached_one_based(element, UIA_PositionInSetPropertyId.0),
+            set_size: cached_one_based(element, UIA_SizeOfSetPropertyId.0),
+            level: cached_one_based(element, UIA_LevelPropertyId.0),
+            rect: cached_rect(element),
+        }
+    }
+}
+
 /// Reads the cached process id, so callers can filter events by target pid
 /// without a cross-process call.
 ///
@@ -242,7 +317,7 @@ pub unsafe fn snapshot_from_cached_element(
             name: cached_string(element, UIA_NamePropertyId.0),
             value: cached_string(element, UIA_ValueValuePropertyId.0),
             states: states_from_cached(element),
-            details: NodeDetails::default(),
+            details: details_from_cached(element),
         }
     }
 }
