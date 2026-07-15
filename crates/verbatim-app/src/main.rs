@@ -622,7 +622,7 @@ fn reducer_loop(outpost_rx: &Receiver<OutpostMessage>, context: &ReducerContext)
 
     while let Ok(message) = outpost_rx.recv() {
         let (source, message) = match message {
-            OutpostMessage::Event(source, message) => (source, message),
+            OutpostMessage::Event(source, message) => (source, *message),
             OutpostMessage::Retired(pid) => {
                 outposts.lock().expect("outposts lock").remove(&pid);
                 continue;

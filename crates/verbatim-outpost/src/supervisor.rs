@@ -82,8 +82,11 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// lifecycle notice the supervisor itself generates.
 #[derive(Debug)]
 pub enum OutpostMessage {
-    /// A message an outpost sent, tagged with its target pid.
-    Event(Pid, OutpostToSupervisor),
+    /// A message an outpost sent, tagged with its target pid. Boxed because
+    /// `OutpostToSupervisor` grew with M3's tree, ancestor-chain, and
+    /// navigation replies while `Retired` stays a bare pid; boxing keeps
+    /// every channel send small instead of sized to the largest reply.
+    Event(Pid, Box<OutpostToSupervisor>),
     /// The supervisor retired an outpost (idle timeout) or gave up
     /// respawning one whose watched application has itself exited; Core
     /// should drop it from any status mirror.
@@ -432,7 +435,7 @@ fn reader_loop(
     while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
         if shared
             .events_tx
-            .send(OutpostMessage::Event(target_pid, message))
+            .send(OutpostMessage::Event(target_pid, Box::new(message)))
             .is_err()
         {
             return; // The app dropped the receiver; stop without respawning.

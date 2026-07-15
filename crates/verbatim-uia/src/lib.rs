@@ -19,6 +19,9 @@
 //!   (its narrow seam is what the M3 sentinel split relocates).
 //! - [`PropertyRegistration`] — name/value change handlers scoped to the target
 //!   app's top-level windows.
+//! - [`SelectionRegistration`] and [`NotificationRegistration`] —
+//!   `SelectionItem_ElementSelected` and `AutomationNotification`, scoped
+//!   the same way (roadmap M3).
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from UIA
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
 //! - [`has_server_side_provider`] — the arbitration probe (blocking; see its
@@ -35,6 +38,7 @@ mod events;
 mod focus;
 pub mod map;
 mod nearest;
+mod notify;
 mod probe;
 mod registry;
 
@@ -44,5 +48,8 @@ pub use com::init_mta;
 pub use events::{PropertyCallback, PropertyRegistration};
 pub use focus::{FocusCallback, FocusRegistration};
 pub use nearest::nearest_window_handle;
+pub use notify::{
+    NotificationCallback, NotificationRegistration, SelectionCallback, SelectionRegistration,
+};
 pub use probe::has_server_side_provider;
 pub use registry::NodeIdRegistry;

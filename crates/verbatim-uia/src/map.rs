@@ -6,7 +6,11 @@
 use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded, IUIAutomationElement,
-    ToggleState_Indeterminate, ToggleState_On, UIA_AcceleratorKeyPropertyId,
+    NotificationKind_ActionAborted, NotificationKind_ActionCompleted, NotificationKind_ItemAdded,
+    NotificationKind_ItemRemoved, NotificationProcessing_All,
+    NotificationProcessing_CurrentThenMostRecent, NotificationProcessing_ImportantMostRecent,
+    NotificationProcessing_MostRecent, ToggleState_Indeterminate, ToggleState_On,
+    UIA_AcceleratorKeyPropertyId,
     UIA_AccessKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
     UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
     UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
@@ -322,6 +326,57 @@ pub unsafe fn snapshot_from_cached_element(
     }
 }
 
+/// Maps a UIA `NotificationKind` to the normalized
+/// [`verbatim_model::NotificationKind`]. UIA's enum has no "unknown" value —
+/// every one of its five members maps directly — so this is total, unlike
+/// the role and state tables above.
+///
+/// Compared by equality rather than matched by pattern, like every other
+/// UIA constant-as-enum value in this module (`ToggleState_On` and friends
+/// above): these are plain `const`s of a tuple-struct type, not real enum
+/// variants, and matching them by pattern name trips rustc's
+/// `non_upper_case_globals` lint.
+#[must_use]
+pub fn notification_kind_from_uia(
+    kind: windows::Win32::UI::Accessibility::NotificationKind,
+) -> verbatim_model::NotificationKind {
+    if kind == NotificationKind_ItemAdded {
+        verbatim_model::NotificationKind::ItemAdded
+    } else if kind == NotificationKind_ItemRemoved {
+        verbatim_model::NotificationKind::ItemRemoved
+    } else if kind == NotificationKind_ActionCompleted {
+        verbatim_model::NotificationKind::ActionCompleted
+    } else if kind == NotificationKind_ActionAborted {
+        verbatim_model::NotificationKind::ActionAborted
+    } else {
+        verbatim_model::NotificationKind::Other
+    }
+}
+
+/// Maps a UIA `NotificationProcessing` to the normalized
+/// [`verbatim_model::NotificationProcessing`]. Defaults to `ImportantAll`
+/// (the most conservative choice — process everything) for
+/// `NotificationProcessing_ImportantAll` itself and for any value outside
+/// UIA's documented five, which is not expected in practice. See
+/// [`notification_kind_from_uia`] for why this compares by equality rather
+/// than matching by pattern.
+#[must_use]
+pub fn notification_processing_from_uia(
+    processing: windows::Win32::UI::Accessibility::NotificationProcessing,
+) -> verbatim_model::NotificationProcessing {
+    if processing == NotificationProcessing_ImportantMostRecent {
+        verbatim_model::NotificationProcessing::ImportantMostRecent
+    } else if processing == NotificationProcessing_All {
+        verbatim_model::NotificationProcessing::All
+    } else if processing == NotificationProcessing_MostRecent {
+        verbatim_model::NotificationProcessing::MostRecent
+    } else if processing == NotificationProcessing_CurrentThenMostRecent {
+        verbatim_model::NotificationProcessing::CurrentThenMostRecent
+    } else {
+        verbatim_model::NotificationProcessing::ImportantAll
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +506,62 @@ mod tests {
         let states = states_from_uia(&raw);
         assert!(states.contains(State::Disabled));
         assert!(states.contains(State::Offscreen));
+    }
+
+    #[test]
+    fn notification_kinds_map_one_to_one() {
+        use windows::Win32::UI::Accessibility::{
+            NotificationKind_ActionAborted, NotificationKind_ActionCompleted,
+            NotificationKind_ItemAdded, NotificationKind_ItemRemoved, NotificationKind_Other,
+        };
+        assert_eq!(
+            notification_kind_from_uia(NotificationKind_ItemAdded),
+            verbatim_model::NotificationKind::ItemAdded
+        );
+        assert_eq!(
+            notification_kind_from_uia(NotificationKind_ItemRemoved),
+            verbatim_model::NotificationKind::ItemRemoved
+        );
+        assert_eq!(
+            notification_kind_from_uia(NotificationKind_ActionCompleted),
+            verbatim_model::NotificationKind::ActionCompleted
+        );
+        assert_eq!(
+            notification_kind_from_uia(NotificationKind_ActionAborted),
+            verbatim_model::NotificationKind::ActionAborted
+        );
+        assert_eq!(
+            notification_kind_from_uia(NotificationKind_Other),
+            verbatim_model::NotificationKind::Other
+        );
+    }
+
+    #[test]
+    fn notification_processing_maps_every_documented_value() {
+        use windows::Win32::UI::Accessibility::{
+            NotificationProcessing_All, NotificationProcessing_CurrentThenMostRecent,
+            NotificationProcessing_ImportantAll, NotificationProcessing_ImportantMostRecent,
+            NotificationProcessing_MostRecent,
+        };
+        assert_eq!(
+            notification_processing_from_uia(NotificationProcessing_ImportantAll),
+            verbatim_model::NotificationProcessing::ImportantAll
+        );
+        assert_eq!(
+            notification_processing_from_uia(NotificationProcessing_ImportantMostRecent),
+            verbatim_model::NotificationProcessing::ImportantMostRecent
+        );
+        assert_eq!(
+            notification_processing_from_uia(NotificationProcessing_All),
+            verbatim_model::NotificationProcessing::All
+        );
+        assert_eq!(
+            notification_processing_from_uia(NotificationProcessing_MostRecent),
+            verbatim_model::NotificationProcessing::MostRecent
+        );
+        assert_eq!(
+            notification_processing_from_uia(NotificationProcessing_CurrentThenMostRecent),
+            verbatim_model::NotificationProcessing::CurrentThenMostRecent
+        );
     }
 }

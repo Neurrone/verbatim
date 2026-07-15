@@ -22,7 +22,8 @@ use crossbeam_channel::{Sender, unbounded};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_NamePropertyId, UIA_ValueValuePropertyId,
+    IUIAutomationElement, NotificationKind, NotificationProcessing, UIA_NamePropertyId,
+    UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumWindows, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo,
@@ -37,10 +38,13 @@ use verbatim_model::{
     Backend, HIDDEN_FRAME_WINDOW_PROP, NodeDetails, NodeSnapshot, NormalizedEvent, Pid,
     PropertyChange, SnapshotVersion, TraceId,
 };
-use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
+use verbatim_uia::map::{
+    cached_native_window_handle, notification_kind_from_uia, notification_processing_from_uia,
+    snapshot_from_cached_element,
+};
 use verbatim_uia::{
-    FocusRegistration, NodeIdRegistry as UiaRegistry, PropertyRegistration,
-    has_server_side_provider, nearest_window_handle,
+    FocusRegistration, NodeIdRegistry as UiaRegistry, NotificationRegistration,
+    PropertyRegistration, SelectionRegistration, has_server_side_provider, nearest_window_handle,
 };
 
 use crate::arbitration::{Arbitrator, window_class_name};
@@ -238,6 +242,12 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
             node_id: node.id,
             change: PropertyChange::States(node.states),
         },
+        // EVENT_OBJECT_SELECTION and its SELECTIONADD/SELECTIONREMOVE/
+        // SELECTIONWITHIN siblings all collapse to this one WinEventKind
+        // (see verbatim_ia2::WinEventHook's doc); the acquired snapshot is
+        // the node the event's own address named, which is the selected (or
+        // most recently affected) node in every one of the four cases.
+        WinEventKind::Selection => NormalizedEvent::SelectionChanged { node: node.clone() },
     }
 }
 
@@ -411,6 +421,8 @@ pub struct Outpost {
     _event_thread: EventThread,
     focus_registration: Option<FocusRegistration>,
     property_registration: Option<PropertyRegistration>,
+    selection_registration: Option<SelectionRegistration>,
+    notification_registration: Option<NotificationRegistration>,
     _writer: JoinHandle<()>,
 }
 
@@ -466,6 +478,8 @@ impl Outpost {
             _event_thread: event_thread,
             focus_registration: None,
             property_registration: None,
+            selection_registration: None,
+            notification_registration: None,
             _writer: writer_join,
         };
         outpost.install_uia_registrations(target_pid);
@@ -487,6 +501,15 @@ impl Outpost {
     }
 
     fn install_uia_registrations(&mut self, target_pid: u32) {
+        self.install_focus_registration(target_pid);
+        self.install_property_registration(target_pid);
+        self.install_selection_registration(target_pid);
+        self.install_notification_registration(target_pid);
+    }
+
+    /// Installs the global UIA focus-change registration, filtered to the
+    /// target pid.
+    fn install_focus_registration(&mut self, target_pid: u32) {
         let focus_shared = self.shared.clone();
         let focus_callback = Arc::new(move |element: &IUIAutomationElement| {
             // SAFETY: `element` is a cached focus element from the base cache
@@ -511,7 +534,11 @@ impl Outpost {
                 .shared
                 .fault(format!("UIA focus registration failed: {error}")),
         }
+    }
 
+    /// Installs the UIA name/value/state property-change registration over
+    /// the target's top-level windows.
+    fn install_property_registration(&mut self, target_pid: u32) {
         let property_shared = self.shared.clone();
         let property_callback =
             Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
@@ -549,6 +576,81 @@ impl Outpost {
             Err(error) => self
                 .shared
                 .fault(format!("UIA property registration failed: {error}")),
+        }
+    }
+
+    /// Installs the UIA `SelectionItem_ElementSelected` registration over
+    /// the target's top-level windows (roadmap M3's selection-events
+    /// bullet). Emitted events route through the same arbitration
+    /// cross-filter as every other UIA event; the reducer does not announce
+    /// them yet.
+    fn install_selection_registration(&mut self, target_pid: u32) {
+        let selection_shared = self.shared.clone();
+        let selection_callback = Arc::new(move |element: &IUIAutomationElement| {
+            // SAFETY: as above, the selected element carries cached values.
+            unsafe {
+                if !uia_passes_filter(&selection_shared, element) {
+                    return;
+                }
+                let node = snapshot_from_cached_element(element, &selection_shared.uia_registry);
+                selection_shared.emit(
+                    TraceId::mint(),
+                    Backend::Uia,
+                    NormalizedEvent::SelectionChanged { node },
+                );
+            }
+        });
+        let windows = top_level_windows(target_pid);
+        match SelectionRegistration::new(windows, selection_callback) {
+            Ok(registration) => self.selection_registration = Some(registration),
+            Err(error) => self
+                .shared
+                .fault(format!("UIA selection registration failed: {error}")),
+        }
+    }
+
+    /// Installs the UIA `AutomationNotification` registration over the
+    /// target's top-level windows (roadmap M3's generic notification-event
+    /// bullet — snap layouts are the motivating case). Same filter and
+    /// same not-yet-announced status as the selection registration.
+    fn install_notification_registration(&mut self, target_pid: u32) {
+        let notification_shared = self.shared.clone();
+        let notification_callback = Arc::new(
+            move |element: &IUIAutomationElement,
+                  kind: NotificationKind,
+                  processing: NotificationProcessing,
+                  display_string: Option<String>,
+                  activity_id: Option<String>| {
+                // SAFETY: as above, the notifying element carries cached values.
+                unsafe {
+                    if !uia_passes_filter(&notification_shared, element) {
+                        return;
+                    }
+                    let node =
+                        snapshot_from_cached_element(element, &notification_shared.uia_registry);
+                    let notification = verbatim_model::Notification {
+                        kind: notification_kind_from_uia(kind),
+                        processing: notification_processing_from_uia(processing),
+                        display_string,
+                        activity_id,
+                    };
+                    notification_shared.emit(
+                        TraceId::mint(),
+                        Backend::Uia,
+                        NormalizedEvent::Notification {
+                            node_id: node.id,
+                            notification,
+                        },
+                    );
+                }
+            },
+        );
+        let windows = top_level_windows(target_pid);
+        match NotificationRegistration::new(windows, notification_callback) {
+            Ok(registration) => self.notification_registration = Some(registration),
+            Err(error) => self
+                .shared
+                .fault(format!("UIA notification registration failed: {error}")),
         }
     }
 

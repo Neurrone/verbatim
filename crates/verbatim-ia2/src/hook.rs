@@ -17,8 +17,9 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_STATECHANGE,
-    EVENT_OBJECT_VALUECHANGE, WINEVENT_OUTOFCONTEXT,
+    EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
+    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
+    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -33,7 +34,26 @@ pub enum WinEventKind {
     StateChange,
     /// `EVENT_OBJECT_NAMECHANGE`.
     NameChange,
+    /// `EVENT_OBJECT_SELECTION`, `EVENT_OBJECT_SELECTIONADD`,
+    /// `EVENT_OBJECT_SELECTIONREMOVE`, or `EVENT_OBJECT_SELECTIONWITHIN` —
+    /// collapsed to one normalized kind since all four report "the
+    /// selection within a container changed" and the outpost reads the
+    /// current selection from the event's own address regardless of which
+    /// one fired (roadmap M3's selection-events bullet).
+    Selection,
 }
+
+/// The events an outpost subscribes to, paired with their normalized kinds.
+const SUBSCRIPTIONS: [(u32, WinEventKind); 8] = [
+    (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
+    (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
+    (EVENT_OBJECT_STATECHANGE, WinEventKind::StateChange),
+    (EVENT_OBJECT_NAMECHANGE, WinEventKind::NameChange),
+    (EVENT_OBJECT_SELECTION, WinEventKind::Selection),
+    (EVENT_OBJECT_SELECTIONADD, WinEventKind::Selection),
+    (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::Selection),
+    (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::Selection),
+];
 
 /// Called on the installing thread for each in-scope event, with the event
 /// kind and its MSAA address `(hwnd, id_object, id_child)`. It must not block:
@@ -43,14 +63,6 @@ pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32)>;
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
 }
-
-/// The four events an M1 outpost subscribes to, paired with their kinds.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 4] = [
-    (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
-    (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
-    (EVENT_OBJECT_STATECHANGE, WinEventKind::StateChange),
-    (EVENT_OBJECT_NAMECHANGE, WinEventKind::NameChange),
-];
 
 /// A set of live out-of-context `WinEvent` hooks. Dropping it unhooks them and
 /// clears the thread-local callback.
