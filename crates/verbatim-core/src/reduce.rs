@@ -10,7 +10,7 @@
 use verbatim_model::{
     Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, Query,
     QueryKind, Role, SegmentContent, SnapshotVersion, SpeechPriority, State, StateSet, TraceId,
-    Utterance, UtteranceSegment,
+    Utterance, UtteranceSegment, UtteranceSource,
 };
 
 use crate::state::{FetchReason, FocusContext, PendingFetch, SrState};
@@ -116,8 +116,8 @@ fn reduce_value_changed(
     vec![Effect::Speak(Utterance {
         trace_id,
         priority: SpeechPriority::Interrupt,
-        segments: vec![UtteranceSegment::text(text)],
-        source: None,
+        segments: vec![UtteranceSegment::value(text)],
+        source: Some(source_of(&focus.snapshot)),
     })]
 }
 
@@ -148,6 +148,7 @@ fn reduce_states_changed(
         return Vec::new();
     }
     let role = focus.snapshot.role;
+    let utterance_source = source_of(&focus.snapshot);
     focus.snapshot.states = new_states;
     focus.last_announced.states = new_states;
 
@@ -192,7 +193,7 @@ fn reduce_states_changed(
         trace_id,
         priority: SpeechPriority::Interrupt,
         segments,
-        source: None,
+        source: Some(utterance_source),
     })]
 }
 
@@ -270,23 +271,33 @@ fn reduce_fetch_completed(
     }
 }
 
+/// The utterance-source metadata describing `node`, for presentation
+/// themes (decision D12).
+fn source_of(node: &NodeSnapshot) -> UtteranceSource {
+    UtteranceSource {
+        role: node.role,
+        rect: node.details.rect,
+    }
+}
+
 /// Builds the full announcement for a node: name, then role, then value,
-/// then applicable states, in NVDA-like order.
+/// then applicable states, in NVDA-like order — each as its semantic span
+/// kind, never anonymous text (decision D12).
 fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapshot) -> Utterance {
     let mut segments = Vec::new();
     if let Some(name) = &node.name {
-        segments.push(UtteranceSegment::text(name.clone()));
+        segments.push(UtteranceSegment::label(name.clone()));
     }
     segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
     if let Some(value) = &node.value {
-        segments.push(UtteranceSegment::text(value.clone()));
+        segments.push(UtteranceSegment::value(value.clone()));
     }
     segments.extend(state_segments(node.role, node.states));
     Utterance {
         trace_id,
         priority,
         segments,
-        source: None,
+        source: Some(source_of(node)),
     }
 }
 

@@ -69,7 +69,7 @@ fn focus_menu_item_with_popup_speaks_name_role_and_submenu() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Settings..."),
+            UtteranceSegment::label("Settings..."),
             UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
             UtteranceSegment::new(SegmentContent::State(State::HasPopup)),
         ]
@@ -89,9 +89,9 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Rate"),
+            UtteranceSegment::label("Rate"),
             UtteranceSegment::new(SegmentContent::Role(Role::Slider)),
-            UtteranceSegment::text("50"),
+            UtteranceSegment::value("50"),
         ]
     );
 
@@ -112,7 +112,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     let utterances = speak_effects(&effects);
     assert_eq!(utterances[0].trace_id, trace_2);
     assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
-    assert_eq!(utterances[0].segments, vec![UtteranceSegment::text("55")]);
+    assert_eq!(utterances[0].segments, vec![UtteranceSegment::value("55")]);
     assert_eq!(
         state.focused().map(|(_, n)| n.value.clone()),
         Some(Some("55".to_string()))
@@ -136,7 +136,7 @@ fn unchecked_checkbox_announces_negated_checked() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Remember me"),
+            UtteranceSegment::label("Remember me"),
             UtteranceSegment::new(SegmentContent::Role(Role::CheckBox)),
             UtteranceSegment::new(SegmentContent::NegatedState(State::Checked)),
         ]
@@ -160,7 +160,7 @@ fn checked_checkbox_announces_checked() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Remember me"),
+            UtteranceSegment::label("Remember me"),
             UtteranceSegment::new(SegmentContent::Role(Role::CheckBox)),
             UtteranceSegment::new(SegmentContent::State(State::Checked)),
         ]
@@ -184,7 +184,7 @@ fn mixed_checkbox_does_not_announce_negated_checked() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Some of these"),
+            UtteranceSegment::label("Some of these"),
             UtteranceSegment::new(SegmentContent::Role(Role::CheckBox)),
             UtteranceSegment::new(SegmentContent::State(State::Mixed)),
         ]
@@ -208,7 +208,7 @@ fn disabled_button_announces_unavailable_state() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("OK"),
+            UtteranceSegment::label("OK"),
             UtteranceSegment::new(SegmentContent::Role(Role::Button)),
             UtteranceSegment::new(SegmentContent::State(State::Disabled)),
         ]
@@ -231,7 +231,7 @@ fn focus_related_states_are_never_announced() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Row"),
+            UtteranceSegment::label("Row"),
             UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
         ]
     );
@@ -576,9 +576,9 @@ fn fetch_completed_with_changed_data_announces_it() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("Status"),
+            UtteranceSegment::label("Status"),
             UtteranceSegment::new(SegmentContent::Role(Role::StaticText)),
-            UtteranceSegment::text("Busy"),
+            UtteranceSegment::value("Busy"),
         ]
     );
 }
