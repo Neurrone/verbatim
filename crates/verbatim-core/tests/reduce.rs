@@ -33,7 +33,10 @@ fn focus_event(trace_id: TraceId, source: Pid, version: u64, snapshot: NodeSnaps
         source,
         backend: Backend::Uia,
         version: SnapshotVersion(version),
-        event: NormalizedEvent::FocusChanged { node: snapshot },
+        event: NormalizedEvent::FocusChanged {
+            node: snapshot,
+            ancestors: Vec::new(),
+        },
     }
 }
 
@@ -646,7 +649,10 @@ fn sample_script() -> Vec<Input> {
             source,
             backend: Backend::Uia,
             version: SnapshotVersion(2),
-            event: NormalizedEvent::FocusChanged { node: checkbox },
+            event: NormalizedEvent::FocusChanged {
+                node: checkbox,
+                ancestors: Vec::new(),
+            },
         },
         Input::Event {
             trace_id: TraceId::mint(),
@@ -693,4 +699,197 @@ fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
 
     let replayed = replay(&SrState::new(), &dumped);
     assert_eq!(replayed, live_effects);
+}
+
+/// A focus event whose snapshot arrives with an ancestor chain, outermost
+/// first — the enriched form outposts emit from M3 on.
+fn focus_event_with_ancestors(
+    trace_id: TraceId,
+    source: Pid,
+    version: u64,
+    snapshot: NodeSnapshot,
+    ancestors: Vec<NodeSnapshot>,
+) -> Input {
+    Input::Event {
+        trace_id,
+        source,
+        backend: Backend::Uia,
+        version: SnapshotVersion(version),
+        event: NormalizedEvent::FocusChanged {
+            node: snapshot,
+            ancestors,
+        },
+    }
+}
+
+#[test]
+fn entering_a_dialog_announces_it_before_the_control() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let window = node(
+        100,
+        Role::Window,
+        Some("Settings - App"),
+        None,
+        StateSet::new(),
+    );
+    let dialog = node(
+        101,
+        Role::Dialog,
+        Some("Save changes"),
+        None,
+        StateSet::new(),
+    );
+    let button = node(102, Role::Button, Some("Save"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![window, dialog]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            // The dialog introduces itself first; the window is never
+            // spoken here (the foreground announcement owns it).
+            UtteranceSegment::label("Save changes"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Dialog)),
+            UtteranceSegment::label("Save"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+#[test]
+fn moving_within_the_same_dialog_does_not_reannounce_it() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let dialog = node(
+        101,
+        Role::Dialog,
+        Some("Save changes"),
+        None,
+        StateSet::new(),
+    );
+    let save = node(102, Role::Button, Some("Save"), None, StateSet::new());
+    let cancel = node(103, Role::Button, Some("Cancel"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, save, vec![dialog.clone()]),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 2, cancel, vec![dialog]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Cancel"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+#[test]
+fn focus_from_another_application_treats_the_chain_as_new() {
+    let state = SrState::new();
+    let dialog = node(101, Role::Dialog, Some("Find"), None, StateSet::new());
+    let edit_a = node(
+        102,
+        Role::EditableText,
+        Some("Find what"),
+        None,
+        StateSet::new(),
+    );
+    let edit_b = node(
+        202,
+        Role::EditableText,
+        Some("Search"),
+        None,
+        StateSet::new(),
+    );
+    let dialog_b = node(201, Role::Dialog, Some("Open"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), 1, edit_a, vec![dialog]),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), Pid(2), 1, edit_b, vec![dialog_b]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments[0],
+        UtteranceSegment::label("Open"),
+        "a different application's chain is entirely newly entered"
+    );
+}
+
+#[test]
+fn nameless_groups_are_not_announced_but_named_ones_are() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let nameless = node(300, Role::Group, None, None, StateSet::new());
+    let named = node(301, Role::Group, Some("Margins"), None, StateSet::new());
+    let field = node(302, Role::SpinButton, Some("Top"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, field, vec![nameless, named]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Margins"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Group)),
+            UtteranceSegment::label("Top"),
+            UtteranceSegment::new(SegmentContent::Role(Role::SpinButton)),
+        ]
+    );
+}
+
+#[test]
+fn details_speak_in_nvda_property_order() {
+    let state = SrState::new();
+    let mut item = node(
+        400,
+        Role::ListItem,
+        Some("Report.txt"),
+        None,
+        StateSet::new(),
+    );
+    item.details = NodeDetails {
+        description: Some("Text document".to_owned()),
+        keyboard_shortcut: Some("Alt+R".to_owned()),
+        position_in_set: Some(2),
+        set_size: Some(5),
+        level: Some(1),
+        rect: None,
+    };
+
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, item));
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Report.txt"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+            UtteranceSegment::new(SegmentContent::Description("Text document".to_owned())),
+            UtteranceSegment::new(SegmentContent::Shortcut("Alt+R".to_owned())),
+            UtteranceSegment::new(SegmentContent::Position {
+                position: 2,
+                set_size: Some(5),
+            }),
+            UtteranceSegment::new(SegmentContent::Level(1)),
+        ]
+    );
 }

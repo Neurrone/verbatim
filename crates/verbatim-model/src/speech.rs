@@ -41,6 +41,9 @@ pub enum SegmentContent {
     /// A control's accessible description, when it adds information beyond
     /// the label.
     Description(String),
+    /// The keyboard shortcut a control advertises (an access key or
+    /// accelerator), spoken after the description in NVDA's property order.
+    Shortcut(String),
     /// A role, rendered to its localized spoken name.
     Role(Role),
     /// A state, rendered to its localized spoken name.

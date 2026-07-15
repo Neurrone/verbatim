@@ -42,7 +42,10 @@ Public API:
   protocol's `DumpTree` reply and the control protocol's `DumpTree` reply,
   so a tree dump travels from the outpost through Core to
   `verbatim-inspect` without translation.
-- `NormalizedEvent` — `FocusChanged` (carrying a full snapshot),
+- `NormalizedEvent` — `FocusChanged` (carrying a full snapshot plus the
+  node's ancestor chain, outermost first, walked by the outpost on a query
+  worker before emitting — deadline-guarded and empty on failure, so
+  context never blocks or loses a focus announcement),
   `PropertyChanged` (name, value, or the complete new `States` set),
   `ValueChanged`, `SelectionChanged` (a node was selected within its
   container, carrying its snapshot), and `Notification` (UIA's
@@ -407,13 +410,27 @@ Public API:
 
 Implementation notes, `reduce`:
 
-- A focus change speaks name, role, value, then states in a fixed order
-  (checked or its negation first, then mixed, pressed, selected, expanded,
-  collapsed, has-popup, default, read-only, disabled, busy), at Interrupt
-  priority. Per decision D12 the name travels as a `Label` span and the
-  value as a `Value` span, never anonymous text, and every utterance
-  carries its source node's role and rectangle (`UtteranceSource`) for
-  presentation themes. The negated-checked rule: a `CheckBox` or `RadioButton`
+- A focus change speaks, at Interrupt priority and in NVDA's property
+  order: newly entered container context first (see below), then the
+  node's name, role, value, states in a fixed order (checked or its
+  negation first, then mixed, pressed, selected, expanded, collapsed,
+  has-popup, default, read-only, disabled, busy), then description,
+  keyboard shortcut, position in set, and level — each detail simply
+  absent when the backend reported nothing. Per decision D12 the name
+  travels as a `Label` span and the value as a `Value` span, never
+  anonymous text, and every utterance carries its source node's role and
+  rectangle (`UtteranceSource`) for presentation themes.
+- Focus-ancestry context (M3): a `FocusChanged` event carries the focused
+  node's ancestor chain, outermost first, walked by the outpost before
+  emitting. The reducer announces the presentable containers that were not
+  in the previous focus's chain — dialogs always, groupings and property
+  pages only when named, top-level windows never (the foreground
+  announcement owns those) — before the control itself, so entering a
+  dialog speaks the dialog and tabbing within it stays quiet about it. A
+  focus change from a different application treats the whole chain as
+  newly entered. The negated-state rules match NVDA's within the current
+  vocabulary (negated checked for check boxes and radio buttons); NVDA's
+  switch and toggle-button negations wait on those roles existing. The negated-checked rule: a `CheckBox` or `RadioButton`
   carrying neither Checked nor Mixed announces "not checked". Focus-related
   states are never announced.
 - A value change on the currently focused node speaks just the bare value,

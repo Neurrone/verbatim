@@ -218,15 +218,42 @@ fn handle_msaa_event(
             id_child,
             &shared.msaa_registry,
         ) {
-            shared.emit(trace, Backend::Msaa, msaa_event(kind, &node));
+            // Focus events are enriched with the node's ancestry right here
+            // on the query worker (the walk is query-pool-only by
+            // contract); every other kind maps directly.
+            let event = if kind == WinEventKind::Focus {
+                let ancestors = shared
+                    .msaa_registry
+                    .key_of(node.id)
+                    .map(|key| {
+                        verbatim_ia2::acquire::ancestor_chain(
+                            key,
+                            &shared.msaa_registry,
+                            MAX_ANCESTOR_HOPS,
+                        )
+                    })
+                    .unwrap_or_default();
+                NormalizedEvent::FocusChanged {
+                    node: node.clone(),
+                    ancestors,
+                }
+            } else {
+                msaa_event(kind, &node)
+            };
+            shared.emit(trace, Backend::Msaa, event);
         }
     });
 }
 
 /// Maps an MSAA event kind and its acquired snapshot to a normalized event.
+/// Focus is handled by the caller (it enriches with ancestry first); this
+/// covers the direct mappings.
 fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
     match kind {
-        WinEventKind::Focus => NormalizedEvent::FocusChanged { node: node.clone() },
+        WinEventKind::Focus => NormalizedEvent::FocusChanged {
+            node: node.clone(),
+            ancestors: Vec::new(),
+        },
         WinEventKind::ValueChange => NormalizedEvent::ValueChanged {
             node_id: node.id,
             value: node.value.clone(),
@@ -521,11 +548,25 @@ impl Outpost {
                     return;
                 }
                 let node = snapshot_from_cached_element(element, &focus_shared.uia_registry);
-                focus_shared.emit(
-                    TraceId::mint(),
-                    Backend::Uia,
-                    NormalizedEvent::FocusChanged { node },
-                );
+                // Ancestry enrichment happens on a query worker, not this
+                // callback thread: the walk is cross-process per hop and
+                // both walk functions are query-pool-only by contract. The
+                // worker re-fetches the element by the runtime id the
+                // snapshot just registered (the same dispatch the
+                // AncestorChain protocol query uses) and emits the enriched
+                // event from there; a failed walk degrades to no context,
+                // never to a lost focus announcement.
+                let trace = TraceId::mint();
+                let shared = focus_shared.clone();
+                focus_shared.pool.submit(move |worker| {
+                    let ancestors =
+                        ancestor_chain_query(worker, &shared, node.id).unwrap_or_default();
+                    shared.emit(
+                        trace,
+                        Backend::Uia,
+                        NormalizedEvent::FocusChanged { node, ancestors },
+                    );
+                });
             }
         });
         match FocusRegistration::new(target_pid, focus_callback) {
@@ -879,7 +920,10 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
                     shared.emit(
                         TraceId::mint(),
                         backend,
-                        NormalizedEvent::FocusChanged { node },
+                        NormalizedEvent::FocusChanged {
+                            node,
+                            ancestors: Vec::new(),
+                        },
                     );
                 }
             }
@@ -897,10 +941,22 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
             if let Some(Some((backend, node))) = found {
                 control_done = true;
                 if still_current() {
+                    // Enrich with the control's ancestry, deadline-guarded
+                    // like every other step of this announcement; a timed
+                    // out or failed walk degrades to no context.
+                    let shared_for_chain = shared.clone();
+                    let node_id = node.id;
+                    let ancestors = shared
+                        .pool
+                        .run(FOCUS_DEADLINE, move |worker| {
+                            ancestor_chain_query(worker, &shared_for_chain, node_id)
+                                .unwrap_or_default()
+                        })
+                        .unwrap_or_default();
                     shared.emit(
                         TraceId::mint(),
                         backend,
-                        NormalizedEvent::FocusChanged { node },
+                        NormalizedEvent::FocusChanged { node, ancestors },
                     );
                 }
             }

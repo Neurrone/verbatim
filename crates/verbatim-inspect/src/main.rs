@@ -207,7 +207,7 @@ fn event_line(frame: &Frame) -> Option<String> {
 
 fn summarize_event(event: &NormalizedEvent) -> String {
     match event {
-        NormalizedEvent::FocusChanged { node } => format!("focus: {}", summarize_node(node)),
+        NormalizedEvent::FocusChanged { node, .. } => format!("focus: {}", summarize_node(node)),
         NormalizedEvent::PropertyChanged { node_id, change } => match change {
             PropertyChange::Name(name) => format!(
                 "{node_id:?} name changed to {}",

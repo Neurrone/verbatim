@@ -58,12 +58,23 @@ fn reduce_event(
     state.record_version(source, version);
 
     match event {
-        NormalizedEvent::FocusChanged { node } => {
-            let utterance = announce_node(trace_id, SpeechPriority::Interrupt, node);
+        NormalizedEvent::FocusChanged { node, ancestors } => {
+            let mut segments = Vec::new();
+            for container in entered_containers(state.focus.as_ref(), source, ancestors) {
+                segments.extend(container_segments(container));
+            }
+            segments.extend(node_segments(node));
+            let utterance = Utterance {
+                trace_id,
+                priority: SpeechPriority::Interrupt,
+                segments,
+                source: Some(source_of(node)),
+            };
             state.focus = Some(FocusContext {
                 source,
                 snapshot: node.clone(),
                 last_announced: node.clone(),
+                ancestors: ancestors.clone(),
             });
             vec![Effect::Speak(utterance)]
         }
@@ -253,10 +264,14 @@ fn reduce_fetch_completed(
 
             if changed {
                 let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
+                // A re-fetch refreshes the node, not its ancestry; the
+                // chain the focus event carried stays authoritative.
+                let ancestors = focus.ancestors.clone();
                 state.focus = Some(FocusContext {
                     source: pending.source,
                     snapshot: snapshot.clone(),
                     last_announced: snapshot.clone(),
+                    ancestors,
                 });
                 vec![Effect::Speak(utterance)]
             } else {
@@ -280,10 +295,65 @@ fn source_of(node: &NodeSnapshot) -> UtteranceSource {
     }
 }
 
-/// Builds the full announcement for a node: name, then role, then value,
-/// then applicable states, in NVDA-like order — each as its semantic span
-/// kind, never anonymous text (decision D12).
-fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapshot) -> Utterance {
+/// The ancestors of a newly focused node worth announcing as entered
+/// context, outermost first: presentable containers (see
+/// [`is_presentable_container`]) that were not already in the previous
+/// focus's ancestry — NVDA's focus-ancestry behavior, where tabbing within
+/// one dialog stays quiet about the dialog but entering it announces it.
+/// A focus change from a different application treats the whole chain as
+/// newly entered.
+fn entered_containers<'a>(
+    previous: Option<&FocusContext>,
+    source: Pid,
+    ancestors: &'a [NodeSnapshot],
+) -> Vec<&'a NodeSnapshot> {
+    ancestors
+        .iter()
+        .filter(|ancestor| is_presentable_container(ancestor))
+        .filter(|ancestor| match previous {
+            Some(prev) if prev.source == source => {
+                !prev.ancestors.iter().any(|old| old.id == ancestor.id)
+            }
+            _ => true,
+        })
+        .collect()
+}
+
+/// Whether a focus ancestor is worth announcing when first entered: dialogs
+/// always, groupings and property pages only when they carry a name (a
+/// nameless group adds nothing). Top-level windows are deliberately never
+/// announced here — the foreground-change announcement (the outpost's
+/// `AnnounceFocus` window step) owns the window, and repeating it on every
+/// cross-application focus change would double-speak every switch.
+fn is_presentable_container(node: &NodeSnapshot) -> bool {
+    match node.role {
+        Role::Dialog => true,
+        Role::Group | Role::PropertyPage => node.name.as_ref().is_some_and(|name| !name.is_empty()),
+        _ => false,
+    }
+}
+
+/// The spoken introduction for one entered container: label, role, and
+/// description when present.
+fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
+    let mut segments = Vec::new();
+    if let Some(name) = &node.name {
+        segments.push(UtteranceSegment::label(name.clone()));
+    }
+    segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
+    if let Some(description) = &node.details.description {
+        segments.push(UtteranceSegment::new(SegmentContent::Description(
+            description.clone(),
+        )));
+    }
+    segments
+}
+
+/// The full announcement for a node, in NVDA's property order: name, role,
+/// value, states, description, keyboard shortcut, position in set, level —
+/// each as its semantic span kind, never anonymous text (decision D12).
+/// Detail spans simply do not appear when the backend reported nothing.
+fn node_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
     if let Some(name) = &node.name {
         segments.push(UtteranceSegment::label(name.clone()));
@@ -293,10 +363,35 @@ fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapsho
         segments.push(UtteranceSegment::value(value.clone()));
     }
     segments.extend(state_segments(node.role, node.states));
+    if let Some(description) = &node.details.description {
+        segments.push(UtteranceSegment::new(SegmentContent::Description(
+            description.clone(),
+        )));
+    }
+    if let Some(shortcut) = &node.details.keyboard_shortcut {
+        segments.push(UtteranceSegment::new(SegmentContent::Shortcut(
+            shortcut.clone(),
+        )));
+    }
+    if let Some(position) = node.details.position_in_set {
+        segments.push(UtteranceSegment::new(SegmentContent::Position {
+            position,
+            set_size: node.details.set_size,
+        }));
+    }
+    if let Some(level) = node.details.level {
+        segments.push(UtteranceSegment::new(SegmentContent::Level(level)));
+    }
+    segments
+}
+
+/// Builds a complete announcement utterance for a node (no entered-context
+/// prefix) — the staleness re-fetch path's announcement.
+fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapshot) -> Utterance {
     Utterance {
         trace_id,
         priority,
-        segments,
+        segments: node_segments(node),
         source: Some(source_of(node)),
     }
 }

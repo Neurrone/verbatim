@@ -60,6 +60,16 @@ pub enum NormalizedEvent {
     FocusChanged {
         /// Snapshot of the newly focused node.
         node: NodeSnapshot,
+        /// The focused node's ancestors, outermost first, walked by the
+        /// outpost before emitting (deadline-guarded; empty when the walk
+        /// timed out or the backend could not answer). Carried on the event
+        /// rather than fetched afterward so the reducer can speak entered
+        /// containers *before* the control, in NVDA's order, without
+        /// holding an Interrupt announcement hostage to an async round
+        /// trip. `#[serde(default)]` keeps events recorded before this
+        /// field existed deserializing unchanged.
+        #[serde(default)]
+        ancestors: Vec<NodeSnapshot>,
     },
     /// A property of a node changed.
     PropertyChanged {

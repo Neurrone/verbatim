@@ -77,7 +77,8 @@ fn spoken_form(content: &SegmentContent) -> Option<String> {
         SegmentContent::Text(text)
         | SegmentContent::Label(text)
         | SegmentContent::Value(text)
-        | SegmentContent::Description(text) => (!text.is_empty()).then(|| text.clone()),
+        | SegmentContent::Description(text)
+        | SegmentContent::Shortcut(text) => (!text.is_empty()).then(|| text.clone()),
         SegmentContent::Role(role) => Some(role_name(*role)),
         SegmentContent::State(state) => state_name(*state),
         SegmentContent::NegatedState(state) => negated_state_name(*state),

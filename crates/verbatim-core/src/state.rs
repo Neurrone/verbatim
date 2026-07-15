@@ -22,6 +22,12 @@ pub(crate) struct FocusContext {
     pub(crate) source: Pid,
     pub(crate) snapshot: NodeSnapshot,
     pub(crate) last_announced: NodeSnapshot,
+    /// The focused node's ancestors, outermost first, as the `FocusChanged`
+    /// event carried them. The next focus change diffs its own ancestry
+    /// against this to announce only newly entered containers (NVDA's
+    /// focus-ancestry behavior); empty when the outpost's walk found
+    /// nothing or timed out.
+    pub(crate) ancestors: Vec<NodeSnapshot>,
 }
 
 /// Why the reducer asked an outpost to re-read a node.

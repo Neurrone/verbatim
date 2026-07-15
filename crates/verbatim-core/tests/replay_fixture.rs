@@ -41,7 +41,10 @@ fn scripted_inputs() -> Vec<Input> {
             source,
             backend: Backend::Uia,
             version: SnapshotVersion(1),
-            event: NormalizedEvent::FocusChanged { node: slider },
+            event: NormalizedEvent::FocusChanged {
+                node: slider,
+                ancestors: Vec::new(),
+            },
         },
         Input::Event {
             trace_id: TraceId::mint(),
