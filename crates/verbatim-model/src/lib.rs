@@ -14,8 +14,8 @@ mod speech;
 mod tree;
 
 pub use event::{
-    Earcon, Effect, FetchResult, Input, NormalizedEvent, Pid, PropertyChange, Query, QueryId,
-    QueryKind, SnapshotVersion,
+    Earcon, Effect, FetchResult, Input, NormalizedEvent, Notification, NotificationKind,
+    NotificationProcessing, Pid, PropertyChange, Query, QueryId, QueryKind, SnapshotVersion,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use speech::{SegmentContent, SpeechPriority, Utterance, UtteranceSegment, UtteranceSource};

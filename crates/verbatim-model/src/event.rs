@@ -75,6 +75,77 @@ pub enum NormalizedEvent {
         /// The new value.
         value: Option<String>,
     },
+    /// A node was selected within its container (MSAA `EVENT_OBJECT_SELECTION`
+    /// and its `SELECTIONADD`/`SELECTIONREMOVE`/`SELECTIONWITHIN` siblings;
+    /// UIA `SelectionItem_ElementSelected`). Roadmap M3 introduces this event
+    /// but deliberately does not announce it yet — the reducer's wildcard arm
+    /// for `#[non_exhaustive]` variants drops it until the "announce a
+    /// focused list's selected item" policy work lands.
+    SelectionChanged {
+        /// Snapshot of the selected node.
+        node: NodeSnapshot,
+    },
+    /// A UIA `AutomationNotification` event: an app-initiated announcement
+    /// (for example Windows 11's snap-layout hints) carried through
+    /// verbatim. Roadmap M3 introduces this event but deliberately does not
+    /// announce it yet, matching [`SelectionChanged`](Self::SelectionChanged).
+    Notification {
+        /// The node the notification concerns.
+        node_id: NodeId,
+        /// The notification payload.
+        notification: Notification,
+    },
+}
+
+/// What kind of change a [`NormalizedEvent::Notification`] reports —
+/// UIA's `NotificationKind`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum NotificationKind {
+    /// An item was added.
+    ItemAdded,
+    /// An item was removed.
+    ItemRemoved,
+    /// An action completed.
+    ActionCompleted,
+    /// An action was aborted.
+    ActionAborted,
+    /// Any other kind of notification.
+    Other,
+}
+
+/// How urgently a [`NormalizedEvent::Notification`] should be processed —
+/// UIA's `NotificationProcessing`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum NotificationProcessing {
+    /// Important; process every notification of this kind.
+    ImportantAll,
+    /// Important; only the most recent notification of this kind matters.
+    ImportantMostRecent,
+    /// Process every notification of this kind.
+    All,
+    /// Only the most recent notification of this kind matters.
+    MostRecent,
+    /// Process the current notification, then only the most recent of any
+    /// further ones that arrive while it is being processed.
+    CurrentThenMostRecent,
+}
+
+/// The payload of a UIA `AutomationNotification` event, normalized
+/// (architecture section 4). Carried but not yet announced — see
+/// [`NormalizedEvent::Notification`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notification {
+    /// What kind of change this reports.
+    pub kind: NotificationKind,
+    /// How urgently it should be processed.
+    pub processing: NotificationProcessing,
+    /// The human-readable text the source app supplied, if any.
+    pub display_string: Option<String>,
+    /// An opaque id the source app uses to correlate related notifications,
+    /// if any.
+    pub activity_id: Option<String>,
 }
 
 /// What a completed fetch produced.
