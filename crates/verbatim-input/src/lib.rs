@@ -20,12 +20,14 @@
 
 pub mod keys;
 pub mod map;
+pub mod scripts;
 pub mod state;
 
 #[cfg(windows)]
 pub mod hook;
 
 pub use map::{GestureMap, SharedGestureMap};
+pub use scripts::{KeyboardLayout, ScriptAction, bindings_for};
 pub use state::{Decision, DecisionConfig, DecisionMachine, EmittedGesture};
 
 #[cfg(windows)]

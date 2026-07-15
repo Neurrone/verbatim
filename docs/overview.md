@@ -182,6 +182,18 @@ Public API:
   arc-swap snapshot the hook reads lock-free; rebinding is one atomic store.
 - `InputHook::start(config, map, events)` — installs `WH_KEYBOARD_LL` on a
   dedicated thread; drop uninstalls.
+- `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
+  `Laptop`, redeclared here decoupled from `verbatim_config::KeyboardLayout`
+  like `DecisionConfig` already is from `VerbatimKeys`) and `ScriptAction`
+  (every M3 command: object navigation, review-cursor text reading, speak
+  time, show tray list) plus `bindings_for(layout) -> Vec<(GestureId,
+  ScriptAction)>`, the complete gesture table for a layout, transcribed from
+  `docs/roadmap.md`'s M3 object-navigation bullet. `GestureMap` is a plain
+  membership set, not generic over the bound action, so `bindings_for`
+  returns gesture-and-action pairs the application adapts itself: build the
+  hook's `GestureMap` from the gestures, and keep a separate lookup (the
+  same pairs, or a `HashMap` built from them) on the application side to
+  resolve an emitted gesture to its action in the router.
 
 Implementation notes, `DecisionMachine::on_key` (the intricate one — the
 semantics follow NVDA's `keyboardHandler`):
