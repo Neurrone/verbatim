@@ -31,7 +31,12 @@ Public API:
   non-exhaustive so later milestones can grow them without breaking
   matches.
 - `NodeSnapshot` — everything needed to announce one node: id, backend,
-  role, optional name and value, states.
+  role, optional name and value, states, plus a `NodeDetails` group of
+  optional properties (description, keyboard shortcut, position in set,
+  set size, level, bounding `Rect`) that backends fill as they learn to
+  fetch each one; everything in it defaults to "not reported", and its
+  serde default keeps snapshots recorded before it existed deserializing
+  unchanged.
 - `TreeNode` — a `NodeSnapshot` plus its children in tree order: the
   shared vocabulary for a walked tree, carried unchanged by the outpost
   protocol's `DumpTree` reply and the control protocol's `DumpTree` reply,
@@ -42,13 +47,19 @@ Public API:
   `ValueChanged`.
 - `Input` and `Effect` — the reducer's contract. Inputs are strictly
   accessibility-shaped: events, fetch completions, timer ticks. Effects are
-  strictly `Speak`, `StopSpeech`, and `Fetch`; menu and quit concerns never
-  appear here.
-- `Utterance`, `UtteranceSegment`, `SegmentContent`, `SpeechPriority` —
-  structured speech. Segments carry text or role and state tokens
-  (including `NegatedState` for announcements like "not checked"), so the
-  pure reducer never touches localization; tokens become words at the
-  speech-pipeline boundary.
+  strictly `Speak`, `StopSpeech`, `Fetch`, and `PlayEarcon` (an `Earcon`
+  names a sound semantically — `AppNotResponding` first — and themes decide
+  what it sounds like); menu and quit concerns never appear here.
+- `Utterance`, `UtteranceSegment`, `SegmentContent`, `UtteranceSource`,
+  `SpeechPriority` — structured speech per decision D12. Segments are
+  semantic spans: literal text, `Label`, `Value`, `Description`, role and
+  state tokens (including `NegatedState` for announcements like "not
+  checked"), `Position` (a "2 of 5" pair), and `Level`. The pure reducer
+  never touches localization; spans become words at the speech pipeline's
+  presentation stage. An utterance optionally carries an
+  `UtteranceSource` — the described node's role and screen rectangle — so
+  M11 presentation themes can key earcons off the role and pan audio by
+  position without a pipeline change.
 - `GestureId` — normalized gesture identifiers, NVDA's scheme.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases
@@ -79,11 +90,19 @@ Public API:
 - `role_name(role)`, `state_name(state)`, `negated_state_name(state)` — the
   localized spoken words for utterance tokens; states that are never spoken
   (focused, focusable, selectable, offscreen) return `None`.
+- `position_in_set(position, set_size)` and `level(n)` — the localized
+  "2 of 5" and "level 3" phrases for the corresponding utterance spans.
+  Both pass their numbers as pre-rendered strings so no locale applies
+  digit grouping to an ordinal position.
 
-Implementation notes: `LocaleDirAssets` exists because i18n-embed's own
-filesystem assets type yields bare file names without the language folder,
-which breaks language negotiation; this implementation yields
-`language/file` paths. The pseudo-locale test (required from M1) generates
+Implementation notes: the loader disables Fluent's bidi argument isolation
+globally — Fluent wraps interpolated arguments in invisible directional
+isolate marks by default, which protects visually rendered mixed-direction
+text but would leak invisible characters into spoken text, dictionary and
+symbol processing, and braille. `LocaleDirAssets` exists because
+i18n-embed's own filesystem assets type yields bare file names without the
+language folder, which breaks language negotiation; this implementation
+yields `language/file` paths. The pseudo-locale test (required from M1) generates
 a bracket-wrapped translation of every English message into a temporary
 locale, loads it, and asserts every message id resolves through it — proof
 no string bypasses the loader. It parses the `.ftl` line by line, which is
@@ -241,8 +260,16 @@ Public API:
   restoring the last committed values.
 - `SpeechEvents` — the observability seam: `utterance_queued` and
   `audio_started`, called on pipeline threads and required to be cheap.
-- `render_utterance` — token rendering at the boundary: turns structured
-  segments into spoken text via `verbatim-i18n`'s role and state words.
+- `Theme` and `PlainTheme` — the presentation stage (decision D12): a theme
+  flattens each structured utterance to the flat request handed to the
+  synthesizer, on the queue thread, just before dispatch. `PlainTheme` is
+  the default (selected when `SpeechManagerConfig::theme` is `None`) and
+  renders plain speech: labels, values, and descriptions as their text,
+  roles and states through `verbatim-i18n`, positions as "2 of 5" (nothing
+  without a set size — a bare position has no useful spoken form), levels
+  as "level 3". M11's earcon and voice-styling themes implement the same
+  trait, which is why utterances carry their source node's role and screen
+  rectangle even though `PlainTheme` ignores both.
 
 Implementation notes, `SpeechManager`: two dedicated threads. The queue
 thread owns the priority lanes — `Interrupt` cancels current and queued
@@ -329,7 +356,10 @@ Implementation notes, `reduce`:
 - A focus change speaks name, role, value, then states in a fixed order
   (checked or its negation first, then mixed, pressed, selected, expanded,
   collapsed, has-popup, default, read-only, disabled, busy), at Interrupt
-  priority. The negated-checked rule: a `CheckBox` or `RadioButton`
+  priority. Per decision D12 the name travels as a `Label` span and the
+  value as a `Value` span, never anonymous text, and every utterance
+  carries its source node's role and rectangle (`UtteranceSource`) for
+  presentation themes. The negated-checked rule: a `CheckBox` or `RadioButton`
   carrying neither Checked nor Mixed announces "not checked". Focus-related
   states are never announced.
 - A value change on the currently focused node speaks just the bare value,
