@@ -97,3 +97,35 @@ jobs:
             verbatim-agent-stdout.log
             verbatim-agent-stderr.log
           if-no-files-found: ignore
+
+  # cargo xtask vm test --record (video-with-audio capture of a run) is a
+  # Hyper-V VM harness feature: it needs the VB-CABLE virtual audio driver
+  # and ffmpeg provisioned into a Hyper-V guest (vm/scripts/
+  # Initialize-VerbatimHarness.ps1's Install-VbCableAudioDriver and
+  # Install-Ffmpeg) and a real interactive guest session for ffmpeg's
+  # gdigrab capture to attach to. None of that exists on the `e2e` job
+  # above: it is runner-direct (agent and Verbatim share the GitHub-hosted
+  # runner itself, no VM), per D3's deferred-CI-for-E2E decision
+  # (docs/architecture.md section 14) — a plain GitHub-hosted Windows
+  # runner cannot do the nested virtualization `cargo xtask vm` needs. So
+  # `--record` does not apply to `e2e` and is not added to it.
+  #
+  # The day CI does drive a Hyper-V guest (a self-hosted runner with nested
+  # virtualization, the deferred story that section documents), a job here
+  # would look roughly like this — kept commented out rather than added as
+  # a real, always-skipped job, since a job with no runner able to execute
+  # it is worse than no job:
+  #
+  # vm-e2e-recorded:
+  #   runs-on: [self-hosted, hyper-v]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Run the E2E suite against the VM, recorded
+  #       run: cargo xtask vm test --record
+  #     - name: Upload the recording
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: verbatim-e2e-recording
+  #         path: artifacts/vm-recordings/*.mp4
+  #         if-no-files-found: ignore

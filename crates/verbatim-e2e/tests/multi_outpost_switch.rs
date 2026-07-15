@@ -20,6 +20,16 @@
 //! waits, substring matchers, tolerant of unrelated intervening utterances,
 //! never re-sending input, and relying on `Scenario`'s `Drop` guard to clean
 //! up every launched process even on panic.
+//!
+//! This test launches Notepad exactly once and never relies on Windows 11
+//! Notepad's single-instance handoff itself — the foreground switch below
+//! reuses that one instance rather than launching a second. It does,
+//! though, depend on `kill_target`'s image-name sweep at the end: confirmed
+//! live, `launch_target`'s own returned pid for Notepad reliably exits on
+//! its own within a few seconds of launch (the handoff to a differently
+//! pid'd process happens even for a single, solo launch — see
+//! `Scenario::launch_target`'s doc comment), so a pid-only kill there would
+//! silently do nothing and leave the real window as a stray.
 
 use std::time::Duration;
 

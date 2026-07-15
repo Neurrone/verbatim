@@ -13,7 +13,11 @@
 use std::io;
 use std::process::Command;
 
+use tracing::warn;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, STILL_ACTIVE};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_TERMINATE, TerminateProcess,
@@ -120,6 +124,85 @@ pub fn kill(pid: u32) -> io::Result<KillOutcome> {
     };
     close(handle);
     outcome
+}
+
+/// Terminates every currently running process whose image (executable file)
+/// name matches `name` (case-insensitive, comparing only the file name —
+/// `"notepad.exe"`, never a full path), and returns how many were actually
+/// terminated. Zero is a normal, successful outcome, not an error: it
+/// simply means no matching process was running.
+///
+/// Exists for the handoff case Windows 11 Notepad exhibits: launching it
+/// when an instance already exists hands the window off to that existing
+/// process and the newly launched one exits immediately, so a pid-based
+/// kill (recorded from the launch that got handed off) can miss the
+/// process actually holding the window. Sweeping by image name catches it
+/// regardless of which launch's pid ended up owning it.
+///
+/// Individual per-pid kill failures (a genuine `TerminateProcess` error,
+/// not the ordinary already-exited race [`kill`] already tolerates) are
+/// logged and skipped rather than aborting the sweep — this is a
+/// best-effort mass cleanup, and one uncooperative process should not stop
+/// the rest from being cleaned up.
+///
+/// # Errors
+///
+/// Returns an error if the system process snapshot itself cannot be taken
+/// or walked; a failure killing an individual matched process does not
+/// propagate.
+pub fn kill_by_name(name: &str) -> io::Result<u32> {
+    let mut terminated = 0u32;
+    for pid in matching_pids(name)? {
+        match kill(pid) {
+            Ok(KillOutcome::Terminated) => terminated += 1,
+            Ok(KillOutcome::AlreadyExited) => {}
+            Err(error) => {
+                warn!(pid, name, %error, "failed to kill a process matched by name; skipping");
+            }
+        }
+    }
+    Ok(terminated)
+}
+
+/// Snapshots every running process and returns the pids whose image file
+/// name matches `name`, case-insensitively.
+fn matching_pids(name: &str) -> io::Result<Vec<u32>> {
+    // SAFETY: `TH32CS_SNAPPROCESS` with a `th32ProcessID` of 0 snapshots
+    // every process system-wide; the returned handle is checked below and
+    // closed via `CloseHandle` before returning.
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(io::Error::other)?;
+
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>())
+            .expect("PROCESSENTRY32W's size fits in a u32"),
+        ..Default::default()
+    };
+    let mut pids = Vec::new();
+    // SAFETY: `snapshot` is a valid, just-created snapshot handle; `entry`
+    // is zero-initialized with `dwSize` set as `Process32FirstW` requires.
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while has_entry {
+        if exe_file_name(&entry.szExeFile).eq_ignore_ascii_case(name) {
+            pids.push(entry.th32ProcessID);
+        }
+        // SAFETY: `snapshot` and `entry` are the same valid values as above;
+        // `Process32NextW` overwrites `entry` in place for the next process.
+        has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+
+    close(snapshot);
+    Ok(pids)
+}
+
+/// Decodes a `PROCESSENTRY32W::szExeFile` fixed-size, nul-terminated,
+/// UTF-16 buffer into an owned `String`.
+fn exe_file_name(buffer: &[u16]) -> String {
+    let len = buffer
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..len])
 }
 
 /// Whether an already-open process handle's process has exited, used to
@@ -275,5 +358,77 @@ mod tests {
     fn kill_of_a_pid_that_never_existed_is_already_exited() {
         let outcome = kill(0xFFFF_FFF0).expect("killing an invalid pid is not an error");
         assert_eq!(outcome, KillOutcome::AlreadyExited);
+    }
+
+    #[test]
+    fn kill_by_name_of_an_unmatched_name_returns_zero() {
+        let terminated = kill_by_name("verbatim-agent-test-nonexistent-image-name.exe")
+            .expect("querying an unmatched name is not an error");
+        assert_eq!(terminated, 0);
+    }
+
+    /// Windows identifies a process's image name from the executable file
+    /// itself, not the command line, so a uniquely named copy of
+    /// `powershell.exe` lets this test match by name deterministically,
+    /// with no risk of also catching an unrelated `powershell.exe` already
+    /// running on the machine this test happens to run on. `Start-Sleep` is
+    /// a PowerShell cmdlet, not a separately resolved executable, so unlike
+    /// an external command name it cannot be shadowed by a same-named tool
+    /// earlier on `PATH` (confirmed live: an earlier attempt using a
+    /// renamed `cmd.exe` running `timeout /t 300` failed exactly that way,
+    /// resolving to a Git-Bash-provided `timeout` with an incompatible
+    /// argument syntax instead of Windows' own).
+    #[test]
+    fn kill_by_name_terminates_every_matching_process() {
+        let unique_name = format!(
+            "verbatim-agent-test-killbyname-{}-{:?}.exe",
+            std::process::id(),
+            std::thread::current().id()
+        );
+        let exe_path = std::env::temp_dir().join(&unique_name);
+        std::fs::copy(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            &exe_path,
+        )
+        .expect("copies powershell.exe under a unique name");
+
+        let pid = launch(
+            exe_path.to_str().expect("utf8 path"),
+            &[
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                "Start-Sleep -Seconds 300".to_owned(),
+            ],
+            None,
+            &[],
+            None,
+        )
+        .expect("spawns the renamed powershell.exe");
+
+        // Give the OS a moment to register the process in the snapshot
+        // kill_by_name walks, before this test's own kill_by_name call
+        // races the snapshot against a process that only just started.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let terminated = kill_by_name(&unique_name).expect("kills by name");
+        assert_eq!(
+            terminated, 1,
+            "expected exactly the one process spawned under this unique name"
+        );
+
+        let mut final_state = ProcessState::Running;
+        for _ in 0..50 {
+            final_state = status(pid).expect("queries status");
+            if final_state != ProcessState::Running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            matches!(final_state, ProcessState::Exited { .. }),
+            "process is reported exited after kill_by_name, got {final_state:?}"
+        );
+
+        std::fs::remove_file(&exe_path).ok();
     }
 }

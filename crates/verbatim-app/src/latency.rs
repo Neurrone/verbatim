@@ -148,6 +148,15 @@ impl SpeechEvents for LatencyLedger {
             );
         }
     }
+
+    fn utterance_finished(&self, trace_id: TraceId, _at: std::time::Instant) {
+        // No ledger field to fill — the timeline stops at audio-started — so
+        // this only mirrors the completion to speech subscribers, letting a
+        // paced consumer wait for an utterance to be heard in full.
+        if let Some(server) = self.server.get() {
+            server.broadcast_speech_finished(trace_id);
+        }
+    }
 }
 
 #[cfg(test)]

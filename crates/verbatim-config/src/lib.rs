@@ -61,6 +61,40 @@ impl Default for VerbatimKeys {
     }
 }
 
+/// The speech rate the E2E suite runs at, on every synthesizer's shared
+/// `0..=100` numeric scale. Deliberately brisk so a recorded run is quick to
+/// review; applied uniformly by [`Settings::for_e2e`] so the VM (`OneCore`)
+/// and runner-direct (capture synth) paths speak at the same rate.
+pub const E2E_RATE: i64 = 80;
+
+impl Settings {
+    /// The fixed configuration shared by the E2E suite's own runner-direct
+    /// staging (`verbatim-e2e`'s `Scenario::launch`) and `cargo xtask vm
+    /// deploy`'s guest staging (`write_synth_settings`): [`Settings::default`]
+    /// with the speech synthesizer overridden to `synth_id` and that
+    /// synthesizer's `rate` set to [`E2E_RATE`].
+    ///
+    /// Both call sites need the same guarantee: a run's configuration is
+    /// always these fixed values, never whatever a previous run or a
+    /// developer's own `settings.toml` happened to leave behind, so neither
+    /// one may load an existing file and mutate it — they build this and
+    /// write it fresh. `xtask` cannot depend on `verbatim-e2e` (and should
+    /// not, to avoid a dev-tooling dependency edge into a test-only crate),
+    /// so this constructor lives here in `verbatim-config`, which both
+    /// already depend on, rather than being duplicated in both places. If
+    /// its shape ever needs to change, keep both call sites in lockstep.
+    #[must_use]
+    pub fn for_e2e(synth_id: &str) -> Self {
+        let mut settings = Self::default();
+        settings.speech.synthesizer = Some(synth_id.to_owned());
+        settings.speech.synth_settings.insert(
+            synth_id.to_owned(),
+            BTreeMap::from([("rate".to_owned(), ConfigValue::Integer(E2E_RATE))]),
+        );
+        settings
+    }
+}
+
 /// One persisted setting value; the TOML-facing analog of the speech
 /// crate's setting values (an integer for sliders, a string for choices, a
 /// boolean for toggles).
@@ -280,6 +314,21 @@ impl ConfigStore {
     /// Returns [`ConfigError::Io`] when writing fails.
     pub fn save_settings(&self) -> Result<(), ConfigError> {
         write_toml_atomic(&self.root.join(Self::SETTINGS_FILE), &self.settings)
+    }
+
+    /// Builds a store from `settings` directly, without reading whatever
+    /// file (if any) already sits at `root` — the counterpart to
+    /// [`load`](Self::load) for callers that need a fixed, deterministic
+    /// configuration rather than picking up and mutating existing state
+    /// (see [`Settings::for_e2e`]). Call [`save_settings`](Self::save_settings)
+    /// afterward to persist it.
+    #[must_use]
+    pub fn from_settings(root: &Path, settings: Settings) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            settings,
+            overlays: Vec::new(),
+        }
     }
 }
 

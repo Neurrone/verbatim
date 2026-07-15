@@ -8,6 +8,7 @@
 //! the same in-guest agent and the same verbs later, by adding a second
 //! `Host` implementation rather than rewriting anything in this module.
 
+mod connect;
 mod create;
 mod deploy;
 mod dotenv;
@@ -15,6 +16,7 @@ mod host;
 mod lifecycle;
 mod logs;
 mod packer_build;
+mod recording;
 mod test;
 
 use std::path::{Path, PathBuf};
@@ -45,6 +47,12 @@ pub(crate) const VERBATIM_DIR: &str = r"C:\VerbatimLab\verbatim";
 /// task and firewall rule.
 pub(crate) const AGENT_DIR: &str = r"C:\VerbatimLab\agent";
 
+/// The in-guest tools directory where `xtask vm deploy` stages the vendored
+/// `ffmpeg.exe` and `ffprobe.exe`, and where `--record` launches and probes
+/// them from (`recording.rs`'s `FFMPEG_GUEST_PATH`). Created by the base
+/// image provisioner and, failing that, by `Copy-VMFile -CreateFullPath`.
+pub(crate) const TOOLS_DIR: &str = r"C:\VerbatimLab\tools";
+
 /// Entry point for `cargo xtask vm <verb> [args...]`; `args` excludes the
 /// leading `vm` token itself.
 pub(crate) fn run(args: &[String]) -> ExitCode {
@@ -67,17 +75,16 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("restart") => lifecycle::restart(&host),
         Some("restore") => lifecycle::restore(&host, args.get(1).map(String::as_str)),
         Some("deploy") => deploy_verb(&host, &repo_root),
-        Some("test") => {
-            let no_restore = match args.get(1).map(String::as_str) {
-                Some("--no-restore") => true,
-                Some(other) => {
-                    return unknown_arg("test", other);
-                }
-                None => false,
-            };
-            test::test(&host, &repo_root, no_restore)
-        }
+        Some("test") => match parse_test_flags(&args[1..]) {
+            Ok(flags) => test::test(&host, &repo_root, flags),
+            Err(other) => return unknown_arg("test", &other),
+        },
         Some("logs") => logs_verb(&host, &repo_root, args.get(1)),
+        Some("connect") => match args.get(1).map(String::as_str) {
+            Some("--forget") => connect::connect(&host, &repo_root, true),
+            Some(other) => return unknown_arg("connect", other),
+            None => connect::connect(&host, &repo_root, false),
+        },
         Some("delete") => lifecycle::delete(&host),
         Some(other) => Err(format!("unknown verb '{other}'")),
         None => {
@@ -99,6 +106,24 @@ fn unknown_arg(verb: &str, arg: &str) -> ExitCode {
     eprintln!("xtask vm {verb}: unknown argument '{arg}'");
     print_usage();
     ExitCode::from(2)
+}
+
+/// Parses `test`'s flags — `--no-restore`, `--record`, and `--paced` —
+/// accepted in any order and independently. Returns a [`test::TestFlags`], or
+/// the first unrecognized argument as `Err`. There is no `--audible` flag
+/// anymore: `test` is audible by default now — see `test::test`'s own doc
+/// comment for why.
+fn parse_test_flags(args: &[String]) -> Result<test::TestFlags, String> {
+    let mut flags = test::TestFlags::default();
+    for arg in args {
+        match arg.as_str() {
+            "--no-restore" => flags.no_restore = true,
+            "--record" => flags.record = true,
+            "--paced" => flags.paced = true,
+            other => return Err(other.to_owned()),
+        }
+    }
+    Ok(flags)
 }
 
 fn deploy_verb(host: &dyn host::Host, repo_root: &Path) -> VmResult<()> {
@@ -145,13 +170,49 @@ fn print_usage() {
         "  deploy           build verbatim.exe, verbatim-outpost.exe, and the agent, and copy"
     );
     eprintln!("                   them (plus settings.toml) into the guest");
-    eprintln!("  test             restore 'golden', deploy, then run the E2E suite against it;");
+    eprintln!("  test             restore 'golden', deploy, then run the E2E suite against it,");
     eprintln!(
-        "                   --no-restore skips the restore and reuses the live guest as-is —"
+        "                   audible by default (real OneCore synthesizer, real WASAPI): heard"
     );
-    eprintln!("                   faster for iteration, but the guest may carry state from a");
-    eprintln!("                   previous run; never use it for an acceptance run");
+    eprintln!(
+        "                   live over a connected `cargo xtask vm connect` session, or played"
+    );
+    eprintln!(
+        "                   to VB-CABLE unheard when headless; --no-restore skips the restore"
+    );
+    eprintln!("                   and reuses the live guest as-is — faster for iteration, but");
+    eprintln!(
+        "                   the guest may carry state from a previous run; never use it for an"
+    );
+    eprintln!(
+        "                   acceptance run; --record additionally captures desktop video and"
+    );
+    eprintln!(
+        "                   VB-CABLE audio to an mp4 under artifacts/vm-recordings — recording"
+    );
+    eprintln!(
+        "                   audio and a connected RDP session are mutually exclusive (RDP hides"
+    );
+    eprintln!(
+        "                   the VB-CABLE capture device), so --record against a connected guest"
+    );
+    eprintln!(
+        "                   degrades to video-only, tagged -no-audio, with a warning, rather"
+    );
+    eprintln!("                   than aborting; --paced waits for each utterance's audio to");
+    eprintln!("                   finish before the next keystroke so speech is heard in full");
+    eprintln!("                   (implied by --record); all flags may be given, in any order");
     eprintln!("  logs [dir]       pull flight-recorder dumps and the agent log out of the guest");
     eprintln!("                   (default dir: artifacts/vm-logs)");
+    eprintln!(
+        "  connect          start the VM if needed, enable Remote Desktop in the guest once,"
+    );
+    eprintln!(
+        "                   store its test credentials in this host's Credential Manager, then"
+    );
+    eprintln!(
+        "                   open mstsc with audio redirected to this computer; --forget removes"
+    );
+    eprintln!("                   the stored credentials and exits without connecting");
     eprintln!("  delete           remove the VM and its disks, for a clean rebuild");
 }

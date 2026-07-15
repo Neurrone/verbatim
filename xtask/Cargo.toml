@@ -11,9 +11,17 @@ publish.workspace = true
 # serde_json are already pulled in by verbatim-agent and verbatim-e2e, and
 # verbatim-config lets `xtask vm deploy` stage settings.toml through the
 # same ConfigStore the app itself uses, rather than hand-writing TOML.
+# verbatim-agent and verbatim-control let `xtask vm test --record` speak
+# the in-guest agent's own wire protocol directly (Hello, LaunchProcess,
+# ProcessStatus, KillProcess) to launch and stop ffmpeg in the guest's
+# interactive session — see xtask/src/vm/recording.rs. Depending on these
+# two crates directly, rather than on verbatim-e2e's own `AgentClient`,
+# avoids pulling a test-only crate into this binary for three request kinds.
 base64.workspace = true
 serde_json.workspace = true
+verbatim-agent.workspace = true
 verbatim-config.workspace = true
+verbatim-control.workspace = true
 
 [lints]
 workspace = true

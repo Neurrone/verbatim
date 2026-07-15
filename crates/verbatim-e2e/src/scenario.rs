@@ -6,7 +6,20 @@
 //! even if the test that created it panicked partway through. This matters
 //! because every live test in this suite runs against the developer's real
 //! desktop, launching a real `verbatim.exe` that injects real keystrokes.
+//!
+//! Configuration is always fixed and isolated, never the developer's own
+//! live state. In runner-direct mode (the default; see [`REMOTE_ENV`]),
+//! [`Scenario::launch`] copies `verbatim.exe` and `verbatim-outpost.exe`
+//! into `target/e2e-stage` under the workspace root and writes
+//! [`verbatim_config::Settings::for_e2e`]'s fixed settings there, then
+//! launches that staged copy — never the developer's own
+//! `target/debug/verbatim.exe` and its `settings.toml`, which a runner-direct
+//! suite would otherwise read, mutate, and leave dirty. In remote mode,
+//! `cargo xtask vm deploy` stages the guest side equivalently (its own
+//! `write_synth_settings`, kept in lockstep with the same fixed-settings
+//! shape — see `Settings::for_e2e`'s doc comment).
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -14,18 +27,25 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use verbatim_agent::protocol::{KillOutcome, ProcessState};
-use verbatim_config::ConfigStore;
+use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{LatencyRecord, Request};
 
 use crate::agent_client::AgentClient;
 use crate::speech::SpeechCollector;
+use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
 /// `target/debug/verbatim.exe` under the workspace root — the ordinary
 /// local debug build, and what the CI job in `.github/workflows/ci.yml`
 /// builds before running this suite.
+///
+/// This names where [`Scenario::launch`] finds the *source* binaries to
+/// stage from in runner-direct mode, not where it launches from: setting it
+/// chooses the source build, never the fixed configuration regime — the
+/// staged copy under `target/e2e-stage` is still what actually runs, with
+/// [`verbatim_config::Settings::for_e2e`]'s settings next to it.
 pub const VERBATIM_EXE_ENV: &str = "VERBATIM_E2E_VERBATIM_EXE";
 
 /// Environment variable marking a *remote* run: the agent, Verbatim, and
@@ -33,19 +53,63 @@ pub const VERBATIM_EXE_ENV: &str = "VERBATIM_E2E_VERBATIM_EXE";
 /// [`VERBATIM_EXE_ENV`] names a path in that machine's filesystem, not this
 /// one's. `cargo xtask vm test` sets it.
 ///
-/// The distinction matters because two of [`Scenario::launch`]'s steps —
-/// checking that `verbatim.exe` exists, and writing the capture-synth
-/// `settings.toml` next to it — are ordinary host filesystem operations.
-/// In the default runner-direct mode the suite and Verbatim share a
-/// filesystem, so both are correct. Against a VM they are not: the guest
-/// path does not exist here, and `cargo xtask vm deploy` has already staged
-/// the same `settings.toml` inside the guest. Set this and both steps are
-/// skipped, since the deploy owns them.
+/// The distinction matters because [`Scenario::launch`]'s runner-direct
+/// staging step — checking the source `verbatim.exe` exists, copying it and
+/// `verbatim-outpost.exe` into `target/e2e-stage`, and writing the fixed
+/// `settings.toml` there — is an ordinary host filesystem operation. In the
+/// default runner-direct mode the suite and Verbatim share a filesystem, so
+/// it is correct. Against a VM it is not: the guest path does not exist
+/// here, and `cargo xtask vm deploy` has already staged the equivalent
+/// inside the guest. Set this and the whole staging step is skipped, since
+/// the deploy owns it.
 pub const REMOTE_ENV: &str = "VERBATIM_E2E_REMOTE";
 
 /// Whether this is a remote (in-guest) run; see [`REMOTE_ENV`].
 fn is_remote() -> bool {
     std::env::var(REMOTE_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+/// Environment variable requesting an *audible* run: [`Scenario::launch`]
+/// selects the real `OneCore` synthesizer instead of the capture synth, and
+/// does not set `VERBATIM_TEST_AUDIO=null`, so Verbatim speaks through the
+/// real `WasapiSink` on real hardware instead of the silent, voice-free
+/// path every other run uses. `cargo xtask vm test --audible` sets it for a
+/// remote run; set it by hand for a runner-direct one.
+///
+/// Intended for human debugging only — for actually listening to a
+/// scenario play out. Every speech assertion in this suite, including the
+/// M1 exit regression's voice-combo section, is synth-agnostic: it captures
+/// whichever voice name the active synthesizer speaks first at runtime
+/// instead of asserting a literal, so those assertions pass under real
+/// `OneCore` voices exactly as they do under the capture synth (confirmed
+/// live). The M1 exit regression's own trailing latency check does not yet
+/// pass under audible mode, though — see that test's module doc — a
+/// separate, unresolved gap in the real audio path, not a speech-assertion
+/// problem. This is not the routine acceptance check only because it needs
+/// a listener and real audio hardware; a plain `cargo xtask vm test`
+/// remains that. In runner-direct mode, real speech also means Verbatim
+/// will speak over any other screen reader already running on the desktop.
+pub const AUDIBLE_ENV: &str = "VERBATIM_E2E_AUDIBLE";
+
+/// Whether this is an audible run; see [`AUDIBLE_ENV`].
+#[must_use]
+pub fn is_audible() -> bool {
+    std::env::var(AUDIBLE_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+/// Environment variable that switches a scenario into paced mode: every
+/// speech assertion additionally waits for the matched utterance's audio to
+/// finish before the next input, so a human watching or a recording hears
+/// each utterance in full. Set by `cargo xtask vm test --paced` (and implied
+/// by `--record`, since a recording nobody can follow is pointless). Purely a
+/// presentation aid — it never changes what is asserted, only the timing —
+/// so ordinary fast runs leave it unset.
+pub const PACED_ENV: &str = "VERBATIM_E2E_PACED";
+
+/// Whether this is a paced run; see [`PACED_ENV`].
+#[must_use]
+pub fn is_paced() -> bool {
+    std::env::var(PACED_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
 /// How long [`Scenario::launch`] waits for Verbatim's control plane to come
@@ -78,6 +142,13 @@ const QUIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// slow CI runner.
 const GUI_SETTLE_DELAY: Duration = Duration::from_secs(1);
 
+/// Image (executable file) names of target applications this suite's
+/// scenarios launch, swept clean by [`Scenario::launch`] before doing
+/// anything else — see the sweep's own code comment for why this matters
+/// beyond ordinary Drop-time cleanup. Grows as new scenarios add target
+/// applications; just Notepad today.
+const SWEPT_TARGET_IMAGE_NAMES: &[&str] = &["notepad.exe"];
+
 /// Enforces one live Verbatim instance at a time within this process.
 ///
 /// This is a same-process guard, not a cross-process one: tests must also
@@ -104,28 +175,58 @@ pub struct Scenario {
     verbatim_pid: u32,
     control: ControlClient,
     speech: SpeechCollector,
-    /// Extra processes launched via [`Scenario::launch_target`], killed on
-    /// drop unless already removed by [`Scenario::kill_target`].
-    launched: Vec<u32>,
+    /// The shared action-and-speech log this scenario's gesture and key
+    /// injection writes to; [`speech`](Self::speech)'s collector holds a
+    /// clone of the same handle and writes utterances to it, so a failure
+    /// can print both interleaved in time order. See [`crate::timeline`].
+    timeline: Timeline,
+    /// Extra processes launched via [`Scenario::launch_target`]: pid paired
+    /// with the image (executable file) name recorded at launch time, since
+    /// pid alone is not reliable cleanup for every target application (see
+    /// that method's doc comment) — killed on drop unless already removed
+    /// by [`Scenario::kill_target`].
+    launched: Vec<(u32, String)>,
 }
 
 impl Scenario {
     /// Launches a fresh Verbatim through the agent named by
-    /// [`crate::ENDPOINT_ENV`]: writes a `settings.toml` next to
-    /// `verbatim.exe` selecting the capture synthesizer (audio-free and
-    /// dependency-free — it needs no installed voices, unlike `OneCore`),
-    /// launches it with `VERBATIM_TEST_AUDIO=null` (device-free
-    /// `NullSink`, still emitting complete latency timelines), and waits
-    /// for its control plane to answer over the agent's tunnel. Opens a
-    /// second, dedicated tunnel connection for speech collection (see
-    /// [`crate::speech::SpeechCollector`] for why it must not share the
-    /// command connection).
+    /// [`crate::ENDPOINT_ENV`].
+    ///
+    /// In runner-direct mode (the default — see [`REMOTE_ENV`]), first
+    /// stages `verbatim.exe` and `verbatim-outpost.exe` into
+    /// `target/e2e-stage` under the workspace root (see [`stage_binaries`]),
+    /// then writes [`verbatim_config::Settings::for_e2e`]'s fixed
+    /// settings.toml there selecting the capture synthesizer (audio-free
+    /// and dependency-free — it needs no installed voices, unlike
+    /// `OneCore`), and launches *that* staged copy with
+    /// `VERBATIM_TEST_AUDIO=null` (device-free `NullSink`, still emitting
+    /// complete latency timelines). The developer's own
+    /// `target/debug/verbatim.exe` and its `settings.toml` are never read or
+    /// written by this. In remote mode `cargo xtask vm deploy` already
+    /// staged the guest side equivalently, so this launches
+    /// [`VERBATIM_EXE_ENV`]'s path directly instead.
+    ///
+    /// Either way, before any of that, this first sweeps
+    /// [`SWEPT_TARGET_IMAGE_NAMES`] on the agent's guest, so every scenario
+    /// begins from as clean a state as possible even after a prior run
+    /// aborted before its own [`Drop`] cleanup ran. Once Verbatim itself is
+    /// launched, this waits for its control plane to answer over the
+    /// agent's tunnel and opens a second, dedicated tunnel connection for
+    /// speech collection (see [`crate::speech::SpeechCollector`] for why it
+    /// must not share the command connection).
+    ///
+    /// Under [`AUDIBLE_ENV`] both choices flip: the settings selects
+    /// `OneCore` and `VERBATIM_TEST_AUDIO=null` is not passed, so Verbatim
+    /// speaks for real. See that constant's doc comment for why that is a
+    /// debugging aid, not an acceptance mode.
     ///
     /// # Errors
     ///
-    /// Returns an error if [`crate::ENDPOINT_ENV`] is unset, `verbatim.exe`
-    /// cannot be found, the agent cannot be reached, or Verbatim's control
-    /// plane never comes up within the launch timeout.
+    /// Returns an error if [`crate::ENDPOINT_ENV`] is unset, the source
+    /// `verbatim.exe` (or, in runner-direct mode, `verbatim-outpost.exe`
+    /// next to it) cannot be found, staging fails, the agent cannot be
+    /// reached, or Verbatim's control plane never comes up within the
+    /// launch timeout.
     pub fn launch() -> io::Result<Self> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
@@ -135,36 +236,71 @@ impl Scenario {
 
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
+        let audible = is_audible();
         if !remote && !verbatim_exe.is_file() {
             return Err(io::Error::other(format!(
                 "verbatim.exe not found at {} (set {VERBATIM_EXE_ENV} to override, or {REMOTE_ENV} if it lives in a guest)",
                 verbatim_exe.display()
             )));
         }
-        let exe_dir = verbatim_exe
-            .parent()
-            .ok_or_else(|| io::Error::other("verbatim.exe path has no parent directory"))?;
-        // In a remote run the path above names a location in the guest, so
-        // neither the existence check nor the config write can happen here;
-        // `cargo xtask vm deploy` staged both inside the guest already.
-        if !remote {
-            configure_capture_synth(exe_dir)?;
-        }
 
-        let exe_str = verbatim_exe
+        // In a remote run the path above names a location in the guest, so
+        // neither staging nor the config write can happen here; `cargo
+        // xtask vm deploy` staged both inside the guest already (selecting
+        // the same synth, per `--audible`). In runner-direct mode, stage a
+        // private copy so this suite never reads or writes the developer's
+        // own build output directory.
+        let (launch_exe, launch_dir) = if remote {
+            let exe_dir = verbatim_exe
+                .parent()
+                .ok_or_else(|| io::Error::other("verbatim.exe path has no parent directory"))?
+                .to_path_buf();
+            (verbatim_exe, exe_dir)
+        } else {
+            let source_dir = verbatim_exe
+                .parent()
+                .ok_or_else(|| io::Error::other("verbatim.exe path has no parent directory"))?;
+            let stage_dir = stage_binaries(source_dir)?;
+            let synth_id = if audible { "onecore" } else { "capture" };
+            configure_synth(&stage_dir, synth_id)?;
+            let staged_exe = stage_dir.join("verbatim.exe");
+            (staged_exe, stage_dir)
+        };
+
+        let exe_str = launch_exe
             .to_str()
             .ok_or_else(|| io::Error::other("verbatim.exe path is not valid UTF-8"))?;
-        let exe_dir_str = exe_dir
+        let exe_dir_str = launch_dir
             .to_str()
             .ok_or_else(|| io::Error::other("verbatim.exe directory is not valid UTF-8"))?;
-        let stderr_path = verbatim_stderr_log_path(exe_dir, remote)?;
+        let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
+
+        // Audible mode omits VERBATIM_TEST_AUDIO=null entirely, so
+        // verbatim-app's own startup check leaves the real WasapiSink in
+        // place instead of swapping in NullSink; see AUDIBLE_ENV.
+        let launch_env: &[(String, String)] = if audible {
+            &[]
+        } else {
+            &[("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
+        };
 
         let mut process_agent = AgentClient::connect(&agent_addr)?;
+        // Sweep known target-application image names before doing anything
+        // else, so this scenario starts from as clean a state as possible
+        // even after a prior run aborted without running its own Drop
+        // cleanup (a killed test process, a Ctrl+C, a panic that unwound
+        // past Scenario somehow). Best-effort: a sweep failure here is
+        // logged, not fatal to the launch.
+        for name in SWEPT_TARGET_IMAGE_NAMES {
+            if let Err(error) = process_agent.kill_processes_by_name(name) {
+                tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
+            }
+        }
         let verbatim_pid = process_agent.launch_process(
             exe_str,
             &[],
             Some(exe_dir_str),
-            &[("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())],
+            launch_env,
             Some(&stderr_path),
         )?;
 
@@ -187,10 +323,12 @@ impl Scenario {
                 )));
             }
         };
-        let speech = SpeechCollector::subscribe(speech_tunnel).map_err(|error| {
-            let _ = process_agent.kill_process(verbatim_pid);
-            io::Error::other(format!("could not subscribe to speech: {error}"))
-        })?;
+        let timeline = Timeline::new();
+        let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone(), is_paced())
+            .map_err(|error| {
+                let _ = process_agent.kill_process(verbatim_pid);
+                io::Error::other(format!("could not subscribe to speech: {error}"))
+            })?;
 
         // See GUI_SETTLE_DELAY's doc comment: the control plane answering
         // does not yet mean the GUI thread has installed its gesture
@@ -203,6 +341,7 @@ impl Scenario {
             verbatim_pid,
             control,
             speech,
+            timeline,
             launched: Vec::new(),
         })
     }
@@ -225,6 +364,7 @@ impl Scenario {
     ///
     /// Returns an error if the request fails.
     pub fn send_gesture(&mut self, identifier: &str) -> io::Result<()> {
+        self.timeline.push_gesture(identifier);
         ok_or_error(self.control.request(Request::SendGesture {
             identifier: identifier.to_owned(),
         })?)?;
@@ -239,6 +379,7 @@ impl Scenario {
     ///
     /// Returns an error if the request fails.
     pub fn send_keys(&mut self, keys: &[&str]) -> io::Result<()> {
+        self.timeline.push_keys(keys);
         ok_or_error(self.control.request(Request::SendKeys {
             keys: keys.iter().map(|key| (*key).to_owned()).collect(),
         })?)?;
@@ -246,8 +387,17 @@ impl Scenario {
     }
 
     /// Launches an extra target application (for example `notepad.exe`)
-    /// through the agent, tracking it for cleanup on drop unless
-    /// [`Scenario::kill_target`] removes it first.
+    /// through the agent, tracking it (pid and image name) for cleanup on
+    /// drop unless [`Scenario::kill_target`] removes it first.
+    ///
+    /// The image name matters as much as the pid: confirmed live against
+    /// the M2 guest, launching `notepad.exe` — even a single, solo launch
+    /// with no other instance already open — hands off to a differently
+    /// pid'd process and the launched pid itself exits within a few
+    /// seconds. A pid-only kill later can therefore be a silent no-op
+    /// against a process that is already gone, leaving the real window
+    /// behind as a stray; [`Scenario::kill_target`] and [`Drop`] both sweep
+    /// by this recorded name for exactly that reason.
     ///
     /// # Errors
     ///
@@ -257,7 +407,7 @@ impl Scenario {
         let pid = self
             .process_agent
             .launch_process(command, &args, None, &[], None)?;
-        self.launched.push(pid);
+        self.launched.push((pid, image_name(command)));
         Ok(pid)
     }
 
@@ -265,12 +415,37 @@ impl Scenario {
     /// [`Scenario::launch_target`] and stops tracking it for drop-time
     /// cleanup.
     ///
+    /// Kills by pid first (`pid`'s own `KillOutcome` is this method's
+    /// return value), then sweeps by the image name recorded at launch —
+    /// see [`launch_target`](Self::launch_target)'s doc comment for why a
+    /// pid-only kill can miss the process actually holding the window. A
+    /// failure sweeping by name is logged and does not change this method's
+    /// own result, since the pid-kill above is the primary outcome being
+    /// reported.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the request fails.
+    /// Returns an error if the pid-kill request fails.
     pub fn kill_target(&mut self, pid: u32) -> io::Result<KillOutcome> {
-        self.launched.retain(|&launched| launched != pid);
-        self.process_agent.kill_process(pid)
+        let name = self
+            .launched
+            .iter()
+            .find(|(launched_pid, _)| *launched_pid == pid)
+            .map(|(_, name)| name.clone());
+        self.launched
+            .retain(|(launched_pid, _)| *launched_pid != pid);
+        let outcome = self.process_agent.kill_process(pid)?;
+        if let Some(name) = name
+            && let Err(error) = self.process_agent.kill_processes_by_name(&name)
+        {
+            tracing::warn!(
+                pid,
+                name,
+                %error,
+                "failed to sweep by image name after kill_target"
+            );
+        }
+        Ok(outcome)
     }
 
     /// Asks the agent whether `pid` is still running.
@@ -355,12 +530,26 @@ impl Scenario {
 
 impl Drop for Scenario {
     fn drop(&mut self) {
-        for pid in self.launched.drain(..) {
+        // Kill by pid first, then sweep by the recorded image name — see
+        // launch_target's doc comment for why a pid-only kill can miss the
+        // process actually holding the window (confirmed live for
+        // notepad.exe). Both steps are best-effort: a failure in either is
+        // logged, not propagated, since this runs even when the test
+        // itself already failed or panicked.
+        for (pid, name) in self.launched.drain(..) {
             if let Err(error) = self.process_agent.kill_process(pid) {
                 tracing::warn!(
                     pid,
                     %error,
                     "failed to kill a scenario-launched process during cleanup"
+                );
+            }
+            if let Err(error) = self.process_agent.kill_processes_by_name(&name) {
+                tracing::warn!(
+                    pid,
+                    name,
+                    %error,
+                    "failed to sweep a scenario-launched process's image name during cleanup"
                 );
             }
         }
@@ -409,10 +598,20 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// The `verbatim.exe` path a scenario launches: [`VERBATIM_EXE_ENV`] when
-/// set, otherwise `target/debug/verbatim.exe` under the workspace root.
+/// The source `verbatim.exe` path: [`VERBATIM_EXE_ENV`] when set, otherwise
+/// `target/debug/verbatim.exe` under the workspace root. In a remote run
+/// this is launched directly; in runner-direct mode it is only the source
+/// [`stage_binaries`] copies from, never launched itself.
 fn verbatim_exe_path() -> PathBuf {
-    if let Ok(path) = std::env::var(VERBATIM_EXE_ENV) {
+    resolve_verbatim_exe_path(std::env::var(VERBATIM_EXE_ENV).ok())
+}
+
+/// The pure resolution logic behind [`verbatim_exe_path`], split out so it
+/// can be unit tested without mutating the real process environment:
+/// `override_path`, when given, wins outright, otherwise the default under
+/// [`workspace_root`].
+fn resolve_verbatim_exe_path(override_path: Option<String>) -> PathBuf {
+    if let Some(path) = override_path {
         return PathBuf::from(path);
     }
     workspace_root()
@@ -429,8 +628,8 @@ fn verbatim_exe_path() -> PathBuf {
 /// In a remote run this is a fixed guest-side path matching what
 /// `cargo xtask vm logs` pulls back out (`xtask/src/vm/logs.rs`); `exe_dir`
 /// is ignored in that case since it names a location on this host, not the
-/// guest. In runner-direct mode it sits next to the launched `verbatim.exe`
-/// itself, alongside its `settings.toml`.
+/// guest. In runner-direct mode it sits next to the staged `verbatim.exe`
+/// copy itself, alongside its `settings.toml`.
 fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> {
     if remote {
         return Ok(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned());
@@ -442,27 +641,257 @@ fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> 
         .ok_or_else(|| io::Error::other("stderr log path is not valid UTF-8"))
 }
 
-/// Writes `settings.toml` in `exe_dir` selecting the capture synthesizer
-/// (id `capture`, registered by `verbatim-app` only when
-/// `VERBATIM_TEST_AUDIO=null` is set — see `verbatim-synth-capture`).
+/// Copies `verbatim.exe` and `verbatim-outpost.exe` from `source_dir` (the
+/// directory [`verbatim_exe_path`] resolved — the ordinary build output, or
+/// [`VERBATIM_EXE_ENV`]'s override directory) into the fixed staging
+/// directory `target/e2e-stage` under the workspace root, and returns that
+/// staging directory.
 ///
-/// Deliberately not `onecore`: `OneCoreSynth::new` fails outright when no
-/// `OneCore` voices are installed, which would fail every scenario launch
-/// on a bare CI runner. The capture synth needs no installed voices and
-/// exercises the same setting-descriptor-driven dialog machinery with a
-/// smaller descriptor set (voice choice, rate slider; no rate-boost
-/// toggle, unlike `OneCore` — the M1 exit-regression test documents this
-/// where it walks the Speech dialog's controls).
+/// The outpost binary must come along, not just `verbatim.exe`:
+/// `verbatim_outpost::supervisor::Supervisor::new` resolves it next to
+/// whatever `verbatim.exe` is actually running as (`std::env::current_exe`),
+/// so once the launched copy lives in the staging directory, the outpost
+/// must live there too or the supervisor cannot find it.
 ///
-/// In runner-direct mode (this suite and the target share a filesystem)
-/// writing directly here is correct; VM deploys handle this differently,
-/// through `xtask vm deploy`.
-fn configure_capture_synth(exe_dir: &Path) -> io::Result<()> {
-    let mut store = ConfigStore::load(exe_dir).map_err(|error| config_error(&error))?;
-    store.settings_mut().speech.synthesizer = Some("capture".to_owned());
+/// A file already staged with matching contents is left alone rather than
+/// re-copied (see [`files_match`]) — the common case in a tight edit-test
+/// loop where nothing changed since the last run.
+///
+/// # Errors
+///
+/// Returns an error if a required source binary is missing or a copy fails.
+fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
+    let stage_dir = workspace_root().join("target").join("e2e-stage");
+    copy_into_stage(source_dir, &stage_dir)?;
+    Ok(stage_dir)
+}
+
+/// The directory-parameterized core of [`stage_binaries`], split out so unit
+/// tests can exercise the hash-skip and missing-source-binary behavior
+/// against temporary directories instead of the real workspace's
+/// `target/e2e-stage` (which [`stage_binaries`] hardwires as its
+/// destination).
+fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(stage_dir)?;
+    for name in ["verbatim.exe", "verbatim-outpost.exe"] {
+        let source = source_dir.join(name);
+        if !source.is_file() {
+            return Err(io::Error::other(format!(
+                "{name} not found at {} (set {VERBATIM_EXE_ENV} to override its directory, or {REMOTE_ENV} if it lives in a guest)",
+                source.display()
+            )));
+        }
+        let destination = stage_dir.join(name);
+        if !files_match(&source, &destination)? {
+            fs::copy(&source, &destination)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `source` and `destination` already hold identical bytes.
+/// `destination` not existing counts as "does not match" rather than an
+/// error, since that is the ordinary first-run case. A plain full-content
+/// comparison, not a cryptographic hash — both files are already local and
+/// this only guards a same-machine copy against a `cargo build` no-op, not
+/// against tampering, so simplicity wins over speed here.
+fn files_match(source: &Path, destination: &Path) -> io::Result<bool> {
+    if !destination.is_file() {
+        return Ok(false);
+    }
+    Ok(fs::read(source)? == fs::read(destination)?)
+}
+
+/// Writes `settings.toml` in `dir` to [`Settings::for_e2e`]'s fixed shape,
+/// selecting the synthesizer named by `synth_id`. Never a load-modify-save
+/// of whatever settings already sit in `dir`: builds the store from
+/// [`Settings::for_e2e`] directly ([`ConfigStore::from_settings`]) and
+/// writes it fresh, so a run's configuration can never accumulate state
+/// left over from a previous run.
+///
+/// Two call shapes, both from [`Scenario::launch`]:
+///
+/// - The ordinary, silent case passes `"capture"`: the capture synthesizer,
+///   registered by `verbatim-app` only when `VERBATIM_TEST_AUDIO=null` is
+///   set (see `verbatim-synth-capture`). Deliberately not `onecore` there:
+///   `OneCoreSynth::new` fails outright when no `OneCore` voices are
+///   installed, which would fail every scenario launch on a bare CI
+///   runner. The capture synth needs no installed voices and exercises the
+///   same setting-descriptor-driven dialog machinery with a smaller
+///   descriptor set (voice choice, rate slider; no rate-boost toggle,
+///   unlike `OneCore` — the M1 exit-regression test documents this where it
+///   walks the Speech dialog's controls).
+/// - [`AUDIBLE_ENV`]'s case passes `"onecore"`: the real synthesizer, so a
+///   human listening to the run hears real speech through real hardware.
+///
+/// Called only in runner-direct mode, on `dir` being [`stage_binaries`]'s
+/// staging directory (this suite and the staged copy share a filesystem, so
+/// writing directly there is correct); VM deploys handle this differently,
+/// through `xtask vm deploy`'s own `write_synth_settings`, staged and
+/// parameterized the same way but kept in lockstep independently — see
+/// [`Settings::for_e2e`]'s doc comment.
+fn configure_synth(dir: &Path, synth_id: &str) -> io::Result<()> {
+    let store = ConfigStore::from_settings(dir, Settings::for_e2e(synth_id));
     store.save_settings().map_err(|error| config_error(&error))
 }
 
 fn config_error(error: &verbatim_config::ConfigError) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+/// The image (executable file) name [`Scenario::launch_target`] records
+/// for later cleanup: just the file name component of `command`, matching
+/// what Windows itself reports as a process's image name (what
+/// `verbatim_agent::protocol::Request::KillProcessesByName` compares
+/// against) — never a full path. Falls back to `command` verbatim on the
+/// rare path that has no file name component at all, so this never fails
+/// outright over what is only ever used as a best-effort cleanup key.
+fn image_name(command: &str) -> String {
+    Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or_else(|| command.to_owned(), str::to_owned)
+}
+
+/// Unit coverage for the runner-direct staging pieces that a live agent
+/// connection is not needed to exercise: fixed-settings generation, the
+/// hash-skip copy behavior, and [`VERBATIM_EXE_ENV`]'s override resolution.
+/// [`Scenario::launch`] itself, and therefore the end-to-end staging flow
+/// these pieces compose into, is only exercised live — by
+/// `.github/workflows/ci.yml`'s `e2e` job (runner-direct) and
+/// `cargo xtask vm test` (remote) — since it needs a running agent.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join("verbatim-e2e-scenario-tests")
+            .join(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn resolve_verbatim_exe_path_honors_the_override() {
+        assert_eq!(
+            resolve_verbatim_exe_path(Some(r"C:\somewhere\verbatim.exe".to_owned())),
+            PathBuf::from(r"C:\somewhere\verbatim.exe"),
+            "the override names the source directory to stage from, not a launch path"
+        );
+    }
+
+    #[test]
+    fn resolve_verbatim_exe_path_defaults_under_the_workspace_root() {
+        assert_eq!(
+            resolve_verbatim_exe_path(None),
+            workspace_root()
+                .join("target")
+                .join("debug")
+                .join("verbatim.exe")
+        );
+    }
+
+    #[test]
+    fn files_match_true_for_identical_content() {
+        let dir = temp_dir("files-match-identical");
+        let a = dir.join("a.bin");
+        let b = dir.join("b.bin");
+        fs::write(&a, b"same bytes").expect("write a");
+        fs::write(&b, b"same bytes").expect("write b");
+        assert!(files_match(&a, &b).expect("compares"));
+    }
+
+    #[test]
+    fn files_match_false_for_different_content() {
+        let dir = temp_dir("files-match-different");
+        let a = dir.join("a.bin");
+        let b = dir.join("b.bin");
+        fs::write(&a, b"one").expect("write a");
+        fs::write(&b, b"two").expect("write b");
+        assert!(!files_match(&a, &b).expect("compares"));
+    }
+
+    #[test]
+    fn files_match_false_when_destination_missing() {
+        let dir = temp_dir("files-match-missing");
+        let a = dir.join("a.bin");
+        fs::write(&a, b"content").expect("write a");
+        let b = dir.join("missing.bin");
+        assert!(!files_match(&a, &b).expect("compares"));
+    }
+
+    #[test]
+    fn copy_into_stage_copies_missing_and_skips_unchanged_and_recopies_changed() {
+        let source_dir = temp_dir("stage-source");
+        let stage_dir = temp_dir("stage-destination");
+        fs::write(source_dir.join("verbatim.exe"), b"verbatim v1").expect("seed verbatim.exe");
+        fs::write(source_dir.join("verbatim-outpost.exe"), b"outpost v1")
+            .expect("seed verbatim-outpost.exe");
+
+        copy_into_stage(&source_dir, &stage_dir).expect("first copy");
+        assert_eq!(
+            fs::read(stage_dir.join("verbatim.exe")).expect("read staged verbatim.exe"),
+            b"verbatim v1"
+        );
+        assert_eq!(
+            fs::read(stage_dir.join("verbatim-outpost.exe")).expect("read staged outpost"),
+            b"outpost v1"
+        );
+
+        // Simulate a stale staged copy left over from an earlier build, then
+        // confirm a second call notices the mismatch and overwrites it
+        // rather than leaving it (the hash-skip path only applies when the
+        // bytes already match).
+        fs::write(
+            stage_dir.join("verbatim.exe"),
+            b"stale, must be overwritten",
+        )
+        .expect("simulate an out-of-date staged copy");
+        copy_into_stage(&source_dir, &stage_dir).expect("second copy overwrites the mismatch");
+        assert_eq!(
+            fs::read(stage_dir.join("verbatim.exe")).expect("read staged verbatim.exe"),
+            b"verbatim v1",
+            "a changed destination must be copied over again, not left stale"
+        );
+    }
+
+    #[test]
+    fn copy_into_stage_errors_when_the_outpost_binary_is_missing() {
+        let source_dir = temp_dir("stage-missing-source");
+        let stage_dir = temp_dir("stage-missing-destination");
+        // Only verbatim.exe, not the outpost: the supervisor resolves the
+        // outpost next to whatever verbatim.exe is running as, so both must
+        // be staged together or the launched copy cannot find it.
+        fs::write(source_dir.join("verbatim.exe"), b"verbatim").expect("seed verbatim.exe");
+
+        let error = copy_into_stage(&source_dir, &stage_dir)
+            .expect_err("a missing verbatim-outpost.exe must be an error, not a silent skip");
+        assert!(error.to_string().contains("verbatim-outpost.exe"));
+    }
+
+    #[test]
+    fn configure_synth_writes_fixed_settings_never_a_merge_of_existing_state() {
+        let dir = temp_dir("configure-synth");
+        // Seed a pre-existing settings.toml carrying state a load-modify-save
+        // would have carried forward (a different locale, a different
+        // synthesizer) so this test would fail if configure_synth ever
+        // starts loading instead of building fresh.
+        fs::write(
+            dir.join(ConfigStore::SETTINGS_FILE),
+            "locale = \"de\"\n[speech]\nsynthesizer = \"onecore\"\n",
+        )
+        .expect("seed a pre-existing settings.toml");
+
+        configure_synth(&dir, "capture").expect("writes fixed settings");
+
+        let store = ConfigStore::load(&dir).expect("reloads what configure_synth wrote");
+        assert_eq!(store.settings(), &Settings::for_e2e("capture"));
+        assert_eq!(
+            store.settings().locale,
+            None,
+            "the pre-existing locale must not survive: configure_synth never loads existing state"
+        );
+    }
 }

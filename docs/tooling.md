@@ -112,10 +112,15 @@ would have emitted it on real hardware — so `LatencyLedger` still records a
 complete event-to-audio timeline with nothing actually playing, and
 `--last N`/`report_latency` assertions still have something to check.
 
-Every scenario `crates/verbatim-e2e` launches sets this variable, and
-`cargo xtask vm deploy` stages a `settings.toml` selecting the capture synth
-for exactly the same reason (no installed voices required, cross-process
-setting-descriptor coverage is still exercised).
+Every scenario `crates/verbatim-e2e` launches sets this variable in
+runner-direct mode, which defaults to the capture synth for exactly the
+same reason (no installed voices required, cross-process setting-descriptor
+coverage is still exercised). `cargo xtask vm deploy` (and `vm test`, and
+`vm create`'s own bake-in of the golden checkpoint) is different: it always
+stages a `settings.toml` selecting the real `OneCore` synthesizer instead,
+since the VM's golden image always has `OneCore` voices installed and a
+real VB-CABLE audio device — see "Hearing and recording a run" below for
+what that means for a VM run's audio.
 
 ## Running mockapp by hand
 
@@ -204,18 +209,45 @@ under it (`single_instance::acquire_replacing`'s own algorithm). This is
 exactly what `.github/workflows/ci.yml`'s `e2e` job does, on a plain
 `windows-latest` runner, with the same two environment variables.
 
+The suite always runs against a fixed, generated configuration, never
+whatever `settings.toml` a developer's own manual runs left behind.
+Concretely, in this runner-direct mode, `Scenario::launch` copies
+`verbatim.exe` and `verbatim-outpost.exe` into `target/e2e-stage` under the
+workspace root (skipping a copy when the destination already matches
+byte-for-byte) and writes a fresh `settings.toml` there — `Settings::default`
+plus exactly the synthesizer choice — before launching that staged copy.
+Your own `target/debug/verbatim.exe` and its `settings.toml` are never read
+or mutated by a test run. Against the VM, `cargo xtask vm deploy` stages the
+guest side the same way, independently (the two crates cannot share code, so
+they are kept in lockstep by hand — see `verbatim_config::Settings::for_e2e`'s
+doc comment, the shared constructor both staging steps build from).
+
 Two more environment variables matter for less common cases:
 
-- `VERBATIM_E2E_VERBATIM_EXE` overrides the `verbatim.exe` path a scenario
-  launches. It defaults to `target/debug/verbatim.exe` under the workspace
-  root (computed from the crate's own manifest directory, so it does not
-  depend on your working directory).
+- `VERBATIM_E2E_VERBATIM_EXE` overrides the directory a scenario stages its
+  binaries *from* — the source build, not where it actually launches from.
+  It defaults to `target/debug/verbatim.exe` under the workspace root
+  (computed from the crate's own manifest directory, so it does not depend
+  on your working directory). Setting it chooses a different source build;
+  the fixed, staged configuration regime is unaffected either way.
 - `VERBATIM_E2E_REMOTE=1` marks a remote run, where the agent, Verbatim, and
   its configuration live on another machine (the Hyper-V guest) — set by
   `cargo xtask vm test`, not something you normally set by hand. It skips
-  the two host-filesystem steps that only make sense when the suite and
-  Verbatim share a filesystem: checking `verbatim.exe` exists, and writing
-  the capture-synth `settings.toml` next to it.
+  the runner-direct staging step entirely (checking the source binaries
+  exist, copying them, and writing `settings.toml`), since `cargo xtask vm
+  deploy` already staged the guest-side equivalent.
+- `VERBATIM_E2E_AUDIBLE=1` requests an audible run — see "Hearing and
+  recording a run" below. Set by hand for a runner-direct audible run;
+  `cargo xtask vm test` sets it automatically now, always, since a VM run
+  is audible by default.
+- `VERBATIM_E2E_PACED=1` makes every speech assertion wait for the matched
+  utterance's audio to finish (the control plane's per-utterance
+  `SpeechFinished` frame) before the next keystroke, so each utterance is
+  heard in full rather than cut off — for watching or recording a run, not
+  for fast CI. It changes only timing, never what is asserted. `cargo xtask
+  vm test --paced` sets it, and `--record` implies it; set it by hand for a
+  paced runner-direct run (only meaningful alongside `VERBATIM_E2E_AUDIBLE`,
+  since the capture synth produces no audio to wait on).
 
 The suite currently has three tests: `session_info` (the agent reports an
 interactive session — the precondition everything else depends on),
@@ -227,16 +259,167 @@ and does not assert).
 Reading a speech-assertion failure: `SpeechCollector::expect_in_order`
 panics with a message naming which matcher, by position, it was waiting for
 (for example "waiting for utterance 3 of 5") along with the literal
-substring it expected, followed by a transcript of every utterance actually
-heard on that connection so far, one per line, oldest first, prefixed with
-its index. Comparing the named matcher against the transcript's tail
-usually shows immediately whether Verbatim said something *close* (wrong
-wording, a race with unrelated desktop activity) or said nothing relevant
-at all (a real regression, or focus never reached the expected control). A
-timeout and an outright connection failure produce distinguishable
+substring it expected, followed by the run's timeline so far — every
+gesture and key the scenario injected and every utterance Verbatim spoke,
+interleaved in time order, one entry per line, each prefixed with the
+milliseconds elapsed since the first entry. Because the commands the test
+sent appear alongside the speech they did or did not provoke, the last line
+before speech stopped is usually the whole diagnosis: you can see the exact
+gesture or keystroke that went out, and whether Verbatim said something
+*close* (wrong wording, a race with unrelated desktop activity) or said
+nothing relevant at all (a real regression, or focus never reached the
+expected control). A timeout and an outright connection failure produce
+distinguishable
 messages — the second appends "underlying error: ..." — so a suite that
 hangs and then fails is not automatically the same bug as one that dies
 outright.
+
+### Hearing and recording a run: the three-mode story
+
+There used to be a silent capture-synth default for the VM, an `--audible`
+flag, and machinery trying to bridge listening and recording into a single
+session. All of that is gone. A VM run now picks one of two things to do
+with its audio, per invocation, and the two never overlap:
+
+- `cargo xtask vm test`, with no flags, is audible by default: it deploys
+  and runs the real `OneCore` synthesizer and real `WasapiSink`, always —
+  there is no more capture-synth default and no `--audible` flag to opt
+  into real audio, since a silent, unrecorded headless VM run produces
+  nothing observable and has no purpose.
+- `cargo xtask vm test --record` is also audible, and additionally records
+  the run as a video with audio, for headless CI and developer review
+  after the fact.
+- `--no-restore` stays, orthogonal to both, exactly as before: it skips the
+  checkpoint restore and its post-restore agent wait for fast local
+  iteration, and must never be used for an acceptance run.
+
+**The key constraint: recording audio and a connected RDP session are
+mutually exclusive. You cannot do both at once.** The moment an RDP
+session — `cargo xtask vm connect`, plain `mstsc.exe`, or `vmconnect.exe`'s
+Enhanced Session — is connected to the guest, Windows replaces that
+session's audio with a "Remote Audio" endpoint, and the VB-CABLE capture
+device `--record` needs becomes invisible within that session. This was
+proven live, twice, with two different tools: ffmpeg and, independently,
+SoX, both failed identically to open the VB-CABLE capture device while an
+RDP session was connected. It is ordinary Windows/RDP session-audio
+behavior, not a bug in this harness, and there is no way around it from
+inside the guest — two approaches were tried and abandoned:
+
+- Configuring "Listen to this device" on the VB-CABLE capture endpoint,
+  to mirror its audio out to whatever Remote Audio endpoint RDP created,
+  via the registry. The audio-endpoint property-store keys involved are
+  protected — writes are denied even running as SYSTEM — and re-enumerating
+  the device (needed to make any change to it take effect) wipes them
+  again regardless.
+- A SoX-based forwarder relaying the cable's audio to Remote Audio. SoX
+  cannot open the cable in the RDP session for the exact same reason
+  ffmpeg cannot: the device simply is not visible there.
+
+Neither is worth retrying. The practical rule that follows: to *hear* a run
+live, connect first and then run `cargo xtask vm test` without `--record`;
+to *record* a run, make sure nothing is connected to the guest first.
+
+**To hear a run live:** `cargo xtask vm connect`, which starts the VM if
+needed, enables Remote Desktop in the guest the first time only (idempotent
+— a second run prints only "already" lines), stores the guest's test
+credentials in this host's own Windows Credential Manager keyed to the
+guest's address, then opens `mstsc.exe` against the guest with audio
+redirected to this computer and no sign-in prompt. Because it signs in as
+the same user the guest's autologon session already runs as, the RDP
+session takes over that session rather than creating a second one — the
+same session the agent and tests run in, so a following test run drives
+exactly what you are watching and listening to. Then, in a second terminal,
+`cargo xtask vm test --no-restore` (audible by default, no flag needed for
+that anymore). Closing the RDP window disconnects rather than logging off,
+leaving the guest running for the test to reuse. Run
+`cargo xtask vm connect --forget` afterward to remove the stored
+credentials again, for example on a shared host; as with any RDP
+disconnect, see Troubleshooting's note below on a locked desktop silently
+swallowing `SendInput` if gestures or keys stop landing after a session.
+The older path still works too, with no host-side credential storage: open
+`vmconnect.exe localhost verbatim` and turn Enhanced Session on (the
+toolbar or View menu) to get audio redirection.
+
+Every speech assertion in this suite, including `m1_exit_regression`'s
+voice-combo section, expects a fixed pair of voice names chosen by mode: the
+capture synth's two fixed names ("Capture A", "Capture B") for a
+non-audible runner-direct run, or the VM's golden image's always-installed
+`OneCore` voice order ("Microsoft David" default, "Microsoft Zira" listed
+next) for an audible run, confirmed live — see that test's own module doc
+and its `expected_voices` helper. `m1_exit_regression`'s own trailing
+latency check does not yet pass under an audible run, though: it requires
+at least one traced utterance to have actually reached audio, and every
+timeline in a live audible run is reported interrupted before audio
+regardless of a connected session or a generous settle pause — a gap
+somewhere in the real `OneCore`/`WasapiSink` audio path, unrelated to and
+unresolved independently of the speech assertions above.
+
+**To record a run:** make sure no RDP session is connected to the guest,
+then `cargo xtask vm test --record` (combinable with `--no-restore`, in
+either order). Before starting ffmpeg, this re-asserts VB-CABLE as the
+guest's default render device (`vm/scripts/Set-DefaultAudioRenderDevice.ps1`,
+already staged to `C:\VerbatimLab\tools` by the golden image, run again at
+record time to undo any stale pin a prior, now-disconnected `connect`
+session left behind), then launches ffmpeg inside the guest's own
+interactive session through the in-guest agent before the suite starts.
+ffmpeg has to go through the agent rather than PowerShell Direct for the
+same session-isolation reason the agent exists at all (see Troubleshooting
+below): `gdigrab`, ffmpeg's Windows desktop-capture input, needs a real
+interactive desktop, which a PowerShell Direct or WinRM session never has.
+Recording itself needs no Enhanced Session and no `cargo xtask vm connect`:
+the guest's VB-CABLE virtual audio driver
+(`vm/scripts/Initialize-VerbatimHarness.ps1`'s `Install-VbCableAudioDriver`)
+gives it a real WASAPI render endpoint ("Speakers (VB-Audio Virtual
+Cable)") with a matching loopback capture endpoint ("CABLE Output
+(VB-Audio Virtual Cable)") that ffmpeg's `dshow` input records from
+directly, headless, with no host RDP session involved at all — which is
+exactly why one must not be connected when `--record` runs. This driver is a
+required part of the golden image for a recorded run to work — unlike the
+Scream driver it replaces (which failed to root-enumerate a device node
+under Secure Boot), a missing one now fails the image build rather than
+silently leaving recording unavailable. The ffmpeg and ffprobe binaries the
+recording path drives are not in the image at all: `cargo xtask vm deploy`
+copies them into `C:\VerbatimLab\tools` over PowerShell Direct from the
+LFS-vendored `vm/vendor/ffmpeg` copy, hash-skipping after the first deploy
+just like Verbatim's own binaries (see the image-rebuild section below and
+`vm/vendor/ffmpeg/README.md`).
+
+If the guest's default render device cannot be pinned to VB-CABLE, or
+ffmpeg exits immediately after being launched with an audio input, that is
+treated as the expected fallout of a connected RDP session having hidden
+the capture device — not aborted on. `cargo xtask vm test --record` prints
+a clear warning and retries with a video-only ffmpeg launch instead, so the
+suite still runs and a video (with no audio track) is still pulled at the
+end; the output filename gets a `-no-audio` suffix in that case, decided by
+probing the pulled file with ffprobe rather than trusted from which launch
+path was taken, so any other way a recording ends up without real audio is
+caught the same way.
+
+The recording is written inside the guest as fragmented MP4
+(`+frag_keyframe+empty_moov+default_base_moof`), so terminating ffmpeg the
+same blunt way `Scenario`'s own cleanup terminates everything else (no
+graceful stdin `q`, just the agent's existing `KillProcess`) still leaves a
+playable file: each completed video/audio fragment stands on its own, so
+the worst a kill mid-fragment costs is a couple of seconds off the tail,
+never the whole recording. After the suite finishes (whether it passed or
+failed — a failing run's video is exactly what is useful to look at),
+`cargo xtask vm test` stops ffmpeg, pulls the result out of the guest over
+the same PowerShell Direct file-read `cargo xtask vm logs` already uses for
+flight-recorder dumps (`Copy-VMFile` only copies host-to-guest, never the
+other direction), and writes it to `artifacts/vm-recordings` on the host as
+`verbatim-e2e-<unix-seconds>.mp4` (or `verbatim-e2e-<unix-seconds>-no-audio.mp4`),
+printing the path once it lands.
+
+`cargo xtask vm test` needs `LIBCLANG_PATH` for wxDragon's bindgen, exactly
+as `cargo xtask ci` does (see this repository's `CLAUDE.md`) — building
+`verbatim-app` pulls in `verbatim-gui`. Unlike a plain `cargo build`, `vm
+test` (through `xtask::vm::deploy::build`) now probes for it itself, reusing
+`cargo xtask ci`'s own candidate list, and sets it on the build's
+environment automatically when found; it prints which directory it used, or
+a note that it found none and is relying on `LIBCLANG_PATH` or `PATH`
+already being set. Nothing needs to be exported by hand on a machine where
+Visual Studio's bundled LLVM or a standalone LLVM install lives in one of
+the probed locations.
 
 ## cargo xtask vm verbs
 
@@ -281,11 +464,19 @@ arguments for the full verb list printed from the source of truth.
   where nothing changed since the last deploy. Use this on its own when you
   want to push a fresh build into an already-running guest without touching
   checkpoints at all.
-- `test` restores `golden`, deploys the current build on top of it,
-  discovers the guest's IP address, then runs `crates/verbatim-e2e`'s suite
-  on the host with `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
-  `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path, and
-  `VERBATIM_E2E_REMOTE=1` set. This is the one-command loop
+- `test` builds the current source first, before touching the VM at all
+  (needs `LIBCLANG_PATH`, set automatically when found — see "Hearing and
+  recording a run" above), then restores `golden`, stages and copies that
+  build onto it (always with the real `OneCore` synthesizer — no more
+  capture-synth choice on the VM path), discovers the guest's IP address,
+  then runs `crates/verbatim-e2e`'s suite on the host with
+  `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
+  `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path,
+  `VERBATIM_E2E_REMOTE=1`, and `VERBATIM_E2E_AUDIBLE=1` set. Building first,
+  ahead of the restore, is deliberate: a compile failure is then caught with
+  zero VM state changes, rather than after a restore that then has to be
+  paid for again on the next attempt. `--no-restore` does not change this —
+  the build still runs first either way. This is the one-command loop
   `docs/roadmap.md`'s M2 exit criteria describes. `cargo xtask vm test
   --no-restore` skips the checkpoint restore (and its post-restore agent
   wait) entirely, deploying straight onto whatever the guest is currently
@@ -294,7 +485,14 @@ arguments for the full verb list printed from the source of truth.
   makes a rerun after a small code change fast — restore plus its agent
   wait is most of an ordinary run's wall-clock cost. Never use
   `--no-restore` for an acceptance run: only a run that actually restored
-  `golden` first demonstrates the harness's real exit criteria.
+  `golden` first demonstrates the harness's real exit criteria. `--record`
+  additionally captures the run as a video with audio into
+  `artifacts/vm-recordings`; see "Hearing and recording a run" above for the
+  key constraint that recording audio and a connected RDP session are
+  mutually exclusive, and how `--record` degrades to a video-only,
+  `-no-audio`-tagged recording with a warning rather than aborting when a
+  session is connected anyway. Both flags may be given together, in either
+  order.
 - `logs [dir]` pulls flight-recorder dumps (from the guest's
   `C:\VerbatimLab\verbatim\dumps`), the agent's own log
   (`C:\VerbatimLab\agent\agent.log`), and a launched Verbatim's captured
@@ -318,6 +516,14 @@ written by Verbatim's own graceful teardown path, which a panic does not
 reach. This capture file is exactly the corner that closes: pull it with
 `cargo xtask vm logs` and its tail is normally the Rust panic message and
 backtrace that would otherwise be lost with the process.
+- `connect` starts the VM if needed, enables Remote Desktop in the guest
+  the first time only, stores the guest's test credentials in this host's
+  own Windows Credential Manager keyed to the guest's address, then opens
+  `mstsc.exe` against the guest with audio redirected to this computer and
+  no sign-in prompt — see "Hearing and recording a run" above for the full
+  recipe and why this exists instead of `vmconnect.exe`. `--forget` removes
+  the stored credentials (`cmdkey /delete:TERMSRV/<guest-ip>`) and exits
+  without connecting.
 - `delete` stops the VM, removes every checkpoint, removes the VM
   registration, and deletes its virtual hard disks, clearing the way for a
   clean `create`.
@@ -368,8 +574,16 @@ Steps:
    M2 harness proper: persistent autologon, every unattended-session
    setting listed in that script's own header comment, a pinned
    1920x1080 display resolution so control positions stay deterministic
-   across runs, a best-effort Scream virtual audio driver install, the
-   `VerbatimAgent` scheduled task, and its inbound firewall rule). The
+   across runs, the VB-CABLE virtual audio driver (the guest's WASAPI
+   render endpoint every VM run now uses, audible by default, required
+   rather than best-effort), the `VerbatimAgent` scheduled task
+   (restart-on-failure, so an agent killed by an RDP disconnect tearing
+   down its session comes back on its own), and its inbound firewall rule).
+   ffmpeg and ffprobe are deliberately not installed by the image build;
+   `cargo xtask vm deploy` stages them from `vm/vendor/ffmpeg` at deploy
+   time (see the note under "Hearing and recording a run" above and
+   `vm/vendor/ffmpeg/README.md`), which is why an in-guest ffmpeg download
+   is not among the provisioner steps. The
    wrapper then clears compression on the exported files and runs
    `Compare-VM` to catch Hyper-V import incompatibilities before they
    become a mystery later. `cargo xtask vm create` then locates the
@@ -471,7 +685,14 @@ self-healing on the *next* run regardless:
 whatever old instance it finds. A stray guest-side process is not
 self-healing the same way and is simplest to clear by restoring a
 checkpoint (`cargo xtask vm restore`), which reverts the whole VM's process
-state along with everything else.
+state along with everything else — though a target application such as
+Notepad no longer strictly needs that: `launch_target`-launched processes
+are killed by pid and then swept by image name (Windows 11 Notepad hands
+launches off to a differently pid'd process, confirmed live even for a
+single, solo launch, so a pid-only kill can silently miss the real window),
+and `Scenario::launch` sweeps those same image names before doing anything
+else, so a scenario starts clean even after a prior run's cleanup was
+skipped entirely.
 
 **A gesture sent immediately after launch can silently do nothing.** The
 control server starts (and so a tunnel connection succeeds) before

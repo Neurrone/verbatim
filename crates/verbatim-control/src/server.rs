@@ -897,6 +897,15 @@ impl ControlServer {
         });
     }
 
+    /// Fans a [`Frame::SpeechFinished`] out to every speech subscriber,
+    /// marking that `trace_id`'s audio has finished playing.
+    pub fn broadcast_speech_finished(&self, trace_id: TraceId) {
+        let frame = Frame::SpeechFinished { trace_id };
+        self.fan_out(&frame, |entry| {
+            entry.speech_subscribed.load(Ordering::Relaxed)
+        });
+    }
+
     fn fan_out(&self, frame: &Frame, subscribed: impl Fn(&ConnectionEntry) -> bool) {
         let registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
         for entry in registry.values() {

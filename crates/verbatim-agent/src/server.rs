@@ -198,6 +198,13 @@ fn dispatch(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::KillProcessesByName { name } => match process::kill_by_name(&name) {
+            Ok(terminated) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::KilledByName { terminated },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         Request::ProcessStatus { pid } => match process::status(pid) {
             Ok(state) => Frame::Reply {
                 to: id,
@@ -398,6 +405,81 @@ mod tests {
                 payload: ReplyPayload::Killed(KillOutcome::Terminated),
             }
         );
+    }
+
+    /// A uniquely named copy of `powershell.exe`: Windows identifies a
+    /// process's image name from the executable file itself, not the
+    /// command line, so this lets `KillProcessesByName` match
+    /// deterministically over the wire, with no risk of also catching an
+    /// unrelated `powershell.exe` already running on the machine this test
+    /// happens to run on. See `process::tests::kill_by_name_terminates_every_matching_process`'s
+    /// doc comment for why `powershell.exe` plus `Start-Sleep`, not
+    /// `cmd.exe` plus an external `timeout` command.
+    #[test]
+    fn kill_processes_by_name_over_the_wire() {
+        let addr = start_agent(r"\\.\pipe\verbatim-agent-test-unused-g");
+        let mut client = TestClient::connect(addr);
+        client.hello();
+
+        let unique_name = format!(
+            "verbatim-agent-test-killbyname-server-{}.exe",
+            std::process::id()
+        );
+        let exe_path = std::env::temp_dir().join(&unique_name);
+        std::fs::copy(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            &exe_path,
+        )
+        .expect("copies powershell.exe under a unique name");
+
+        let launch_reply = client.request(Request::LaunchProcess {
+            command: exe_path.to_str().expect("utf8 path").to_owned(),
+            args: vec![
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                "Start-Sleep -Seconds 300".to_owned(),
+            ],
+            working_dir: None,
+            env: vec![],
+            stderr_to: None,
+        });
+        let Frame::Reply {
+            payload: ReplyPayload::Launched { pid },
+            ..
+        } = launch_reply
+        else {
+            panic!("expected a Launched reply, got {launch_reply:?}");
+        };
+
+        // Give the OS a moment to register the process in the snapshot
+        // KillProcessesByName walks.
+        thread::sleep(std::time::Duration::from_millis(200));
+
+        let kill_reply = client.request(Request::KillProcessesByName {
+            name: unique_name.clone(),
+        });
+        assert_eq!(
+            kill_reply,
+            Frame::Reply {
+                to: 3,
+                payload: ReplyPayload::KilledByName { terminated: 1 },
+            }
+        );
+
+        let status_reply = client.request(Request::ProcessStatus { pid });
+        let Frame::Reply {
+            payload: ReplyPayload::ProcessStatus(state),
+            ..
+        } = status_reply
+        else {
+            panic!("expected a ProcessStatus reply, got {status_reply:?}");
+        };
+        assert!(
+            matches!(state, ProcessState::Exited { .. }),
+            "expected the process to be exited after KillProcessesByName, got {state:?}"
+        );
+
+        std::fs::remove_file(&exe_path).ok();
     }
 
     #[test]

@@ -142,6 +142,27 @@ impl AgentClient {
         }
     }
 
+    /// Terminates every process on the guest whose image (executable file)
+    /// name matches `name`, case-insensitively — see
+    /// `verbatim_agent::protocol::Request::KillProcessesByName`. Returns
+    /// how many were actually terminated; zero is a normal, successful
+    /// outcome, not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn kill_processes_by_name(&mut self, name: &str) -> io::Result<u32> {
+        match self.request(Request::KillProcessesByName {
+            name: name.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::KilledByName { terminated },
+                ..
+            } => Ok(terminated),
+            other => Err(unexpected("KillProcessesByName", &other)),
+        }
+    }
+
     /// Asks whether `pid` is still running on the guest.
     ///
     /// # Errors

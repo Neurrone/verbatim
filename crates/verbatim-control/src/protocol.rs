@@ -124,6 +124,17 @@ pub enum Frame {
         /// already has by frame time.
         audio_started_at_ms: Option<u64>,
     },
+    /// An utterance's audio has finished playing (subscription frame, same
+    /// speech subscription as [`Frame::Speech`]). Emitted once per utterance
+    /// that plays to completion — not for one interrupted or dropped before
+    /// audio — right after its buffers drain. Lets a paced consumer wait for
+    /// speech to be heard in full before acting (see `verbatim-e2e`'s
+    /// `SpeechCollector` pacing); carries no text, only the `trace_id`, so it
+    /// never competes with [`Frame::Speech`] as a matchable utterance.
+    SpeechFinished {
+        /// Trace ID of the utterance that finished.
+        trace_id: TraceId,
+    },
 }
 
 /// Payload of a [`Frame::Reply`].

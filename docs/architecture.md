@@ -14,17 +14,20 @@ screen reader in both rendered and source form.
   both first-class client stacks behind the normalized tree model, with
   per-app arbitration picking the richest source (as NVDA does). JAB is
   committed but lowest-priority among the backends, landing after UIA and
-  MSAA/IA2 are solid (roadmap M11). Rationale: UIA is the only API for WinUI, Terminal,
+  MSAA/IA2 are solid (roadmap M13). Rationale: UIA is the only API for WinUI, Terminal,
   and modern-Office surfaces, but Firefox and Chromium expose their richest
   tree via IA2, and much of Win32 — including parts of Windows itself — is
   MSAA/IA2-only. Neither API alone covers the desktop.
 - **D2 — Injection is planned but never required for correctness.** An
-  in-process injection helper (NVDA's nvdaHelper analog) is a planned
-  component, but out-of-process IA2 must work first; the helper ships when
-  performance data demands it (see risk R1). Rationale: needed for
-  competitive IA2 performance in large browser documents, but keeping it off
-  the correctness path keeps the x64/ARM64EC/x86 binary matrix and antivirus
-  friction out of early milestones.
+  in-process injection helper (NVDA's nvdaHelper analog) ships with browse
+  mode (roadmap M6), staged inside that milestone: out-of-process IA2 lands
+  first to prove correctness, then the helper adds IA2 call batching and
+  virtual-buffer acceleration for performance. NVDA has already proven that
+  in-process access is what makes large browser documents fast enough, so
+  the helper is scheduled work rather than gated on new measurements; the
+  fixed-corpus comparison against NVDA (M6 exit) verifies the result.
+  Keeping the helper off the correctness path keeps the x64/ARM64EC/x86
+  binary matrix and antivirus friction out of the early milestones.
 - **D3 — E2E runs locally in a Hyper-V Windows 11 VM first**; CI automation
   of E2E is deferred. CI still builds and runs unit and provider tests on
   GitHub-hosted Windows runners. Rationale: GitHub-hosted Windows runners
@@ -65,6 +68,31 @@ screen reader in both rendered and source form.
   hardcoded anywhere in the workspace. Rationale: Fluent's grammar handling
   (plurals, gender, selectors) matters for speech-quality messages, and the
   ecosystem supports the pseudo-locale testing required from M1.
+- **D11 — No display model until last, and screen review does not wait for
+  it.** Screen review is a spatial projection of the normalized tree —
+  visible nodes ordered by bounding rectangle and grouped into visual
+  lines, extent-backed wherever a text interface exposes per-character
+  geometry (UIA TextPattern bounding rectangles, IA2 character extents),
+  rectangle interpolation otherwise — landing with the browse-mode
+  projection machinery (roadmap M6), with OCR as a second text source (M8).
+  A GDI display model in the NVDA tradition (in-process hooks on GDI
+  text-output calls) is deliberately last (M14) and behind a re-triage
+  gate, riding the M6 injection helper as its delivery vehicle; the only
+  work gated on it is the legacy GDI terminal clients (PuTTY, SecureCRT,
+  Tera Term). Rationale: a display model sees only GDI-drawn text, a
+  shrinking share of a Windows 11 screen, while tree-plus-extents is exact
+  wherever a text API exists — including the Chromium, WinUI, and
+  DirectWrite surfaces where a GDI display model sees nothing at all.
+- **D12 — Utterances stay structured until the last pipeline stage.** The
+  reducer never emits flattened strings: an `Utterance` is a sequence of
+  semantic spans — label, role, value, state, description, attribute-tagged
+  text runs — and a presentation stage at the end of the speech pipeline
+  flattens spans to text through a theme, where the default theme
+  reproduces plain speech. Rationale: earcons and voice styling for roles
+  and formatting (roadmap M11, in the Emacspeak audio-formatting tradition)
+  become a theme swap rather than a pipeline rewrite, and dictionary and
+  symbol processing operate on typed spans rather than undifferentiated
+  text.
 
 ## 1. Process and thread model
 
@@ -213,7 +241,7 @@ Two client stacks feed one model. Per-app (occasionally per-window)
 Win32. Arbitration lives in the outpost, is config-overridable per app (and
 tweakable by app-module extensions), and is invisible above the normalized
 model. A third backend, JAB, joins the same arbitration later (D1, roadmap
-M11) for Java applications.
+M13) for Java applications.
 
 ### UIA
 
@@ -250,8 +278,8 @@ M11) for Java applications.
   every property is a cross-process COM round trip. Mitigations, in order:
   fetch discipline (only what the reducer asked for), aggressive outpost-side
   caching keyed to WinEvent invalidations, incremental browse-mode builds,
-  and ultimately the D2 in-process helper for batching once measurements
-  demand it (R1).
+  and the D2 in-process helper for batching, which lands with browse mode
+  (M6).
 - **MSAA-only apps** are normalized at "usable" fidelity through the same
   stack (IA2 is a set of interfaces layered on MSAA plumbing).
 
@@ -268,8 +296,10 @@ later but route through the same `Input` type.
 
 ## 6. Speech and audio
 
-Pipeline stages, in order: utterance, dictionary and symbol processing,
-language tagging, synth driver, PCM, `AudioSink`.
+Pipeline stages, in order: structured utterance (semantic spans, per D12),
+dictionary and symbol processing (per span), presentation (a theme flattens
+spans to text, voice changes, and earcons; the default theme is plain
+speech), language tagging, synth driver, PCM, `AudioSink`.
 
 - **Speech manager**: priority lanes (interrupt/next/queued), index marks with
   callbacks (say-all, braille sync, latency probes), rate/pitch/volume state,
@@ -289,7 +319,7 @@ language tagging, synth driver, PCM, `AudioSink`.
 - **Audio**: `AudioSink` trait; WASAPI event-driven shared mode with small
   buffers as the only initial implementation.
 - **Latency budget** (enforced by tests, not aspiration): from key-down to
-  first audio sample, 50 ms or less with eSpeak on a low-end reference VM.
+  first audio sample, 50 ms or less with eSpeak on the harness VM.
   Every stage is traced (section 9).
 
 ## 7. Extensions (Wasm)
@@ -325,7 +355,10 @@ built region immediately; moving into unbuilt territory triggers on-demand
 expansion. This delivers the "interact with large pages before full render"
 requirement, and because it projects the normalized model (not browser
 internals), the same machinery provides Narrator-style scan mode in ordinary
-apps.
+apps. Screen review is the same projection specialized to geometry (D11):
+visible nodes ordered by bounding rectangle and grouped into visual lines,
+extent-backed where text interfaces exist, with OCR (M8) and eventually the
+display model (M14) as further text sources behind the same review commands.
 
 ## 9. Observability
 
@@ -373,7 +406,8 @@ same-process UIA client/provider hazards).
 
 ## 12. Security posture
 
-- No injection unless and until the D2 helper ships, and then only via it.
+- No injection unless and until the D2 helper ships (M6), and then only via
+  it.
 - Native synth DLLs and Wasm extensions are sandboxed as described; Core never
   loads third-party native code in-process.
 - **UIAccess**: reading elevated apps' UI from a non-elevated Verbatim
@@ -420,9 +454,25 @@ checkpointed as a golden image), `start`/`stop`/`restart`/`restore
 [checkpoint]`, `deploy` (artifacts copied in and the in-guest agent
 restarted via PowerShell Direct), `test` (restore the golden checkpoint,
 deploy, then run the E2E suite via the in-guest agent tunneling Verbatim's
-control plane), `logs`, `delete`. A Scream virtual audio device gives the
-guest a real WASAPI render endpoint with no host RDP session attached, so
-audio-dependent scenarios need no Enhanced Session.
+control plane, audible by default now — real `OneCore` speech, real
+`WasapiSink`, no more capture-synth default or `--audible` flag on this
+path — with `--record` to also capture the run as an mp4), `logs`,
+`connect`, `delete`.
+
+Audio: a VB-CABLE virtual audio device gives the guest a real WASAPI render
+endpoint (Scream, tried first, fails to root-enumerate a device node under
+this image's Secure Boot; VB-CABLE is validly Authenticode-signed and
+installs headless). `test --record` captures desktop video plus that same
+device's loopback audio through ffmpeg, launched in the guest's interactive
+session via the in-guest agent — the same session-isolation reason the
+agent exists at all. Recording audio and a connected RDP session are
+mutually exclusive: RDP replaces the guest session's audio with its own
+"Remote Audio" endpoint and hides the VB-CABLE capture device from that
+session entirely, proven live with both ffmpeg and SoX failing identically
+to open it, so a run is either heard live over a connected session or
+recorded headless, never both at once. See `docs/tooling.md` for the full
+mechanism, the exact recipe for each, and the two dead ends (a registry
+"Listen to this device" mirror, and a SoX forwarder) already ruled out.
 
 ## 15. Crate map
 
@@ -436,7 +486,7 @@ audio-dependent scenarios need no Enhanced Session.
 - `verbatim-uia` and `verbatim-uia-rops` — UIA client stack; remote
   operations.
 - `verbatim-ia2` — MSAA/IA2 client stack (WinEvents, IAccessible2).
-- `verbatim-jab` — Java Access Bridge client stack (planned, M11).
+- `verbatim-jab` — Java Access Bridge client stack (planned, M13).
 - `verbatim-outpost` — the outpost actor and per-app outpost binary, plus the
   Core-side supervisor.
 - `verbatim-control` — control-plane protocol and server.
@@ -455,13 +505,16 @@ audio-dependent scenarios need no Enhanced Session.
 
 - **R1 — Out-of-process IA2 chattiness.** No cache requests or remote ops
   means large browser documents could make browse-mode builds feel slow.
-  Mitigation: fetch discipline and incremental builds first; the M6 exit
-  measures against NVDA on a fixed corpus and pulls the D2 injection helper
-  (M10) forward if needed.
+  Mitigation: fetch discipline and incremental builds first; the D2
+  injection helper lands inside M6 itself (out-of-process first, then the
+  helper), and the M6 exit's fixed-corpus measurement against NVDA verifies
+  the result.
 - **R2 — Outpost process overhead.** One process per app costs working set
   and spawn latency, which matters on low-end devices. Mitigation: idle
-  retirement, pre-spawning on foreground change, measurement as an M3 exit
-  criterion; consolidation into shared hosts as the fallback (D9).
+  retirement, pre-spawning on foreground change, working-set and
+  spawn-latency measurement on the harness VM in M3 (no dedicated low-end
+  VM profile; user reports drive any deeper investigation); consolidation
+  into shared hosts as the fallback (D9).
 - **R3 — Remote-ops on ARM64.** API limits or behavior differences.
   Mitigation: spike alongside first terminal work (M4).
 - **R4 — Eloquence complications.** DLL architecture or licensing issues.

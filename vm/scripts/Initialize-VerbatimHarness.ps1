@@ -14,14 +14,26 @@ the base image into an unattended, deterministic E2E lab machine:
   automatic reboots, and the network-location and first-logon prompts.
 - A pinned 1920x1080 display resolution, so control positions are
   deterministic across runs.
-- The Scream virtual audio driver (duncanthrax/scream), best-effort: a
-  missing audio device must not fail image creation, since the capture
-  synth plus null sink make most E2E scenarios device-free anyway.
+- The VB-CABLE virtual audio driver (VB-Audio), required, unlike the Scream
+  driver this replaces (which failed to root-enumerate a device node under
+  Secure Boot): cargo xtask vm test is audible by default now, and needs a
+  real WASAPI render endpoint to speak through. VB-CABLE becomes the guest's
+  only render endpoint, so Windows auto-selects it as the default with no
+  separate pinning step here — see Install-VbCableAudioDriver's own comment.
+  Set-DefaultAudioRenderDevice.ps1 is still staged to C:\VerbatimLab\tools (by
+  the Packer file provisioner ahead of this script) for cargo xtask vm test
+  --record to re-assert that pin at record time, in case a prior cargo xtask
+  vm connect session left a stale default. ffmpeg and ffprobe, which --record
+  launches and probes with, are NOT installed here: cargo xtask vm deploy
+  copies them into C:\VerbatimLab\tools over PowerShell Direct at deploy time
+  (see vm/vendor/ffmpeg/README.md), so they are not part of this image.
 - C:\VerbatimLab\agent and the VerbatimAgent scheduled task, which runs
   the agent at logon of the automation user, interactively (see that
   function's own comment for why this is the one non-negotiable rule
-  here). The task fails harmlessly until cargo xtask vm deploy puts
-  verbatim-agent.exe in place.
+  here), with restart-on-failure so an agent killed by, for example, an RDP
+  disconnect tearing down its session comes back on its own. The task
+  fails harmlessly until cargo xtask vm deploy puts verbatim-agent.exe in
+  place.
 - An inbound firewall rule for the agent's TCP port.
 
 Every step is idempotent and logs one fact per line, prefixed "harness:",
@@ -46,8 +58,9 @@ TCP port the firewall rule opens for the in-guest agent. Defaults to
 44001 (verbatim_agent::protocol::DEFAULT_PORT).
 
 Display resolution is not set here; it belongs to the host, which pins the
-synthetic video adapter with Set-VMVideo. See the comment above this
-script's Scream section for why a WinRM provisioning session cannot do it.
+synthetic video adapter with Set-VMVideo. See the comment preceding
+Install-VcRedistributable for why a WinRM provisioning session cannot do
+it.
 #>
 [CmdletBinding()]
 param(
@@ -206,99 +219,143 @@ function Install-VcRedistributable {
     Write-HarnessFact "VC++ x64 redistributable installed"
 }
 
-function Install-ScreamAudioDriver {
+function Install-VbCableAudioDriver {
     <#
-    Installs the Scream virtual audio driver so the guest always has a
-    WASAPI render endpoint, even with no Enhanced Session RDP audio
-    redirection attached. Best-effort: any failure here is logged and
-    swallowed, never propagated — a missing audio device must not fail
-    image creation, per this script's own header comment.
+    Installs the VB-CABLE virtual audio driver (VB-Audio) so the guest has
+    a real WASAPI render endpoint ("Speakers (VB-Audio Virtual Cable)") and
+    a matching loopback capture endpoint ("CABLE Output (VB-Audio Virtual
+    Cable)") that cargo xtask vm test --record captures audio from. This
+    replaces Scream, which failed to root-enumerate a device node under
+    Secure Boot. Unlike Scream's own best-effort install, this one is NOT
+    best-effort: a recorded run needs a real audio device, so a failure
+    here fails the image build loudly rather than continuing without one.
 
-    Stages the driver with pnputil (as instructed: import the signing
-    certificate to the trusted publisher store, then pnputil /add-driver),
-    but pnputil alone cannot create a device node for a driver with no
-    matching hardware present — Scream is a software-only device, and
-    Windows has no built-in way to root-enumerate one. So the last step
-    uses devcon, bundled in the same downloaded, hash-verified zip, exactly
-    the way Scream's own Install-x64.bat does it (devcon install
-    Scream.inf *Scream). This is a deliberate, documented deviation from a
-    pnputil-only install; see the Phase 4 report for the reasoning.
+    Recipe, proven against a live running guest before being folded into
+    this idempotent provisioner:
+
+    1. Download and hash-verify the VB-CABLE driver pack, and (for its
+       devcon helper only, not for the driver itself) the Scream release
+       zip.
+    2. Trust the driver's Authenticode signing certificate — read off
+       vbaudio_cable64_win7.sys, not the .cat file Scream's own install
+       used — to Cert:\LocalMachine\TrustedPublisher only. No
+       Cert:\LocalMachine\Root change is needed: this certificate chains to
+       a trusted VeriSign root already, confirmed live.
+    3. Stage the driver into the driver store with pnputil, then use devcon
+       (pnputil alone cannot create a device node for a driver with no
+       matching hardware present, exactly the constraint Scream's own
+       install needed devcon for) to root-enumerate the device against
+       hardware id VBAudioVACWDM.
+    4. Assert a MEDIA-class PnP device and a Win32_SoundDevice entry both
+       name VB-Audio, so a silent partial install fails the build instead
+       of surfacing only later as a recorded run with no sound.
+
+    The guest's only render endpoint becomes VB-CABLE's, so Windows
+    auto-selects it as the default with no separate "set default device"
+    step — confirmed live: OneCore played to it immediately with no
+    Set-AudioDevice-equivalent call anywhere in this harness.
+
+    Today's guest is x64 only (per docs/tooling.md's Windows 11 x64 ISO
+    prerequisite), and the driver pack itself ships no ARM64 variant
+    (only 32- and 64-bit x86 INFs), so this function is deliberately
+    x64-only rather than branching on PROCESSOR_ARCHITECTURE the way
+    Scream's install used to for a possible future ARM64 guest.
     #>
     param(
-        [string]$Version = "4.0",
-        [string]$DownloadUrl = "https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip",
+        [string]$CableDownloadUrl = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip",
         # Verified by downloading this exact release asset and computing
         # its SHA-256 with Get-FileHash.
-        [string]$ExpectedSha256 = "FA33E25F9A46C61E4E0CD83362C51C3D2A45C6FE4091AAD7507E240E40F1A520"
+        [string]$CableExpectedSha256 = "66FD0A4D9F4896FF41632B7E3D53892C085C4561F53E8AE8D0F0BC10EEDD1CDD",
+        # Only devcon.exe is taken from this zip, not the Scream driver
+        # itself; see this function's own doc comment.
+        [string]$DevconDownloadUrl = "https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip",
+        [string]$DevconExpectedSha256 = "FA33E25F9A46C61E4E0CD83362C51C3D2A45C6FE4091AAD7507E240E40F1A520"
     )
 
-    try {
-        if (Get-PnpDevice -Class MEDIA -FriendlyName "Scream*" -ErrorAction SilentlyContinue) {
-            Write-HarnessFact "Scream audio driver already present; skipping install"
-            return
-        }
-
-        $workDir = Join-Path $env:TEMP "verbatim-scream-$Version"
-        New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-        $zipPath = Join-Path $workDir "Scream$Version.zip"
-
-        Write-HarnessFact "downloading Scream $Version from $DownloadUrl"
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
-
-        $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $zipPath).Hash
-        if ($actualSha256 -ne $ExpectedSha256) {
-            throw "Scream download SHA-256 mismatch: expected $ExpectedSha256, got $actualSha256"
-        }
-        Write-HarnessFact "Scream download SHA-256 verified"
-
-        $extractDir = Join-Path $workDir "extracted"
-        Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-
-        $architecture = switch ($env:PROCESSOR_ARCHITECTURE) {
-            "ARM64" { "arm64" }
-            default { "x64" }
-        }
-        $driverDir = Join-Path $extractDir "Install\driver\$architecture"
-        $infPath = Join-Path $driverDir "Scream.inf"
-        $catPath = Join-Path $driverDir "scream.cat"
-        if (-not (Test-Path -LiteralPath $infPath)) {
-            throw "Scream driver INF not found for architecture $architecture at $infPath"
-        }
-
-        $signature = Get-AuthenticodeSignature -FilePath $catPath
-        if ($signature.SignerCertificate) {
-            $certPath = Join-Path $workDir "scream.cer"
-            Export-Certificate -Cert $signature.SignerCertificate -FilePath $certPath | Out-Null
-            Import-Certificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\TrustedPublisher" | Out-Null
-            Import-Certificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null
-            Write-HarnessFact "imported the Scream driver signing certificate to the trusted publisher store"
-        }
-        else {
-            Write-HarnessFact "scream.cat has no readable signing certificate; attempting install anyway"
-        }
-
-        $pnputilOutput = & pnputil.exe /add-driver $infPath 2>&1
-        $pnputilOutput | ForEach-Object { Write-HarnessFact "pnputil: $_" }
-        if ($LASTEXITCODE -ne 0) {
-            throw "pnputil /add-driver exited with code $LASTEXITCODE"
-        }
-
-        $devconPath = Join-Path $extractDir "Install\helpers\devcon-$architecture.exe"
-        if (-not (Test-Path -LiteralPath $devconPath)) {
-            throw "devcon helper not found for architecture $architecture at $devconPath"
-        }
-        & $devconPath remove "*Scream" 2>&1 | ForEach-Object { Write-HarnessFact "devcon: $_" }
-        $installOutput = & $devconPath install $infPath "*Scream" 2>&1
-        $installOutput | ForEach-Object { Write-HarnessFact "devcon: $_" }
-        if ($LASTEXITCODE -ne 0) {
-            throw "devcon install exited with code $LASTEXITCODE"
-        }
-
-        Write-HarnessFact "Scream audio driver installed for architecture $architecture"
+    if (Get-PnpDevice -Class MEDIA -FriendlyName "*VB-Audio*" -ErrorAction SilentlyContinue) {
+        Write-HarnessFact "VB-CABLE audio driver already present; skipping install"
+        return
     }
-    catch {
-        Write-HarnessFact "Scream audio driver install failed, continuing without it: $($_.Exception.Message)"
+
+    $workDir = Join-Path $env:TEMP "verbatim-vbcable"
+    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+
+    $cableZip = Join-Path $workDir "VBCABLE_Driver_Pack43.zip"
+    Write-HarnessFact "downloading VB-CABLE from $CableDownloadUrl"
+    Invoke-WebRequest -Uri $CableDownloadUrl -OutFile $cableZip -UseBasicParsing
+    $cableActualSha256 = (Get-FileHash -Algorithm SHA256 -Path $cableZip).Hash
+    if ($cableActualSha256 -ne $CableExpectedSha256) {
+        throw "VB-CABLE download SHA-256 mismatch: expected $CableExpectedSha256, got $cableActualSha256"
     }
+    Write-HarnessFact "VB-CABLE download SHA-256 verified"
+
+    $cableDir = Join-Path $workDir "cable"
+    Expand-Archive -Path $cableZip -DestinationPath $cableDir -Force
+
+    $infPath = Join-Path $cableDir "vbMmeCable64_win7.inf"
+    $sysPath = Join-Path $cableDir "vbaudio_cable64_win7.sys"
+    if (-not (Test-Path -LiteralPath $infPath)) {
+        throw "VB-CABLE driver INF not found at $infPath"
+    }
+    if (-not (Test-Path -LiteralPath $sysPath)) {
+        throw "VB-CABLE driver binary not found at $sysPath"
+    }
+
+    $signature = Get-AuthenticodeSignature -FilePath $sysPath
+    if (-not $signature.SignerCertificate) {
+        throw "vbaudio_cable64_win7.sys has no readable signing certificate; refusing to install an unsigned driver"
+    }
+    # Add the signing certificate to the machine's TrustedPublisher store via
+    # the .NET X509Store API rather than the Import-Certificate cmdlet. In the
+    # Packer WinRM provisioning session, Import-Certificate throws
+    # UnauthorizedAccessException opening that store, whereas the direct
+    # X509Store ReadWrite open succeeds — confirmed live, this exact swap is
+    # what let the headless install go through.
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("TrustedPublisher", "LocalMachine")
+    $store.Open("ReadWrite")
+    $store.Add($signature.SignerCertificate)
+    $store.Close()
+    Write-HarnessFact "imported the VB-CABLE driver signing certificate to the trusted publisher store"
+
+    $pnputilOutput = & pnputil.exe /add-driver $infPath /install 2>&1
+    $pnputilOutput | ForEach-Object { Write-HarnessFact "pnputil: $_" }
+    if ($LASTEXITCODE -ne 0) {
+        throw "pnputil /add-driver /install exited with code $LASTEXITCODE"
+    }
+
+    $devconZip = Join-Path $workDir "Scream4.0.zip"
+    Write-HarnessFact "downloading Scream (its devcon helper only) from $DevconDownloadUrl"
+    Invoke-WebRequest -Uri $DevconDownloadUrl -OutFile $devconZip -UseBasicParsing
+    $devconActualSha256 = (Get-FileHash -Algorithm SHA256 -Path $devconZip).Hash
+    if ($devconActualSha256 -ne $DevconExpectedSha256) {
+        throw "Scream (devcon source) download SHA-256 mismatch: expected $DevconExpectedSha256, got $devconActualSha256"
+    }
+    Write-HarnessFact "Scream (devcon source) download SHA-256 verified"
+
+    $devconExtractDir = Join-Path $workDir "scream"
+    Expand-Archive -Path $devconZip -DestinationPath $devconExtractDir -Force
+    $devconPath = Join-Path $devconExtractDir "Install\helpers\devcon-x64.exe"
+    if (-not (Test-Path -LiteralPath $devconPath)) {
+        throw "devcon helper not found at $devconPath"
+    }
+
+    $installOutput = & $devconPath install $infPath "VBAudioVACWDM" 2>&1
+    $installOutput | ForEach-Object { Write-HarnessFact "devcon: $_" }
+    if ($LASTEXITCODE -ne 0) {
+        throw "devcon install exited with code $LASTEXITCODE"
+    }
+
+    $mediaDevice = Get-PnpDevice -Class MEDIA -FriendlyName "*VB-Audio*" -ErrorAction SilentlyContinue
+    if (-not $mediaDevice) {
+        throw "VB-CABLE install completed but no MEDIA-class 'VB-Audio' PnP device is present"
+    }
+    $soundDevice = Get-CimInstance -ClassName Win32_SoundDevice -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "VB-Audio" }
+    if (-not $soundDevice) {
+        throw "VB-CABLE install completed but no 'VB-Audio' Win32_SoundDevice entry is present"
+    }
+
+    Write-HarnessFact "VB-CABLE audio driver installed; render endpoint auto-selected as default (confirmed live)"
 }
 
 function Register-VerbatimAgentTask {
@@ -326,6 +383,12 @@ function Register-VerbatimAgentTask {
     # or "run whether user is logged on or not" both hand it a
     # non-interactive session instead, which must never happen here.
     $principal = New-ScheduledTaskPrincipal -UserId $Username -LogonType Interactive -RunLevel Highest
+    # RestartCount/RestartInterval: a real gap seen live — an RDP session
+    # disconnecting (or the workstation locking behind it) can tear down the
+    # interactive session the agent's process lives in, killing it with no
+    # trigger left to bring it back on its own (AtLogOn only fires at an
+    # actual logon, not a session teardown). This restarts the task itself
+    # after such a death without needing a fresh logon.
     $settings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
@@ -365,7 +428,7 @@ Set-PersistentAutologon -Username $Username -Password $Password
 Disable-UnattendedInterruptions
 Disable-SleepAndHibernate
 Install-VcRedistributable
-Install-ScreamAudioDriver
+Install-VbCableAudioDriver
 Register-VerbatimAgentTask -Username $Username -AgentPath (Join-Path $agentDir "verbatim-agent.exe") -LogPath (Join-Path $agentDir "agent.log")
 New-VerbatimAgentFirewallRule -Port $AgentPort
 

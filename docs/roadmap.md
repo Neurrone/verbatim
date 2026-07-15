@@ -47,28 +47,29 @@ Exit: `cargo xtask ci` runs clean on both architectures.
 - UIA focus, property-change, and value-change events flow from the outpost
   through the reducer and speech pipeline, out through OneCore and WASAPI.
   Real UIA path, no self-voicing shortcut.
+- A minimal MSAA client and NVDA-style per-window arbitration: wx dialogs
+  are native Win32 controls with no UIA server-side provider, so reading
+  our own GUI takes the MSAA path, exactly as NVDA reads its own; the UIA
+  path is still required and exercised by UIA-native windows.
 - Keyboard hook with the Verbatim modifier key and a single gesture:
   Verbatim+V opens the Verbatim menu. Nothing else is bound in M1.
+- Control-plane v0 and `verbatim-inspect`, so M1 work is verifiable live:
+  event and speech streams, gesture and arbitrary key injection, latency
+  queries, and quit.
 - Latency traces visible end-to-end (event observed, speech queued, audio
-  started).
-- Amendments recorded during M1 planning. First, a minimal MSAA client and
-  NVDA-style per-window arbitration are pulled forward from M3: wx dialogs
-  are native Win32 controls with no UIA server-side provider, so reading our
-  own GUI takes the MSAA path, exactly as NVDA reads its own; the UIA path
-  is still required and exercised by UIA-native windows. Second, a minimal
-  control-plane v0 and `verbatim-inspect` are pulled forward from M2 so M1
-  work is verifiable live: event and speech streams, gesture and arbitrary
-  key injection, latency queries, and quit. Third, startup replaces any
-  running instance (NVDA's algorithm), and configuration is portable —
-  `settings.toml` next to the executable is the base configuration (globals
-  plus the base profile, where speech lives), and the `profiles` folder
-  holds named profile overlays, none of which are active in M1.
+  started); the capture synthesizer and the in-memory replay machinery land
+  here too.
+- Startup replaces any running instance (NVDA's algorithm), and
+  configuration is portable — `settings.toml` next to the executable is the
+  base configuration (globals plus the base profile, where speech lives),
+  and the `profiles` folder holds named profile overlays, none of which are
+  active in M1.
 
 Exit: with Verbatim running, Verbatim+V opens the menu, and every item in
 the menu and every control in the settings dialog is fully announced —
 name, role, value, and state on focus, plus value changes while adjusting
 sliders and combo boxes; keypress-to-audio latency traced and reported
-end-to-end (budget enforcement starts when eSpeak lands in M3).
+end-to-end (budget enforcement starts in M3, capture-synth based).
 
 ## M2 — Test harness and VM
 
@@ -79,22 +80,49 @@ Make everything after this point verifiable automatically.
   client stacks against it, cross-process), including backend-arbitration
   cases.
 - Flight-recorder dumps to disk (crash or user-triggered snapshot) and
-  reducer replay tests built from live dumps; the capture synth and the
-  in-memory replay machinery landed in M1.
-- Control plane v0 and `verbatim-inspect` landed in M1 (event and speech
-  streams, gesture and arbitrary key injection, latency timelines, status,
-  quit). M2 adds the remaining surface the harness needs, starting with
-  tree dumps, and the in-guest agent that speaks the protocol
+  reducer replay tests built from live dumps.
+- The remaining control-plane surface the harness needs beyond M1's v0,
+  starting with tree dumps, and the in-guest agent that speaks the protocol
   programmatically.
 - Hyper-V harness: `xtask vm create/start/stop/restart/restore/deploy/test
-  /logs/delete`, golden checkpoint, in-guest agent (`verbatim-agent`); E2E
-  scenarios (own GUI plus Speech dialog, and Notepad focus) running locally
-  against the VM. CI runs the E2E suite runner-direct — the in-guest agent
-  bound to loopback on a plain GitHub-hosted Windows runner — alongside
-  unit and provider tests. Automating the *VM* itself in CI is still
-  deferred per D3: `.github/workflows/vm-smoke.yml`, manual-dispatch only,
-  checks whether GitHub's larger Windows runners can host nested
-  virtualization at all, ahead of ever depending on it.
+/logs/connect/delete`, golden checkpoint, in-guest agent
+  (`verbatim-agent`); E2E scenarios (own GUI plus Speech dialog, and Notepad
+  focus) running locally against the VM. CI runs the E2E suite
+  runner-direct — the in-guest agent bound to loopback on a plain
+  GitHub-hosted Windows runner — alongside unit and provider tests.
+  Automating the _VM_ itself in CI is still deferred per D3:
+  `.github/workflows/vm-smoke.yml`, manual-dispatch only, checks whether
+  GitHub's larger Windows runners can host nested virtualization at all,
+  ahead of ever depending on it.
+- `xtask vm test` is audible by default now (real `OneCore` speech, real
+  `WasapiSink`), and `--record` additionally captures the run as a video
+  with audio to `artifacts/vm-recordings` — both shipped reality, not
+  aspirational. See "Audio in the VM harness" below for the constraint that
+  shapes both.
+- Arbitration attribution, landed at the end of the milestone when the new
+  E2E suite exposed its absence as intermittent failures: a UIA event's
+  element is usually not a window itself, so
+  `verbatim_uia::nearest_window_handle` (NVDA's `getNearestWindowHandle`
+  mechanism, one `NormalizeElementBuildCache` round trip) resolves its
+  nearest windowed ancestor, and both backends arbitrate the same window
+  for the same logical element; the decision ladder itself never needed
+  changing. A residual risk stands: the normalize call is a cross-process
+  call made inline on the event callback thread (NVDA's own trade),
+  contained by per-app outpost isolation, with a deadline-guarded query
+  worker as the fallback if it misbehaves.
+- The D9 outpost generalization, landed at the same time and for the same
+  reason: one outpost per application, spawned on first foreground and kept
+  alive in the background (so the cross-pid retarget path — and the
+  WinEvent rebind gap it carried — no longer exists), per-pid respawn on
+  death, idle retirement on a two-minute threshold (never the current
+  foreground's outpost, never Core's own, which is pre-warmed at startup
+  because a cold spawn provably races an immediately following keystroke),
+  and Core-side gating so only the foreground application's outpost is
+  heard. Foreground changes announce the new window and then its focused
+  control — NVDA's model — with bounded, generation-checked retries
+  absorbing slow-starting applications; that made application-switch
+  announcements deterministic, verified by a dedicated multi-app E2E
+  scenario plus five consecutive green suite runs.
 
 Exit: a one-command local run boots the VM, deploys a build, runs E2E, and
 reports speech assertions + latency numbers. The suite must include the M1
@@ -103,82 +131,138 @@ settings dialog read correctly — every menu item and dialog control
 announced with name, role, value, and state on focus, plus value changes
 while adjusting the rate slider (both directions) and the voice combo box
 (changed and changed back) — with keypress-to-audio latency reported from
-the same run. The regression drives the capture synthesizer, whose Speech
-page offers a voice combo box and a rate slider but no toggle at all, so it
-asserts value changes only, not a check-box state change; the reducer's
-checked and not-checked announcements are covered by `verbatim-core`'s unit
-tests and, cross-process, by `mockapp`'s scripted state-change events. A
-state-change assertion belongs in this E2E regression too, the day a
-drivable synthesizer page offers a toggle.
+the same run. The regression drives the capture synthesizer in runner-direct
+mode (whose Speech page offers a voice combo box and a rate slider but no
+toggle at all, so it asserts value changes only, not a check-box state
+change) and the real `OneCore` synthesizer against the VM, where it is now
+audible by default; the reducer's checked and not-checked announcements are
+covered by `verbatim-core`'s unit tests and, cross-process, by `mockapp`'s
+scripted state-change events. A state-change assertion belongs in this E2E
+regression too, the day a drivable synthesizer page offers a toggle.
+
+### Audio in the VM harness
+
+Hyper-V Gen2 VMs have no emulated sound card, so audio needs a virtual
+device. VB-CABLE (VB-Audio Virtual Cable) is that device — not Scream,
+which was tried first and fails to root-enumerate a device node under this
+image's Secure Boot; VB-CABLE is validly Authenticode-signed (chains to a
+trusted root) and installs headless under Secure Boot without issue. It
+provides both a render endpoint speech plays to and a loopback capture
+endpoint `cargo xtask vm test --record` records from.
+
+The constraint that shapes the whole design: recording audio and a
+connected RDP session are mutually exclusive, proven live. The moment an
+RDP session connects, Windows replaces that session's audio with its own
+"Remote Audio" endpoint and the VB-CABLE capture device becomes invisible
+within that session — confirmed with two independent tools, ffmpeg and
+SoX, both failing identically to open it while a session was connected. So
+a VM run is either heard live over a connected session, or recorded
+headless with `--record`, never both in the same run.
+
+Two dead ends were tried and ruled out, on record here so neither is
+retried: mirroring the VB-CABLE capture endpoint's audio out to RDP's
+Remote Audio endpoint via the "Listen to this device" registry keys (the
+property-store keys involved are protected — writes are denied even
+running as SYSTEM — and re-enumerating the device to apply any change
+wipes them again anyway); and a SoX-based forwarder relaying the cable's
+audio to Remote Audio (SoX cannot open the cable in the RDP session for the
+exact same reason ffmpeg cannot — the device is not visible there at all).
 
 ## M3 — Desktop usability core
 
 Verbatim becomes usable as a daily driver for basic Windows navigation.
+This milestone's two originally largest items — arbitration attribution
+and the D9 outpost generalization — were finished early, at the end of M2
+(see M2).
 
-- Carried out of this milestone early: the two largest items below landed at
-  the end of M2, driven by the new E2E suite exposing their absence as
-  intermittent failures and by an explicit decision to fix causes rather
-  than symptoms. First, arbitration attribution: a UIA event's element is
-  usually not a window itself, so `verbatim_uia::nearest_window_handle`
-  (NVDA's `getNearestWindowHandle` mechanism, one
-  `NormalizeElementBuildCache` round trip) resolves its nearest windowed
-  ancestor, and both backends arbitrate the same window for the same
-  logical element; the decision ladder itself never needed changing. The
-  residual risk stands: the normalize call is a cross-process call made
-  inline on the event callback thread (NVDA's own trade), contained by
-  per-app outpost isolation, with a deadline-guarded query worker as the
-  fallback if it misbehaves. Second, the D9 outpost generalization itself:
-  one outpost per application, spawned on first foreground and kept alive
-  in the background (so the cross-pid retarget path — and the WinEvent
-  rebind gap it carried — no longer exists), per-pid respawn on death,
-  idle retirement on a two-minute threshold (never the current foreground's
-  outpost, never Core's own, which is pre-warmed at startup because a cold
-  spawn provably races an immediately following keystroke), and Core-side
-  gating so only the foreground application's outpost is heard. Foreground
-  changes now announce the new window and then its focused control — NVDA's
-  model — with bounded, generation-checked retries absorbing slow-starting
-  applications; that made the previously flaky application-switch
-  announcements deterministic, verified by a dedicated multi-app E2E
-  scenario plus five consecutive green suite runs.
-- What remains here from that work: the recovery ladder beyond respawn (call
-  deadlines and thread abandonment exist; the full kill-and-respawn policy
-  for a wedged-but-alive outpost does not), the stale-cache policy, WinEvent
-  routing refinements, and measuring per-outpost working set and spawn
-  latency on the low-end VM profile (risk R2), which needs a VM profile the
-  M2 harness does not yet define. Residual E2E flakes also remain, distinct
-  from the fixed races and much rarer: an occasional missed announcement
-  deep in a long tab-through-dialog sequence, an occasional slow first
-  launch on a cold guest, and transient agent-tunnel network hiccups — all
-  now self-documenting, since every launched Verbatim writes stderr to a
-  collected log and panics dump the flight recorder, and the quit-path
-  panic that muddied earlier evidence (a re-entrant borrow of the GUI
-  thread-local, fired on nearly every clean exit, silently) is fixed.
-  Worth root-causing during this milestone's responsiveness work rather
-  than papering over in the tests.
+- Outpost hardening, continuing the M2 work: the recovery ladder beyond
+  respawn (call deadlines and thread abandonment exist; the full
+  kill-and-respawn policy for a wedged-but-alive outpost does not), the
+  stale-cache policy, WinEvent routing refinements, and measuring
+  per-outpost working set and spawn latency on the existing harness VM
+  (risk R2). Deliberately no dedicated low-end VM profile: the goal is to
+  be efficient outright, and behavior on weaker hardware gets investigated
+  only if real users report problems.
+  Residual E2E flakes — much rarer than the fixed races: an occasional
+  missed announcement deep in a long tab-through-dialog sequence, an
+  occasional slow first launch on a cold guest, and transient agent-tunnel
+  network hiccups — are all self-documenting now (every launched Verbatim
+  writes stderr to a collected log, panics dump the flight recorder, and
+  the quit-path panic that muddied earlier evidence is fixed) and get
+  root-caused during this milestone's responsiveness work rather than
+  papered over in the tests.
+- Structured utterances (D12), landed now before more speech features
+  accrete: the reducer emits utterances as sequences of semantic spans —
+  label, role, value, state, description, attribute-tagged text runs —
+  never pre-flattened strings; a presentation stage at the end of the
+  speech pipeline flattens spans to text through a default theme. This is
+  what later makes M11's earcons and voice styling a theme swap rather
+  than a rewrite; the `PlayEarcon` effect already exists in the model.
 - Announce a focused list's selected item. Focus landing on a list currently
-  speaks only the list's own name and role; the selected entry is not spoken,
-  which is not how a screen reader should read a category list or a list box.
-  This gap was masked until M2: spurious cross-backend UIA events were
-  announcing the selected item by accident, and fixing arbitration
-  attribution revealed it. Belongs with this milestone's selection and
-  object-navigation work.
-- Focus/foreground tracking across apps; object navigation and review cursor;
-  input-help mode; remappable gesture map; symbol/dictionary processing v1.
-- eSpeak NG built-in synth (statically linked, x64 and ARM64) as regular
-  implementation work — it is the reference synth for the latency budget,
-  which is enforced from here on.
+  speaks only the list's own name and role; the selected entry is not
+  spoken, which is not how a screen reader should read a category list or a
+  list box (a gap masked until M2's arbitration fix removed the spurious
+  cross-backend events that were announcing it by accident). Generalized to
+  selection changes inside a focused container — the same mechanism that
+  reads Explorer tab switches.
+- Object navigation, review cursor navigation, minimally and deliberately scoped so it does not silently
+  inflate: navigate to parent, next and previous sibling, and first child;
+  report the current object; the review cursor follows focus, with a
+  command to return it to focus; navigate through the review cursor to read text; activate the current object. Enough to
+  reach everything the tab order cannot.
+- Windows shell support expressed as generic core policy, not per-app
+  patches. NVDA's live Windows 11 Explorer fixes reduce almost entirely to
+  capabilities Verbatim needs anyway: window-classification arbitration
+  rules (the `isGoodUIAWindow` analog — taskbar, systray overflow, Task
+  View, and the input switcher prefer UIA), the selection-change
+  announcements above, generic UIA notification-event handling (snap
+  layouts), and foreground-transition focus filtering (alt-tab noise
+  suppression). The irreducibly Explorer-specific residue — duplicate-focus
+  dedup on desktop icons, stripping directionality marks from date columns,
+  tooltip dedup in the systray — is cosmetic and waits for the Tier A
+  extension port, which is the first real test of the Wasm path. Recorded
+  contingency: if an E2E scenario surfaces a quirk that is both blocking
+  and inexpressible as generic policy, the fix is pulling a minimal
+  extension host forward from M5, not a built-in quirk layer.
+- Time and date command: Verbatim+F12 speaks the time, twice quickly for
+  the date. A system tray and taskbar icons list (the function of NVDA's
+  systrayList add-on): a Verbatim-owned dialog listing tray and taskbar
+  items, Enter to click, a context-menu action for right-click, built on
+  the existing UIA client over the shell windows. The list dialog is a
+  reusable component — M6's elements list presents through the same one.
+  Both are core features.
+- Latency budget enforcement starts here: the pipeline budget via the
+  capture synthesizer (deterministic, measures everything except
+  synthesis), plus an end-to-end OneCore smoke number with a looser
+  threshold. The eSpeak reference budget takes over when eSpeak lands
+  in M8.
 - E2E scenarios: Explorer, Settings, Start menu, task switching, at least
-  one MSAA/IA2-only legacy app; a deliberately-hung app must not delay
-  speech for the rest of the system (E2E test kills/suspends a mock app
-  mid-interaction).
+  one MSAA/IA2-only legacy app;
 
-Exit: navigate Windows shell fluently; hung-app E2E passes; latency budget
-holds on the low-end VM profile.
+- Cleanup / improvement of the E2e: currently everything runs together in one recording but this won't be feasible once we have more, we need to be able to group them and run all of them, or only a subset. Each recording should only cover one scenario for ease of debugging, scenarios should have before and after commands for setting up and teardown of state (e.g, open / close notepad)
+- Deferred to M8: eSpeak NG, input help mode, and the configuration
+  surfaces for gesture remapping, speech dictionaries, and symbol
+  pronunciation. The underlying infrastructure is data-driven from the
+  start — gestures bind through stable identifiers (the control plane
+  already injects them by name), and structured utterance spans make
+  dictionaries a per-span pipeline stage — so M8 adds configuration UI on
+  top of it, not new architecture.
+
+Exit: navigate the Windows shell fluently; review cursor and object navigation work; the
+capture-synth latency budget holds in the VM harness; no reducer
+path emits a pre-flattened utterance string (D12) — every spoken
+announcement reaches the pipeline as semantic spans.
 
 ## M4 — Text, editing, and terminals
 
 - TextPattern support in the model; caret tracking, typed-character echo,
   word/line/character navigation; say-all with index-mark continuation.
+- Text runs carry formatting attributes as utterance spans (spelling and
+  grammar markers, and font/color where exposed), so M11's
+  formatting-change sounds have data to act on.
+- A minimal built-in character-description table (punctuation and symbol
+  names): character navigation must say "comma" on a comma even though the
+  configurable dictionary system waits until M8.
 - Remote-ops integration (ancestor fetch on focus; terminal text ranges) —
   includes the ARM64 remote-ops verification (R3).
 - Windows Terminal: diff-based output announcement with flood policy; the
@@ -195,29 +279,46 @@ shows bounded latency and no hang.
   measure host-call overhead against the extension-hook deadlines before
   building further on it.
 - App-module activation keyed to processes; hot reload; capability manifests.
-- Dogfood: at least one first-party app module (e.g., Terminal refinements)
-  ported out of the core into an extension; a trivial Wasm synth proves the
+- Dogfood: at least one first-party app module ported out of the core into
+  an extension — the Explorer cosmetic fixes deferred from M3 are the
+  designated first candidate — and a trivial Wasm synth proves the
   `verbatim:synth` world.
 
 Exit: an app module can be edited and hot-reloaded without restarting
 Verbatim; capability denial is enforced and tested. This milestone opens the
-app-module porting track (see the section after M12), which then runs
+app-module porting track (see the section after M15), which then runs
 continuously alongside every later milestone.
 
-## M6 — Browse mode and browsers
+## M6 — Browse mode, browsers, and the injection helper
 
 - Document projection / incremental virtual buffer over the normalized tree;
-  quick-nav keys, elements list, switching between focus and browse modes.
+  quick-nav keys, elements list (presented through the M3 list dialog),
+  switching between focus and browse modes.
 - Firefox and Chromium (Edge/Chrome) via IA2 as the primary source, with a
-  UIA comparison where relevant; **measure build/navigation performance and
-  parity vs NVDA on a fixed page corpus** — this data decides whether the
-  D2 injection helper (M10) gets pulled forward.
+  UIA comparison where relevant.
+- The D2 injection helper lands here, staged inside the milestone:
+  out-of-process IA2 first, proving correctness, then the in-process helper
+  for performance — IA2 call batching and virtual-buffer acceleration —
+  including the x64/ARM64EC/x86 helper matrix and antivirus/signing
+  considerations. NVDA has already proven that in-process access is what
+  makes browsing fast enough, so this is scheduled work rather than a
+  measure-first gate; the fixed-page-corpus measurement against NVDA
+  remains as this milestone's exit verification.
+- Screen review as a spatial projection of the normalized tree (D11):
+  visible nodes ordered by bounding rectangle, grouped into visual lines,
+  walked by the review cursor by line, word, and character. Extent-backed
+  wherever a text interface exists — UIA TextPattern bounding rectangles
+  and IA2 character extents give exact per-character geometry, batched
+  through the new helper — with rectangle interpolation as the fallback for
+  name-plus-rectangle elements. OCR joins as a second text source in M8 and
+  the display model as a third in M14; the review commands and cursor stay
+  the same throughout, only the source improves underneath.
 - Interaction-before-full-render E2E on a very large page.
 - Scan-mode generalization: the same projection over an ordinary app.
 
 Exit: real browsing works day-to-day; large-page E2E passes; corpus
-performance/parity report written, with a recorded decision on whether the
-M10 injection helper must be pulled forward.
+performance/parity report vs NVDA written, at (or consciously accepted
+near) parity; screen review reads a modern app's screen correctly.
 
 ## M7 — Native synth host + Eloquence PoC
 
@@ -227,21 +328,87 @@ M10 injection helper must be pulled forward.
 
 Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
 
-## M8 — Breadth: profiles, overlays, OCR, secure desktop
+## M8 — Breadth: speech configurability, profiles, overlays, OCR, secure desktop
 
-- Configuration profiles (manual and triggered), full pronunciation/symbol
-  dictionaries, localized UI shipped in at least two languages as proof.
+- eSpeak NG built-in synth (statically linked, x64 and ARM64) — the
+  reference synth for the latency budget, whose enforcement tightens from
+  the M3 capture-synth budget to the eSpeak reference number.
+- Input help mode; the gesture-remapping configuration GUI; full
+  pronunciation/symbol dictionaries and their configuration UI (the
+  data-driven infrastructure exists from M3/M4).
+- Configuration profiles (manual and triggered); localized UI shipped in at
+  least two languages as proof.
 - Focus highlight (DirectComposition overlay) and screen curtain (R6 check);
   overlay component designed to host a future magnifier.
 - OCR capability (Windows.Media.Ocr) exposed to extensions; synthetic-subtree
-  review of an image/window.
+  review of an image/window; OCR becomes screen review's second text source,
+  for windows whose pixels contain text that no API exposes.
 - Secure-desktop instance (`--secure`), AT registration, UIAccess/test-signing
   story in the VM (R5).
 - Installer/updater skeleton.
 
-Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E.
+Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E;
+eSpeak latency budget green.
 
-## M9 — Remote support
+## M9 — Logging and log viewer
+
+Proper user-facing observability, distinct from (and built on) the
+developer-facing flight recorder and tracing spans.
+
+- User-facing log levels and categories; logging to file plus an in-memory
+  ring; the existing tracing spans, collected stderr, and panic dumps
+  absorbed into one coherent story.
+- A log viewer window in Verbatim itself, readable with Verbatim — the
+  viewer is its own dogfooding test.
+- The commands NVDA users expect around it: open the log viewer, report the
+  most recent error, cycle the log level at runtime.
+
+Exit: a user can reproduce a bug, open the log viewer, and read what
+happened, without touching developer tooling.
+
+## M10 — Extension console
+
+The equivalent of NVDA's Python console for extension development. Python
+is an obvious fit for NVDA; with Wasm extensions the console is instead an
+interactive interpreter that is itself an extension: an interpreter
+compiled to Wasm, granted broad capabilities, evaluating against exactly
+the `verbatim:ext` WIT API every extension uses. No privileged side-channel
+API exists — if the console can do it, an extension can — so the console
+doubles as a standing test that the API is ergonomic enough for
+exploratory work. Convenience aliases in the NVDA console style (the
+focused object, the navigator object) are pre-bound bindings over the same
+calls, never separate host functions.
+
+Design questions settled inside this milestone: which interpreter (QuickJS,
+RustPython, or similar, compiled to a component), how epoch preemption
+interacts with long-running evaluations, and whether the console UI lives
+in the Verbatim GUI, in `verbatim-inspect`, or both.
+
+Exit: from the console, inspect the focused object, walk its tree, speak,
+and bind a gesture — against a live Verbatim, without restarting anything.
+
+## M11 — Audio formatting: earcons and voice styling
+
+The payoff for D12's structured utterances: presentation themes that map
+semantic spans to sound, in the tradition of Emacspeak's audio formatting
+and the audio-themes family of NVDA add-ons.
+
+- A theme maps span semantics to presentation: a role can become an earcon
+  plus shorter speech (a slider sound and "pitch 50" instead of "Pitch
+  rate slider 50"); formatting attributes on text runs can become sounds
+  (a spelling or syntax error under the cursor plays a sound rather than
+  being spoken); capitals, quotes, and emphasis can become pitch or voice
+  changes.
+- The default theme reproduces plain speech exactly; switching themes is a
+  runtime configuration change, no restart.
+- Themes are data, and eventually extension-provided packages — giving the
+  porting track a consumer in the audio-themes add-on family.
+
+Exit: an earcon theme ships alongside the plain default; a scripted E2E
+hears the slider earcon and the spelling-error sound; the plain theme's
+output is identical to pre-M11 speech.
+
+## M12 — Remote support
 
 - Pairing/auth UX on the control plane; speech mirroring out, input in;
   secure-desktop and permission rules applied to remote sessions.
@@ -249,18 +416,7 @@ Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E.
 Exit: control a second Verbatim instance (between the VM and the host)
 end-to-end.
 
-## M10 — In-process helper and performance parity (per D2)
-
-- The planned injection helper: in-process IA2 batching (and virtual-buffer
-  acceleration if the M6 data demands it) — first and only use of injection,
-  including the x64/ARM64EC/x86 helper matrix and AV/signing considerations.
-  Pulled forward ahead of M7–M9 if the M6 corpus report says out-of-process
-  IA2 isn't good enough.
-- Re-run the M6 corpus with the helper: parity-vs-NVDA decision per browser.
-
-Exit: browsers at (or consciously accepted near) NVDA parity on the corpus.
-
-## M11 — Java Access Bridge
+## M13 — Java Access Bridge
 
 JAB is a committed backend, deliberately last among the accessibility APIs
 (D1): far fewer apps need it than UIA and MSAA/IA2.
@@ -274,7 +430,34 @@ JAB is a committed backend, deliberately last among the accessibility APIs
 
 Exit: a mainstream Swing application is readable and navigable end-to-end.
 
-## M12 — Braille (deliberately last, D7)
+## M14 — Display model (gated)
+
+A GDI display model in the NVDA tradition, deliberately last among the
+text sources (D11), and opened by an explicit re-triage gate: test the
+then-current PuTTY, SecureCRT, and Tera Term (and any other app that has
+motivated this milestone by then) against stock Verbatim plus OCR, and
+build only if the display model still earns its maintenance cost. By this
+point everything it needs already exists, which is what keeps the
+milestone cheap: the M6 injection helper is the delivery vehicle (the
+display model is its second in-process client), synthetic nodes make its
+output first-class model content, and the M4 diff announcer and flood
+policy handle live terminal output.
+
+- GDI text-output hooks (`ExtTextOutW` and family) in the injection helper;
+  a per-window text model (chunk rectangles, baseline ordering,
+  invalidation on redraw).
+- A live-text diff source over that model — the `DisplayModelLiveText`
+  equivalent — feeding the same announcement pipeline as Windows Terminal.
+- Screen review gains the display model as its third, pixel-faithful text
+  source for GDI apps; text-under-mouse works in apps with no text API.
+- Unblocks the porting track's legacy terminal clients (PuTTY, SecureCRT,
+  Tera Term).
+
+Exit: the re-triage decision is recorded; if built, a PuTTY session is
+readable with live output announcement and the existing screen-review
+commands, with no fidelity regression anywhere else.
+
+## M15 — Braille (deliberately last, D7)
 
 - liblouis integration; `BrailleDisplay` trait implementations for common
   displays; braille viewer (on-screen virtual display) so development and
@@ -304,11 +487,16 @@ Tiers, gated by the capabilities each module needs:
 
 - **Tier A — immediately after M5** (needs only extension API v0: events,
   tree queries, speech, gestures): the Windows shell and utility modules —
-  Explorer, Settings, Task Manager, Calculator, search, lock screen and
-  logon UI, Open With, Notepad, Notepad++, VS Code, Poedit, Spotify,
-  foobar2000, Audacity, 1Password, basic Zoom and Teams behavior.
-- **Tier B — with M4/M6 text and terminal infrastructure**: the terminal
-  clients — PuTTY, mintty, SecureCRT, Tera Term.
+  Explorer (starting with the cosmetic fixes deferred from M3), Settings,
+  Task Manager, Calculator, search, lock screen and logon UI, Open With,
+  Notepad, Notepad++, VS Code, Poedit, Spotify, foobar2000, Audacity,
+  1Password, basic Zoom and Teams behavior.
+- **Tier B — the terminal clients, in two stages**: Windows Terminal
+  workflows are core M4 behavior, and mintty is triaged on its own after M4
+  (its ConPTY integration may make it readable stock). PuTTY, SecureCRT,
+  and Tera Term draw their screens through GDI with no accessibility API at
+  all, so they are gated on the M14 display model — with ssh from Windows
+  Terminal as the recommended interim answer.
 - **Tier C — after M6 browse mode** (web-content-hosting apps): WebView2
   hosts, WhatsApp, deeper Teams support, Thunderbird, Kindle and other
   readers.
@@ -319,7 +507,7 @@ Tiers, gated by the capabilities each module needs:
   capability-gated app object-model bridge in the WIT host API — the
   largest single API-growth item in the plan, and worth its own design pass
   for both surface and security.
-- **Tier E — after the JAB backend lands (M11)**: javaw and Eclipse.
+- **Tier E — after the JAB backend lands (M13)**: javaw and Eclipse.
 
 ## Ongoing tracks (every milestone)
 

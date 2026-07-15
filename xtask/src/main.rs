@@ -106,7 +106,14 @@ fn ci() -> ExitCode {
 /// Locates a libclang directory for wxDragon's bindgen when the environment
 /// does not already provide one, checking Visual Studio's bundled LLVM and a
 /// standalone LLVM install (the layout on GitHub-hosted Windows runners).
-fn find_libclang() -> Option<PathBuf> {
+///
+/// `pub(crate)` rather than private: `xtask::vm::deploy::build_binaries`
+/// reuses this exact probe before its own plain `cargo build`, which
+/// otherwise fails to build `verbatim-gui`'s wxDragon dependency whenever
+/// `LIBCLANG_PATH` is not already set in the caller's environment — this
+/// `ci` path is the only other place in this binary that needs it, so one
+/// shared probe stays in lockstep rather than two copies drifting apart.
+pub(crate) fn find_libclang() -> Option<PathBuf> {
     const CANDIDATES: &[&str] = &[
         r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin",
         r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin",

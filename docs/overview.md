@@ -434,8 +434,7 @@ Public API:
 The per-application outpost process, the Core-side supervisor, the
 foreground trigger, and the private protocol between them (architecture
 sections 1 and 4, decision D9, implemented in full — generalized from M1's
-single instance to the many-concurrent-processes design, pulled forward
-from M3).
+single instance to the many-concurrent-processes design at the end of M2).
 
 An outpost's target application is fixed at spawn and never retargeted:
 the pid arrives on its command line (`--target-pid`), hooks and UIA
@@ -537,7 +536,7 @@ Implementation notes:
   text area in its own child `hwnd` distinct from the frame), which made an
   earlier version of this code read the edit control's own snapshot instead
   of the window's. The control step's retries answer a different race —
-  the second focus-timing race `docs/roadmap.md`'s M3 section names, the
+  the second focus-timing race `docs/roadmap.md`'s M2 section names, the
   foreground trigger and this query racing the target process's own
   control creation — using `GetGUIThreadInfo`'s `hwndFocus` specifically,
   since that question ("what control is focused") is genuinely different
@@ -553,7 +552,7 @@ Implementation notes:
   property by `verbatim-gui` (see that crate's section) and must never be
   announced — it transits real focus during the prePopup show/raise/force-
   foreground dance and would otherwise read as a nameless "Verbatim"
-  window with role unknown, the first of the two M3 focus-timing races.
+  window with role unknown, the first of the two M2 focus-timing races.
   Every `FocusChanged` emission path checks the property (`GetPropW`, which
   tolerates any handle and never blocks) before emitting: the MSAA event
   path (scoped to `id_child == verbatim_ia2::CHILDID_SELF`, re-exported
@@ -973,14 +972,20 @@ Public API:
   non-matching frames including speech ones — reusing a request connection
   would silently lose utterances in flight). `expect_in_order` waits for a
   list of substring matchers to appear across utterances, in order,
-  tolerating unrelated utterances in between, and panics with every
-  utterance heard so far on failure; `try_expect_in_order` is the
-  non-panicking form for a caller that wants to retry a flaky first
-  interaction; `transcript()` is the debugging artifact both print.
+  tolerating unrelated utterances in between, and panics on failure with the
+  run's `Timeline` — the injected gestures and keys interleaved with the
+  spoken utterances in time order, so the command that provoked (or failed
+  to provoke) each utterance is visible next to it; `try_expect_in_order` is
+  the non-panicking form for a caller that wants to retry a flaky first
+  interaction. The `Timeline` is a cheaply cloneable `Arc<Mutex<_>>` shared
+  between the `Scenario` (which records each injected gesture and key) and
+  the collector (which records each utterance), which is how the two produce
+  one merged, ordered account.
 - `latency::report` — fetches the most recent `last_n` latency timelines,
-  asserts every one carries an audio-start timestamp (guaranteed under
-  `NullSink`, so a missing one is itself a bug), and prints one fact per
-  line.
+  prints one fact per line, and asserts at least one reached audio — but
+  only outside audible mode, since a real synthesizer is legitimately
+  interrupted before playback at this suite's pace (a capture-synth
+  invariant, not a real-synth one).
 
 Implementation notes: `REMOTE_ENV` (`VERBATIM_E2E_REMOTE`) marks a run where
 Verbatim lives in a guest rather than sharing this process's filesystem —
@@ -1022,9 +1027,35 @@ module tree, not a library):
   over other `Host` calls (poll `guest_ip`, then raw-TCP-probe the agent's
   port), so a future non-Hyper-V host gets it for free.
 - `create`, `deploy`, `test`, `lifecycle` (`start`/`stop`/`restart`
-  /`restore`/`delete`), `logs` — one module per verb or verb family, each
-  orchestrating `Host` calls; `mod.rs` dispatches `cargo xtask vm <verb>`
-  to them.
+  /`restore`/`delete`), `logs`, `connect` — one module per verb or verb
+  family, each orchestrating `Host` calls; `mod.rs` dispatches
+  `cargo xtask vm <verb>` to them. `deploy::stage_and_copy` always stages a
+  `settings.toml` selecting the real `OneCore` synthesizer now — there is
+  no more capture-synth choice or `--audible` flag on the VM path, since
+  `test` is audible by default; the capture synth remains the runner-direct
+  default, independently, in `verbatim_e2e::scenario`. `deploy::build`
+  probes for `libclang.dll` before its `cargo build` the same way
+  `xtask`'s own `ci` command does (reusing `find_libclang`), since building
+  `verbatim-app` pulls in `verbatim-gui`'s wxDragon dependency.
+- `recording` — `test`'s `--record` flag: a small client speaking
+  `verbatim_agent::protocol` directly (`Hello`, `LaunchProcess`,
+  `ProcessStatus`, `KillProcess`; not `Host`, and not `verbatim-e2e`'s own
+  fuller `AgentClient` — see the module's doc comment for why) to pin
+  VB-CABLE as the guest's default render device, launch ffmpeg inside the
+  guest's interactive session, confirm it is still running a moment later,
+  terminate it once the suite finishes, and pull the fragmented-MP4 result
+  back to `artifacts/vm-recordings` on the host via `Host::read_guest_file`
+  (the same PowerShell Direct mechanism `logs` uses, since `Copy-VMFile`
+  only copies host-to-guest). Recording audio and a connected RDP session
+  are mutually exclusive (`docs/tooling.md` has the full constraint and
+  why); `test`'s own `start_recording_with_fallback` treats a failure to
+  pin the render device, or ffmpeg exiting immediately after an
+  audio-capturing launch, as the expected fallout of a connected session —
+  not fatal — and retries `recording::start_recording` with
+  `with_audio: false` instead, so the suite still runs and a video-only
+  recording is still pulled. `recording::pull_recording`'s own
+  ffprobe-based check, not which launch path was taken, is what decides the
+  pulled file's `-no-audio` filename tag.
 - `dotenv` — a minimal hand-rolled `.env` reader (`KEY=VALUE` lines,
   comments, quoting) for `VERBATIM_VM_USERNAME`/`VERBATIM_VM_PASSWORD` from
   the repository-root `.env`, deliberately not a crate dependency for a

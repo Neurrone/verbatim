@@ -440,8 +440,10 @@ fn run_job(
     drop(pipeline);
 
     let cancelled = cancel.load(Ordering::Acquire);
+    let had_sink_error = sink_error.is_some();
+    let had_synth_error = result.is_err();
     if begun {
-        if cancelled || sink_error.is_some() || result.is_err() {
+        if cancelled || had_sink_error || had_synth_error {
             sink.stop();
         } else if let Err(error) = sink.end() {
             warn!(target: "verbatim::speech", %error, "draining audio failed");
@@ -452,6 +454,18 @@ fn run_job(
     }
     if let Err(error) = result {
         warn!(target: "verbatim::speech", %error, "synthesis failed, utterance dropped");
+    }
+    // The utterance played to completion (audio began, drained cleanly, no
+    // cancellation) — report it, on the synth thread, right after `sink.end()`
+    // above returned from draining. An interrupted or failed utterance is
+    // deliberately silent here, so this pairs with `audio_started`.
+    if begun
+        && !cancelled
+        && !had_sink_error
+        && !had_synth_error
+        && let Some(observer) = events
+    {
+        observer.utterance_finished(request.trace_id, Instant::now());
     }
 }
 

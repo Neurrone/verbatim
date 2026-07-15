@@ -28,10 +28,12 @@ pub mod agent_client;
 pub mod latency;
 pub mod scenario;
 pub mod speech;
+pub mod timeline;
 
 pub use agent_client::AgentClient;
 pub use scenario::Scenario;
 pub use speech::SpeechCollector;
+pub use timeline::Timeline;
 
 /// Environment variable naming the endpoint (`host:port`) of an already
 /// running `verbatim-agent`. Every live test in this crate checks

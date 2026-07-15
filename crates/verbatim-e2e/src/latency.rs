@@ -35,7 +35,16 @@ use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 /// # Panics
 ///
 /// Panics if no returned record reached audio at all, which would mean
-/// speech never made it out of the pipeline.
+/// speech never made it out of the pipeline — but only under the capture
+/// synthesizer's instant [`verbatim_audio::NullSink`], where reaching audio
+/// is immediate. Under a real synthesizer (audible mode) this invariant does
+/// not hold: a real voice takes long enough to start that this suite's pace
+/// — each step waits only for an utterance to be *queued*, then moves focus,
+/// interrupting it at `Interrupt` priority — legitimately interrupts every
+/// utterance before its first sample plays. That is correct screen-reader
+/// behavior, not a pipeline failure, so the assertion is skipped when
+/// [`crate::scenario::is_audible`]; the timelines are still fetched and
+/// printed.
 pub fn report(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
     let frame = ok_or_error(control.request(Request::Latency { last_n })?)?;
     let Frame::Reply {
@@ -73,10 +82,14 @@ pub fn report(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<Latenc
         "latency: {reached_audio} of {} timelines reached audio; the rest were interrupted by a later announcement",
         records.len()
     );
-    assert!(
-        reached_audio > 0 || records.is_empty(),
-        "no utterance reached audio in {} timelines; speech never left the pipeline",
-        records.len()
-    );
+    // See this function's doc comment: reaching audio is a capture-synth
+    // invariant, not a real-synth one, so the assertion is capture-mode only.
+    if !crate::scenario::is_audible() {
+        assert!(
+            reached_audio > 0 || records.is_empty(),
+            "no utterance reached audio in {} timelines; speech never left the pipeline",
+            records.len()
+        );
+    }
     Ok(records)
 }

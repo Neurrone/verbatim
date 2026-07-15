@@ -86,6 +86,18 @@ pub enum Request {
         /// [`ReplyPayload::Launched`].
         pid: u32,
     },
+    /// Terminates every currently running process whose image (executable
+    /// file) name matches `name` (case-insensitive, comparing only the file
+    /// name — for example `"notepad.exe"`, never a full path). Exists
+    /// because Windows 11 Notepad hands off to an already-running instance
+    /// rather than spawning a new one, so the pid a `LaunchProcess` reply
+    /// names can outlive the window it actually opened — a name sweep
+    /// catches whatever pid ended up owning it. Zero matches is a normal,
+    /// successful outcome, not an error.
+    KillProcessesByName {
+        /// The image file name to match.
+        name: String,
+    },
     /// Asks whether a process is still running.
     ProcessStatus {
         /// The OS process id.
@@ -146,6 +158,13 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::KillProcess`].
     Killed(KillOutcome),
+    /// Answer to [`Request::KillProcessesByName`]: how many matching
+    /// processes were found and terminated. Zero is a normal outcome, not
+    /// an error.
+    KilledByName {
+        /// Count of processes terminated.
+        terminated: u32,
+    },
     /// Answer to [`Request::ProcessStatus`].
     ProcessStatus(ProcessState),
     /// Answer to [`Request::SessionInfo`].
@@ -297,5 +316,33 @@ mod tests {
                 .expect("not end of stream");
             assert_eq!(&read, expected);
         }
+    }
+
+    #[test]
+    fn kill_processes_by_name_round_trips() {
+        let request = RequestEnvelope {
+            id: 9,
+            request: Request::KillProcessesByName {
+                name: "notepad.exe".to_owned(),
+            },
+        };
+        let frame = Frame::Reply {
+            to: 9,
+            payload: ReplyPayload::KilledByName { terminated: 2 },
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
     }
 }

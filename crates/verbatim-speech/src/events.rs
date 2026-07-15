@@ -24,4 +24,11 @@ pub trait SpeechEvents: Send + Sync {
 
     /// The first audio buffer of an utterance has been handed to the sink.
     fn audio_started(&self, trace_id: TraceId, at: Instant);
+
+    /// An utterance's audio has finished playing — its buffers have drained
+    /// through the sink. Fired only for an utterance that played to
+    /// completion, never for one interrupted or dropped before audio, so it
+    /// pairs with [`audio_started`](SpeechEvents::audio_started). Runs on the
+    /// synth thread, so like the others it must be cheap and non-blocking.
+    fn utterance_finished(&self, trace_id: TraceId, at: Instant);
 }

@@ -25,6 +25,12 @@ if (-not $SkipAutomationPrep) {
 }
 
 New-Item -ItemType Directory -Force -Path $LabRoot | Out-Null
+# Created here, not by Initialize-VerbatimHarness.ps1 or Install-Ffmpeg,
+# because the Packer template's "file" provisioners for
+# Set-DefaultAudioRenderDevice.ps1 and Set-RdpAudioMirror.ps1 run between
+# this script and Initialize-VerbatimHarness.ps1 and need the destination
+# directory to already exist.
+New-Item -ItemType Directory -Force -Path (Join-Path $LabRoot "tools") | Out-Null
 
 $os = $null
 try {

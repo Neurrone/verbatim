@@ -72,12 +72,37 @@ build {
     ]
   }
 
+  # Set-DefaultAudioRenderDevice.ps1 is a standalone guest script that
+  # `cargo xtask vm test --record` sends over PowerShell Direct before every
+  # recording, to re-assert VB-CABLE as the default render device in case a
+  # prior `cargo xtask vm connect` session left a stale default (see
+  # xtask/src/vm/recording.rs). It travels in as its own "file" provisioner,
+  # staged to C:\VerbatimLab\tools, rather than embedded as text inside
+  # Initialize-VerbatimHarness.ps1, since Packer's "powershell" provisioner
+  # uploads and runs exactly one script file with no access to siblings —
+  # the destination directory already exists by this point
+  # (Initialize-VerbatimBaseImage.ps1 creates it) precisely so this can run
+  # before the harness provisioner.
+  provisioner "file" {
+    source      = "${path.root}/scripts/Set-DefaultAudioRenderDevice.ps1"
+    destination = "C:/VerbatimLab/tools/Set-DefaultAudioRenderDevice.ps1"
+  }
+
+  # ffmpeg.exe and ffprobe.exe are deliberately NOT part of this image build.
+  # cargo xtask vm deploy copies them into the guest at C:\VerbatimLab\tools
+  # over PowerShell Direct (VMBus) alongside Verbatim's own binaries, from the
+  # LFS-vendored vm/vendor/ffmpeg copy: that channel is fast and needs no
+  # network reachability, unlike both an in-guest download (throttled or
+  # stalled over Hyper-V's NAT) and a WinRM file provisioner (which hung
+  # base64-streaming the ~100 MB binaries). See vm/vendor/ffmpeg/README.md and
+  # docs/tooling.md's image-rebuild section.
+
   # The M2 harness provisioner (autologon, unattended-session settings,
-  # display resolution, Scream audio, the VerbatimAgent scheduled task,
-  # firewall rule): see that script's own header comment for the full step
-  # list. Credentials are the same ones the source block already uses for
-  # WinRM, reused rather than duplicated so there is exactly one place that
-  # names the automation account.
+  # display resolution, VB-CABLE audio, the VerbatimAgent scheduled task, and
+  # its firewall rule): see that script's own header comment for
+  # the full step list. Credentials are the same ones the source block
+  # already uses for WinRM, reused rather than duplicated so there is
+  # exactly one place that names the automation account.
   provisioner "powershell" {
     script = "${path.root}/scripts/Initialize-VerbatimHarness.ps1"
     environment_vars = [
