@@ -25,9 +25,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
     UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId, UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent,
-    UiaRaiseNotificationEvent,
+    UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
+    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -220,6 +220,8 @@ fn role_to_control_type(role: Role) -> i32 {
         Role::StatusBar => UIA_StatusBarControlTypeId.0,
         Role::Group => UIA_GroupControlTypeId.0,
         Role::RadioButton => UIA_RadioButtonControlTypeId.0,
+        Role::Tree => UIA_TreeControlTypeId.0,
+        Role::TreeItem => UIA_TreeItemControlTypeId.0,
         // `Role` is `#[non_exhaustive]`; Pane, Unknown, and anything added
         // later serve as an unstyled pane rather than failing to answer.
         _ => UIA_PaneControlTypeId.0,

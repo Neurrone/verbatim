@@ -77,6 +77,8 @@ role-editable-text = edit
 role-link = link
 role-tool-bar = tool bar
 role-status-bar = status bar
+role-tree = tree view
+role-tree-item = tree view item
 role-unknown = unknown
 
 ## Spoken state names.

@@ -25,8 +25,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_RadioButtonControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
     UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
     UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
-    UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId,
+    UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
 };
 
 use crate::com::{variant_bool, variant_i32, variant_string};
@@ -58,6 +58,8 @@ pub fn role_from_control_type(control_type: i32) -> Role {
         t if t == UIA_GroupControlTypeId.0 => Role::Group,
         t if t == UIA_PaneControlTypeId.0 => Role::Pane,
         t if t == UIA_RadioButtonControlTypeId.0 => Role::RadioButton,
+        t if t == UIA_TreeControlTypeId.0 => Role::Tree,
+        t if t == UIA_TreeItemControlTypeId.0 => Role::TreeItem,
         _ => Role::Unknown,
     }
 }
@@ -428,6 +430,11 @@ mod tests {
         assert_eq!(
             role_from_control_type(UIA_TabControlTypeId.0),
             Role::TabControl
+        );
+        assert_eq!(role_from_control_type(UIA_TreeControlTypeId.0), Role::Tree);
+        assert_eq!(
+            role_from_control_type(UIA_TreeItemControlTypeId.0),
+            Role::TreeItem
         );
     }
 

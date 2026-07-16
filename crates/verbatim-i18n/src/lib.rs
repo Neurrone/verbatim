@@ -377,6 +377,8 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::Link => i18n_embed_fl::fl!(loader, "role-link"),
         Role::ToolBar => i18n_embed_fl::fl!(loader, "role-tool-bar"),
         Role::StatusBar => i18n_embed_fl::fl!(loader, "role-status-bar"),
+        Role::Tree => i18n_embed_fl::fl!(loader, "role-tree"),
+        Role::TreeItem => i18n_embed_fl::fl!(loader, "role-tree-item"),
         _ => i18n_embed_fl::fl!(loader, "role-unknown"),
     }
 }
@@ -546,6 +548,8 @@ mod tests {
     #[test]
     fn role_and_state_names_resolve() {
         assert_eq!(role_name(verbatim_model::Role::Slider), "slider");
+        assert_eq!(role_name(verbatim_model::Role::Tree), "tree view");
+        assert_eq!(role_name(verbatim_model::Role::TreeItem), "tree view item");
         assert_eq!(
             state_name(verbatim_model::State::Checked).as_deref(),
             Some("checked")
