@@ -8,9 +8,10 @@
 //! [`crate::replay`]).
 
 use verbatim_model::{
-    Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, Query,
-    QueryKind, Role, SegmentContent, SnapshotVersion, SpeechPriority, State, StateSet, TraceId,
-    Utterance, UtteranceSegment, UtteranceSource,
+    Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Notification,
+    NotificationProcessing, Pid, PropertyChange, Query, QueryKind, Role, SegmentContent,
+    SnapshotVersion, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
+    UtteranceSource,
 };
 
 use crate::state::{FetchReason, FocusContext, PendingFetch, SrState};
@@ -63,6 +64,23 @@ fn reduce_event(
             ancestors,
             selected_child,
         } => {
+            // Suppress a focus event identical to the one already announced
+            // from the same application, back to back: the UIA focus
+            // callback and a foreground re-announcement can both emit a
+            // FocusChanged for one control, and rapid duplicate foreground
+            // events re-report an unchanged focus. This is NVDA's
+            // already-the-focus early return. It never suppresses a genuine
+            // return to a window after visiting another: that path focuses
+            // the other application's control in between, so this event is
+            // no longer identical to the last announced one.
+            if let Some(focus) = state.focus.as_ref()
+                && focus.source == source
+                && &focus.last_announced == node
+                && focus.ancestors == *ancestors
+                && focus.last_selection == selected_child.as_ref().map(|selected| selected.id)
+            {
+                return Vec::new();
+            }
             let mut segments = Vec::new();
             for container in entered_containers(state.focus.as_ref(), source, ancestors) {
                 segments.extend(container_segments(container));
@@ -92,6 +110,10 @@ fn reduce_event(
         NormalizedEvent::SelectionChanged { node } => {
             reduce_selection_changed(state, trace_id, source, node)
         }
+        NormalizedEvent::Notification {
+            node_id: _,
+            notification,
+        } => reduce_notification(trace_id, notification),
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, source, *node_id, value.clone())
         }
@@ -116,6 +138,39 @@ fn reduce_event(
         // `NormalizedEvent` is `#[non_exhaustive]`.
         _ => Vec::new(),
     }
+}
+
+/// Handles a UIA `AutomationNotification` event (NVDA's
+/// `event_UIA_notification`): announce the application-supplied display
+/// string, if any, and nothing when there is none — a notification with no
+/// text has nothing to say. Foreground gating already happened in the
+/// shell (only the foreground application's events reach the reducer), so
+/// this needs no application check of its own. The processing hint sets the
+/// priority: `MostRecent` and `ImportantMostRecent` supersede earlier
+/// speech and so interrupt; every other kind queues behind current speech,
+/// NVDA's exact split. The notification kind and activity id are not used
+/// yet — they exist for later per-kind policy and for correlating an
+/// activity's notifications, which M3 does not need.
+fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Effect> {
+    let Some(text) = notification
+        .display_string
+        .as_ref()
+        .filter(|display| !display.is_empty())
+    else {
+        return Vec::new();
+    };
+    let priority = match notification.processing {
+        NotificationProcessing::MostRecent | NotificationProcessing::ImportantMostRecent => {
+            SpeechPriority::Interrupt
+        }
+        _ => SpeechPriority::Queued,
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority,
+        segments: vec![UtteranceSegment::text(text.clone())],
+        source: None,
+    })]
 }
 
 /// Whether a focused role is a selection container whose interior selection

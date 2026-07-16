@@ -432,6 +432,18 @@ Implementation notes, `reduce`:
   newly entered. The negated-state rules match NVDA's within the current
   vocabulary (negated checked for check boxes and radio buttons); NVDA's
   switch and toggle-button negations wait on those roles existing.
+- Notification handling and focus-noise suppression (M3): a UIA
+  `Notification` event speaks its display string when it carries one,
+  interrupting for `MostRecent`/`ImportantMostRecent` processing and
+  queuing otherwise (NVDA's `event_UIA_notification`; snap-layout hints are
+  the motivating case), with foreground gating already done in the shell so
+  only the foreground application's notifications reach the reducer. A
+  focus event identical to the one already announced from the same
+  application, back to back, is dropped — NVDA's already-the-focus early
+  return, which removes the double-fire when the UIA callback and a
+  foreground re-announcement both report one control; it never suppresses a
+  genuine return to a window after visiting another, since that focuses a
+  different control in between.
 - Selection announcements (M3): a focus event on a selection container (a
   list, a tab control) also carries the container's selected child, which
   is spoken right after the container; a `SelectionChanged` event is

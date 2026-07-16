@@ -97,18 +97,17 @@ pub enum NormalizedEvent {
     },
     /// A node was selected within its container (MSAA `EVENT_OBJECT_SELECTION`
     /// and its `SELECTIONADD`/`SELECTIONREMOVE`/`SELECTIONWITHIN` siblings;
-    /// UIA `SelectionItem_ElementSelected`). Roadmap M3 introduces this event
-    /// but deliberately does not announce it yet — the reducer's wildcard arm
-    /// for `#[non_exhaustive]` variants drops it until the "announce a
-    /// focused list's selected item" policy work lands.
+    /// UIA `SelectionItem_ElementSelected`). The reducer announces it while
+    /// focus rests on a selection container, once per newly selected item.
     SelectionChanged {
         /// Snapshot of the selected node.
         node: NodeSnapshot,
     },
     /// A UIA `AutomationNotification` event: an app-initiated announcement
     /// (for example Windows 11's snap-layout hints) carried through
-    /// verbatim. Roadmap M3 introduces this event but deliberately does not
-    /// announce it yet, matching [`SelectionChanged`](Self::SelectionChanged).
+    /// verbatim. The reducer speaks its display string, if any, interrupting
+    /// for `MostRecent`/`ImportantMostRecent` processing and queuing
+    /// otherwise (NVDA's `event_UIA_notification`).
     Notification {
         /// The node the notification concerns.
         node_id: NodeId,
@@ -153,7 +152,7 @@ pub enum NotificationProcessing {
 }
 
 /// The payload of a UIA `AutomationNotification` event, normalized
-/// (architecture section 4). Carried but not yet announced — see
+/// (architecture section 4). Announced by the reducer through
 /// [`NormalizedEvent::Notification`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notification {

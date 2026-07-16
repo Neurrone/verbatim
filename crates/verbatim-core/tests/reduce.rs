@@ -1053,3 +1053,122 @@ fn selection_changes_outside_a_focused_container_stay_silent() {
     let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), Pid(2), 1, item));
     assert!(effects.is_empty(), "another application's selection");
 }
+
+fn notification_event(
+    trace_id: TraceId,
+    source: Pid,
+    version: u64,
+    processing: verbatim_model::NotificationProcessing,
+    display: Option<&str>,
+) -> Input {
+    Input::Event {
+        trace_id,
+        source,
+        backend: Backend::Uia,
+        version: SnapshotVersion(version),
+        event: NormalizedEvent::Notification {
+            node_id: NodeId::new(1),
+            notification: verbatim_model::Notification {
+                kind: verbatim_model::NotificationKind::Other,
+                processing,
+                display_string: display.map(str::to_owned),
+                activity_id: None,
+            },
+        },
+    }
+}
+
+#[test]
+fn notification_with_text_is_announced_and_priority_follows_processing() {
+    use verbatim_model::NotificationProcessing;
+
+    // MostRecent supersedes: Interrupt.
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &notification_event(
+            TraceId::mint(),
+            Pid(1),
+            1,
+            NotificationProcessing::MostRecent,
+            Some("Snap layout available"),
+        ),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::text("Snap layout available")]
+    );
+
+    // All: queued behind current speech.
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &notification_event(
+            TraceId::mint(),
+            Pid(1),
+            2,
+            NotificationProcessing::All,
+            Some("Download complete"),
+        ),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
+}
+
+#[test]
+fn notification_without_text_is_silent() {
+    use verbatim_model::NotificationProcessing;
+
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &notification_event(
+            TraceId::mint(),
+            Pid(1),
+            1,
+            NotificationProcessing::All,
+            None,
+        ),
+    );
+    assert!(
+        effects.is_empty(),
+        "a notification with no display text says nothing"
+    );
+}
+
+#[test]
+fn identical_back_to_back_focus_is_suppressed() {
+    let source = Pid(1);
+    let button = node(700, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (state, effects) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, 1, button.clone()),
+    );
+    assert_eq!(effects.len(), 1, "first focus is announced");
+
+    // The exact same node focusing again from the same app: suppressed.
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), source, 2, button));
+    assert!(
+        effects.is_empty(),
+        "a redundant identical focus event is not re-announced"
+    );
+}
+
+#[test]
+fn returning_to_a_window_after_visiting_another_is_announced() {
+    let a = node(700, Role::Button, Some("OK"), None, StateSet::new());
+    let b = node(800, Role::Button, Some("Cancel"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), Pid(1), 1, a.clone()),
+    );
+    // Visit another control (different app), then come back to the first.
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(2), 1, b));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 2, a));
+    assert_eq!(
+        effects.len(),
+        1,
+        "focus that differs from the last announced one is announced, even if seen earlier"
+    );
+}
