@@ -113,10 +113,10 @@ fn copy_pipe_to_tcp(pipe: &OverlappedPipe, mut tcp: TcpStream) -> (u64, &'static
             Err(_) => return (total, "pipe read error"),
             Ok(n) => n,
         };
+        total += read as u64;
         if tcp.write_all(&buf[..read]).is_err() {
             return (total, "tcp write error");
         }
-        total += read as u64;
     }
 }
 

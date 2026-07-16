@@ -740,6 +740,7 @@ fn spawn_connection(
 /// broadcast into an invisible drop, which is how a test harness once
 /// heard nothing for a whole scenario while speech demonstrably flowed.
 fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>, conn_id: ConnectionId) {
+    let mut frames = 0u64;
     while let Ok(frame) = outbound_rx.recv() {
         if let Err(error) = write_message(&mut writer, &frame) {
             warn!(
@@ -749,7 +750,12 @@ fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>, conn_id: C
             );
             break;
         }
+        frames += 1;
     }
+    // One line per connection close: with the agent relay logging its own
+    // per-direction totals, this count is the server-side half of the
+    // correlation that attributes any future frame loss to a layer.
+    tracing::info!(conn_id, frames, "control-plane connection writer finished");
 }
 
 /// Accepts connections until `shutdown` is set, spawning a reader and
