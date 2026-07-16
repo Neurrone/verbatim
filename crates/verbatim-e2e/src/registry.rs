@@ -45,9 +45,12 @@
 //! - [`Group::Speech`]: Verbatim's own menu and Speech settings dialog, and
 //!   the latency reporting built into walking them —
 //!   [`m1_exit_regression`](crate::scenarios::m1_exit_regression) today.
-//! - [`Group::Shell`]: switching foreground between applications — the
-//!   "task switching" item `docs/roadmap.md`'s M3 E2E list names —
-//!   [`multi_outpost_switch`](crate::scenarios::multi_outpost_switch) today.
+//! - [`Group::Shell`]: the Windows shell — switching foreground between
+//!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
+//!   list names,
+//!   [`multi_outpost_switch`](crate::scenarios::multi_outpost_switch)) and
+//!   opening the Start/Search surface
+//!   ([`start_menu`](crate::scenarios::start_menu)).
 //! - [`Group::Legacy`]: a real external target application, standing in for
 //!   the "at least one MSAA-only legacy app" M3 exit item until a
 //!   genuinely MSAA-only one is chosen —
@@ -68,7 +71,7 @@ use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus, object_navigation,
-    tree_navigation,
+    start_menu, tree_navigation,
 };
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
@@ -205,6 +208,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: msinfo32::setup,
         body: msinfo32::body,
         teardown: msinfo32::teardown,
+    },
+    ScenarioDef {
+        name: "start_menu",
+        group: Group::Shell,
+        target_images: &[],
+        setup: start_menu::setup,
+        body: start_menu::body,
+        teardown: start_menu::teardown,
     },
     ScenarioDef {
         name: "tree_navigation",

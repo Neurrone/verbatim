@@ -357,6 +357,19 @@ and the D9 outpost generalization — were finished early, at the end of M2
   behavior is verified by hand — open Settings, tab to any toggle, and
   confirm it announces "<name> toggle button pressed" on and "not pressed"
   off.
+
+  Start menu and search: the `start_menu` E2E scenario covers the reliable
+  half — pressing the Windows key opens the Start/Search surface and
+  Verbatim announces its search box. Unlike Explorer and the Settings app,
+  the Start menu opens on a real key press and takes the foreground the
+  ordinary way, so its opening announcement is stable (validated across
+  repeated fresh-restore runs). Navigating the search *results* is
+  deliberately not automated: typing a query switches Start to virtualized
+  Web-content result panes that report selection rather than focus as the
+  highlight moves, an async surface that does not settle predictably under
+  the suite's pace. Reading the results is verified by hand — open Start,
+  type a few letters, arrow through the results, and confirm each is
+  announced as you land on it.
 - Time and date command: Verbatim+F12 speaks the time, twice quickly for
   the date. A system tray and taskbar icons list replicating the
   systrayList NVDA add-on exactly, including its GUI: Verbatim+F11 opens

@@ -266,9 +266,14 @@ object-navigation and review commands against Verbatim's own settings
 dialog), `msinfo32` (an MSAA-only legacy application reaches Verbatim
 through the MSAA stack), and `tree_navigation` (logical object navigation
 through msinfo32's real Win32 tree view — the regression scenario for the
-flat MSAA tree-view exposure). A real Explorer folder-window scenario is
-deliberately not among them — see the "Explorer" note in `docs/roadmap.md`'s
-M3 section for why it is verified by hand for now. A scenario's name is also its
+flat MSAA tree-view exposure), and `start_menu` (pressing the Windows key
+opens the Start/Search surface and Verbatim announces its search box).
+A real Explorer folder-window scenario is deliberately not among them — see
+the "Explorer" note in `docs/roadmap.md`'s M3 section for why it is verified
+by hand for now, and the same section's toggle-controls and Start-menu notes
+for the other by-hand cases (the Settings app's toggles, and navigating the
+Start menu's search *results*, both deferred for the same reason). A
+scenario's name is also its
 `#[test]` function name, so `cargo test -p verbatim-e2e <name> -- --exact
 --test-threads=1` runs exactly that one scenario runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
