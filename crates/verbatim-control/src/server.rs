@@ -248,6 +248,10 @@ fn dispatch_request(
         }
         Request::SubscribeSpeech => {
             speech_subscribed.store(true, Ordering::Relaxed);
+            // Info, not debug: when a test harness reports hearing nothing,
+            // whether the subscription was ever registered is the first
+            // question, and this line in the captured stderr answers it.
+            tracing::info!("speech subscribed on a control connection");
             Frame::Reply {
                 to: id,
                 payload: ReplyPayload::Ok,
@@ -702,7 +706,17 @@ fn spawn_connection(
     let writer_raw = Arc::clone(&raw);
     thread::Builder::new()
         .name(format!("verbatim-control-writer-{conn_id}"))
-        .spawn(move || run_writer(PipeWriter(writer_raw), &outbound_rx))
+        .spawn(move || {
+            run_writer(PipeWriter(Arc::clone(&writer_raw)), &outbound_rx, conn_id);
+            // However the writer ended — the session closing its channel, or
+            // a write failing — this connection can never carry another
+            // frame, so disconnect the pipe (idempotent). Without this, a
+            // write failure left the pipe open with a dead writer behind it:
+            // the client saw an apparently healthy connection that would
+            // simply never speak again, instead of the end-of-stream that
+            // tells it to fail loudly.
+            writer_raw.disconnect();
+        })
         .expect("spawning the control-plane writer thread");
 
     thread::Builder::new()
@@ -720,10 +734,19 @@ fn spawn_connection(
 
 /// Drains outbound frames onto the wire until the channel disconnects
 /// (every sender, including the reader thread's and the registry's own
-/// clone, has been dropped) or a write fails (the client is gone).
-fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>) {
+/// clone, has been dropped) or a write fails (the client is gone, or the
+/// transport hiccuped). A failed write is logged, never silent: a writer
+/// that dies quietly while its session stays open turns every later
+/// broadcast into an invisible drop, which is how a test harness once
+/// heard nothing for a whole scenario while speech demonstrably flowed.
+fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>, conn_id: ConnectionId) {
     while let Ok(frame) = outbound_rx.recv() {
-        if write_message(&mut writer, &frame).is_err() {
+        if let Err(error) = write_message(&mut writer, &frame) {
+            warn!(
+                conn_id,
+                %error,
+                "control-plane write failed; closing this connection's writer"
+            );
             break;
         }
     }
@@ -907,14 +930,34 @@ impl ControlServer {
     }
 
     fn fan_out(&self, frame: &Frame, subscribed: impl Fn(&ConnectionEntry) -> bool) {
-        let registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
-        for entry in registry.values() {
+        let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut dead: Vec<ConnectionId> = Vec::new();
+        for (&conn_id, entry) in registry.iter() {
             if !subscribed(entry) {
                 continue;
             }
-            if let Err(TrySendError::Full(_)) = entry.outbound.try_send(frame.clone()) {
-                warn!("dropping a control-plane frame for a slow client");
+            match entry.outbound.try_send(frame.clone()) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    warn!(conn_id, "dropping a control-plane frame for a slow client");
+                }
+                // The connection's writer thread has exited (its receiver is
+                // gone) while the reader side still holds the session open —
+                // a zombie subscriber. Left in place it would swallow every
+                // further broadcast without a trace, which is exactly how a
+                // test harness once heard nothing for a whole scenario while
+                // speech demonstrably flowed. Prune it and say so.
+                Err(TrySendError::Disconnected(_)) => {
+                    warn!(
+                        conn_id,
+                        "control-plane connection has a dead writer; dropping it from broadcasts"
+                    );
+                    dead.push(conn_id);
+                }
             }
+        }
+        for conn_id in dead {
+            registry.remove(&conn_id);
         }
     }
 }
