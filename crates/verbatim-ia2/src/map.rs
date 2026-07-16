@@ -7,10 +7,10 @@ use verbatim_model::{Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     ROLE_SYSTEM_CHECKBUTTON, ROLE_SYSTEM_COMBOBOX, ROLE_SYSTEM_DIALOG, ROLE_SYSTEM_GROUPING,
     ROLE_SYSTEM_LINK, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_MENUITEM,
-    ROLE_SYSTEM_MENUPOPUP, ROLE_SYSTEM_PAGETAB, ROLE_SYSTEM_PAGETABLIST, ROLE_SYSTEM_PROPERTYPAGE,
-    ROLE_SYSTEM_PUSHBUTTON, ROLE_SYSTEM_RADIOBUTTON, ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SPINBUTTON,
-    ROLE_SYSTEM_STATICTEXT, ROLE_SYSTEM_STATUSBAR, ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TOOLBAR,
-    ROLE_SYSTEM_WINDOW,
+    ROLE_SYSTEM_MENUPOPUP, ROLE_SYSTEM_OUTLINE, ROLE_SYSTEM_OUTLINEITEM, ROLE_SYSTEM_PAGETAB,
+    ROLE_SYSTEM_PAGETABLIST, ROLE_SYSTEM_PROPERTYPAGE, ROLE_SYSTEM_PUSHBUTTON,
+    ROLE_SYSTEM_RADIOBUTTON, ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SPINBUTTON, ROLE_SYSTEM_STATICTEXT,
+    ROLE_SYSTEM_STATUSBAR, ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TOOLBAR, ROLE_SYSTEM_WINDOW,
 };
 // MSAA `STATE_SYSTEM_*` bit values (winuser.h). These are frozen ABI constants;
 // the `windows` crate splits them across three feature-gated modules and types
@@ -58,6 +58,8 @@ pub fn role_from_msaa(role: u32) -> Role {
         ROLE_SYSTEM_STATUSBAR => Role::StatusBar,
         ROLE_SYSTEM_PAGETABLIST => Role::TabControl,
         ROLE_SYSTEM_PAGETAB => Role::Tab,
+        ROLE_SYSTEM_OUTLINE => Role::Tree,
+        ROLE_SYSTEM_OUTLINEITEM => Role::TreeItem,
         _ => Role::Unknown,
     }
 }
@@ -101,6 +103,8 @@ mod tests {
         assert_eq!(role_from_msaa(ROLE_SYSTEM_TEXT), Role::EditableText);
         assert_eq!(role_from_msaa(ROLE_SYSTEM_PAGETABLIST), Role::TabControl);
         assert_eq!(role_from_msaa(ROLE_SYSTEM_PAGETAB), Role::Tab);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_OUTLINE), Role::Tree);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_OUTLINEITEM), Role::TreeItem);
     }
 
     #[test]

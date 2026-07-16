@@ -174,6 +174,8 @@ fn role_from_fixture_str(name: &str) -> Option<Role> {
         "link" => Role::Link,
         "tool_bar" => Role::ToolBar,
         "status_bar" => Role::StatusBar,
+        "tree" => Role::Tree,
+        "tree_item" => Role::TreeItem,
         "unknown" => Role::Unknown,
         _ => return None,
     })
@@ -232,6 +234,8 @@ mod tests {
             "link",
             "tool_bar",
             "status_bar",
+            "tree",
+            "tree_item",
             "unknown",
         ] {
             assert!(

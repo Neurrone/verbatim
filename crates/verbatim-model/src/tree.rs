@@ -69,6 +69,10 @@ pub enum Role {
     ToolBar,
     /// A status bar.
     StatusBar,
+    /// A tree view control.
+    Tree,
+    /// One item inside a tree view.
+    TreeItem,
     /// Anything not yet mapped into the vocabulary.
     Unknown,
 }
