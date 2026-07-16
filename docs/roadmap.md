@@ -444,10 +444,16 @@ and the D9 outpost generalization — were finished early, at the end of M2
   dictionaries a per-span pipeline stage — so M8 adds configuration UI on
   top of it, not new architecture.
 
-Exit: navigate the Windows shell fluently; review cursor and object navigation work; the
-capture-synth latency budget holds in the VM harness; no reducer
-path emits a pre-flattened utterance string (D12) — every spoken
-announcement reaches the pipeline as semantic spans.
+Exit: navigate the Windows shell fluently; review cursor and object
+navigation work (confirmed live, including on the MSAA-backed settings
+dialog after the window-hierarchy and edge-message fixes); the
+capture-synth pipeline latency stays within budget in the VM harness —
+measured at 1 to 8 milliseconds typically, reported per scenario, with the
+hard assertion deferred to M8's controlled measurement after it proved to
+track guest scheduling rather than code (recorded above); no reducer path
+emits a pre-flattened utterance string (D12) — every spoken announcement,
+including navigation edge messages, reaches the pipeline as semantic
+spans.
 
 ## M4 — Text, editing, and terminals
 
