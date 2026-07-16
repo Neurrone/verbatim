@@ -222,6 +222,18 @@ pub mod messages {
         fl!(loader(), "menu-exit")
     }
 
+    /// Spoken confirmation that text was copied to the clipboard.
+    #[must_use]
+    pub fn clipboard_copied() -> String {
+        fl!(loader(), "clipboard-copied")
+    }
+
+    /// Spoken notice that a clipboard copy failed.
+    #[must_use]
+    pub fn clipboard_copy_failed() -> String {
+        fl!(loader(), "clipboard-copy-failed")
+    }
+
     /// Base title of the settings dialog.
     #[must_use]
     pub fn settings_title() -> String {

@@ -55,11 +55,21 @@ Public API:
   and activity id). The last two are emitted by outposts but deliberately
   not yet announced: the reducer's wildcard arm drops them until M3's
   selection-announcement policy work lands.
-- `Input` and `Effect` — the reducer's contract. Inputs are strictly
-  accessibility-shaped: events, fetch completions, timer ticks. Effects are
-  strictly `Speak`, `StopSpeech`, `Fetch`, and `PlayEarcon` (an `Earcon`
-  names a sound semantically — `AppNotResponding` first — and themes decide
-  what it sounds like); menu and quit concerns never appear here.
+- `Input` and `Effect` — the reducer's contract. Inputs are events, fetch
+  completions, timer ticks, and `Command` (a review or object-navigation
+  gesture carrying a `ReviewCommand` and a press-repeat count, roadmap M3).
+  Effects are `Speak`, `StopSpeech`, `Fetch` (whose `QueryKind` now also
+  names the navigation directions parent, next/previous sibling, first
+  child, with a `NoNeighbor` `FetchResult` for a tree edge), `PlayEarcon`
+  (an `Earcon` names a sound semantically — `AppNotResponding` first — and
+  themes decide what it sounds like), `Activate` (invoke or default-action a
+  node), and `CopyToClipboard` (routed through the shell's shared clipboard
+  helper, so the reducer never touches the clipboard); menu and quit
+  concerns never appear here.
+- `ReviewCommand` — the model-level review and object-navigation vocabulary
+  (report object, parent, siblings, first child, to-focus, activate, and
+  the review-cursor line/word/character motions) the keyboard layer's
+  scripts map onto, so the reducer never depends on input-crate types.
 - `Utterance`, `UtteranceSegment`, `SegmentContent`, `UtteranceSource`,
   `SpeechPriority` — structured speech per decision D12. Segments are
   semantic spans: literal text, `Label`, `Value`, `Description`, role and
@@ -432,6 +442,19 @@ Implementation notes, `reduce`:
   newly entered. The negated-state rules match NVDA's within the current
   vocabulary (negated checked for check boxes and radio buttons); NVDA's
   switch and toggle-button negations wait on those roles existing.
+- Object navigation and the review cursor (M3): `SrState` carries a
+  navigator object and a review cursor that follow focus by default (every
+  focus change snaps them to the new focus). A `Command` input runs against
+  them: report-object announces on the first press, spells its review text
+  on the second, and copies name-and-value on the third; parent, sibling,
+  and first-child moves emit a navigation `Fetch` whose completion moves the
+  navigator and announces it (deduplicated so a rapid second move supersedes
+  a pending one, silent at a tree edge); activate emits `Activate`; to-focus
+  snaps the navigator back. The review-cursor line, word, and character
+  motions walk the navigator object's flat text (its value or name) in the
+  pure `review` module — grapheme-cluster characters and word-boundary
+  segmentation wait for M4's text model. All of this is pure and unit-tested
+  in `verbatim-core`.
 - Notification handling and focus-noise suppression (M3): a UIA
   `Notification` event speaks its display string when it carries one,
   interrupting for `MostRecent`/`ImportantMostRecent` processing and
@@ -1496,7 +1519,18 @@ its visible owner.
 
 ## verbatim-app
 
-The composition root: `verbatim.exe`.
+The composition root: `verbatim.exe`. Its `clipboard` module is the one
+shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
+Win32 clipboard interaction and the localized spoken confirmation, and every
+copying gesture routes through it — the report-object triple-press is the
+first caller. The reducer thread selects on both the outpost stream and a
+command channel the gesture router feeds, so a review or object-navigation
+gesture is reduced and its effects executed by the same path as an
+accessibility event; `Effect::Activate` and `Effect::CopyToClipboard` are
+executed there alongside `Speak` and `Fetch`. The router builds its gesture
+map and its gesture-to-script table from `verbatim_input::bindings_for` for
+the configured keyboard layout, so the active review and navigation bindings
+follow `settings.toml`'s `keyboard.layout`.
 
 Public surface: none — this is the binary. Internal structure worth
 knowing for review:

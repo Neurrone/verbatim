@@ -99,3 +99,8 @@ state-busy = busy
 
 object-position-in-set = { $position } of { $set_size }
 object-level = level { $level }
+
+## Clipboard.
+
+clipboard-copied = copied to clipboard
+clipboard-copy-failed = copy failed

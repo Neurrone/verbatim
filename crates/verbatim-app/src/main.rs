@@ -7,6 +7,7 @@
 //! this, the process main thread, until shutdown is requested from the menu,
 //! the control plane, or a replacing instance.
 
+mod clipboard;
 mod datetime;
 mod flight_dump;
 mod latency;
@@ -27,9 +28,13 @@ use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
-use verbatim_input::{DecisionConfig, EmittedGesture, GestureMap, InputHook, SharedGestureMap};
+use verbatim_input::{
+    DecisionConfig, EmittedGesture, GestureMap, InputHook, KeyboardLayout, ScriptAction,
+    SharedGestureMap,
+};
 use verbatim_model::{
-    Effect, GestureId, Input, Pid, SpeechPriority, TraceId, TreeNode, Utterance, UtteranceSegment,
+    Effect, GestureId, Input, Pid, ReviewCommand, SpeechPriority, TraceId, TreeNode, Utterance,
+    UtteranceSegment,
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::{ForegroundTrigger, OutpostMessage, Supervisor};
@@ -49,16 +54,11 @@ use latency::LatencyLedger;
 /// as though they were happening on screen right now).
 type CurrentForeground = Arc<AtomicU32>;
 
-/// The M1 keyboard binding: Verbatim+V opens the menu.
+/// The one binding not carried by the keyboard layout's own script table:
+/// Verbatim+V opens the menu. The review, object-navigation, time, and
+/// tray-list bindings all come from `verbatim_input::bindings_for` for the
+/// active layout (roadmap M3).
 const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
-
-/// M3: Verbatim+F12 speaks the current time (twice quickly for the date,
-/// once multi-press counting lands — see [`router_loop`]'s seam note).
-const SPEAK_TIME_GESTURE: &str = "kb:verbatim+f12";
-
-/// M3: Verbatim+F11 opens the system tray items list (twice quickly for
-/// the taskbar list, once multi-press counting lands — same seam).
-const SHELL_LIST_GESTURE: &str = "kb:verbatim+f11";
 
 /// How long a `DumpTree` control-plane request waits for the outpost's
 /// answer before giving up.
@@ -121,6 +121,10 @@ fn main() -> ExitCode {
 
 /// Everything after the process-level preliminaries; errors here are startup
 /// failures reported to the user.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the composition root wires every subsystem together in one place; splitting it would scatter the startup order this function exists to make legible"
+)]
 fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let own_pid = std::process::id();
 
@@ -141,6 +145,16 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
     // audio (see build_speech_manager).
     let manager = build_speech_manager(&config, &ledger)?;
+
+    // The keyboard layout selects which review and object-navigation
+    // bindings are active (roadmap M3); read it before `config` moves into
+    // the store. File-only in M3, so no live re-read is needed. The config
+    // and input crates each own a `KeyboardLayout` (deliberately decoupled),
+    // so translate here at the seam.
+    let keyboard_layout = match config.settings().keyboard.layout {
+        verbatim_config::KeyboardLayout::Desktop => KeyboardLayout::Desktop,
+        verbatim_config::KeyboardLayout::Laptop => KeyboardLayout::Laptop,
+    };
 
     // Settings host: the GUI's live handle; commit persists to the base
     // profile through the config store.
@@ -173,7 +187,13 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         }))
     };
 
-    // The reducer thread: normalized events in, speech and fetches out.
+    // Review and object-navigation commands from the router reach the
+    // reducer over this channel; the reducer thread selects on it alongside
+    // the outpost stream (see `reducer_loop`).
+    let (command_tx, command_rx) = unbounded::<Input>();
+
+    // The reducer thread: normalized events and review commands in, speech,
+    // fetches, activations, and clipboard copies out.
     {
         let context = ReducerContext {
             manager: Arc::clone(&manager),
@@ -187,19 +207,29 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
-            .spawn(move || reducer_loop(&outpost_rx, &context))?;
+            .spawn(move || reducer_loop(&outpost_rx, &command_rx, &context))?;
     }
 
-    // The gesture router: bound gestures to imperative commands, never into
-    // the reducer. The GUI handle arrives once the GUI thread is up.
+    // The gesture router: bound gestures become GUI commands, direct speech,
+    // or — for review and object navigation — reducer commands sent over
+    // `command_tx`. The GUI handle arrives once the GUI thread is up.
     let gui_handle: Arc<OnceLock<GuiHandle>> = Arc::new(OnceLock::new());
     let (gesture_tx, gesture_rx) = bounded::<EmittedGesture>(64);
     {
         let gui_handle = Arc::clone(&gui_handle);
         let manager = Arc::clone(&manager);
+        let command_tx = command_tx.clone();
         thread::Builder::new()
             .name("verbatim-router".to_owned())
-            .spawn(move || router_loop(&gesture_rx, &gui_handle, &manager))?;
+            .spawn(move || {
+                router_loop(
+                    &gesture_rx,
+                    &gui_handle,
+                    &manager,
+                    &command_tx,
+                    keyboard_layout,
+                );
+            })?;
     }
 
     // GUI events out of the GUI thread: Exit requests shutdown.
@@ -212,7 +242,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // The gesture map shared by the hook and the control plane's validation.
-    let bound_gestures = bound_gestures();
+    let bound_gestures = bound_gestures(keyboard_layout);
 
     // Control plane.
     let server = ControlServer::start(control_handlers(ControlHandlersConfig {
@@ -613,72 +643,95 @@ fn incoming_input(
     }
 }
 
-/// The reducer thread body: drains outpost messages, feeds the pure reducer,
-/// and executes its effects.
-fn reducer_loop(outpost_rx: &Receiver<OutpostMessage>, context: &ReducerContext) {
-    let ReducerContext {
-        manager,
-        supervisor,
-        ledger,
-        server_slot,
-        outposts,
-        pending_dump_tree,
-        recorder,
-        current_foreground,
-    } = context;
+/// The reducer thread body: drains outpost messages and router commands,
+/// feeds the pure reducer, and executes its effects. Selects on both
+/// sources so a review or object-navigation gesture is handled with the
+/// same reduce-and-execute step as an accessibility event.
+fn reducer_loop(
+    outpost_rx: &Receiver<OutpostMessage>,
+    command_rx: &Receiver<Input>,
+    context: &ReducerContext,
+) {
     let mut state = SrState::new();
-
-    while let Ok(message) = outpost_rx.recv() {
-        let (source, message) = match message {
-            OutpostMessage::Event(source, message) => (source, *message),
-            OutpostMessage::Retired(pid) => {
-                outposts.lock().expect("outposts lock").remove(&pid);
-                continue;
-            }
-        };
-        let Some(input) = incoming_input(
-            source,
-            message,
-            ledger,
-            server_slot,
-            outposts,
-            pending_dump_tree,
-            current_foreground,
-        ) else {
-            continue;
-        };
-
-        let trace_id = match &input {
-            Input::Event { trace_id, .. } | Input::FetchCompleted { trace_id, .. } => *trace_id,
-            _ => TraceId::mint(),
-        };
-        let (next, effects) = reduce(&state, &input);
-        {
-            let mut recorder = recorder.lock().unwrap_or_else(PoisonError::into_inner);
-            recorder.record_input(input, effects.len());
-        }
-        state = next;
-
-        for effect in effects {
-            match effect {
-                Effect::Speak(utterance) => manager.speak(utterance),
-                Effect::StopSpeech => {
-                    // M1's reducer interrupts through utterance priority and
-                    // never emits this; log so a future change is visible.
-                    tracing::debug!("StopSpeech effect ignored in M1");
-                }
-                Effect::Fetch(query) => {
-                    if let Err(error) = supervisor.send_to(
-                        query.source,
-                        &SupervisorToOutpost::Fetch { trace_id, query },
-                    ) {
-                        tracing::warn!(%error, "fetch could not reach the outpost");
+    loop {
+        crossbeam_channel::select! {
+            recv(outpost_rx) -> message => {
+                let Ok(message) = message else { break };
+                let (source, message) = match message {
+                    OutpostMessage::Event(source, message) => (source, *message),
+                    OutpostMessage::Retired(pid) => {
+                        context.outposts.lock().expect("outposts lock").remove(&pid);
+                        continue;
                     }
-                }
-                _ => {}
+                };
+                let Some(input) = incoming_input(
+                    source,
+                    message,
+                    &context.ledger,
+                    &context.server_slot,
+                    &context.outposts,
+                    &context.pending_dump_tree,
+                    &context.current_foreground,
+                ) else {
+                    continue;
+                };
+                state = apply_input(&state, input, context);
+            }
+            recv(command_rx) -> command => {
+                let Ok(input) = command else { break };
+                state = apply_input(&state, input, context);
             }
         }
     }
+}
+
+/// Runs one input through the reducer, records it in the flight recorder,
+/// and executes the resulting effects; returns the next state.
+fn apply_input(state: &SrState, input: Input, context: &ReducerContext) -> SrState {
+    let trace_id = match &input {
+        Input::Event { trace_id, .. }
+        | Input::FetchCompleted { trace_id, .. }
+        | Input::Command { trace_id, .. } => *trace_id,
+        _ => TraceId::mint(),
+    };
+    let (next, effects) = reduce(state, &input);
+    {
+        let mut recorder = context
+            .recorder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        recorder.record_input(input, effects.len());
+    }
+
+    for effect in effects {
+        match effect {
+            Effect::Speak(utterance) => context.manager.speak(utterance),
+            Effect::StopSpeech => {
+                // The reducer interrupts through utterance priority and
+                // never emits this; log so a future change is visible.
+                tracing::debug!("StopSpeech effect ignored");
+            }
+            Effect::Fetch(query) => {
+                if let Err(error) = context.supervisor.send_to(
+                    query.source,
+                    &SupervisorToOutpost::Fetch { trace_id, query },
+                ) {
+                    tracing::warn!(%error, "fetch could not reach the outpost");
+                }
+            }
+            Effect::Activate { source, node_id } => {
+                if let Err(error) = context
+                    .supervisor
+                    .send_to(source, &SupervisorToOutpost::Activate { trace_id, node_id })
+                {
+                    tracing::warn!(%error, "activate could not reach the outpost");
+                }
+            }
+            Effect::CopyToClipboard(text) => clipboard::copy(&context.manager, &text),
+            _ => {}
+        }
+    }
+    next
 }
 
 /// The router thread body: bound gestures become imperative commands —
@@ -695,33 +748,94 @@ fn router_loop(
     gesture_rx: &Receiver<EmittedGesture>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
     manager: &Arc<SpeechManager>,
+    command_tx: &crossbeam_channel::Sender<Input>,
+    layout: KeyboardLayout,
 ) {
     let show_menu = GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding");
-    let speak_time = GestureId::parse(SPEAK_TIME_GESTURE).expect("valid binding");
-    let shell_list = GestureId::parse(SHELL_LIST_GESTURE).expect("valid binding");
+    // The active layout's gesture-to-script table, looked up per press.
+    let scripts: HashMap<GestureId, ScriptAction> =
+        verbatim_input::bindings_for(layout).into_iter().collect();
     while let Ok(emitted) = gesture_rx.recv() {
         tracing::info!(trace_id = %emitted.trace_id, gesture = %emitted.gesture, "gesture");
         if emitted.gesture == show_menu {
             send_gui_command(gui_handle, GuiCommand::ShowMenu);
-        } else if emitted.gesture == speak_time {
-            speak_time_or_date(manager, 0);
-        } else if emitted.gesture == shell_list {
-            send_gui_command(
+            continue;
+        }
+        let Some(action) = scripts.get(&emitted.gesture) else {
+            continue;
+        };
+        // Time and the shell list are imperative shell concerns; everything
+        // else is a review or object-navigation command for the reducer.
+        match action {
+            ScriptAction::SpeakTime => speak_time_or_date(manager, emitted.repeat),
+            ScriptAction::ShowTrayList => send_gui_command(
                 gui_handle,
-                GuiCommand::OpenShellItemList(shell_list_kind(0)),
-            );
+                GuiCommand::OpenShellItemList(shell_list_kind(emitted.repeat)),
+            ),
+            other => {
+                if let Some(command) = review_command_of(*other) {
+                    let input = Input::Command {
+                        trace_id: emitted.trace_id,
+                        command,
+                        repeat: emitted.repeat,
+                    };
+                    if command_tx.send(input).is_err() {
+                        tracing::warn!("reducer command channel closed; dropping gesture");
+                    }
+                }
+            }
         }
     }
 }
 
-/// The keyboard bindings this milestone ships, as the shared gesture map
-/// the hook consults and the control plane validates against.
-fn bound_gestures() -> SharedGestureMap {
-    GestureMap::new(
-        [SHOW_MENU_GESTURE, SPEAK_TIME_GESTURE, SHELL_LIST_GESTURE]
-            .map(|gesture| GestureId::parse(gesture).expect("valid binding")),
-    )
-    .into_shared()
+/// Maps a keyboard [`ScriptAction`] to the reducer's [`ReviewCommand`], or
+/// `None` for the two actions the router handles itself (time and the tray
+/// list). The two enums are deliberately separate — the input crate owns
+/// key scripts, the model owns reducer commands — so this is the one place
+/// they meet.
+fn review_command_of(action: ScriptAction) -> Option<ReviewCommand> {
+    Some(match action {
+        ScriptAction::ReportCurrentObject => ReviewCommand::ReportObject,
+        ScriptAction::MoveToParent => ReviewCommand::Parent,
+        ScriptAction::MoveToNextSibling => ReviewCommand::NextSibling,
+        ScriptAction::MoveToPreviousSibling => ReviewCommand::PreviousSibling,
+        ScriptAction::MoveToFirstChild => ReviewCommand::FirstChild,
+        ScriptAction::MoveReviewCursorToFocus => ReviewCommand::ToFocus,
+        ScriptAction::ActivateCurrentObject => ReviewCommand::Activate,
+        ScriptAction::ReviewTop => ReviewCommand::ReviewTop,
+        ScriptAction::ReviewPreviousLine => ReviewCommand::ReviewPreviousLine,
+        ScriptAction::ReviewCurrentLine => ReviewCommand::ReviewCurrentLine,
+        ScriptAction::ReviewNextLine => ReviewCommand::ReviewNextLine,
+        ScriptAction::ReviewPreviousWord => ReviewCommand::ReviewPreviousWord,
+        ScriptAction::ReviewCurrentWord => ReviewCommand::ReviewCurrentWord,
+        ScriptAction::ReviewNextWord => ReviewCommand::ReviewNextWord,
+        ScriptAction::ReviewStartOfLine => ReviewCommand::ReviewStartOfLine,
+        ScriptAction::ReviewPreviousCharacter => ReviewCommand::ReviewPreviousCharacter,
+        ScriptAction::ReviewCurrentCharacter => ReviewCommand::ReviewCurrentCharacter,
+        ScriptAction::ReviewNextCharacter => ReviewCommand::ReviewNextCharacter,
+        ScriptAction::ReviewEndOfLine => ReviewCommand::ReviewEndOfLine,
+        ScriptAction::ReviewBottom => ReviewCommand::ReviewBottom,
+        // `SpeakTime` and `ShowTrayList` are handled by the router itself
+        // and never reach here; `ScriptAction` is also non-exhaustive, so an
+        // unmapped future action is simply not routed to the reducer until
+        // it is given a command.
+        _ => return None,
+    })
+}
+
+/// The keyboard bindings this milestone ships, as the shared gesture map the
+/// hook consults and the control plane validates against: the menu gesture
+/// plus every review and object-navigation binding for the active layout
+/// (roadmap M3). The layout's own table already carries the time and tray
+/// gestures, so they are not listed separately.
+fn bound_gestures(layout: KeyboardLayout) -> SharedGestureMap {
+    let mut gestures = vec![GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")];
+    gestures.extend(
+        verbatim_input::bindings_for(layout)
+            .into_iter()
+            .map(|(gesture, _action)| gesture),
+    );
+    GestureMap::new(gestures).into_shared()
 }
 
 /// Sends one command to the GUI when it is up; during the startup window

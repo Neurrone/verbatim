@@ -49,8 +49,8 @@ use verbatim_uia::{
 
 use crate::arbitration::{Arbitrator, window_class_name};
 use crate::protocol::{
-    DumpedTree, NavigateOutcome, OutpostToSupervisor, SupervisorToOutpost, read_message,
-    write_message,
+    DumpedTree, NavigateDirection, NavigateOutcome, OutpostToSupervisor, SupervisorToOutpost,
+    read_message, write_message,
 };
 use crate::query_pool::{QueryPool, Worker};
 
@@ -82,6 +82,25 @@ const ANCESTOR_CHAIN_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Cap on the number of ancestors an `AncestorChain` walk returns.
 const MAX_ANCESTOR_HOPS: u32 = 64;
+
+/// Deadline for a single object-navigation hop (parent, sibling, child)
+/// issued through the reducer's `Fetch` path — a single cross-process
+/// walker step, so the ordinary per-call deadline suffices.
+const NAVIGATE_DEADLINE: Duration = Duration::from_millis(400);
+
+/// The [`NavigateDirection`] a navigation [`verbatim_model::QueryKind`]
+/// names, or `None` for the plain snapshot re-read (which is not a
+/// navigation).
+fn navigate_direction_of(kind: verbatim_model::QueryKind) -> Option<NavigateDirection> {
+    use verbatim_model::QueryKind;
+    match kind {
+        QueryKind::Parent => Some(NavigateDirection::Parent),
+        QueryKind::NextSibling => Some(NavigateDirection::NextSibling),
+        QueryKind::PreviousSibling => Some(NavigateDirection::PreviousSibling),
+        QueryKind::FirstChild => Some(NavigateDirection::FirstChild),
+        _ => None,
+    }
+}
 
 /// How many times [`Outpost::handle_announce_focus`] retries the
 /// focused-control query when nothing is found yet (a control that has not
@@ -713,19 +732,48 @@ impl Outpost {
     /// Answers a fetch by re-reading the node from whichever backend owns it.
     fn handle_fetch(&self, trace: TraceId, query: verbatim_model::Query) {
         use verbatim_model::FetchResult;
-        // M1 supports only QueryKind::NodeSnapshot (re-read the node).
         let shared = self.shared.clone();
         let node_id = query.node_id;
         let query_id = query.query_id;
-        self.shared.pool.submit(move |worker| {
-            let result =
-                refetch_node(worker, &shared, node_id).map_or(FetchResult::Gone, FetchResult::Node);
-            let _ = shared.outbound.send(OutpostToSupervisor::FetchReply {
-                trace_id: trace,
-                query_id,
-                result,
-            });
-        });
+        // A re-read is fire-and-forget on a worker; the object-navigation
+        // kinds walk one step and can block on a hung provider, so they run
+        // deadline-guarded like the other navigation queries, abandoning
+        // rather than wedging the outpost. Both reply on the same
+        // query-id-correlated FetchReply path so the reducer's completion
+        // handling is identical for either.
+        match navigate_direction_of(query.kind) {
+            None => {
+                self.shared.pool.submit(move |worker| {
+                    let result = refetch_node(worker, &shared, node_id)
+                        .map_or(FetchResult::Gone, FetchResult::Node);
+                    let _ = shared.outbound.send(OutpostToSupervisor::FetchReply {
+                        trace_id: trace,
+                        query_id,
+                        result,
+                    });
+                });
+            }
+            Some(direction) => {
+                let outbound = self.shared.outbound.clone();
+                let result = self
+                    .shared
+                    .pool
+                    .run(NAVIGATE_DEADLINE, move |worker| {
+                        navigate_query(worker, &shared, node_id, direction)
+                    })
+                    // A timed-out or failed navigation leaves the navigator
+                    // put: report no neighbor rather than a spurious move.
+                    .map_or(FetchResult::NoNeighbor, |outcome| match outcome {
+                        Ok(NavigateOutcome::Found(node)) => FetchResult::Node(node),
+                        Ok(NavigateOutcome::NoNeighbor) | Err(_) => FetchResult::NoNeighbor,
+                    });
+                let _ = outbound.send(OutpostToSupervisor::FetchReply {
+                    trace_id: trace,
+                    query_id,
+                    result,
+                });
+            }
+        }
     }
 
     /// Answers a `DumpTree` request by walking the target application's
