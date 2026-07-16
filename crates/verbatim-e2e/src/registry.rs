@@ -53,10 +53,11 @@
 //!   genuinely MSAA-only one is chosen —
 //!   [`notepad_focus`](crate::scenarios::notepad_focus) today.
 //! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
-//!   commands (`docs/roadmap.md`'s M3 section) — no scenario yet, since
-//!   those commands are not implemented yet; kept as a named group now so
-//!   the first navigation scenario has an obvious home instead of widening
-//!   an existing group to fit.
+//!   commands (`docs/roadmap.md`'s M3 section) —
+//!   [`object_navigation`](crate::scenarios::object_navigation) against
+//!   Verbatim's own settings dialog, and
+//!   [`tree_navigation`](crate::scenarios::tree_navigation) against
+//!   msinfo32's real Win32 tree view over MSAA.
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -67,6 +68,7 @@ use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus, object_navigation,
+    tree_navigation,
 };
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
@@ -80,7 +82,7 @@ pub enum Group {
     Shell,
     /// A real external, non-Verbatim target application.
     Legacy,
-    /// Object navigation and review-cursor commands (no scenario yet).
+    /// Object navigation and review-cursor commands.
     Navigation,
 }
 
@@ -203,6 +205,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: msinfo32::setup,
         body: msinfo32::body,
         teardown: msinfo32::teardown,
+    },
+    ScenarioDef {
+        name: "tree_navigation",
+        group: Group::Navigation,
+        target_images: &["msinfo32.exe"],
+        setup: tree_navigation::setup,
+        body: tree_navigation::body,
+        teardown: tree_navigation::teardown,
     },
 ];
 
