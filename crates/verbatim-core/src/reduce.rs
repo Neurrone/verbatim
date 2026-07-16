@@ -113,7 +113,11 @@ fn reduce_event(
             });
             // The review cursor follows focus (roadmap M3): every focus
             // change snaps the navigator object to the new focus and resets
-            // the review cursor to its start.
+            // the review cursor to its start. This deliberately does not
+            // touch `latest_navigation`: an app-initiated focus event is not
+            // newer user intent than an object-navigation command already
+            // in flight, so a completion for that command must still be
+            // free to apply once it lands (see `SrState::latest_navigation`).
             state.navigator = Some(Navigator {
                 source,
                 object: node.clone(),
@@ -225,7 +229,13 @@ fn reduce_command(
 }
 
 /// Snaps the navigator (and review cursor) back to the current focus and
-/// reports it. A no-op with nothing focused.
+/// reports it. A no-op with nothing focused — including when a navigation
+/// fetch is still pending, in which case its eventual completion must not
+/// override this explicit return to focus, so this also clears
+/// `latest_navigation`. Also reused to re-seed the navigator when a
+/// navigation fetch reports `FetchResult::Gone` (the outpost could not
+/// re-acquire the navigator's node): the same "fall back to focus and
+/// announce it" behavior applies there too.
 fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let Some(focus) = state.focus.as_ref() else {
         return Vec::new();
@@ -238,6 +248,7 @@ fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         object,
         review_offset: 0,
     });
+    state.latest_navigation = None;
     vec![Effect::Speak(utterance)]
 }
 
@@ -297,7 +308,10 @@ fn clipboard_text(node: &NodeSnapshot) -> String {
 /// Emits a navigation fetch for the navigator object's neighbor in the
 /// direction `kind` names; the completion (`reduce_fetch_completed`) moves
 /// the navigator and announces the result, or reports the edge when there
-/// is no such neighbor.
+/// is no such neighbor. Records this fetch's query id as the latest
+/// navigation: a second navigation command issued before this one completes
+/// supersedes it here, so the first's eventual completion is dropped as
+/// stale (see `SrState::latest_navigation`).
 fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Effect> {
     let Some(navigator) = state.navigator.as_ref() else {
         return Vec::new();
@@ -313,6 +327,7 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
             reason: FetchReason::Navigate,
         },
     );
+    state.latest_navigation = Some(query_id);
     vec![Effect::Fetch(Query {
         query_id,
         source,
@@ -607,32 +622,49 @@ fn reduce_fetch_completed(
     };
     match pending.reason {
         FetchReason::Staleness => reduce_staleness_completed(state, trace_id, &pending, result),
-        FetchReason::Navigate => reduce_navigate_completed(state, trace_id, &pending, result),
+        FetchReason::Navigate => {
+            reduce_navigate_completed(state, trace_id, &pending, query_id, result)
+        }
     }
 }
 
-/// Completes an object-navigation fetch: if the navigator has not moved
-/// since the fetch was issued (a rapid second navigation supersedes a
-/// pending one), move it to the returned neighbor and announce it, or leave
-/// it put and announce nothing at a tree edge (`NoNeighbor`). A screen
-/// reader conventionally plays an edge earcon here; M3 stays silent, which
-/// the earcon theme (M11) can later fill.
+/// Completes an object-navigation fetch.
+///
+/// Applied if and only if `query_id` is still [`SrState::latest_navigation`]
+/// — the most recently issued navigation command, tracked independently of
+/// the navigator's identity. This is what a focus event arriving between
+/// the command and its completion used to break: focus snaps the navigator
+/// (review follows focus) but no longer touches `latest_navigation`, so the
+/// user's own pending navigation still lands. A second navigation issued
+/// before the first completes replaces `latest_navigation`, so the first's
+/// late completion is dropped as stale; `ToFocus` clears it outright, so a
+/// late completion cannot override the user's explicit return to focus.
+///
+/// On `FetchResult::Node`, moves the navigator to the returned neighbor and
+/// announces it. On `FetchResult::NoNeighbor`, stays silent and leaves the
+/// navigator put — a tree edge, not an error; a screen reader conventionally
+/// plays an edge earcon here, which the earcon theme (M11) can later fill.
+/// On `FetchResult::Gone` — the navigator's node could no longer be
+/// re-acquired, distinct from a genuine tree edge — re-seeds the navigator
+/// from the current focus and announces it (via [`navigator_to_focus`])
+/// rather than staying silent, so a dead navigator object never presents as
+/// the command having done nothing; if nothing is focused either, that stays
+/// silent too.
 fn reduce_navigate_completed(
     state: &mut SrState,
     trace_id: TraceId,
     pending: &PendingFetch,
+    query_id: verbatim_model::QueryId,
     result: &FetchResult,
 ) -> Vec<Effect> {
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
-    };
-    // A newer navigation moved the navigator on before this reply arrived;
-    // this stale result no longer describes where the navigator is.
-    if navigator.source != pending.source || navigator.object.id != pending.node_id {
+    if state.latest_navigation != Some(query_id) {
+        // Superseded by a newer navigation, or cleared by `ToFocus`: this
+        // completion no longer describes user intent worth acting on.
         return Vec::new();
     }
     match result {
         FetchResult::Node(snapshot) => {
+            state.latest_navigation = None;
             let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
             state.navigator = Some(Navigator {
                 source: pending.source,
@@ -641,8 +673,14 @@ fn reduce_navigate_completed(
             });
             vec![Effect::Speak(utterance)]
         }
-        // No such neighbor, or the node is gone: the navigator stays put.
-        _ => Vec::new(),
+        FetchResult::Gone => navigator_to_focus(state, trace_id),
+        // `NoNeighbor` (a tree edge, silent by design) and any future
+        // `FetchResult` variant added under `#[non_exhaustive]`: nothing to
+        // move to, so the navigator stays put.
+        _ => {
+            state.latest_navigation = None;
+            Vec::new()
+        }
     }
 }
 

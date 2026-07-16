@@ -1292,6 +1292,141 @@ fn navigate_at_a_tree_edge_is_silent_and_stays_put() {
 }
 
 #[test]
+fn navigate_completion_after_an_intervening_focus_event_still_applies() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    // Issue the navigation command; its completion is still in flight.
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+
+    // A focus event for a different node in the same application arrives
+    // before the completion does. Review follows focus, so the navigator
+    // snaps to it, but this must not discard the user's still-pending
+    // navigation.
+    let elsewhere = node(20, Role::Button, Some("Cancel"), None, StateSet::new());
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 2, elsewhere));
+
+    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        result: FetchResult::Node(parent),
+    };
+    let (_, effects) = reduce(&state, &completion);
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments[0],
+        UtteranceSegment::label("Buttons"),
+        "a navigation completion must still land after an intervening focus event"
+    );
+}
+
+#[test]
+fn a_second_navigation_supersedes_the_first_pending_one() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let first_query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::NextSibling, 0),
+    );
+    let second_query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+
+    // The first (now stale) completion is dropped.
+    let stale_parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
+    let stale_completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: first_query.query_id,
+        result: FetchResult::Node(stale_parent),
+    };
+    let (state, effects) = reduce(&state, &stale_completion);
+    assert!(
+        effects.is_empty(),
+        "a completion for a superseded navigation is dropped"
+    );
+
+    // The second completion applies.
+    let sibling = node(12, Role::Button, Some("Cancel"), None, StateSet::new());
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: second_query.query_id,
+        result: FetchResult::Node(sibling),
+    };
+    let (_, effects) = reduce(&state, &completion);
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Cancel"));
+}
+
+#[test]
+fn to_focus_after_a_navigation_drops_its_late_completion() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+
+    // The user explicitly returns to focus before the navigation's
+    // completion arrives; that explicit intent must win.
+    let (state, _) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+
+    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        result: FetchResult::Node(parent),
+    };
+    let (_, effects) = reduce(&state, &completion);
+    assert!(
+        effects.is_empty(),
+        "a navigation completion after an explicit ToFocus is dropped"
+    );
+}
+
+#[test]
+fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+
+    // The outpost could not re-acquire the navigator's node: distinct from
+    // a tree edge, so this must not stay silent. It falls back to
+    // announcing whatever is currently focused.
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        result: FetchResult::Gone,
+    };
+    let (_, effects) = reduce(&state, &completion);
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("OK"));
+}
+
+#[test]
 fn activate_emits_activate_for_the_navigator_object() {
     let source = Pid(7);
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());

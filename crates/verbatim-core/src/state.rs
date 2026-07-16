@@ -85,6 +85,19 @@ pub struct SrState {
     /// the first focus lands; from then it tracks focus unless an
     /// object-navigation command moves it away.
     pub(crate) navigator: Option<Navigator>,
+    /// The `QueryId` of the most recently issued object-navigation fetch, if
+    /// its completion has not landed yet.
+    ///
+    /// A completion is applied only when it is this query: a later
+    /// navigation command supersedes an earlier still-pending one, so a
+    /// stale completion arriving after it is dropped rather than clobbering
+    /// where the user has since moved. A `FocusChanged` event snaps the
+    /// navigator to the new focus (review follows focus) but deliberately
+    /// leaves this field alone — an app-initiated focus event must not be
+    /// able to discard the user's own, more recent, in-flight navigation.
+    /// `ToFocus` clears it explicitly, since it is itself the user's
+    /// explicit, newer intent superseding whatever navigation was pending.
+    pub(crate) latest_navigation: Option<QueryId>,
 }
 
 impl SrState {
