@@ -890,10 +890,10 @@ impl Outpost {
                 true
             }
             SupervisorToOutpost::Ping { seq } => {
-                let _ = self
-                    .shared
-                    .outbound
-                    .send(OutpostToSupervisor::Pong { seq: *seq });
+                let _ = self.shared.outbound.send(OutpostToSupervisor::Pong {
+                    seq: *seq,
+                    parked_count: self.shared.pool.parked_count(),
+                });
                 true
             }
             SupervisorToOutpost::DumpTree { trace_id } => {

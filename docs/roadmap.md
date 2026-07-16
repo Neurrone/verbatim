@@ -176,8 +176,17 @@ and the D9 outpost generalization — were finished early, at the end of M2
 (see M2).
 
 - Outpost hardening, continuing the M2 work: the recovery ladder beyond
-  respawn (call deadlines and thread abandonment exist; the full
-  kill-and-respawn policy for a wedged-but-alive outpost does not), the
+  respawn. Call deadlines and thread abandonment (rungs 1 and 2) already
+  existed; rung 3's kill-and-respawn now also covers a wedged-but-alive
+  outpost, not just one that crashes. A dedicated heartbeat thread in the
+  supervisor pings every live outpost every few seconds; each pong reports
+  the outpost's current parked-thread count (rung 2's bounded garbage). An
+  outpost that misses several consecutive pongs, or whose parked-thread
+  count climbs past a small threshold, is killed (dropping its job handle
+  triggers an immediate kernel-level kill, so no message has to reach an
+  outpost that is not reliably answering) and respawned through the same
+  generation-checked machinery respawn-on-crash already used, so a kill
+  cannot race a retirement or an application exit. Remaining: the
   stale-cache policy, WinEvent routing refinements, and measuring
   per-outpost working set and spawn latency on the existing harness VM
   (risk R2). Deliberately no dedicated low-end VM profile: the goal is to
