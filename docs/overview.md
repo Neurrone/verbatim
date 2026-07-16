@@ -60,7 +60,9 @@ Public API:
   gesture carrying a `ReviewCommand` and a press-repeat count, roadmap M3).
   Effects are `Speak`, `StopSpeech`, `Fetch` (whose `QueryKind` now also
   names the navigation directions parent, next/previous sibling, first
-  child, with a `NoNeighbor` `FetchResult` for a tree edge), `PlayEarcon`
+  child, with a `NoNeighbor` `FetchResult` for a genuine tree edge and
+  `Gone` for a node that could no longer be re-acquired — the outpost
+  never conflates the two), `PlayEarcon`
   (an `Earcon` names a sound semantically — `AppNotResponding` first — and
   themes decide what it sounds like), `Activate` (invoke or default-action a
   node), and `CopyToClipboard` (routed through the shell's shared clipboard
@@ -448,9 +450,16 @@ Implementation notes, `reduce`:
   them: report-object announces on the first press, spells its review text
   on the second, and copies name-and-value on the third; parent, sibling,
   and first-child moves emit a navigation `Fetch` whose completion moves the
-  navigator and announces it (deduplicated so a rapid second move supersedes
-  a pending one, silent at a tree edge); activate emits `Activate`; to-focus
-  snaps the navigator back. The review-cursor line, word, and character
+  navigator and announces it; activate emits `Activate`; to-focus snaps the
+  navigator back. Completions are matched by `SrState`'s latest-navigation
+  query id, not by navigator identity: an app-initiated focus event landing
+  between the command and its completion still snaps the navigator (review
+  follows focus) but never discards the user's in-flight navigation, while
+  a rapid second move or an explicit to-focus does supersede it. A
+  `NoNeighbor` completion is a genuine tree edge and stays silent (the M11
+  earcon's slot); a `Gone` completion means the navigator's node could not
+  be re-acquired, and re-seeds the navigator from the current focus,
+  announcing it, so a dead node never presents as a command doing nothing. The review-cursor line, word, and character
   motions walk the navigator object's flat text (its value or name) in the
   pure `review` module — grapheme-cluster characters and word-boundary
   segmentation wait for M4's text model. All of this is pure and unit-tested
@@ -626,8 +635,20 @@ Public API:
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent
   implementation), `navigate` (parent via `accParent`, siblings and first
-  child via `accNavigate`), and `activate` (`accDoDefaultAction`, MSAA's
-  only activation primitive).
+  child via `accNavigate`; returns `Ok(None)` for a genuine edge and `Err`
+  only when the source node itself can no longer be acquired, so the
+  outpost can report `Gone` rather than a fake edge), and `activate`
+  (`accDoDefaultAction`, MSAA's only activation primitive). One
+  control-class seam, mirroring NVDA's `sysTreeView32.py`: a
+  `SysTreeView32` item's navigation and ancestor chain route through the
+  tree control's own `TVM_GETNEXTITEM` relations (with the
+  accid-to-htreeitem mapping messages and their pre-v6 comctl32 fallback),
+  because MSAA exposes every visible tree item as a flat sibling list
+  under the control — parent, siblings, and first child would otherwise
+  all answer the visible-order neighbor instead of the logical one. A tree
+  item's `accValue` is its 0-based indent depth, not a value, so
+  `read_snapshot` reads it into the snapshot's one-based level and leaves
+  the value empty, again matching NVDA.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, pinned by unit tests against
   raw state words captured from live controls.

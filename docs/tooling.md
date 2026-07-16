@@ -259,9 +259,14 @@ precondition everything else depends on, not itself a scenario). The
 scenarios today: `notepad_focus` (launching Notepad reaches Verbatim and
 Verbatim survives Notepad exiting), `multi_outpost_switch` (switching
 foreground between Notepad and Verbatim's own menu keeps both outposts
-alive and re-announces correctly), and `m1_exit_regression` (the scripted
+alive and re-announces correctly), `m1_exit_regression` (the scripted
 walk of the M1 exit criteria — see `docs/roadmap.md`'s M2 section for
-exactly what it asserts and does not assert). A scenario's name is also its
+exactly what it asserts and does not assert), `object_navigation` (the M3
+object-navigation and review commands against Verbatim's own settings
+dialog), `msinfo32` (an MSAA-only legacy application reaches Verbatim
+through the MSAA stack), and `tree_navigation` (logical object navigation
+through msinfo32's real Win32 tree view — the regression scenario for the
+flat MSAA tree-view exposure). A scenario's name is also its
 `#[test]` function name, so `cargo test -p verbatim-e2e <name> -- --exact
 --test-threads=1` runs exactly that one scenario runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
@@ -301,6 +306,18 @@ distinguishable
 messages — the second appends "underlying error: ..." — so a suite that
 hangs and then fails is not automatically the same bug as one that dies
 outright.
+
+One trap when writing new assertions: every utterance reaches the speech
+stream twice — once when queued and once when its audio starts — so the
+timeline shows each spoken line as a close-together pair, and an
+`expect_in_order` matcher can be satisfied by the *second* copy of an
+utterance a previous assertion already matched. Consecutive assertions
+whose substrings differ (the usual case) are unaffected, but a matcher
+that is a substring of the previous step's announcement — say "tree view"
+right after an utterance ending in "tree view item" — will false-match
+the leftover duplicate. `expect_change_capturing`, which skips utterances
+identical to a captured previous announcement, is the tool for that case;
+`tree_navigation`'s tree-control step is the worked example.
 
 ### Hearing and recording a run: the three-mode story
 
