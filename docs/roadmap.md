@@ -288,13 +288,13 @@ and the D9 outpost generalization — were finished early, at the end of M2
   capture synthesizer (deterministic, measures everything except
   synthesis), plus an end-to-end OneCore smoke number with a looser
   threshold. The eSpeak reference budget takes over when eSpeak lands
-  in M8. The OneCore smoke number is contingent on first root-causing the
-  known audible-path anomaly (in an audible E2E run no utterance ever
-  records an audio start, even with settle pauses of several seconds —
-  see the M1 exit regression's module doc), which reads as a defect in
-  the OneCore-to-WASAPI path or its instrumentation, not slowness; if
-  OneCore then proves too variable for any stable threshold, its smoke
-  check waits for eSpeak.
+  in M8. An earlier concern that the audible path never reached audio at
+  all turned out not to reproduce: a substantial fraction of an audible
+  run's utterances do reach audio (measured live), the rest interrupted
+  before playback by the suite's fast pace — expected real-synth
+  behavior, raised by `--paced`. The OneCore smoke number therefore
+  measures the utterances that do reach audio; if OneCore proves too
+  variable for any stable threshold, its smoke check waits for eSpeak.
 - Generic backend parity with NVDA, scoped to MSAA and UIA only: object
   presentation on focus (property order, spoken and negated state sets,
   description, positional info), the WinEvent and UIA event sets with

@@ -61,6 +61,8 @@
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 
+use verbatim_control::protocol::LatencyRecord;
+
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{m1_exit_regression, multi_outpost_switch, notepad_focus};
@@ -307,7 +309,11 @@ fn run(def: &ScenarioDef) {
         Ok(state) => state,
         Err(error) => {
             scenario.collect_failure_artifacts(&dir);
-            write_summary(&dir, def.name, false, &mut scenario);
+            // Setup failed before any input was driven, so a latency
+            // snapshot here would be empty; record none rather than racing
+            // the imminent quit for nothing.
+            let latency = scenario.latency_snapshot(200).ok();
+            write_summary(&dir, def.name, false, latency.as_deref());
             drop(scenario);
             panic!("scenario {:?}: setup failed: {error}", def.name);
         }
@@ -317,6 +323,13 @@ fn run(def: &ScenarioDef) {
         panic::catch_unwind(AssertUnwindSafe(|| (def.body)(&mut scenario, &mut state)));
     let teardown_outcome =
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)));
+
+    // Snapshot latency now, while Verbatim is still up and its control
+    // connection still answers — before the quit below tears it down. Taking
+    // it after the quit is why a passing scenario used to record "unknown"
+    // latency (the snapshot raced Verbatim's exit and lost); a failing one
+    // reported real numbers only because it skips the quit.
+    let latency = scenario.latency_snapshot(200).ok();
 
     // A clean quit is asserted only when body and teardown both succeeded:
     // an already-failed scenario's Verbatim may be in any state, and
@@ -335,7 +348,7 @@ fn run(def: &ScenarioDef) {
     if !passed {
         scenario.collect_failure_artifacts(&dir);
     }
-    write_summary(&dir, def.name, passed, &mut scenario);
+    write_summary(&dir, def.name, passed, latency.as_deref());
     println!(
         "scenario {:?}: {}",
         def.name,
@@ -359,9 +372,13 @@ fn run(def: &ScenarioDef) {
 /// [`crate::scenario::Scenario::latency_snapshot`]) and writes this
 /// scenario's [`ScenarioSummary`], logging rather than failing the run if
 /// the write itself fails.
-fn write_summary(dir: &std::path::Path, name: &str, passed: bool, scenario: &mut Scenario) {
-    let latency = scenario.latency_snapshot(200).ok();
-    let summary = ScenarioSummary::new(name, passed, latency.as_deref());
+fn write_summary(
+    dir: &std::path::Path,
+    name: &str,
+    passed: bool,
+    latency: Option<&[LatencyRecord]>,
+) {
+    let summary = ScenarioSummary::new(name, passed, latency);
     if let Err(error) = summary.write(dir) {
         eprintln!("scenario {name:?}: could not write its run summary: {error}");
     }
