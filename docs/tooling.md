@@ -471,7 +471,13 @@ lands. A multi-scenario `--record` run therefore produces one recording per
 scenario, never one recording covering the whole run — the point of the
 restructuring: a recording that only ever needs to show one scenario's
 behavior is far easier to review than one long recording someone has to
-scrub through.
+scrub through. This per-scenario pull sequencing was verified live during
+M3: a `--record` run of the whole suite produced one correctly named,
+audio-carrying mp4 per scenario. The other Track B caveat, reading a
+flight-recorder dump back off the guest through the agent, is exercised
+continuously — every failed scenario's `collect_failure_artifacts` pulls
+`flight-recorder.jsonl` this way, and those dumps were read repeatedly
+while root-causing M3's navigation and cold-start work.
 
 `cargo xtask vm test` needs `LIBCLANG_PATH` for wxDragon's bindgen, exactly
 as `cargo xtask ci` does (see this repository's `CLAUDE.md`) — building

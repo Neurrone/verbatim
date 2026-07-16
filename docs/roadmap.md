@@ -186,12 +186,19 @@ and the D9 outpost generalization — were finished early, at the end of M2
   triggers an immediate kernel-level kill, so no message has to reach an
   outpost that is not reliably answering) and respawned through the same
   generation-checked machinery respawn-on-crash already used, so a kill
-  cannot race a retirement or an application exit. Remaining: the
-  stale-cache policy, WinEvent routing refinements, and measuring
-  per-outpost working set and spawn latency on the existing harness VM
-  (risk R2). Deliberately no dedicated low-end VM profile: the goal is to
-  be efficient outright, and behavior on weaker hardware gets investigated
-  only if real users report problems.
+  cannot race a retirement or an application exit. Risk R2 measured on the
+  existing harness VM: a live outpost's working set is roughly 19 megabytes
+  (18.9 and 19.6 in a two-outpost sample), and an outpost is ready within
+  roughly 160 milliseconds of a cold spawn, with each additional concurrent
+  outpost marginal (about 26 milliseconds). Nineteen megabytes per app is
+  the number the working-set-on-low-end-devices concern turns on; the
+  architecture's mitigations (idle retirement, shared code pages from the
+  single outpost binary, and the option to consolidate low-traffic apps
+  into one host later) address it, and there is deliberately no dedicated
+  low-end VM profile — the goal is to be efficient outright, and behavior on
+  weaker hardware gets investigated only if real users report problems.
+  Remaining, as lower-priority polish carried forward: the stale-cache
+  policy and WinEvent routing refinements.
   Residual E2E flakes: root-caused during this milestone, as promised
   here, from failing runs' flight recorders and stderr on a repeated
   fresh-restore repro loop. The "occasional missed announcement deep in a
