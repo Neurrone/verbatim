@@ -231,24 +231,23 @@ and the D9 outpost generalization — were finished early, at the end of M2
   `layout` is either `desktop` (the default) or `laptop` — exposed only in
   the file in M3; its GUI surface arrives with M8's gesture-remapping
   work. Review-mode switching stays excluded (it arrives with screen
-  review in M6), but an earlier exclusion here was reversed by a recorded
-  decision: this milestone first shipped navigation over the full tree
-  ("no simple review"), and live desktop testing found it unusable on UIA
-  surfaces — every parent or sibling step landed on unnamed panes and
-  wrapper containers. UIA object navigation now applies NVDA's
-  presentation-type filtering (the judgment behind NVDA's default simple
-  review, ported from `NVDAObjects/__init__.py` onto Verbatim's role
-  vocabulary): purely presentational elements — unknown and pane roles,
-  textless static text, nameless and description-less windows, property
-  pages, and groupings — are crossed but never landed on or spoken in
-  focus ancestry, and a layout container's content children are projected
-  up as siblings, exactly NVDA's `_findSimpleNext`. The same testing round
-  also gave navigation NVDA's responsiveness: outposts cache the live UIA
-  element behind every node (re-finding by runtime id was an unscoped
-  desktop-wide search per navigation step, the "stuck" feel), and menus
-  are announced from the `MenuPopupStart` WinEvent the moment they open
-  rather than from the foreground-announce retry loop (over half a second
-  of the Verbatim+V lag NVDA does not have).
+  review in M6). Object navigation sees the full tree, matching NVDA with
+  its simple review mode off — the user's baseline, and a decision this
+  milestone re-affirmed after briefly shipping NVDA's simple-review
+  projection instead (reverted the same day: the baseline is the
+  unfiltered tree). Spoken focus ancestry is filtered separately, exactly
+  as NVDA filters it regardless of that setting: NVDA's
+  `isPresentableFocusAncestor`, ported onto Verbatim's roles — layout
+  elements (unknown and pane roles, textless static text, nameless and
+  description-less windows, property pages, and groupings) plus list
+  items, tree items, and editable text are crossed but never spoken as
+  entered containers. The same testing round gave navigation NVDA's
+  responsiveness: outposts cache the live UIA element behind every node
+  (re-finding by runtime id was an unscoped desktop-wide search per
+  navigation step, the "stuck" feel), and menus are announced from the
+  `MenuPopupStart` WinEvent the moment they open rather than from the
+  foreground-announce retry loop (over half a second of the Verbatim+V
+  lag NVDA does not have).
 
   The object-navigation bindings, desktop then laptop:
 

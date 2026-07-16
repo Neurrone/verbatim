@@ -523,29 +523,29 @@ Public API:
   `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
 - `Uia::ancestor_chain` — the chain of ancestors of an element, outermost
   first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
-  over the control view (one cross-process round trip per ancestor, the
-  walk NVDA shipped for years), capped by the caller, with layout
-  ancestors (see `navigate` below) crossed but never reported.
-  Deliberately the simplest correct implementation behind this method as
-  a seam: M4's remote-operations work replaces the per-hop walk with a
-  single batched round trip inside the provider process, so callers must
-  depend only on the resulting list.
-- `Uia::navigate` — object navigation with NVDA's simple-navigation
-  semantics over the control view (parent, next or previous sibling,
-  first child; the `NavigateDirection` enum), returning the neighbor's
-  snapshot with `Ok(None)` as the first-class "no such neighbor" outcome
-  distinct from an error. Purely presentational "layout" elements —
-  NVDA's presentation-type judgment ported onto Verbatim's roles: unknown
-  and pane roles, textless static text, nameless and description-less
-  windows, property pages, and groupings — are never landed on: parent
-  walks to the first content ancestor, first-child descends through
-  layout containers, and a layout sibling's content children project up
-  as siblings (`_findSimpleNext`, ported from NVDA), all bounded by a
-  hop budget. The registry additionally caches the live element behind
-  every node as an agile reference, so navigation resolves nodes directly
-  instead of re-finding them by runtime id (an unscoped desktop-wide
-  `FindFirst` per step, before this) — `element_by_runtime_id` remains as
-  the fallback, now scoped to a caller-supplied root.
+  over the raw view (one cross-process round trip per ancestor, the walk
+  NVDA shipped for years), capped by the caller. Ancestors that are not
+  presentable focus context — NVDA's `isPresentableFocusAncestor`,
+  ported: layout elements (unknown and pane roles, textless static text,
+  nameless windows, property pages, and groupings) plus list items, tree
+  items, and editable text — are crossed but never reported, matching
+  what NVDA speaks as entered containers regardless of its review-mode
+  setting. Deliberately the simplest correct implementation behind this
+  method as a seam: M4's remote-operations work replaces the per-hop walk
+  with a single batched round trip inside the provider process, so
+  callers must depend only on the resulting list.
+- `Uia::navigate` — one raw-view tree-walker step (parent, next or
+  previous sibling, first child; the `NavigateDirection` enum) returning
+  the neighbor's snapshot, with `Ok(None)` as the first-class "no such
+  neighbor" outcome distinct from an error. Deliberately the full,
+  unfiltered tree: a recorded decision matching NVDA with its simple
+  review mode off, the user's baseline (an intermediate revision
+  projected NVDA's simple-review filtering here and was reverted). The
+  registry caches the live element behind every node as an agile
+  reference, so navigation resolves nodes directly instead of re-finding
+  them by runtime id (an unscoped desktop-wide `FindFirst` per step,
+  before this) — `element_by_runtime_id` remains as the fallback, now
+  scoped to a caller-supplied root.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then the legacy `DoDefaultAction` pattern, each fetched live since
   activation is an infrequent user action, not something the cache

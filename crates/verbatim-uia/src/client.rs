@@ -244,15 +244,10 @@ impl Uia {
         registry: &NodeIdRegistry,
         max_hops: u32,
     ) -> windows::core::Result<Vec<NodeSnapshot>> {
-        // The control view, not the raw view: ancestry feeds spoken
-        // focus context and object navigation, and the raw view's purely
-        // structural wrappers (unnamed lists, duplicated groupings —
-        // observed live against Explorer's quick-access list) make spoken
-        // chains feel broken. UIA documents the control view as the view
-        // assistive technology should present; the raw view stays for
-        // `walk_tree` (dump-tree), which is a debugging surface.
+        // The raw view, the same parent chain NVDA's own object hierarchy
+        // walks; what gets *reported* out of it is filtered below.
         // SAFETY: `self.client` is a live IUIAutomation instance.
-        let walker = unsafe { self.client.ControlViewWalker() }?;
+        let walker = unsafe { self.client.RawViewWalker() }?;
         let mut chain = Vec::new();
         let mut current = element.clone();
         for _ in 0..max_hops {
@@ -263,10 +258,12 @@ impl Uia {
             };
             // SAFETY: `parent` was just built with `cache`.
             let snapshot = unsafe { snapshot_from_cached_element(&parent, registry) };
-            // Layout ancestors (see `is_layout`) are crossed but never
-            // reported: spoken focus context and simple navigation must
-            // agree on which containers exist.
-            if !is_layout(&snapshot) {
+            // Non-presentable ancestors are crossed but never reported —
+            // NVDA's `isPresentableFocusAncestor`, which filters spoken
+            // focus context regardless of its review-mode setting (object
+            // navigation, by contrast, sees the full tree; see
+            // [`Uia::navigate`]).
+            if is_presentable_focus_ancestor(&snapshot) {
                 chain.push(snapshot);
             }
             current = parent;
@@ -331,23 +328,25 @@ impl Uia {
         }))
     }
 
-    /// Navigates one step from `element` in `direction`, with NVDA's simple
-    /// navigation semantics over the control view: purely presentational
-    /// ("layout") elements are never landed on. Parent walks up to the first
-    /// content ancestor; first-child descends through layout containers to
-    /// the first content descendant; a sibling walk treats a layout
-    /// sibling's content children as siblings (the layout container is
-    /// entered, not announced) and bubbles up through layout parents when a
-    /// level is exhausted — the projection NVDA's `_findSimpleNext`
-    /// implements, ported from `nvda/source/NVDAObjects/__init__.py`.
-    /// Confirmed necessary live against Explorer: its control view is full
-    /// of unnamed lists and doubled groupings that make unfiltered
-    /// navigation feel broken.
+    /// Navigates one step from `element` in `direction`, via the raw-view
+    /// tree walker's per-hop `*BuildCache` methods — a single cross-process
+    /// round trip, and deliberately the full, unfiltered tree.
+    ///
+    /// A recorded decision, made twice: object navigation matches NVDA
+    /// with its simple review mode off — every element the raw view
+    /// exposes is navigable, exactly the tree NVDA's own `baseTreeWalker`
+    /// (also the raw view walker) exposes. An intermediate revision
+    /// projected NVDA's simple-review filtering here instead; the user
+    /// baselines against NVDA with the setting off, where full-tree
+    /// navigation is the correct behavior, so the projection was removed.
+    /// Spoken focus ancestry is a different matter: NVDA filters it by
+    /// `isPresentableFocusAncestor` regardless of the review-mode setting,
+    /// and [`Uia::ancestor_chain`] mirrors that.
     ///
     /// Returns `Ok(None)` for a genuine "no such neighbor" (a root's
-    /// parent, a last content sibling's next). Cross-process, several
-    /// walker hops per call, bounded by [`SIMPLE_NAV_HOP_BUDGET`];
-    /// query-pool threads only, guarded by the caller's deadline.
+    /// parent, a last child's next sibling), a first-class outcome distinct
+    /// from an error. Cross-process; query-pool threads only, guarded by
+    /// the caller's deadline.
     ///
     /// # Errors
     ///
@@ -364,40 +363,29 @@ impl Uia {
         direction: NavigateDirection,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         // SAFETY: `self.client` is a live IUIAutomation instance.
-        let walker = unsafe { self.client.ControlViewWalker() }?;
-        let mut budget = SIMPLE_NAV_HOP_BUDGET;
-        // SAFETY: forwarded from the caller's contract.
-        let found = unsafe {
+        let walker = unsafe { self.client.RawViewWalker() }?;
+        // SAFETY: `element` and `cache` are valid per the caller's contract.
+        let neighbor = unsafe {
             match direction {
-                NavigateDirection::Parent => {
-                    simple_parent(&walker, element, cache, registry, &mut budget)
+                NavigateDirection::Parent => walker.GetParentElementBuildCache(element, cache),
+                NavigateDirection::NextSibling => {
+                    walker.GetNextSiblingElementBuildCache(element, cache)
+                }
+                NavigateDirection::PreviousSibling => {
+                    walker.GetPreviousSiblingElementBuildCache(element, cache)
                 }
                 NavigateDirection::FirstChild => {
-                    simple_first_child(&walker, element, cache, registry, &mut budget)
+                    walker.GetFirstChildElementBuildCache(element, cache)
                 }
-                NavigateDirection::NextSibling => find_simple_next(
-                    element,
-                    &walker,
-                    cache,
-                    registry,
-                    false,
-                    false,
-                    true,
-                    &mut budget,
-                ),
-                NavigateDirection::PreviousSibling => find_simple_next(
-                    element,
-                    &walker,
-                    cache,
-                    registry,
-                    true,
-                    false,
-                    true,
-                    &mut budget,
-                ),
             }
         };
-        Ok(found.map(|(_, snapshot)| snapshot))
+        match neighbor {
+            // SAFETY: `neighbor` was just built with `cache`.
+            Ok(neighbor) => Ok(Some(unsafe {
+                snapshot_from_cached_element(&neighbor, registry)
+            })),
+            Err(_) => Ok(None),
+        }
     }
 
     /// Activates `element`: tries `Invoke`, then `Toggle`, then the legacy
@@ -535,21 +523,20 @@ unsafe fn walk_recursive(
     TreeNode { snapshot, children }
 }
 
-/// Cap on cross-process walker hops one simple-navigation call may spend
-/// crossing layout runs. Generous — observed layout runs are a handful of
-/// elements — while still bounding a pathological provider; a call that
-/// exhausts it reports "no neighbor" rather than wandering forever.
-const SIMPLE_NAV_HOP_BUDGET: u32 = 64;
-
 /// NVDA's layout judgment (`presentationType`), ported from
 /// `nvda/source/NVDAObjects/__init__.py` onto Verbatim's role vocabulary: a
-/// layout element structures the tree without communicating anything a
-/// user navigates for, so simple navigation never lands on one. Unknown
-/// and pane roles are always layout; static text with no readable text is
-/// layout; a window, property page, or grouping with neither name nor
-/// description is layout. NVDA's "unavailable" tier (invisible objects) is
-/// deliberately not ported: our `State::Offscreen` maps UIA's `IsOffscreen`,
-/// which also marks scrolled-out but perfectly real content.
+/// layout element structures the tree without communicating anything on its
+/// own. Unknown and pane roles are always layout; static text with no
+/// readable text is layout; a window, property page, or grouping with
+/// neither name nor description is layout. NVDA's "unavailable" tier
+/// (invisible objects) is deliberately not ported: our `State::Offscreen`
+/// maps UIA's `IsOffscreen`, which also marks scrolled-out but perfectly
+/// real content.
+///
+/// Used only to filter *spoken focus ancestry* (see
+/// [`is_presentable_focus_ancestor`]); object navigation deliberately sees
+/// the full tree, matching NVDA with its simple review mode off (the
+/// recorded decision on [`Uia::navigate`]).
 fn is_layout(snapshot: &NodeSnapshot) -> bool {
     use verbatim_model::Role;
     fn blank(text: Option<&str>) -> bool {
@@ -565,212 +552,28 @@ fn is_layout(snapshot: &NodeSnapshot) -> bool {
     }
 }
 
-/// One raw control-view walker hop, `None` at a tree edge. Decrements
-/// `budget` and reports the edge once it is spent.
-///
-/// # Safety
-///
-/// `element` must be a live element built with `cache`.
-unsafe fn hop(
-    walker: &IUIAutomationTreeWalker,
-    element: &IUIAutomationElement,
-    cache: &IUIAutomationCacheRequest,
-    kind: Hop,
-    budget: &mut u32,
-) -> Option<IUIAutomationElement> {
-    if *budget == 0 {
-        return None;
+/// NVDA's `isPresentableFocusAncestor`: whether an ancestor is worth
+/// speaking as focus context. Layout elements are not; neither are roles
+/// that never meaningfully contain the focus for announcement purposes —
+/// list items, tree items, and editable text (NVDA also lists progress
+/// bars, a role this vocabulary does not have yet). NVDA applies this to
+/// focus ancestry regardless of its review-mode setting.
+fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
+    use verbatim_model::Role;
+    if is_layout(snapshot) {
+        return false;
     }
-    *budget -= 1;
-    // SAFETY: forwarded from this function's contract; an `Err` from any
-    // walker step means "no element there", the convention the whole file
-    // uses.
-    unsafe {
-        match kind {
-            Hop::Parent => walker.GetParentElementBuildCache(element, cache),
-            Hop::Next => walker.GetNextSiblingElementBuildCache(element, cache),
-            Hop::Previous => walker.GetPreviousSiblingElementBuildCache(element, cache),
-            Hop::FirstChild => walker.GetFirstChildElementBuildCache(element, cache),
-            Hop::LastChild => walker.GetLastChildElementBuildCache(element, cache),
-        }
-    }
-    .ok()
-}
-
-/// The raw walker steps [`hop`] can take.
-#[derive(Clone, Copy)]
-enum Hop {
-    Parent,
-    Next,
-    Previous,
-    FirstChild,
-    LastChild,
-}
-
-/// The first content ancestor of `element`: raw parent hops, skipping
-/// layout, `None` at the root.
-///
-/// # Safety
-///
-/// `element` must be a live element built with `cache`.
-unsafe fn simple_parent(
-    walker: &IUIAutomationTreeWalker,
-    element: &IUIAutomationElement,
-    cache: &IUIAutomationCacheRequest,
-    registry: &NodeIdRegistry,
-    budget: &mut u32,
-) -> Option<(IUIAutomationElement, NodeSnapshot)> {
-    // SAFETY: forwarded from this function's contract; every hop result was
-    // built with `cache`.
-    unsafe {
-        let mut current = hop(walker, element, cache, Hop::Parent, budget)?;
-        loop {
-            let snapshot = snapshot_from_cached_element(&current, registry);
-            if !is_layout(&snapshot) {
-                return Some((current, snapshot));
-            }
-            current = hop(walker, &current, cache, Hop::Parent, budget)?;
-        }
-    }
-}
-
-/// The first content child of `element`: the raw first child, or — when
-/// that child is layout — its first content descendant via
-/// [`find_simple_next`] entering it. NVDA's `simpleFirstChild`.
-///
-/// # Safety
-///
-/// `element` must be a live element built with `cache`.
-unsafe fn simple_first_child(
-    walker: &IUIAutomationTreeWalker,
-    element: &IUIAutomationElement,
-    cache: &IUIAutomationCacheRequest,
-    registry: &NodeIdRegistry,
-    budget: &mut u32,
-) -> Option<(IUIAutomationElement, NodeSnapshot)> {
-    // SAFETY: forwarded from this function's contract.
-    unsafe {
-        let child = hop(walker, element, cache, Hop::FirstChild, budget)?;
-        let snapshot = snapshot_from_cached_element(&child, registry);
-        if !is_layout(&snapshot) {
-            return Some((child, snapshot));
-        }
-        find_simple_next(&child, walker, cache, registry, false, true, false, budget)
-    }
-}
-
-/// NVDA's `_findSimpleNext`, ported: the next (or previous) content
-/// element in the simple projection of the tree rooted around `element`.
-/// With `use_child`, `element`'s own subtree is searched first (entering a
-/// layout container instead of announcing it); with `use_parent`, an
-/// exhausted sibling level bubbles up through layout parents. The argument
-/// order after `element` mirrors the walker-first style of the other
-/// helpers.
-///
-/// # Safety
-///
-/// `element` must be a live element built with `cache`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a faithful port of NVDA's four-flag recursion; bundling the flags into a struct would only rename them"
-)]
-unsafe fn find_simple_next(
-    element: &IUIAutomationElement,
-    walker: &IUIAutomationTreeWalker,
-    cache: &IUIAutomationCacheRequest,
-    registry: &NodeIdRegistry,
-    go_previous: bool,
-    use_child: bool,
-    use_parent: bool,
-    budget: &mut u32,
-) -> Option<(IUIAutomationElement, NodeSnapshot)> {
-    let child_hop = if go_previous {
-        Hop::LastChild
-    } else {
-        Hop::FirstChild
-    };
-    let sibling_hop = if go_previous {
-        Hop::Previous
-    } else {
-        Hop::Next
-    };
-
-    // SAFETY: forwarded from this function's contract; every hop result was
-    // built with `cache`.
-    unsafe {
-        if use_child && let Some(child) = hop(walker, element, cache, child_hop, budget) {
-            let snapshot = snapshot_from_cached_element(&child, registry);
-            let found = if is_layout(&snapshot) {
-                find_simple_next(
-                    &child,
-                    walker,
-                    cache,
-                    registry,
-                    go_previous,
-                    true,
-                    false,
-                    budget,
-                )
-            } else {
-                Some((child, snapshot))
-            };
-            if found.is_some() {
-                return found;
-            }
-        }
-
-        if let Some(sibling) = hop(walker, element, cache, sibling_hop, budget) {
-            let snapshot = snapshot_from_cached_element(&sibling, registry);
-            let found = if is_layout(&snapshot) {
-                find_simple_next(
-                    &sibling,
-                    walker,
-                    cache,
-                    registry,
-                    go_previous,
-                    true,
-                    false,
-                    budget,
-                )
-            } else {
-                Some((sibling, snapshot))
-            };
-            if found.is_some() {
-                return found;
-            }
-        }
-
-        if !use_parent {
-            return None;
-        }
-        let mut parent = hop(walker, element, cache, Hop::Parent, budget)?;
-        loop {
-            let snapshot = snapshot_from_cached_element(&parent, registry);
-            if !is_layout(&snapshot) {
-                return None;
-            }
-            if let Some(found) = find_simple_next(
-                &parent,
-                walker,
-                cache,
-                registry,
-                go_previous,
-                false,
-                false,
-                budget,
-            ) {
-                return Some(found);
-            }
-            parent = hop(walker, &parent, cache, Hop::Parent, budget)?;
-        }
-    }
+    !matches!(
+        snapshot.role,
+        Role::ListItem | Role::TreeItem | Role::EditableText
+    )
 }
 
 #[cfg(test)]
-mod simple_nav_tests {
+mod presentation_tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
-    use super::is_layout;
+    use super::{is_layout, is_presentable_focus_ancestor};
 
     fn snapshot(role: Role, name: Option<&str>, description: Option<&str>) -> NodeSnapshot {
         let details = NodeDetails {
@@ -821,5 +624,34 @@ mod simple_nav_tests {
         assert!(!is_layout(&snapshot(Role::List, None, None)));
         assert!(!is_layout(&snapshot(Role::ListItem, None, None)));
         assert!(!is_layout(&snapshot(Role::Button, None, None)));
+    }
+
+    #[test]
+    fn item_and_text_roles_are_not_presentable_focus_ancestors() {
+        assert!(!is_presentable_focus_ancestor(&snapshot(
+            Role::ListItem,
+            Some("Desktop"),
+            None
+        )));
+        assert!(!is_presentable_focus_ancestor(&snapshot(
+            Role::TreeItem,
+            Some("Home"),
+            None
+        )));
+        assert!(!is_presentable_focus_ancestor(&snapshot(
+            Role::EditableText,
+            Some("Search"),
+            None
+        )));
+        assert!(is_presentable_focus_ancestor(&snapshot(
+            Role::Group,
+            Some("Quick access"),
+            None
+        )));
+        assert!(!is_presentable_focus_ancestor(&snapshot(
+            Role::Pane,
+            Some("named"),
+            None
+        )));
     }
 }
