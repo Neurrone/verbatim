@@ -197,8 +197,14 @@ and the D9 outpost generalization — were finished early, at the end of M2
   into one host later) address it, and there is deliberately no dedicated
   low-end VM profile — the goal is to be efficient outright, and behavior on
   weaker hardware gets investigated only if real users report problems.
-  Remaining, as lower-priority polish carried forward: the stale-cache
-  policy and WinEvent routing refinements.
+  Remaining, carried forward: the stale-cache policy (lower-priority
+  polish), and the focus-listener outpost (decision D13, recorded in
+  `docs/architecture.md` section 1 after M3's live debugging traced the
+  announce-poll's whole failure family to the first-focus spawn race) —
+  the concrete successor to what this bullet previously called "WinEvent
+  routing refinements". Suggested scheduling: the start of M4, before
+  caret tracking and typed-character echo build more behavior on top of
+  the announcement plumbing D13 reshapes.
   Residual E2E flakes: root-caused during this milestone, as promised
   here, from failing runs' flight recorders and stderr on a repeated
   fresh-restore repro loop. The "occasional missed announcement deep in a

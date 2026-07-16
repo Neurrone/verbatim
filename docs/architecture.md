@@ -93,6 +93,26 @@ screen reader in both rendered and source form.
   become a theme swap rather than a pipeline rewrite, and dictionary and
   symbol processing operate on typed spans rather than undifferentiated
   text.
+- **D13 — A dedicated focus-listener outpost detects focus; per-app
+  outposts announce it.** One permanent, stateless listener process holds
+  the single desktop-global UIA focus registration and global MSAA
+  WinEvent hooks (focus, foreground, menu popups), under a hard rule: it
+  never makes a cross-process call — it reads only what the event itself
+  carries (a UIA element's cached properties, an MSAA event's raw window
+  and object ids) plus hang-safe local reads, and forwards each captured
+  focus fact to Core, which routes it to the target's own outpost for
+  acquisition, arbitration, enrichment, and announcement. Rationale:
+  per-app outposts structurally race first focus — the event fires before
+  the newly foregrounded app's outpost has spawned and hooked — and the
+  synthetic announce-by-polling that papered over the race was root-caused
+  live (milestone M3) as a class of silent failures: menu-open races,
+  cold-start "window window" noise, and announcements silently never
+  produced when the poll's budget exhausted on a loaded machine. A
+  listener that exists from startup and cannot block on any application
+  never misses the event, so the poll demotes from primary mechanism to
+  rare fallback; announcements keep flowing through the per-app outposts,
+  so node identity, backend arbitration, and D9's isolation for every
+  query are unchanged. Details in section 1.
 
 ## 1. Process and thread model
 
@@ -163,6 +183,89 @@ Recovery is a ladder, cheapest rung first:
 Because outposts are per-app processes, a hang or crash in one app's
 accessibility plumbing cannot affect reading any other app, and Core (input,
 speech, GUI) is never in the blast radius at all.
+
+### The focus listener (D13)
+
+Per-app outposts have one structural blind spot: the first focus. When an
+application gains the foreground, its focus event fires before the
+supervisor has spawned that application's outpost and before the outpost's
+hooks are installed, so the event is unobservable by the very process
+responsible for it. The M3-era mitigation — the supervisor tells the new
+outpost to *reconstruct* what it missed by polling "what window? what
+focused control?" with bounded retries — was root-caused live as a family
+of silent failures: the poll raced menu popups, announced half-constructed
+windows, and when every retry burned its deadline against a loaded or
+slow-starting application, exhausted without announcing anything at all.
+
+The focus listener closes the blind spot at its cause. It is one permanent
+outpost process, supervised like any other (job object, heartbeat,
+respawn), that exists from startup and holds exactly the subscriptions
+that are global by nature:
+
+- the desktop-global UIA focus registration — which UIA offers only
+  desktop-wide anyway; before D13, every per-app outpost held its own
+  desktop-global registration and discarded other applications' events, so
+  N outposts meant N redundant callbacks per focus change system-wide, and
+  this consolidates them into one;
+- global MSAA WinEvent hooks (process id zero) for focus, foreground
+  changes, and menu-popup opens — NVDA's own arrangement, and what
+  absorbs the foreground trigger that previously ran inside Core.
+
+The listener's contract is a single hard rule: **it never makes a
+cross-process call.** A UIA focus callback delivers the element with its
+properties already cached, so building a snapshot is local memory reads;
+an MSAA WinEvent delivers raw window and object ids, which are forwarded
+untouched; the only other reads are hang-safe local ones (the window's
+owning process id, its class name). No cross-process calls means no
+deadlines, no query pool, no parked threads, and no way for any
+application — hung or not — to stall focus detection for the rest of the
+desktop. The listener holds no per-application state either, so a crash
+respawns into full capability instantly.
+
+Detection and announcement are deliberately split. The listener forwards
+each captured focus fact (source process, window, backend address or
+cached snapshot) to Core; the supervisor ensures the target's own outpost
+exists — a spawn now merely delays the announcement by the spawn latency,
+where before it lost the event outright — and hands the fact to it. Facts
+for an outpost still spawning queue per process with newest-wins for
+focus: three focus changes during one spawn deliver one announcement, the
+current one. The app outpost then does everything it already does today,
+on its deadline-guarded query pool: acquisition, cross-backend
+arbitration, ancestry and selection enrichment, and the announced focus
+event — degrading rather than falling silent when enrichment times out
+(the event-carried snapshot always suffices to announce name, role,
+value, and state). Node identity therefore never crosses processes — the
+navigator, object navigation, and every fetch keep routing to the per-app
+outpost exactly as before, and D9's isolation still bounds every call
+that can block.
+
+Because both backends can report the same focus, the listener forwards
+both facts and takes no side: arbitration is not a race between the pair
+but a sticky per-window verdict the app outpost already keeps, which each
+fact consults independently whenever it arrives — so deduplication does
+not depend on the two facts arriving together, or at all. For a window
+with no verdict yet, the existing asymmetric provisional rule applies
+unchanged: the MSAA fact proceeds provisionally while the UIA fact is
+dropped and the probe scheduled, so exactly one backend announces even in
+the cold case, in either arrival order. Resolving which window a
+non-windowed UIA element belongs to can itself take a cross-process
+normalize call, which is precisely why the verdict check runs in the app
+outpost and never in the listener.
+
+What remains of the old poll is a genuine fallback, no longer the
+mechanism of record: it covers the listener's own respawn gap (on
+listener death the supervisor re-announces the current foreground once
+the replacement is up) and the irreducible case NVDA shares — a specific
+control that exists but is not yet readable (a window before its name),
+retried briefly against a known address rather than guessed at.
+
+The per-app outposts shed their focus-shaped subscriptions — the
+per-outpost UIA focus registration, the MSAA focus hook, and the
+menu-popup hook — and keep their process-scoped property, value, state,
+name, and selection subscriptions unchanged. One extra hop (listener to
+Core to app outpost) costs well under a millisecond against the tens of
+milliseconds acquisition already costs, and removes the zero-to-seconds
+discovery latency of polling.
 
 ### Why one process per app
 
