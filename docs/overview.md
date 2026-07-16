@@ -76,9 +76,11 @@ Public API:
   `SpeechPriority` — structured speech per decision D12. Segments are
   semantic spans: literal text, `Label`, `Value`, `Description`, role and
   state tokens (including `NegatedState` for announcements like "not
-  checked"), `Position` (a "2 of 5" pair), and `Level`. The pure reducer
-  never touches localization; spans become words at the speech pipeline's
-  presentation stage. An utterance optionally carries an
+  checked"), `Position` (a "2 of 5" pair), `Level`, and `Message` (a fixed
+  reader message the reducer names — a navigation edge, for instance —
+  rather than a property of any node, so it can say something without
+  pre-flattening text). The pure reducer never touches localization; spans
+  become words at the speech pipeline's presentation stage. An utterance optionally carries an
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
   position without a pipeline change.
@@ -658,17 +660,28 @@ Public API:
   child via `accNavigate`; returns `Ok(None)` for a genuine edge and `Err`
   only when the source node itself can no longer be acquired, so the
   outpost can report `Gone` rather than a fake edge), and `activate`
-  (`accDoDefaultAction`, MSAA's only activation primitive). One
-  control-class seam, mirroring NVDA's `sysTreeView32.py`: a
-  `SysTreeView32` item's navigation and ancestor chain route through the
-  tree control's own `TVM_GETNEXTITEM` relations (with the
-  accid-to-htreeitem mapping messages and their pre-v6 comctl32 fallback),
-  because MSAA exposes every visible tree item as a flat sibling list
-  under the control — parent, siblings, and first child would otherwise
-  all answer the visible-order neighbor instead of the logical one. A tree
-  item's `accValue` is its 0-based indent depth, not a value, so
-  `read_snapshot` reads it into the snapshot's one-based level and leaves
-  the value empty, again matching NVDA.
+  (`accDoDefaultAction`, MSAA's only activation primitive). Two seams
+  mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
+  item's navigation and ancestor chain route through the tree control's
+  own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping
+  messages and their pre-v6 comctl32 fallback), because MSAA exposes every
+  visible tree item as a flat sibling list under the control — parent,
+  siblings, and first child would otherwise all answer the visible-order
+  neighbor instead of the logical one; a tree item's `accValue` is its
+  0-based indent depth, not a value, so `read_snapshot` reads it into the
+  snapshot's one-based level and leaves the value empty, again matching
+  NVDA. And a window-root object — the window face every windowed control
+  exposes alongside its client object, keyed under `OBJID_WINDOW` (not
+  `OBJID_CLIENT`, so the two faces of one hwnd get distinct node ids
+  rather than colliding) — navigates the Win32 window hierarchy rather
+  than `accNavigate`/`accParent`: parent is `GA_PARENT`, siblings are the
+  next and previous visible top-level child windows
+  (`GW_HWNDNEXT`/`GW_HWNDPREV`), and the first child is the first visible
+  child window or, for a leaf control, its own client object. This is
+  NVDA's `Window`/`WindowRoot` navigation, and it is what makes
+  parent-then-sibling-then-child navigation between the controls of a
+  dialog work: MSAA's own answers there are the control's scroll-bar and
+  client pieces, not the sibling controls.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, pinned by unit tests against
   raw state words captured from live controls.

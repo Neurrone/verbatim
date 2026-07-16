@@ -226,7 +226,17 @@ and the D9 outpost generalization — were finished early, at the end of M2
   report the current object; the review cursor follows focus, with a
   command to return it to focus; navigate through the review cursor to read text; activate the current object. Enough to
   reach everything the tab order cannot. Gestures are NVDA's, with the
-  Verbatim modifier in NVDA's place. The active layout is a proper global
+  Verbatim modifier in NVDA's place. A navigation that finds no neighbor
+  speaks NVDA's edge message ("No next", "No previous", "No containing
+  object", "No objects inside") rather than falling silent — an earlier
+  revision stayed silent with an M11 earcon planned on top, but live
+  testing found silence indistinguishable from a broken command, so the
+  message is the behavior and the earcon becomes an addition. Windowed
+  controls (a dialog's slider, check box, and so on, each its own window
+  over MSAA) navigate the Win32 window hierarchy the way NVDA's
+  Window/WindowRoot classes do, since plain MSAA answers their sibling and
+  child navigation with the control's own scroll-bar and client pieces
+  rather than the sibling controls a user moves between. The active layout is a proper global
   setting from the start: a `keyboard` section in `settings.toml` whose
   `layout` is either `desktop` (the default) or `laptop` — exposed only in
   the file in M3; its GUI surface arrives with M8's gesture-remapping
