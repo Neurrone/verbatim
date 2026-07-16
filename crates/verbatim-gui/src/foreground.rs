@@ -92,23 +92,38 @@ pub(crate) fn force_foreground(hwnd: HWND) {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = BringWindowToTop(hwnd);
         if SetForegroundWindow(hwnd).as_bool() {
+            tracing::info!("popup foreground taken directly");
             return;
         }
 
         let foreground = GetForegroundWindow();
         if foreground.is_invalid() {
+            tracing::warn!(
+                "popup foreground not taken: SetForegroundWindow failed and no foreground window exists to attach to"
+            );
             return;
         }
         let foreground_thread = GetWindowThreadProcessId(foreground, None);
         let our_thread = GetCurrentThreadId();
         if foreground_thread == 0 || foreground_thread == our_thread {
+            tracing::warn!(
+                foreground_thread,
+                "popup foreground not taken: SetForegroundWindow failed with no attachable foreground thread"
+            );
             return;
         }
 
         if AttachThreadInput(our_thread, foreground_thread, true).as_bool() {
-            let _ = SetForegroundWindow(hwnd);
+            let taken = SetForegroundWindow(hwnd).as_bool();
             let _ = BringWindowToTop(hwnd);
             let _ = AttachThreadInput(our_thread, foreground_thread, false);
+            if taken {
+                tracing::info!("popup foreground taken via input-queue attachment");
+            } else {
+                tracing::warn!(
+                    "popup foreground not taken: SetForegroundWindow failed even attached to the foreground thread; popup may not be readable"
+                );
+            }
         } else {
             tracing::warn!("could not attach to the foreground thread; popup may not be readable");
         }

@@ -337,8 +337,12 @@ fn show_menu() {
     frame.center_on_screen();
     let position = frame.get_position();
     pre_popup(frame);
+    // Info, not debug: whether the popup actually showed is the first fact
+    // needed when diagnosing a menu that opened silently or not at all
+    // (the cold-guest first-launch investigation), and it fires only on an
+    // explicit user gesture, so it cannot flood the log.
     let shown = frame.popup_menu(&mut menu, Some(position));
-    tracing::debug!(
+    tracing::info!(
         shown,
         x = position.x,
         y = position.y,
