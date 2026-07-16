@@ -35,8 +35,8 @@ use verbatim_ia2::{
     CHILDID_SELF, NodeIdRegistry as MsaaRegistry, WinEventCallback, WinEventHook, WinEventKind,
 };
 use verbatim_model::{
-    Backend, HIDDEN_FRAME_WINDOW_PROP, NodeDetails, NodeSnapshot, NormalizedEvent, Pid,
-    PropertyChange, SnapshotVersion, TraceId,
+    Backend, FetchResult, HIDDEN_FRAME_WINDOW_PROP, NodeDetails, NodeSnapshot, NormalizedEvent,
+    Pid, PropertyChange, SnapshotVersion, TraceId,
 };
 use verbatim_uia::map::{
     cached_native_window_handle, notification_kind_from_uia, notification_processing_from_uia,
@@ -731,7 +731,6 @@ impl Outpost {
 
     /// Answers a fetch by re-reading the node from whichever backend owns it.
     fn handle_fetch(&self, trace: TraceId, query: verbatim_model::Query) {
-        use verbatim_model::FetchResult;
         let shared = self.shared.clone();
         let node_id = query.node_id;
         let query_id = query.query_id;
@@ -755,18 +754,10 @@ impl Outpost {
             }
             Some(direction) => {
                 let outbound = self.shared.outbound.clone();
-                let result = self
-                    .shared
-                    .pool
-                    .run(NAVIGATE_DEADLINE, move |worker| {
-                        navigate_query(worker, &shared, node_id, direction)
-                    })
-                    // A timed-out or failed navigation leaves the navigator
-                    // put: report no neighbor rather than a spurious move.
-                    .map_or(FetchResult::NoNeighbor, |outcome| match outcome {
-                        Ok(NavigateOutcome::Found(node)) => FetchResult::Node(node),
-                        Ok(NavigateOutcome::NoNeighbor) | Err(_) => FetchResult::NoNeighbor,
-                    });
+                let outcome = self.shared.pool.run(NAVIGATE_DEADLINE, move |worker| {
+                    navigate_query(worker, &shared, node_id, direction)
+                });
+                let result = fetch_result_for_navigate(outcome);
                 let _ = outbound.send(OutpostToSupervisor::FetchReply {
                     trace_id: trace,
                     query_id,
@@ -1213,10 +1204,34 @@ fn navigate_query(
             key,
             &shared.msaa_registry,
             msaa_navigate_direction(direction),
-        );
+        )?;
         return Ok(found.map_or(NavigateOutcome::NoNeighbor, NavigateOutcome::Found));
     }
     Err("unknown node id".to_owned())
+}
+
+/// Maps the outcome of a deadline-guarded [`navigate_query`] call to the
+/// [`FetchResult`] sent back over the outpost protocol — the pure decision
+/// behind [`Outpost::handle_fetch`]'s object-navigation arm, factored out so
+/// it is unit-testable without a live accessibility backend.
+///
+/// A timed-out query (`None`, [`QueryPool::run`](crate::query_pool::QueryPool::run)'s
+/// deadline elapsed) and an acquisition failure (`Some(Err(_))`, the source
+/// node could no longer be re-fetched) both report [`FetchResult::Gone`]:
+/// the *node itself* is unreachable, which is a different fact from "this
+/// is the edge of the tree". Only a genuine
+/// `Ok(NavigateOutcome::NoNeighbor)` — the source node re-fetched fine, but
+/// nothing exists in the requested direction — reports
+/// [`FetchResult::NoNeighbor`]. Before this distinction existed, a timeout
+/// or a failed re-fetch was reported the same way as a real edge, which
+/// made a genuinely gone node look like "you're at the last item" instead
+/// of prompting a fresh fetch.
+fn fetch_result_for_navigate(outcome: Option<Result<NavigateOutcome, String>>) -> FetchResult {
+    match outcome {
+        None | Some(Err(_)) => FetchResult::Gone,
+        Some(Ok(NavigateOutcome::NoNeighbor)) => FetchResult::NoNeighbor,
+        Some(Ok(NavigateOutcome::Found(node))) => FetchResult::Node(node),
+    }
 }
 
 /// Maps the outpost protocol's [`crate::protocol::NavigateDirection`] to
@@ -1587,5 +1602,60 @@ pub fn run_attach(target_pid: u32) -> io::Result<()> {
     outpost.handle_announce_focus(TraceId::mint());
     loop {
         thread::park();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::{NodeId, Role, StateSet};
+
+    use super::{
+        Backend, FetchResult, NavigateOutcome, NodeDetails, NodeSnapshot, fetch_result_for_navigate,
+    };
+
+    fn sample_node() -> NodeSnapshot {
+        NodeSnapshot {
+            id: NodeId::new(1),
+            backend: Backend::Msaa,
+            role: Role::TreeItem,
+            name: Some("Item".to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        }
+    }
+
+    /// A deadline timeout must never be reported the same way as a genuine
+    /// tree edge — the node may well still exist, just unreachable within
+    /// the deadline, so the reducer should treat it as gone (prompting a
+    /// fresh fetch) rather than "you're at the last item".
+    #[test]
+    fn timeout_reports_gone_not_no_neighbor() {
+        assert_eq!(fetch_result_for_navigate(None), FetchResult::Gone);
+    }
+
+    /// An acquisition failure for the *source* node (it could no longer be
+    /// re-fetched) is likewise "gone", not "no neighbor": the failure is
+    /// about the starting node, not about what lies in the requested
+    /// direction.
+    #[test]
+    fn acquisition_failure_reports_gone_not_no_neighbor() {
+        let outcome = Some(Err("could not re-fetch the node".to_owned()));
+        assert_eq!(fetch_result_for_navigate(outcome), FetchResult::Gone);
+    }
+
+    /// A genuine edge — the source node is fine, but nothing exists in the
+    /// requested direction — is the only case that reports `NoNeighbor`.
+    #[test]
+    fn genuine_edge_reports_no_neighbor() {
+        let outcome = Some(Ok(NavigateOutcome::NoNeighbor));
+        assert_eq!(fetch_result_for_navigate(outcome), FetchResult::NoNeighbor);
+    }
+
+    #[test]
+    fn found_neighbor_reports_the_node() {
+        let node = sample_node();
+        let outcome = Some(Ok(NavigateOutcome::Found(node.clone())));
+        assert_eq!(fetch_result_for_navigate(outcome), FetchResult::Node(node));
     }
 }

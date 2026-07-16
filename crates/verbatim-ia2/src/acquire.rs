@@ -9,17 +9,34 @@
 //! relations) are acquired here by calling `IServiceProvider::QueryService` on
 //! the `IAccessible` obtained below. That is deliberately left as a module
 //! boundary for now — see [`acquire_ia2`].
+//!
+//! `SysTreeView32` seam: a Win32 common-control tree view (comctl32) exposes
+//! every visible item to MSAA as a flat sibling list directly under the tree
+//! control, not nested under its logical parent — confirmed live against
+//! msinfo32. [`navigate`] and [`ancestor_chain`] detect this window class and
+//! route a tree item's navigation through the control's own `TVM_*` window
+//! messages instead of `accNavigate`/`accParent`, mirroring NVDA's
+//! `sysTreeView32.py`. Those messages are sent with plain `SendMessageW`,
+//! which can block if the owning application is wedged — acceptable only
+//! because every caller of this module already runs on a deadline-guarded
+//! query-pool thread (never the event thread), the same bound every other
+//! blocking call in this module already relies on.
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccessible,
     NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, WindowFromAccessibleObject,
 };
+use windows::Win32::UI::Controls::{
+    TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM,
+    TVM_MAPHTREEITEMTOACCID,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GUITHREADINFO, GetGUIThreadInfo, GetWindowThreadProcessId, OBJID_CLIENT,
+    GUITHREADINFO, GetClassNameW, GetGUIThreadInfo, GetWindowThreadProcessId, OBJID_CLIENT,
+    SendMessageW,
 };
 use windows::core::Interface;
 
@@ -85,6 +102,15 @@ unsafe fn accessible_and_child(
 /// `max_hops` ancestors; stops early, without error, once a hop finds no
 /// further parent or fails. Blocking; query pool only.
 ///
+/// For a `SysTreeView32` item addressed as a simple child (see this module's
+/// top doc comment), the walk first follows the item's own logical
+/// ancestors through `TVGN_PARENT` (the same relation [`navigate`] uses for
+/// `Parent`), then continues with the tree control itself and its own
+/// window ancestry through the normal `accParent` walk below — so a
+/// focus-ancestry announcement for a deeply nested tree item reads its full
+/// logical path, not the flat MSAA sibling list the control otherwise
+/// exposes. Both stages share the one `max_hops` budget.
+///
 /// This is deliberately the simplest correct implementation, behind this
 /// function as a seam: milestone M4's remote-operations work replaces
 /// UIA's equivalent per-hop walk with a single batched round trip, and MSAA
@@ -99,10 +125,34 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
         return Vec::new();
     };
     let mut chain = Vec::new();
+    // SAFETY: `child` is valid for `acc`, just acquired together above.
+    let is_simple_child = unsafe { child_id_of(&child) } != CHILDID_SELF;
+    let mut hops_used = 0u32;
+
+    if is_simple_child && is_systreeview32(hwnd) {
+        // SAFETY: `child` is valid for `acc`.
+        let mut current_acc_id = unsafe { child_id_of(&child) };
+        while hops_used < max_hops {
+            let Some(parent_acc_id) = tree_view_relation_acc_id(hwnd, current_acc_id, TVGN_PARENT)
+            else {
+                // The item is a root: fall through to the tree control
+                // itself, via the ordinary simple-child handling below.
+                break;
+            };
+            let parent_key = (hwnd, id_object, parent_acc_id);
+            // SAFETY: `acc` is the tree control's own live IAccessible;
+            // `parent_acc_id` addresses one of its simple children.
+            let snapshot =
+                unsafe { read_snapshot(&acc, &child_variant(parent_acc_id), parent_key, registry) };
+            chain.push(snapshot);
+            hops_used += 1;
+            current_acc_id = parent_acc_id;
+        }
+    }
+
     let mut current = acc;
-    // SAFETY: `child` is valid for `current`, just acquired together above.
-    let mut at_self = unsafe { child_id_of(&child) } == CHILDID_SELF;
-    for _ in 0..max_hops {
+    let mut at_self = !is_simple_child;
+    while hops_used < max_hops {
         if !at_self {
             // SAFETY: `current` is a live IAccessible from a prior successful
             // acquisition.
@@ -114,6 +164,7 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
             };
             chain.push(snapshot);
             at_self = true;
+            hops_used += 1;
             continue;
         }
         // SAFETY: `current` is a live IAccessible.
@@ -136,10 +187,110 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
             )
         };
         chain.push(snapshot);
+        hops_used += 1;
         current = parent_acc;
     }
     chain.reverse();
     chain
+}
+
+/// Reads a window's class name via `GetClassNameW` — a local, non-blocking
+/// call safe on any thread even against a hung window, unlike the
+/// `SendMessageW` calls the `SysTreeView32` helpers below make.
+fn window_class_name(hwnd: isize) -> String {
+    let mut buffer = [0u16; 256];
+    // SAFETY: GetClassNameW writes at most buffer.len()-1 code units plus a
+    // NUL and returns the count written; an invalid handle yields 0, and
+    // `buffer` is a local, fully owned array.
+    let len = unsafe { GetClassNameW(HWND(hwnd as *mut c_void), &mut buffer) };
+    let Ok(len) = usize::try_from(len) else {
+        return String::new();
+    };
+    String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
+}
+
+/// Returns whether `hwnd` is a `SysTreeView32` common control (comctl32's
+/// tree view) — see this module's top doc comment for why its items need
+/// the `TVM_*`-based navigation below instead of `accNavigate`/`accParent`.
+fn is_systreeview32(hwnd: isize) -> bool {
+    window_class_name(hwnd) == "SysTreeView32"
+}
+
+/// Sends a `TVM_*` message to a tree-view control and returns the result as
+/// an `isize`, the common shape every `HTREEITEM`/relation-code message
+/// below uses. A thin wrapper so every call site reads the same way.
+///
+/// # Safety
+///
+/// `hwnd` may be any handle value (an invalid one fails safely, returning
+/// 0, since `SendMessageW` itself tolerates a bad handle). See this
+/// module's top doc comment for why a plain, non-timeout `SendMessageW` is
+/// acceptable here.
+unsafe fn send_tvm(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize {
+    // SAFETY: forwarded to the caller's contract; the TVM_* messages used by
+    // this module's callers take plain integers (an acc id, an `HTREEITEM`
+    // value, or a `TVGN_*` relation code) in `wparam`/`lparam`, never a
+    // pointer that would need to stay valid beyond the call.
+    unsafe { SendMessageW(hwnd, msg, Some(WPARAM(wparam)), Some(LPARAM(lparam))).0 }
+}
+
+/// Maps an MSAA child id to its `HTREEITEM`, via `TVM_MAPACCIDTOHTREEITEM`.
+/// Falls back to using the child id as the `HTREEITEM` value directly when
+/// the message returns 0: comctl32 versions before v6 have no accid/htreeitem
+/// mapping and use the hItem as the child id outright, exactly as NVDA's
+/// `sysTreeView32.py` (`treeview_hItem`) does.
+fn htreeitem_for_acc_id(hwnd: HWND, acc_id: i32) -> isize {
+    let wparam = usize::try_from(acc_id.cast_unsigned()).unwrap_or(0);
+    // SAFETY: `hwnd` may be any handle; `send_tvm` fails safely per its own
+    // contract.
+    let mapped = unsafe { send_tvm(hwnd, TVM_MAPACCIDTOHTREEITEM, wparam, 0) };
+    if mapped == 0 {
+        isize::try_from(acc_id).unwrap_or(0)
+    } else {
+        mapped
+    }
+}
+
+/// Maps an `HTREEITEM` back to its MSAA child id, via
+/// `TVM_MAPHTREEITEMTOACCID`. Falls back to using the `HTREEITEM` value
+/// itself as the child id when the message returns 0, the same comctl32 <
+/// v6 fallback [`htreeitem_for_acc_id`] documents.
+fn acc_id_for_htreeitem(hwnd: HWND, hitem: isize) -> i32 {
+    let wparam = usize::try_from(hitem).unwrap_or(0);
+    // SAFETY: `hwnd` may be any handle; `send_tvm` fails safely per its own
+    // contract.
+    let mapped = unsafe { send_tvm(hwnd, TVM_MAPHTREEITEMTOACCID, wparam, 0) };
+    if mapped == 0 {
+        i32::try_from(hitem).unwrap_or(0)
+    } else {
+        i32::try_from(mapped).unwrap_or(0)
+    }
+}
+
+/// The shared `TVM_*` plumbing behind a `SysTreeView32` item's logical
+/// parent, next sibling, previous sibling, and first child: maps `acc_id`
+/// to its `HTREEITEM` ([`htreeitem_for_acc_id`]), walks `relation`
+/// (`TVGN_PARENT`, `TVGN_NEXT`, `TVGN_PREVIOUS`, or `TVGN_CHILD`) via
+/// `TVM_GETNEXTITEM`, and maps the result back to an acc id
+/// ([`acc_id_for_htreeitem`]) — mirroring NVDA's `sysTreeView32.py`
+/// relation properties. `None` for a 0 result at either step: a 0
+/// `HTREEITEM` lookup means `acc_id` no longer resolves; a 0 relation
+/// result means a genuine "no such neighbor" (or, for `TVGN_PARENT`, that
+/// the item is a root — see [`navigate`] and [`ancestor_chain`] for how
+/// each caller handles that case).
+fn tree_view_relation_acc_id(hwnd: isize, acc_id: i32, relation: u32) -> Option<i32> {
+    let hwnd = HWND(hwnd as *mut c_void);
+    let hitem = htreeitem_for_acc_id(hwnd, acc_id);
+    if hitem == 0 {
+        return None;
+    }
+    // SAFETY: `hwnd` may be any handle; `send_tvm` fails safely per its own
+    // contract.
+    let neighbor_hitem = unsafe { send_tvm(hwnd, TVM_GETNEXTITEM, relation as usize, hitem) };
+    if neighbor_hitem == 0 {
+        return None;
+    }
+    Some(acc_id_for_htreeitem(hwnd, neighbor_hitem))
 }
 
 /// A direction to navigate from a node with [`navigate`], mirroring
@@ -158,27 +309,65 @@ pub enum NavigateDirection {
     FirstChild,
 }
 
-/// Navigates one step from the node named by `key` in `direction`. Parent
-/// goes through `IAccessible::accParent` (with the same "simple child's
-/// immediate parent is the object it is a child of" handling
-/// [`ancestor_chain`] uses, since plain MSAA has no `accParent` for a child
-/// id); the other three directions go through `IAccessible::accNavigate`.
-/// Returns `None` for a genuine "no such neighbor" as well as for an
-/// acquisition failure — MSAA does not distinguish the two at this call
-/// boundary, unlike UIA's tree walker. Blocking; query pool only.
-#[must_use]
+/// Navigates one step from the node named by `key` in `direction`.
+///
+/// For a `SysTreeView32` item addressed as a simple child (see this
+/// module's top doc comment), every direction routes through the tree
+/// control's own `TVGN_*` relations ([`tree_view_relation_acc_id`]) instead
+/// of `accNavigate`/`accParent`, mirroring NVDA's `sysTreeView32.py`: MSAA
+/// over this control exposes every visible item as a flat sibling list
+/// directly under the tree, not nested under its logical parent, so
+/// `accNavigate`'s next/previous/first-child answers and `accParent`'s
+/// answer are all wrong for it (confirmed live against msinfo32). A
+/// `Parent` query whose item is a root (`TVGN_PARENT` returns nothing)
+/// falls through to the ordinary simple-child handling below, which
+/// correctly lands on the tree control itself.
+///
+/// Every other node goes through `IAccessible::accParent` for `Parent`
+/// (with the same "simple child's immediate parent is the object it is a
+/// child of" handling [`ancestor_chain`] uses, since plain MSAA has no
+/// `accParent` for a child id) and `IAccessible::accNavigate` for the other
+/// three directions.
+///
+/// Blocking; query pool only.
+///
+/// # Errors
+///
+/// Returns `Err` only when the source node itself — the one named by `key`
+/// — can no longer be re-acquired; this is the "the node is gone" case.
+/// `Ok(None)` is a genuine edge: the source node is fine, but there is no
+/// neighbor in that direction (a root's parent, a last child's next
+/// sibling, a leaf's first child). The two are never conflated, so callers
+/// can distinguish "this node vanished" from "this is the end of the tree".
 pub fn navigate(
     key: MsaaKey,
     registry: &NodeIdRegistry,
     direction: NavigateDirection,
-) -> Option<NodeSnapshot> {
+) -> Result<Option<NodeSnapshot>, String> {
     let (hwnd, id_object, id_child) = key;
     // SAFETY: forwarded to `accessible_and_child`'s contract.
-    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
+    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }
+        .ok_or_else(|| "could not acquire the node".to_owned())?;
+    // SAFETY: `child` is valid for `acc`, just acquired together above.
+    let is_simple_child = unsafe { child_id_of(&child) } != CHILDID_SELF;
+    let tree_view = is_simple_child && is_systreeview32(hwnd);
 
     if direction == NavigateDirection::Parent {
-        // SAFETY: `child` is valid for `acc`, just acquired together above.
-        if unsafe { child_id_of(&child) } != CHILDID_SELF {
+        if tree_view {
+            // SAFETY: `child` is valid for `acc`.
+            let acc_id = unsafe { child_id_of(&child) };
+            if let Some(parent_acc_id) = tree_view_relation_acc_id(hwnd, acc_id, TVGN_PARENT) {
+                let parent_key = (hwnd, id_object, parent_acc_id);
+                // SAFETY: `acc` is the tree control's own live IAccessible;
+                // `parent_acc_id` addresses one of its simple children.
+                return Ok(Some(unsafe {
+                    read_snapshot(&acc, &child_variant(parent_acc_id), parent_key, registry)
+                }));
+            }
+            // The item is a root: fall through to the ordinary simple-child
+            // handling below, which lands on the tree control itself.
+        }
+        if is_simple_child {
             // The immediate parent of a simple child (addressed only by a
             // child id, not its own IDispatch) is the object it is a child
             // of; see this module's `ancestor_chain` doc for the same case.
@@ -186,24 +375,55 @@ pub fn navigate(
             let self_hwnd = unsafe { window_of(&acc) }.unwrap_or(hwnd);
             let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             // SAFETY: `acc` is live; CHILDID_SELF addresses it directly.
-            return Some(unsafe {
+            return Ok(Some(unsafe {
                 read_snapshot(&acc, &child_variant(CHILDID_SELF), self_key, registry)
-            });
+            }));
         }
         // SAFETY: `acc` is live.
-        let parent_acc: IAccessible = unsafe { acc.accParent() }.ok()?.cast().ok()?;
+        let Ok(parent_dispatch) = (unsafe { acc.accParent() }) else {
+            return Ok(None);
+        };
+        let Ok(parent_acc) = parent_dispatch.cast::<IAccessible>() else {
+            return Ok(None);
+        };
         // SAFETY: `parent_acc` was just acquired above.
         let parent_hwnd = unsafe { window_of(&parent_acc) }.unwrap_or(hwnd);
         let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
         // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
-        return Some(unsafe {
+        return Ok(Some(unsafe {
             read_snapshot(
                 &parent_acc,
                 &child_variant(CHILDID_SELF),
                 parent_key,
                 registry,
             )
-        });
+        }));
+    }
+
+    if tree_view {
+        // SAFETY: `child` is valid for `acc`.
+        let acc_id = unsafe { child_id_of(&child) };
+        let relation = match direction {
+            NavigateDirection::NextSibling => TVGN_NEXT,
+            NavigateDirection::PreviousSibling => TVGN_PREVIOUS,
+            NavigateDirection::FirstChild => TVGN_CHILD,
+            NavigateDirection::Parent => unreachable!("handled above"),
+        };
+        return Ok(
+            tree_view_relation_acc_id(hwnd, acc_id, relation).map(|neighbor_acc_id| {
+                let neighbor_key = (hwnd, id_object, neighbor_acc_id);
+                // SAFETY: `acc` is the tree control's own live IAccessible;
+                // `neighbor_acc_id` addresses one of its simple children.
+                unsafe {
+                    read_snapshot(
+                        &acc,
+                        &child_variant(neighbor_acc_id),
+                        neighbor_key,
+                        registry,
+                    )
+                }
+            }),
+        );
     }
 
     let navdir = match direction {
@@ -213,7 +433,9 @@ pub fn navigate(
         NavigateDirection::Parent => unreachable!("handled above"),
     };
     // SAFETY: `acc` is live; `child` is valid for it.
-    let result = unsafe { acc.accNavigate(navdir.cast_signed(), &child) }.ok()?;
+    let Ok(result) = (unsafe { acc.accNavigate(navdir.cast_signed(), &child) }) else {
+        return Ok(None);
+    };
     // SAFETY: `result` is the VARIANT `accNavigate` just returned; `acc` is
     // live, matching `resolve_child`'s contract even though this result did
     // not come from `AccessibleChildren` — both follow the same MSAA
@@ -225,7 +447,9 @@ pub fn navigate(
     });
     // SAFETY: `target_acc` is live and `target_child` valid for it, per
     // `resolve_child`.
-    Some(unsafe { read_snapshot(&target_acc, &target_child, target_key, registry) })
+    Ok(Some(unsafe {
+        read_snapshot(&target_acc, &target_child, target_key, registry)
+    }))
 }
 
 /// Activates the node named by `key`: `IAccessible::accDoDefaultAction`, the
@@ -550,9 +774,19 @@ fn acquire_ia2() {
 
 /// Reads name, role, value, state, and the M3 [`NodeDetails`] properties
 /// plain MSAA offers (`accDescription`, `accKeyboardShortcut`, `accLocation`)
-/// from an accessible and its child id. Position-in-set and level stay
-/// `None` on this backend until IA2 lands in M6 (architecture section 4;
+/// from an accessible and its child id. Position-in-set stays `None` on this
+/// backend until IA2 lands in M6 (architecture section 4;
 /// `IServiceProvider::QueryService` is the seam, not touched here).
+///
+/// Level is the one exception: a `SysTreeView32` item ([`Role::TreeItem`])
+/// overloads `accValue` to report its 0-based indent depth as a numeric
+/// string rather than a real value — NVDA's `sysTreeView32.py` overrides
+/// `TreeViewItem.value` to `None` for exactly this reason. This reads that
+/// same string into [`NodeDetails::level`] instead, one-based to match
+/// NVDA's spoken level (confirmed live: the root item's raw `accValue` is
+/// `"0"`, which read as `value` used to make Verbatim announce the root's
+/// value as "0" instead of its level), and leaves `value` itself `None` for
+/// a tree item, matching NVDA.
 ///
 /// # Safety
 ///
@@ -568,7 +802,7 @@ unsafe fn read_snapshot(
     // unsupported property by returning an error, mapped to a neutral default.
     unsafe {
         let name = acc.get_accName(child).ok().and_then(|b| bstr_to_option(&b));
-        let value = acc
+        let raw_value = acc
             .get_accValue(child)
             .ok()
             .and_then(|b| bstr_to_option(&b));
@@ -592,6 +826,17 @@ unsafe fn read_snapshot(
             .ok()
             .and_then(|b| bstr_to_option(&b));
         let rect = location_of(acc, child);
+        // See this function's doc comment: a tree item's accValue is really
+        // its 0-based level, not a value.
+        let (value, level) = if role == Role::TreeItem {
+            let level = raw_value
+                .as_deref()
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|v| v + 1);
+            (None, level)
+        } else {
+            (raw_value, None)
+        };
         NodeSnapshot {
             id: registry.id_for(key),
             backend: Backend::Msaa,
@@ -604,7 +849,7 @@ unsafe fn read_snapshot(
                 keyboard_shortcut,
                 position_in_set: None,
                 set_size: None,
-                level: None,
+                level,
                 rect,
             },
         }
