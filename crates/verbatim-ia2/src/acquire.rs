@@ -455,9 +455,24 @@ pub fn navigate(
     // VT_DISPATCH/VT_I4 convention for naming a related object.
     let (target_acc, target_child, target_hwnd) = unsafe { resolve_child(&acc, &result, hwnd) };
     // SAFETY: `target_child` is valid for `target_acc`, per `resolve_child`.
-    let target_key = (target_hwnd, OBJID_CLIENT.0, unsafe {
-        child_id_of(&target_child)
-    });
+    let target_child_id = unsafe { child_id_of(&target_child) };
+    let target_key = (target_hwnd, OBJID_CLIENT.0, target_child_id);
+    // NVDA's `accNavigate` sanity check (its `IAccessible._get_next`): a
+    // control whose window is its whole world answers sibling navigation
+    // with itself — the focused settings slider's `accNavigate(NEXT)`
+    // returns the slider again, and reading that as a neighbor re-announced
+    // the same control (or, for a result with no readable identity, spoke
+    // nothing at all) instead of reporting the edge. Treat a result that
+    // resolves back to the source object as "no such neighbor" so the
+    // reducer speaks the edge message; a simple child advancing to a
+    // different child id (a list item stepping to the next item, the
+    // msinfo32 case) has a different id and passes through. Sibling
+    // navigation between the actual controls happens at the window level
+    // (see `window_navigate`), which is why a user moves up to the frame
+    // first.
+    if target_hwnd == hwnd && target_child_id == id_child {
+        return Ok(None);
+    }
     // SAFETY: `target_acc` is live and `target_child` valid for it, per
     // `resolve_child`.
     Ok(Some(unsafe {
