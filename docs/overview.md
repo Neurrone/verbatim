@@ -723,7 +723,11 @@ Public API:
   `NavigateDirection`), `Activate` (invoke the node's activation action),
   `Shutdown`. `OutpostToSupervisor`: `Ready`, `Event` (trace id,
   observation timestamp, backend, snapshot version, normalized event),
-  `FetchReply`, `Pong`, `DumpTreeReply` (a `DumpedTree` — the root
+  `FetchReply`, `Pong` (echoes the ping's sequence number and reports the
+  outpost's current `QueryPool` parked-thread count — recovery ladder rung
+  2's bounded garbage — so the supervisor's heartbeat can judge rung 3's
+  wedge-kill decision from the same message that proves the outpost is
+  still answering at all), `DumpTreeReply` (a `DumpedTree` — the root
   `verbatim_model::TreeNode` plus whether the walk was truncated — or a
   human-readable failure reason), `AncestorChainReply`, `NavigateReply`
   (whose success payload is a `NavigateOutcome`: a found snapshot, or a
@@ -778,6 +782,32 @@ Public API:
   sending `Shutdown`, which is what makes the ordinary respawn path
   correctly do nothing for a deliberate retirement instead of resurrecting
   it.
+- Wedge detection and kill-and-respawn (recovery ladder rung 3, completing
+  the M2-era respawn-on-crash path): a dedicated heartbeat thread pings
+  every live outpost every three seconds (`PING_INTERVAL`) and, from each
+  `Pong`, records the outpost's last-answered time and reported
+  parked-thread count. The pure policy function `wedge_decision` — given a
+  last-pong time, now, and a parked count, decide kill or not, and why —
+  is unit-tested in isolation from the ping/kill I/O, the same split
+  `idle_decision` uses for idle retirement. An outpost is declared wedged,
+  and killed and respawned, if either: no pong has arrived for three
+  consecutive ping intervals (`MISSED_PONG_THRESHOLD`, tolerating one slow
+  tick before concluding the outpost has actually stopped answering), or
+  its last reported parked-thread count reached 8 (`PARKED_THREAD_KILL_THRESHOLD`
+  — each parked thread is roughly a megabyte of stack and a handle, so 8 is
+  already several megabytes of garbage and evidence of repeated hangs, not
+  one isolated slow call). The kill itself reuses the same job object every
+  outpost is spawned into: removing the map entry drops its job handle, and
+  the kill-on-job-close limit set at spawn turns that into an immediate
+  kernel-level kill, so no message needs to reach an outpost that is by
+  definition not reliably answering. Both the kill and the subsequent
+  respawn are generation-checked exactly like the crash path, so a kill
+  decision computed a moment earlier cannot race a retirement or a natural
+  respawn that already replaced the entry, and the killed process's late
+  pong or end-of-stream is generation-mismatched against the replacement
+  and ignored. Every kill logs at warn level with the target pid, the
+  outpost's own pid, and the reason (`"missed heartbeats"` or `"parked
+  threads"`), for a flight-recorder-plus-stderr investigation to grep for.
 - `ForegroundTrigger::new(callback)` — the one global WinEvent hook in
   Core: a dedicated thread reporting only the new foreground window's pid
   and handle, no property fetches, wired to `Supervisor::note_foreground`.

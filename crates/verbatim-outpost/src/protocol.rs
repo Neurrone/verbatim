@@ -179,6 +179,11 @@ pub enum OutpostToSupervisor {
     Pong {
         /// The probed sequence number.
         seq: u64,
+        /// This outpost's current count of query-pool workers parked on
+        /// abandoned calls (recovery ladder rung 2's bounded garbage); the
+        /// supervisor watches this, alongside missed pongs, to detect a
+        /// wedged-but-alive outpost (recovery ladder rung 3).
+        parked_count: usize,
     },
     /// Answer to [`SupervisorToOutpost::DumpTree`].
     DumpTreeReply {
@@ -312,6 +317,30 @@ mod tests {
         assert_eq!(second, ready);
         let end: Option<OutpostToSupervisor> = read_message(&mut reader).expect("reads");
         assert!(end.is_none(), "end of stream reads as None");
+    }
+
+    #[test]
+    fn ping_and_pong_round_trip() {
+        let ping = SupervisorToOutpost::Ping { seq: 5 };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &ping).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: SupervisorToOutpost = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, ping);
+
+        let expected_pong = OutpostToSupervisor::Pong {
+            seq: 5,
+            parked_count: 3,
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &expected_pong).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, expected_pong);
     }
 
     #[test]

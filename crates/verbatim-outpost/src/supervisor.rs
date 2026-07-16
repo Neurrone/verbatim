@@ -32,6 +32,25 @@
 //! checks that the watched application's process is itself still alive before
 //! respawning — an outpost whose application has already exited is retired
 //! instead, not resurrected to watch a pid that no longer exists.
+//!
+//! Respawn-on-death only covers an outpost that *exits*. Recovery ladder rung
+//! 3 also covers one that is alive but wedged: stopped answering entirely, or
+//! quietly piling up parked threads from abandoned COM calls (rung 2's
+//! bounded garbage — architecture section 1). A dedicated heartbeat thread
+//! (started in [`Supervisor::new`] alongside the idle sweep) pings every live
+//! outpost on [`PING_INTERVAL`] and, from each pong, learns the outpost's
+//! current parked-thread count. [`wedge_decision`] is the pure policy —
+//! given the last pong time, now, and the last reported parked count, decide
+//! whether to kill and respawn, and why — kept separate from the I/O that
+//! gathers those inputs, the same split [`idle_decision`] uses. A kill is
+//! generation-checked exactly like a natural respawn, so it cannot race a
+//! retirement or a respawn that already replaced the entry, and it works by
+//! removing the outpost's map entry and dropping its job handle: the
+//! kill-on-job-close limit set up at spawn turns that drop into an immediate
+//! kernel-level kill, so no message has to reach an outpost that is by
+//! definition not reliably answering messages. The old process's late pong
+//! or end-of-stream is then generation-mismatched against the freshly
+//! spawned replacement and ignored.
 
 use std::ffi::c_void;
 use std::fs::File;
@@ -77,6 +96,32 @@ const IDLE_RETIREMENT: Duration = Duration::from_mins(2);
 /// change ever triggers a sweep on its own.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
+/// How often the heartbeat thread pings every live outpost (recovery ladder
+/// rung 3's wedged-but-alive detection). A few seconds keeps a wedge visible
+/// on a human timescale — a screen reader user experiencing a stuck
+/// application notices within tens of seconds, not minutes — without adding
+/// meaningful overhead: a handful of tiny JSON messages per interval, even
+/// with several outposts running at once.
+const PING_INTERVAL: Duration = Duration::from_secs(3);
+
+/// How many consecutive [`PING_INTERVAL`]s may pass with no pong before an
+/// outpost is declared wedged. More than one interval tolerates a single
+/// slow tick (VM scheduling variance has already forced one latency-budget
+/// loosening in this codebase); three intervals means a wedge is declared
+/// only after roughly [`PING_INTERVAL`] times three with no sign of life,
+/// long enough that a merely busy outpost has had ample chance to answer.
+const MISSED_PONG_THRESHOLD: u32 = 3;
+
+/// The parked-thread count (recovery ladder rung 2's bounded garbage; see
+/// this module's doc and architecture section 1) at or above which an
+/// outpost is killed and respawned even though it is still answering pings.
+/// Each parked thread is roughly a megabyte of stack and a handle, so 8 is
+/// already several megabytes of garbage — and, since parking only happens
+/// when a call is abandoned past its deadline, also evidence the target
+/// application is repeatedly hanging calls rather than having hit one
+/// isolated slow call.
+const PARKED_THREAD_KILL_THRESHOLD: usize = 8;
+
 /// A message from the supervisor to the app: either something an outpost
 /// sent over its pipe, tagged with the target application it watches, or a
 /// lifecycle notice the supervisor itself generates.
@@ -104,19 +149,33 @@ struct SupervisorShared {
     generation: AtomicU64,
     outposts: Mutex<HashMap<Pid, Running>>,
     current_foreground: Mutex<Option<Pid>>,
+    /// Source of the `seq` echoed in each `Ping`/`Pong`; only monotonicity
+    /// (for log correlation) matters, not per-outpost uniqueness.
+    ping_seq: AtomicU64,
 }
 
 /// One live outpost process, the parent end of its command pipe, and enough
-/// bookkeeping to decide respawn and idle-retirement policy.
+/// bookkeeping to decide respawn, idle-retirement, and wedge-kill policy.
 struct Running {
     generation: u64,
-    /// Held so the kernel kills the outpost when this handle closes.
+    /// Held so the kernel kills the outpost when this handle closes — the
+    /// mechanism both natural job cleanup and a deliberate wedge kill
+    /// (dropping this early) rely on.
     _job: OwnedHandle,
     /// The outpost process handle; closing it does not kill the process (the
     /// job does), it just releases our reference.
     _process: OwnedHandle,
+    /// The outpost's own process id, for wedge-kill log lines.
+    outpost_pid: Pid,
     to_outpost: File,
     last_foreground_at: Instant,
+    /// When the most recent pong from this outpost was recorded. Set to the
+    /// spawn time initially, so a freshly spawned outpost is not judged
+    /// wedged before it has had a chance to answer even one ping.
+    last_pong_at: Instant,
+    /// The parked-thread count from the most recent pong, or 0 before the
+    /// first one arrives.
+    last_parked_count: usize,
 }
 
 impl Supervisor {
@@ -138,8 +197,10 @@ impl Supervisor {
             generation: AtomicU64::new(0),
             outposts: Mutex::new(HashMap::new()),
             current_foreground: Mutex::new(None),
+            ping_seq: AtomicU64::new(0),
         });
         spawn_sweep_thread(&shared);
+        spawn_heartbeat_thread(&shared);
         Ok(Self { shared })
     }
 
@@ -280,6 +341,7 @@ impl SupervisorShared {
 
         // SAFETY: `process.process` is a valid process handle we now own.
         let process_owned = unsafe { OwnedHandle::from_raw_handle(process.process.0 as RawHandle) };
+        let outpost_pid = Pid(process.pid);
 
         let reader_shared = Arc::clone(self);
         let from_outpost = pipes.parent_in;
@@ -288,12 +350,16 @@ impl SupervisorShared {
             .spawn(move || reader_loop(&reader_shared, generation, target_pid, from_outpost))
             .map_err(io::Error::other)?;
 
+        let now = Instant::now();
         Ok(Running {
             generation,
             _job: job,
             _process: process_owned,
+            outpost_pid,
             to_outpost,
-            last_foreground_at: Instant::now(),
+            last_foreground_at: now,
+            last_pong_at: now,
+            last_parked_count: 0,
         })
     }
 
@@ -328,6 +394,115 @@ impl SupervisorShared {
             }
             Err(error) => {
                 tracing::error!(%error, %target_pid, "failed to respawn outpost");
+                let _ = self.events_tx.send(OutpostMessage::Retired(target_pid));
+            }
+        }
+    }
+
+    /// Records a pong from the outpost currently watching `target_pid`,
+    /// updating its last-pong time and last-reported parked-thread count —
+    /// but only if it is still this `generation`'s entry, so a pong from an
+    /// outpost that has since been killed-and-respawned or naturally
+    /// respawned (a late message from the old process) is silently ignored,
+    /// the same generation discipline [`Self::respawn_if_alive`] follows.
+    fn record_pong(&self, target_pid: Pid, generation: u64, parked_count: usize) {
+        let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(running) = outposts.get_mut(&target_pid)
+            && running.generation == generation
+        {
+            running.last_pong_at = Instant::now();
+            running.last_parked_count = parked_count;
+        }
+    }
+
+    /// Pings every live outpost and kills-and-respawns any [`wedge_decision`]
+    /// judges wedged, from its last recorded pong time and parked-thread
+    /// count. Called from the heartbeat thread on every [`PING_INTERVAL`].
+    /// Pinging and deciding happen under one lock acquisition (so the
+    /// decision is made from a consistent snapshot), but the kill-and-respawn
+    /// itself happens afterward, outside the lock, matching
+    /// [`Self::sweep_idle`]'s two-pass shape.
+    fn heartbeat_tick(self: &Arc<Self>) {
+        let now = Instant::now();
+        let seq = self.ping_seq.fetch_add(1, Ordering::Relaxed);
+        let mut wedged = Vec::new();
+        {
+            let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+            for (&pid, running) in outposts.iter_mut() {
+                match wedge_decision(
+                    running.last_pong_at,
+                    now,
+                    PING_INTERVAL,
+                    MISSED_PONG_THRESHOLD,
+                    running.last_parked_count,
+                    PARKED_THREAD_KILL_THRESHOLD,
+                ) {
+                    Some(reason) => wedged.push((pid, running.generation, reason)),
+                    None => {
+                        let _ = write_message(
+                            &mut running.to_outpost,
+                            &SupervisorToOutpost::Ping { seq },
+                        );
+                    }
+                }
+            }
+        }
+        for (pid, generation, reason) in wedged {
+            self.kill_and_respawn(pid, generation, reason);
+        }
+    }
+
+    /// Kills and respawns the outpost that [`Self::heartbeat_tick`] judged
+    /// wedged, if it is still this generation's current entry for
+    /// `target_pid` — the same generation check [`Self::respawn_if_alive`]
+    /// uses, so a kill decision computed from a slightly stale snapshot
+    /// cannot race a retirement or a respawn that already replaced this
+    /// entry. Removing the map entry drops its job handle, and the
+    /// kill-on-job-close limit set up at spawn turns that drop into an
+    /// immediate kernel-level kill — no message needs to reach an outpost
+    /// that is, by definition, not reliably answering messages. Logs at warn
+    /// level with the target pid, the outpost's own pid, and the reason, for
+    /// a flight-recorder-plus-stderr investigation to grep for. Mirrors
+    /// [`Self::respawn_if_alive`]'s alive-application check: an outpost
+    /// whose application has itself exited is retired, not resurrected.
+    fn kill_and_respawn(self: &Arc<Self>, target_pid: Pid, generation: u64, reason: WedgeReason) {
+        let killed = {
+            let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+            match outposts.get(&target_pid) {
+                Some(running) if running.generation == generation => outposts.remove(&target_pid),
+                _ => None, // Already retired or replaced; nothing to do.
+            }
+        };
+        let Some(running) = killed else {
+            return;
+        };
+        tracing::warn!(
+            %target_pid,
+            outpost_pid = %running.outpost_pid,
+            reason = %reason,
+            "killing wedged outpost"
+        );
+        // Dropping `running` here closes its job handle; kill-on-job-close
+        // kills the outpost process immediately.
+        drop(running);
+
+        if !process_is_alive(target_pid.0) {
+            let _ = self.events_tx.send(OutpostMessage::Retired(target_pid));
+            return;
+        }
+        match self.spawn(target_pid) {
+            Ok(running) => {
+                self.outposts
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(target_pid, running);
+            }
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    %target_pid,
+                    "failed to respawn outpost after killing a wedged one"
+                );
                 let _ = self.events_tx.send(OutpostMessage::Retired(target_pid));
             }
         }
@@ -387,6 +562,53 @@ fn idle_decision(last_foreground_at: Instant, now: Instant, idle_after: Duration
     now.saturating_duration_since(last_foreground_at) >= idle_after
 }
 
+/// Why the supervisor killed and respawned an otherwise-alive outpost
+/// (recovery ladder rung 3: wedged-but-alive detection, complementing the
+/// crash-triggered respawn [`SupervisorShared::respawn_if_alive`] already
+/// handles).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WedgeReason {
+    /// No pong was received for [`MISSED_PONG_THRESHOLD`] consecutive ping
+    /// intervals: the outpost has stopped answering, whatever the cause.
+    MissedHeartbeats,
+    /// The most recent pong reported a parked-thread count at or above
+    /// [`PARKED_THREAD_KILL_THRESHOLD`].
+    ParkedThreads,
+}
+
+impl std::fmt::Display for WedgeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            WedgeReason::MissedHeartbeats => "missed heartbeats",
+            WedgeReason::ParkedThreads => "parked threads",
+        })
+    }
+}
+
+/// The pure wedge-kill decision, factored out for unit testing exactly like
+/// [`idle_decision`]: given the last time a pong was recorded, now, and the
+/// most recently reported parked-thread count, decide whether the outpost
+/// should be killed and respawned, and why. Parked threads are checked
+/// first: a wedged-and-leaking outpost that also happens to have just missed
+/// its first pong is still more usefully reported as "parked threads" (the
+/// more specific, more actionable diagnosis) than "missed heartbeats".
+fn wedge_decision(
+    last_pong_at: Instant,
+    now: Instant,
+    ping_interval: Duration,
+    missed_pong_threshold: u32,
+    parked_count: usize,
+    parked_kill_threshold: usize,
+) -> Option<WedgeReason> {
+    if parked_count >= parked_kill_threshold {
+        return Some(WedgeReason::ParkedThreads);
+    }
+    if now.saturating_duration_since(last_pong_at) >= ping_interval * missed_pong_threshold {
+        return Some(WedgeReason::MissedHeartbeats);
+    }
+    None
+}
+
 /// Spawns the coarse background thread that sweeps idle outposts even when
 /// no foreground change happens to trigger one — a long-backgrounded
 /// application's outpost still needs to be reaped eventually. Lives for the
@@ -399,6 +621,27 @@ fn spawn_sweep_thread(shared: &Arc<SupervisorShared>) {
             loop {
                 thread::sleep(SWEEP_INTERVAL);
                 shared.sweep_idle();
+            }
+        });
+}
+
+/// Spawns the dedicated heartbeat thread that pings every live outpost on
+/// [`PING_INTERVAL`] and kills-and-respawns any [`wedge_decision`] judges
+/// wedged (recovery ladder rung 3). A separate thread rather than folding
+/// into the idle sweep because the two run on genuinely different
+/// timescales: idle retirement checks every [`SWEEP_INTERVAL`] (tens of
+/// seconds is plenty for a memory-use mitigation), while a wedge needs to be
+/// caught within a handful of [`PING_INTERVAL`]s to matter to a screen
+/// reader user waiting on a response. Lives for the process's whole life,
+/// like the supervisor itself and the sweep thread.
+fn spawn_heartbeat_thread(shared: &Arc<SupervisorShared>) {
+    let shared = Arc::clone(shared);
+    let _ = thread::Builder::new()
+        .name("verbatim-outpost-heartbeat".to_owned())
+        .spawn(move || {
+            loop {
+                thread::sleep(PING_INTERVAL);
+                shared.heartbeat_tick();
             }
         });
 }
@@ -424,7 +667,11 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 /// Forwards outpost messages until the pipe closes, then requests a
-/// respawn-if-alive decision.
+/// respawn-if-alive decision. A `Pong` is intercepted here rather than
+/// forwarded: it feeds [`SupervisorShared::record_pong`] (the heartbeat
+/// bookkeeping [`heartbeat_tick`](SupervisorShared::heartbeat_tick) reads),
+/// and carries nothing the app needs — it was already a no-op there before
+/// this module tracked heartbeats at all.
 fn reader_loop(
     shared: &Arc<SupervisorShared>,
     generation: u64,
@@ -433,6 +680,10 @@ fn reader_loop(
 ) {
     let mut reader = BufReader::new(from_outpost);
     while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+        if let OutpostToSupervisor::Pong { parked_count, .. } = message {
+            shared.record_pong(target_pid, generation, parked_count);
+            continue;
+        }
         if shared
             .events_tx
             .send(OutpostMessage::Event(target_pid, Box::new(message)))
@@ -555,10 +806,11 @@ fn create_job() -> io::Result<OwnedHandle> {
     Ok(unsafe { OwnedHandle::from_raw_handle(job.0 as RawHandle) })
 }
 
-/// The handles a spawned process yields.
+/// The handles and id a spawned process yields.
 struct Spawned {
     process: HANDLE,
     thread: HANDLE,
+    pid: u32,
 }
 
 /// Creates the outpost process suspended, inheriting handles, and assigns it to
@@ -598,6 +850,7 @@ fn spawn_suspended(command_line: &str, job: &OwnedHandle) -> io::Result<Spawned>
     Ok(Spawned {
         process: info.hProcess,
         thread: info.hThread,
+        pid: info.dwProcessId,
     })
 }
 
@@ -654,5 +907,86 @@ mod tests {
         let start = Instant::now();
         let earlier = start.checked_sub(Duration::from_secs(5)).unwrap_or(start);
         assert!(!idle_decision(start, earlier, Duration::from_mins(2)));
+    }
+
+    #[test]
+    fn wedge_decision_is_none_when_recently_ponged_and_unparked() {
+        let start = Instant::now();
+        let now = start + Duration::from_secs(1);
+        assert_eq!(
+            wedge_decision(start, now, Duration::from_secs(3), 3, 0, 8),
+            None
+        );
+    }
+
+    #[test]
+    fn wedge_decision_is_none_just_before_the_missed_pong_threshold() {
+        let start = Instant::now();
+        let now = (start + Duration::from_secs(3) * 3)
+            .checked_sub(Duration::from_millis(1))
+            .expect("computable");
+        assert_eq!(
+            wedge_decision(start, now, Duration::from_secs(3), 3, 0, 8),
+            None
+        );
+    }
+
+    #[test]
+    fn wedge_decision_is_missed_heartbeats_at_and_past_the_threshold() {
+        let start = Instant::now();
+        let interval = Duration::from_secs(3);
+        assert_eq!(
+            wedge_decision(start, start + interval * 3, interval, 3, 0, 8),
+            Some(WedgeReason::MissedHeartbeats)
+        );
+        assert_eq!(
+            wedge_decision(start, start + interval * 10, interval, 3, 0, 8),
+            Some(WedgeReason::MissedHeartbeats)
+        );
+    }
+
+    #[test]
+    fn wedge_decision_is_none_just_below_the_parked_threshold() {
+        let start = Instant::now();
+        assert_eq!(
+            wedge_decision(start, start, Duration::from_secs(3), 3, 7, 8),
+            None
+        );
+    }
+
+    #[test]
+    fn wedge_decision_is_parked_threads_at_and_past_the_threshold() {
+        let start = Instant::now();
+        assert_eq!(
+            wedge_decision(start, start, Duration::from_secs(3), 3, 8, 8),
+            Some(WedgeReason::ParkedThreads)
+        );
+        assert_eq!(
+            wedge_decision(start, start, Duration::from_secs(3), 3, 50, 8),
+            Some(WedgeReason::ParkedThreads)
+        );
+    }
+
+    #[test]
+    fn wedge_decision_prefers_parked_threads_when_both_conditions_hold() {
+        // Parked threads is the more specific, more actionable diagnosis, so
+        // it wins when an outpost has both missed its pongs and leaked
+        // threads.
+        let start = Instant::now();
+        let interval = Duration::from_secs(3);
+        assert_eq!(
+            wedge_decision(start, start + interval * 5, interval, 3, 8, 8),
+            Some(WedgeReason::ParkedThreads)
+        );
+    }
+
+    #[test]
+    fn wedge_decision_never_panics_when_now_precedes_last_pong() {
+        let start = Instant::now();
+        let earlier = start.checked_sub(Duration::from_secs(5)).unwrap_or(start);
+        assert_eq!(
+            wedge_decision(start, earlier, Duration::from_secs(3), 3, 0, 8),
+            None
+        );
     }
 }
