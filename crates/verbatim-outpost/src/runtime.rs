@@ -103,14 +103,24 @@ fn navigate_direction_of(kind: verbatim_model::QueryKind) -> Option<NavigateDire
     }
 }
 
-/// How many times [`Outpost::handle_announce_focus`] retries the
-/// focused-control query when nothing is found yet (a control that has not
-/// focused itself between the foreground change and this outpost's first
-/// attempt — the second race `docs/roadmap.md`'s M3 section names).
-const ANNOUNCE_RETRY_ATTEMPTS: u32 = 5;
+/// How many times [`Outpost::handle_announce_focus`] retries the window and
+/// focused-control queries when nothing is found yet (a control that has
+/// not focused itself between the foreground change and this outpost's
+/// first attempt — the second race `docs/roadmap.md`'s M3 section names —
+/// or a window that has not been given its accessible name yet).
+///
+/// Ten attempts across roughly five seconds, raised from five across two:
+/// on a heavily loaded guest, every early attempt can burn its whole
+/// 400-millisecond query deadline against a UI surface still under
+/// construction (root-caused live from a Start-menu run whose ledger showed
+/// no announcement was ever produced — the two-second budget exhausted
+/// while the Search window was still nameless, and the exhaustion was
+/// silent). A superseding foreground change still aborts an in-flight loop
+/// immediately through the generation check, so the longer budget costs
+/// nothing when the user moves on.
+const ANNOUNCE_RETRY_ATTEMPTS: u32 = 10;
 
-/// Spacing between focused-control retry attempts. Four gaps across five
-/// attempts spread the whole retry window across roughly two seconds.
+/// Spacing between announce retry attempts.
 const ANNOUNCE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Shared state cloned into every callback and query. All fields are cheap to
@@ -1037,6 +1047,22 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
         if attempt + 1 < ANNOUNCE_RETRY_ATTEMPTS {
             thread::sleep(ANNOUNCE_RETRY_INTERVAL);
         }
+    }
+
+    // Exhausting the budget without announcing must never be silent: the
+    // user switched to an application and heard nothing, and before this
+    // warning existed that outcome was indistinguishable from the transport
+    // losing the announcement (root-caused live: a Start-menu run produced
+    // no announcement at all, and every layer downstream had to be
+    // instrumented before the exhaustion here was even suspected). A loop
+    // superseded by a newer announce is not exhaustion and returns above.
+    if still_current() {
+        tracing::warn!(
+            target_pid,
+            window_done,
+            control_done,
+            "announce retries exhausted without a complete announcement"
+        );
     }
 }
 
