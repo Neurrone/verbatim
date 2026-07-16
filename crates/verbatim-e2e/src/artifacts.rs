@@ -78,6 +78,17 @@ pub struct ScenarioSummary {
     pub latency_records: Option<usize>,
     /// How many of those timelines had reached audio.
     pub latency_reached_audio: Option<usize>,
+    /// The worst event-to-queue latency (milliseconds) across the timelines,
+    /// or `None` when there were no timelines or the fetch failed. This is
+    /// the deterministic pipeline latency — event observed to speech
+    /// queued — independent of the synthesizer, so it is the M3 capture-synth
+    /// budget's measured quantity.
+    pub max_event_to_queue_ms: Option<u64>,
+    /// The worst event-to-audio latency (milliseconds) across the timelines
+    /// that reached audio, or `None` when none did. Under the capture synth's
+    /// instant sink this is close to the pipeline latency; under a real synth
+    /// it includes synthesis and is the looser end-to-end smoke number.
+    pub max_event_to_audio_ms: Option<u64>,
 }
 
 impl ScenarioSummary {
@@ -94,6 +105,26 @@ impl ScenarioSummary {
                     .iter()
                     .filter(|record| record.audio_started_at_ms.is_some())
                     .count()
+            }),
+            max_event_to_queue_ms: latency.and_then(|records| {
+                records
+                    .iter()
+                    .filter_map(|record| {
+                        record
+                            .speech_queued_at_ms
+                            .map(|queued| queued.saturating_sub(record.event_observed_at_ms))
+                    })
+                    .max()
+            }),
+            max_event_to_audio_ms: latency.and_then(|records| {
+                records
+                    .iter()
+                    .filter_map(|record| {
+                        record
+                            .audio_started_at_ms
+                            .map(|audio| audio.saturating_sub(record.event_observed_at_ms))
+                    })
+                    .max()
             }),
         }
     }
@@ -124,6 +155,16 @@ impl ScenarioSummary {
             text,
             "latency_reached_audio: {}",
             format_optional_count(self.latency_reached_audio)
+        );
+        let _ = writeln!(
+            text,
+            "max_event_to_queue_ms: {}",
+            format_optional_u64(self.max_event_to_queue_ms)
+        );
+        let _ = writeln!(
+            text,
+            "max_event_to_audio_ms: {}",
+            format_optional_u64(self.max_event_to_audio_ms)
         );
         fs::write(dir.join(SUMMARY_FILE_NAME), text)
     }
@@ -158,6 +199,18 @@ fn parse_optional_count(value: &str) -> Option<usize> {
     }
 }
 
+fn format_optional_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "unknown".to_owned(), |ms| ms.to_string())
+}
+
+fn parse_optional_u64(value: &str) -> Option<u64> {
+    if value == "unknown" {
+        None
+    } else {
+        value.parse().ok()
+    }
+}
+
 /// The pure parse behind [`ScenarioSummary::read`], split out so it can be
 /// unit tested directly against hand-written text without touching a
 /// filesystem.
@@ -168,6 +221,8 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
     let mut latency_reached_audio = None;
     let mut saw_latency_records_line = false;
     let mut saw_latency_reached_audio_line = false;
+    let mut max_event_to_queue_ms = None;
+    let mut max_event_to_audio_ms = None;
 
     for line in text.lines() {
         let (key, value) = line.split_once(": ")?;
@@ -188,6 +243,10 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
                 latency_reached_audio = parse_optional_count(value);
                 saw_latency_reached_audio_line = true;
             }
+            // The timing lines are newer than the count lines; a summary
+            // written before they existed simply leaves them `None`.
+            "max_event_to_queue_ms" => max_event_to_queue_ms = parse_optional_u64(value),
+            "max_event_to_audio_ms" => max_event_to_audio_ms = parse_optional_u64(value),
             _ => {}
         }
     }
@@ -201,6 +260,8 @@ fn parse_summary(text: &str) -> Option<ScenarioSummary> {
         latency_reached_audio: saw_latency_reached_audio_line
             .then_some(latency_reached_audio)
             .flatten(),
+        max_event_to_queue_ms,
+        max_event_to_audio_ms,
     })
 }
 

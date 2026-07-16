@@ -428,9 +428,11 @@ fn print_run_summary(results: &[(String, bool, Option<ScenarioSummary>)]) {
                 (
                     if summary.passed { "pass" } else { "fail" },
                     format!(
-                        "latency: {} of {} timelines reached audio",
+                        "latency: {} of {} reached audio; pipeline max {} ms, audio max {} ms",
                         format_optional_count(summary.latency_reached_audio),
                         format_optional_count(summary.latency_records),
+                        format_optional_u64(summary.max_event_to_queue_ms),
+                        format_optional_u64(summary.max_event_to_audio_ms),
                     ),
                 )
             },
@@ -441,6 +443,10 @@ fn print_run_summary(results: &[(String, bool, Option<ScenarioSummary>)]) {
 
 fn format_optional_count(value: Option<usize>) -> String {
     value.map_or_else(|| "?".to_owned(), |count| count.to_string())
+}
+
+fn format_optional_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "?".to_owned(), |ms| ms.to_string())
 }
 
 /// Runs one scenario (or, for [`SESSION_INFO_TEST_NAME`], the `session_info`

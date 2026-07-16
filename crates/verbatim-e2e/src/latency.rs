@@ -21,6 +21,57 @@ use std::io;
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 
+/// The M3 pipeline latency budget in milliseconds: the deterministic
+/// event-observed-to-speech-queued latency must stay under this. It is
+/// synth-independent (it ends where synthesis begins), so it is enforced in
+/// every run, capture or audible.
+///
+/// The number: measured pipeline latency in the VM harness is 1 to 8 ms
+/// across the scenarios, so 50 ms is a comfortable, non-flaky regression
+/// tripwire — over six times the worst observed — while still catching a
+/// gross regression. It equals the architecture's end-to-end key-to-audio
+/// budget (50 ms with eSpeak, `docs/architecture.md` section 6) used here as
+/// a ceiling on the pipeline-only portion; M8 tightens enforcement to the
+/// eSpeak reference number once eSpeak lands. The end-to-end `OneCore` smoke
+/// number the roadmap also mentions is deliberately not enforced: observed
+/// audio latency ranges to over 1300 ms for a long utterance (synthesis
+/// time scales with text), too variable for any stable threshold, so per
+/// the roadmap's recorded contingency it waits for eSpeak.
+pub const PIPELINE_BUDGET_MS: u64 = 50;
+
+/// The worst event-to-queue (pipeline) latency across `records`, or `None`
+/// when no timeline recorded a queue time.
+#[must_use]
+pub fn max_event_to_queue_ms(records: &[LatencyRecord]) -> Option<u64> {
+    records
+        .iter()
+        .filter_map(|record| {
+            record
+                .speech_queued_at_ms
+                .map(|queued| queued.saturating_sub(record.event_observed_at_ms))
+        })
+        .max()
+}
+
+/// Asserts the M3 pipeline latency budget ([`PIPELINE_BUDGET_MS`]) held for
+/// this scenario: the worst event-to-queue latency across `records` must not
+/// exceed it. A scenario with no queued speech has nothing to check and
+/// passes. Panics on a breach — the registry's scenario runner turns that
+/// into a failed scenario with its latency artifacts, exactly like any other
+/// assertion.
+///
+/// # Panics
+///
+/// Panics when the worst pipeline latency exceeds [`PIPELINE_BUDGET_MS`].
+pub fn assert_pipeline_budget(records: &[LatencyRecord]) {
+    if let Some(worst) = max_event_to_queue_ms(records) {
+        assert!(
+            worst <= PIPELINE_BUDGET_MS,
+            "pipeline latency budget exceeded: worst event-to-queue was {worst} ms, budget is {PIPELINE_BUDGET_MS} ms"
+        );
+    }
+}
+
 /// Fetches the most recent `last_n` latency timelines with no printing and
 /// no assertion — the raw building block [`report`] wraps, and what
 /// [`crate::scenario::Scenario::latency_snapshot`] calls for the registry's

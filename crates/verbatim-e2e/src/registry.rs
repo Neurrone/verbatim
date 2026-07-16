@@ -341,6 +341,22 @@ fn run(def: &ScenarioDef) {
     // reported real numbers only because it skips the quit.
     let latency = scenario.latency_snapshot(200).ok();
 
+    // The M3 pipeline latency budget (roadmap M3 exit criterion): the
+    // deterministic event-to-queue latency must hold. Checked here so it
+    // applies to every scenario uniformly, in both runner-direct and VM
+    // runs, and a breach fails the scenario like any other assertion. A
+    // scenario that queued no speech has nothing to measure and passes.
+    let budget_outcome = match latency
+        .as_deref()
+        .and_then(crate::latency::max_event_to_queue_ms)
+    {
+        Some(worst) if worst > crate::latency::PIPELINE_BUDGET_MS => Err(format!(
+            "pipeline latency budget exceeded: worst event-to-queue {worst} ms > {} ms",
+            crate::latency::PIPELINE_BUDGET_MS
+        )),
+        _ => Ok(()),
+    };
+
     // A clean quit is asserted only when body and teardown both succeeded:
     // an already-failed scenario's Verbatim may be in any state, and
     // Scenario::drop already guarantees it is killed regardless, so there is
@@ -354,7 +370,10 @@ fn run(def: &ScenarioDef) {
         Ok(())
     };
 
-    let passed = body_outcome.is_ok() && teardown_outcome.is_ok() && quit_outcome.is_ok();
+    let passed = body_outcome.is_ok()
+        && teardown_outcome.is_ok()
+        && quit_outcome.is_ok()
+        && budget_outcome.is_ok();
     if !passed {
         scenario.collect_failure_artifacts(&dir);
     }
@@ -374,6 +393,9 @@ fn run(def: &ScenarioDef) {
         panic::resume_unwind(payload);
     }
     if let Err(reason) = quit_outcome {
+        panic!("scenario {:?}: {reason}", def.name);
+    }
+    if let Err(reason) = budget_outcome {
         panic!("scenario {:?}: {reason}", def.name);
     }
 }

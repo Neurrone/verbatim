@@ -287,14 +287,23 @@ and the D9 outpost generalization — were finished early, at the end of M2
 - Latency budget enforcement starts here: the pipeline budget via the
   capture synthesizer (deterministic, measures everything except
   synthesis), plus an end-to-end OneCore smoke number with a looser
-  threshold. The eSpeak reference budget takes over when eSpeak lands
-  in M8. An earlier concern that the audible path never reached audio at
-  all turned out not to reproduce: a substantial fraction of an audible
-  run's utterances do reach audio (measured live), the rest interrupted
-  before playback by the suite's fast pace — expected real-synth
-  behavior, raised by `--paced`. The OneCore smoke number therefore
-  measures the utterances that do reach audio; if OneCore proves too
-  variable for any stable threshold, its smoke check waits for eSpeak.
+  threshold. Landed: the pipeline budget is enforced per scenario in the
+  E2E harness (`verbatim_e2e::latency::PIPELINE_BUDGET_MS`), a hard
+  assertion in both runner-direct and VM runs — the deterministic
+  event-observed-to-speech-queued latency, which is synth-independent.
+  Measured pipeline latency in the VM is 1 to 8 ms, so the budget is 50 ms:
+  a comfortable, non-flaky regression tripwire (the architecture's
+  end-to-end key-to-audio number used as a pipeline ceiling), tightening
+  to the eSpeak reference in M8. An earlier concern that the audible path
+  never reached audio turned out not to reproduce: a substantial fraction
+  of an audible run's utterances do reach audio (measured live), the rest
+  interrupted before playback by the suite's fast pace — expected
+  real-synth behavior, raised by `--paced`. The end-to-end OneCore smoke
+  number is deliberately not enforced: observed audio latency ranges past
+  1300 ms for a long utterance (synthesis time scales with text), too
+  variable for any stable threshold, so per this milestone's recorded
+  contingency it waits for eSpeak's reference number in M8. Every run's
+  per-scenario summary reports the measured pipeline and audio maxima.
 - Generic backend parity with NVDA, scoped to MSAA and UIA only: object
   presentation on focus (property order, spoken and negated state sets,
   description, positional info), the WinEvent and UIA event sets with
