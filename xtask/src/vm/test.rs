@@ -143,7 +143,7 @@ use std::process::{Command, ExitStatus};
 use verbatim_e2e::artifacts::{self, ScenarioSummary};
 use verbatim_e2e::registry;
 
-use super::host::{Host, wait_for_agent};
+use super::host::{Host, renew_guest_dhcp, wait_for_agent};
 use super::recording;
 use super::{AGENT_PORT, CHECKPOINT_NAME, VERBATIM_DIR, VM_NAME, VmResult, deploy, dotenv};
 
@@ -231,6 +231,12 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
         println!("xtask vm test: restoring checkpoint '{CHECKPOINT_NAME}'");
         host.restore_checkpoint(VM_NAME, CHECKPOINT_NAME)?;
         host.start_vm(VM_NAME)?;
+        // The restored guest may hold a DHCP lease from a Default Switch
+        // subnet that no longer exists (see renew_guest_dhcp); renew before
+        // waiting so the agent probe has a routable address to reach.
+        if let Err(error) = renew_guest_dhcp(host, VM_NAME, &credentials) {
+            eprintln!("xtask vm test: guest DHCP renewal failed (continuing): {error}");
+        }
         wait_for_agent(host, VM_NAME)?;
     }
 

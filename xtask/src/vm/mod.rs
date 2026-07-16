@@ -73,7 +73,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Some("start") => lifecycle::start(&host),
         Some("stop") => lifecycle::stop(&host),
         Some("restart") => lifecycle::restart(&host),
-        Some("restore") => lifecycle::restore(&host, args.get(1).map(String::as_str)),
+        Some("restore") => lifecycle::restore(&host, &repo_root, args.get(1).map(String::as_str)),
         Some("deploy") => deploy_verb(&host, &repo_root),
         Some("test") => match parse_test_flags(&args[1..]) {
             Ok(flags) => test::test(&host, &repo_root, flags),

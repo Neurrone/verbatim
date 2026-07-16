@@ -390,6 +390,30 @@ pub(crate) fn wait_for_agent(host: &dyn Host, vm_name: &str) -> VmResult<()> {
     }
 }
 
+/// Renews the guest's DHCP lease over PowerShell Direct (which needs no
+/// working guest network). Called after a checkpoint restore, before
+/// waiting for the agent: restoring a running checkpoint resumes the guest
+/// with the lease it held when the checkpoint was taken, and Hyper-V's
+/// Default Switch regenerates its NAT subnet on every host reboot, so a
+/// lease that outlived a host reboot is unroutable — the agent listens
+/// happily inside the guest while no host-side probe can reach it
+/// (diagnosed live: guest healthy on a 172.18.x lease while the switch had
+/// moved to 172.21.x). On a guest whose lease is already valid the renewal
+/// is a harmless no-op. Callers treat failure as non-fatal: a genuinely
+/// broken guest surfaces naturally as the agent wait timing out.
+pub(crate) fn renew_guest_dhcp(
+    host: &dyn Host,
+    vm_name: &str,
+    credentials: &GuestCredentials,
+) -> VmResult<()> {
+    host.run_in_guest(
+        vm_name,
+        credentials,
+        "ipconfig /release | Out-Null; ipconfig /renew | Out-Null; 'dhcp renewed'",
+    )
+    .map(|_output| ())
+}
+
 fn probe_port(ip: &str) -> VmResult<()> {
     let addr: SocketAddr = format!("{ip}:{}", super::AGENT_PORT)
         .parse()

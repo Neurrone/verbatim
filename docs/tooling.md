@@ -694,6 +694,20 @@ existing pattern rather than a redesign.
 
 ## Troubleshooting
 
+**The agent is unreachable after a checkpoint restore, but perfectly
+healthy inside the guest.** Restoring a running checkpoint resumes the
+guest with the DHCP lease it held when the checkpoint was taken, and
+Hyper-V's Default Switch regenerates its NAT subnet on every host reboot —
+so a golden checkpoint restored after the host rebooted leaves the guest
+on an unroutable address: the agent listens, PowerShell Direct works, but
+no host-side TCP probe can connect (diagnosed live: guest on a 172.18.x
+lease while the switch had moved to 172.21.x). Every restore path
+(`vm restore`, `vm test`) now renews the guest's lease over PowerShell
+Direct before waiting for the agent, so this fixes itself; if an agent
+wait ever times out anyway, compare the guest's IP
+(`Get-VMNetworkAdapter`) against the host's `vEthernet (Default Switch)`
+subnet first.
+
 **Nothing launched over WinRM or PowerShell Direct can drive or be read by
 a screen reader.** This is the interactive-session rule, and it is the
 reason `verbatim-agent` exists at all instead of the harness just using
