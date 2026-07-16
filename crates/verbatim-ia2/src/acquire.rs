@@ -35,8 +35,9 @@ use windows::Win32::UI::Controls::{
     TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GUITHREADINFO, GetClassNameW, GetGUIThreadInfo, GetWindowThreadProcessId, OBJID_CLIENT,
-    SendMessageW,
+    GA_PARENT, GUITHREADINFO, GW_HWNDNEXT, GW_HWNDPREV, GetAncestor, GetClassNameW,
+    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowThreadProcessId,
+    IsWindowVisible, OBJID_CLIENT, OBJID_WINDOW, SendMessageW,
 };
 use windows::core::Interface;
 
@@ -345,6 +346,18 @@ pub fn navigate(
     direction: NavigateDirection,
 ) -> Result<Option<NodeSnapshot>, String> {
     let (hwnd, id_object, id_child) = key;
+    // A window-root object (a windowed control's window face, keyed under
+    // OBJID_WINDOW — see `read_snapshot`) navigates the Win32 window
+    // hierarchy, not `accNavigate`/`accParent`, mirroring NVDA's Window and
+    // WindowRoot classes. MSAA over a plain windowed control answers sibling
+    // and child navigation with the control's own scroll-bar and client
+    // pieces (confirmed live: "next" from a settings slider landed on its
+    // "Page left" scroll button), while the sibling *controls* a user
+    // navigates between are sibling windows the window hierarchy walks
+    // directly.
+    if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
+        return Ok(window_navigate(hwnd, direction, registry));
+    }
     // SAFETY: forwarded to `accessible_and_child`'s contract.
     let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }
         .ok_or_else(|| "could not acquire the node".to_owned())?;
@@ -763,6 +776,96 @@ unsafe fn resolve_child(
     }
 }
 
+/// Whether `hwnd` is a window a user would navigate onto — NVDA's
+/// `isUsableWindow`, reduced to its load-bearing check: it must be visible.
+/// (NVDA also rejects hung and DWM-ghost windows; those are a
+/// responsiveness guard, not a correctness one, and the query pool's
+/// deadline already bounds a hung provider here.)
+fn is_usable_window(hwnd: isize) -> bool {
+    // SAFETY: IsWindowVisible tolerates any handle, returning false for an
+    // invalid one.
+    hwnd != 0 && unsafe { IsWindowVisible(HWND(hwnd as *mut c_void)) }.as_bool()
+}
+
+/// The window-object snapshot for `hwnd` (`OBJID_WINDOW`, `CHILDID_SELF`): the
+/// window face `read_snapshot` keys under `OBJID_WINDOW`. `None` if the
+/// window cannot be acquired.
+fn window_object_snapshot(hwnd: isize, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let (acc, child) = unsafe { accessible_and_child(hwnd, OBJID_WINDOW.0, CHILDID_SELF) }?;
+    // SAFETY: `acc`/`child` were just acquired together; the key names the
+    // same window object `read_snapshot` will re-key under OBJID_WINDOW.
+    Some(unsafe { read_snapshot(&acc, &child, (hwnd, OBJID_WINDOW.0, CHILDID_SELF), registry) })
+}
+
+/// Navigates the Win32 window hierarchy from a window-root object, NVDA's
+/// Window/WindowRoot navigation: parent is the parent window (`GA_PARENT`),
+/// siblings are the next and previous usable top-level child windows
+/// (`GW_HWNDNEXT`/`GW_HWNDPREV`, skipping invisible ones), and the first
+/// child is the first usable child window, or — for a leaf control with no
+/// child windows — the control's own client object, the content inside the
+/// frame (a settings slider's actual slider). `None` at each edge.
+fn window_navigate(
+    hwnd: isize,
+    direction: NavigateDirection,
+    registry: &NodeIdRegistry,
+) -> Option<NodeSnapshot> {
+    let handle = HWND(hwnd as *mut c_void);
+    match direction {
+        NavigateDirection::Parent => {
+            // SAFETY: GetAncestor/GetDesktopWindow tolerate any handle.
+            let parent = unsafe { GetAncestor(handle, GA_PARENT) };
+            let desktop = unsafe { GetDesktopWindow() };
+            if parent.0.is_null() || parent.0 == desktop.0 {
+                return None;
+            }
+            window_object_snapshot(parent.0 as isize, registry)
+        }
+        NavigateDirection::NextSibling => window_sibling(hwnd, GW_HWNDNEXT, registry),
+        NavigateDirection::PreviousSibling => window_sibling(hwnd, GW_HWNDPREV, registry),
+        NavigateDirection::FirstChild => {
+            // SAFETY: GetTopWindow tolerates any handle.
+            let mut child = unsafe { GetTopWindow(Some(handle)) }.unwrap_or_default();
+            while !child.0.is_null() && !is_usable_window(child.0 as isize) {
+                // SAFETY: `child` is a live handle from the walk above.
+                child = unsafe { GetWindow(child, GW_HWNDNEXT) }.unwrap_or_default();
+            }
+            if child.0.is_null() {
+                // A leaf control: its "child" is the content inside its own
+                // frame, the client object of the same window.
+                // SAFETY: forwarded to `accessible_and_child`'s contract.
+                let (acc, ch) =
+                    unsafe { accessible_and_child(hwnd, OBJID_CLIENT.0, CHILDID_SELF) }?;
+                let key = (hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+                // SAFETY: `acc`/`ch` just acquired together.
+                return Some(unsafe { read_snapshot(&acc, &ch, key, registry) });
+            }
+            window_object_snapshot(child.0 as isize, registry)
+        }
+    }
+}
+
+/// The next or previous usable sibling window of `hwnd` in the given
+/// `GetWindow` direction, skipping invisible windows. `None` at the edge.
+fn window_sibling(
+    hwnd: isize,
+    direction: windows::Win32::UI::WindowsAndMessaging::GET_WINDOW_CMD,
+    registry: &NodeIdRegistry,
+) -> Option<NodeSnapshot> {
+    let mut current = HWND(hwnd as *mut c_void);
+    loop {
+        // SAFETY: `current` is a live handle from the caller or the previous
+        // hop; GetWindow returns an error (mapped to null) at the edge.
+        current = unsafe { GetWindow(current, direction) }.ok()?;
+        if current.0.is_null() {
+            return None;
+        }
+        if is_usable_window(current.0 as isize) {
+            return window_object_snapshot(current.0 as isize, registry);
+        }
+    }
+}
+
 /// The IA2 acquisition seam (architecture section 4, roadmap M3). From the
 /// `IAccessible` acquired above, `IServiceProvider::QueryService` yields
 /// `IAccessible2` and the text, hypertext, and relation interfaces. Not
@@ -836,6 +939,19 @@ unsafe fn read_snapshot(
             (None, level)
         } else {
             (raw_value, None)
+        };
+        // A window object — MSAA's second face of every windowed control,
+        // role ROLE_SYSTEM_WINDOW alongside the client object's real role —
+        // gets its identity keyed under OBJID_WINDOW, never OBJID_CLIENT.
+        // Callers key by acquisition path and mostly assume OBJID_CLIENT,
+        // which collided the window object onto the client object's node:
+        // re-acquiring that key yielded the client again, so navigating to
+        // a parent window object announced it once and then went nowhere —
+        // observed live as "parent is stuck" from any hwnd-backed control.
+        let key = if role == Role::Window && key.2 == CHILDID_SELF && key.1 == OBJID_CLIENT.0 {
+            (key.0, OBJID_WINDOW.0, key.2)
+        } else {
+            key
         };
         NodeSnapshot {
             id: registry.id_for(key),
