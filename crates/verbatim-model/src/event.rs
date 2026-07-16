@@ -175,15 +175,29 @@ pub enum FetchResult {
     Node(NodeSnapshot),
     /// The node no longer exists.
     Gone,
+    /// A navigation query found no node in the requested direction — a
+    /// root's parent, a last child's next sibling, a leaf's first child.
+    /// A first-class outcome, distinct from `Gone` (the starting node is
+    /// fine, the neighbor simply does not exist).
+    NoNeighbor,
 }
 
-/// What to fetch. M1 supports re-reading one node's snapshot; later
-/// milestones add ancestors, text ranges, and subtree queries.
+/// What to fetch. Re-reading one node's snapshot (staleness re-fetch), or
+/// navigating one step from a node to a neighbor (object navigation,
+/// roadmap M3). Later milestones add text ranges and subtree queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum QueryKind {
     /// Re-read the node's name, role, value, and states.
     NodeSnapshot,
+    /// The node's parent.
+    Parent,
+    /// The node's next sibling in tree order.
+    NextSibling,
+    /// The node's previous sibling in tree order.
+    PreviousSibling,
+    /// The node's first child.
+    FirstChild,
 }
 
 /// A fetch request emitted by the reducer and executed by an outpost.
@@ -225,10 +239,76 @@ pub enum Input {
         /// What the outpost found.
         result: FetchResult,
     },
+    /// A review or object-navigation command, from a bound gesture
+    /// (roadmap M3). The imperative shell translates a keyboard script
+    /// into this; the reducer runs it against its navigator object and
+    /// review cursor.
+    Command {
+        /// Trace ID minted when the triggering key was observed, carried
+        /// through so a command's speech joins the latency timeline.
+        trace_id: TraceId,
+        /// Which command.
+        command: ReviewCommand,
+        /// How many times the gesture was pressed in quick succession, zero
+        /// for the first press: report-current-object reports on 0, spells
+        /// on 1, copies on 2 (NVDA's multi-press semantics). Other commands
+        /// ignore it.
+        repeat: u8,
+    },
     /// Periodic timer tick, for time-based policies. Unused by M1 logic but
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.
     Tick,
+}
+
+/// A review-cursor or object-navigation command (roadmap M3), the
+/// model-level vocabulary the keyboard layer's scripts map onto so the
+/// reducer never depends on input-crate types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ReviewCommand {
+    /// Report the current navigator object (spell on the second press in a
+    /// streak, copy its name and value on the third).
+    ReportObject,
+    /// Move the navigator object to its parent.
+    Parent,
+    /// Move the navigator object to its next sibling.
+    NextSibling,
+    /// Move the navigator object to its previous sibling.
+    PreviousSibling,
+    /// Move the navigator object to its first child.
+    FirstChild,
+    /// Move the navigator object (and review cursor) back to the focus.
+    ToFocus,
+    /// Activate the current navigator object (invoke, toggle, or default
+    /// action).
+    Activate,
+    /// Move the review cursor to the first line of the navigator object.
+    ReviewTop,
+    /// Move the review cursor to the previous line.
+    ReviewPreviousLine,
+    /// Report the review cursor's current line.
+    ReviewCurrentLine,
+    /// Move the review cursor to the next line.
+    ReviewNextLine,
+    /// Move the review cursor to the previous word.
+    ReviewPreviousWord,
+    /// Report the review cursor's current word.
+    ReviewCurrentWord,
+    /// Move the review cursor to the next word.
+    ReviewNextWord,
+    /// Move the review cursor to the start of the current line.
+    ReviewStartOfLine,
+    /// Move the review cursor to the previous character.
+    ReviewPreviousCharacter,
+    /// Report the review cursor's current character.
+    ReviewCurrentCharacter,
+    /// Move the review cursor to the next character.
+    ReviewNextCharacter,
+    /// Move the review cursor to the end of the current line.
+    ReviewEndOfLine,
+    /// Move the review cursor to the last line of the navigator object.
+    ReviewBottom,
 }
 
 /// A non-speech sound the reducer can ask for, named semantically so
@@ -259,4 +339,18 @@ pub enum Effect {
     Fetch(Query),
     /// Play a non-speech sound (decision D12; themed in milestone M11).
     PlayEarcon(Earcon),
+    /// Activate a node — invoke, toggle, or its default action — in the
+    /// application that owns it. Fire-and-forget from the reducer's view;
+    /// the shell routes it to the outpost.
+    Activate {
+        /// The application (and outpost) that owns the node.
+        source: Pid,
+        /// The node to activate.
+        node_id: NodeId,
+    },
+    /// Copy text to the system clipboard through the shell's shared
+    /// clipboard helper, which owns the spoken confirmation. The reducer
+    /// stays pure — it never touches the clipboard itself — so the
+    /// report-object triple-press emits this rather than doing the copy.
+    CopyToClipboard(String),
 }

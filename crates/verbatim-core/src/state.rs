@@ -37,15 +37,31 @@ pub(crate) struct FocusContext {
 
 /// Why the reducer asked an outpost to re-read a node.
 ///
-/// Only one reason exists in M1; the type keeps the pending-fetch table
-/// self-describing as later milestones add more (ancestor-chain rebuilds,
-/// browse-mode expansion, and so on).
+/// The type keeps the pending-fetch table self-describing as milestones add
+/// more reasons (browse-mode expansion, and so on).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FetchReason {
     /// An event arrived with a version older than the last one seen for its
     /// source, so the reducer distrusts the data it carried and asked for a
     /// fresh read instead of announcing it.
     Staleness,
+    /// An object-navigation command asked the outpost for the navigator
+    /// object's neighbor in some direction; the completion moves the
+    /// navigator there and announces it (roadmap M3).
+    Navigate,
+}
+
+/// The navigator object and its review cursor (roadmap M3): the object
+/// object-navigation commands walk, independent of keyboard focus. It
+/// follows focus by default (every focus change resets it), and the
+/// "to focus" command snaps it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Navigator {
+    pub(crate) source: Pid,
+    pub(crate) object: NodeSnapshot,
+    /// The review cursor's character offset into the object's review text
+    /// (see `review::text_of`). Always a valid boundary within that text.
+    pub(crate) review_offset: usize,
 }
 
 /// One outstanding fetch the reducer is waiting on: which node it asked
@@ -65,6 +81,10 @@ pub struct SrState {
     pub(crate) versions: HashMap<Pid, SnapshotVersion>,
     pub(crate) next_query_id: u64,
     pub(crate) pending_fetches: HashMap<QueryId, PendingFetch>,
+    /// The navigator object and review cursor (roadmap M3). `None` until
+    /// the first focus lands; from then it tracks focus unless an
+    /// object-navigation command moves it away.
+    pub(crate) navigator: Option<Navigator>,
 }
 
 impl SrState {

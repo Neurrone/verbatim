@@ -9,12 +9,13 @@
 
 use verbatim_model::{
     Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    NotificationProcessing, Pid, PropertyChange, Query, QueryKind, Role, SegmentContent,
-    SnapshotVersion, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
-    UtteranceSource,
+    NotificationProcessing, Pid, PropertyChange, Query, QueryKind, ReviewCommand, Role,
+    SegmentContent, SnapshotVersion, SpeechPriority, State, StateSet, TraceId, Utterance,
+    UtteranceSegment, UtteranceSource,
 };
 
-use crate::state::{FetchReason, FocusContext, PendingFetch, SrState};
+use crate::review;
+use crate::state::{FetchReason, FocusContext, Navigator, PendingFetch, SrState};
 
 /// Advances `state` by one `input`, returning the new state and the effects
 /// the imperative shell must execute.
@@ -37,6 +38,11 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
             query_id,
             result,
         } => reduce_fetch_completed(&mut next, *trace_id, *query_id, result),
+        Input::Command {
+            trace_id,
+            command,
+            repeat,
+        } => reduce_command(&mut next, *trace_id, *command, *repeat),
         // `Tick` is reserved vocabulary with no policy yet; `Input` is also
         // `#[non_exhaustive]`, so this arm doubles as the catch-all for
         // variants added by later milestones, until each grows a real
@@ -105,6 +111,14 @@ fn reduce_event(
                 ancestors: ancestors.clone(),
                 last_selection: selected_child.as_ref().map(|selected| selected.id),
             });
+            // The review cursor follows focus (roadmap M3): every focus
+            // change snaps the navigator object to the new focus and resets
+            // the review cursor to its start.
+            state.navigator = Some(Navigator {
+                source,
+                object: node.clone(),
+                review_offset: 0,
+            });
             vec![Effect::Speak(utterance)]
         }
         NormalizedEvent::SelectionChanged { node } => {
@@ -169,6 +183,240 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
         trace_id,
         priority,
         segments: vec![UtteranceSegment::text(text.clone())],
+        source: None,
+    })]
+}
+
+/// Runs a review or object-navigation command (roadmap M3) against the
+/// navigator object and its review cursor. A command with no navigator yet
+/// (nothing has ever been focused) does nothing. Object-navigation moves
+/// (`Parent`, `NextSibling`, `PreviousSibling`, `FirstChild`) are async:
+/// they emit a `Fetch` to the owning outpost and the completion moves the
+/// navigator; everything else — report, activate, review text motion — is
+/// synchronous over state the reducer already holds.
+fn reduce_command(
+    state: &mut SrState,
+    trace_id: TraceId,
+    command: ReviewCommand,
+    repeat: u8,
+) -> Vec<Effect> {
+    // "To focus" is meaningful even with the navigator already on focus;
+    // handle it before the navigator-present guard so it can seed one.
+    if command == ReviewCommand::ToFocus {
+        return navigator_to_focus(state, trace_id);
+    }
+    let Some(navigator) = state.navigator.as_ref() else {
+        return Vec::new();
+    };
+
+    match command {
+        ReviewCommand::ToFocus => unreachable!("handled above"),
+        ReviewCommand::ReportObject => report_object(navigator, trace_id, repeat),
+        ReviewCommand::Activate => vec![Effect::Activate {
+            source: navigator.source,
+            node_id: navigator.object.id,
+        }],
+        ReviewCommand::Parent => navigate(state, trace_id, QueryKind::Parent),
+        ReviewCommand::NextSibling => navigate(state, trace_id, QueryKind::NextSibling),
+        ReviewCommand::PreviousSibling => navigate(state, trace_id, QueryKind::PreviousSibling),
+        ReviewCommand::FirstChild => navigate(state, trace_id, QueryKind::FirstChild),
+        _ => review_text_command(state, trace_id, command),
+    }
+}
+
+/// Snaps the navigator (and review cursor) back to the current focus and
+/// reports it. A no-op with nothing focused.
+fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    let Some(focus) = state.focus.as_ref() else {
+        return Vec::new();
+    };
+    let object = focus.snapshot.clone();
+    let source = focus.source;
+    let utterance = announce_node(trace_id, SpeechPriority::Interrupt, &object);
+    state.navigator = Some(Navigator {
+        source,
+        object,
+        review_offset: 0,
+    });
+    vec![Effect::Speak(utterance)]
+}
+
+/// Reports the navigator object: on the first press its full announcement,
+/// on the second its text spelled character by character, on the third its
+/// name and value copied to the clipboard (NVDA's multi-press semantics).
+fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+    match repeat {
+        0 => vec![Effect::Speak(announce_node(
+            trace_id,
+            SpeechPriority::Interrupt,
+            &navigator.object,
+        ))],
+        1 => {
+            let text = review::text_of(&navigator.object);
+            let segments = text
+                .chars()
+                .map(|ch| UtteranceSegment::text(ch.to_string()))
+                .collect::<Vec<_>>();
+            if segments.is_empty() {
+                return Vec::new();
+            }
+            vec![Effect::Speak(Utterance {
+                trace_id,
+                priority: SpeechPriority::Interrupt,
+                segments,
+                source: Some(source_of(&navigator.object)),
+            })]
+        }
+        _ => {
+            // Copy the object's name and value; the shell's clipboard
+            // helper owns the spoken confirmation (see the memory on a
+            // single shared copy path).
+            let text = clipboard_text(&navigator.object);
+            if text.is_empty() {
+                return Vec::new();
+            }
+            vec![Effect::CopyToClipboard(text)]
+        }
+    }
+}
+
+/// The text the report-object copy press puts on the clipboard: the
+/// object's name and value joined by a space, each included only when
+/// present, matching what a user reading the object would expect to paste.
+fn clipboard_text(node: &NodeSnapshot) -> String {
+    let mut parts = Vec::new();
+    if let Some(name) = node.name.as_ref().filter(|name| !name.is_empty()) {
+        parts.push(name.clone());
+    }
+    if let Some(value) = node.value.as_ref().filter(|value| !value.is_empty()) {
+        parts.push(value.clone());
+    }
+    parts.join(" ")
+}
+
+/// Emits a navigation fetch for the navigator object's neighbor in the
+/// direction `kind` names; the completion (`reduce_fetch_completed`) moves
+/// the navigator and announces the result, or reports the edge when there
+/// is no such neighbor.
+fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Effect> {
+    let Some(navigator) = state.navigator.as_ref() else {
+        return Vec::new();
+    };
+    let source = navigator.source;
+    let node_id = navigator.object.id;
+    let query_id = state.allocate_query_id();
+    state.pending_fetches.insert(
+        query_id,
+        PendingFetch {
+            source,
+            node_id,
+            reason: FetchReason::Navigate,
+        },
+    );
+    vec![Effect::Fetch(Query {
+        query_id,
+        source,
+        node_id,
+        kind,
+    })]
+}
+
+/// Runs a review-cursor text command over the navigator object's review
+/// text (see [`review`]). Moves the cursor and announces the line, word, or
+/// character it lands on. At a text boundary the motion stays put and
+/// re-reads the current unit, matching how a screen reader reports the edge.
+fn review_text_command(
+    state: &mut SrState,
+    trace_id: TraceId,
+    command: ReviewCommand,
+) -> Vec<Effect> {
+    let Some(navigator) = state.navigator.as_mut() else {
+        return Vec::new();
+    };
+    let text = review::text_of(&navigator.object);
+    let offset = navigator.review_offset.min(text.len());
+
+    let (new_offset, spoken) = match command {
+        ReviewCommand::ReviewTop => (0, review::line_span(&text, 0)),
+        ReviewCommand::ReviewBottom => {
+            let start = review::line_span(&text, text.len()).0;
+            (start, review::line_span(&text, start))
+        }
+        ReviewCommand::ReviewPreviousLine => {
+            let (start, _) = review::line_span(&text, offset);
+            let target = review::previous_char(&text, start).unwrap_or(start);
+            let span = review::line_span(&text, target);
+            (span.0, span)
+        }
+        ReviewCommand::ReviewNextLine => {
+            let (_, end) = review::line_span(&text, offset);
+            if end >= text.len() {
+                (
+                    review::line_span(&text, offset).0,
+                    review::line_span(&text, offset),
+                )
+            } else {
+                let span = review::line_span(&text, end + 1);
+                (span.0, span)
+            }
+        }
+        // Current-line and start-of-line both land the cursor at the line
+        // start and read the whole line; the only difference a text model
+        // (M4) will draw between them is the reported position, not the
+        // spoken text.
+        ReviewCommand::ReviewCurrentLine | ReviewCommand::ReviewStartOfLine => {
+            let span = review::line_span(&text, offset);
+            (span.0, span)
+        }
+        ReviewCommand::ReviewEndOfLine => {
+            let span = review::line_span(&text, offset);
+            (span.1, span)
+        }
+        ReviewCommand::ReviewPreviousWord => {
+            let target = review::previous_word_start(&text, offset).unwrap_or(offset);
+            (target, review::word_span(&text, target))
+        }
+        ReviewCommand::ReviewNextWord => match review::next_word_start(&text, offset) {
+            Some(target) => (target, review::word_span(&text, target)),
+            None => (offset, review::word_span(&text, offset)),
+        },
+        ReviewCommand::ReviewCurrentWord => {
+            let span = review::word_span(&text, offset);
+            (span.0, span)
+        }
+        ReviewCommand::ReviewPreviousCharacter => {
+            let target = review::previous_char(&text, offset).unwrap_or(offset);
+            (
+                target,
+                review::char_span(&text, target).unwrap_or((target, target)),
+            )
+        }
+        ReviewCommand::ReviewNextCharacter => match review::char_span(&text, offset) {
+            Some((_, next)) if next < text.len() => {
+                (next, review::char_span(&text, next).unwrap_or((next, next)))
+            }
+            _ => (
+                offset,
+                review::char_span(&text, offset).unwrap_or((offset, offset)),
+            ),
+        },
+        ReviewCommand::ReviewCurrentCharacter => {
+            let span = review::char_span(&text, offset).unwrap_or((offset, offset));
+            (offset, span)
+        }
+        _ => return Vec::new(),
+    };
+
+    navigator.review_offset = new_offset;
+    let (start, end) = spoken;
+    let slice = text.get(start..end).unwrap_or("");
+    if slice.is_empty() {
+        return Vec::new();
+    }
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Interrupt,
+        segments: vec![UtteranceSegment::text(slice.to_owned())],
         source: None,
     })]
 }
@@ -357,6 +605,56 @@ fn reduce_fetch_completed(
     let Some(pending) = state.pending_fetches.remove(&query_id) else {
         return Vec::new();
     };
+    match pending.reason {
+        FetchReason::Staleness => reduce_staleness_completed(state, trace_id, &pending, result),
+        FetchReason::Navigate => reduce_navigate_completed(state, trace_id, &pending, result),
+    }
+}
+
+/// Completes an object-navigation fetch: if the navigator has not moved
+/// since the fetch was issued (a rapid second navigation supersedes a
+/// pending one), move it to the returned neighbor and announce it, or leave
+/// it put and announce nothing at a tree edge (`NoNeighbor`). A screen
+/// reader conventionally plays an edge earcon here; M3 stays silent, which
+/// the earcon theme (M11) can later fill.
+fn reduce_navigate_completed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    pending: &PendingFetch,
+    result: &FetchResult,
+) -> Vec<Effect> {
+    let Some(navigator) = state.navigator.as_ref() else {
+        return Vec::new();
+    };
+    // A newer navigation moved the navigator on before this reply arrived;
+    // this stale result no longer describes where the navigator is.
+    if navigator.source != pending.source || navigator.object.id != pending.node_id {
+        return Vec::new();
+    }
+    match result {
+        FetchResult::Node(snapshot) => {
+            let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
+            state.navigator = Some(Navigator {
+                source: pending.source,
+                object: snapshot.clone(),
+                review_offset: 0,
+            });
+            vec![Effect::Speak(utterance)]
+        }
+        // No such neighbor, or the node is gone: the navigator stays put.
+        _ => Vec::new(),
+    }
+}
+
+/// Completes a staleness re-fetch of the focused node (the original M1
+/// path): announce only a real change against what was last announced, and
+/// drop a result whose focus has moved on.
+fn reduce_staleness_completed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    pending: &PendingFetch,
+    result: &FetchResult,
+) -> Vec<Effect> {
     if !state.focus_matches(pending.source, pending.node_id) {
         // Focus moved on while the fetch was in flight; the result no
         // longer describes anything the reducer should announce.

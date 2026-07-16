@@ -1172,3 +1172,278 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
         "focus that differs from the last announced one is announced, even if seen earlier"
     );
 }
+
+// ---- Object navigation and review cursor (M3 reducer item 4) ----
+
+use verbatim_model::ReviewCommand;
+
+fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
+    Input::Command {
+        trace_id,
+        command: cmd,
+        repeat,
+    }
+}
+
+/// Focus a node so the navigator is seeded, returning the resulting state.
+fn focused(source: Pid, snapshot: NodeSnapshot) -> SrState {
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, 1, snapshot),
+    );
+    state
+}
+
+#[test]
+fn report_object_announces_spells_then_copies() {
+    let source = Pid(1);
+    let edit = node(
+        10,
+        Role::EditableText,
+        Some("Name"),
+        Some("Ann"),
+        StateSet::new(),
+    );
+    let state = focused(source, edit);
+
+    // First press: full announcement.
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Name"));
+
+    // Second press: spell the review text (the value "Ann").
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 1),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::text("A"),
+            UtteranceSegment::text("n"),
+            UtteranceSegment::text("n"),
+        ]
+    );
+
+    // Third press: copy name and value to the clipboard.
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 2),
+    );
+    assert_eq!(effects.len(), 1);
+    match &effects[0] {
+        Effect::CopyToClipboard(text) => assert_eq!(text, "Name Ann"),
+        other => panic!("expected CopyToClipboard, got {other:?}"),
+    }
+}
+
+#[test]
+fn navigate_to_parent_fetches_then_moves_and_announces() {
+    let source = Pid(1);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    // The command emits a navigation fetch.
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+    assert_eq!(query.kind, QueryKind::Parent);
+    assert_eq!(query.node_id, NodeId::new(10));
+
+    // The completion moves the navigator to the parent and announces it.
+    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        result: FetchResult::Node(parent),
+    };
+    let (_, effects) = reduce(&state, &completion);
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments[0],
+        UtteranceSegment::label("Buttons")
+    );
+}
+
+#[test]
+fn navigate_at_a_tree_edge_is_silent_and_stays_put() {
+    let source = Pid(1);
+    let root = node(10, Role::Window, Some("App"), None, StateSet::new());
+    let state = focused(source, root);
+
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        result: FetchResult::NoNeighbor,
+    };
+    let (_, effects) = reduce(&state, &completion);
+    assert!(effects.is_empty(), "no neighbor: silent, navigator unmoved");
+}
+
+#[test]
+fn activate_emits_activate_for_the_navigator_object() {
+    let source = Pid(7);
+    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::Activate, 0),
+    );
+    match &effects[0] {
+        Effect::Activate { source: s, node_id } => {
+            assert_eq!(*s, source);
+            assert_eq!(*node_id, NodeId::new(10));
+        }
+        other => panic!("expected Activate, got {other:?}"),
+    }
+}
+
+#[test]
+fn review_cursor_walks_lines_words_and_characters() {
+    let source = Pid(1);
+    let edit = node(
+        10,
+        Role::EditableText,
+        Some("Body"),
+        Some("first line\nsecond line"),
+        StateSet::new(),
+    );
+    let state = focused(source, edit);
+
+    // Current line at the start.
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewCurrentLine, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::text("first line")]
+    );
+
+    // Next line.
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::text("second line")]
+    );
+
+    // Next line at the bottom: stays put, re-reads.
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::text("second line")]
+    );
+
+    // Top, then first word, then next word.
+    let (state, _) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewTop, 0),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewCurrentWord, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::text("first")]
+    );
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewNextWord, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::text("line")]
+    );
+
+    // First character of the current position ("line" -> 'l').
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::text("l")]
+    );
+}
+
+#[test]
+fn navigator_follows_focus_and_returns_to_focus() {
+    let source = Pid(1);
+    let first = node(10, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, first);
+
+    // Move the navigator to the parent.
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = match &effects[0] {
+        Effect::Fetch(q) => *q,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+    let parent = node(11, Role::Group, Some("Group"), None, StateSet::new());
+    let (state, _) = reduce(
+        &state,
+        &Input::FetchCompleted {
+            trace_id: TraceId::mint(),
+            query_id: query.query_id,
+            result: FetchResult::Node(parent),
+        },
+    );
+
+    // A new focus event snaps the navigator back to focus.
+    let second = node(
+        20,
+        Role::EditableText,
+        Some("Field"),
+        Some("x"),
+        StateSet::new(),
+    );
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 2, second));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments[0],
+        UtteranceSegment::label("Field"),
+        "the navigator followed focus to the new control"
+    );
+
+    // Explicit "to focus" also reports the focused control after wandering.
+    let (state, _) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    assert_eq!(
+        speak_effects(&effects)[0].segments[0],
+        UtteranceSegment::label("Field"),
+        "to-focus snaps the navigator back regardless of where it wandered"
+    );
+}
+
+#[test]
+fn commands_with_no_navigator_yet_do_nothing() {
+    let state = SrState::new();
+    let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    assert!(effects.is_empty());
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert!(effects.is_empty());
+}
