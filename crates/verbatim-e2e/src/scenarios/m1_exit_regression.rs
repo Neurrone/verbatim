@@ -164,11 +164,11 @@ pub(crate) fn teardown(_scenario: &mut Scenario, _state: ScenarioState) {
     reason = "one scripted walk of the M1 exit criteria, deliberately linear so a failure's line number says exactly which step regressed"
 )]
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // Verbatim+V opens the menu with nothing selected; Down arrow selects
+    // Verbatim+V opens the menu with nothing selected (the shared helper
+    // waits for the popup's announcement — see `scenarios::open_verbatim_menu`
+    // for the cold-guest race that wait closes); Down arrow then selects
     // the first item, Settings, announcing its name and role.
-    scenario
-        .send_gesture("kb:verbatim+v")
-        .expect("sends the Verbatim+V gesture");
+    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()

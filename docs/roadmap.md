@@ -183,14 +183,26 @@ and the D9 outpost generalization — were finished early, at the end of M2
   (risk R2). Deliberately no dedicated low-end VM profile: the goal is to
   be efficient outright, and behavior on weaker hardware gets investigated
   only if real users report problems.
-  Residual E2E flakes — much rarer than the fixed races: an occasional
-  missed announcement deep in a long tab-through-dialog sequence, an
-  occasional slow first launch on a cold guest, and transient agent-tunnel
-  network hiccups — are all self-documenting now (every launched Verbatim
-  writes stderr to a collected log, panics dump the flight recorder, and
-  the quit-path panic that muddied earlier evidence is fixed) and get
-  root-caused during this milestone's responsiveness work rather than
-  papered over in the tests.
+  Residual E2E flakes: root-caused during this milestone, as promised
+  here, from failing runs' flight recorders and stderr on a repeated
+  fresh-restore repro loop. The "occasional missed announcement deep in a
+  long tab-through-dialog sequence" was never a missed announcement:
+  every control's focus announcement was present in the flight recorder,
+  and the harness was matching assertions against the speech stream's
+  audio-start follow-up frames — under a loaded synthesizer those arrive
+  seconds late, interleaved with fresh queue-time frames, satisfying
+  assertions with stale text. The collector now matches queue-time frames
+  only. The "slow first launch on a cold guest" was the first menu popup
+  of a session taking over two seconds to appear (GUI-process resource
+  loading; the foreground grab itself took under twenty milliseconds,
+  confirmed by permanent info-level logging on the popup path) while
+  scenarios sent their first arrow key blind less than a hundred
+  milliseconds after Verbatim+V; scenarios now wait for the popup's own
+  announcement first, the same synchronization a listening user performs.
+  The same investigation removed the bare "window" announcement heard on
+  a cold first menu open: the outpost's announce-focus retry was reading
+  the popup window before the platform named it, and now skips unnamed
+  windows so a retry announces the named window instead.
 - Structured utterances (D12), landed now before more speech features
   accrete: the reducer emits utterances as sequences of semantic spans —
   label, role, value, state, description, attribute-tagged text runs —

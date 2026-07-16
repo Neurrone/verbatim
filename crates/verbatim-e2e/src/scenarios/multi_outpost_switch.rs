@@ -69,16 +69,16 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect_in_order(&["Notepad", "edit"], STEP_TIMEOUT);
 
     // Verbatim+V brings Verbatim's own hidden frame and popup menu to
-    // foreground. The hidden frame itself must never be announced (decision
-    // D9's hidden-frame suppression); the menu opens with nothing selected,
-    // so the first Down arrow is what produces a real, ordinary WinEvent
-    // focus announcement for "Settings..." — proving Verbatim's own outpost
-    // works correctly while Notepad's outpost is still alive in the
-    // background (multi-outpost coexistence, not a retarget of one shared
-    // outpost).
-    scenario
-        .send_gesture("kb:verbatim+v")
-        .expect("sends the Verbatim+V gesture");
+    // foreground (the shared helper waits for the popup's announcement —
+    // see `scenarios::open_verbatim_menu` for the cold-guest race that
+    // wait closes). The hidden frame itself must never be announced
+    // (decision D9's hidden-frame suppression); the menu opens with
+    // nothing selected, so the first Down arrow is what produces a real,
+    // ordinary WinEvent focus announcement for "Settings..." — proving
+    // Verbatim's own outpost works correctly while Notepad's outpost is
+    // still alive in the background (multi-outpost coexistence, not a
+    // retarget of one shared outpost).
+    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()

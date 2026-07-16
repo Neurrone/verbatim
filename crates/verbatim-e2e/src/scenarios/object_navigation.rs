@@ -41,9 +41,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // then lands on that item. Waiting for the item as the settled focus
     // tolerates the intermediate list announcement and lets the focus
     // sequence finish before the navigator commands below run.
-    scenario
-        .send_gesture("kb:verbatim+v")
-        .expect("sends the Verbatim+V gesture");
+    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()
