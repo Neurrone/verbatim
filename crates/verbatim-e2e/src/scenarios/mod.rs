@@ -25,15 +25,17 @@ pub(crate) mod tree_navigation;
 /// take over two seconds to appear (first-menu resource loading in the
 /// GUI process — the foreground grab itself completed in under twenty
 /// milliseconds), and an arrow key sent blind in that window lands
-/// nowhere, so no menu item is ever focused or announced. The popup
-/// window's own announcement is the open signal; the platform names menu
-/// popup windows "Context", so that plus the window role is the stable
-/// thing to wait for.
+/// nowhere, so no menu item is ever focused or announced. The popup's own
+/// announcement is the open signal: it announces as its client object —
+/// the platform names menu popups "Context", spoken with the menu role —
+/// emitted by the `MenuPopupStart` `WinEvent` the moment the menu opens
+/// (NVDA's menu-start behavior), with the foreground-announce path
+/// producing the identical node as its fallback.
 pub(crate) fn open_verbatim_menu(scenario: &mut Scenario, timeout: Duration) {
     scenario
         .send_gesture("kb:verbatim+v")
         .expect("sends the Verbatim+V gesture");
     scenario
         .speech()
-        .expect_in_order(&["Context", "window"], timeout);
+        .expect_in_order(&["Context", "menu"], timeout);
 }

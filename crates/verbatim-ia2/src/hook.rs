@@ -19,7 +19,7 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWi
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD,
     EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_STATECHANGE,
-    EVENT_OBJECT_VALUECHANGE, WINEVENT_OUTOFCONTEXT,
+    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_MENUPOPUPSTART, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -41,10 +41,15 @@ pub enum WinEventKind {
     /// current selection from the event's own address regardless of which
     /// one fired (roadmap M3's selection-events bullet).
     Selection,
+    /// `EVENT_SYSTEM_MENUPOPUPSTART` — a popup menu just opened. NVDA
+    /// announces menus from this event; announcing from anything slower (a
+    /// foreground-change retry loop, measured live) leaves a noticeable
+    /// pause between opening a menu and hearing it.
+    MenuPopupStart,
 }
 
 /// The events an outpost subscribes to, paired with their normalized kinds.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 8] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 9] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
     (EVENT_OBJECT_STATECHANGE, WinEventKind::StateChange),
@@ -53,6 +58,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 8] = [
     (EVENT_OBJECT_SELECTIONADD, WinEventKind::Selection),
     (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::Selection),
     (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::Selection),
+    (EVENT_SYSTEM_MENUPOPUPSTART, WinEventKind::MenuPopupStart),
 ];
 
 /// Called on the installing thread for each in-scope event, with the event
