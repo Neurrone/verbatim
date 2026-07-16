@@ -523,15 +523,29 @@ Public API:
   `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
 - `Uia::ancestor_chain` — the chain of ancestors of an element, outermost
   first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
-  (one cross-process round trip per ancestor, the walk NVDA shipped for
-  years), capped by the caller. Deliberately the simplest correct
-  implementation behind this method as a seam: M4's remote-operations work
-  replaces the per-hop walk with a single batched round trip inside the
-  provider process, so callers must depend only on the resulting list.
-- `Uia::navigate` — one tree-walker step (parent, next or previous
-  sibling, first child; the `NavigateDirection` enum) returning the
-  neighbor's snapshot, with `Ok(None)` as the first-class "no such
-  neighbor" outcome distinct from an error.
+  over the control view (one cross-process round trip per ancestor, the
+  walk NVDA shipped for years), capped by the caller, with layout
+  ancestors (see `navigate` below) crossed but never reported.
+  Deliberately the simplest correct implementation behind this method as
+  a seam: M4's remote-operations work replaces the per-hop walk with a
+  single batched round trip inside the provider process, so callers must
+  depend only on the resulting list.
+- `Uia::navigate` — object navigation with NVDA's simple-navigation
+  semantics over the control view (parent, next or previous sibling,
+  first child; the `NavigateDirection` enum), returning the neighbor's
+  snapshot with `Ok(None)` as the first-class "no such neighbor" outcome
+  distinct from an error. Purely presentational "layout" elements —
+  NVDA's presentation-type judgment ported onto Verbatim's roles: unknown
+  and pane roles, textless static text, nameless and description-less
+  windows, property pages, and groupings — are never landed on: parent
+  walks to the first content ancestor, first-child descends through
+  layout containers, and a layout sibling's content children project up
+  as siblings (`_findSimpleNext`, ported from NVDA), all bounded by a
+  hop budget. The registry additionally caches the live element behind
+  every node as an agile reference, so navigation resolves nodes directly
+  instead of re-finding them by runtime id (an unscoped desktop-wide
+  `FindFirst` per step, before this) — `element_by_runtime_id` remains as
+  the fallback, now scoped to a caller-supplied root.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then the legacy `DoDefaultAction` pattern, each fetched live since
   activation is an infrequent user action, not something the cache
@@ -618,7 +632,13 @@ Public API:
   selection changes (the four `EVENT_OBJECT_SELECTION*` events collapse to
   one `WinEventKind::Selection`, since all four report "the selection
   within a container changed" and acquisition reads the affected node from
-  the event's own address either way); callbacks are delivered on the
+  the event's own address either way), plus `MenuPopupStart`
+  (`EVENT_SYSTEM_MENUPOPUPSTART`): a popup menu opening announces the menu
+  itself the moment it opens, NVDA's menu-start behavior — the outpost
+  emits it as focus on the menu's client object with no ancestry, the
+  identical node its foreground-announce fallback produces for a
+  menu-class window, so the reducer's duplicate-focus suppression drops
+  whichever path announces second. Callbacks are delivered on the
   installing thread's message loop and must never make blocking calls into
   the target. `WinEventKind` names the event; drop unhooks.
 - `acquire` — the query-pool side: `snapshot_from_event` (from
