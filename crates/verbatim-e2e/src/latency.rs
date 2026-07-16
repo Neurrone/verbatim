@@ -26,18 +26,24 @@ use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 /// synth-independent (it ends where synthesis begins), so it is enforced in
 /// every run, capture or audible.
 ///
-/// The number: measured pipeline latency in the VM harness is 1 to 8 ms
-/// across the scenarios, so 50 ms is a comfortable, non-flaky regression
-/// tripwire — over six times the worst observed — while still catching a
-/// gross regression. It equals the architecture's end-to-end key-to-audio
-/// budget (50 ms with eSpeak, `docs/architecture.md` section 6) used here as
-/// a ceiling on the pipeline-only portion; M8 tightens enforcement to the
-/// eSpeak reference number once eSpeak lands. The end-to-end `OneCore` smoke
-/// number the roadmap also mentions is deliberately not enforced: observed
-/// audio latency ranges to over 1300 ms for a long utterance (synthesis
-/// time scales with text), too variable for any stable threshold, so per
-/// the roadmap's recorded contingency it waits for eSpeak.
-pub const PIPELINE_BUDGET_MS: u64 = 50;
+/// This is a gross-regression tripwire, not a tight service-level target.
+/// The tight number comes in M8 from eSpeak's reference budget on a
+/// controlled measurement; here the budget runs on a shared, variably
+/// loaded VM (and on CI runners), where the reducer thread can be starved by
+/// host scheduling for tens of milliseconds with nothing wrong in
+/// Verbatim's code. Measured pipeline latency is 1 to 8 ms typically, but a
+/// heavily loaded harness run pushed it to 58 ms — so the budget is 200 ms:
+/// comfortably above observed scheduling variance, and still an order of
+/// magnitude below what a real pipeline regression would cost (a reducer
+/// accidentally doing blocking I/O would show hundreds of milliseconds to
+/// seconds). An earlier 50 ms value was set from lightly loaded runs alone
+/// and flaked the first time a loaded run spiked; this margin is the
+/// correction. The end-to-end `OneCore` smoke number the roadmap also
+/// mentions is deliberately not enforced: observed audio latency ranges to
+/// over 1300 ms for a long utterance (synthesis time scales with text), too
+/// variable for any stable threshold, so per the roadmap's recorded
+/// contingency it waits for eSpeak.
+pub const PIPELINE_BUDGET_MS: u64 = 200;
 
 /// The worst event-to-queue (pipeline) latency across `records`, or `None`
 /// when no timeline recorded a queue time.
