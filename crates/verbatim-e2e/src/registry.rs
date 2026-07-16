@@ -65,7 +65,9 @@ use verbatim_control::protocol::LatencyRecord;
 
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
-use crate::scenarios::{m1_exit_regression, multi_outpost_switch, notepad_focus};
+use crate::scenarios::{
+    m1_exit_regression, multi_outpost_switch, notepad_focus, object_navigation,
+};
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
 /// own doc comment for what each group is meant to hold.
@@ -185,6 +187,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: multi_outpost_switch::setup,
         body: multi_outpost_switch::body,
         teardown: multi_outpost_switch::teardown,
+    },
+    ScenarioDef {
+        name: "object_navigation",
+        group: Group::Navigation,
+        target_images: &[],
+        setup: object_navigation::setup,
+        body: object_navigation::body,
+        teardown: object_navigation::teardown,
     },
 ];
 
