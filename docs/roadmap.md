@@ -287,17 +287,20 @@ and the D9 outpost generalization — were finished early, at the end of M2
 - Latency budget enforcement starts here: the pipeline budget via the
   capture synthesizer (deterministic, measures everything except
   synthesis), plus an end-to-end OneCore smoke number with a looser
-  threshold. Landed: the pipeline budget is enforced per scenario in the
-  E2E harness (`verbatim_e2e::latency::PIPELINE_BUDGET_MS`), a hard
-  assertion in both runner-direct and VM runs — the deterministic
-  event-observed-to-speech-queued latency, which is synth-independent.
-  It is a gross-regression tripwire, not a tight target: on a shared,
-  variably loaded VM the reducer thread can be starved by host scheduling
-  for tens of milliseconds with nothing wrong in the code. Measured
-  pipeline latency is 1 to 8 ms typically but reached 58 ms on a heavily
-  loaded run, so the budget is 200 ms — above observed scheduling variance,
-  still an order of magnitude below a real pipeline regression's cost. The
-  tight number arrives in M8 with eSpeak's reference budget on a controlled
+  threshold. Landed, then amended by a recorded decision: the pipeline
+  budget (`verbatim_e2e::latency::PIPELINE_BUDGET_MS`, the deterministic
+  event-observed-to-speech-queued latency, synth-independent) is
+  *reported, never asserted* — a prominent warning on a breach, plus every
+  run summary's measured per-scenario maxima. It began as a hard
+  per-scenario assertion, and flaked twice for the same non-code reason: a
+  50 ms budget set from lightly loaded runs (1 to 8 ms typical) tripped at
+  58 ms on a loaded run; raised to 200 ms, it tripped again at 277 ms
+  during a full audible suite run, while a dedicated rerun of the
+  identical build measured 3 ms. A wall-clock assertion inside a shared,
+  variably loaded VM measures host scheduling, not Verbatim's code, so the
+  assertion only manufactured flaky runs. A real pipeline regression still
+  shows unmistakably in the always-reported maxima. The enforced budget
+  returns in M8 with eSpeak's reference number on a controlled
   measurement. An earlier concern that the audible path
   never reached audio turned out not to reproduce: a substantial fraction
   of an audible run's utterances do reach audio (measured live), the rest
