@@ -25,8 +25,17 @@ enum TimelineKind {
     /// they were sent to that single request.
     Keys(Vec<String>),
     /// An utterance's full rendered text, as heard on the speech
-    /// connection.
+    /// connection at queue time — the frame assertions match against.
     Utterance(String),
+    /// The audio-start follow-up for an utterance already recorded as an
+    /// [`Utterance`](TimelineKind::Utterance): the same text again, arriving
+    /// whenever the synthesizer actually began playing it. Recorded so the
+    /// rendered timeline shows real audio timing, but never part of
+    /// [`Timeline::utterances`] — under a loaded real synthesizer these
+    /// arrive seconds late and interleaved with fresh queue-time frames, and
+    /// matching them as utterances is exactly the off-by-one that broke the
+    /// M1 walk on a cold guest.
+    AudioStarted(String),
 }
 
 /// One [`TimelineKind`] paired with the [`Instant`] it was recorded at.
@@ -76,6 +85,15 @@ impl Timeline {
         self.push(TimelineKind::Utterance(text.to_owned()));
     }
 
+    /// Records an utterance's audio-start follow-up at the current instant.
+    /// Rendered as its own `audio` line; excluded from [`utterances`]
+    /// (see [`TimelineKind::AudioStarted`]).
+    ///
+    /// [`utterances`]: Self::utterances
+    pub fn push_audio_started(&self, text: &str) {
+        self.push(TimelineKind::AudioStarted(text.to_owned()));
+    }
+
     fn push(&self, kind: TimelineKind) {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         entries.push(TimelineEntry {
@@ -94,7 +112,9 @@ impl Timeline {
             .iter()
             .filter_map(|entry| match &entry.kind {
                 TimelineKind::Utterance(text) => Some(text.clone()),
-                TimelineKind::Gesture(_) | TimelineKind::Keys(_) => None,
+                TimelineKind::Gesture(_)
+                | TimelineKind::Keys(_)
+                | TimelineKind::AudioStarted(_) => None,
             })
             .collect()
     }
@@ -124,6 +144,9 @@ impl Timeline {
                 }
                 TimelineKind::Utterance(text) => {
                     format!("+{elapsed}ms speech {text:?}")
+                }
+                TimelineKind::AudioStarted(text) => {
+                    format!("+{elapsed}ms audio {text:?}")
                 }
             };
             let _ = writeln!(out, "{line}");
@@ -186,6 +209,18 @@ mod tests {
             timeline.utterances(),
             vec!["one".to_owned(), "two".to_owned()]
         );
+    }
+
+    #[test]
+    fn audio_start_followups_render_tagged_and_never_count_as_utterances() {
+        let timeline = Timeline::new();
+        timeline.push_utterance("one");
+        timeline.push_audio_started("one");
+
+        assert_eq!(timeline.utterances(), vec!["one".to_owned()]);
+        let rendered = timeline.render();
+        assert!(rendered.contains(r#"speech "one""#));
+        assert!(rendered.contains(r#"audio "one""#));
     }
 
     #[test]

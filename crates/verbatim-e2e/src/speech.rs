@@ -167,11 +167,21 @@ impl SpeechCollector {
         let deadline = Instant::now() + timeout;
         loop {
             match self.control.next_frame() {
-                Ok(Frame::Speech { text, .. }) => {
-                    self.timeline.push_utterance(&text);
-                    if text != unchanged {
-                        self.wait_for_audio_finished();
-                        return text;
+                Ok(Frame::Speech {
+                    text,
+                    audio_started_at_ms,
+                    ..
+                }) => {
+                    // Never a change candidate: an audio-start follow-up is
+                    // stale text by definition (see `advance_through`).
+                    if audio_started_at_ms.is_some() {
+                        self.timeline.push_audio_started(&text);
+                    } else {
+                        self.timeline.push_utterance(&text);
+                        if text != unchanged {
+                            self.wait_for_audio_finished();
+                            return text;
+                        }
                     }
                 }
                 Ok(_) => {
@@ -269,7 +279,22 @@ impl SpeechCollector {
         let mut completing_text = None;
         while next < matchers.len() && Instant::now() < deadline {
             match self.control.next_frame() {
-                Ok(Frame::Speech { text, .. }) => {
+                Ok(Frame::Speech {
+                    text,
+                    audio_started_at_ms,
+                    ..
+                }) => {
+                    // An audio-start follow-up repeats an utterance already
+                    // matched at queue time, and under a loaded real
+                    // synthesizer arrives seconds late, interleaved with
+                    // fresh queue-time frames — matching it would satisfy a
+                    // matcher with stale text (the off-by-one that broke the
+                    // M1 tab walk on a cold guest). Record it for the
+                    // timeline's audio timing and never match it.
+                    if audio_started_at_ms.is_some() {
+                        self.timeline.push_audio_started(&text);
+                        continue;
+                    }
                     self.timeline.push_utterance(&text);
                     while next < matchers.len() && text.contains(matchers[next]) {
                         next += 1;

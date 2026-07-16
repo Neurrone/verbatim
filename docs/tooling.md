@@ -307,17 +307,16 @@ messages — the second appends "underlying error: ..." — so a suite that
 hangs and then fails is not automatically the same bug as one that dies
 outright.
 
-One trap when writing new assertions: every utterance reaches the speech
-stream twice — once when queued and once when its audio starts — so the
-timeline shows each spoken line as a close-together pair, and an
-`expect_in_order` matcher can be satisfied by the *second* copy of an
-utterance a previous assertion already matched. Consecutive assertions
-whose substrings differ (the usual case) are unaffected, but a matcher
-that is a substring of the previous step's announcement — say "tree view"
-right after an utterance ending in "tree view item" — will false-match
-the leftover duplicate. `expect_change_capturing`, which skips utterances
-identical to a captured previous announcement, is the tool for that case;
-`tree_navigation`'s tree-control step is the worked example.
+Every utterance reaches the speech stream twice — a queue-time frame, then
+an audio-start follow-up whenever the synthesizer actually begins playing
+it. The collector matches assertions against queue-time frames only:
+under a loaded real synthesizer the audio follow-ups arrive seconds late,
+interleaved with fresh queue-time frames, and matching them satisfied
+assertions with stale text (the off-by-one that broke the M1 tab walk on
+a cold guest until this was fixed). The rendered timeline still records
+both, each audio follow-up as its own `audio`-tagged line, so a failure
+readout shows real audio timing without the stale text ever counting as
+an utterance.
 
 ### Hearing and recording a run: the three-mode story
 

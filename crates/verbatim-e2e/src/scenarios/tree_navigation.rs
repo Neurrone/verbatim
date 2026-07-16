@@ -14,12 +14,9 @@
 //! ("System Summary"), up again onto the tree control itself (role "tree
 //! view", never an item), and finally snap the navigator back to focus.
 //! Substring matches, tolerant of state wording, like the other scenarios.
-//! The tree-control step captures the exact utterance instead: every
-//! announcement reaches the speech stream twice (once queued, once at audio
-//! start), and a leftover duplicate of a "tree view item" announcement
-//! would satisfy a bare "tree view" substring, so that step waits for the
-//! first utterance that differs from the previous announcement and asserts
-//! it is the control, not an item.
+//! The tree-control step additionally captures the full utterance and
+//! asserts it is not an item announcement, since "tree view" is a
+//! substring of "tree view item" and a wrong landing must not pass.
 
 use std::io;
 use std::time::Duration;
@@ -72,25 +69,26 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
     // Parent: the logical parent item "System Summary", not the tree
     // control (the flat exposure used to answer the control for every
-    // item). Capture the exact text so the tree-control step below can
-    // wait for the first utterance that differs from it.
+    // item).
     scenario
         .send_gesture("kb:verbatim+numpad8")
         .expect("sends move-to-parent");
-    let parent_announcement = scenario
+    scenario
         .speech()
-        .expect_in_order_capturing(&["System Summary", "tree view item"], STEP_TIMEOUT);
+        .expect_in_order(&["System Summary", "tree view item"], STEP_TIMEOUT);
 
     // Parent from the root item: the tree control itself, spoken by its
-    // bare role since msinfo32's tree control is unnamed.
+    // bare role since msinfo32's tree control is unnamed — and never as an
+    // item, which the captured text rules out ("tree view" is a substring
+    // of "tree view item", so the matcher alone cannot).
     scenario
         .send_gesture("kb:verbatim+numpad8")
         .expect("sends move-to-parent");
     let spoken = scenario
         .speech()
-        .expect_change_capturing(&parent_announcement, STEP_TIMEOUT);
+        .expect_in_order_capturing(&["tree view"], STEP_TIMEOUT);
     assert!(
-        spoken.contains("tree view") && !spoken.contains("tree view item"),
+        !spoken.contains("tree view item"),
         "parent of the root item must be the tree control, not an item; heard: {spoken}"
     );
 
