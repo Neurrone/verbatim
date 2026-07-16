@@ -950,17 +950,29 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
                 window_snapshot(worker, hwnd, &shared_for_window)
             });
             if let Some(Some((backend, node))) = window {
-                window_done = true;
-                if still_current() {
-                    shared.emit(
-                        TraceId::mint(),
-                        backend,
-                        NormalizedEvent::FocusChanged {
-                            node,
-                            ancestors: Vec::new(),
-                            selected_child: None,
-                        },
-                    );
+                // A window with no name yet announces as a bare "window" —
+                // pure noise. Observed live on a cold guest: the menu popup
+                // window exists before the platform gives it its accessible
+                // name, and announcing that instant was the "window window"
+                // heard on the first Verbatim+V after a fresh restore. Skip
+                // it and let the next attempt read the name that arrives a
+                // beat later; a window still nameless when the attempts run
+                // out simply goes unannounced, which says exactly as much
+                // as "window" did.
+                let named = node.name.as_deref().is_some_and(|name| !name.is_empty());
+                if named {
+                    window_done = true;
+                    if still_current() {
+                        shared.emit(
+                            TraceId::mint(),
+                            backend,
+                            NormalizedEvent::FocusChanged {
+                                node,
+                                ancestors: Vec::new(),
+                                selected_child: None,
+                            },
+                        );
+                    }
                 }
             }
         }
