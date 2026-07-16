@@ -1272,7 +1272,7 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
 }
 
 #[test]
-fn navigate_at_a_tree_edge_is_silent_and_stays_put() {
+fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
     let source = Pid(1);
     let root = node(10, Role::Window, Some("App"), None, StateSet::new());
     let state = focused(source, root);
@@ -1287,8 +1287,55 @@ fn navigate_at_a_tree_edge_is_silent_and_stays_put() {
         query_id: query.query_id,
         result: FetchResult::NoNeighbor,
     };
-    let (_, effects) = reduce(&state, &completion);
-    assert!(effects.is_empty(), "no neighbor: silent, navigator unmoved");
+    let (after, effects) = reduce(&state, &completion);
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::new(SegmentContent::Message(
+            verbatim_model::Message::NoContainingObject
+        ))],
+        "a parent edge speaks NVDA's no-containing-object message"
+    );
+    // The navigator stays put: reporting the object re-announces the root.
+    let (_, effects) = reduce(
+        &after,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("App"));
+}
+
+#[test]
+fn every_navigation_direction_speaks_its_own_edge_message() {
+    use verbatim_model::Message;
+    let cases = [
+        (ReviewCommand::Parent, Message::NoContainingObject),
+        (ReviewCommand::NextSibling, Message::NoNextObject),
+        (ReviewCommand::PreviousSibling, Message::NoPreviousObject),
+        (ReviewCommand::FirstChild, Message::NoObjectsInside),
+    ];
+    for (command_kind, expected) in cases {
+        let source = Pid(1);
+        let root = node(10, Role::Window, Some("App"), None, StateSet::new());
+        let state = focused(source, root);
+        let (state, effects) = reduce(&state, &command(TraceId::mint(), command_kind, 0));
+        let query = match &effects[0] {
+            Effect::Fetch(query) => *query,
+            other => panic!("expected Fetch, got {other:?}"),
+        };
+        let completion = Input::FetchCompleted {
+            trace_id: TraceId::mint(),
+            query_id: query.query_id,
+            result: FetchResult::NoNeighbor,
+        };
+        let (_, effects) = reduce(&state, &completion);
+        let utterances = speak_effects(&effects);
+        assert_eq!(
+            utterances[0].segments,
+            vec![UtteranceSegment::new(SegmentContent::Message(expected))],
+            "edge message for {command_kind:?}"
+        );
+    }
 }
 
 #[test]

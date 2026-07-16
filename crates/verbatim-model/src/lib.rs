@@ -19,7 +19,9 @@ pub use event::{
     SnapshotVersion,
 };
 pub use gesture::{GestureId, GestureParseError};
-pub use speech::{SegmentContent, SpeechPriority, Utterance, UtteranceSegment, UtteranceSource};
+pub use speech::{
+    Message, SegmentContent, SpeechPriority, Utterance, UtteranceSegment, UtteranceSource,
+};
 pub use tree::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet, TreeNode};
 
 use std::fmt;

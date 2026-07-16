@@ -325,6 +325,7 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
             source,
             node_id,
             reason: FetchReason::Navigate,
+            kind,
         },
     );
     state.latest_navigation = Some(query_id);
@@ -601,6 +602,7 @@ fn refetch_focus(state: &mut SrState) -> Vec<Effect> {
             source,
             node_id,
             reason: FetchReason::Staleness,
+            kind: QueryKind::NodeSnapshot,
         },
     );
     vec![Effect::Fetch(Query {
@@ -641,9 +643,13 @@ fn reduce_fetch_completed(
 /// late completion cannot override the user's explicit return to focus.
 ///
 /// On `FetchResult::Node`, moves the navigator to the returned neighbor and
-/// announces it. On `FetchResult::NoNeighbor`, stays silent and leaves the
-/// navigator put — a tree edge, not an error; a screen reader conventionally
-/// plays an edge earcon here, which the earcon theme (M11) can later fill.
+/// announces it. On `FetchResult::NoNeighbor`, leaves the navigator put and
+/// speaks the direction's edge message — NVDA's wording: "No next", "No
+/// previous", "No containing object", "No objects inside". An earlier
+/// revision stayed silent here (with an M11 earcon planned on top); live
+/// testing found silence indistinguishable from a broken command, exactly
+/// as NVDA's spoken messages predict, so the messages are the behavior now
+/// and M11's earcon becomes an addition rather than the only feedback.
 /// On `FetchResult::Gone` — the navigator's node could no longer be
 /// re-acquired, distinct from a genuine tree edge — re-seeds the navigator
 /// from the current focus and announces it (via [`navigator_to_focus`])
@@ -674,13 +680,36 @@ fn reduce_navigate_completed(
             vec![Effect::Speak(utterance)]
         }
         FetchResult::Gone => navigator_to_focus(state, trace_id),
-        // `NoNeighbor` (a tree edge, silent by design) and any future
-        // `FetchResult` variant added under `#[non_exhaustive]`: nothing to
-        // move to, so the navigator stays put.
+        // A genuine tree edge: the navigator stays put and the edge is
+        // spoken (NVDA's wording, chosen per direction). Any future
+        // `FetchResult` variant added under `#[non_exhaustive]` stays
+        // silent until given a meaning here.
         _ => {
             state.latest_navigation = None;
-            Vec::new()
+            let Some(message) = edge_message_of(pending.kind) else {
+                return Vec::new();
+            };
+            vec![Effect::Speak(Utterance {
+                trace_id,
+                priority: SpeechPriority::Interrupt,
+                segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
+                source: None,
+            })]
         }
+    }
+}
+
+/// The edge message a navigation `QueryKind` speaks when there is no
+/// neighbor in its direction — NVDA's messages, one per command. `None`
+/// for kinds that are not navigations (a plain re-read has no edge).
+fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
+    use verbatim_model::Message;
+    match kind {
+        QueryKind::Parent => Some(Message::NoContainingObject),
+        QueryKind::NextSibling => Some(Message::NoNextObject),
+        QueryKind::PreviousSibling => Some(Message::NoPreviousObject),
+        QueryKind::FirstChild => Some(Message::NoObjectsInside),
+        _ => None,
     }
 }
 

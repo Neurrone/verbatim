@@ -61,6 +61,26 @@ pub enum SegmentContent {
     },
     /// One-based nesting level (tree items, headings).
     Level(u32),
+    /// A fixed reader message, rendered to its localized wording — the
+    /// D12-conformant way for the reducer to say something that is not a
+    /// property of any node (a navigation edge, for instance) without
+    /// pre-flattening text.
+    Message(Message),
+}
+
+/// A fixed reader message a [`SegmentContent::Message`] segment names.
+/// Localization happens at the presentation stage, like every other span.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Message {
+    /// Object navigation found no next sibling — NVDA's "No next".
+    NoNextObject,
+    /// Object navigation found no previous sibling — NVDA's "No previous".
+    NoPreviousObject,
+    /// Object navigation found no parent — NVDA's "No containing object".
+    NoContainingObject,
+    /// Object navigation found no children — NVDA's "No objects inside".
+    NoObjectsInside,
 }
 
 /// One segment of an utterance, with an optional language override.

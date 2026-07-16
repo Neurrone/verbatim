@@ -347,6 +347,24 @@ pub mod messages {
     }
 }
 
+/// The localized wording of a fixed reader message — a navigation edge and
+/// its siblings — used by the speech pipeline when it renders
+/// `SegmentContent::Message` spans. Wording matches NVDA's.
+#[must_use]
+pub fn message_text(message: verbatim_model::Message) -> String {
+    use verbatim_model::Message;
+    let loader = loader();
+    match message {
+        Message::NoNextObject => i18n_embed_fl::fl!(loader, "message-no-next-object"),
+        Message::NoPreviousObject => i18n_embed_fl::fl!(loader, "message-no-previous-object"),
+        Message::NoContainingObject => i18n_embed_fl::fl!(loader, "message-no-containing-object"),
+        Message::NoObjectsInside => i18n_embed_fl::fl!(loader, "message-no-objects-inside"),
+        // `Message` is non_exhaustive; an unmapped future message speaks
+        // nothing rather than crashing the pipeline.
+        _ => String::new(),
+    }
+}
+
 /// The localized spoken name of a role, used by the speech pipeline when it
 /// renders utterance tokens.
 #[must_use]

@@ -81,6 +81,14 @@ role-tree = tree view
 role-tree-item = tree view item
 role-unknown = unknown
 
+## Reader messages: fixed announcements that describe the reader's own
+## outcome rather than any node's property. Wording matches NVDA's.
+
+message-no-next-object = No next
+message-no-previous-object = No previous
+message-no-containing-object = No containing object
+message-no-objects-inside = No objects inside
+
 ## Spoken state names.
 
 state-selected = selected

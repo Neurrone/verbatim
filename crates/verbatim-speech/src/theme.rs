@@ -12,7 +12,9 @@
 //! (`verbatim_model::UtteranceSource`), even though [`PlainTheme`] ignores
 //! both.
 
-use verbatim_i18n::{level, negated_state_name, position_in_set, role_name, state_name};
+use verbatim_i18n::{
+    level, message_text, negated_state_name, position_in_set, role_name, state_name,
+};
 use verbatim_model::{SegmentContent, Utterance};
 
 use crate::driver::SpeechRequest;
@@ -86,6 +88,10 @@ fn spoken_form(content: &SegmentContent) -> Option<String> {
             set_size.map(|set_size| position_in_set(*position, set_size))
         }
         SegmentContent::Level(depth) => Some(level(*depth)),
+        SegmentContent::Message(message) => {
+            let text = message_text(*message);
+            (!text.is_empty()).then_some(text)
+        }
         _ => None,
     }
 }

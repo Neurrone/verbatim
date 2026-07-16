@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use verbatim_model::{NodeId, NodeSnapshot, Pid, QueryId, SnapshotVersion};
+use verbatim_model::{NodeId, NodeSnapshot, Pid, QueryId, QueryKind, SnapshotVersion};
 
 /// What the focused node looked like the last time the reducer actually
 /// spoke about it.
@@ -65,12 +65,16 @@ pub(crate) struct Navigator {
 }
 
 /// One outstanding fetch the reducer is waiting on: which node it asked
-/// about, and why.
+/// about, why, and what kind of query it was — a navigation completion
+/// needs the kind back to speak the right edge message ("No next" for a
+/// sibling move, "No containing object" for a parent move) when there is
+/// no neighbor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PendingFetch {
     pub(crate) source: Pid,
     pub(crate) node_id: NodeId,
     pub(crate) reason: FetchReason,
+    pub(crate) kind: QueryKind,
 }
 
 /// Reducer state: focus context, per-source staleness tracking, and
