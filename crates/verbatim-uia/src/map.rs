@@ -339,7 +339,10 @@ pub unsafe fn snapshot_from_cached_element(
             .unwrap_or_default();
         let control_type = cached_i32(element, UIA_ControlTypePropertyId.0).unwrap_or(0);
         NodeSnapshot {
-            id: registry.id_for(&runtime_id),
+            // Caches `element` as the node's live element while minting its
+            // id, so navigation and re-reads resolve it directly instead of
+            // re-finding it by runtime id (see the registry's module doc).
+            id: registry.id_for_element(&runtime_id, element),
             backend: Backend::Uia,
             role: role_from_control_type(control_type),
             name: cached_string(element, UIA_NamePropertyId.0),
