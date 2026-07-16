@@ -46,7 +46,10 @@ pub(crate) fn open(pipe_name: &str) -> io::Result<OverlappedPipe> {
 /// Relays bytes between `pipe` and the TCP connection (`reader`, still
 /// possibly holding buffered bytes read before the tunnel handoff, and
 /// `writer`, a clone of the same socket) in both directions until either
-/// side closes.
+/// side closes. Logs the per-direction byte totals and why each direction
+/// ended when the tunnel closes: with two independent relays and three
+/// processes in the path, a "client heard nothing" report is otherwise
+/// unattributable — the counts say whether the bytes ever left the pipe.
 pub(crate) fn run(pipe: OverlappedPipe, reader: BufReader<TcpStream>, writer: TcpStream) {
     let pipe = Arc::new(pipe);
     // A clone of the socket kept on this thread purely so it can be shut
@@ -59,50 +62,61 @@ pub(crate) fn run(pipe: OverlappedPipe, reader: BufReader<TcpStream>, writer: Tc
     let to_pipe = {
         let pipe = Arc::clone(&pipe);
         thread::spawn(move || {
-            copy_tcp_to_pipe(reader, &pipe);
+            let (bytes, ended) = copy_tcp_to_pipe(reader, &pipe);
             // The client is done sending (EOF) or gone (error): stop any
             // pending pipe read so the pipe-to-tcp direction also ends.
             pipe.cancel_pending_io();
+            (bytes, ended)
         })
     };
 
-    copy_pipe_to_tcp(&pipe, writer);
+    let (to_tcp_bytes, to_tcp_ended) = copy_pipe_to_tcp(&pipe, writer);
     // Verbatim closed the pipe, or the pipe errored: unblock the client
     // side too.
     let _ = shutdown_handle.shutdown(Shutdown::Both);
     pipe.cancel_pending_io();
 
-    let _ = to_pipe.join();
+    let (to_pipe_bytes, to_pipe_ended) = to_pipe.join().unwrap_or((0, "join failed"));
+    eprintln!(
+        "verbatim-agent: control tunnel closed; relayed {to_pipe_bytes} bytes to the pipe ({to_pipe_ended}), {to_tcp_bytes} bytes to tcp ({to_tcp_ended})"
+    );
 }
 
 /// Copies from `reader` to `pipe` until EOF or an error on either side.
 /// Generic so it runs directly against the tunnel handoff's `BufReader`,
 /// which may still hold bytes read (but not yet consumed) before the
-/// handoff.
-fn copy_tcp_to_pipe<R: Read>(mut reader: R, pipe: &OverlappedPipe) {
+/// handoff. Returns the bytes copied and why the loop ended.
+fn copy_tcp_to_pipe<R: Read>(mut reader: R, pipe: &OverlappedPipe) -> (u64, &'static str) {
     let mut buf = [0u8; 8192];
+    let mut total = 0u64;
     loop {
         let read = match reader.read(&mut buf) {
-            Ok(0) | Err(_) => return,
+            Ok(0) => return (total, "tcp end of stream"),
+            Err(_) => return (total, "tcp read error"),
             Ok(n) => n,
         };
         if pipe.write_all(&buf[..read]).is_err() {
-            return;
+            return (total, "pipe write error");
         }
+        total += read as u64;
     }
 }
 
 /// Copies from `pipe` to `tcp` until EOF or an error on either side.
-fn copy_pipe_to_tcp(pipe: &OverlappedPipe, mut tcp: TcpStream) {
+/// Returns the bytes copied and why the loop ended.
+fn copy_pipe_to_tcp(pipe: &OverlappedPipe, mut tcp: TcpStream) -> (u64, &'static str) {
     let mut buf = [0u8; 8192];
+    let mut total = 0u64;
     loop {
         let read = match pipe.read(&mut buf) {
-            Ok(0) | Err(_) => return,
+            Ok(0) => return (total, "pipe end of stream"),
+            Err(_) => return (total, "pipe read error"),
             Ok(n) => n,
         };
         if tcp.write_all(&buf[..read]).is_err() {
-            return;
+            return (total, "tcp write error");
         }
+        total += read as u64;
     }
 }
 
