@@ -66,7 +66,7 @@ use verbatim_control::protocol::LatencyRecord;
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
-    m1_exit_regression, multi_outpost_switch, notepad_focus, object_navigation,
+    m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus, object_navigation,
 };
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
@@ -195,6 +195,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: object_navigation::setup,
         body: object_navigation::body,
         teardown: object_navigation::teardown,
+    },
+    ScenarioDef {
+        name: "msinfo32",
+        group: Group::Legacy,
+        target_images: &["msinfo32.exe"],
+        setup: msinfo32::setup,
+        body: msinfo32::body,
+        teardown: msinfo32::teardown,
     },
 ];
 

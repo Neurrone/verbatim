@@ -6,6 +6,7 @@
 //! calling into these modules directly.
 
 pub(crate) mod m1_exit_regression;
+pub(crate) mod msinfo32;
 pub(crate) mod multi_outpost_switch;
 pub(crate) mod notepad_focus;
 pub(crate) mod object_navigation;
