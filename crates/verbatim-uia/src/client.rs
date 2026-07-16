@@ -15,9 +15,10 @@ use windows::Win32::System::Variant::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern, IUIAutomationTogglePattern,
-    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId,
-    UIA_LegacyIAccessiblePatternId, UIA_RuntimeIdPropertyId, UIA_TogglePatternId,
+    IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern,
+    IUIAutomationSelectionPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
+    TreeScope_Subtree, UIA_InvokePatternId, UIA_LegacyIAccessiblePatternId,
+    UIA_RuntimeIdPropertyId, UIA_SelectionPatternId, UIA_TogglePatternId,
 };
 
 use verbatim_model::{NodeSnapshot, TreeNode};
@@ -247,6 +248,62 @@ impl Uia {
         }
         chain.reverse();
         Ok(chain)
+    }
+
+    /// The first selected child of a selection container, via the
+    /// container's `Selection` pattern: `GetCurrentSelection`, then the
+    /// first element of the result rebuilt with `cache` so its snapshot
+    /// reads entirely from cached properties. `Ok(None)` is every benign
+    /// outcome — the element does not expose the pattern, or nothing is
+    /// selected. Multi-selections report their first element; the reducer
+    /// speaks one item, and richer multi-selection reporting is deliberately
+    /// out of M3's scope. Cross-process; query-pool threads only, guarded
+    /// by the caller's deadline.
+    ///
+    /// # Errors
+    ///
+    /// Never fails today: pattern and selection failures all map to
+    /// `Ok(None)` because "no reportable selection" is the correct reading
+    /// of each. The `Result` stays in the signature so a genuinely
+    /// distinguishable failure can surface later without breaking callers.
+    ///
+    /// # Safety
+    ///
+    /// `element` must be a live element built with `cache`.
+    pub unsafe fn selected_child(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+        registry: &NodeIdRegistry,
+    ) -> windows::core::Result<Option<NodeSnapshot>> {
+        // SAFETY: `element` is live per the caller's contract; a missing
+        // pattern surfaces as an error mapped to None.
+        let Ok(pattern) = (unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
+        }) else {
+            return Ok(None);
+        };
+        // SAFETY: `pattern` was just obtained from a live element.
+        let Ok(selection) = (unsafe { pattern.GetCurrentSelection() }) else {
+            return Ok(None);
+        };
+        // SAFETY: `selection` is a live element array.
+        if unsafe { selection.Length() }.unwrap_or(0) == 0 {
+            return Ok(None);
+        }
+        // SAFETY: index 0 exists per the length check above.
+        let Ok(first) = (unsafe { selection.GetElement(0) }) else {
+            return Ok(None);
+        };
+        // SAFETY: `first` is live; rebuilding with `cache` prefetches the
+        // full snapshot property set in one round trip.
+        let Ok(cached) = (unsafe { first.BuildUpdatedCache(cache) }) else {
+            return Ok(None);
+        };
+        // SAFETY: `cached` was just built with `cache`.
+        Ok(Some(unsafe {
+            snapshot_from_cached_element(&cached, registry)
+        }))
     }
 
     /// Navigates one step from `element` in `direction`, via the raw-view

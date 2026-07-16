@@ -182,24 +182,17 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.send_keys(&["enter"]).expect("sends enter");
 
     // The settings dialog opens with focus in the category list, announced
-    // by name and role.
-    //
-    // Note what is *not* asserted: the selected category ("Speech"). Focus
-    // lands on the list itself, and Verbatim does not yet announce a
-    // focused list's selected child the way NVDA does. An earlier version of
-    // this scenario did assert it — and passed — but only because of a bug:
-    // UIA events for non-window elements were bypassing per-window
-    // arbitration, so a wx dialog that belongs to MSAA was also being
-    // announced by the UIA stack, which reports focus at list-item
-    // granularity. Fixing that (see `uia_passes_filter` in
-    // verbatim-outpost) removed the accidental announcement and revealed
-    // the real gap. Announcing a list's selection on focus is genuine
-    // screen-reader behavior and belongs with the selection and
-    // object-navigation work in M3; this assertion tightens to include it
-    // then.
+    // by name and role — and, since M3's selection work, followed by the
+    // selected category ("Speech"): the outpost enriches the focus event
+    // with the list's selected child (MSAA `accSelection` on this wx list
+    // box) and the reducer speaks it right after the list. This assertion
+    // was deliberately loose before M3 (an earlier accidental version of
+    // the announcement came from a cross-backend arbitration bug, fixed at
+    // the end of M2, and the real behavior did not exist yet); it is the
+    // tightened form the original comment promised.
     scenario
         .speech()
-        .expect_in_order(&["Categories", "list"], STEP_TIMEOUT);
+        .expect_in_order(&["Categories", "list", "Speech"], STEP_TIMEOUT);
 
     // Tab walks the dialog in the live-confirmed order: Change... button,
     // then the capture synth's three driver-generated controls, then OK,

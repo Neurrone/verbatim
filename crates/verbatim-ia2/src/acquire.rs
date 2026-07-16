@@ -255,6 +255,54 @@ pub fn resnapshot(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapsho
     snapshot_from_event(hwnd, id_object, id_child, registry)
 }
 
+/// Reads the selected child of a selection container via `accSelection`: a
+/// `VT_I4` result names a child by id on the container itself, a
+/// `VT_DISPATCH` carries the child's own `IAccessible`. A multi-selection
+/// (`VT_UNKNOWN` carrying an `IEnumVARIANT`) and an empty selection both
+/// report `None` — the reducer speaks one item, and richer multi-selection
+/// reporting is deliberately out of M3's scope. Only meaningful for a key
+/// addressing a full object (`CHILDID_SELF`); a child-id key reports `None`
+/// since a simple child cannot contain anything. Blocking; query pool only.
+#[must_use]
+pub fn selected_child(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
+    let (hwnd, id_object, id_child) = key;
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
+    // SAFETY: `child` was just acquired together with `acc`.
+    if unsafe { child_id_of(&child) } != CHILDID_SELF {
+        return None;
+    }
+    // SAFETY: `acc` is a live IAccessible.
+    let selection = unsafe { acc.accSelection() }.ok()?;
+    // SAFETY: the variant type is checked before any union field is read.
+    unsafe {
+        let vt = selection.Anonymous.Anonymous.vt;
+        if vt == VT_I4 {
+            let child_id = selection.Anonymous.Anonymous.Anonymous.lVal;
+            let child_key = (hwnd, id_object, child_id);
+            return Some(read_snapshot(
+                &acc,
+                &child_variant(child_id),
+                child_key,
+                registry,
+            ));
+        }
+        if vt == VT_DISPATCH {
+            let dispatch = selection.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()?;
+            let child_acc = dispatch.cast::<IAccessible>().ok()?;
+            let child_hwnd = window_of(&child_acc).unwrap_or(hwnd);
+            let child_key = (child_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            return Some(read_snapshot(
+                &child_acc,
+                &child_variant(CHILDID_SELF),
+                child_key,
+                registry,
+            ));
+        }
+    }
+    None
+}
+
 /// Reads the currently focused object of `target_pid` for the synthetic focus
 /// event an `AnnounceFocus` triggers. Uses `GetGUIThreadInfo` then `accFocus`, with
 /// a fallback to the focused window itself. Blocking; query pool only.

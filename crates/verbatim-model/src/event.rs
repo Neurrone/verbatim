@@ -70,6 +70,16 @@ pub enum NormalizedEvent {
         /// field existed deserializing unchanged.
         #[serde(default)]
         ancestors: Vec<NodeSnapshot>,
+        /// The selected child of a newly focused selection container (a
+        /// list's selected item, a tab control's active tab), fetched by
+        /// the outpost alongside the ancestors — only for container roles,
+        /// `None` otherwise or when nothing is selected or the query
+        /// failed. Carried on the event for the same reason the ancestors
+        /// are: the reducer speaks it immediately after the container
+        /// without a round trip. `#[serde(default)]` for wire
+        /// compatibility.
+        #[serde(default)]
+        selected_child: Option<NodeSnapshot>,
     },
     /// A property of a node changed.
     PropertyChanged {

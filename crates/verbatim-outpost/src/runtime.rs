@@ -211,7 +211,7 @@ fn handle_msaa_event(
     let trace = TraceId::mint();
     let shared = shared.clone();
     let pool = shared.pool.clone();
-    pool.submit(move |_worker| {
+    pool.submit(move |worker| {
         if let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
             hwnd,
             id_object,
@@ -222,20 +222,11 @@ fn handle_msaa_event(
             // on the query worker (the walk is query-pool-only by
             // contract); every other kind maps directly.
             let event = if kind == WinEventKind::Focus {
-                let ancestors = shared
-                    .msaa_registry
-                    .key_of(node.id)
-                    .map(|key| {
-                        verbatim_ia2::acquire::ancestor_chain(
-                            key,
-                            &shared.msaa_registry,
-                            MAX_ANCESTOR_HOPS,
-                        )
-                    })
-                    .unwrap_or_default();
+                let (ancestors, selected_child) = focus_enrichment_query(worker, &shared, &node);
                 NormalizedEvent::FocusChanged {
                     node: node.clone(),
                     ancestors,
+                    selected_child,
                 }
             } else {
                 msaa_event(kind, &node)
@@ -253,6 +244,7 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
         WinEventKind::Focus => NormalizedEvent::FocusChanged {
             node: node.clone(),
             ancestors: Vec::new(),
+            selected_child: None,
         },
         WinEventKind::ValueChange => NormalizedEvent::ValueChanged {
             node_id: node.id,
@@ -559,12 +551,16 @@ impl Outpost {
                 let trace = TraceId::mint();
                 let shared = focus_shared.clone();
                 focus_shared.pool.submit(move |worker| {
-                    let ancestors =
-                        ancestor_chain_query(worker, &shared, node.id).unwrap_or_default();
+                    let (ancestors, selected_child) =
+                        focus_enrichment_query(worker, &shared, &node);
                     shared.emit(
                         trace,
                         Backend::Uia,
-                        NormalizedEvent::FocusChanged { node, ancestors },
+                        NormalizedEvent::FocusChanged {
+                            node,
+                            ancestors,
+                            selected_child,
+                        },
                     );
                 });
             }
@@ -923,6 +919,7 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
                         NormalizedEvent::FocusChanged {
                             node,
                             ancestors: Vec::new(),
+                            selected_child: None,
                         },
                     );
                 }
@@ -945,18 +942,21 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
                     // like every other step of this announcement; a timed
                     // out or failed walk degrades to no context.
                     let shared_for_chain = shared.clone();
-                    let node_id = node.id;
-                    let ancestors = shared
+                    let node_for_chain = node.clone();
+                    let (ancestors, selected_child) = shared
                         .pool
                         .run(FOCUS_DEADLINE, move |worker| {
-                            ancestor_chain_query(worker, &shared_for_chain, node_id)
-                                .unwrap_or_default()
+                            focus_enrichment_query(worker, &shared_for_chain, &node_for_chain)
                         })
                         .unwrap_or_default();
                     shared.emit(
                         TraceId::mint(),
                         backend,
-                        NormalizedEvent::FocusChanged { node, ancestors },
+                        NormalizedEvent::FocusChanged {
+                            node,
+                            ancestors,
+                            selected_child,
+                        },
                     );
                 }
             }
@@ -1031,6 +1031,63 @@ fn refetch_node(
         return verbatim_ia2::acquire::resnapshot(key, &shared.msaa_registry);
     }
     None
+}
+
+/// Whether a focused node's role is a selection container whose selected
+/// child is announced with it (roadmap M3: a list's selected item, a tab
+/// control's active tab).
+fn wants_selected_child(role: verbatim_model::Role) -> bool {
+    matches!(
+        role,
+        verbatim_model::Role::List | verbatim_model::Role::TabControl
+    )
+}
+
+/// Gathers a newly focused node's event enrichment on a query worker: its
+/// ancestor chain (outermost first) and, for selection containers, its
+/// selected child — fetching the backend element once and asking it both
+/// questions. Every failure degrades to an empty chain or `None`: focus
+/// enrichment must never turn a focus announcement into an error.
+fn focus_enrichment_query(
+    worker: &mut Worker,
+    shared: &Shared,
+    node: &NodeSnapshot,
+) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
+    let want_selection = wants_selected_child(node.role);
+    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node.id) {
+        let Some(uia) = worker.uia() else {
+            return (Vec::new(), None);
+        };
+        let Ok(cache) = uia.base_cache_request() else {
+            return (Vec::new(), None);
+        };
+        let Ok(Some(element)) = uia.element_by_runtime_id(&runtime_id, &cache) else {
+            return (Vec::new(), None);
+        };
+        // SAFETY: `element` was built with `cache` immediately above.
+        let ancestors = unsafe {
+            uia.ancestor_chain(&element, &cache, &shared.uia_registry, MAX_ANCESTOR_HOPS)
+        }
+        .unwrap_or_default();
+        let selected = if want_selection {
+            // SAFETY: `element` was built with `cache` immediately above.
+            unsafe { uia.selected_child(&element, &cache, &shared.uia_registry) }.unwrap_or(None)
+        } else {
+            None
+        };
+        return (ancestors, selected);
+    }
+    if let Some(key) = shared.msaa_registry.key_of(node.id) {
+        let ancestors =
+            verbatim_ia2::acquire::ancestor_chain(key, &shared.msaa_registry, MAX_ANCESTOR_HOPS);
+        let selected = if want_selection {
+            verbatim_ia2::acquire::selected_child(key, &shared.msaa_registry)
+        } else {
+            None
+        };
+        return (ancestors, selected);
+    }
+    (Vec::new(), None)
 }
 
 /// Walks the ancestor chain of a node by id, on a query worker: UIA via

@@ -155,6 +155,30 @@ use super::{AGENT_PORT, CHECKPOINT_NAME, VERBATIM_DIR, VM_NAME, VmResult, deploy
 const SESSION_INFO_TEST_NAME: &str = "agent_reports_an_interactive_window_station";
 
 /// The flags `cargo xtask vm test` accepts, all defaulting to off or empty:
+/// The acceptance run's checkpoint restore: golden checkpoint, start, a
+/// DHCP renewal (the restored guest may hold a lease from a Default Switch
+/// subnet that no longer exists — see `renew_guest_dhcp`), then the agent
+/// wait. `--no-restore` skips all of it, loudly.
+fn restore_golden_unless_skipped(
+    host: &dyn Host,
+    no_restore: bool,
+    credentials: &dotenv::GuestCredentials,
+) -> VmResult<()> {
+    if no_restore {
+        println!(
+            "xtask vm test: --no-restore set — SKIPPING the checkpoint restore; guest state              may be dirty from a previous run; do not use --no-restore for an acceptance run"
+        );
+        return Ok(());
+    }
+    println!("xtask vm test: restoring checkpoint '{CHECKPOINT_NAME}'");
+    host.restore_checkpoint(VM_NAME, CHECKPOINT_NAME)?;
+    host.start_vm(VM_NAME)?;
+    if let Err(error) = renew_guest_dhcp(host, VM_NAME, credentials) {
+        eprintln!("xtask vm test: guest DHCP renewal failed (continuing): {error}");
+    }
+    wait_for_agent(host, VM_NAME)
+}
+
 /// `--no-restore` skips the checkpoint restore, `--record` captures a video
 /// per scenario, `--paced` waits for each utterance to finish before the
 /// next input, `--list` prints the scenario registry and exits, and
@@ -222,23 +246,7 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     );
     let built = deploy::build(repo_root)?;
 
-    if no_restore {
-        println!(
-            "xtask vm test: --no-restore set — SKIPPING the checkpoint restore; guest state \
-             may be dirty from a previous run; do not use --no-restore for an acceptance run"
-        );
-    } else {
-        println!("xtask vm test: restoring checkpoint '{CHECKPOINT_NAME}'");
-        host.restore_checkpoint(VM_NAME, CHECKPOINT_NAME)?;
-        host.start_vm(VM_NAME)?;
-        // The restored guest may hold a DHCP lease from a Default Switch
-        // subnet that no longer exists (see renew_guest_dhcp); renew before
-        // waiting so the agent probe has a routable address to reach.
-        if let Err(error) = renew_guest_dhcp(host, VM_NAME, &credentials) {
-            eprintln!("xtask vm test: guest DHCP renewal failed (continuing): {error}");
-        }
-        wait_for_agent(host, VM_NAME)?;
-    }
+    restore_golden_unless_skipped(host, no_restore, &credentials)?;
 
     println!(
         "xtask vm test: audible by default — deploying and running with the real OneCore \

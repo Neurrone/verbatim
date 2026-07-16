@@ -58,12 +58,22 @@ fn reduce_event(
     state.record_version(source, version);
 
     match event {
-        NormalizedEvent::FocusChanged { node, ancestors } => {
+        NormalizedEvent::FocusChanged {
+            node,
+            ancestors,
+            selected_child,
+        } => {
             let mut segments = Vec::new();
             for container in entered_containers(state.focus.as_ref(), source, ancestors) {
                 segments.extend(container_segments(container));
             }
             segments.extend(node_segments(node));
+            // A selection container introduces its selected item right
+            // after itself — the roadmap's "announce a focused list's
+            // selected item".
+            if let Some(selected) = selected_child {
+                segments.extend(node_segments(selected));
+            }
             let utterance = Utterance {
                 trace_id,
                 priority: SpeechPriority::Interrupt,
@@ -75,8 +85,12 @@ fn reduce_event(
                 snapshot: node.clone(),
                 last_announced: node.clone(),
                 ancestors: ancestors.clone(),
+                last_selection: selected_child.as_ref().map(|selected| selected.id),
             });
             vec![Effect::Speak(utterance)]
+        }
+        NormalizedEvent::SelectionChanged { node } => {
+            reduce_selection_changed(state, trace_id, source, node)
         }
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, source, *node_id, value.clone())
@@ -102,6 +116,51 @@ fn reduce_event(
         // `NormalizedEvent` is `#[non_exhaustive]`.
         _ => Vec::new(),
     }
+}
+
+/// Whether a focused role is a selection container whose interior selection
+/// changes are announced — the reducer-side twin of the outpost's
+/// enrichment filter, kept to the same roles: lists (a list box, a category
+/// list) and tab controls (an Explorer or Settings tab strip). Combo boxes
+/// are deliberately excluded: their selection reaches the reducer as a
+/// value change already, and announcing both would double-speak every
+/// pick.
+fn is_selection_container(role: Role) -> bool {
+    matches!(role, Role::List | Role::TabControl)
+}
+
+/// Handles a `SelectionChanged` event: a node was selected within its
+/// container. Announced only when the selection happened under the focused
+/// container — the event's source application is the focused one, focus
+/// sits on a selection container, and the selected node is neither the
+/// focused node itself nor the item most recently announced (the focus
+/// event's own `selected_child`, or the previous selection event). This is
+/// NVDA's generic selection behavior: arrowing through a list whose focus
+/// stays on the container speaks each newly selected item, and everything
+/// else stays quiet.
+fn reduce_selection_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    source: Pid,
+    node: &NodeSnapshot,
+) -> Vec<Effect> {
+    let Some(focus) = state.focus.as_mut() else {
+        return Vec::new();
+    };
+    if focus.source != source
+        || !is_selection_container(focus.snapshot.role)
+        || node.id == focus.snapshot.id
+        || focus.last_selection == Some(node.id)
+    {
+        return Vec::new();
+    }
+    focus.last_selection = Some(node.id);
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Interrupt,
+        segments: node_segments(node),
+        source: Some(source_of(node)),
+    })]
 }
 
 /// Shared handling for `ValueChanged` and `PropertyChanged(Value(..))`: both
@@ -264,14 +323,17 @@ fn reduce_fetch_completed(
 
             if changed {
                 let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
-                // A re-fetch refreshes the node, not its ancestry; the
-                // chain the focus event carried stays authoritative.
+                // A re-fetch refreshes the node, not its ancestry or its
+                // selection history; what the focus event carried stays
+                // authoritative.
                 let ancestors = focus.ancestors.clone();
+                let last_selection = focus.last_selection;
                 state.focus = Some(FocusContext {
                     source: pending.source,
                     snapshot: snapshot.clone(),
                     last_announced: snapshot.clone(),
                     ancestors,
+                    last_selection,
                 });
                 vec![Effect::Speak(utterance)]
             } else {
@@ -398,9 +460,14 @@ fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapsho
 
 /// Announcement order for states: checked (or its negation for check boxes
 /// and radio buttons that carry neither checked nor mixed), mixed, pressed,
-/// selected, expanded, collapsed, has-popup, default, read-only, disabled,
-/// busy. Focus-related states (focused, focusable, selectable, offscreen)
-/// are never announced — they describe capability, not content.
+/// expanded, collapsed, has-popup, default, read-only, disabled, busy, and
+/// finally "not selected" for a selectable node that is not selected.
+/// Focus-related states (focused, focusable, offscreen) are never announced
+/// — they describe capability, not content. Positive `Selected` is never
+/// announced on a node announcement either, matching NVDA: a focused item
+/// being selected is the expected default, so only its notable absence is
+/// spoken. Selection *changes* still announce "selected" through the
+/// state-change diff, which keeps its own list.
 fn state_segments(role: Role, states: StateSet) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
 
@@ -415,7 +482,6 @@ fn state_segments(role: Role, states: StateSet) -> Vec<UtteranceSegment> {
     for state in [
         State::Mixed,
         State::Pressed,
-        State::Selected,
         State::Expanded,
         State::Collapsed,
         State::HasPopup,
@@ -427,6 +493,12 @@ fn state_segments(role: Role, states: StateSet) -> Vec<UtteranceSegment> {
         if states.contains(state) {
             segments.push(UtteranceSegment::new(SegmentContent::State(state)));
         }
+    }
+
+    if states.contains(State::Selectable) && !states.contains(State::Selected) {
+        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
+            State::Selected,
+        )));
     }
 
     segments

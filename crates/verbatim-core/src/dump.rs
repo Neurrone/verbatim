@@ -244,6 +244,7 @@ mod tests {
                     version: SnapshotVersion(1),
                     event: NormalizedEvent::FocusChanged {
                         ancestors: Vec::new(),
+                        selected_child: None,
                         node: NodeSnapshot {
                             id: NodeId::new(1),
                             backend: Backend::Uia,

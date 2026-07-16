@@ -28,6 +28,11 @@ pub(crate) struct FocusContext {
     /// focus-ancestry behavior); empty when the outpost's walk found
     /// nothing or timed out.
     pub(crate) ancestors: Vec<NodeSnapshot>,
+    /// The most recently announced selected item within the focused
+    /// container — seeded by the focus event's own `selected_child`, then
+    /// advanced by each announced `SelectionChanged` — so a selection event
+    /// for the item that was just spoken is not spoken twice.
+    pub(crate) last_selection: Option<NodeId>,
 }
 
 /// Why the reducer asked an outpost to re-read a node.

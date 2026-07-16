@@ -44,6 +44,7 @@ fn scripted_inputs() -> Vec<Input> {
             event: NormalizedEvent::FocusChanged {
                 node: slider,
                 ancestors: Vec::new(),
+                selected_child: None,
             },
         },
         Input::Event {

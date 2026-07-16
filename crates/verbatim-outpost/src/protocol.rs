@@ -280,6 +280,7 @@ mod tests {
             version: SnapshotVersion(3),
             event: NormalizedEvent::FocusChanged {
                 ancestors: Vec::new(),
+                selected_child: None,
                 node: NodeSnapshot {
                     id: NodeId::new(1),
                     backend: Backend::Msaa,

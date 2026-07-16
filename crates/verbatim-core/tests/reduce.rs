@@ -36,6 +36,7 @@ fn focus_event(trace_id: TraceId, source: Pid, version: u64, snapshot: NodeSnaps
         event: NormalizedEvent::FocusChanged {
             node: snapshot,
             ancestors: Vec::new(),
+            selected_child: None,
         },
     }
 }
@@ -219,7 +220,7 @@ fn disabled_button_announces_unavailable_state() {
 }
 
 #[test]
-fn focus_related_states_are_never_announced() {
+fn focus_related_states_are_never_announced_but_unselected_is() {
     let state = SrState::new();
     let mut states = StateSet::new();
     states.insert(State::Focused);
@@ -236,7 +237,31 @@ fn focus_related_states_are_never_announced() {
         vec![
             UtteranceSegment::label("Row"),
             UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+            // NVDA's rule: a selectable item that is not selected announces
+            // exactly that; focused/focusable/offscreen stay silent.
+            UtteranceSegment::new(SegmentContent::NegatedState(State::Selected)),
         ]
+    );
+}
+
+#[test]
+fn selected_items_do_not_announce_positive_selected_on_focus() {
+    let state = SrState::new();
+    let mut states = StateSet::new();
+    states.insert(State::Selectable);
+    states.insert(State::Selected);
+    let item = node(7, Role::ListItem, Some("Row"), None, states);
+
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, item));
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Row"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+        ],
+        "a focused item being selected is the expected default and stays silent"
     );
 }
 
@@ -652,6 +677,7 @@ fn sample_script() -> Vec<Input> {
             event: NormalizedEvent::FocusChanged {
                 node: checkbox,
                 ancestors: Vec::new(),
+                selected_child: None,
             },
         },
         Input::Event {
@@ -718,6 +744,7 @@ fn focus_event_with_ancestors(
         event: NormalizedEvent::FocusChanged {
             node: snapshot,
             ancestors,
+            selected_child: None,
         },
     }
 }
@@ -892,4 +919,137 @@ fn details_speak_in_nvda_property_order() {
             UtteranceSegment::new(SegmentContent::Level(1)),
         ]
     );
+}
+
+/// A focus event carrying a selection container's selected child.
+fn focus_event_with_selection(
+    trace_id: TraceId,
+    source: Pid,
+    version: u64,
+    snapshot: NodeSnapshot,
+    selected_child: Option<NodeSnapshot>,
+) -> Input {
+    Input::Event {
+        trace_id,
+        source,
+        backend: Backend::Uia,
+        version: SnapshotVersion(version),
+        event: NormalizedEvent::FocusChanged {
+            node: snapshot,
+            ancestors: Vec::new(),
+            selected_child,
+        },
+    }
+}
+
+fn selection_event(trace_id: TraceId, source: Pid, version: u64, node: NodeSnapshot) -> Input {
+    Input::Event {
+        trace_id,
+        source,
+        backend: Backend::Uia,
+        version: SnapshotVersion(version),
+        event: NormalizedEvent::SelectionChanged { node },
+    }
+}
+
+#[test]
+fn focusing_a_list_announces_its_selected_item() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let list = node(500, Role::List, Some("Categories"), None, StateSet::new());
+    let item = node(501, Role::ListItem, Some("Speech"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_selection(TraceId::mint(), source, 1, list, Some(item)),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Categories"),
+            UtteranceSegment::new(SegmentContent::Role(Role::List)),
+            UtteranceSegment::label("Speech"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+        ]
+    );
+}
+
+#[test]
+fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let list = node(500, Role::List, Some("Categories"), None, StateSet::new());
+    let speech = node(501, Role::ListItem, Some("Speech"), None, StateSet::new());
+    let keyboard = node(502, Role::ListItem, Some("Keyboard"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_with_selection(TraceId::mint(), source, 1, list, Some(speech)),
+    );
+
+    // Arrowing to another item announces it.
+    let (state, effects) = reduce(
+        &state,
+        &selection_event(TraceId::mint(), source, 2, keyboard.clone()),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Keyboard"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+        ]
+    );
+
+    // A duplicate selection event for the same item stays silent.
+    let (_, effects) = reduce(
+        &state,
+        &selection_event(TraceId::mint(), source, 3, keyboard),
+    );
+    assert!(effects.is_empty(), "the same selection is not spoken twice");
+}
+
+#[test]
+fn the_focus_events_own_selected_item_is_not_reannounced_by_a_selection_event() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let list = node(500, Role::List, Some("Categories"), None, StateSet::new());
+    let speech = node(501, Role::ListItem, Some("Speech"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_with_selection(TraceId::mint(), source, 1, list, Some(speech.clone())),
+    );
+
+    // Platforms often raise a selection event right after focus lands; the
+    // focus announcement already spoke this item.
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, 2, speech));
+    assert!(effects.is_empty());
+}
+
+#[test]
+fn selection_changes_outside_a_focused_container_stay_silent() {
+    let state = SrState::new();
+    let button = node(600, Role::Button, Some("OK"), None, StateSet::new());
+    let item = node(601, Role::ListItem, Some("Row"), None, StateSet::new());
+
+    // Focus on a non-container: selection noise elsewhere is not announced.
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, button));
+    let (state, effects) = reduce(
+        &state,
+        &selection_event(TraceId::mint(), Pid(1), 2, item.clone()),
+    );
+    assert!(effects.is_empty(), "focus is not on a selection container");
+
+    // A selection event from a different application is not announced
+    // either.
+    let list = node(602, Role::List, Some("Files"), None, StateSet::new());
+    let (state, _) = reduce(
+        &state,
+        &focus_event_with_selection(TraceId::mint(), Pid(1), 3, list, None),
+    );
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), Pid(2), 1, item));
+    assert!(effects.is_empty(), "another application's selection");
 }
