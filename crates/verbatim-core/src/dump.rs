@@ -239,6 +239,7 @@ mod tests {
             RecordedInput {
                 input: Input::Event {
                     trace_id: TraceId::mint(),
+                    observed_at_ms: 0,
                     source: Pid(1),
                     backend: Backend::Uia,
                     version: SnapshotVersion(1),
@@ -319,6 +320,7 @@ mod tests {
         let third = RecordedInput {
             input: Input::Event {
                 trace_id: TraceId::mint(),
+                observed_at_ms: 0,
                 source: Pid(2),
                 backend: Backend::Uia,
                 version: SnapshotVersion(9),

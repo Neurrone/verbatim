@@ -10,12 +10,20 @@
 //!
 //! State is a map keyed by target [`Pid`], N-ready by construction: one
 //! outpost process per application (D9), spawned when that application first
-//! gains foreground and kept alive when it loses foreground again — never
-//! respawned or rebound to a different application. [`Supervisor::note_foreground`]
-//! is the call the
-//! [`ForegroundTrigger`](crate::foreground::ForegroundTrigger) makes on every
-//! foreground change: spawn if this pid has no outpost yet, otherwise send
-//! the existing one an `AnnounceFocus`.
+//! gains focus and kept alive when it loses foreground again — never respawned
+//! or rebound to a different application.
+//!
+//! Focus detection lives in a separate process (decision D13): the focus
+//! listener holds the desktop-global UIA focus registration and global MSAA
+//! hooks and forwards each captured focus fact to the supervisor, which routes
+//! it to the target's own outpost ([`SupervisorShared::route_fact`]) —
+//! spawning that outpost if needed and queueing facts newest-wins across the
+//! spawn. The listener lives in a dedicated slot, supervised by the same job,
+//! heartbeat, and respawn machinery but never in the per-pid map, so the idle
+//! sweep structurally never touches it. What remains of the announce poll is a
+//! fallback: [`Supervisor::note_foreground`] spawns-or-announces for the
+//! startup target and to re-announce the current foreground across a listener
+//! respawn gap.
 //!
 //! Idle outposts are retired on a timer so memory use stays bounded (risk R2):
 //! an outpost whose application has not held foreground for
@@ -64,6 +72,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE};
 use windows::Win32::Foundation::{HANDLE_FLAG_INHERIT, HANDLE_FLAGS, SetHandleInformation};
 use windows::Win32::Security::SECURITY_ATTRIBUTES;
@@ -79,9 +88,12 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::PWSTR;
 
-use verbatim_model::Pid;
+use verbatim_model::{Pid, TraceId};
 
-use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost, read_message, write_message};
+use crate::protocol::{
+    DeliveredFact, ListenerFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
+    write_message,
+};
 
 /// A 200 MB per-outpost memory cap; a leaking outpost is killed by the kernel
 /// and respawned by the supervisor.
@@ -136,6 +148,14 @@ pub enum OutpostMessage {
     /// respawning one whose watched application has itself exited; Core
     /// should drop it from any status mirror.
     Retired(Pid),
+    /// The focus listener reported a foreground change to this pid (decision
+    /// D13). Sent before the corresponding focus fact is delivered, so the
+    /// reducer's stale-event gate has the new foreground recorded by the time
+    /// the fact's own event arrives (channel ordering makes this race-free).
+    /// The app stores it and notes the pid as targeted, exactly what the old
+    /// in-Core foreground trigger did — but without spawning or announcing,
+    /// which the supervisor now drives from the fact itself.
+    ForegroundChanged(Pid),
 }
 
 /// Spawns, tracks, retires, and respawns outpost processes.
@@ -148,6 +168,11 @@ struct SupervisorShared {
     events_tx: Sender<OutpostMessage>,
     generation: AtomicU64,
     outposts: Mutex<HashMap<Pid, Running>>,
+    /// The focus listener's dedicated slot (decision D13): one permanent,
+    /// stateless process, supervised like any outpost (job, heartbeat,
+    /// respawn) but never in the per-pid map, so the idle sweep structurally
+    /// never touches it and no listener entry pollutes the status mirror.
+    listener: Mutex<Option<ListenerRunning>>,
     current_foreground: Mutex<Option<Pid>>,
     /// Source of the `seq` echoed in each `Ping`/`Pong`; only monotonicity
     /// (for log correlation) matters, not per-outpost uniqueness.
@@ -176,6 +201,33 @@ struct Running {
     /// The parked-thread count from the most recent pong, or 0 before the
     /// first one arrives.
     last_parked_count: usize,
+    /// Whether this outpost has sent its `Ready` yet. A focus fact routed to
+    /// an outpost still spawning is not written straight to its pipe — it is
+    /// held in [`pending`](Self::pending) and flushed when `Ready` arrives, so
+    /// the fact is never lost to the spawn gap (decision D13).
+    ready: bool,
+    /// Focus facts routed to this outpost before it sent `Ready`, one slot per
+    /// category, newest-wins (see [`PendingFacts`]).
+    pending: PendingFacts,
+}
+
+/// The focus listener's live process, the parent end of its command pipe, and
+/// the bookkeeping to decide respawn and wedge-kill policy (decision D13). It
+/// carries no `last_foreground_at` (the listener is never idle-retired) and no
+/// parked count (it never parks a thread — its hard rule is no cross-process
+/// call, so it never blocks on one).
+struct ListenerRunning {
+    generation: u64,
+    /// Held so the kernel kills the listener when this handle closes, the same
+    /// mechanism the per-app outposts use.
+    _job: OwnedHandle,
+    /// The listener process handle; closing it just releases our reference.
+    _process: OwnedHandle,
+    /// The listener's own process id, for wedge-kill log lines.
+    outpost_pid: Pid,
+    to_listener: File,
+    /// When the most recent pong was recorded, spawn time initially.
+    last_pong_at: Instant,
 }
 
 impl Supervisor {
@@ -196,20 +248,32 @@ impl Supervisor {
             events_tx,
             generation: AtomicU64::new(0),
             outposts: Mutex::new(HashMap::new()),
+            listener: Mutex::new(None),
             current_foreground: Mutex::new(None),
             ping_seq: AtomicU64::new(0),
         });
+        // The focus listener exists from startup (decision D13). A failed
+        // initial spawn is logged and left for the heartbeat tick to retry on
+        // its interval, rather than failing supervisor construction.
+        shared.ensure_listener();
         spawn_sweep_thread(&shared);
         spawn_heartbeat_thread(&shared);
         Ok(Self { shared })
     }
 
-    /// Reports a foreground change to `target_pid`: spawns an outpost if
-    /// none exists for this pid yet, otherwise sends the existing one an
-    /// `AnnounceFocus` — never respawning or rebinding it. Outposts stay
-    /// alive when their application loses foreground; call this on every
-    /// foreground change, including the first, so the first application's
-    /// outpost exists too.
+    /// Reports a foreground change to `target_pid` by the announce-poll path:
+    /// spawns an outpost if none exists for this pid yet, otherwise sends the
+    /// existing one an `AnnounceFocus` — never respawning or rebinding it.
+    /// Outposts stay alive when their application loses foreground.
+    ///
+    /// Under decision D13 this is a fallback, not the mechanism of record.
+    /// Ordinary foreground changes now flow through the focus listener as
+    /// facts ([`SupervisorShared::route_fact`]); this poll remains for the
+    /// supervisor's own startup target (`verbatim-app`'s
+    /// `target_current_foreground`) and to re-announce the current foreground
+    /// after a listener respawn. It writes `AnnounceFocus` on both branches —
+    /// `spawn` itself no longer does, so a fact-routing spawn stays silent and
+    /// lets the fact do the announcing.
     ///
     /// # Errors
     ///
@@ -220,30 +284,7 @@ impl Supervisor {
             .current_foreground
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(target_pid);
-
-        let mut outposts = self
-            .shared
-            .outposts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let result = if let Some(running) = outposts.get_mut(&target_pid) {
-            running.last_foreground_at = Instant::now();
-            write_message(
-                &mut running.to_outpost,
-                &SupervisorToOutpost::AnnounceFocus {
-                    trace_id: verbatim_model::TraceId::mint(),
-                },
-            )
-        } else {
-            match self.shared.spawn(target_pid) {
-                Ok(running) => {
-                    outposts.insert(target_pid, running);
-                    Ok(())
-                }
-                Err(error) => Err(error),
-            }
-        };
-        drop(outposts);
+        let result = self.shared.announce_foreground(target_pid);
         self.shared.sweep_idle();
         result
     }
@@ -329,15 +370,12 @@ impl SupervisorShared {
         }
         close_handle(process.thread);
 
-        let mut to_outpost = pipes.parent_out;
-        // The spawn itself is the first foreground change this outpost has
-        // to announce; it saw none of the events that led to it.
-        write_message(
-            &mut to_outpost,
-            &SupervisorToOutpost::AnnounceFocus {
-                trace_id: verbatim_model::TraceId::mint(),
-            },
-        )?;
+        let to_outpost = pipes.parent_out;
+        // No `AnnounceFocus` is written here (decision D13): focus now arrives
+        // as a listener fact, and a fact-routing spawn wants the fact to do
+        // the announcing, not a poll. The two callers that still want the poll
+        // — the startup target and a listener-respawn recovery — write
+        // `AnnounceFocus` themselves through `announce_foreground`.
 
         // SAFETY: `process.process` is a valid process handle we now own.
         let process_owned = unsafe { OwnedHandle::from_raw_handle(process.process.0 as RawHandle) };
@@ -360,7 +398,120 @@ impl SupervisorShared {
             last_foreground_at: now,
             last_pong_at: now,
             last_parked_count: 0,
+            ready: false,
+            pending: PendingFacts::default(),
         })
+    }
+
+    /// The announce-poll spawn-or-announce behind [`Supervisor::note_foreground`]:
+    /// if an outpost already watches `target_pid`, refresh its foreground time
+    /// and send it an `AnnounceFocus`; otherwise spawn one and send the same.
+    /// The poll is a decision-D13 fallback (startup target, listener-respawn
+    /// recovery), so unlike [`Self::route_fact`] this always writes
+    /// `AnnounceFocus`.
+    fn announce_foreground(self: &Arc<Self>, target_pid: Pid) -> io::Result<()> {
+        let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(running) = outposts.get_mut(&target_pid) {
+            running.last_foreground_at = Instant::now();
+        } else {
+            let running = self.spawn(target_pid)?;
+            outposts.insert(target_pid, running);
+        }
+        let running = outposts
+            .get_mut(&target_pid)
+            .expect("just inserted or already present");
+        write_message(
+            &mut running.to_outpost,
+            &SupervisorToOutpost::AnnounceFocus {
+                trace_id: TraceId::mint(),
+            },
+        )
+    }
+
+    /// Routes one focus fact from the listener to the target's own outpost
+    /// (decision D13). For a foreground fact, this first records the new
+    /// foreground (both the supervisor's own tracking, for the idle sweep and
+    /// listener-respawn recovery, and the app's, via
+    /// [`OutpostMessage::ForegroundChanged`]) *before* delivering, so the
+    /// reducer's stale-event gate has the new foreground by the time the
+    /// fact's own event arrives. For every fact it ensures the target outpost
+    /// exists — spawning it if needed, which merely delays this one
+    /// announcement by the spawn latency rather than losing it — and then
+    /// delivers the fact, or, if the outpost has not sent `Ready` yet, queues
+    /// it newest-wins per category to be flushed on `Ready`.
+    fn route_fact(self: &Arc<Self>, trace_id: TraceId, observed_at_ms: u64, fact: ListenerFact) {
+        let target_pid = fact.pid();
+        let is_foreground = matches!(fact, ListenerFact::Foreground { .. });
+        if is_foreground {
+            *self
+                .current_foreground
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(target_pid);
+            {
+                let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(running) = outposts.get_mut(&target_pid) {
+                    running.last_foreground_at = Instant::now();
+                }
+            }
+            // Sent before the deliver below: the app updates its foreground
+            // atomic here, and channel ordering guarantees it lands before the
+            // outpost's own emitted event can (the outpost has not even been
+            // handed the fact yet).
+            let _ = self
+                .events_tx
+                .send(OutpostMessage::ForegroundChanged(target_pid));
+        }
+
+        let delivered = fact.into_delivered();
+        let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+        let running = match outposts.entry(target_pid) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => match self.spawn(target_pid) {
+                Ok(running) => entry.insert(running),
+                Err(error) => {
+                    tracing::warn!(%error, %target_pid, "failed to spawn outpost for a focus fact");
+                    return;
+                }
+            },
+        };
+        if running.ready {
+            let _ = write_message(
+                &mut running.to_outpost,
+                &SupervisorToOutpost::DeliverFact {
+                    trace_id,
+                    observed_at_ms,
+                    fact: delivered,
+                },
+            );
+        } else {
+            running.pending.store(trace_id, observed_at_ms, delivered);
+        }
+    }
+
+    /// Flushes any facts queued for `target_pid` while it was still spawning,
+    /// when its `Ready` is intercepted (decision D13) — but only if it is
+    /// still this `generation`'s entry, the same discipline
+    /// [`Self::record_pong`] follows. The facts flush in the fixed order
+    /// foreground, focus, menu-popup ([`PendingFacts::drain`]).
+    fn on_ready(&self, target_pid: Pid, generation: u64) {
+        let mut outposts = self.outposts.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(running) = outposts.get_mut(&target_pid) else {
+            return;
+        };
+        if running.generation != generation {
+            return;
+        }
+        running.ready = true;
+        for pending in running.pending.drain() {
+            let _ = write_message(
+                &mut running.to_outpost,
+                &SupervisorToOutpost::DeliverFact {
+                    trace_id: pending.trace_id,
+                    observed_at_ms: pending.observed_at_ms,
+                    fact: pending.fact,
+                },
+            );
+        }
     }
 
     /// Respawns the outpost that exited, if it is still this generation's
@@ -450,6 +601,34 @@ impl SupervisorShared {
         for (pid, generation, reason) in wedged {
             self.kill_and_respawn(pid, generation, reason);
         }
+
+        // The listener is supervised on the same interval and by the same
+        // wedge policy (decision D13), from its dedicated slot rather than the
+        // per-pid map. A missing slot (a failed initial or respawn spawn) is
+        // retried here.
+        self.ensure_listener();
+        let wedged_listener = {
+            let mut slot = self.listener.lock().unwrap_or_else(PoisonError::into_inner);
+            slot.as_mut().and_then(|running| {
+                if let Some(reason) = wedge_decision(
+                    running.last_pong_at,
+                    now,
+                    PING_INTERVAL,
+                    MISSED_PONG_THRESHOLD,
+                    0, // The listener never parks a thread.
+                    PARKED_THREAD_KILL_THRESHOLD,
+                ) {
+                    Some((running.generation, reason))
+                } else {
+                    let _ =
+                        write_message(&mut running.to_listener, &SupervisorToOutpost::Ping { seq });
+                    None
+                }
+            })
+        };
+        if let Some((generation, reason)) = wedged_listener {
+            self.kill_and_respawn_listener(generation, reason);
+        }
     }
 
     /// Kills and respawns the outpost that [`Self::heartbeat_tick`] judged
@@ -505,6 +684,153 @@ impl SupervisorShared {
                 );
                 let _ = self.events_tx.send(OutpostMessage::Retired(target_pid));
             }
+        }
+    }
+
+    /// Spawns the focus listener (decision D13) with the same job-object
+    /// machinery as a per-app outpost — suspended, placed in a
+    /// kill-on-close-plus-memory-cap job, resumed — but with the `--listener`
+    /// command line (no target pid) and its own reader loop. No `AnnounceFocus`
+    /// is written: the listener has no target to announce.
+    fn spawn_listener(self: &Arc<Self>) -> io::Result<ListenerRunning> {
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let pipes = Pipes::create()?;
+        let job = create_job()?;
+
+        let command_line = format!(
+            "\"{}\" --listener --pipe-in {} --pipe-out {}",
+            self.exe_path.display(),
+            pipes.child_in.0 as usize,
+            pipes.child_out.0 as usize,
+        );
+        let process = spawn_suspended(&command_line, &job)?;
+        pipes.close_child_ends();
+
+        // SAFETY: `process.thread` is the suspended primary thread handle.
+        unsafe {
+            ResumeThread(process.thread);
+        }
+        close_handle(process.thread);
+
+        // SAFETY: `process.process` is a valid process handle we now own.
+        let process_owned = unsafe { OwnedHandle::from_raw_handle(process.process.0 as RawHandle) };
+        let outpost_pid = Pid(process.pid);
+
+        let reader_shared = Arc::clone(self);
+        let from_listener = pipes.parent_in;
+        thread::Builder::new()
+            .name("verbatim-listener-reader".to_owned())
+            .spawn(move || listener_reader_loop(&reader_shared, generation, from_listener))
+            .map_err(io::Error::other)?;
+
+        Ok(ListenerRunning {
+            generation,
+            _job: job,
+            _process: process_owned,
+            outpost_pid,
+            to_listener: pipes.parent_out,
+            last_pong_at: Instant::now(),
+        })
+    }
+
+    /// Spawns the listener into its slot if the slot is empty. Called at
+    /// startup and from each heartbeat tick, so a failed initial spawn is
+    /// retried on the heartbeat interval rather than leaving the desktop with
+    /// no focus detection. A spawn failure is logged and left for the next
+    /// tick.
+    fn ensure_listener(self: &Arc<Self>) {
+        let mut slot = self.listener.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.is_some() {
+            return;
+        }
+        match self.spawn_listener() {
+            Ok(running) => *slot = Some(running),
+            Err(error) => tracing::error!(%error, "failed to spawn focus listener"),
+        }
+    }
+
+    /// Records a pong from the listener, updating its last-pong time — but only
+    /// if it is still this `generation`'s listener, the same generation
+    /// discipline [`Self::record_pong`] follows. The listener never parks a
+    /// thread, so its parked count is ignored.
+    fn record_listener_pong(&self, generation: u64) {
+        let mut slot = self.listener.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(running) = slot.as_mut()
+            && running.generation == generation
+        {
+            running.last_pong_at = Instant::now();
+        }
+    }
+
+    /// Respawns the listener after its pipe reached end of stream, if it is
+    /// still this `generation`'s listener, then re-announces the current
+    /// foreground once — the poll fallback covering the respawn gap, during
+    /// which no facts flowed (decision D13). The generation check makes a late
+    /// end-of-stream from a listener already killed-and-respawned a no-op.
+    fn respawn_listener_if_current(self: &Arc<Self>, generation: u64) {
+        {
+            let mut slot = self.listener.lock().unwrap_or_else(PoisonError::into_inner);
+            match slot.as_ref() {
+                Some(running) if running.generation == generation => {}
+                _ => return, // Already replaced; nothing to do.
+            }
+            match self.spawn_listener() {
+                Ok(running) => *slot = Some(running),
+                Err(error) => {
+                    tracing::error!(%error, "failed to respawn focus listener");
+                    *slot = None; // Left empty for the heartbeat tick to retry.
+                }
+            }
+        }
+        self.announce_current_foreground();
+    }
+
+    /// Kills and respawns the listener the heartbeat judged wedged, if it is
+    /// still this `generation`'s listener — the same generation check and
+    /// job-handle-drop kill [`Self::kill_and_respawn`] uses. Follows the
+    /// respawn with one synthetic announce for the current foreground to cover
+    /// the gap, exactly as an end-of-stream respawn does.
+    fn kill_and_respawn_listener(self: &Arc<Self>, generation: u64, reason: WedgeReason) {
+        {
+            let mut slot = self.listener.lock().unwrap_or_else(PoisonError::into_inner);
+            let killed = match slot.as_ref() {
+                Some(running) if running.generation == generation => slot.take(),
+                _ => None,
+            };
+            let Some(running) = killed else {
+                return;
+            };
+            tracing::warn!(
+                outpost_pid = %running.outpost_pid,
+                reason = %reason,
+                "killing wedged focus listener"
+            );
+            // Dropping `running` closes its job handle; kill-on-job-close kills
+            // the listener process immediately.
+            drop(running);
+            match self.spawn_listener() {
+                Ok(running) => *slot = Some(running),
+                Err(error) => {
+                    tracing::error!(%error, "failed to respawn focus listener after killing a wedged one");
+                    *slot = None;
+                }
+            }
+        }
+        self.announce_current_foreground();
+    }
+
+    /// Re-announces the current foreground application once through the
+    /// announce-poll path, covering a listener respawn gap (decision D13).
+    /// Does nothing if no foreground is known yet.
+    fn announce_current_foreground(self: &Arc<Self>) {
+        let current = *self
+            .current_foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(pid) = current
+            && let Err(error) = self.announce_foreground(pid)
+        {
+            tracing::warn!(%error, %pid, "failed to re-announce foreground after listener respawn");
         }
     }
 
@@ -609,6 +935,79 @@ fn wedge_decision(
     None
 }
 
+/// A focus fact routed to an outpost, held until the outpost is ready to
+/// receive it (decision D13).
+struct PendingFact {
+    trace_id: TraceId,
+    observed_at_ms: u64,
+    fact: DeliveredFact,
+}
+
+/// The per-outpost queue of focus facts that arrived while the outpost was
+/// still spawning (decision D13). One slot per category, each newest-wins:
+/// three focus changes during one spawn deliver one announcement, the current
+/// one. Kept as a pure type with its own unit tests, the same split
+/// [`idle_decision`] and [`wedge_decision`] use, so the queueing policy is
+/// testable without a live outpost.
+///
+/// The MSAA and UIA focus facts get *separate* slots, not one shared focus
+/// slot. Both backends can report the same focus, and the app outpost resolves
+/// a real per-window verdict for each fact independently; which fact is the one
+/// that actually announces depends on the window's backend — a UIA window's
+/// UIA fact, an MSAA window's MSAA fact. That only works if both facts survive
+/// the spawn: a single shared slot let the later-arriving fact overwrite the
+/// earlier, so the survivor could be the fact the verdict drops, announcing
+/// nothing (found live for a UIA search box that fires no MSAA focus event at
+/// all — its UIA fact was overwritten by a foreground-driven MSAA fact, which
+/// then dropped against the UIA verdict). Keeping both lets whichever backend
+/// owns the window announce, in either arrival order.
+#[derive(Default)]
+struct PendingFacts {
+    foreground: Option<PendingFact>,
+    msaa_focus: Option<PendingFact>,
+    uia_focus: Option<PendingFact>,
+    menu_popup: Option<PendingFact>,
+}
+
+impl PendingFacts {
+    /// Stores `fact` in its category's slot, overwriting any older fact there
+    /// (newest-wins). The MSAA and UIA focus facts have distinct slots (see the
+    /// type's doc), so a spawn that saw both delivers both.
+    fn store(&mut self, trace_id: TraceId, observed_at_ms: u64, fact: DeliveredFact) {
+        let pending = PendingFact {
+            trace_id,
+            observed_at_ms,
+            fact,
+        };
+        let slot = match pending.fact {
+            DeliveredFact::Foreground { .. } => &mut self.foreground,
+            DeliveredFact::MsaaFocus { .. } => &mut self.msaa_focus,
+            DeliveredFact::UiaFocus { .. } => &mut self.uia_focus,
+            DeliveredFact::MenuPopup { .. } => &mut self.menu_popup,
+        };
+        *slot = Some(pending);
+    }
+
+    /// Takes the queued facts in the fixed flush order foreground, MSAA focus,
+    /// UIA focus, menu-popup, leaving every slot empty. The order is a stable
+    /// default, not a correctness requirement: each focus fact resolves its own
+    /// real per-window verdict on its per-fact thread, so exactly one backend
+    /// announces regardless of which flushes first (the outpost no longer
+    /// depends on a provisional MSAA-first ordering the way it did before facts
+    /// resolved real verdicts).
+    fn drain(&mut self) -> Vec<PendingFact> {
+        [
+            self.foreground.take(),
+            self.msaa_focus.take(),
+            self.uia_focus.take(),
+            self.menu_popup.take(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
 /// Spawns the coarse background thread that sweeps idle outposts even when
 /// no foreground change happens to trigger one — a long-backgrounded
 /// application's outpost still needs to be reaped eventually. Lives for the
@@ -667,11 +1066,16 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 /// Forwards outpost messages until the pipe closes, then requests a
-/// respawn-if-alive decision. A `Pong` is intercepted here rather than
-/// forwarded: it feeds [`SupervisorShared::record_pong`] (the heartbeat
-/// bookkeeping [`heartbeat_tick`](SupervisorShared::heartbeat_tick) reads),
-/// and carries nothing the app needs — it was already a no-op there before
-/// this module tracked heartbeats at all.
+/// respawn-if-alive decision. Two message kinds are intercepted:
+///
+/// - A `Pong` is consumed here, never forwarded: it feeds
+///   [`SupervisorShared::record_pong`] (the heartbeat bookkeeping
+///   [`heartbeat_tick`](SupervisorShared::heartbeat_tick) reads), and carries
+///   nothing the app needs.
+/// - A `Ready` is intercepted to flush any focus facts queued while the
+///   outpost was spawning ([`SupervisorShared::on_ready`], decision D13), but
+///   is *also* still forwarded to the app, which updates its status mirror
+///   from it.
 fn reader_loop(
     shared: &Arc<SupervisorShared>,
     generation: u64,
@@ -684,6 +1088,10 @@ fn reader_loop(
             shared.record_pong(target_pid, generation, parked_count);
             continue;
         }
+        if matches!(message, OutpostToSupervisor::Ready { .. }) {
+            shared.on_ready(target_pid, generation);
+            // Fall through: the app still wants the Ready for its status mirror.
+        }
         if shared
             .events_tx
             .send(OutpostMessage::Event(target_pid, Box::new(message)))
@@ -694,6 +1102,34 @@ fn reader_loop(
     }
     // Reached on end of stream or a pipe error: the outpost has exited.
     shared.respawn_if_alive(target_pid, generation);
+}
+
+/// Forwards listener messages until its pipe closes, then respawns the
+/// listener (decision D13). Unlike [`reader_loop`], a `FocusFact` is routed to
+/// the target's own outpost and never forwarded to the app; a `Pong` feeds the
+/// listener's own heartbeat bookkeeping; `Ready` and `Fault` are logged. The
+/// listener sends nothing else.
+fn listener_reader_loop(shared: &Arc<SupervisorShared>, generation: u64, from_listener: File) {
+    let mut reader = BufReader::new(from_listener);
+    while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+        match message {
+            OutpostToSupervisor::FocusFact {
+                trace_id,
+                observed_at_ms,
+                fact,
+            } => shared.route_fact(trace_id, observed_at_ms, fact),
+            OutpostToSupervisor::Pong { .. } => shared.record_listener_pong(generation),
+            OutpostToSupervisor::Ready { outpost_pid, .. } => {
+                tracing::info!(%outpost_pid, "focus listener ready");
+            }
+            OutpostToSupervisor::Fault { detail } => {
+                tracing::warn!(detail, "focus listener fault");
+            }
+            _ => {} // The listener sends nothing else.
+        }
+    }
+    // Reached on end of stream or a pipe error: the listener has exited.
+    shared.respawn_listener_if_current(generation);
 }
 
 /// The four pipe handles: parent and child ends of two anonymous pipes.
@@ -988,5 +1424,76 @@ mod tests {
             wedge_decision(start, earlier, Duration::from_secs(3), 3, 0, 8),
             None
         );
+    }
+
+    fn uia_focus(runtime: i32) -> DeliveredFact {
+        DeliveredFact::UiaFocus {
+            hwnd: 0,
+            snapshot: crate::protocol::UiaSnapshotFact {
+                runtime_id: vec![runtime],
+                role: verbatim_model::Role::Button,
+                name: None,
+                value: None,
+                states: verbatim_model::StateSet::new(),
+                details: verbatim_model::NodeDetails::default(),
+            },
+        }
+    }
+
+    fn msaa_focus(id_child: i32) -> DeliveredFact {
+        DeliveredFact::MsaaFocus {
+            hwnd: 9,
+            id_object: -4,
+            id_child,
+        }
+    }
+
+    #[test]
+    fn pending_facts_keep_newest_within_each_backend_and_survive_both() {
+        let mut pending = PendingFacts::default();
+        // Two UIA focus changes and two MSAA focus changes during one spawn:
+        // each backend's slot keeps only its newest, but both backends survive
+        // — a shared slot would have lost one, and the app outpost needs both
+        // to arbitrate independently.
+        pending.store(TraceId::mint(), 1, uia_focus(1));
+        pending.store(TraceId::mint(), 2, uia_focus(2));
+        pending.store(TraceId::mint(), 3, msaa_focus(10));
+        pending.store(TraceId::mint(), 4, msaa_focus(20));
+        let drained = pending.drain();
+        assert_eq!(drained.len(), 2, "one MSAA and one UIA focus fact survive");
+        // Drain order is MSAA focus before UIA focus.
+        assert_eq!(drained[0].observed_at_ms, 4);
+        assert_eq!(drained[0].fact, msaa_focus(20));
+        assert_eq!(drained[1].observed_at_ms, 2);
+        assert_eq!(drained[1].fact, uia_focus(2));
+    }
+
+    #[test]
+    fn pending_facts_drain_in_foreground_msaa_uia_menu_order() {
+        let mut pending = PendingFacts::default();
+        // Stored out of order; must drain foreground, MSAA focus, UIA focus,
+        // then menu-popup.
+        pending.store(
+            TraceId::mint(),
+            40,
+            DeliveredFact::MenuPopup {
+                hwnd: 3,
+                id_object: -3,
+                id_child: 0,
+            },
+        );
+        pending.store(TraceId::mint(), 30, uia_focus(2));
+        pending.store(TraceId::mint(), 20, msaa_focus(5));
+        pending.store(TraceId::mint(), 10, DeliveredFact::Foreground { hwnd: 1 });
+        let order: Vec<u64> = pending.drain().iter().map(|p| p.observed_at_ms).collect();
+        assert_eq!(order, vec![10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn pending_facts_drain_leaves_slots_empty() {
+        let mut pending = PendingFacts::default();
+        pending.store(TraceId::mint(), 1, DeliveredFact::Foreground { hwnd: 1 });
+        assert_eq!(pending.drain().len(), 1);
+        assert!(pending.drain().is_empty(), "a second drain finds nothing");
     }
 }

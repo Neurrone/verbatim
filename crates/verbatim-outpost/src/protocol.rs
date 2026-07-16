@@ -12,8 +12,172 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, FetchResult, NormalizedEvent, Pid, Query, QueryId, SnapshotVersion, TraceId, TreeNode,
+    Backend, FetchResult, NodeDetails, NormalizedEvent, Pid, Query, QueryId, Role, SnapshotVersion,
+    StateSet, TraceId, TreeNode,
 };
+
+/// The identity-free contents of a UIA focus element, as the focus listener
+/// captures them (decision D13): the runtime id plus role, name, value,
+/// states, and details — everything a [`NodeSnapshot`](verbatim_model::NodeSnapshot)
+/// carries except its [`NodeId`](verbatim_model::NodeId). The node id is
+/// deliberately absent: identity is minted per application inside that
+/// application's own outpost and never crosses a process boundary, so the
+/// receiving outpost mints it from the runtime id when it rebuilds the
+/// snapshot. Mirrors `verbatim_uia::map::CachedUiaParts`, which is what the
+/// listener reads by cached property access.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UiaSnapshotFact {
+    /// The UIA runtime id, the key the receiving outpost mints its node id from.
+    pub runtime_id: Vec<i32>,
+    /// Normalized role (already refined for toggle buttons).
+    pub role: Role,
+    /// Accessible name, if any.
+    pub name: Option<String>,
+    /// Current value.
+    pub value: Option<String>,
+    /// Current states.
+    pub states: StateSet,
+    /// The optional properties beyond the core four.
+    pub details: NodeDetails,
+}
+
+/// A focus fact the listener forwards to Core, tagged with the pid Core routes
+/// it to (decision D13). The listener reads only what the event itself carries
+/// plus hang-safe local reads (the owning pid, a cached window handle), never
+/// a cross-process call: a UIA focus fact is built from the element's cached
+/// properties, an MSAA fact forwards the raw `WinEvent` address untouched.
+///
+/// [`DeliveredFact`] is the same address minus the pid, which the supervisor
+/// hands to the target's own outpost once routing is done.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ListenerFact {
+    /// A UIA focus change: the owning pid, the element's cached native window
+    /// handle (0 when the element is not itself a window), and its cached
+    /// snapshot parts.
+    UiaFocus {
+        /// The owning application's pid.
+        pid: Pid,
+        /// The element's cached native window handle, or 0 when it is not a
+        /// window in its own right (a menu item, a list item).
+        hwnd: isize,
+        /// The element's cached snapshot parts.
+        snapshot: UiaSnapshotFact,
+    },
+    /// An MSAA focus change: the owning pid and the raw `WinEvent` address.
+    MsaaFocus {
+        /// The owning application's pid.
+        pid: Pid,
+        /// The event's window handle.
+        hwnd: isize,
+        /// The event's `idObject`.
+        id_object: i32,
+        /// The event's `idChild`.
+        id_child: i32,
+    },
+    /// A foreground change: the owning pid and the new foreground window.
+    Foreground {
+        /// The new foreground window's owning pid.
+        pid: Pid,
+        /// The new foreground window handle.
+        hwnd: isize,
+    },
+    /// A popup menu opening: the owning pid and the raw `WinEvent` address.
+    MenuPopup {
+        /// The owning application's pid.
+        pid: Pid,
+        /// The event's window handle.
+        hwnd: isize,
+        /// The event's `idObject`.
+        id_object: i32,
+        /// The event's `idChild`.
+        id_child: i32,
+    },
+}
+
+impl ListenerFact {
+    /// The pid the supervisor routes this fact to.
+    #[must_use]
+    pub fn pid(&self) -> Pid {
+        match *self {
+            ListenerFact::UiaFocus { pid, .. }
+            | ListenerFact::MsaaFocus { pid, .. }
+            | ListenerFact::Foreground { pid, .. }
+            | ListenerFact::MenuPopup { pid, .. } => pid,
+        }
+    }
+
+    /// Strips the pid, yielding the [`DeliveredFact`] the supervisor hands to
+    /// the target outpost once routing is done.
+    #[must_use]
+    pub fn into_delivered(self) -> DeliveredFact {
+        match self {
+            ListenerFact::UiaFocus { hwnd, snapshot, .. } => {
+                DeliveredFact::UiaFocus { hwnd, snapshot }
+            }
+            ListenerFact::MsaaFocus {
+                hwnd,
+                id_object,
+                id_child,
+                ..
+            } => DeliveredFact::MsaaFocus {
+                hwnd,
+                id_object,
+                id_child,
+            },
+            ListenerFact::Foreground { hwnd, .. } => DeliveredFact::Foreground { hwnd },
+            ListenerFact::MenuPopup {
+                hwnd,
+                id_object,
+                id_child,
+                ..
+            } => DeliveredFact::MenuPopup {
+                hwnd,
+                id_object,
+                id_child,
+            },
+        }
+    }
+}
+
+/// A focus fact the supervisor delivers to a target outpost (decision D13):
+/// the same address a [`ListenerFact`] carries, minus the pid, since routing
+/// is already done. The outpost turns it back into an announcement on its own
+/// deadline-guarded query pool — acquiring, arbitrating, enriching, and
+/// emitting exactly as it does for the events it still hooks itself.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum DeliveredFact {
+    /// A UIA focus change (see [`ListenerFact::UiaFocus`]).
+    UiaFocus {
+        /// The element's cached native window handle, or 0 when it is not a
+        /// window in its own right.
+        hwnd: isize,
+        /// The element's cached snapshot parts.
+        snapshot: UiaSnapshotFact,
+    },
+    /// An MSAA focus change (see [`ListenerFact::MsaaFocus`]).
+    MsaaFocus {
+        /// The event's window handle.
+        hwnd: isize,
+        /// The event's `idObject`.
+        id_object: i32,
+        /// The event's `idChild`.
+        id_child: i32,
+    },
+    /// A foreground change (see [`ListenerFact::Foreground`]).
+    Foreground {
+        /// The new foreground window handle.
+        hwnd: isize,
+    },
+    /// A popup menu opening (see [`ListenerFact::MenuPopup`]).
+    MenuPopup {
+        /// The event's window handle.
+        hwnd: isize,
+        /// The event's `idObject`.
+        id_object: i32,
+        /// The event's `idChild`.
+        id_child: i32,
+    },
+}
 
 /// Messages from the Core-side supervisor to an outpost.
 ///
@@ -35,20 +199,39 @@ pub enum SupervisorToOutpost {
         /// The forced backend, or `None` for normal arbitration.
         backend_override: Option<Backend>,
     },
-    /// Announces the target application's foreground: the newly
-    /// authoritative outpost for this pid (freshly spawned, or one Core
-    /// already had running for it) emits a synthetic `FocusChanged` for the
-    /// application's top-level foreground window, then the synthetic focus
-    /// for its focused control, retrying the control query a bounded number
-    /// of times against a control that has not focused itself yet. Sent on
-    /// every foreground change to this pid, including the first (spawn
-    /// triggers one implicitly by way of the supervisor sending this right
-    /// after; see `verbatim-outpost::supervisor`).
+    /// Announces the target application's foreground by polling: the outpost
+    /// emits a synthetic `FocusChanged` for the application's top-level
+    /// foreground window, then the synthetic focus for its focused control,
+    /// retrying a bounded number of times against a control or window that
+    /// has not readied itself yet.
+    ///
+    /// Under decision D13 this is a fallback, no longer the mechanism of
+    /// record. The focus listener detects focus from the OS event directly
+    /// and Core delivers it as a [`DeliverFact`](Self::DeliverFact); the poll
+    /// remains only for the supervisor's own startup target and to re-announce
+    /// the current foreground across a listener respawn gap. It is still sent
+    /// when Core spawns or re-targets an outpost for a foreground application
+    /// (see `verbatim-outpost::supervisor`).
     AnnounceFocus {
         /// Trace ID of the foreground-change observation that caused this
         /// announcement, for diagnostics; the emitted events mint their own
         /// trace IDs, since each is its own observably-caused utterance.
         trace_id: TraceId,
+    },
+    /// Delivers a focus fact the focus listener captured, for this outpost's
+    /// target application (decision D13). The outpost acquires, arbitrates,
+    /// enriches, and announces it on its query pool exactly as it does for
+    /// the events it hooks itself, but threading the listener's `trace_id`
+    /// and `observed_at_ms` through to the emitted event so the latency
+    /// timeline starts at the real OS event rather than this delivery.
+    DeliverFact {
+        /// Trace ID the listener minted when it observed the OS event.
+        trace_id: TraceId,
+        /// Milliseconds since the Unix epoch when the listener observed the
+        /// OS event — the first point on the keypress-to-audio timeline.
+        observed_at_ms: u64,
+        /// The routed fact, minus the pid (routing is done).
+        fact: DeliveredFact,
     },
     /// Asks for more data about a node; answered by
     /// [`OutpostToSupervisor::FetchReply`].
@@ -226,6 +409,20 @@ pub enum OutpostToSupervisor {
     Fault {
         /// Human-readable detail for logs and diagnostics.
         detail: String,
+    },
+    /// A focus fact the focus listener captured (decision D13). Sent only by
+    /// the listener process, never a per-application outpost; the supervisor
+    /// intercepts it, routes it to the target's own outpost, and never
+    /// forwards it to the app. The listener mints the `trace_id` and stamps
+    /// `observed_at_ms` at observation, so the latency timeline starts at the
+    /// real OS event.
+    FocusFact {
+        /// Trace ID minted when the listener observed the OS event.
+        trace_id: TraceId,
+        /// Milliseconds since the Unix epoch when the OS event was observed.
+        observed_at_ms: u64,
+        /// The captured fact, tagged with the pid Core routes it to.
+        fact: ListenerFact,
     },
 }
 
@@ -488,6 +685,103 @@ mod tests {
             .expect("not end of stream");
         assert_eq!(read_found, found);
         assert_eq!(read_no_neighbor, no_neighbor);
+    }
+
+    #[test]
+    fn focus_fact_and_deliver_fact_round_trip() {
+        let snapshot = UiaSnapshotFact {
+            runtime_id: vec![42, 7],
+            role: Role::MenuItem,
+            name: Some("Settings...".into()),
+            value: None,
+            states: StateSet::new().with(State::Focused),
+            details: NodeDetails::default(),
+        };
+        let fact = ListenerFact::UiaFocus {
+            pid: Pid(1234),
+            hwnd: 0,
+            snapshot: snapshot.clone(),
+        };
+        let focus_fact = OutpostToSupervisor::FocusFact {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 1_752_000_000_000,
+            fact: fact.clone(),
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &focus_fact).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: OutpostToSupervisor = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, focus_fact);
+
+        // The delivered fact is the same address minus the pid.
+        assert_eq!(fact.pid(), Pid(1234));
+        assert_eq!(
+            fact.into_delivered(),
+            DeliveredFact::UiaFocus { hwnd: 0, snapshot }
+        );
+
+        let deliver = SupervisorToOutpost::DeliverFact {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 1_752_000_000_001,
+            fact: DeliveredFact::MsaaFocus {
+                hwnd: 0x1234,
+                id_object: -4,
+                id_child: 0,
+            },
+        };
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &deliver).expect("writes");
+        let mut reader = buffer.as_slice();
+        let read_back: SupervisorToOutpost = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_back, deliver);
+    }
+
+    #[test]
+    fn every_listener_fact_variant_routes_and_strips_its_pid() {
+        let variants = [
+            (
+                ListenerFact::MsaaFocus {
+                    pid: Pid(1),
+                    hwnd: 10,
+                    id_object: -4,
+                    id_child: 0,
+                },
+                DeliveredFact::MsaaFocus {
+                    hwnd: 10,
+                    id_object: -4,
+                    id_child: 0,
+                },
+            ),
+            (
+                ListenerFact::Foreground {
+                    pid: Pid(2),
+                    hwnd: 20,
+                },
+                DeliveredFact::Foreground { hwnd: 20 },
+            ),
+            (
+                ListenerFact::MenuPopup {
+                    pid: Pid(3),
+                    hwnd: 30,
+                    id_object: -3,
+                    id_child: 0,
+                },
+                DeliveredFact::MenuPopup {
+                    hwnd: 30,
+                    id_object: -3,
+                    id_child: 0,
+                },
+            ),
+        ];
+        for (index, (fact, expected)) in variants.into_iter().enumerate() {
+            let pid = Pid(u32::try_from(index).unwrap() + 1);
+            assert_eq!(fact.pid(), pid);
+            assert_eq!(fact.into_delivered(), expected);
+        }
     }
 
     #[test]

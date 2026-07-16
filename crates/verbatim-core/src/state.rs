@@ -20,6 +20,14 @@ use verbatim_model::{NodeId, NodeSnapshot, Pid, QueryId, QueryKind, SnapshotVers
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FocusContext {
     pub(crate) source: Pid,
+    /// Milliseconds since the Unix epoch when the OS event behind this focus
+    /// was observed, carried from the `FocusChanged` input. A later
+    /// `FocusChanged` from the same source whose own observation is strictly
+    /// earlier than this is dropped (last-observation-wins), so a window and a
+    /// control announcement racing on two outpost threads cannot leave the
+    /// reducer on the earlier-observed one. Zero when the input carried no
+    /// timestamp (an older flight-recorder stream).
+    pub(crate) observed_at_ms: u64,
     pub(crate) snapshot: NodeSnapshot,
     pub(crate) last_announced: NodeSnapshot,
     /// The focused node's ancestors, outermost first, as the `FocusChanged`

@@ -63,6 +63,121 @@ pub fn snapshot_from_event(
     Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry) })
 }
 
+/// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent`, applying
+/// NVDA's child-0-on-a-list redirect before mapping to a [`NodeSnapshot`].
+/// Returns `None` if the object cannot be acquired. Blocking; query pool only.
+///
+/// NVDA's `processFocusWinEvent`
+/// (`nvda/source/IAccessibleHandler/__init__.py`): some controls fire
+/// `EVENT_OBJECT_FOCUS` on child id 0 even when a child holds the focus — the
+/// wxWidgets generic list is one, firing on the list object itself while a list
+/// item is focused. When the event names a list on its own object (child id 0
+/// and MSAA role `ROLE_SYSTEM_LIST`) or the client of a `SysListView32` window,
+/// NVDA reads `accFocus` and redirects the focus object to the named child if
+/// it is a real, different child. This mirrors that condition exactly — no
+/// broader — so a focus event on such a container announces the focused item,
+/// not the container, and the navigator lands on the item. Every other focus
+/// event maps directly, the same as [`snapshot_from_event`], which is what the
+/// menu-popup and other non-focus paths keep using.
+#[must_use]
+pub fn snapshot_from_focus_event(
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+    registry: &NodeIdRegistry,
+) -> Option<NodeSnapshot> {
+    // SAFETY: forwarded to `accessible_and_child`'s contract.
+    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
+    // SAFETY: `acc` and `child` were just acquired together and are valid.
+    if let Some((focus_acc, focus_child, key)) =
+        unsafe { redirect_focus_to_child(&acc, &child, hwnd, id_object, id_child) }
+    {
+        // SAFETY: `focus_acc` and `focus_child` are a valid pair — a real
+        // child addressed by id on `acc`.
+        return Some(unsafe { read_snapshot(&focus_acc, &focus_child, key, registry) });
+    }
+    // SAFETY: `acc` and `child` are valid for each other.
+    Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry) })
+}
+
+/// NVDA's `processFocusWinEvent` redirect: when a focus event names a list
+/// container on child id 0 (MSAA role `ROLE_SYSTEM_LIST`) or the client of a
+/// `SysListView32` window, and `accFocus` names a real, different child *by
+/// id*, return that child's accessible, child variant, and [`MsaaKey`]. `None`
+/// when the condition does not hold or `accFocus` names no distinct child, so
+/// the caller keeps the event's own object.
+///
+/// The child-object (`VT_DISPATCH`) form of `accFocus` deliberately does not
+/// redirect: NVDA's guard is `isinstance(realChildID, int) and realChildID > 0
+/// and realChildID != childID`, so a Dispatch result fails the `isinstance`
+/// check and NVDA keeps the container — matched here by the catch-all `None`.
+/// Redirecting on it would also be unsound, because a child object with no
+/// window handle of its own falls back to the event's own `hwnd`, keying the
+/// child's snapshot under the container's `(hwnd, OBJID_CLIENT, CHILDID_SELF)`
+/// node identity, so a later refetch of that node id would read the container.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible` and `child` a valid child-id `VARIANT`
+/// for it.
+unsafe fn redirect_focus_to_child(
+    acc: &IAccessible,
+    child: &VARIANT,
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+) -> Option<(IAccessible, VARIANT, MsaaKey)> {
+    // SAFETY: forwarded to this function's contract.
+    if !unsafe { focus_event_names_list(acc, child, hwnd, id_object, id_child) } {
+        return None;
+    }
+    // SAFETY: `acc` is live per the contract.
+    match unsafe { read_acc_focus(acc) } {
+        // A child by id: redirect only when it is a real child (greater than
+        // zero) and not the one the event already named — NVDA's exact guard.
+        FocusTarget::ChildId(real_child) if real_child > 0 && real_child != id_child => Some((
+            acc.clone(),
+            child_variant(real_child),
+            (hwnd, id_object, real_child),
+        )),
+        // A `VT_DISPATCH` child object, `None`, or a self/zero child id: keep
+        // the container (see this function's doc for why the dispatch form is
+        // deliberately not redirected).
+        _ => None,
+    }
+}
+
+/// Whether an `EVENT_OBJECT_FOCUS` address matches NVDA's redirect condition:
+/// a list on its own object (child id 0, MSAA role `ROLE_SYSTEM_LIST`), or the
+/// client of a `SysListView32` window.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible` and `child` a valid child-id `VARIANT`
+/// for it.
+unsafe fn focus_event_names_list(
+    acc: &IAccessible,
+    child: &VARIANT,
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+) -> bool {
+    if id_child == CHILDID_SELF {
+        // SAFETY: `acc`/`child` valid together per the contract; `variant_i32`
+        // reads only the VARIANT `get_accRole` just returned.
+        let role = unsafe {
+            acc.get_accRole(child)
+                .ok()
+                .and_then(|v| variant_i32(&v))
+                .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
+        };
+        if role == Role::List {
+            return true;
+        }
+    }
+    id_object == OBJID_CLIENT.0 && window_class_name(hwnd).contains("SysListView32")
+}
+
 /// Acquires the `IAccessible` and child variant named by a `WinEvent`
 /// address, the shared first step behind [`snapshot_from_event`] and
 /// [`ancestor_chain`]. Returns `None` if the object cannot be acquired.
@@ -1042,6 +1157,49 @@ unsafe fn accessible_from_window(hwnd: HWND) -> Option<IAccessible> {
     }
 }
 
+/// What `accFocus` named on a client accessible: nothing distinct, a child by
+/// id (`VT_I4`), or a child's own object (`VT_DISPATCH`). The single place that
+/// parses the `accFocus` `VARIANT`, shared by [`resolve_focus`] (which flattens
+/// it to an accessible-plus-child pair) and [`snapshot_from_focus_event`]
+/// (which needs to distinguish the forms to apply NVDA's redirect rule).
+enum FocusTarget {
+    /// `accFocus` failed, or named the client itself (`CHILDID_SELF`), or an
+    /// unhandled variant form.
+    None,
+    /// A child addressed by id on the client object.
+    ChildId(i32),
+    /// A child exposed as its own `IAccessible`.
+    ChildObject(IAccessible),
+}
+
+/// Reads `accFocus` on `client` into a [`FocusTarget`].
+///
+/// # Safety
+///
+/// `client` must be a live `IAccessible`.
+unsafe fn read_acc_focus(client: &IAccessible) -> FocusTarget {
+    // SAFETY: accFocus returns an owned VARIANT; its variant type is inspected
+    // before any union field is read.
+    unsafe {
+        let Ok(focus) = client.accFocus() else {
+            return FocusTarget::None;
+        };
+        let vt = focus.Anonymous.Anonymous.vt;
+        if vt == VT_DISPATCH {
+            if let Some(dispatch) = focus.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()
+                && let Ok(child_acc) = dispatch.cast::<IAccessible>()
+            {
+                return FocusTarget::ChildObject(child_acc);
+            }
+            FocusTarget::None
+        } else if vt == VT_I4 {
+            FocusTarget::ChildId(focus.Anonymous.Anonymous.Anonymous.lVal)
+        } else {
+            FocusTarget::None
+        }
+    }
+}
+
 /// Resolves `accFocus` on a client accessible into the focused accessible and
 /// its child id, handling both the child-id (`VT_I4`) and child-object
 /// (`VT_DISPATCH`) forms, falling back to the client itself.
@@ -1050,26 +1208,11 @@ unsafe fn accessible_from_window(hwnd: HWND) -> Option<IAccessible> {
 ///
 /// `client` must be a live `IAccessible`.
 unsafe fn resolve_focus(client: &IAccessible) -> (IAccessible, VARIANT) {
-    // SAFETY: accFocus returns an owned VARIANT; its variant type is inspected
-    // before any union field is read.
-    unsafe {
-        let Ok(focus) = client.accFocus() else {
-            return (client.clone(), child_variant(CHILDID_SELF));
-        };
-        let vt = focus.Anonymous.Anonymous.vt;
-        if vt == VT_DISPATCH {
-            if let Some(dispatch) = focus.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()
-                && let Ok(child_acc) = dispatch.cast::<IAccessible>()
-            {
-                return (child_acc, child_variant(CHILDID_SELF));
-            }
-            (client.clone(), child_variant(CHILDID_SELF))
-        } else if vt == VT_I4 {
-            let child_id = focus.Anonymous.Anonymous.Anonymous.lVal;
-            (client.clone(), child_variant(child_id))
-        } else {
-            (client.clone(), child_variant(CHILDID_SELF))
-        }
+    // SAFETY: forwarded to `read_acc_focus`'s contract.
+    match unsafe { read_acc_focus(client) } {
+        FocusTarget::ChildObject(child_acc) => (child_acc, child_variant(CHILDID_SELF)),
+        FocusTarget::ChildId(child_id) => (client.clone(), child_variant(child_id)),
+        FocusTarget::None => (client.clone(), child_variant(CHILDID_SELF)),
     }
 }
 

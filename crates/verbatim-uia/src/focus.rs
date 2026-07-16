@@ -2,10 +2,16 @@
 //!
 //! This module owns its own thread, apartment, client, and the global
 //! `IUIAutomationFocusChangedEventHandler`. Its entire public surface is
-//! [`FocusRegistration::new`] — construct with a target-pid filter and a
-//! callback — and `Drop`, which unregisters. Keeping it this self-contained is
-//! deliberate: the M3 sentinel split moves focus watching into a separate
-//! process, and a narrow seam makes that a relocation rather than a rewrite.
+//! [`FocusRegistration::new`] — construct with a callback — and `Drop`, which
+//! unregisters.
+//!
+//! The registration is desktop-global and unfiltered: UIA offers focus
+//! change events only desktop-wide anyway, and under decision D13 the one
+//! process that holds this registration is the focus listener, which watches
+//! every application at once and forwards each focus fact to the target's own
+//! outpost. The per-application pid filter this module used to carry is gone
+//! with that move — the M3 sentinel split this narrow seam was built to make
+//! a relocation rather than a rewrite.
 
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -19,9 +25,9 @@ use crate::client::Uia;
 
 pub use handler::FocusHandler;
 
-/// Invoked on the UIA callback thread for each focus change whose element
-/// belongs to the target process. Receives the cached element; the outpost
-/// maps it to a snapshot and applies its arbitration cross-filter. Must be
+/// Invoked on the UIA callback thread for each desktop-wide focus change.
+/// Receives the cached element; the listener reads its cached process id,
+/// window handle, and snapshot parts and forwards a focus fact. Must be
 /// `Send + Sync` because UIA delivers on library-managed apartment threads.
 pub type FocusCallback = Arc<dyn Fn(&IUIAutomationElement) + Send + Sync>;
 
@@ -37,14 +43,11 @@ mod handler {
     };
     use windows_core::implement;
 
-    use crate::map::cached_process_id;
-
     use super::FocusCallback;
 
-    /// The COM object implementing the focus handler, filtering to a target pid.
+    /// The COM object implementing the desktop-wide focus handler.
     #[implement(windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler)]
     pub struct FocusHandler {
-        pub target_pid: u32,
         pub callback: FocusCallback,
     }
 
@@ -53,11 +56,7 @@ mod handler {
             &self,
             sender: windows_core::Ref<IUIAutomationElement>,
         ) -> windows_core::Result<()> {
-            if let Some(element) = sender.as_ref()
-                // SAFETY: the sender element was built with this handler's cache
-                // request, so its process id is cached and this read never blocks.
-                && unsafe { cached_process_id(element) } == Some(self.target_pid)
-            {
+            if let Some(element) = sender.as_ref() {
                 (self.callback)(element);
             }
             Ok(())
@@ -75,20 +74,20 @@ pub struct FocusRegistration {
 }
 
 impl FocusRegistration {
-    /// Registers a global focus-change handler filtered to `target_pid`,
-    /// spawning the thread that owns the apartment and client. Returns once the
-    /// handler is registered (or with the error that prevented it).
+    /// Registers the desktop-global focus-change handler, spawning the thread
+    /// that owns the apartment and client. Returns once the handler is
+    /// registered (or with the error that prevented it).
     ///
     /// # Errors
     ///
     /// Returns the COM error if the apartment, client, cache request, or
     /// handler registration could not be set up.
-    pub fn new(target_pid: u32, callback: FocusCallback) -> windows::core::Result<Self> {
+    pub fn new(callback: FocusCallback) -> windows::core::Result<Self> {
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
         let join = thread::Builder::new()
             .name("verbatim-uia-focus".to_owned())
-            .spawn(move || run(target_pid, callback, &ready_tx, &stop_rx))
+            .spawn(move || run(callback, &ready_tx, &stop_rx))
             .map_err(|e| {
                 windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
             })?;
@@ -124,7 +123,6 @@ impl Drop for FocusRegistration {
 /// The worker-thread body: set up the apartment, client, and handler, report
 /// readiness, then block until asked to stop and unregister.
 fn run(
-    target_pid: u32,
     callback: FocusCallback,
     ready: &mpsc::Sender<windows::core::Result<()>>,
     stop: &mpsc::Receiver<()>,
@@ -132,11 +130,7 @@ fn run(
     let setup = (|| -> windows::core::Result<(Uia, IUIAutomationFocusChangedEventHandler)> {
         let uia = Uia::new()?;
         let cache = uia.base_cache_request()?;
-        let handler: IUIAutomationFocusChangedEventHandler = FocusHandler {
-            target_pid,
-            callback,
-        }
-        .into();
+        let handler: IUIAutomationFocusChangedEventHandler = FocusHandler { callback }.into();
         // SAFETY: `cache` and `handler` are live; the client is this thread's
         // own. The handler AddRefs internally, so dropping our `cache` handle
         // after registration is safe.

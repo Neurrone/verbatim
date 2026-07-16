@@ -344,6 +344,70 @@ pub unsafe fn cached_native_window_handle(element: &IUIAutomationElement) -> isi
     unsafe { cached_i32(element, UIA_NativeWindowHandlePropertyId.0).unwrap_or(0) as isize }
 }
 
+/// The identity-free contents of a cached UIA element: its runtime id plus
+/// the role, name, value, states, and details a [`NodeSnapshot`] carries —
+/// everything except the outpost-minted [`NodeId`](verbatim_model::NodeId).
+///
+/// This is what the focus listener (decision D13) forwards for a UIA focus
+/// event. Node identity is minted per application in that app's own outpost
+/// and must never cross a process boundary, so the listener — which holds no
+/// per-application state and never touches a registry — captures exactly
+/// these parts by cached reads and hands them on; the receiving app outpost
+/// mints the id from the runtime id when it rebuilds the snapshot.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CachedUiaParts {
+    /// The UIA runtime id, stable for the element's lifetime and the key the
+    /// receiving outpost mints its [`NodeId`](verbatim_model::NodeId) from.
+    pub runtime_id: Vec<i32>,
+    /// Normalized role (already refined for toggle buttons).
+    pub role: Role,
+    /// Accessible name, if any.
+    pub name: Option<String>,
+    /// Current value.
+    pub value: Option<String>,
+    /// Current states.
+    pub states: StateSet,
+    /// The optional properties beyond the core four.
+    pub details: NodeDetails,
+}
+
+/// Reads a cached UIA element into its identity-free [`CachedUiaParts`],
+/// without minting a [`NodeId`](verbatim_model::NodeId) or touching any
+/// registry. Reads only cached values (plus `GetRuntimeId`, itself a local
+/// read on a cached element), so it is safe on an event-callback thread and
+/// makes no cross-process call — the listener's hard rule (decision D13).
+///
+/// [`snapshot_from_cached_element`] is this plus the registry step that mints
+/// the id and caches the live element; the two share this one reading path so
+/// the role and state mapping is never duplicated.
+///
+/// # Safety
+///
+/// `element` must be a live element built with [`crate::cache::base_cache_request`].
+#[must_use]
+pub unsafe fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> CachedUiaParts {
+    // SAFETY: `element` was built with the base cache request per the contract,
+    // so GetRuntimeId and every cached read below are satisfied. The runtime-id
+    // SAFEARRAY is consumed by `take_i32_safearray`.
+    unsafe {
+        let runtime_id = element
+            .GetRuntimeId()
+            .map(|array| crate::com::take_i32_safearray(array))
+            .unwrap_or_default();
+        let control_type = cached_i32(element, UIA_ControlTypePropertyId.0).unwrap_or(0);
+        let toggle_available = cached_bool(element, UIA_IsTogglePatternAvailablePropertyId.0);
+        let role = refine_button_role(role_from_control_type(control_type), toggle_available);
+        CachedUiaParts {
+            runtime_id,
+            role,
+            name: cached_string(element, UIA_NamePropertyId.0),
+            value: cached_string(element, UIA_ValueValuePropertyId.0),
+            states: states_from_cached(element, role),
+            details: details_from_cached(element),
+        }
+    }
+}
+
 /// Builds a [`NodeSnapshot`] from a cached UIA element, minting or reusing its
 /// [`NodeId`](verbatim_model::NodeId) via `registry`. Reads only cached values,
 /// so it is safe on an event-callback thread.
@@ -356,29 +420,19 @@ pub unsafe fn snapshot_from_cached_element(
     element: &IUIAutomationElement,
     registry: &NodeIdRegistry,
 ) -> NodeSnapshot {
-    // SAFETY: `element` was built with the base cache request per the contract,
-    // so GetRuntimeId and every cached read below are satisfied. The runtime-id
-    // SAFEARRAY is consumed by `take_i32_safearray`.
-    unsafe {
-        let runtime_id = element
-            .GetRuntimeId()
-            .map(|array| crate::com::take_i32_safearray(array))
-            .unwrap_or_default();
-        let control_type = cached_i32(element, UIA_ControlTypePropertyId.0).unwrap_or(0);
-        let toggle_available = cached_bool(element, UIA_IsTogglePatternAvailablePropertyId.0);
-        let role = refine_button_role(role_from_control_type(control_type), toggle_available);
-        NodeSnapshot {
-            // Caches `element` as the node's live element while minting its
-            // id, so navigation and re-reads resolve it directly instead of
-            // re-finding it by runtime id (see the registry's module doc).
-            id: registry.id_for_element(&runtime_id, element),
-            backend: Backend::Uia,
-            role,
-            name: cached_string(element, UIA_NamePropertyId.0),
-            value: cached_string(element, UIA_ValueValuePropertyId.0),
-            states: states_from_cached(element, role),
-            details: details_from_cached(element),
-        }
+    // SAFETY: forwarded to `snapshot_parts_from_cached_element`'s contract.
+    let parts = unsafe { snapshot_parts_from_cached_element(element) };
+    NodeSnapshot {
+        // Caches `element` as the node's live element while minting its
+        // id, so navigation and re-reads resolve it directly instead of
+        // re-finding it by runtime id (see the registry's module doc).
+        id: registry.id_for_element(&parts.runtime_id, element),
+        backend: Backend::Uia,
+        role: parts.role,
+        name: parts.name,
+        value: parts.value,
+        states: parts.states,
+        details: parts.details,
     }
 }
 

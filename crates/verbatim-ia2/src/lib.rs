@@ -10,9 +10,10 @@
 //!
 //! The pieces:
 //!
-//! - [`WinEventHook`] — the out-of-context focus/value/state/name hooks,
-//!   installed on the outpost event thread and delivered through its message
-//!   loop.
+//! - [`WinEventHook`] — the out-of-context hooks, installed on an event thread
+//!   and delivered through its message loop, for a caller-chosen set of event
+//!   kinds ([`APP_SUBSCRIPTIONS`] for a per-app outpost, or
+//!   [`LISTENER_SUBSCRIPTIONS`] globally for the focus listener, decision D13).
 //! - [`acquire`] — query-pool acquisition and mapping, including the synthetic
 //!   focus query.
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from MSAA
@@ -26,5 +27,7 @@ pub mod map;
 mod registry;
 
 pub use com::CHILDID_SELF;
-pub use hook::{WinEventCallback, WinEventHook, WinEventKind};
+pub use hook::{
+    APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, WinEventCallback, WinEventHook, WinEventKind,
+};
 pub use registry::{MsaaKey, NodeIdRegistry};

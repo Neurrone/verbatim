@@ -29,6 +29,30 @@ fn node(
 
 fn focus_event(trace_id: TraceId, source: Pid, version: u64, snapshot: NodeSnapshot) -> Input {
     Input::Event {
+        observed_at_ms: 0,
+        trace_id,
+        source,
+        backend: Backend::Uia,
+        version: SnapshotVersion(version),
+        event: NormalizedEvent::FocusChanged {
+            node: snapshot,
+            ancestors: Vec::new(),
+            selected_child: None,
+        },
+    }
+}
+
+/// A focus change carrying an explicit observation timestamp, for the
+/// last-observation-wins gate.
+fn focus_event_at(
+    trace_id: TraceId,
+    observed_at_ms: u64,
+    source: Pid,
+    version: u64,
+    snapshot: NodeSnapshot,
+) -> Input {
+    Input::Event {
+        observed_at_ms,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -101,6 +125,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
 
     let trace_2 = TraceId::mint();
     let value_changed = Input::Event {
+        observed_at_ms: 0,
         trace_id: trace_2,
         source,
         backend: Backend::Uia,
@@ -327,6 +352,7 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
     let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 1, focused));
 
     let other_value_changed = Input::Event {
+        observed_at_ms: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -362,6 +388,7 @@ fn property_changed_name_on_focused_node_updates_silently() {
     let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 1, focused));
 
     let name_changed = Input::Event {
+        observed_at_ms: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -387,6 +414,7 @@ fn states_changed_input(
     states: StateSet,
 ) -> Input {
     Input::Event {
+        observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -566,6 +594,7 @@ fn trigger_staleness(
     older_version: u64,
 ) -> (SrState, QueryId) {
     let event = Input::Event {
+        observed_at_ms: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -594,6 +623,7 @@ fn out_of_order_version_triggers_fetch_for_focused_node() {
     assert_eq!(state.last_seen_version(source), Some(SnapshotVersion(5)));
 
     let older = Input::Event {
+        observed_at_ms: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -718,6 +748,7 @@ fn sample_script() -> Vec<Input> {
     vec![
         focus_event(TraceId::mint(), source, 1, button),
         Input::Event {
+            observed_at_ms: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
@@ -729,6 +760,7 @@ fn sample_script() -> Vec<Input> {
             },
         },
         Input::Event {
+            observed_at_ms: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
@@ -785,6 +817,7 @@ fn focus_event_with_ancestors(
     ancestors: Vec<NodeSnapshot>,
 ) -> Input {
     Input::Event {
+        observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -932,6 +965,272 @@ fn nameless_groups_are_not_announced_but_named_ones_are() {
 }
 
 #[test]
+fn a_named_list_ancestor_is_announced_as_entered_context() {
+    // The settings dialog's category list ("Categories:") must be spoken when
+    // focus enters it — NVDA presents a named list ancestor.
+    let state = SrState::new();
+    let source = Pid(1);
+    let list = node(600, Role::List, Some("Categories"), None, StateSet::new());
+    let item = node(601, Role::ListItem, Some("Speech"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, item, vec![list]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Categories"),
+            UtteranceSegment::new(SegmentContent::Role(Role::List)),
+            UtteranceSegment::label("Speech"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+        ]
+    );
+}
+
+#[test]
+fn an_unnamed_tree_ancestor_is_still_announced() {
+    // NVDA treats a tree as content regardless of name; an unnamed tree
+    // ancestor announces as a bare "tree view".
+    let state = SrState::new();
+    let source = Pid(1);
+    let tree = node(610, Role::Tree, None, None, StateSet::new());
+    let item = node(611, Role::TreeItem, Some("Home"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, item, vec![tree]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::new(SegmentContent::Role(Role::Tree)),
+            UtteranceSegment::label("Home"),
+            UtteranceSegment::new(SegmentContent::Role(Role::TreeItem)),
+        ]
+    );
+}
+
+#[test]
+fn an_unnamed_group_ancestor_is_dropped() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let group = node(620, Role::Group, None, None, StateSet::new());
+    let button = node(621, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![group]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("OK"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ],
+        "a nameless group adds nothing and is not announced"
+    );
+}
+
+#[test]
+fn a_named_window_ancestor_is_never_announced_as_context() {
+    // The window is owned by the foreground announcement, never repeated as
+    // entered focus context — even when it carries a name (a documented
+    // divergence from NVDA).
+    let state = SrState::new();
+    let source = Pid(1);
+    let window = node(
+        630,
+        Role::Window,
+        Some("App - Window"),
+        None,
+        StateSet::new(),
+    );
+    let button = node(631, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![window]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("OK"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+#[test]
+fn list_item_and_editable_text_ancestors_are_dropped() {
+    // NVDA's focus-ancestry exclusions: item and editable-text roles never
+    // announce as entered context, even when named.
+    let state = SrState::new();
+    let source = Pid(1);
+    let list_item = node(640, Role::ListItem, Some("Row"), None, StateSet::new());
+    let edit = node(
+        641,
+        Role::EditableText,
+        Some("Field"),
+        None,
+        StateSet::new(),
+    );
+    let button = node(642, Role::Button, Some("Go"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![list_item, edit]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Go"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+#[test]
+fn a_focus_observed_earlier_than_the_current_focus_is_dropped() {
+    // msinfo32's race: the control ("System Summary", observed later) is
+    // announced first, then the window ("System Information", observed earlier)
+    // arrives on another outpost thread. The earlier-observed window must be
+    // dropped, or it would move focus and the navigator back to the window.
+    let state = SrState::new();
+    let source = Pid(1);
+    let item = node(
+        700,
+        Role::TreeItem,
+        Some("System Summary"),
+        None,
+        StateSet::new(),
+    );
+    let window = node(
+        701,
+        Role::Window,
+        Some("System Information"),
+        None,
+        StateSet::new(),
+    );
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, source, 1, item.clone()),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 500, source, 2, window),
+    );
+
+    assert!(effects.is_empty(), "an earlier-observed focus is dropped");
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id),
+        Some(item.id),
+        "focus stays on the later-observed control"
+    );
+}
+
+#[test]
+fn a_focus_observed_at_the_same_time_proceeds() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let first = node(710, Role::Button, Some("A"), None, StateSet::new());
+    let second = node(711, Role::Button, Some("B"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, source, 1, first),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, source, 2, second.clone()),
+    );
+
+    assert!(!effects.is_empty(), "an equal-observation focus proceeds");
+    assert_eq!(state.focused().map(|(_, node)| node.id), Some(second.id));
+}
+
+#[test]
+fn a_focus_observed_later_proceeds() {
+    let state = SrState::new();
+    let source = Pid(1);
+    let first = node(712, Role::Button, Some("A"), None, StateSet::new());
+    let second = node(713, Role::Button, Some("B"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, source, 1, first),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 2000, source, 2, second.clone()),
+    );
+
+    assert!(!effects.is_empty(), "a later-observed focus proceeds");
+    assert_eq!(state.focused().map(|(_, node)| node.id), Some(second.id));
+}
+
+#[test]
+fn an_earlier_focus_from_a_different_application_still_proceeds() {
+    // The observation gate is per-source; a different application's staleness
+    // is the shell's cross-app foreground gate, not this reducer rule.
+    let state = SrState::new();
+    let first = node(720, Role::Button, Some("A"), None, StateSet::new());
+    let second = node(721, Role::Button, Some("B"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, Pid(1), 1, first),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 500, Pid(2), 1, second.clone()),
+    );
+
+    assert!(
+        !effects.is_empty(),
+        "a different application's focus is not gated by observation time here"
+    );
+    assert_eq!(
+        state.focused().map(|(pid, node)| (pid, node.id)),
+        Some((Pid(2), second.id))
+    );
+}
+
+#[test]
+fn a_zero_observation_always_proceeds() {
+    // A flight-recorder stream recorded before observed_at_ms existed carries 0
+    // for every event; those must never be dropped, so replay stays
+    // deterministic.
+    let state = SrState::new();
+    let source = Pid(1);
+    let first = node(730, Role::Button, Some("A"), None, StateSet::new());
+    let second = node(731, Role::Button, Some("B"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, source, 1, first),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 0, source, 2, second.clone()),
+    );
+
+    assert!(!effects.is_empty(), "a zero-timestamp focus proceeds");
+    assert_eq!(state.focused().map(|(_, node)| node.id), Some(second.id));
+}
+
+#[test]
 fn details_speak_in_nvda_property_order() {
     let state = SrState::new();
     let mut item = node(
@@ -978,6 +1277,7 @@ fn focus_event_with_selection(
     selected_child: Option<NodeSnapshot>,
 ) -> Input {
     Input::Event {
+        observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -992,6 +1292,7 @@ fn focus_event_with_selection(
 
 fn selection_event(trace_id: TraceId, source: Pid, version: u64, node: NodeSnapshot) -> Input {
     Input::Event {
+        observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -1110,6 +1411,7 @@ fn notification_event(
     display: Option<&str>,
 ) -> Input {
     Input::Event {
+        observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,

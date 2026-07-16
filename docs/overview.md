@@ -438,12 +438,30 @@ Implementation notes, `reduce`:
 - Focus-ancestry context (M3): a `FocusChanged` event carries the focused
   node's ancestor chain, outermost first, walked by the outpost before
   emitting. The reducer announces the presentable containers that were not
-  in the previous focus's chain — dialogs always, groupings and property
-  pages only when named, top-level windows never (the foreground
-  announcement owns those) — before the control itself, so entering a
-  dialog speaks the dialog and tabbing within it stays quiet about it. A
-  focus change from a different application treats the whole chain as
-  newly entered. The negated-state rules match NVDA's: negated checked for
+  in the previous focus's chain, before the control itself, so entering a
+  dialog speaks the dialog and tabbing within it stays quiet about it. The
+  presentable-container filter (`is_presentable_container`) is at NVDA parity
+  with `_get_isPresentableFocusAncestor` over `_get_presentationType`: it is
+  exclusion-based, not an allowlist. Item and editable-text roles (`TreeItem`,
+  `ListItem`, `EditableText`) are never presented; the always-layout
+  structural roles (`Unknown`, `Pane`) never; top-level windows never (the
+  foreground announcement owns those, a documented divergence — NVDA would
+  present a named window); `Group` and `PropertyPage` only when they carry a
+  name or description; `StaticText` only when it has real text; and every
+  other role — dialogs, toolbars, an unnamed tree announcing as bare "tree
+  view" — regardless of name, as NVDA treats them. A focus change from a
+  different application treats the whole chain as newly entered.
+- Focus is last-observation-wins: `Input::Event` carries the
+  `observed_at_ms` the outpost stamped, and the focus context keeps it. A
+  `FocusChanged` from the same application observed strictly earlier than the
+  focus currently held is dropped — not spoken, no focus or navigator move —
+  because the window and control announcements of one foreground change are
+  produced on different outpost threads and can arrive out of observation
+  order, and the earlier-observed one is not the real focus. A zero timestamp
+  (a flight-recorder stream recorded before the field existed) can never be
+  strictly earlier, so it always proceeds and replay stays deterministic; a
+  different application is unaffected, its staleness being the shell's
+  cross-app foreground gate. The negated-state rules match NVDA's: negated checked for
   check boxes and radio buttons, and negated pressed ("not pressed") for a
   toggle button — a `Button` control that exposes the UIA Toggle pattern,
   which `verbatim-uia` reclassifies to `Role::ToggleButton` with the
@@ -565,12 +583,13 @@ Public API:
   the implementation note below), and the `NodeDetails` properties —
   `FullDescription` and `HelpText`, `AccessKey` and `AcceleratorKey`,
   `PositionInSet`, `SizeOfSet`, `Level`, and `BoundingRectangle`.
-- `FocusRegistration::new(target_pid, callback)` — the self-contained
-  global focus listener, filtered to a target pid; drop unregisters and
-  tears down its own thread. Deliberately a sealed module: UIA's focus
-  registration is desktop-global and unscopeable, so exactly one exists per
-  process, and in M3 this module moves wholesale into the focus-sentinel
-  outpost.
+- `FocusRegistration::new(callback)` — the self-contained, desktop-global
+  UIA focus registration; drop unregisters and tears down its own thread.
+  UIA's focus registration is desktop-global and unscopeable, so exactly one
+  exists per process. Under decision D13 the one process that holds it is the
+  focus listener, which watches every application at once; the per-application
+  pid filter this module once carried is gone with that move (the sealed
+  module made the relocation a change of caller, not a rewrite).
 - `PropertyRegistration::new(hwnds, callback)` — name, value, toggle-state,
   enabled, and expand-collapse property changes, scoped to the target's
   top-level windows with subtree scope.
@@ -635,26 +654,42 @@ parity work covers MSAA and UIA only).
 
 Public API:
 
-- `WinEventHook::install(target_pid, callback)` — out-of-context WinEvent
-  hooks scoped to one process id, for focus, value, state, name, and
-  selection changes (the four `EVENT_OBJECT_SELECTION*` events collapse to
-  one `WinEventKind::Selection`, since all four report "the selection
-  within a container changed" and acquisition reads the affected node from
-  the event's own address either way), plus `MenuPopupStart`
-  (`EVENT_SYSTEM_MENUPOPUPSTART`): a popup menu opening announces the menu
-  itself the moment it opens, NVDA's menu-start behavior — the outpost
+- `WinEventHook::install(target_pid, kinds, callback)` — out-of-context
+  WinEvent hooks for a caller-chosen set of event kinds, scoped to one
+  process id (or global for pid zero). Two constant sets name the two
+  callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
+  installs — value, state, name, and selection changes (the four
+  `EVENT_OBJECT_SELECTION*` events collapse to one `WinEventKind::Selection`,
+  since all four report "the selection within a container changed" and
+  acquisition reads the affected node from the event's own address either
+  way); and `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
+  globally — focus (`EVENT_OBJECT_FOCUS`), foreground
+  (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
+  absorbs Core's old foreground trigger), and menu-popup opens
+  (`EVENT_SYSTEM_MENUPOPUPSTART`). A popup menu opening announces the menu
+  itself the moment it opens, NVDA's menu-start behavior — the app outpost
   emits it as focus on the menu's client object with no ancestry, the
-  identical node its foreground-announce fallback produces for a
-  menu-class window, so the reducer's duplicate-focus suppression drops
-  whichever path announces second. Callbacks are delivered on the
-  installing thread's message loop and must never make blocking calls into
-  the target. `WinEventKind` names the event; drop unhooks.
+  identical node its foreground-announce fallback produces for a menu-class
+  window, so the reducer's duplicate-focus suppression drops whichever path
+  announces second. Callbacks are delivered on the installing thread's
+  message loop and must never make blocking calls into the target.
+  `WinEventKind` names the event; drop unhooks.
 - `acquire` — the query-pool side: `snapshot_from_event` (from
   `AccessibleObjectFromEvent` through name, role, value, state,
   description, keyboard-shortcut, and location reads to a `NodeSnapshot` —
   the `NodeDetails` half plain MSAA can express; position-in-set and level
   stay `None` on this backend until IA2's `groupPosition` lands in M6,
-  never faked by counting siblings), `resnapshot` for fetches,
+  never faked by counting siblings), `snapshot_from_focus_event` (the
+  focus-specific entry the outpost uses for `EVENT_OBJECT_FOCUS` addresses,
+  applying NVDA's `processFocusWinEvent` child-0-on-a-list redirect: when a
+  focus event names a list on its own object — child id 0, MSAA role
+  `ROLE_SYSTEM_LIST` — or the client of a `SysListView32` window, it reads
+  `accFocus` and redirects to the named child when that child is real and
+  different, so a container that fires focus on itself, like the wxWidgets
+  generic list, announces the focused item rather than the container; the
+  `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
+  `resolve_focus` also uses, so the child-id and child-object forms are
+  handled once), `resnapshot` for fetches,
   `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
   for the synthetic focus event an outpost emits after a foreground
   change), and the M3 node-relative operations: `ancestor_chain`
@@ -696,43 +731,66 @@ Public API:
 
 ## verbatim-outpost
 
-The per-application outpost process, the Core-side supervisor, the
-foreground trigger, and the private protocol between them (architecture
-sections 1 and 4, decision D9, implemented in full — generalized from M1's
-single instance to the many-concurrent-processes design at the end of M2).
+The per-application outpost process, the focus listener, the Core-side
+supervisor, and the private protocol between them (architecture sections 1
+and 4, decisions D9 and D13, implemented in full — generalized from M1's
+single instance to the many-concurrent-processes design at the end of M2,
+then split so a dedicated listener detects focus and the per-app outposts
+announce it).
 
 An outpost's target application is fixed at spawn and never retargeted:
 the pid arrives on its command line (`--target-pid`), hooks and UIA
 registrations install once during construction, and there is no rebind
-path. Outposts stay alive when their application loses foreground — a
-foreground change to an application Core already has an outpost for sends
-that outpost an `AnnounceFocus`, never a respawn.
+path. Outposts stay alive when their application loses foreground.
+
+Focus detection is a separate process (decision D13). The focus listener —
+the same `verbatim-outpost.exe` run with `--listener` and no target pid —
+holds the one desktop-global UIA focus registration and the global MSAA
+hooks for focus, foreground, and menu-popup opens (process id zero), under a
+hard rule that it never makes a cross-process call: it reads only what each
+event carries (a UIA element's cached properties, an MSAA event's raw
+address) plus the hang-safe `GetWindowThreadProcessId`, and forwards each
+captured focus fact to Core. The supervisor routes every fact to the target
+application's own outpost, which acquires, arbitrates, enriches, and
+announces it exactly as it does for the events it still hooks itself. Node
+identity never crosses a process: the listener forwards a UIA runtime id,
+and the receiving outpost mints the `NodeId` from it. The announce poll
+(`AnnounceFocus`/`run_announce`) demotes to a fallback for the listener's
+own respawn gap and for a window that exists before it has a readable name.
 
 Public API:
 
 - `protocol` — the wire vocabulary the supervisor and each outpost speak.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration — the old
-  `Configure`'s backend-override half), `AnnounceFocus` (the old
-  `Configure`'s implicit synthetic-focus half, now explicit and reusable
-  across the outpost's whole life, not just at spawn), `Fetch`, `Ping`,
-  `DumpTree` (walk the target's tree from its top-level window),
-  `AncestorChain` (the chain of ancestors of a node, outermost first, as
-  `NodeSnapshot`s, capped at 64 hops), `Navigate` (one step from a node —
-  parent, next or previous sibling, or first child, the protocol's own
-  `NavigateDirection`), `Activate` (invoke the node's activation action),
-  `Shutdown`. `OutpostToSupervisor`: `Ready`, `Event` (trace id,
-  observation timestamp, backend, snapshot version, normalized event),
-  `FetchReply`, `Pong` (echoes the ping's sequence number and reports the
-  outpost's current `QueryPool` parked-thread count — recovery ladder rung
-  2's bounded garbage — so the supervisor's heartbeat can judge rung 3's
-  wedge-kill decision from the same message that proves the outpost is
-  still answering at all), `DumpTreeReply` (a `DumpedTree` — the root
-  `verbatim_model::TreeNode` plus whether the walk was truncated — or a
-  human-readable failure reason), `AncestorChainReply`, `NavigateReply`
-  (whose success payload is a `NavigateOutcome`: a found snapshot, or a
-  first-class `NoNeighbor` distinct from an error — a root's missing
-  parent is not a failure), `ActivateReply`, `Fault`. The three M3 query
+  `Configure`'s backend-override half), `AnnounceFocus` (the announce-poll
+  fallback, decision D13; a synthetic top-level-window-then-focused-control
+  announcement, still used for the supervisor's startup target and to
+  re-announce across a listener respawn), `DeliverFact` (a focus fact the
+  listener captured, routed to this outpost — a UIA focus element's cached
+  snapshot parts, an MSAA focus or menu-popup address, or a foreground
+  window — carrying the listener's own trace id and observation timestamp so
+  the latency timeline starts at the OS event), `Fetch`, `Ping`, `DumpTree`
+  (walk the target's tree from its top-level window), `AncestorChain` (the
+  chain of ancestors of a node, outermost first, as `NodeSnapshot`s, capped
+  at 64 hops), `Navigate` (one step from a node — parent, next or previous
+  sibling, or first child, the protocol's own `NavigateDirection`),
+  `Activate` (invoke the node's activation action), `Shutdown`.
+  `OutpostToSupervisor`: `Ready`, `Event` (trace id, observation timestamp,
+  backend, snapshot version, normalized event), `FetchReply`, `Pong` (echoes
+  the ping's sequence number and reports the outpost's current `QueryPool`
+  parked-thread count — recovery ladder rung 2's bounded garbage — so the
+  supervisor's heartbeat can judge rung 3's wedge-kill decision from the same
+  message that proves the outpost is still answering at all), `DumpTreeReply`
+  (a `DumpedTree` — the root `verbatim_model::TreeNode` plus whether the walk
+  was truncated — or a human-readable failure reason), `AncestorChainReply`,
+  `NavigateReply` (whose success payload is a `NavigateOutcome`: a found
+  snapshot, or a first-class `NoNeighbor` distinct from an error — a root's
+  missing parent is not a failure), `ActivateReply`, `Fault`, `FocusFact`
+  (sent only by the listener: a `ListenerFact` — the pid to route to plus the
+  captured address — with the trace id and timestamp the listener stamped at
+  observation). A `ListenerFact` strips to a pid-less `DeliveredFact` once
+  the supervisor has routed it. The three M3 query
   pairs are deliberately outpost-protocol-only rather than carried by the
   reducer-facing `Fetch`: none of them re-reads one already-known node's
   own snapshot (the one thing `QueryKind::NodeSnapshot` answers), and each
@@ -757,18 +815,67 @@ Public API:
   ladder rung two, since a thread blocked in a hung app's COM call cannot
   be safely killed); `submit` is fire-and-forget. Workers lazily own their
   own `Uia` client.
-- `Outpost`, `run_pipe`, `run_attach` — the runtime. `Outpost::new(writer,
-  target_pid)` installs hooks and UIA registrations for the fixed pid and
-  announces `Ready`; `run_pipe` is the production mode over inherited pipe
-  handles; `run_attach` watches a pid directly, immediately announces its
-  focus, and prints outbound messages as JSON lines to stdout, the
-  standalone dev mode.
-- `Supervisor` — `new(events_tx)`, `note_foreground(pid)` (spawn if this
-  pid has no outpost yet, otherwise send the existing one an
-  `AnnounceFocus`; the call to make on every foreground change),
-  `ensure_spawned(pid)` (warm an outpost without touching foreground
-  tracking — used once, at Core startup, for Core's own pid; see its doc
-  comment), `send_to(pid, command)`. State is a map keyed by target pid,
+- `Outpost`, `run_pipe`, `run_attach` — the per-application runtime.
+  `Outpost::new(writer, target_pid)` installs the process-scoped property,
+  value, state, and selection subscriptions (`APP_SUBSCRIPTIONS`) for the
+  fixed pid and announces `Ready` — but no focus registration and no focus
+  or menu-popup hooks, which are the listener's now (decision D13); focus
+  arrives instead as a `DeliverFact`, handled on a short-lived per-fact thread
+  (`handle_deliver_fact` spawning `run_msaa_fact`/`run_uia_fact`, shaped like
+  the foreground fact's retry thread) that reuses the same acquisition,
+  enrichment, and emit code, with the listener's trace and timestamp threaded
+  through. The one difference from a self-hooked event is arbitration: a fact
+  resolves a *real* verdict inline (`resolve_fact_verdict` — a cached verdict,
+  else a `has_server_side_provider` probe on the deadline-guarded pool),
+  because a fact thread is allowed to block where an event-thread callback is
+  not. So exactly one backend announces every fact deterministically — a UIA
+  window's UIA fact delivers and its MSAA fact drops, an MSAA window's the
+  reverse — with no cold-case duplicate and no provisional announcement from a
+  genuinely UIA window. The first-ever fact for a window pays one probe
+  (bounded by the query deadline) before announcing; only a probe that times
+  out falls back to the old provisional behavior (the MSAA fact proceeds, the
+  UIA fact drops), so a hung window degrades to that contract rather than
+  silence. Concurrent fact threads emit in no fixed order, which the reducer's
+  last-observation-wins rule now resolves. `run_pipe` is the production mode
+  over inherited pipe handles; `run_attach` watches a pid directly, immediately
+  announces its focus by poll, and prints outbound messages as JSON lines to
+  stdout, the standalone dev mode. The live pid-scoped hooks (value, state,
+  name, selection) keep the non-blocking provisional cross-filter on the event
+  thread, where blocking is still forbidden.
+- `run_listener` — the focus-listener runtime (decision D13): sets up the
+  outbound writer, announces `Ready`, installs the desktop-global
+  `FocusRegistration` and the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`,
+  pid zero), and forwards each event as a `FocusFact` built entirely from
+  cached and hang-safe local reads. It answers `Ping` with a `Pong` (parked
+  count always zero — it never blocks on a cross-process call), exits on
+  `Shutdown`, and ignores everything else. It holds no per-application
+  state, so a crash respawns into full capability instantly.
+- `Supervisor` — `new(events_tx)` (which also spawns the focus listener into
+  its dedicated slot), `note_foreground(pid)` (the announce-poll fallback:
+  spawn if this pid has no outpost yet, otherwise send the existing one an
+  `AnnounceFocus`; used for the startup target and listener-respawn
+  recovery, no longer every foreground change), `ensure_spawned(pid)` (warm
+  an outpost without touching foreground tracking — used once, at Core
+  startup, for Core's own pid; see its doc comment), `send_to(pid,
+  command)`. Focus facts from the listener are routed by `route_fact`: for a
+  foreground fact it records the new foreground and emits
+  `OutpostMessage::ForegroundChanged(pid)` before delivering, so the
+  reducer's stale-event gate has the new foreground by the time the fact's
+  own event arrives; for every fact it ensures the target outpost exists
+  (spawning it if needed) and delivers the fact, or — if the outpost has not
+  sent `Ready` yet — queues it newest-wins per category, flushed when `Ready`
+  is intercepted. The categories are foreground, MSAA focus, UIA focus, and
+  menu-popup, with separate slots for the two backends' focus facts
+  deliberately: both can report the same focus and the app outpost's per-window
+  verdict decides which announces, so both must survive the spawn. Which fact
+  is the one that announces depends on the window's backend — a UIA window's
+  UIA fact, an MSAA window's MSAA fact — so a shared slot that let one overwrite
+  the other could keep the wrong one and drop it against the verdict, silencing
+  the control (found live for a UIA search box that fires no MSAA focus event
+  at all). Flush order is foreground, MSAA focus, UIA focus, menu-popup. That
+  queueing
+  policy is the pure `PendingFacts` type, unit-tested like `idle_decision` and
+  `wedge_decision`. State is a map keyed by target pid,
   genuinely N-ready now: a reader thread per outpost forwards messages into
   the channel as `OutpostMessage::Event(pid, message)`, respawning on end
   of stream only if that pid's map entry still has the same generation
@@ -808,9 +915,15 @@ Public API:
   and ignored. Every kill logs at warn level with the target pid, the
   outpost's own pid, and the reason (`"missed heartbeats"` or `"parked
   threads"`), for a flight-recorder-plus-stderr investigation to grep for.
-- `ForegroundTrigger::new(callback)` — the one global WinEvent hook in
-  Core: a dedicated thread reporting only the new foreground window's pid
-  and handle, no property fetches, wired to `Supervisor::note_foreground`.
+  The focus listener is supervised by this same machinery (decision D13),
+  but from a dedicated slot rather than the per-pid map: it is spawned at
+  startup (a failed initial spawn is retried on the heartbeat interval),
+  pinged and wedge-killed by the same policy (its parked count is always
+  zero, so only the missed-heartbeat rule can fire), and respawned on
+  end-of-stream — after which the supervisor fires one synthetic announce for
+  the current foreground to cover the gap during which no facts flowed. Being
+  outside the per-pid map, the idle sweep structurally never touches it and
+  no listener entry ever reaches Core's status mirror.
 
 Implementation notes:
 
@@ -819,15 +932,16 @@ Implementation notes:
   in a job object carrying kill-on-job-close and a 200 MB memory cap, and
   only then resumed — inside the job before executing a single
   instruction. Core holds the only job handle, so kernel teardown of Core,
-  however it dies, kills every outpost. The command line also carries
-  `--target-pid`, fixing the watched application for the outpost's whole
-  life; immediately after resuming, the supervisor writes the spawn's own
-  implicit `AnnounceFocus` down the pipe (buffered by the OS; the outpost
-  need not be reading yet).
-- Foreground announcements (`AnnounceFocus`, `run_announce`): the newly
-  authoritative outpost announces the top-level foreground window, then the
-  focused control, both sharing one retry budget — up to five attempts
-  across roughly two seconds. The window step stops retrying once it
+  however it dies, kills every outpost. A per-application outpost's command
+  line carries `--target-pid`, fixing the watched application for its whole
+  life; the listener's carries `--listener` and no pid. `spawn` itself no
+  longer writes an `AnnounceFocus` (decision D13): a fact-routing spawn wants
+  the fact to do the announcing, and the two callers that still want the poll
+  — the startup target and a listener-respawn recovery — write it themselves.
+- Foreground announcements (`AnnounceFocus`, `run_announce`, the announce-poll
+  fallback): the outpost announces the top-level foreground window, then the
+  focused control, both sharing one retry budget — up to ten attempts across
+  roughly five seconds. The window step stops retrying once it
   succeeds (or is deliberately skipped, when every top-level window is
   Core's own hidden frame); the control step keeps going until it succeeds
   or the attempts run out. A single deadline-guarded attempt for the window
@@ -851,8 +965,8 @@ Implementation notes:
   earlier version of this code read the edit control's own snapshot instead
   of the window's. The control step's retries answer a different race —
   the second focus-timing race `docs/roadmap.md`'s M2 section names, the
-  foreground trigger and this query racing the target process's own
-  control creation — using `GetGUIThreadInfo`'s `hwndFocus` specifically,
+  announce poll and this query racing the target process's own control
+  creation — using `GetGUIThreadInfo`'s `hwndFocus` specifically,
   since that question ("what control is focused") is genuinely different
   from "what is the top-level window". The whole loop runs off the command
   loop on its own thread so `Ping` and `Fetch` stay responsive during the
@@ -1670,10 +1784,14 @@ knowing for review:
   `verbatim-synth-capture` alongside OneCore and swaps in `NullSink` for
   `WasapiSink`, logging a warning, so E2E and CI runs work with no sound
   card), the settings host with a persist callback writing through the
-  config store, the supervisor plus foreground trigger (targeting the
-  current foreground immediately, since the trigger only fires on
-  changes), the reducer thread (drains outpost messages via
-  `incoming_input`, feeds `reduce`, records each input into the shared
+  config store, the supervisor with its focus listener (decision D13;
+  targeting the current foreground once at startup by poll, since the
+  listener thereafter reports foreground changes as facts — Core no longer
+  runs its own foreground hook, and learns of a foreground change through
+  `OutpostMessage::ForegroundChanged`, which it stores into the
+  current-foreground atomic and notes as a targeted pid), the reducer thread
+  (drains outpost messages via `incoming_input`, feeds `reduce`, records each
+  input into the shared
   flight recorder, executes effects — `Speak` to the pipeline, `Fetch`
   back to the outpost; a `DumpTreeReply` is routed around the reducer
   entirely, straight into whatever one-shot sender is parked in the

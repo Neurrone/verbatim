@@ -2,10 +2,10 @@
 //!
 //! Startup order: namespace trace IDs, load config, start tracing, replace
 //! any running instance, load locales, bring up the speech pipeline, the
-//! supervisor and foreground trigger, the reducer and router threads, the
-//! control plane, and the keyboard hook — then run the wxDragon GUI loop on
-//! this, the process main thread, until shutdown is requested from the menu,
-//! the control plane, or a replacing instance.
+//! supervisor and its focus listener (decision D13), the reducer and router
+//! threads, the control plane, and the keyboard hook — then run the wxDragon
+//! GUI loop on this, the process main thread, until shutdown is requested from
+//! the menu, the control plane, or a replacing instance.
 
 mod clipboard;
 mod datetime;
@@ -37,7 +37,7 @@ use verbatim_model::{
     UtteranceSegment,
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, SupervisorToOutpost};
-use verbatim_outpost::{ForegroundTrigger, OutpostMessage, Supervisor};
+use verbatim_outpost::{OutpostMessage, Supervisor};
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
     SynthRegistry,
@@ -161,31 +161,19 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let store = Arc::new(Mutex::new(config));
     let settings_host = manager.settings_host(persist_fn(Arc::clone(&store)));
 
-    // Supervisor (one outpost process per application, decision D9) plus the
-    // foreground trigger that spawns or re-announces the right one on every
-    // foreground change; outpost status is mirrored for the control plane.
+    // Supervisor (one outpost process per application, decision D9) plus its
+    // dedicated focus listener (decision D13), which detects focus and
+    // foreground changes desktop-wide and reports them as facts the supervisor
+    // routes; outpost status is mirrored for the control plane. Core no longer
+    // runs its own foreground hook — the listener absorbs it, and the reducer
+    // loop learns of foreground changes through
+    // `OutpostMessage::ForegroundChanged`.
     let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
     let supervisor = Arc::new(Supervisor::new(outpost_tx)?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     let current_foreground: CurrentForeground = Arc::new(AtomicU32::new(0));
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
-
-    let trigger = {
-        let supervisor = Arc::clone(&supervisor);
-        let outposts = Arc::clone(&outposts);
-        let current_foreground = Arc::clone(&current_foreground);
-        ForegroundTrigger::new(Arc::new(move |pid, _hwnd| {
-            if pid == 0 {
-                return;
-            }
-            current_foreground.store(pid, Ordering::SeqCst);
-            note_targeted_pid(&outposts, Pid(pid));
-            if let Err(error) = supervisor.note_foreground(Pid(pid)) {
-                tracing::warn!(%error, pid, "failed to target foreground application");
-            }
-        }))
-    };
 
     // Review and object-navigation commands from the router reach the
     // reducer over this channel; the reducer thread selects on it alongside
@@ -289,9 +277,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     // The wx loop has exited (Exit menu item, control-plane quit, or a
-    // replacing instance's WM_QUIT). Stop the input and foreground hooks
-    // explicitly; job objects kill the outposts when the process exits.
-    drop(trigger);
+    // replacing instance's WM_QUIT). The keyboard hook stops when `_hook`
+    // drops; job objects kill the outposts and the focus listener when the
+    // process exits.
     Ok(())
 }
 
@@ -493,9 +481,9 @@ fn note_targeted_pid(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, target:
 /// creation, `WinEvent` hook install, UIA registration) measurably races a
 /// real keypress sent immediately after the popup menu takes foreground —
 /// see `Supervisor::ensure_spawned`'s doc comment for the live VM failure
-/// this fixes. Does not touch foreground tracking; that still happens
-/// through the ordinary `ForegroundTrigger` path when Core's window actually
-/// takes foreground.
+/// this fixes. Does not touch foreground tracking; that happens when the focus
+/// listener reports Core's window taking foreground (decision D13), delivered
+/// as `OutpostMessage::ForegroundChanged`.
 fn warm_own_outpost(
     supervisor: &Arc<Supervisor>,
     outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
@@ -586,6 +574,7 @@ fn incoming_input(
             }
             Some(Input::Event {
                 trace_id,
+                observed_at_ms,
                 source,
                 backend,
                 version,
@@ -661,6 +650,17 @@ fn reducer_loop(
                     OutpostMessage::Event(source, message) => (source, *message),
                     OutpostMessage::Retired(pid) => {
                         context.outposts.lock().expect("outposts lock").remove(&pid);
+                        continue;
+                    }
+                    OutpostMessage::ForegroundChanged(pid) => {
+                        // The focus listener reported a new foreground (decision
+                        // D13). Record it for the stale-event gate and note the
+                        // pid as targeted — exactly what the old in-Core
+                        // foreground trigger did — but the supervisor drives the
+                        // spawn and announcement from the fact itself, so there
+                        // is nothing more to do here.
+                        context.current_foreground.store(pid.0, Ordering::SeqCst);
+                        note_targeted_pid(&context.outposts, pid);
                         continue;
                     }
                 };

@@ -76,9 +76,9 @@
 //! but never reached by Tab, and this walk does not assert on it.
 //!
 //! This scenario launches a real Verbatim on a real desktop, and the
-//! outpost's foreground tracking is desktop-wide
-//! (`docs/architecture.md` section 1's `ForegroundTrigger`): unrelated
-//! foreground activity is visible to it and can pollute a run with
+//! focus listener's foreground tracking is desktop-wide
+//! (`docs/architecture.md` section 1's focus listener, decision D13):
+//! unrelated foreground activity is visible to it and can pollute a run with
 //! irrelevant speech, and latency on a working machine is far less
 //! predictable than on an idle VM. Every step therefore waits generously
 //! and exactly once, never retrying its input: a step that was merely slow

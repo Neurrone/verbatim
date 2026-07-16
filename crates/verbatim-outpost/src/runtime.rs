@@ -33,7 +33,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, HSTRING};
 
 use verbatim_ia2::{
-    CHILDID_SELF, NodeIdRegistry as MsaaRegistry, WinEventCallback, WinEventHook, WinEventKind,
+    APP_SUBSCRIPTIONS, CHILDID_SELF, NodeIdRegistry as MsaaRegistry, WinEventCallback,
+    WinEventHook, WinEventKind,
 };
 use verbatim_model::{
     Backend, FetchResult, HIDDEN_FRAME_WINDOW_PROP, NodeDetails, NodeSnapshot, NormalizedEvent,
@@ -44,14 +45,14 @@ use verbatim_uia::map::{
     snapshot_from_cached_element,
 };
 use verbatim_uia::{
-    FocusRegistration, NodeIdRegistry as UiaRegistry, NotificationRegistration,
-    PropertyRegistration, SelectionRegistration, has_server_side_provider, nearest_window_handle,
+    NodeIdRegistry as UiaRegistry, NotificationRegistration, PropertyRegistration,
+    SelectionRegistration, has_server_side_provider, nearest_window_handle,
 };
 
 use crate::arbitration::{Arbitrator, window_class_name};
 use crate::protocol::{
-    DumpedTree, NavigateDirection, NavigateOutcome, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
+    DeliveredFact, DumpedTree, NavigateDirection, NavigateOutcome, OutpostToSupervisor,
+    SupervisorToOutpost, UiaSnapshotFact, read_message, write_message,
 };
 use crate::query_pool::{QueryPool, Worker};
 
@@ -148,16 +149,25 @@ struct Shared {
 
 impl Shared {
     /// Sends one normalized event, stamping it with the next snapshot version
-    /// and the observation timestamp that anchors the latency timeline.
+    /// and the current time as the observation timestamp — for an event this
+    /// outpost observed itself through its own hook.
     fn emit(&self, trace: TraceId, backend: Backend, event: NormalizedEvent) {
+        self.emit_at(trace, now_ms(), backend, event);
+    }
+
+    /// Sends one normalized event with an explicit observation timestamp — for
+    /// a focus fact delivered from the listener (decision D13), where the
+    /// timeline must start at the OS event the listener observed, not at this
+    /// outpost's later re-emission. [`Self::emit`] is this with the current
+    /// time.
+    fn emit_at(
+        &self,
+        trace: TraceId,
+        observed_at_ms: u64,
+        backend: Backend,
+        event: NormalizedEvent,
+    ) {
         let version = SnapshotVersion(self.version.fetch_add(1, Ordering::Relaxed) + 1);
-        let observed_at_ms = u64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-        )
-        .unwrap_or(u64::MAX);
         let _ = self.outbound.send(OutpostToSupervisor::Event {
             trace_id: trace,
             observed_at_ms,
@@ -174,7 +184,16 @@ impl Shared {
 
     /// Warms the arbitration cache for `hwnd` off the calling thread: runs the
     /// blocking probe on a deadline-guarded query worker, then records the
-    /// verdict. A probe timeout is reported as a fault and cached as non-UIA.
+    /// verdict from a real answer. A probe that times out records *nothing* —
+    /// it reports a fault and leaves the verdict absent, so the next fact for
+    /// that window re-consults and re-probes rather than being bound forever to
+    /// a guess. Caching a timeout as non-UIA was a class of silent failure: a
+    /// genuinely-UIA window (a XAML surface such as the Start-search box) whose
+    /// probe raced a busy machine and timed out once was then treated as
+    /// non-UIA permanently, so its UIA focus facts were dropped by the
+    /// arbitration filter and never announced. While the verdict is absent the
+    /// MSAA fact still proceeds provisionally, so nothing falls silent in the
+    /// meantime.
     fn schedule_probe(&self, hwnd: isize, class: String) {
         let shared = self.clone();
         let _ = thread::Builder::new()
@@ -193,9 +212,11 @@ impl Shared {
                 if let Some(is_uia) = probed {
                     shared.lock_arbitrator().record_probe(hwnd, is_uia);
                 } else {
-                    shared.lock_arbitrator().record_probe(hwnd, false);
+                    // Record nothing on timeout: leave the verdict unresolved
+                    // so the next fact re-probes, rather than binding this
+                    // window to a false non-UIA guess (see this method's doc).
                     shared.fault(format!(
-                        "UiaHasServerSideProvider timed out for hwnd {hwnd}; treated as non-UIA"
+                        "UiaHasServerSideProvider timed out for hwnd {hwnd}; verdict left unresolved"
                     ));
                 }
             });
@@ -206,6 +227,19 @@ impl Shared {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Milliseconds since the Unix epoch, the observation timestamp that anchors
+/// the keypress-to-audio latency timeline. Shared by [`Shared::emit`] and the
+/// listener, which stamps facts at observation.
+pub(crate) fn now_ms() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 /// Whether `hwnd` carries Core's hidden-main-frame marker property (decision
@@ -220,14 +254,23 @@ fn window_is_hidden_frame(hwnd: isize) -> bool {
     !value.0.is_null()
 }
 
-/// The MSAA `WinEvent` callback body: cross-filter on the event thread, then
+/// The MSAA `WinEvent` handling body: cross-filter on the calling thread, then
 /// hand acquisition to the query pool. Never blocks.
+///
+/// The `trace` and `observed_at_ms` are supplied by the caller rather than
+/// minted here, so the two entry points differ only in their timeline anchor:
+/// a live hook (value, state, name, selection) mints a fresh trace and stamps
+/// now, while a focus or menu-popup fact delivered from the listener (decision
+/// D13) threads the listener's own trace and observation time through, so the
+/// latency timeline starts at the OS event.
 fn handle_msaa_event(
     shared: &Shared,
     kind: WinEventKind,
     hwnd: isize,
     id_object: i32,
     id_child: i32,
+    trace: TraceId,
+    observed_at_ms: u64,
 ) {
     // Hidden-frame suppression (decision D9) applies only to the window's
     // own focus event (`id_child == CHILDID_SELF`), never to a child
@@ -242,16 +285,30 @@ fn handle_msaa_event(
         Some(false) => {}
         None => shared.schedule_probe(hwnd, class), // provisional non-UIA; warm cache.
     }
-    let trace = TraceId::mint();
     let shared = shared.clone();
     let pool = shared.pool.clone();
     pool.submit(move |worker| {
-        if let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
-            hwnd,
-            id_object,
-            id_child,
-            &shared.msaa_registry,
-        ) {
+        // A focus event uses the focus-specific acquisition, which applies
+        // NVDA's child-0-on-a-list redirect so a container that fires focus on
+        // itself (the wx generic list) announces the focused item, not the
+        // container; every other kind (value, state, name, selection,
+        // menu-popup) reads the event's own address directly.
+        let acquired = if kind == WinEventKind::Focus {
+            verbatim_ia2::acquire::snapshot_from_focus_event(
+                hwnd,
+                id_object,
+                id_child,
+                &shared.msaa_registry,
+            )
+        } else {
+            verbatim_ia2::acquire::snapshot_from_event(
+                hwnd,
+                id_object,
+                id_child,
+                &shared.msaa_registry,
+            )
+        };
+        if let Some(node) = acquired {
             // Focus events are enriched with the node's ancestry right here
             // on the query worker (the walk is query-pool-only by
             // contract); every other kind maps directly. A menu popup
@@ -270,7 +327,7 @@ fn handle_msaa_event(
             } else {
                 msaa_event(kind, &node)
             };
-            shared.emit(trace, Backend::Msaa, event);
+            shared.emit_at(trace, observed_at_ms, Backend::Msaa, event);
         }
     });
 }
@@ -287,11 +344,17 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
         // announce path's menu-window snapshot, so the reducer's
         // identical-focus suppression drops whichever of the two paths
         // arrives second.
-        WinEventKind::Focus | WinEventKind::MenuPopupStart => NormalizedEvent::FocusChanged {
-            node: node.clone(),
-            ancestors: Vec::new(),
-            selected_child: None,
-        },
+        // A per-application outpost never receives a Foreground WinEvent (it
+        // is the listener's global subscription; a foreground fact reaches
+        // this outpost through `handle_foreground_fact`, not here), but the
+        // match is total, so map it to the same bare focus shape defensively.
+        WinEventKind::Focus | WinEventKind::MenuPopupStart | WinEventKind::Foreground => {
+            NormalizedEvent::FocusChanged {
+                node: node.clone(),
+                ancestors: Vec::new(),
+                selected_child: None,
+            }
+        }
         WinEventKind::ValueChange => NormalizedEvent::ValueChanged {
             node_id: node.id,
             value: node.value.clone(),
@@ -399,22 +462,26 @@ unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> 
     unsafe { resolve_window_and_filter(shared, element).0 }
 }
 
-/// The event thread: installs the MSAA hooks for the fixed target pid once,
-/// then pumps messages so the out-of-context callbacks are delivered.
-struct EventThread {
+/// The event thread: installs the requested MSAA hooks once (scoped to the
+/// given pid, or global for pid zero), then pumps messages so the
+/// out-of-context callbacks are delivered. Both a per-application outpost and
+/// the focus listener (decision D13) use it, differing only in their pid and
+/// subscription set.
+pub(crate) struct EventThread {
     thread_id: u32,
     join: Option<JoinHandle<()>>,
 }
 
 impl EventThread {
-    fn spawn(
+    pub(crate) fn spawn(
         target_pid: u32,
+        kinds: &'static [WinEventKind],
         make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync>,
     ) -> Self {
         let (id_tx, id_rx) = unbounded::<u32>();
         let join = thread::Builder::new()
             .name("verbatim-event".to_owned())
-            .spawn(move || event_thread_main(target_pid, &id_tx, &make_callback))
+            .spawn(move || event_thread_main(target_pid, kinds, &id_tx, &make_callback))
             .expect("spawn event thread");
         let thread_id = id_rx.recv().unwrap_or(0);
         Self {
@@ -443,18 +510,19 @@ impl Drop for EventThread {
 
 fn event_thread_main(
     target_pid: u32,
+    kinds: &'static [WinEventKind],
     id_tx: &Sender<u32>,
     make_callback: &Arc<dyn Fn() -> WinEventCallback + Send + Sync>,
 ) {
     // SAFETY: GetCurrentThreadId is always sound.
     let thread_id = unsafe { GetCurrentThreadId() };
     let _ = id_tx.send(thread_id);
-    // Installed once, for the whole life of the outpost (decision D9): a
+    // Installed once, for the whole life of the process (decision D9): a
     // second live hook set on the same thread while a first is still
     // registered has been observed to permanently kill WinEvent delivery on
     // that thread for the rest of the process, which is exactly why this
     // pid is fixed at spawn instead of rebindable.
-    let hook = match WinEventHook::install(target_pid, make_callback()) {
+    let hook = match WinEventHook::install(target_pid, kinds, make_callback()) {
         Ok(installed) => Some(installed),
         Err(error) => {
             tracing::warn!(error, target_pid, "failed to install WinEvent hooks");
@@ -484,7 +552,6 @@ pub struct Outpost {
     target_pid: u32,
     shared: Shared,
     _event_thread: EventThread,
-    focus_registration: Option<FocusRegistration>,
     property_registration: Option<PropertyRegistration>,
     selection_registration: Option<SelectionRegistration>,
     notification_registration: Option<NotificationRegistration>,
@@ -528,21 +595,32 @@ impl Outpost {
             generation: Arc::new(AtomicU64::new(0)),
         };
 
+        // The per-application outpost hooks only its process-scoped property,
+        // value, state, and selection events (decision D13); focus and
+        // menu-popup are the focus listener's, delivered back as facts. A live
+        // hook mints its own trace and stamps the observation time now.
         let callback_shared = shared.clone();
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let shared = callback_shared.clone();
             Box::new(move |kind, hwnd, id_object, id_child| {
-                handle_msaa_event(&shared, kind, hwnd, id_object, id_child);
+                handle_msaa_event(
+                    &shared,
+                    kind,
+                    hwnd,
+                    id_object,
+                    id_child,
+                    TraceId::mint(),
+                    now_ms(),
+                );
             })
         });
-        let event_thread = EventThread::spawn(target_pid, make_callback);
+        let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
 
         let mut outpost = Self {
             pid: std::process::id(),
             target_pid,
             shared,
             _event_thread: event_thread,
-            focus_registration: None,
             property_registration: None,
             selection_registration: None,
             notification_registration: None,
@@ -567,57 +645,9 @@ impl Outpost {
     }
 
     fn install_uia_registrations(&mut self, target_pid: u32) {
-        self.install_focus_registration(target_pid);
         self.install_property_registration(target_pid);
         self.install_selection_registration(target_pid);
         self.install_notification_registration(target_pid);
-    }
-
-    /// Installs the global UIA focus-change registration, filtered to the
-    /// target pid.
-    fn install_focus_registration(&mut self, target_pid: u32) {
-        let focus_shared = self.shared.clone();
-        let focus_callback = Arc::new(move |element: &IUIAutomationElement| {
-            // SAFETY: `element` is a cached focus element from the base cache
-            // request, so the filter, hidden-frame check, and mapping read
-            // only cached values.
-            unsafe {
-                let (deliver, hwnd) = resolve_window_and_filter(&focus_shared, element);
-                if !deliver || hwnd.is_some_and(window_is_hidden_frame) {
-                    return;
-                }
-                let node = snapshot_from_cached_element(element, &focus_shared.uia_registry);
-                // Ancestry enrichment happens on a query worker, not this
-                // callback thread: the walk is cross-process per hop and
-                // both walk functions are query-pool-only by contract. The
-                // worker re-fetches the element by the runtime id the
-                // snapshot just registered (the same dispatch the
-                // AncestorChain protocol query uses) and emits the enriched
-                // event from there; a failed walk degrades to no context,
-                // never to a lost focus announcement.
-                let trace = TraceId::mint();
-                let shared = focus_shared.clone();
-                focus_shared.pool.submit(move |worker| {
-                    let (ancestors, selected_child) =
-                        focus_enrichment_query(worker, &shared, &node);
-                    shared.emit(
-                        trace,
-                        Backend::Uia,
-                        NormalizedEvent::FocusChanged {
-                            node,
-                            ancestors,
-                            selected_child,
-                        },
-                    );
-                });
-            }
-        });
-        match FocusRegistration::new(target_pid, focus_callback) {
-            Ok(registration) => self.focus_registration = Some(registration),
-            Err(error) => self
-                .shared
-                .fault(format!("UIA focus registration failed: {error}")),
-        }
     }
 
     /// Installs the UIA name/value/state property-change registration over
@@ -757,6 +787,89 @@ impl Outpost {
             .spawn(move || run_announce(&shared, target_pid, generation));
     }
 
+    /// Turns a focus fact delivered from the listener (decision D13) into an
+    /// announcement, dispatching by kind. A foreground fact announces its
+    /// window on its own retry thread; the MSAA-focus, menu-popup, and
+    /// UIA-focus facts each run on a short-lived per-fact thread
+    /// ([`run_msaa_fact`], [`run_uia_fact`]) so they can resolve a *real*
+    /// arbitration verdict inline — a blocking probe the event-thread
+    /// provisional cross-filter could never make — before acquiring,
+    /// enriching, and emitting. Every path threads the listener's `trace` and
+    /// `observed_at_ms` through, so the latency timeline starts at the OS
+    /// event.
+    ///
+    /// Facts arrive at user speed, so a thread per fact is cheap; the thread
+    /// keeps the command loop responsive (`Ping`, `Fetch`) while a cold
+    /// window's one probe runs, and it uses the deadline-guarded query pool for
+    /// every blocking step, never an unguarded block inside a `submit` closure.
+    fn handle_deliver_fact(&self, trace: TraceId, observed_at_ms: u64, fact: DeliveredFact) {
+        match fact {
+            DeliveredFact::Foreground { hwnd } => {
+                self.handle_foreground_fact(trace, observed_at_ms, hwnd);
+            }
+            DeliveredFact::MsaaFocus {
+                hwnd,
+                id_object,
+                id_child,
+            } => self.spawn_fact_thread(move |shared| {
+                run_msaa_fact(
+                    &shared,
+                    WinEventKind::Focus,
+                    hwnd,
+                    id_object,
+                    id_child,
+                    trace,
+                    observed_at_ms,
+                );
+            }),
+            DeliveredFact::MenuPopup {
+                hwnd,
+                id_object,
+                id_child,
+            } => self.spawn_fact_thread(move |shared| {
+                run_msaa_fact(
+                    &shared,
+                    WinEventKind::MenuPopupStart,
+                    hwnd,
+                    id_object,
+                    id_child,
+                    trace,
+                    observed_at_ms,
+                );
+            }),
+            DeliveredFact::UiaFocus { hwnd, snapshot } => self.spawn_fact_thread(move |shared| {
+                run_uia_fact(&shared, trace, observed_at_ms, hwnd, snapshot);
+            }),
+        }
+    }
+
+    /// Runs `body` on a short-lived named thread with a clone of the shared
+    /// state — the per-fact thread [`Self::handle_deliver_fact`] uses so a
+    /// fact's blocking verdict resolution never touches the command loop.
+    fn spawn_fact_thread<F: FnOnce(Shared) + Send + 'static>(&self, body: F) {
+        let shared = self.shared.clone();
+        let _ = thread::Builder::new()
+            .name("verbatim-fact".to_owned())
+            .spawn(move || body(shared));
+    }
+
+    /// Announces a foreground fact's window (decision D13): the hwnd is a known
+    /// address, so this reads its snapshot on the pool and retries briefly
+    /// while the window is still nameless — the second poll fallback the
+    /// architecture names, a window before its name retried against a known
+    /// address rather than guessed at. Bumps the announce generation so a
+    /// superseding announce or fact aborts a stale retry, the same discipline
+    /// [`run_announce`] follows.
+    fn handle_foreground_fact(&self, trace: TraceId, observed_at_ms: u64, hwnd: isize) {
+        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let shared = self.shared.clone();
+        let _ = thread::Builder::new()
+            .name("verbatim-fact-foreground".to_owned())
+            .spawn(move || {
+                announce_foreground_window(&shared, hwnd, trace, observed_at_ms, generation);
+            });
+    }
+
     /// Answers a fetch by re-reading the node from whichever backend owns it.
     fn handle_fetch(&self, trace: TraceId, query: verbatim_model::Query) {
         let shared = self.shared.clone();
@@ -893,6 +1006,14 @@ impl Outpost {
             }
             SupervisorToOutpost::AnnounceFocus { trace_id } => {
                 self.handle_announce_focus(*trace_id);
+                true
+            }
+            SupervisorToOutpost::DeliverFact {
+                trace_id,
+                observed_at_ms,
+                fact,
+            } => {
+                self.handle_deliver_fact(*trace_id, *observed_at_ms, fact.clone());
                 true
             }
             SupervisorToOutpost::Fetch { trace_id, query } => {
@@ -1064,6 +1185,253 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
             "announce retries exhausted without a complete announcement"
         );
     }
+}
+
+/// Resolves the owning window of a UIA focus fact whose listener-cached handle
+/// was 0 (the element is not a window in its own right — a menu item, a list
+/// item). Re-resolves the element inside this outpost (a cross-process step
+/// the listener is forbidden), then reads its own cached window handle and,
+/// failing that, asks UIA which window it belongs to
+/// ([`nearest_window_handle`], NVDA's `getNearestWindowHandle`). Runs on a
+/// query worker (blocking allowed).
+fn uia_fact_window(
+    worker: &mut Worker,
+    shared: &Shared,
+    node_id: verbatim_model::NodeId,
+) -> Option<isize> {
+    let uia = worker.uia()?;
+    let cache = uia.base_cache_request().ok()?;
+    let element = resolve_uia_element(uia, &cache, shared, node_id)?;
+    // SAFETY: `element` was built with the base cache request by
+    // `resolve_uia_element`, so the cached window-handle read is satisfied.
+    let cached = unsafe { cached_native_window_handle(&element) };
+    if cached != 0 {
+        return Some(cached);
+    }
+    nearest_window_handle(&element)
+}
+
+/// The retry driver behind [`Outpost::handle_foreground_fact`], run on its own
+/// thread. Reads and announces the snapshot of `hwnd` — a known foreground
+/// window address — retrying briefly while it is still nameless, reusing
+/// [`run_announce`]'s window step reasoning: a window with no accessible name
+/// yet announces as a bare "window", pure noise, so this waits for the name a
+/// beat later rather than guessing. `generation` is the announce generation
+/// captured when the fact was handled; a superseding announce or fact bumps it
+/// and aborts this loop. Core's own hidden main frame is never announced
+/// (decision D9).
+fn announce_foreground_window(
+    shared: &Shared,
+    hwnd: isize,
+    trace: TraceId,
+    observed_at_ms: u64,
+    generation: u64,
+) {
+    let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
+    if window_is_hidden_frame(hwnd) {
+        return;
+    }
+    for attempt in 0..ANNOUNCE_RETRY_ATTEMPTS {
+        if !still_current() {
+            return;
+        }
+        let shared_for_window = shared.clone();
+        let window = shared.pool.run(FOCUS_DEADLINE, move |worker| {
+            window_snapshot(worker, hwnd, &shared_for_window)
+        });
+        if let Some(Some((backend, node))) = window {
+            let named = node.name.as_deref().is_some_and(|name| !name.is_empty());
+            if named {
+                if still_current() {
+                    shared.emit_at(
+                        trace,
+                        observed_at_ms,
+                        backend,
+                        NormalizedEvent::FocusChanged {
+                            node,
+                            ancestors: Vec::new(),
+                            selected_child: None,
+                        },
+                    );
+                }
+                return;
+            }
+        }
+        if attempt + 1 < ANNOUNCE_RETRY_ATTEMPTS {
+            thread::sleep(ANNOUNCE_RETRY_INTERVAL);
+        }
+    }
+}
+
+/// Resolves the real arbitration verdict for a fact's window, blocking on the
+/// deadline-guarded query pool when a probe is needed (decision D13). Facts are
+/// handled on a per-fact thread where blocking is allowed, unlike the event
+/// thread's callbacks, so a fact resolves a genuine verdict rather than the
+/// asymmetric provisional guess the callback cross-filter must fall back on.
+///
+/// Returns `Some(true)` for a UIA window and `Some(false)` for a non-UIA window
+/// — both from a cached verdict, or from a fresh probe that answered and was
+/// recorded. Returns `None` only when the probe could not answer within the
+/// query deadline, leaving the verdict unresolved so the next fact for that
+/// window retries; the late-completing probe still records the real verdict.
+///
+/// This is the fix for a control class the provisional rule could not serve:
+/// the premise behind "an MSAA fact always covers the cold case" is that both
+/// backends report every focus, but a genuinely-UIA XAML control (the
+/// Start-search box) fires no MSAA focus event at all, so its only chance is
+/// its UIA fact — which the provisional rule dropped forever against an
+/// unresolved verdict. Resolving inline lets that fact probe once and announce.
+fn resolve_fact_verdict(shared: &Shared, hwnd: isize) -> Option<bool> {
+    let class = window_class_name(hwnd);
+    // Fast path: a fresh cached verdict answers without a worker or a probe.
+    if let Some(verdict) = shared.lock_arbitrator().verdict(hwnd, &class) {
+        return Some(verdict);
+    }
+    // Cold path: probe on a deadline-guarded worker. `decide_backend` records a
+    // real answer whenever the probe returns; `None` here means the deadline
+    // expired first, so the caller falls back rather than recording a guess.
+    let probe_shared = shared.clone();
+    shared.pool.run(QUERY_DEADLINE, move |_worker| {
+        decide_backend(&probe_shared, hwnd, &class)
+    })
+}
+
+/// The per-fact-thread body for an MSAA focus or menu-popup fact (decision
+/// D13). Hidden-frame suppression as on the live path, then a *real* verdict
+/// resolved inline: a UIA window drops the MSAA fact (UIA owns it — no
+/// provisional MSAA announcement from a genuinely UIA window), a non-UIA window
+/// proceeds, and a probe timeout also proceeds, degrading to exactly the old
+/// provisional contract (MSAA covers the cold case) rather than silence.
+/// Acquisition and enrichment run deadline-guarded on the pool, reusing the
+/// same acquire helpers and [`focus_enrichment_query`] the live path uses.
+fn run_msaa_fact(
+    shared: &Shared,
+    kind: WinEventKind,
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+    trace: TraceId,
+    observed_at_ms: u64,
+) {
+    if kind == WinEventKind::Focus && id_child == CHILDID_SELF && window_is_hidden_frame(hwnd) {
+        return;
+    }
+    // Verdict true (UIA window) drops the MSAA fact; false and a probe timeout
+    // both proceed — the timeout is the provisional fallback for a hung window.
+    if resolve_fact_verdict(shared, hwnd) == Some(true) {
+        return;
+    }
+    let acquire_shared = shared.clone();
+    let node = shared.pool.run(FOCUS_DEADLINE, move |_worker| {
+        if kind == WinEventKind::Focus {
+            verbatim_ia2::acquire::snapshot_from_focus_event(
+                hwnd,
+                id_object,
+                id_child,
+                &acquire_shared.msaa_registry,
+            )
+        } else {
+            verbatim_ia2::acquire::snapshot_from_event(
+                hwnd,
+                id_object,
+                id_child,
+                &acquire_shared.msaa_registry,
+            )
+        }
+    });
+    // Outer `None` is a deadline timeout; inner `None` is a failed acquisition.
+    let Some(Some(node)) = node else {
+        return;
+    };
+    let event = if kind == WinEventKind::Focus {
+        let enrich_shared = shared.clone();
+        let enrich_node = node.clone();
+        let (ancestors, selected_child) = shared
+            .pool
+            .run(FOCUS_DEADLINE, move |worker| {
+                focus_enrichment_query(worker, &enrich_shared, &enrich_node)
+            })
+            .unwrap_or_default();
+        NormalizedEvent::FocusChanged {
+            node,
+            ancestors,
+            selected_child,
+        }
+    } else {
+        msaa_event(kind, &node)
+    };
+    shared.emit_at(trace, observed_at_ms, Backend::Msaa, event);
+}
+
+/// The per-fact-thread body for a UIA focus fact (decision D13). Mints the node
+/// id from the fact's runtime id (identity never crossed the listener
+/// boundary), resolves the owning window (the listener's cached handle if any,
+/// else a deadline-guarded re-resolve-and-`nearest_window_handle`), suppresses
+/// a hidden frame, then resolves the *real* verdict inline: a UIA window
+/// delivers, a non-UIA window drops (its MSAA fact announces instead), and a
+/// probe timeout drops too — the MSAA side's own timeout fallback covers the
+/// window, so nothing is recorded and nothing double-announces. A UIA element
+/// with no window at all is delivered (nothing to arbitrate on), matching
+/// [`resolve_window_and_filter`]'s last resort. Enrichment degrades to the bare
+/// snapshot, which always suffices to announce, so a passing fact never falls
+/// silent.
+fn run_uia_fact(
+    shared: &Shared,
+    trace: TraceId,
+    observed_at_ms: u64,
+    hwnd: isize,
+    snapshot: UiaSnapshotFact,
+) {
+    let node = NodeSnapshot {
+        id: shared.uia_registry.id_for(&snapshot.runtime_id),
+        backend: Backend::Uia,
+        role: snapshot.role,
+        name: snapshot.name,
+        value: snapshot.value,
+        states: snapshot.states,
+        details: snapshot.details,
+    };
+    let window = if hwnd != 0 {
+        Some(hwnd)
+    } else {
+        let window_shared = shared.clone();
+        let node_id = node.id;
+        shared
+            .pool
+            .run(FOCUS_DEADLINE, move |worker| {
+                uia_fact_window(worker, &window_shared, node_id)
+            })
+            .flatten()
+            .or_else(foreground_focus_window)
+    };
+    if window.is_some_and(window_is_hidden_frame) {
+        return;
+    }
+    if let Some(hwnd) = window
+        && resolve_fact_verdict(shared, hwnd) != Some(true)
+    {
+        // Non-UIA window (MSAA announces instead) or a probe timeout (the MSAA
+        // side's fallback covers it): drop, record nothing.
+        return;
+    }
+    let enrich_shared = shared.clone();
+    let enrich_node = node.clone();
+    let (ancestors, selected_child) = shared
+        .pool
+        .run(FOCUS_DEADLINE, move |worker| {
+            focus_enrichment_query(worker, &enrich_shared, &enrich_node)
+        })
+        .unwrap_or_default();
+    shared.emit_at(
+        trace,
+        observed_at_ms,
+        Backend::Uia,
+        NormalizedEvent::FocusChanged {
+            node,
+            ancestors,
+            selected_child,
+        },
+    );
 }
 
 /// Runs on a query-pool thread: finds the target's top-level window (its

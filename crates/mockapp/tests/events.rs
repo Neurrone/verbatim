@@ -14,7 +14,7 @@ mod common;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use verbatim_ia2::{WinEventHook, WinEventKind};
+use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State};
 use verbatim_uia::{
     NotificationRegistration, PropertyRegistration, SelectionRegistration, Uia,
@@ -281,6 +281,7 @@ fn msaa_set_name_raises_a_name_change_win_event() {
     let seen_cb = seen.clone();
     let _hook = WinEventHook::install(
         pid,
+        APP_SUBSCRIPTIONS,
         Box::new(move |kind, _hwnd, _id_object, _id_child| {
             seen_cb
                 .lock()
@@ -312,6 +313,7 @@ fn msaa_set_value_raises_a_value_change_win_event() {
     let seen_cb = seen.clone();
     let _hook = WinEventHook::install(
         pid,
+        APP_SUBSCRIPTIONS,
         Box::new(move |kind, _hwnd, _id_object, _id_child| {
             seen_cb
                 .lock()
@@ -343,6 +345,7 @@ fn msaa_select_raises_a_selection_win_event() {
     let seen_cb = seen.clone();
     let _hook = WinEventHook::install(
         pid,
+        APP_SUBSCRIPTIONS,
         Box::new(move |kind, _hwnd, _id_object, _id_child| {
             seen_cb
                 .lock()

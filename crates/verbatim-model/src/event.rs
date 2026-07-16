@@ -221,6 +221,16 @@ pub enum Input {
     Event {
         /// Trace ID minted when the OS event was first observed.
         trace_id: TraceId,
+        /// Milliseconds since the Unix epoch when the OS event was first
+        /// observed — the same stamp the outpost put on the wire. The reducer
+        /// keeps focus state last-observation-wins: a `FocusChanged` observed
+        /// strictly earlier than the focus currently held (same source) is
+        /// dropped, since two focus announcements can race on different outpost
+        /// threads and the later-observed one is the real focus. Defaults to 0
+        /// for flight-recorder streams recorded before this field existed, and
+        /// a zero always proceeds (it can never be "strictly earlier").
+        #[serde(default)]
+        observed_at_ms: u64,
         /// The application the event came from.
         source: Pid,
         /// Which backend sourced the event (diagnostics only).

@@ -28,11 +28,19 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
     let effects = match input {
         Input::Event {
             trace_id,
+            observed_at_ms,
             source,
             backend: _,
             version,
             event,
-        } => reduce_event(&mut next, *trace_id, *source, *version, event),
+        } => reduce_event(
+            &mut next,
+            *trace_id,
+            *observed_at_ms,
+            *source,
+            *version,
+            event,
+        ),
         Input::FetchCompleted {
             trace_id,
             query_id,
@@ -55,6 +63,7 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
+    observed_at_ms: u64,
     source: Pid,
     version: SnapshotVersion,
     event: &NormalizedEvent,
@@ -70,6 +79,24 @@ fn reduce_event(
             ancestors,
             selected_child,
         } => {
+            // Drop a focus observed strictly earlier than the focus this
+            // application already holds (last-observation-wins). The window and
+            // control announcements of one foreground change are produced on
+            // different outpost threads and can arrive out of observation
+            // order; without this, a late-arriving but earlier-observed window
+            // FocusChanged would move focus and the navigator back to the
+            // window after the control was already announced. A zero timestamp
+            // (an older recorded stream) can never be strictly earlier, so it
+            // always proceeds and replay stays deterministic. A different
+            // application is unaffected — the shell's cross-app foreground gate
+            // owns that staleness.
+            if observed_at_ms != 0
+                && let Some(focus) = state.focus.as_ref()
+                && focus.source == source
+                && focus.observed_at_ms > observed_at_ms
+            {
+                return Vec::new();
+            }
             // Suppress a focus event identical to the one already announced
             // from the same application, back to back: the UIA focus
             // callback and a foreground re-announcement can both emit a
@@ -106,6 +133,7 @@ fn reduce_event(
             };
             state.focus = Some(FocusContext {
                 source,
+                observed_at_ms,
                 snapshot: node.clone(),
                 last_announced: node.clone(),
                 ancestors: ancestors.clone(),
@@ -756,13 +784,15 @@ fn reduce_staleness_completed(
 
             if changed {
                 let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
-                // A re-fetch refreshes the node, not its ancestry or its
-                // selection history; what the focus event carried stays
-                // authoritative.
+                // A re-fetch refreshes the node, not its ancestry, its
+                // selection history, or its observation time; what the focus
+                // event carried stays authoritative.
                 let ancestors = focus.ancestors.clone();
                 let last_selection = focus.last_selection;
+                let observed_at_ms = focus.observed_at_ms;
                 state.focus = Some(FocusContext {
                     source: pending.source,
+                    observed_at_ms,
                     snapshot: snapshot.clone(),
                     last_announced: snapshot.clone(),
                     ancestors,
@@ -814,17 +844,60 @@ fn entered_containers<'a>(
         .collect()
 }
 
-/// Whether a focus ancestor is worth announcing when first entered: dialogs
-/// always, groupings and property pages only when they carry a name (a
-/// nameless group adds nothing). Top-level windows are deliberately never
-/// announced here — the foreground-change announcement (the outpost's
-/// `AnnounceFocus` window step) owns the window, and repeating it on every
-/// cross-application focus change would double-speak every switch.
+/// Whether a focus ancestor is worth announcing when first entered, at NVDA
+/// parity. This is exclusion-based, mirroring NVDA's
+/// `_get_isPresentableFocusAncestor` (`nvda/source/NVDAObjects/__init__.py`
+/// lines 1166-1180) layered over `_get_presentationType` (same file, lines
+/// 911-980): most roles announce as entered context, and only a specific set
+/// is filtered out.
+///
+/// Translated to this role vocabulary:
+///
+/// - `TreeItem`, `ListItem`, and `EditableText` never present, matching NVDA's
+///   ancestry exclusions (NVDA also excludes `ProgressBar`, a role this
+///   vocabulary does not have).
+/// - `Unknown` and `Pane` are always layout (NVDA's structural-role list), so
+///   they never present.
+/// - `Window` never presents, regardless of name: the foreground-change
+///   announcement (the outpost's foreground fact / `AnnounceFocus` window step)
+///   owns the top-level window, and repeating it on every cross-application
+///   focus change would double-speak every switch. This is a deliberate,
+///   documented divergence — NVDA would present a named window.
+/// - `Group` and `PropertyPage` present only when they carry a name or a
+///   description (NVDA makes these layout when both are empty; whitespace
+///   counts as empty).
+/// - `StaticText` presents only when it has real, non-whitespace text (its
+///   name), matching NVDA's static-text branch.
+/// - Every other role — dialogs, toolbars, an unnamed tree, and the rest —
+///   presents regardless of name. NVDA treats them as content; an unnamed
+///   tree ancestor announcing as a bare "tree view" is real NVDA behavior.
 fn is_presentable_container(node: &NodeSnapshot) -> bool {
+    let named = node
+        .name
+        .as_deref()
+        .is_some_and(|name| !name.trim().is_empty());
+    let described = node
+        .details
+        .description
+        .as_deref()
+        .is_some_and(|description| !description.trim().is_empty());
     match node.role {
-        Role::Dialog => true,
-        Role::Group | Role::PropertyPage => node.name.as_ref().is_some_and(|name| !name.is_empty()),
-        _ => false,
+        // NVDA's ancestry exclusions (item and editable-text roles), the
+        // always-layout structural roles (Unknown, Pane), and Window — which
+        // the foreground announcement owns and this never repeats, even named.
+        // See this function's doc for the per-role NVDA provenance.
+        Role::TreeItem
+        | Role::ListItem
+        | Role::EditableText
+        | Role::Unknown
+        | Role::Pane
+        | Role::Window => false,
+        // Layout-when-unlabeled roles: content only when named or described.
+        Role::Group | Role::PropertyPage => named || described,
+        // Static text: content only when it has real, non-whitespace text.
+        Role::StaticText => named,
+        // Every other role NVDA treats as content, regardless of name.
+        _ => true,
     }
 }
 

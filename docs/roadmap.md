@@ -198,13 +198,16 @@ and the D9 outpost generalization — were finished early, at the end of M2
   low-end VM profile — the goal is to be efficient outright, and behavior on
   weaker hardware gets investigated only if real users report problems.
   Remaining, carried forward: the stale-cache policy (lower-priority
-  polish), and the focus-listener outpost (decision D13, recorded in
+  polish). The focus-listener outpost (decision D13, recorded in
   `docs/architecture.md` section 1 after M3's live debugging traced the
-  announce-poll's whole failure family to the first-focus spawn race) —
-  the concrete successor to what this bullet previously called "WinEvent
-  routing refinements". Suggested scheduling: the start of M4, before
-  caret tracking and typed-character echo build more behavior on top of
-  the announcement plumbing D13 reshapes.
+  announce-poll's whole failure family to the first-focus spawn race) was
+  implemented at the start of M4 as suggested here, before caret tracking
+  and typed-character echo build more behavior on top of the announcement
+  plumbing it reshaped: all seven scenarios green on fresh restores plus
+  ten consecutive clean cold-start runs of the two announce-race
+  reproducers (`start_menu` and `m1_exit_regression`), with the menu-open
+  announcement measured at roughly 100 milliseconds, at the fast end of
+  the pre-D13 warm range.
   Residual E2E flakes: root-caused during this milestone, as promised
   here, from failing runs' flight recorders and stderr on a repeated
   fresh-restore repro loop. The "occasional missed announcement deep in a
