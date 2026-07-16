@@ -34,13 +34,17 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // msinfo32 opens with focus on the tree's "System Summary" root item.
-    scenario
-        .speech()
-        .expect_in_order(&["System Information"], STEP_TIMEOUT);
-    scenario
-        .speech()
-        .expect_in_order(&["System Summary", "tree view item"], STEP_TIMEOUT);
+    // msinfo32 opens with its window ("System Information") and focus on the
+    // tree's "System Summary" root item. Asserted as one ordered matcher
+    // sequence rather than two separate waits: under load the window title
+    // and the focused item can arrive as a single combined announcement, and
+    // two waits would let the first consume the line the second needs. One
+    // `expect_in_order` advances through all three substrings whether they
+    // land on one line or several.
+    scenario.speech().expect_in_order(
+        &["System Information", "System Summary", "tree view item"],
+        STEP_TIMEOUT,
+    );
 
     // First child of the root: "Hardware Resources", one level deeper.
     scenario

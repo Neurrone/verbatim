@@ -31,18 +31,18 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Launching msinfo32 brings its window to the foreground; Verbatim
-    // announces the window and then the focused control through the MSAA
-    // stack. The window is titled "System Information".
+    // announces the window (titled "System Information") through the MSAA
+    // stack, then focus settles in the category tree on the default "System
+    // Summary" node. Both substrings are asserted in one ordered matcher,
+    // not two separate waits: under load the window title and the focused
+    // item can arrive as one combined announcement ("System Information
+    // dialog ... System Summary ..."), and two separate waits would let the
+    // first consume the line the second needs and then starve. One
+    // `expect_in_order` advances through both, whether they land on one line
+    // or two, tolerating any intermediate announcements.
     scenario
         .speech()
-        .expect_in_order(&["System Information"], STEP_TIMEOUT);
-
-    // Focus settles in the category tree on the default "System Summary"
-    // node. Assert it as the settled focus, tolerating the intermediate
-    // window and pane announcements.
-    scenario
-        .speech()
-        .expect_in_order(&["System Summary"], STEP_TIMEOUT);
+        .expect_in_order(&["System Information", "System Summary"], STEP_TIMEOUT);
 }
 
 #[allow(
