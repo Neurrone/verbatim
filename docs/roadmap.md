@@ -284,6 +284,31 @@ and the D9 outpost generalization — were finished early, at the end of M2
   contingency: if an E2E scenario surfaces a quirk that is both blocking
   and inexpressible as generic policy, the fix is pulling a minimal
   extension host forward from M5, not a built-in quirk layer.
+
+  Explorer E2E scenario: deliberately not in the automated suite, verified
+  manually for now. The capability is proven live (reading a real Explorer
+  folder window's file list over UIA — file name, list-item role, and
+  positional info, with good-window arbitration keeping it on UIA), but an
+  automated scenario for it is flaky in a way the other shell scenarios are
+  not, and the flake is in the harness's interaction with the shell, not in
+  Verbatim: a folder window opened through the shell (`start <folder>`) is
+  created by the already-running `explorer.exe`, so unlike a freshly
+  launched process such as Notepad or msinfo32 it does not reliably take and
+  hold the foreground on a loaded, freshly-restored guest, and Verbatim's
+  passive foreground announcement then has nothing stable to fire on. The
+  other shell scenarios (msinfo32, object navigation, tree navigation,
+  multi-outpost switch) already exercise the shell-navigation exit criterion
+  on real surfaces, so this one is verified by hand rather than papered over
+  with retries: with Verbatim running, open a folder of a few files in real
+  Explorer (Windows+E, or any folder from the desktop or taskbar — opening it
+  interactively is what gives it the foreground the automated harness cannot
+  reliably arrange), and confirm Verbatim announces the folder window and then
+  each file as a list item with its name and position in the set as you arrow
+  through ("alpha.txt, list item, 1 of 3"), which is the UIA file list,
+  list-item role, positional info, and good-window arbitration the scenario
+  would have asserted. Automating it waits for the shell-foreground-timing
+  work its own investigation would need, most naturally alongside the Tier A
+  extension port that motivates the Explorer-specific cosmetic fixes anyway.
 - Time and date command: Verbatim+F12 speaks the time, twice quickly for
   the date. A system tray and taskbar icons list replicating the
   systrayList NVDA add-on exactly, including its GUI: Verbatim+F11 opens
