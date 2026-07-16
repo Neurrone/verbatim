@@ -43,9 +43,10 @@ Public API:
   so a tree dump travels from the outpost through Core to
   `verbatim-inspect` without translation.
 - `NormalizedEvent` — `FocusChanged` (carrying a full snapshot plus the
-  node's ancestor chain, outermost first, walked by the outpost on a query
-  worker before emitting — deadline-guarded and empty on failure, so
-  context never blocks or loses a focus announcement),
+  node's ancestor chain, outermost first, and — for selection containers —
+  the container's selected child, both gathered by the outpost on a query
+  worker before emitting: deadline-guarded, degrading to empty on failure,
+  so enrichment never blocks or loses a focus announcement),
   `PropertyChanged` (name, value, or the complete new `States` set),
   `ValueChanged`, `SelectionChanged` (a node was selected within its
   container, carrying its snapshot), and `Notification` (UIA's
@@ -430,7 +431,18 @@ Implementation notes, `reduce`:
   focus change from a different application treats the whole chain as
   newly entered. The negated-state rules match NVDA's within the current
   vocabulary (negated checked for check boxes and radio buttons); NVDA's
-  switch and toggle-button negations wait on those roles existing. The negated-checked rule: a `CheckBox` or `RadioButton`
+  switch and toggle-button negations wait on those roles existing.
+- Selection announcements (M3): a focus event on a selection container (a
+  list, a tab control) also carries the container's selected child, which
+  is spoken right after the container; a `SelectionChanged` event is
+  spoken while focus stays on the container — each newly selected item
+  once, deduplicated against the focus event's own selected child and
+  against repeats — and stays silent from other applications, on
+  non-container focus, or for combo boxes (whose picks already arrive as
+  value changes). Selected-state wording matches NVDA: positive "selected"
+  is never spoken on a node announcement, and a selectable node that is
+  not selected says "not selected"; selection-state *changes* still say
+  "selected" through the state-change diff. The negated-checked rule: a `CheckBox` or `RadioButton`
   carrying neither Checked nor Mixed announces "not checked". Focus-related
   states are never announced.
 - A value change on the currently focused node speaks just the bare value,
