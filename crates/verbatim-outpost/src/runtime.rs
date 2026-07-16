@@ -27,7 +27,8 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumWindows, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo,
-    GetMessageW, GetPropW, GetWindowThreadProcessId, MSG, PostThreadMessageW, TranslateMessage,
+    GetMessageW, GetPropW, GetWindowThreadProcessId, IsWindowVisible, MSG, OBJID_CLIENT,
+    PostThreadMessageW, TranslateMessage,
 };
 use windows::core::{BOOL, HSTRING};
 
@@ -122,6 +123,10 @@ struct Shared {
     pool: QueryPool,
     uia_registry: UiaRegistry,
     msaa_registry: MsaaRegistry,
+    /// The target application's pid, fixed at spawn (decision D9). Queries
+    /// that re-find a UIA element by runtime id scope their search to this
+    /// process's own top-level windows (see [`resolve_uia_element`]).
+    target_pid: u32,
     /// Bumped by every `AnnounceFocus`; an in-flight retry loop compares its
     /// captured generation against the current value before each attempt
     /// and before emitting, so a superseding announce aborts stale retries
@@ -239,7 +244,12 @@ fn handle_msaa_event(
         ) {
             // Focus events are enriched with the node's ancestry right here
             // on the query worker (the walk is query-pool-only by
-            // contract); every other kind maps directly.
+            // contract); every other kind maps directly. A menu popup
+            // deliberately skips enrichment: a menu needs no container
+            // context, and emitting the bare node (same key the announce
+            // path's menu-window snapshot uses, no ancestors) lets the
+            // reducer's identical-focus suppression drop whichever of the
+            // two announcement paths arrives second.
             let event = if kind == WinEventKind::Focus {
                 let (ancestors, selected_child) = focus_enrichment_query(worker, &shared, &node);
                 NormalizedEvent::FocusChanged {
@@ -260,7 +270,14 @@ fn handle_msaa_event(
 /// covers the direct mappings.
 fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
     match kind {
-        WinEventKind::Focus => NormalizedEvent::FocusChanged {
+        // Focus reaches here only in tests (the live caller enriches it
+        // first). A menu popup opening is announced as focus on the menu
+        // itself with no ancestry — NVDA's menu-start handling —
+        // deliberately the same shape (bare node, empty ancestors) as the
+        // announce path's menu-window snapshot, so the reducer's
+        // identical-focus suppression drops whichever of the two paths
+        // arrives second.
+        WinEventKind::Focus | WinEventKind::MenuPopupStart => NormalizedEvent::FocusChanged {
             node: node.clone(),
             ancestors: Vec::new(),
             selected_child: None,
@@ -497,6 +514,7 @@ impl Outpost {
             pool: QueryPool::new(2),
             uia_registry: UiaRegistry::new(id_counter.clone()),
             msaa_registry: MsaaRegistry::new(id_counter),
+            target_pid,
             generation: Arc::new(AtomicU64::new(0)),
         };
 
@@ -1065,16 +1083,52 @@ fn dump_tree(worker: &mut Worker, target_pid: u32, shared: &Shared) -> Result<Du
     }
 }
 
+/// Resolves a UIA node to a live element built with `cache`: the registry's
+/// cached element first (rebuilding its cached properties both refreshes
+/// them and proves the element still answers — a dead one errors and is
+/// evicted), then a runtime-id search scoped to the target application's
+/// own top-level windows. `None` when the node cannot be resolved at all.
+///
+/// The two-tier shape is the fix for object navigation feeling stuck on
+/// UIA surfaces: the pre-cache implementation re-found every node with an
+/// unscoped `FindFirst` from the desktop root on every single step.
+fn resolve_uia_element(
+    uia: &verbatim_uia::Uia,
+    cache: &windows::Win32::UI::Accessibility::IUIAutomationCacheRequest,
+    shared: &Shared,
+    node_id: verbatim_model::NodeId,
+) -> Option<IUIAutomationElement> {
+    if let Some(agile) = shared.uia_registry.element_of(node_id) {
+        if let Ok(element) = agile.resolve() {
+            // SAFETY: `element` resolved from a live agile reference; a dead
+            // underlying element fails the call rather than crashing.
+            if let Ok(fresh) = unsafe { element.BuildUpdatedCache(cache) } {
+                return Some(fresh);
+            }
+        }
+        shared.uia_registry.evict_element(node_id);
+    }
+    let runtime_id = shared.uia_registry.runtime_id_of(node_id)?;
+    for hwnd in top_level_windows(shared.target_pid) {
+        if let Ok(root) = uia.element_from_handle(hwnd, cache)
+            && let Ok(Some(element)) = uia.element_by_runtime_id(&root, &runtime_id, cache)
+        {
+            return Some(element);
+        }
+    }
+    None
+}
+
 /// Re-reads a node by id from whichever registry knows it.
 fn refetch_node(
     worker: &mut Worker,
     shared: &Shared,
     node_id: verbatim_model::NodeId,
 ) -> Option<NodeSnapshot> {
-    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+    if shared.uia_registry.runtime_id_of(node_id).is_some() {
         let uia = worker.uia()?;
         let cache = uia.base_cache_request().ok()?;
-        let element = uia.element_by_runtime_id(&runtime_id, &cache).ok()??;
+        let element = resolve_uia_element(uia, &cache, shared, node_id)?;
         // SAFETY: `element` was built with the base cache request.
         return Some(unsafe { snapshot_from_cached_element(&element, &shared.uia_registry) });
     }
@@ -1105,14 +1159,14 @@ fn focus_enrichment_query(
     node: &NodeSnapshot,
 ) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
     let want_selection = wants_selected_child(node.role);
-    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node.id) {
+    if shared.uia_registry.runtime_id_of(node.id).is_some() {
         let Some(uia) = worker.uia() else {
             return (Vec::new(), None);
         };
         let Ok(cache) = uia.base_cache_request() else {
             return (Vec::new(), None);
         };
-        let Ok(Some(element)) = uia.element_by_runtime_id(&runtime_id, &cache) else {
+        let Some(element) = resolve_uia_element(uia, &cache, shared, node.id) else {
             return (Vec::new(), None);
         };
         // SAFETY: `element` was built with `cache` immediately above.
@@ -1150,18 +1204,16 @@ fn ancestor_chain_query(
     shared: &Shared,
     node_id: verbatim_model::NodeId,
 ) -> Result<Vec<NodeSnapshot>, String> {
-    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+    if shared.uia_registry.runtime_id_of(node_id).is_some() {
         let uia = worker
             .uia()
             .ok_or_else(|| "could not create a UIA client".to_owned())?;
         let cache = uia
             .base_cache_request()
             .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
-        let element = uia
-            .element_by_runtime_id(&runtime_id, &cache)
-            .map_err(|error| format!("could not re-fetch the node: {error}"))?
-            .ok_or_else(|| "the node no longer exists".to_owned())?;
-        // SAFETY: `element` was built with `cache` immediately above.
+        let element = resolve_uia_element(uia, &cache, shared, node_id)
+            .ok_or_else(|| "the node could not be re-acquired".to_owned())?;
+        // SAFETY: `element` was built with `cache` by `resolve_uia_element`.
         let chain = unsafe {
             uia.ancestor_chain(&element, &cache, &shared.uia_registry, MAX_ANCESTOR_HOPS)
         }
@@ -1188,18 +1240,16 @@ fn navigate_query(
     node_id: verbatim_model::NodeId,
     direction: crate::protocol::NavigateDirection,
 ) -> Result<NavigateOutcome, String> {
-    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+    if shared.uia_registry.runtime_id_of(node_id).is_some() {
         let uia = worker
             .uia()
             .ok_or_else(|| "could not create a UIA client".to_owned())?;
         let cache = uia
             .base_cache_request()
             .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
-        let element = uia
-            .element_by_runtime_id(&runtime_id, &cache)
-            .map_err(|error| format!("could not re-fetch the node: {error}"))?
-            .ok_or_else(|| "the node no longer exists".to_owned())?;
-        // SAFETY: `element` was built with `cache` immediately above.
+        let element = resolve_uia_element(uia, &cache, shared, node_id)
+            .ok_or_else(|| "the node could not be re-acquired".to_owned())?;
+        // SAFETY: `element` was built with `cache` by `resolve_uia_element`.
         let found = unsafe {
             uia.navigate(
                 &element,
@@ -1294,18 +1344,16 @@ fn activate_query(
     shared: &Shared,
     node_id: verbatim_model::NodeId,
 ) -> Result<(), String> {
-    if let Some(runtime_id) = shared.uia_registry.runtime_id_of(node_id) {
+    if shared.uia_registry.runtime_id_of(node_id).is_some() {
         let uia = worker
             .uia()
             .ok_or_else(|| "could not create a UIA client".to_owned())?;
         let cache = uia
             .base_cache_request()
             .map_err(|error| format!("could not build a UIA cache request: {error}"))?;
-        let element = uia
-            .element_by_runtime_id(&runtime_id, &cache)
-            .map_err(|error| format!("could not re-fetch the node: {error}"))?
-            .ok_or_else(|| "the node no longer exists".to_owned())?;
-        // SAFETY: `element` was built with `cache` immediately above.
+        let element = resolve_uia_element(uia, &cache, shared, node_id)
+            .ok_or_else(|| "the node could not be re-acquired".to_owned())?;
+        // SAFETY: `element` was built with `cache` by `resolve_uia_element`.
         return unsafe { uia.activate(&element) }
             .map_err(|error| format!("UIA activation failed: {error}"));
     }
@@ -1325,6 +1373,21 @@ fn window_snapshot(
     shared: &Shared,
 ) -> Option<(Backend, NodeSnapshot)> {
     let class = window_class_name(hwnd);
+    // A popup menu window (the Win32 menu class) announces as its client
+    // object — role menu, the menu's own name — never as a bare "window":
+    // that is what a menu opening should sound like, and it is byte-for-byte
+    // the node the `MenuPopupStart` WinEvent path emits (same registry key,
+    // no ancestors), so the reducer's identical-focus suppression drops
+    // whichever of the two paths announces second.
+    if class == "#32768" {
+        let node = verbatim_ia2::acquire::snapshot_from_event(
+            hwnd,
+            OBJID_CLIENT.0,
+            CHILDID_SELF,
+            &shared.msaa_registry,
+        )?;
+        return Some((Backend::Msaa, node));
+    }
     let is_uia = decide_backend(shared, hwnd, &class);
     if is_uia {
         let uia = worker.uia()?;
@@ -1486,10 +1549,25 @@ fn active_top_level_window(target_pid: u32) -> Option<isize> {
     genuine_foreground_window(target_pid)
         .filter(|&hwnd| !window_is_hidden_frame(hwnd))
         .or_else(|| {
+            // The fallback enumeration also skips invisible windows:
+            // processes keep hidden housekeeping windows ("DDE Server
+            // Window", message-only broker windows) that enumerate first
+            // and were announced as if the user had landed on them —
+            // heard live as a spurious "DDE Server Window window" while a
+            // menu was open. A window nobody can see is never the one to
+            // announce.
             top_level_windows(target_pid)
                 .into_iter()
-                .find(|&hwnd| !window_is_hidden_frame(hwnd))
+                .find(|&hwnd| !window_is_hidden_frame(hwnd) && window_is_visible(hwnd))
         })
+}
+
+/// Whether `hwnd` is visible (`IsWindowVisible`) — a local, non-blocking
+/// read safe against any handle, invalid ones included.
+fn window_is_visible(hwnd: isize) -> bool {
+    // SAFETY: IsWindowVisible tolerates any handle value, returning false
+    // for an invalid one.
+    unsafe { IsWindowVisible(HWND(hwnd as *mut c_void)) }.as_bool()
 }
 
 /// Returns `GetForegroundWindow()` if it belongs to `target_pid`, else
