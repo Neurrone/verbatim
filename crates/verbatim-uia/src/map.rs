@@ -64,6 +64,20 @@ pub fn role_from_control_type(control_type: i32) -> Role {
     }
 }
 
+/// Refines a Button control type's role using `TogglePattern` availability;
+/// every other role passes through unchanged. Mirrors NVDA's `_get_role`: a
+/// Button element that supports the Toggle pattern is a toggle button (NVDA:
+/// role BUTTON plus a supported `UIA_ToggleToggleStatePropertyId` becomes
+/// TOGGLEBUTTON).
+#[must_use]
+pub fn refine_button_role(role: Role, toggle_available: bool) -> Role {
+    if role == Role::Button && toggle_available {
+        Role::ToggleButton
+    } else {
+        role
+    }
+}
+
 /// Reads a cached property as a `VARIANT`. Returns `None` when the property was
 /// not cached or is unsupported (UIA returns a reserved sentinel value).
 ///
@@ -147,7 +161,12 @@ struct RawUiaStates {
 /// Toggle and expand values are honored only when their pattern is available,
 /// so a non-toggle control's default `ToggleState_Indeterminate` never becomes
 /// a spurious [`State::Mixed`].
-fn states_from_uia(raw: &RawUiaStates) -> StateSet {
+///
+/// `role` is the already-resolved (see [`refine_button_role`]) role of the
+/// node the states belong to: `ToggleState_On` becomes [`State::Pressed`]
+/// for a [`Role::ToggleButton`] and [`State::Checked`] for everything else,
+/// mirroring NVDA's toggle-state branch.
+fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
     let mut states = StateSet::new();
     if raw.has_focus {
         states.insert(State::Focused);
@@ -163,7 +182,12 @@ fn states_from_uia(raw: &RawUiaStates) -> StateSet {
     }
     if raw.toggle_available {
         if raw.toggle_state == Some(ToggleState_On.0) {
-            states.insert(State::Checked);
+            let on_state = if role == Role::ToggleButton {
+                State::Pressed
+            } else {
+                State::Checked
+            };
+            states.insert(on_state);
         } else if raw.toggle_state == Some(ToggleState_Indeterminate.0) {
             states.insert(State::Mixed);
         }
@@ -185,11 +209,14 @@ fn states_from_uia(raw: &RawUiaStates) -> StateSet {
 }
 
 /// Derives the normalized [`StateSet`] from an element's cached properties.
+/// `role` is the element's already-resolved role (see
+/// [`refine_button_role`]), which the toggle-state mapping needs to pick
+/// between [`State::Pressed`] and [`State::Checked`].
 ///
 /// # Safety
 ///
 /// `element` must be a live element built with the base cache request.
-unsafe fn states_from_cached(element: &IUIAutomationElement) -> StateSet {
+unsafe fn states_from_cached(element: &IUIAutomationElement, role: Role) -> StateSet {
     // SAFETY: every property below is in the base cache request; each read is
     // forwarded to the cached_* helpers' contract.
     let raw = unsafe {
@@ -212,7 +239,7 @@ unsafe fn states_from_cached(element: &IUIAutomationElement) -> StateSet {
             selected: cached_bool(element, UIA_SelectionItemIsSelectedPropertyId.0),
         }
     };
-    states_from_uia(&raw)
+    states_from_uia(&raw, role)
 }
 
 /// Reads a cached one-based property (`PositionInSet`, `SizeOfSet`, `Level`)
@@ -338,16 +365,18 @@ pub unsafe fn snapshot_from_cached_element(
             .map(|array| crate::com::take_i32_safearray(array))
             .unwrap_or_default();
         let control_type = cached_i32(element, UIA_ControlTypePropertyId.0).unwrap_or(0);
+        let toggle_available = cached_bool(element, UIA_IsTogglePatternAvailablePropertyId.0);
+        let role = refine_button_role(role_from_control_type(control_type), toggle_available);
         NodeSnapshot {
             // Caches `element` as the node's live element while minting its
             // id, so navigation and re-reads resolve it directly instead of
             // re-finding it by runtime id (see the registry's module doc).
             id: registry.id_for_element(&runtime_id, element),
             backend: Backend::Uia,
-            role: role_from_control_type(control_type),
+            role,
             name: cached_string(element, UIA_NamePropertyId.0),
             value: cached_string(element, UIA_ValueValuePropertyId.0),
-            states: states_from_cached(element),
+            states: states_from_cached(element, role),
             details: details_from_cached(element),
         }
     }
@@ -447,6 +476,23 @@ mod tests {
         assert_eq!(role_from_control_type(999_999), Role::Unknown);
     }
 
+    /// A Button that supports the Toggle pattern is a toggle button (NVDA:
+    /// role BUTTON plus a supported `UIA_ToggleToggleStatePropertyId`
+    /// becomes TOGGLEBUTTON).
+    #[test]
+    fn button_with_toggle_pattern_is_toggle_button() {
+        assert_eq!(refine_button_role(Role::Button, true), Role::ToggleButton);
+    }
+
+    /// A Button with no Toggle pattern support stays a plain button; a role
+    /// other than Button passes through unchanged regardless of toggle
+    /// availability.
+    #[test]
+    fn plain_button_and_other_roles_pass_through() {
+        assert_eq!(refine_button_role(Role::Button, false), Role::Button);
+        assert_eq!(refine_button_role(Role::CheckBox, true), Role::CheckBox);
+    }
+
     /// A focused, non-toggle element (e.g. a Pane or menu/list item) reports a
     /// default `ToggleState_Indeterminate` even though it has no `TogglePattern`.
     /// Gating on availability keeps that from becoming a spurious `Mixed`.
@@ -464,7 +510,7 @@ mod tests {
             selection_available: false,
             selected: false,
         };
-        let states = states_from_uia(&raw);
+        let states = states_from_uia(&raw, Role::Pane);
         assert!(states.contains(State::Focused));
         assert!(states.contains(State::Focusable));
         assert!(
@@ -475,7 +521,9 @@ mod tests {
         assert!(!states.contains(State::Collapsed));
     }
 
-    /// When the pattern is available, the toggle value is honored.
+    /// When the pattern is available, the toggle value is honored. A role
+    /// other than `ToggleButton` maps `ToggleState_On` to `Checked`, the
+    /// pre-M3 default.
     #[test]
     fn available_toggle_pattern_maps_toggle_state() {
         let base = RawUiaStates {
@@ -490,21 +538,43 @@ mod tests {
             selection_available: false,
             selected: false,
         };
-        assert!(states_from_uia(&base).contains(State::Checked));
+        assert!(states_from_uia(&base, Role::CheckBox).contains(State::Checked));
 
         let indeterminate = RawUiaStates {
             toggle_state: Some(ToggleState_Indeterminate.0),
             ..base
         };
-        assert!(states_from_uia(&indeterminate).contains(State::Mixed));
+        assert!(states_from_uia(&indeterminate, Role::CheckBox).contains(State::Mixed));
 
         let off = RawUiaStates {
             toggle_state: Some(0),
             ..base
         };
-        let off_states = states_from_uia(&off);
+        let off_states = states_from_uia(&off, Role::CheckBox);
         assert!(!off_states.contains(State::Checked));
         assert!(!off_states.contains(State::Mixed));
+    }
+
+    /// `ToggleState_On` maps to `State::Pressed` for a `ToggleButton`,
+    /// rather than `State::Checked`.
+    #[test]
+    fn toggle_state_on_honors_toggle_button_role() {
+        let base = RawUiaStates {
+            has_focus: false,
+            focusable: true,
+            enabled: true,
+            offscreen: false,
+            toggle_available: true,
+            toggle_state: Some(ToggleState_On.0),
+            expand_available: false,
+            expand_state: None,
+            selection_available: false,
+            selected: false,
+        };
+
+        let toggle_button_states = states_from_uia(&base, Role::ToggleButton);
+        assert!(toggle_button_states.contains(State::Pressed));
+        assert!(!toggle_button_states.contains(State::Checked));
     }
 
     #[test]
@@ -521,12 +591,12 @@ mod tests {
             selection_available: false,
             selected: false,
         };
-        assert!(states_from_uia(&expanded).contains(State::Expanded));
+        assert!(states_from_uia(&expanded, Role::Pane).contains(State::Expanded));
         let collapsed = RawUiaStates {
             expand_state: Some(ExpandCollapseState_Collapsed.0),
             ..expanded
         };
-        assert!(states_from_uia(&collapsed).contains(State::Collapsed));
+        assert!(states_from_uia(&collapsed, Role::Pane).contains(State::Collapsed));
     }
 
     #[test]
@@ -543,7 +613,7 @@ mod tests {
             selection_available: false,
             selected: false,
         };
-        let states = states_from_uia(&raw);
+        let states = states_from_uia(&raw, Role::Pane);
         assert!(states.contains(State::Disabled));
         assert!(states.contains(State::Offscreen));
     }
@@ -567,7 +637,7 @@ mod tests {
             selection_available: true,
             selected: true,
         };
-        let states = states_from_uia(&base);
+        let states = states_from_uia(&base, Role::Pane);
         assert!(states.contains(State::Selectable));
         assert!(states.contains(State::Selected));
 
@@ -575,7 +645,7 @@ mod tests {
             selected: false,
             ..base
         };
-        let states = states_from_uia(&unselected);
+        let states = states_from_uia(&unselected, Role::Pane);
         assert!(states.contains(State::Selectable));
         assert!(!states.contains(State::Selected));
 
@@ -584,7 +654,7 @@ mod tests {
             selected: true,
             ..base
         };
-        let states = states_from_uia(&unavailable);
+        let states = states_from_uia(&unavailable, Role::Pane);
         assert!(!states.contains(State::Selectable));
         assert!(
             !states.contains(State::Selected),

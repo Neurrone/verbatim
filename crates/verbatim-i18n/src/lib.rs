@@ -381,6 +381,7 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::Menu => i18n_embed_fl::fl!(loader, "role-menu"),
         Role::MenuItem => i18n_embed_fl::fl!(loader, "role-menu-item"),
         Role::Button => i18n_embed_fl::fl!(loader, "role-button"),
+        Role::ToggleButton => i18n_embed_fl::fl!(loader, "role-toggle-button"),
         Role::CheckBox => i18n_embed_fl::fl!(loader, "role-check-box"),
         Role::RadioButton => i18n_embed_fl::fl!(loader, "role-radio-button"),
         Role::ComboBox => i18n_embed_fl::fl!(loader, "role-combo-box"),
@@ -433,6 +434,7 @@ pub fn negated_state_name(state: verbatim_model::State) -> Option<String> {
     Some(match state {
         State::Checked => i18n_embed_fl::fl!(loader, "state-not-checked"),
         State::Selected => i18n_embed_fl::fl!(loader, "state-not-selected"),
+        State::Pressed => i18n_embed_fl::fl!(loader, "state-not-pressed"),
         _ => return None,
     })
 }
@@ -569,12 +571,24 @@ mod tests {
         assert_eq!(role_name(verbatim_model::Role::Tree), "tree view");
         assert_eq!(role_name(verbatim_model::Role::TreeItem), "tree view item");
         assert_eq!(
+            role_name(verbatim_model::Role::ToggleButton),
+            "toggle button"
+        );
+        assert_eq!(
             state_name(verbatim_model::State::Checked).as_deref(),
             Some("checked")
         );
         assert_eq!(
             negated_state_name(verbatim_model::State::Checked).as_deref(),
             Some("not checked")
+        );
+        assert_eq!(
+            state_name(verbatim_model::State::Pressed).as_deref(),
+            Some("pressed")
+        );
+        assert_eq!(
+            negated_state_name(verbatim_model::State::Pressed).as_deref(),
+            Some("not pressed")
         );
         assert_eq!(state_name(verbatim_model::State::Focused), None);
         assert_eq!(

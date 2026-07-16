@@ -514,11 +514,12 @@ fn reduce_value_changed(
 /// `EVENT_OBJECT_STATECHANGE` and equivalent UIA property changes carry the
 /// whole new set, not a delta). Diffs against the stored snapshot and
 /// announces, Interrupt priority: every newly gained announceable state
-/// (using the same order and exclusions as [`announce_node`]), plus the
-/// check-box/radio-button "toggled off" case — losing `Checked` with no
-/// `Mixed` present announces `NegatedState(Checked)`, since that transition
-/// would otherwise be silent. Ignored for any node other than the focused
-/// one; a no-op if the set did not actually change.
+/// (using the same order and exclusions as [`announce_node`]), plus two
+/// "toggled off" cases that would otherwise be silent — losing `Checked`
+/// with no `Mixed` present on a check box or radio button announces
+/// `NegatedState(Checked)`; losing `Pressed` on a toggle button announces
+/// `NegatedState(Pressed)`. Ignored for any node other than the focused one;
+/// a no-op if the set did not actually change.
 fn reduce_states_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -557,9 +558,21 @@ fn reduce_states_changed(
         )));
     }
 
+    let gained_pressed =
+        new_states.contains(State::Pressed) && !old_states.contains(State::Pressed);
+    let lost_pressed = role == Role::ToggleButton
+        && old_states.contains(State::Pressed)
+        && !new_states.contains(State::Pressed);
+    if gained_pressed {
+        segments.push(UtteranceSegment::new(SegmentContent::State(State::Pressed)));
+    } else if lost_pressed {
+        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
+            State::Pressed,
+        )));
+    }
+
     for candidate in [
         State::Mixed,
-        State::Pressed,
         State::Selected,
         State::Expanded,
         State::Collapsed,
@@ -879,15 +892,16 @@ fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapsho
 }
 
 /// Announcement order for states: checked (or its negation for check boxes
-/// and radio buttons that carry neither checked nor mixed), mixed, pressed,
-/// expanded, collapsed, has-popup, default, read-only, disabled, busy, and
-/// finally "not selected" for a selectable node that is not selected.
-/// Focus-related states (focused, focusable, offscreen) are never announced
-/// — they describe capability, not content. Positive `Selected` is never
-/// announced on a node announcement either, matching NVDA: a focused item
-/// being selected is the expected default, so only its notable absence is
-/// spoken. Selection *changes* still announce "selected" through the
-/// state-change diff, which keeps its own list.
+/// and radio buttons that carry neither checked nor mixed), pressed (or its
+/// negation "not pressed" for a toggle button that does not carry it),
+/// mixed, expanded, collapsed, has-popup, default, read-only, disabled,
+/// busy, and finally "not selected" for a selectable node that is not
+/// selected. Focus-related states (focused, focusable, offscreen) are never
+/// announced — they describe capability, not content. Positive `Selected`
+/// is never announced on a node announcement either, matching NVDA: a
+/// focused item being selected is the expected default, so only its
+/// notable absence is spoken. Selection *changes* still announce "selected"
+/// through the state-change diff, which keeps its own list.
 fn state_segments(role: Role, states: StateSet) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
 
@@ -899,9 +913,16 @@ fn state_segments(role: Role, states: StateSet) -> Vec<UtteranceSegment> {
         )));
     }
 
+    if states.contains(State::Pressed) {
+        segments.push(UtteranceSegment::new(SegmentContent::State(State::Pressed)));
+    } else if role == Role::ToggleButton {
+        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
+            State::Pressed,
+        )));
+    }
+
     for state in [
         State::Mixed,
-        State::Pressed,
         State::Expanded,
         State::Collapsed,
         State::HasPopup,

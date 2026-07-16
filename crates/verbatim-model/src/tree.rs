@@ -41,6 +41,9 @@ pub enum Role {
     MenuItem,
     /// A push button.
     Button,
+    /// A button with a pressed state (UIA `ToggleButton`, ARIA
+    /// `aria-pressed`).
+    ToggleButton,
     /// A check box.
     CheckBox,
     /// A radio button.

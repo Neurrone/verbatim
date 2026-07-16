@@ -192,15 +192,18 @@ fn raise_property_changed(tree: &SharedTree, hwnd: HWND, index: usize, property:
 }
 
 /// Maps a normalized [`Role`] to the UIA control type mockapp serves for it
-/// — the inverse of `verbatim_uia::map::role_from_control_type`, restricted
-/// to the roles that map cleanly in both directions. A fixture author who
-/// picks [`Role::Dialog`] or [`Role::PropertyPage`] gets [`Role::Window`]
-/// back on read, because UIA has no distinct control type for either; that
-/// mirrors UIA itself (and `verbatim_uia`'s own forward map), not a mockapp
-/// gap.
+/// — the inverse of `verbatim_uia::map::role_from_control_type` (further
+/// refined by `verbatim_uia::map::refine_button_role`), restricted to the
+/// roles that map cleanly in both directions. A fixture author who picks
+/// [`Role::Dialog`] or [`Role::PropertyPage`] gets [`Role::Window`] back on
+/// read, because UIA has no distinct control type for either; that mirrors
+/// UIA itself (and `verbatim_uia`'s own forward map), not a mockapp gap.
+/// [`Role::ToggleButton`] shares the Button control type with
+/// [`Role::Button`] itself, matching real UIA: what distinguishes them is
+/// `TogglePattern` availability ([`props::toggle_available`]).
 fn role_to_control_type(role: Role) -> i32 {
     match role {
-        Role::Button => UIA_ButtonControlTypeId.0,
+        Role::Button | Role::ToggleButton => UIA_ButtonControlTypeId.0,
         Role::CheckBox => UIA_CheckBoxControlTypeId.0,
         Role::ComboBox => UIA_ComboBoxControlTypeId.0,
         Role::EditableText => UIA_EditControlTypeId.0,
@@ -330,11 +333,14 @@ mod props {
 
     /// Whether `role` reports `TogglePattern` availability. Gated on role
     /// alone (rather than current state) so an unchecked box still reports
-    /// availability, matching real toggle-capable controls.
+    /// availability, matching real toggle-capable controls. A toggle button
+    /// is toggle-capable by role too, same as a check box or radio button.
     pub(super) fn toggle_available(role: verbatim_model::Role) -> bool {
         matches!(
             role,
-            verbatim_model::Role::CheckBox | verbatim_model::Role::RadioButton
+            verbatim_model::Role::CheckBox
+                | verbatim_model::Role::RadioButton
+                | verbatim_model::Role::ToggleButton
         )
     }
 
@@ -432,8 +438,12 @@ mod props {
 
     /// The `ToggleState` for `states`, independent of whether the pattern is
     /// actually available — callers gate on [`toggle_available`] separately.
+    /// Both `Checked` and `Pressed` (a toggle button's pressed state) serve
+    /// `ToggleState_On`: a fixture author writes whichever of the two
+    /// matches the node's role, and this is the single UIA-side value both
+    /// collapse to, same as real UIA.
     pub(super) fn toggle_state_value(states: verbatim_model::StateSet) -> ToggleState {
-        if states.contains(State::Checked) {
+        if states.contains(State::Checked) || states.contains(State::Pressed) {
             ToggleState_On
         } else if states.contains(State::Mixed) {
             ToggleState_Indeterminate

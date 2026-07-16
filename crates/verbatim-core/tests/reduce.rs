@@ -196,6 +196,54 @@ fn mixed_checkbox_does_not_announce_negated_checked() {
 }
 
 #[test]
+fn unpressed_toggle_button_announces_negated_pressed() {
+    let state = SrState::new();
+    let toggle_button = node(900, Role::ToggleButton, Some("Bold"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event(TraceId::mint(), Pid(1), 1, toggle_button),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Bold"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ToggleButton)),
+            UtteranceSegment::new(SegmentContent::NegatedState(State::Pressed)),
+        ]
+    );
+}
+
+#[test]
+fn pressed_toggle_button_announces_pressed() {
+    let state = SrState::new();
+    let toggle_button = node(
+        901,
+        Role::ToggleButton,
+        Some("Bold"),
+        None,
+        StateSet::new().with(State::Pressed),
+    );
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event(TraceId::mint(), Pid(1), 1, toggle_button),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Bold"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ToggleButton)),
+            UtteranceSegment::new(SegmentContent::State(State::Pressed)),
+        ]
+    );
+}
+
+#[test]
 fn disabled_button_announces_unavailable_state() {
     let state = SrState::new();
     let button = node(
