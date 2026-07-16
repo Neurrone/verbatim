@@ -46,7 +46,7 @@ fn expected_tree() -> HashMap<&'static str, Expected> {
                 value: None,
                 states: &[],
                 absent_states: &[],
-                child_count: 5,
+                child_count: 7,
             },
         ),
         (
@@ -86,6 +86,32 @@ fn expected_tree() -> HashMap<&'static str, Expected> {
                 value: None,
                 states: &[State::Focusable, State::Mixed],
                 absent_states: &[State::Checked],
+                child_count: 0,
+            },
+        ),
+        (
+            // A UIA Button element that exposes the Toggle pattern maps to a
+            // toggle button, and its `ToggleState_On` becomes `Pressed`
+            // (never `Checked`) — NVDA's toggle behavior, exercised here
+            // through the real cross-process UIA client, not just the pure
+            // role table.
+            "Wireless",
+            Expected {
+                role: Role::ToggleButton,
+                value: None,
+                states: &[State::Focusable, State::Pressed],
+                absent_states: &[State::Checked],
+                child_count: 0,
+            },
+        ),
+        (
+            // The same control off: no `Pressed`, and still not `Checked`.
+            "Airplane mode",
+            Expected {
+                role: Role::ToggleButton,
+                value: None,
+                states: &[State::Focusable],
+                absent_states: &[State::Pressed, State::Checked],
                 child_count: 0,
             },
         ),

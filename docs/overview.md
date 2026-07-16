@@ -443,9 +443,15 @@ Implementation notes, `reduce`:
   announcement owns those) — before the control itself, so entering a
   dialog speaks the dialog and tabbing within it stays quiet about it. A
   focus change from a different application treats the whole chain as
-  newly entered. The negated-state rules match NVDA's within the current
-  vocabulary (negated checked for check boxes and radio buttons); NVDA's
-  switch and toggle-button negations wait on those roles existing.
+  newly entered. The negated-state rules match NVDA's: negated checked for
+  check boxes and radio buttons, and negated pressed ("not pressed") for a
+  toggle button — a `Button` control that exposes the UIA Toggle pattern,
+  which `verbatim-uia` reclassifies to `Role::ToggleButton` with the
+  toggle-on state mapped to `Pressed` rather than `Checked`, exactly as
+  NVDA does (this is what a Windows 11 Settings toggle announces as). A
+  separate `Switch` role was considered and deliberately not added: the
+  reference NVDA's UIA path has no such role and announces these as toggle
+  buttons.
 - Object navigation and the review cursor (M3): `SrState` carries a
   navigator object and a review cursor that follow focus by default (every
   focus change snaps them to the new focus). A `Command` input runs against

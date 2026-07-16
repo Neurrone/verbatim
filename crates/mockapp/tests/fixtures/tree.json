@@ -39,6 +39,18 @@
           "role": "radio_button",
           "name": "Option A",
           "states": ["focusable", "checked"]
+        },
+        {
+          "id": "toggle_on",
+          "role": "toggle_button",
+          "name": "Wireless",
+          "states": ["focusable", "pressed"]
+        },
+        {
+          "id": "toggle_off",
+          "role": "toggle_button",
+          "name": "Airplane mode",
+          "states": ["focusable"]
         }
       ]
     },

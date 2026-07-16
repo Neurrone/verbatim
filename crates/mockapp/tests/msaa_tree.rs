@@ -66,7 +66,7 @@ fn expected_tree() -> HashMap<&'static str, Expected> {
                 value: None,
                 states: &[],
                 absent_states: &[],
-                child_count: 5,
+                child_count: 7,
             },
         ),
         (
@@ -106,6 +106,32 @@ fn expected_tree() -> HashMap<&'static str, Expected> {
                 value: None,
                 states: &[State::Focusable, State::Mixed],
                 absent_states: &[State::Checked],
+                child_count: 0,
+            },
+        ),
+        (
+            // MSAA has no toggle-button role (`verbatim-ia2` maps its
+            // control type to `Unknown`), but the pressed state still
+            // round-trips as `State::Pressed` — the two fixture toggle
+            // buttons exist for the UIA test's toggle-button mapping, and
+            // are asserted here only so the shared-fixture MSAA walk stays
+            // exhaustive.
+            "Wireless",
+            Expected {
+                role: Role::Unknown,
+                value: None,
+                states: &[State::Focusable, State::Pressed],
+                absent_states: &[],
+                child_count: 0,
+            },
+        ),
+        (
+            "Airplane mode",
+            Expected {
+                role: Role::Unknown,
+                value: None,
+                states: &[State::Focusable],
+                absent_states: &[State::Pressed],
                 child_count: 0,
             },
         ),

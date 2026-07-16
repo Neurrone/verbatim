@@ -334,6 +334,29 @@ and the D9 outpost generalization — were finished early, at the end of M2
   would have asserted. Automating it waits for the shell-foreground-timing
   work its own investigation would need, most naturally alongside the Tier A
   extension port that motivates the Explorer-specific cosmetic fixes anyway.
+
+  Toggle controls (the Settings app's read-only WinUI toggles): landed as a
+  `ToggleButton` role, matching the reference NVDA exactly. A WinUI
+  `ToggleSwitch` reports as a UIA Button that exposes the Toggle pattern, so
+  `verbatim-uia` reclassifies a Button-with-Toggle to `Role::ToggleButton`
+  and maps its toggle-on state to `Pressed` rather than `Checked` (NVDA's
+  `_get_role` and toggle-state branch); the reducer announces "not pressed"
+  for a toggle button that is off, the same negated-state treatment check
+  boxes get, and a live-off toggle's state change announces the negation
+  too. A separate `Switch` role spoken "on"/"off" was considered (an earlier
+  recorded intent) and dropped after checking the reference NVDA, whose UIA
+  path has no switch role and announces these as toggle buttons; the
+  maintainer confirmed the toggle-button wording. The mapping is verified
+  cross-process through mockapp's real UIA client (a scripted toggle button
+  round-trips to `ToggleButton` plus `Pressed`), and the reducer wording is
+  unit-tested. The live Settings-app E2E scenario is deferred for the same
+  reason as the Explorer scenario above: the Settings app is a
+  broker-activated process that does not take keyboard focus reliably
+  through the harness on a freshly-restored guest (an eight-tab probe into
+  the Notifications page produced no announcements at all), so the toggle
+  behavior is verified by hand — open Settings, tab to any toggle, and
+  confirm it announces "<name> toggle button pressed" on and "not pressed"
+  off.
 - Time and date command: Verbatim+F12 speaks the time, twice quickly for
   the date. A system tray and taskbar icons list replicating the
   systrayList NVDA add-on exactly, including its GUI: Verbatim+F11 opens
