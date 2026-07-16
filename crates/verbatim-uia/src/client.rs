@@ -9,7 +9,7 @@
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
-use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayDestroy, SafeArrayPutElement};
+use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayPutElement};
 use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4,
 };
@@ -122,9 +122,16 @@ impl Uia {
         }
         // SAFETY: a VT_ARRAY | VT_I4 VARIANT is built around a freshly created
         // i32 SAFEARRAY sized to the runtime id; the array is filled by index
-        // within bounds. `VARIANT` has no Drop in this crate, so the array is
-        // destroyed explicitly after `CreatePropertyCondition` copies the value
-        // into the condition. The search walks from the root of this tree.
+        // within bounds. The VARIANT owns the array: `windows`'s `VARIANT`
+        // has a `Drop` impl that calls `VariantClear`, which destroys the
+        // `parray` for a VT_ARRAY variant, so the array is freed exactly once
+        // when `variant` drops at the end of this scope — after
+        // `CreatePropertyCondition` has copied it into the condition and after
+        // the search below. It must NOT also be destroyed explicitly: that
+        // was a double free (`SafeArrayDestroy` then `VariantClear` on the
+        // same pointer), the heap corruption an outpost crash-loop traced to
+        // this exact spot under the M3 focus-enrichment query. The search
+        // walks from the root of this tree.
         unsafe {
             let count = u32::try_from(runtime_id.len()).unwrap_or(0);
             let array = SafeArrayCreateVector(VT_I4, 0, count);
@@ -150,9 +157,7 @@ impl Uia {
             let root = self.client.GetRootElement()?;
             let condition = self
                 .client
-                .CreatePropertyCondition(UIA_RuntimeIdPropertyId, &variant);
-            let _ = SafeArrayDestroy(array);
-            let condition = condition?;
+                .CreatePropertyCondition(UIA_RuntimeIdPropertyId, &variant)?;
             match root.FindFirstBuildCache(TreeScope_Subtree, &condition, cache) {
                 Ok(element) => Ok(Some(element)),
                 Err(_) => Ok(None),
