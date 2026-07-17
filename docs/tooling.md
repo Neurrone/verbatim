@@ -284,17 +284,24 @@ pass or fail, latency counts) to `target/e2e-artifacts/<scenario name>/
 summary.txt` under the workspace root (`VERBATIM_E2E_ARTIFACTS_DIR`
 overrides the root), whether run runner-direct or through `cargo xtask vm
 test`; `xtask vm test` reads this back to build its own run summary rather
-than parsing test output. A *failed* scenario additionally writes, into the
-same directory, the interleaved timeline
+than parsing test output. Every scenario run, pass or fail, also writes into
+the same directory the interleaved timeline
 (`timeline.txt` — the same account an `expect_*` panic already prints),
-Verbatim's captured stderr log (`stderr.log`), and a flight-recorder dump
-(`flight-recorder.jsonl`, fetched via the control plane's `DumpRecorder`
-request and read back through the agent) — collected by
-`Scenario::collect_failure_artifacts` from inside the scenario's own process,
-where the live control and agent connections it needs still exist. None of
-this is a retry mechanism: a failed scenario is reported failed exactly
-once, with these artifacts left for root-causing, never re-run
-automatically by anything in this crate or by `xtask`.
+Verbatim's captured stderr log (`stderr.log`), the per-process outpost and
+listener logs the supervisor redirected each spawned process's stderr into
+(`outpost-core.log`, `listener.log`, and one `outpost-<pid>.log` per launched
+target — fetched by name from the guest's `logs` directory, since the agent
+reads single files and cannot list a directory), and a reducer flight-recorder
+dump (`flight-recorder.jsonl`, fetched via the control plane's `DumpRecorder`
+request and read back through the agent) — the timeline, stderr, and outpost
+logs by `Scenario::collect_run_artifacts` and the flight recorder by
+`Scenario::collect_flight_recorder` (taken before the clean quit, so a passing
+run captures it too), both from inside the scenario's own process, where the
+live control and agent connections they need still exist. A passing run leaves
+these behind so its announcement timings and reducer inputs can be read, not
+only a failing one. None of this is a retry mechanism: a failed scenario is
+reported failed exactly once, with these artifacts left for root-causing,
+never re-run automatically by anything in this crate or by `xtask`.
 
 Reading a speech-assertion failure: `SpeechCollector::expect_in_order`
 panics with a message naming which matcher, by position, it was waiting for
@@ -475,7 +482,7 @@ scrub through. This per-scenario pull sequencing was verified live during
 M3: a `--record` run of the whole suite produced one correctly named,
 audio-carrying mp4 per scenario. The other Track B caveat, reading a
 flight-recorder dump back off the guest through the agent, is exercised
-continuously — every failed scenario's `collect_failure_artifacts` pulls
+continuously — every scenario's `collect_flight_recorder` pulls
 `flight-recorder.jsonl` this way, and those dumps were read repeatedly
 while root-causing M3's navigation and cold-start work.
 

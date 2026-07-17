@@ -63,8 +63,9 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{self, BufReader};
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
@@ -76,6 +77,10 @@ use std::collections::hash_map::Entry;
 use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE};
 use windows::Win32::Foundation::{HANDLE_FLAG_INHERIT, HANDLE_FLAGS, SetHandleInformation};
 use windows::Win32::Security::SECURITY_ATTRIBUTES;
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    OPEN_ALWAYS,
+};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -84,9 +89,10 @@ use windows::Win32::System::JobObjects::{
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, GetExitCodeProcess, OpenProcess,
-    PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread, STARTUPINFOW,
+    PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
+    STARTUPINFOW,
 };
-use windows::core::PWSTR;
+use windows::core::{PCWSTR, PWSTR};
 
 use verbatim_model::{Pid, TraceId};
 
@@ -357,7 +363,17 @@ impl SupervisorShared {
             pipes.child_out.0 as usize,
             target_pid.0,
         );
-        let process = spawn_suspended(&command_line, &job)?;
+        // Redirect the outpost's stderr to a per-pid log file so its `tracing`
+        // output is readable (Task: outpost observability). Best-effort: a
+        // failed log open leaves the outpost unredirected, never unspawned.
+        let log_handle = child_log_handle(&self.exe_path, &format!("outpost-{}", target_pid.0));
+        let spawn_result = spawn_suspended(&command_line, &job, log_handle);
+        if let Some(handle) = log_handle {
+            // The child inherited its own copy; drop ours whether or not the
+            // spawn succeeded.
+            close_handle(handle);
+        }
+        let process = spawn_result?;
 
         // The child has inherited its pipe ends; close ours to them so EOF is
         // observed correctly when the outpost exits.
@@ -703,7 +719,14 @@ impl SupervisorShared {
             pipes.child_in.0 as usize,
             pipes.child_out.0 as usize,
         );
-        let process = spawn_suspended(&command_line, &job)?;
+        // Redirect the listener's stderr to `logs/listener.log`, same as a
+        // per-app outpost (Task: outpost observability). Best-effort.
+        let log_handle = child_log_handle(&self.exe_path, "listener");
+        let spawn_result = spawn_suspended(&command_line, &job, log_handle);
+        if let Some(handle) = log_handle {
+            close_handle(handle);
+        }
+        let process = spawn_result?;
         pipes.close_child_ends();
 
         // SAFETY: `process.thread` is the suspended primary thread handle.
@@ -1250,20 +1273,34 @@ struct Spawned {
 }
 
 /// Creates the outpost process suspended, inheriting handles, and assigns it to
-/// `job` before it runs.
-fn spawn_suspended(command_line: &str, job: &OwnedHandle) -> io::Result<Spawned> {
+/// `job` before it runs. When `log_handle` is `Some`, the child's standard
+/// output and error are redirected to it (its standard input too, harmlessly —
+/// the outpost reads its command pipe, never stdin), so the outpost's own
+/// `tracing` output lands in a file the harness can read; the handle must be
+/// inheritable (see [`open_child_log`]).
+fn spawn_suspended(
+    command_line: &str,
+    job: &OwnedHandle,
+    log_handle: Option<HANDLE>,
+) -> io::Result<Spawned> {
     let mut command: Vec<u16> = command_line
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let startup = STARTUPINFOW {
+    let mut startup = STARTUPINFOW {
         cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(0),
         ..Default::default()
     };
+    if let Some(log) = log_handle {
+        startup.dwFlags |= STARTF_USESTDHANDLES;
+        startup.hStdInput = log;
+        startup.hStdOutput = log;
+        startup.hStdError = log;
+    }
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: `command` is a NUL-terminated writable UTF-16 buffer; startup and
     // info are correctly sized; bInheritHandles is true so the inheritable
-    // child pipe ends pass to the child.
+    // child pipe ends (and the log handle, when set) pass to the child.
     unsafe {
         CreateProcessW(
             None,
@@ -1303,6 +1340,59 @@ fn close_handle(handle: HANDLE) {
     // SAFETY: `handle` is a valid handle we own and are done with.
     unsafe {
         let _ = windows::Win32::Foundation::CloseHandle(handle);
+    }
+}
+
+/// Opens (creating if needed) the per-role log file a spawned child's stderr is
+/// redirected into, returning an inheritable, append-mode handle — or `None` if
+/// the logs directory or file could not be created, since outpost logging is
+/// diagnostics and must never fail a spawn. `file_stem` names the file
+/// (`outpost-<target pid>` or `listener`) inside a `logs` directory next to the
+/// outpost executable, where `cargo xtask vm logs` and the E2E harness can read
+/// it. Append mode so a crashed outpost's log and its respawn's both survive in
+/// one file. The caller passes the returned handle to [`spawn_suspended`] and
+/// closes its own copy afterward (the child keeps its inherited copy).
+fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
+    let dir = exe_path.parent()?.join("logs");
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%error, "could not create the outpost logs directory");
+        return None;
+    }
+    let path = dir.join(format!("{file_stem}.log"));
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
+        lpSecurityDescriptor: std::ptr::null_mut(),
+        bInheritHandle: true.into(),
+    };
+    // SAFETY: `wide` is a NUL-terminated path alive across the call; the
+    // attributes live for the call; append-mode writes are atomic at end of
+    // file, so concurrent writers (a respawned outpost) do not interleave.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            FILE_APPEND_DATA.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            Some(&raw const attributes),
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    };
+    match handle {
+        Ok(handle) if !handle.is_invalid() => Some(handle),
+        Ok(handle) => {
+            close_handle(handle);
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not open an outpost log file");
+            None
+        }
     }
 }
 

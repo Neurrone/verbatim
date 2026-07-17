@@ -26,9 +26,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo,
-    GetMessageW, GetPropW, GetWindowThreadProcessId, IsWindowVisible, MSG, OBJID_CLIENT,
-    PostThreadMessageW, TranslateMessage,
+    DispatchMessageW, EnumWindows, GA_ROOT, GUITHREADINFO, GetAncestor, GetForegroundWindow,
+    GetGUIThreadInfo, GetMessageW, GetPropW, GetWindowThreadProcessId, IsWindowVisible, MSG,
+    OBJID_CLIENT, PostThreadMessageW, TranslateMessage,
 };
 use windows::core::{BOOL, HSTRING};
 
@@ -123,6 +123,22 @@ const ANNOUNCE_RETRY_ATTEMPTS: u32 = 10;
 
 /// Spacing between announce retry attempts.
 const ANNOUNCE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How many attempts the window announcement job holds the serial announce
+/// lane for while its window is still nameless: three, spaced
+/// [`WINDOW_LANE_INTERVAL`] apart, so the lane is held at most roughly 600
+/// milliseconds plus the reads' own time. The lane must never starve the
+/// control announcement queued behind the window — the failure the old
+/// per-fact threads produced was the window emitting *after* the control and
+/// being dropped by the reducer as stale — so the window job releases the lane
+/// after this bound whether or not it has succeeded, continuing any remaining
+/// retries off the lane (see [`window_announce_job`]).
+const WINDOW_LANE_ATTEMPTS: u32 = 3;
+
+/// Spacing between the window job's on-lane nameless-retry attempts — tighter
+/// than [`ANNOUNCE_RETRY_INTERVAL`] because these attempts hold the lane and so
+/// must be brief; the background remainder uses the wider spacing.
+const WINDOW_LANE_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Shared state cloned into every callback and query. All fields are cheap to
 /// clone (channels, atomics, and `Arc`-backed registries and the arbitrator).
@@ -254,6 +270,27 @@ fn window_is_hidden_frame(hwnd: isize) -> bool {
     !value.0.is_null()
 }
 
+/// Whether `hwnd` is Core's hidden main frame *or a child window of it*
+/// (decision D9). The hidden-frame marker property is set on the frame window
+/// only, so a control that lives in its own child `hwnd` inside the frame — a
+/// wxWidgets panel has one — is not caught by reading the marker on that child
+/// alone, and was announcing as a bare "pane". This also checks the top-level
+/// ancestor (`GetAncestor` with `GA_ROOT`, a hang-safe local read like
+/// `GetPropW`), so a focus fact for a control hosted inside the hidden frame is
+/// suppressed too: Core's hidden frame must never announce, transiting real
+/// focus during the prePopup show/raise/force-foreground dance. Used by the
+/// fact-announce paths, where a resolved window can be such a child.
+fn window_belongs_to_hidden_frame(hwnd: isize) -> bool {
+    if window_is_hidden_frame(hwnd) {
+        return true;
+    }
+    // SAFETY: GetAncestor tolerates any window handle, returning null for an
+    // invalid one; GA_ROOT walks to the top-level owner.
+    let root = unsafe { GetAncestor(HWND(hwnd as *mut c_void), GA_ROOT) };
+    let root = root.0 as isize;
+    root != 0 && root != hwnd && window_is_hidden_frame(root)
+}
+
 /// The MSAA `WinEvent` handling body: cross-filter on the calling thread, then
 /// hand acquisition to the query pool. Never blocks.
 ///
@@ -287,7 +324,12 @@ fn handle_msaa_event(
     }
     let shared = shared.clone();
     let pool = shared.pool.clone();
-    pool.submit(move |worker| {
+    // Deadline-guarded (architecture section 1's founding rule): a hung
+    // acquisition abandons its worker and restores capacity rather than
+    // draining the pool invisibly. FOCUS_DEADLINE covers the acquisition plus
+    // the Focus branch's enrichment walk; the lighter property/value/state/
+    // selection events complete well inside it.
+    pool.submit_deadline(FOCUS_DEADLINE, move |worker| {
         // A focus event uses the focus-specific acquisition, which applies
         // NVDA's child-0-on-a-list redirect so a container that fires focus on
         // itself (the wx generic list) announces the focused item, not the
@@ -346,8 +388,9 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
         // arrives second.
         // A per-application outpost never receives a Foreground WinEvent (it
         // is the listener's global subscription; a foreground fact reaches
-        // this outpost through `handle_foreground_fact`, not here), but the
-        // match is total, so map it to the same bare focus shape defensively.
+        // this outpost as a `DeliverFact`, enqueued as a window job on the
+        // announce lane, not here), but the match is total, so map it to the
+        // same bare focus shape defensively.
         WinEventKind::Focus | WinEventKind::MenuPopupStart | WinEventKind::Foreground => {
             NormalizedEvent::FocusChanged {
                 node: node.clone(),
@@ -545,6 +588,14 @@ fn event_thread_main(
     drop(hook);
 }
 
+/// One unit of work on the per-outpost announce lane: a closure that runs a
+/// window, MSAA-focus, menu, or UIA-focus announcement to completion against
+/// the shared state. The lane runs these strictly one at a time, in arrival
+/// (listener-observation) order, so the foreground window announcement is
+/// spoken before the focused control it precedes rather than racing it on a
+/// separate thread and losing to the reducer's last-observation-wins rule.
+type AnnounceJob = Box<dyn FnOnce(&Shared) + Send>;
+
 /// The outpost: owns the shared state, event thread, and UIA registrations
 /// for one target application, fixed for the outpost's whole life.
 pub struct Outpost {
@@ -556,6 +607,14 @@ pub struct Outpost {
     selection_registration: Option<SelectionRegistration>,
     notification_registration: Option<NotificationRegistration>,
     _writer: JoinHandle<()>,
+    /// Enqueues announce jobs onto the lane, in arrival order. Held here, not
+    /// in [`Shared`], so that when the outpost drops this sender the lane's
+    /// receiver reaches end of stream and the announcer thread exits — the
+    /// announcer holds a `Shared` clone to run jobs, so keeping the sender out
+    /// of `Shared` is what breaks the otherwise self-sustaining reference.
+    announce_tx: Sender<AnnounceJob>,
+    /// The long-lived announcer thread draining [`announce_tx`](Self::announce_tx).
+    _announcer: JoinHandle<()>,
 }
 
 impl Outpost {
@@ -616,6 +675,20 @@ impl Outpost {
         });
         let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
 
+        // The announce lane: one long-lived thread draining a FIFO of jobs,
+        // running each to completion before the next, so announcements emit in
+        // arrival order (decision D13's window-then-focus requirement).
+        let (announce_tx, announce_rx) = unbounded::<AnnounceJob>();
+        let announcer_shared = shared.clone();
+        let announcer_join = thread::Builder::new()
+            .name("verbatim-announcer".to_owned())
+            .spawn(move || {
+                while let Ok(job) = announce_rx.recv() {
+                    job(&announcer_shared);
+                }
+            })
+            .expect("spawn announcer thread");
+
         let mut outpost = Self {
             pid: std::process::id(),
             target_pid,
@@ -625,6 +698,8 @@ impl Outpost {
             selection_registration: None,
             notification_registration: None,
             _writer: writer_join,
+            announce_tx,
+            _announcer: announcer_join,
         };
         outpost.install_uia_registrations(target_pid);
 
@@ -788,32 +863,43 @@ impl Outpost {
     }
 
     /// Turns a focus fact delivered from the listener (decision D13) into an
-    /// announcement, dispatching by kind. A foreground fact announces its
-    /// window on its own retry thread; the MSAA-focus, menu-popup, and
-    /// UIA-focus facts each run on a short-lived per-fact thread
-    /// ([`run_msaa_fact`], [`run_uia_fact`]) so they can resolve a *real*
+    /// announce-lane job, dispatching by kind. A foreground fact enqueues the
+    /// window job; MSAA-focus, menu-popup, and UIA-focus facts enqueue their
+    /// [`run_msaa_fact`]/[`run_uia_fact`] bodies, which resolve a *real*
     /// arbitration verdict inline — a blocking probe the event-thread
     /// provisional cross-filter could never make — before acquiring,
     /// enriching, and emitting. Every path threads the listener's `trace` and
     /// `observed_at_ms` through, so the latency timeline starts at the OS
     /// event.
     ///
-    /// Facts arrive at user speed, so a thread per fact is cheap; the thread
-    /// keeps the command loop responsive (`Ping`, `Fetch`) while a cold
-    /// window's one probe runs, and it uses the deadline-guarded query pool for
-    /// every blocking step, never an unguarded block inside a `submit` closure.
+    /// The jobs run one at a time on the lane, in arrival order; each keeps the
+    /// command loop responsive (`Ping`, `Fetch`) because the lane is its own
+    /// thread, and uses the deadline-guarded query pool for every blocking
+    /// step. A foreground fact bumps the announce generation as it enqueues, so
+    /// a superseding foreground supersedes an older window job (newest-wins).
+    /// Each job is wrapped with a `start`/`end` trace line naming its kind and
+    /// hwnd, so a stalled lane is readable from the outpost log.
     fn handle_deliver_fact(&self, trace: TraceId, observed_at_ms: u64, fact: DeliveredFact) {
-        match fact {
+        let (kind_label, job_hwnd) = match &fact {
+            DeliveredFact::Foreground { hwnd } => ("foreground", *hwnd),
+            DeliveredFact::MsaaFocus { hwnd, .. } => ("msaa-focus", *hwnd),
+            DeliveredFact::MenuPopup { hwnd, .. } => ("menu-popup", *hwnd),
+            DeliveredFact::UiaFocus { hwnd, .. } => ("uia-focus", *hwnd),
+        };
+        let inner: AnnounceJob = match fact {
             DeliveredFact::Foreground { hwnd } => {
-                self.handle_foreground_fact(trace, observed_at_ms, hwnd);
+                let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+                Box::new(move |shared: &Shared| {
+                    window_announce_job(shared, hwnd, trace, observed_at_ms, generation);
+                })
             }
             DeliveredFact::MsaaFocus {
                 hwnd,
                 id_object,
                 id_child,
-            } => self.spawn_fact_thread(move |shared| {
+            } => Box::new(move |shared: &Shared| {
                 run_msaa_fact(
-                    &shared,
+                    shared,
                     WinEventKind::Focus,
                     hwnd,
                     id_object,
@@ -826,9 +912,9 @@ impl Outpost {
                 hwnd,
                 id_object,
                 id_child,
-            } => self.spawn_fact_thread(move |shared| {
+            } => Box::new(move |shared: &Shared| {
                 run_msaa_fact(
-                    &shared,
+                    shared,
                     WinEventKind::MenuPopupStart,
                     hwnd,
                     id_object,
@@ -837,37 +923,19 @@ impl Outpost {
                     observed_at_ms,
                 );
             }),
-            DeliveredFact::UiaFocus { hwnd, snapshot } => self.spawn_fact_thread(move |shared| {
-                run_uia_fact(&shared, trace, observed_at_ms, hwnd, snapshot);
+            DeliveredFact::UiaFocus { hwnd, snapshot } => Box::new(move |shared: &Shared| {
+                run_uia_fact(shared, trace, observed_at_ms, hwnd, snapshot);
             }),
-        }
-    }
-
-    /// Runs `body` on a short-lived named thread with a clone of the shared
-    /// state — the per-fact thread [`Self::handle_deliver_fact`] uses so a
-    /// fact's blocking verdict resolution never touches the command loop.
-    fn spawn_fact_thread<F: FnOnce(Shared) + Send + 'static>(&self, body: F) {
-        let shared = self.shared.clone();
-        let _ = thread::Builder::new()
-            .name("verbatim-fact".to_owned())
-            .spawn(move || body(shared));
-    }
-
-    /// Announces a foreground fact's window (decision D13): the hwnd is a known
-    /// address, so this reads its snapshot on the pool and retries briefly
-    /// while the window is still nameless — the second poll fallback the
-    /// architecture names, a window before its name retried against a known
-    /// address rather than guessed at. Bumps the announce generation so a
-    /// superseding announce or fact aborts a stale retry, the same discipline
-    /// [`run_announce`] follows.
-    fn handle_foreground_fact(&self, trace: TraceId, observed_at_ms: u64, hwnd: isize) {
-        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let shared = self.shared.clone();
-        let _ = thread::Builder::new()
-            .name("verbatim-fact-foreground".to_owned())
-            .spawn(move || {
-                announce_foreground_window(&shared, hwnd, trace, observed_at_ms, generation);
-            });
+        };
+        let job: AnnounceJob = Box::new(move |shared: &Shared| {
+            tracing::info!(kind = kind_label, hwnd = job_hwnd, "announce job start");
+            inner(shared);
+            tracing::info!(kind = kind_label, hwnd = job_hwnd, "announce job end");
+        });
+        // Enqueue in arrival order; the announcer thread runs the jobs one at a
+        // time. A send failure means the announcer has already exited (outpost
+        // shutting down), which is harmless to ignore.
+        let _ = self.announce_tx.send(job);
     }
 
     /// Answers a fetch by re-reading the node from whichever backend owns it.
@@ -883,15 +951,20 @@ impl Outpost {
         // handling is identical for either.
         match navigate_direction_of(query.kind) {
             None => {
-                self.shared.pool.submit(move |worker| {
-                    let result = refetch_node(worker, &shared, node_id)
-                        .map_or(FetchResult::Gone, FetchResult::Node);
-                    let _ = shared.outbound.send(OutpostToSupervisor::FetchReply {
-                        trace_id: trace,
-                        query_id,
-                        result,
+                // Deadline-guarded like every cross-process call: a plain
+                // re-read on a hung provider abandons its worker rather than
+                // draining the pool (QUERY_DEADLINE — a single-node re-read).
+                self.shared
+                    .pool
+                    .submit_deadline(QUERY_DEADLINE, move |worker| {
+                        let result = refetch_node(worker, &shared, node_id)
+                            .map_or(FetchResult::Gone, FetchResult::Node);
+                        let _ = shared.outbound.send(OutpostToSupervisor::FetchReply {
+                            trace_id: trace,
+                            query_id,
+                            result,
+                        });
                     });
-                });
             }
             Some(direction) => {
                 let outbound = self.shared.outbound.clone();
@@ -1211,16 +1284,24 @@ fn uia_fact_window(
     nearest_window_handle(&element)
 }
 
-/// The retry driver behind [`Outpost::handle_foreground_fact`], run on its own
-/// thread. Reads and announces the snapshot of `hwnd` — a known foreground
-/// window address — retrying briefly while it is still nameless, reusing
-/// [`run_announce`]'s window step reasoning: a window with no accessible name
-/// yet announces as a bare "window", pure noise, so this waits for the name a
-/// beat later rather than guessing. `generation` is the announce generation
-/// captured when the fact was handled; a superseding announce or fact bumps it
-/// and aborts this loop. Core's own hidden main frame is never announced
-/// (decision D9).
-fn announce_foreground_window(
+/// The foreground window's announce-lane job (decision D13): read and announce
+/// the snapshot of `hwnd` — a known foreground window address — so it is spoken
+/// before the focused control queued behind it. Reuses [`run_announce`]'s
+/// window-step reasoning: a window with no accessible name yet announces as a
+/// bare "window", pure noise, so it retries while nameless rather than guessing.
+///
+/// It holds the lane for at most [`WINDOW_LANE_ATTEMPTS`] attempts spaced
+/// [`WINDOW_LANE_INTERVAL`] apart. If the window is named within that budget it
+/// announces in order and the lane moves on. If it is still nameless, the lane
+/// must move on regardless (it must never starve the control announcement), so
+/// this hands the remaining retry budget to [`background_window_retry`] off the
+/// lane and returns; that background retry emits the window announcement late —
+/// out of order rather than lost — when the name finally arrives, and the
+/// reducer's window carve-out speaks a late window announcement without moving
+/// focus. `generation` is the announce generation captured at enqueue; a
+/// superseding announce or foreground fact bumps it and aborts the retry. Core's
+/// own hidden main frame is never announced (decision D9).
+fn window_announce_job(
     shared: &Shared,
     hwnd: isize,
     trace: TraceId,
@@ -1228,39 +1309,97 @@ fn announce_foreground_window(
     generation: u64,
 ) {
     let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
-    if window_is_hidden_frame(hwnd) {
+    if window_belongs_to_hidden_frame(hwnd) {
         return;
     }
-    for attempt in 0..ANNOUNCE_RETRY_ATTEMPTS {
+    for attempt in 0..WINDOW_LANE_ATTEMPTS {
         if !still_current() {
             return;
         }
-        let shared_for_window = shared.clone();
-        let window = shared.pool.run(FOCUS_DEADLINE, move |worker| {
-            window_snapshot(worker, hwnd, &shared_for_window)
-        });
-        if let Some(Some((backend, node))) = window {
-            let named = node.name.as_deref().is_some_and(|name| !name.is_empty());
-            if named {
-                if still_current() {
-                    shared.emit_at(
-                        trace,
-                        observed_at_ms,
-                        backend,
-                        NormalizedEvent::FocusChanged {
-                            node,
-                            ancestors: Vec::new(),
-                            selected_child: None,
-                        },
-                    );
-                }
-                return;
+        if let Some((backend, node)) = read_named_window(shared, hwnd) {
+            if still_current() {
+                shared.emit_at(
+                    trace,
+                    observed_at_ms,
+                    backend,
+                    NormalizedEvent::FocusChanged {
+                        node,
+                        ancestors: Vec::new(),
+                        selected_child: None,
+                    },
+                );
             }
+            return;
         }
-        if attempt + 1 < ANNOUNCE_RETRY_ATTEMPTS {
-            thread::sleep(ANNOUNCE_RETRY_INTERVAL);
+        if attempt + 1 < WINDOW_LANE_ATTEMPTS {
+            thread::sleep(WINDOW_LANE_INTERVAL);
         }
     }
+    // Still nameless after holding the lane: release it (the control behind us
+    // must not wait) and finish the retry budget on a background thread.
+    if still_current() {
+        let shared = shared.clone();
+        let _ = thread::Builder::new()
+            .name("verbatim-window-late".to_owned())
+            .spawn(move || {
+                background_window_retry(&shared, hwnd, trace, observed_at_ms, generation);
+            });
+    }
+}
+
+/// The off-lane remainder of [`window_announce_job`]'s retry budget: the
+/// window was still nameless when the lane had to move on, so this finishes the
+/// [`ANNOUNCE_RETRY_ATTEMPTS`] budget (the attempts the lane did not spend), at
+/// the wider [`ANNOUNCE_RETRY_INTERVAL`], and emits the window announcement the
+/// moment the name arrives — late, out of order, but not lost. Aborts if the
+/// announce generation is superseded, exactly as the on-lane phase does.
+fn background_window_retry(
+    shared: &Shared,
+    hwnd: isize,
+    trace: TraceId,
+    observed_at_ms: u64,
+    generation: u64,
+) {
+    let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
+    for _ in WINDOW_LANE_ATTEMPTS..ANNOUNCE_RETRY_ATTEMPTS {
+        thread::sleep(ANNOUNCE_RETRY_INTERVAL);
+        if !still_current() {
+            return;
+        }
+        if let Some((backend, node)) = read_named_window(shared, hwnd) {
+            if still_current() {
+                shared.emit_at(
+                    trace,
+                    observed_at_ms,
+                    backend,
+                    NormalizedEvent::FocusChanged {
+                        node,
+                        ancestors: Vec::new(),
+                        selected_child: None,
+                    },
+                );
+            }
+            return;
+        }
+    }
+}
+
+/// Reads `hwnd`'s window snapshot on a deadline-guarded worker and returns it
+/// only when the window has a non-empty accessible name — the shared "is it
+/// named yet?" step of both the on-lane and background window retries. `None`
+/// covers a read that timed out, found nothing, or found a still-nameless
+/// window.
+fn read_named_window(shared: &Shared, hwnd: isize) -> Option<(Backend, NodeSnapshot)> {
+    let shared_for_window = shared.clone();
+    let window = shared.pool.run(FOCUS_DEADLINE, move |worker| {
+        window_snapshot(worker, hwnd, &shared_for_window)
+    });
+    if let Some(Some((backend, node))) = window
+        && node.name.as_deref().is_some_and(|name| !name.is_empty())
+    {
+        return Some((backend, node));
+    }
+    None
 }
 
 /// Resolves the real arbitration verdict for a fact's window, blocking on the
@@ -1313,7 +1452,10 @@ fn run_msaa_fact(
     trace: TraceId,
     observed_at_ms: u64,
 ) {
-    if kind == WinEventKind::Focus && id_child == CHILDID_SELF && window_is_hidden_frame(hwnd) {
+    if kind == WinEventKind::Focus
+        && id_child == CHILDID_SELF
+        && window_belongs_to_hidden_frame(hwnd)
+    {
         return;
     }
     // Verdict true (UIA window) drops the MSAA fact; false and a probe timeout
@@ -1404,7 +1546,7 @@ fn run_uia_fact(
             .flatten()
             .or_else(foreground_focus_window)
     };
-    if window.is_some_and(window_is_hidden_frame) {
+    if window.is_some_and(window_belongs_to_hidden_frame) {
         return;
     }
     if let Some(hwnd) = window

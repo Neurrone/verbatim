@@ -378,7 +378,7 @@ fn run(def: &ScenarioDef) {
         Ok(state) => state,
         Err(error) => {
             scenario.collect_run_artifacts(&dir);
-            scenario.collect_failure_artifacts(&dir);
+            scenario.collect_flight_recorder(&dir);
             // Setup failed before any input was driven, so a latency
             // snapshot here would be empty; record none rather than racing
             // the imminent quit for nothing.
@@ -400,6 +400,13 @@ fn run(def: &ScenarioDef) {
     // latency (the snapshot raced Verbatim's exit and lost); a failing one
     // reported real numbers only because it skips the quit.
     let latency = scenario.latency_snapshot(200).ok();
+
+    // Dump the reducer flight recorder for every run, pass or fail, while
+    // Verbatim is still up (a passing run quits below; a failing one skipped
+    // the quit, so Verbatim is up here either way). It captures the reducer
+    // inputs a passing run leaves no other trace of — wanted for chasing
+    // symptoms the pass/fail verdict alone does not explain.
+    scenario.collect_flight_recorder(&dir);
 
     // The M3 pipeline latency budget: reported prominently on a breach,
     // never asserted (a recorded decision — see PIPELINE_BUDGET_MS's doc
@@ -435,13 +442,9 @@ fn run(def: &ScenarioDef) {
 
     let passed = body_outcome.is_ok() && teardown_outcome.is_ok() && quit_outcome.is_ok();
     // The timeline and stderr log are written for every run, pass or fail (so a
-    // passing diagnostic leaves its timings behind); the flight-recorder dump
-    // is added only on failure, where the run skipped the quit and Verbatim is
-    // still up to answer `DumpRecorder`.
+    // passing diagnostic leaves its timings behind). The flight-recorder dump
+    // already happened above, before the quit, for every run.
     scenario.collect_run_artifacts(&dir);
-    if !passed {
-        scenario.collect_failure_artifacts(&dir);
-    }
     write_summary(&dir, def.name, passed, latency.as_deref());
     println!(
         "scenario {:?}: {}",

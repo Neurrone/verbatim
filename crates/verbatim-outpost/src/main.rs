@@ -34,6 +34,10 @@ fn main() -> ExitCode {
     // Keep this outpost's trace IDs disjoint from Core's and every other
     // outpost's; they meet in Core's latency ledger.
     verbatim_model::TraceId::namespace(std::process::id());
+    // The supervisor redirects this process's stderr to a per-role log file
+    // (see `verbatim-outpost::supervisor`); install a subscriber so the
+    // outpost's `tracing` output actually lands there instead of nowhere.
+    init_tracing();
     let args: Vec<String> = std::env::args().collect();
     match parse_args(&args) {
         Some(Mode::Pipe {
@@ -83,6 +87,21 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Installs a tracing subscriber writing to this process's stderr (which the
+/// supervisor redirects to a log file). Respects `RUST_LOG`, defaulting to
+/// `info` so the announce-lane and query-pool diagnostics land without extra
+/// configuration. Never a hard failure: if a subscriber is somehow already
+/// set, `try_init` returns an error that is ignored.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 enum Mode {

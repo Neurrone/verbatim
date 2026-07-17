@@ -1101,11 +1101,12 @@ fn list_item_and_editable_text_ancestors_are_dropped() {
 }
 
 #[test]
-fn a_focus_observed_earlier_than_the_current_focus_is_dropped() {
+fn a_stale_window_focus_is_spoken_but_never_moves_focus() {
     // msinfo32's race: the control ("System Summary", observed later) is
     // announced first, then the window ("System Information", observed earlier)
-    // arrives on another outpost thread. The earlier-observed window must be
-    // dropped, or it would move focus and the navigator back to the window.
+    // arrives late from the announce lane. The window is foreground context the
+    // maintainer requires never lost, so it must still be spoken — but it must
+    // not move focus or the navigator back to the window.
     let state = SrState::new();
     let source = Pid(1);
     let item = node(
@@ -1129,13 +1130,50 @@ fn a_focus_observed_earlier_than_the_current_focus_is_dropped() {
     );
     let (state, effects) = reduce(
         &state,
-        &focus_event_at(TraceId::mint(), 500, source, 2, window),
+        &focus_event_at(TraceId::mint(), 500, source, 2, window.clone()),
     );
 
-    assert!(effects.is_empty(), "an earlier-observed focus is dropped");
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("System Information"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+        ],
+        "the late window announcement is spoken as foreground context"
+    );
     assert_eq!(
         state.focused().map(|(_, node)| node.id),
         Some(item.id),
+        "focus stays on the later-observed control, not the late window"
+    );
+}
+
+#[test]
+fn a_stale_control_focus_is_dropped_silently() {
+    // A stale *control* focus (not a window, not an ancestor of the current
+    // focus) is noise and a navigator hazard, so it stays dropped entirely.
+    let state = SrState::new();
+    let source = Pid(1);
+    let current = node(704, Role::Button, Some("Save"), None, StateSet::new());
+    let superseded = node(705, Role::Button, Some("Cancel"), None, StateSet::new());
+
+    let (state, _) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 1000, source, 1, current.clone()),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_at(TraceId::mint(), 500, source, 2, superseded),
+    );
+
+    assert!(
+        effects.is_empty(),
+        "a stale control focus is dropped silently"
+    );
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id),
+        Some(current.id),
         "focus stays on the later-observed control"
     );
 }

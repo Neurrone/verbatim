@@ -43,12 +43,12 @@
 //!   `--scenario` typo or a missing `tests/<name>.rs` libtest wrapper makes
 //!   `cargo test <name> -- --exact` match zero tests and still exit 0, and
 //!   silently green-lighting that would defeat the point of running it. The
-//!   artifacts directory holds the interleaved timeline and Verbatim's
-//!   captured stderr log for every run (so a passing diagnostic leaves its
-//!   timings behind), plus a flight-recorder dump on failure — all collected
-//!   by `verbatim_e2e::registry::run` itself, inside the subprocess, since
-//!   that is where the live control and agent connections needed to fetch
-//!   them still exist.
+//!   artifacts directory holds the interleaved timeline, Verbatim's captured
+//!   stderr log, and a reducer flight-recorder dump — all for every run, pass
+//!   or fail (so a passing diagnostic leaves its timings and reducer inputs
+//!   behind) — all collected by `verbatim_e2e::registry::run` itself, inside
+//!   the subprocess, since that is where the live control and agent
+//!   connections needed to fetch them still exist.
 //! - There is still no retry of any kind, at any level: a scenario that
 //!   fails is reported failed, once, with its artifacts left for a human to
 //!   root-cause — never re-run automatically by this module or by

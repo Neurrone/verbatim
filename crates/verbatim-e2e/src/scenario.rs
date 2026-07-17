@@ -40,9 +40,9 @@ use crate::{ENDPOINT_ENV, endpoint};
 /// [`crate::artifacts::scenario_dir`] names. The timeline and stderr log are
 /// written for every run by [`Scenario::collect_run_artifacts`] (so a passing
 /// diagnostic run leaves its announcement timings and outpost-ready timestamps
-/// behind, not only a failing one); the flight-recorder dump is the
-/// failure-only extra [`Scenario::collect_failure_artifacts`] adds, since it
-/// needs Verbatim still up to answer `DumpRecorder`.
+/// behind, not only a failing one); the flight-recorder dump is written for
+/// every run too by [`Scenario::collect_flight_recorder`], taken before the
+/// clean quit since it needs Verbatim still up to answer `DumpRecorder`.
 const TIMELINE_FILE_NAME: &str = "timeline.txt";
 const STDERR_FILE_NAME: &str = "stderr.log";
 const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
@@ -193,7 +193,7 @@ pub struct Scenario {
     /// The path this launch's Verbatim has its stdout and stderr captured
     /// into (see [`verbatim_stderr_log_path`]), readable back through
     /// [`process_agent`](Self::process_agent)'s `read_file` — what
-    /// [`Scenario::collect_failure_artifacts`] pulls on a scenario failure.
+    /// [`Scenario::collect_run_artifacts`] pulls on every run.
     stderr_log_path: String,
 }
 
@@ -593,9 +593,90 @@ impl Scenario {
                 );
             }
         }
+
+        self.collect_outpost_logs(dir);
     }
 
-    /// Collects the failure-only extra into `dir` (created if missing): a
+    /// Fetches the per-process outpost and listener log files the supervisor
+    /// redirected each spawned process's stderr into (Task: outpost
+    /// observability), from the `logs` directory next to Verbatim's executable
+    /// on the guest, into `dir`. Core's own outpost (`outpost-<verbatim pid>`)
+    /// and the listener are always attempted — those cover the menu scenarios,
+    /// where Core's own outpost is the one that goes silent — plus each launched
+    /// target application's outpost, by the pid this scenario launched it with.
+    ///
+    /// The agent reads one file by path (it has no directory listing), so only
+    /// deterministically-named files are fetched; a missing per-app outpost log
+    /// (a pid that never became an outpost's target, e.g. a `notepad.exe`
+    /// hand-off) is skipped silently, while a missing Core outpost or listener
+    /// log — which should exist — is noted.
+    fn collect_outpost_logs(&mut self, dir: &Path) {
+        let Some(logs_dir) = self.outpost_logs_dir() else {
+            eprintln!("could not derive the outpost logs directory from the stderr log path");
+            return;
+        };
+        // Core's own outpost and the listener should exist: note a failure.
+        self.fetch_outpost_log(
+            &format!(r"{logs_dir}\outpost-{}.log", self.verbatim_pid),
+            dir,
+            "outpost-core.log",
+            true,
+        );
+        self.fetch_outpost_log(
+            &format!(r"{logs_dir}\listener.log"),
+            dir,
+            "listener.log",
+            true,
+        );
+        // Each launched target's outpost, by the launch pid; many never become
+        // an outpost's target, so a missing file here is expected and silent.
+        let launched: Vec<u32> = self.launched.iter().map(|(pid, _)| *pid).collect();
+        for pid in launched {
+            self.fetch_outpost_log(
+                &format!(r"{logs_dir}\outpost-{pid}.log"),
+                dir,
+                &format!("outpost-{pid}.log"),
+                false,
+            );
+        }
+    }
+
+    /// The `logs` directory next to Verbatim's executable, derived from the
+    /// captured stderr log path's parent (both live in the same directory —
+    /// see [`verbatim_stderr_log_path`]).
+    fn outpost_logs_dir(&self) -> Option<String> {
+        Path::new(&self.stderr_log_path)
+            .parent()?
+            .join("logs")
+            .to_str()
+            .map(str::to_owned)
+    }
+
+    /// Reads one outpost/listener log at `remote_path` back through the agent
+    /// and writes it into `dir` as `local_name`. `note_missing` controls whether
+    /// a read failure is reported (for logs expected to exist) or ignored (for
+    /// per-app logs that often do not).
+    fn fetch_outpost_log(
+        &mut self,
+        remote_path: &str,
+        dir: &Path,
+        local_name: &str,
+        note_missing: bool,
+    ) {
+        match self.process_agent.read_file(remote_path) {
+            Ok(bytes) => {
+                if let Err(error) = fs::write(dir.join(local_name), bytes) {
+                    eprintln!("could not write the fetched {local_name}: {error}");
+                }
+            }
+            Err(error) if note_missing => {
+                eprintln!("could not read {remote_path} back through the agent: {error}");
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Dumps the reducer flight recorder into `dir` (created if missing): a
     /// flight-recorder dump (`Request::DumpRecorder` returns the path Core
     /// wrote it to — same machine as [`stderr_log_path`](Self::stderr_log_path)
     /// in either mode, since Core and Verbatim's own stderr capture are the
@@ -603,13 +684,14 @@ impl Scenario {
     /// stderr log are written separately by [`Scenario::collect_run_artifacts`].
     ///
     /// Requires Verbatim to still be answering its control plane, so
-    /// [`crate::registry::run`] calls this only after a scenario has *failed*,
-    /// where the run skips the clean quit and leaves Verbatim up; a passing run
-    /// has already quit and has no flight recorder to dump. Best-effort,
-    /// deliberately never itself a source of test failure — the control
-    /// connection or the agent may be in a degraded state (Verbatim crashed,
-    /// the tunnel dropped) — so a failure is logged, not propagated.
-    pub fn collect_failure_artifacts(&mut self, dir: &Path) {
+    /// [`crate::registry::run`] calls this on every run *before* the clean quit
+    /// (and, on a failing run, while Verbatim is still up because the quit was
+    /// skipped): the reducer inputs it captures are wanted for a passing run
+    /// too, to chase symptoms the pass/fail verdict alone does not explain.
+    /// Best-effort, deliberately never itself a source of test failure — the
+    /// control connection or the agent may be in a degraded state (Verbatim
+    /// crashed, the tunnel dropped) — so a failure is logged, not propagated.
+    pub fn collect_flight_recorder(&mut self, dir: &Path) {
         if let Err(error) = fs::create_dir_all(dir) {
             eprintln!(
                 "could not create failure-artifacts directory {}: {error}",

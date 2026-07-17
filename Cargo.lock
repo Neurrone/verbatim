@@ -2059,6 +2059,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "tracing-subscriber",
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-uia",

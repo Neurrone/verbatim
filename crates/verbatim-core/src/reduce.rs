@@ -79,22 +79,46 @@ fn reduce_event(
             ancestors,
             selected_child,
         } => {
-            // Drop a focus observed strictly earlier than the focus this
-            // application already holds (last-observation-wins). The window and
-            // control announcements of one foreground change are produced on
-            // different outpost threads and can arrive out of observation
-            // order; without this, a late-arriving but earlier-observed window
-            // FocusChanged would move focus and the navigator back to the
-            // window after the control was already announced. A zero timestamp
-            // (an older recorded stream) can never be strictly earlier, so it
-            // always proceeds and replay stays deterministic. A different
-            // application is unaffected — the shell's cross-app foreground gate
-            // owns that staleness.
+            // Last-observation-wins: a FocusChanged from the same application
+            // observed strictly earlier than the focus currently held is not
+            // the real focus, and moving focus and the navigator to it would
+            // send both backward. A zero timestamp (an older recorded stream)
+            // can never be strictly earlier, so it always proceeds and replay
+            // stays deterministic; a different application is unaffected — the
+            // shell's cross-app foreground gate owns that staleness.
+            //
+            // Two kinds of stale event are still *spoken* — but never move the
+            // focus context or navigator: a window, and an ancestor of the
+            // current focus. The window announcement is foreground context the
+            // maintainer requires never lost. It can legitimately arrive late,
+            // after the control it precedes, when the announce lane in the app
+            // outpost had to release the lane while the window was still
+            // nameless and finished reading it in the background (see
+            // `window_announce_job` in `verbatim-outpost`). Everything else
+            // stale is a stale *control* focus: noise, and a navigator hazard,
+            // so it stays dropped.
             if observed_at_ms != 0
                 && let Some(focus) = state.focus.as_ref()
                 && focus.source == source
                 && focus.observed_at_ms > observed_at_ms
             {
+                let is_window = node.role == Role::Window;
+                let is_ancestor = focus
+                    .ancestors
+                    .iter()
+                    .any(|ancestor| ancestor.id == node.id);
+                if is_window || is_ancestor {
+                    // The same utterance a fresh window FocusChanged produces —
+                    // just the node, no entered-container replay — spoken as
+                    // foreground context, leaving focus and the navigator on
+                    // the real, later-observed focus.
+                    return vec![Effect::Speak(Utterance {
+                        trace_id,
+                        priority: SpeechPriority::Interrupt,
+                        segments: node_segments(node),
+                        source: Some(source_of(node)),
+                    })];
+                }
                 return Vec::new();
             }
             // Suppress a focus event identical to the one already announced

@@ -1,11 +1,12 @@
 //! Host-side artifacts one scenario run leaves behind under
-//! [`artifacts_root`]: a [`ScenarioSummary`] always, the interleaved
-//! [`crate::timeline::Timeline`] and Verbatim's captured stderr log on every
-//! run (pass or fail), and — only when the scenario failed — a flight-recorder
-//! dump. See [`crate::scenario::Scenario::collect_run_artifacts`] for the
-//! always-on pair, [`crate::scenario::Scenario::collect_failure_artifacts`]
-//! for the failure-only extra, and [`crate::registry`] for where
-//! [`ScenarioSummary::write`] is called.
+//! [`artifacts_root`]: a [`ScenarioSummary`], the interleaved
+//! [`crate::timeline::Timeline`] and Verbatim's captured stderr log, and a
+//! reducer flight-recorder dump — all on every run, pass or fail. See
+//! [`crate::scenario::Scenario::collect_run_artifacts`] for the timeline and
+//! stderr pair, [`crate::scenario::Scenario::collect_flight_recorder`] for the
+//! flight-recorder dump (taken before the clean quit so a passing run captures
+//! it too), and [`crate::registry`] for where [`ScenarioSummary::write`] is
+//! called.
 //!
 //! This module is also the seam `cargo xtask vm test` reads through: it
 //! calls exactly the same [`artifacts_root`] and [`scenario_dir`] functions a

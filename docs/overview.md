@@ -454,14 +454,20 @@ Implementation notes, `reduce`:
 - Focus is last-observation-wins: `Input::Event` carries the
   `observed_at_ms` the outpost stamped, and the focus context keeps it. A
   `FocusChanged` from the same application observed strictly earlier than the
-  focus currently held is dropped — not spoken, no focus or navigator move —
-  because the window and control announcements of one foreground change are
-  produced on different outpost threads and can arrive out of observation
-  order, and the earlier-observed one is not the real focus. A zero timestamp
-  (a flight-recorder stream recorded before the field existed) can never be
-  strictly earlier, so it always proceeds and replay stays deterministic; a
-  different application is unaffected, its staleness being the shell's
-  cross-app foreground gate. The negated-state rules match NVDA's: negated checked for
+  focus currently held does not move focus or the navigator — the
+  earlier-observed one is not the real focus — but it is not always dropped. A
+  window, or an ancestor of the current focus, is still *spoken* (the same
+  utterance a fresh window focus produces, no entered-container replay), because
+  a window announcement is foreground context the maintainer requires never
+  lost: the app outpost's announce lane emits the window before the control it
+  precedes when it can, but a window still nameless when the lane had to move on
+  is read in the background and arrives late, after the control (see the
+  announce lane below). Any other stale event — a stale *control* focus — is
+  dropped entirely, spoken to nobody, since it is noise and a navigator hazard.
+  A zero timestamp (a flight-recorder stream recorded before the field existed)
+  can never be strictly earlier, so it always proceeds and replay stays
+  deterministic; a different application is unaffected, its staleness being the
+  shell's cross-app foreground gate. The negated-state rules match NVDA's: negated checked for
   check boxes and radio buttons, and negated pressed ("not pressed") for a
   toggle button — a `Button` control that exposes the UIA Toggle pattern,
   which `verbatim-uia` reclassifies to `Role::ToggleButton` with the
@@ -809,34 +815,60 @@ Public API:
   `isGoodUIAWindow` (`nvda/source/appModules/explorer.py`): taskbar,
   input switcher, Task View and snap layouts, and the systray overflow —
   the roadmap's shell window-classification rules as generic policy.
-- `QueryPool` — the deadline-guarded workers: `run(deadline, work)` blocks
-  the caller up to the deadline and abandons the call on expiry (the worker
-  stays parked, a counter increments, and a replacement spawns — recovery
-  ladder rung two, since a thread blocked in a hung app's COM call cannot
-  be safely killed); `submit` is fire-and-forget. Workers lazily own their
-  own `Uia` client.
+- `QueryPool` — the deadline-guarded workers. Every cross-process call carries
+  a deadline (the founding rule of architecture section 1), request/response or
+  fire-and-forget: `run(deadline, work)` blocks the caller up to the deadline
+  and abandons the call on expiry (the worker stays parked, a counter
+  increments, and a replacement spawns — recovery ladder rung two, since a
+  thread blocked in a hung app's COM call cannot be safely killed);
+  `submit_deadline(deadline, work)` is fire-and-forget whose result nobody
+  awaits, but a single watchdog thread tracks each job's deadline and applies
+  the identical abandonment on expiry (park the worker, spawn a replacement,
+  same warning). The old unbounded `submit` is gone: it let one hung
+  acquisition block a worker forever *without* bumping the parked count, so the
+  wedge policy was blind to it and every replacement a later `run` timeout
+  spawned immediately picked the next hung job off the shared backlog — the
+  pool poisoned itself to zero capacity and every announcement silently failed.
+  Workers lazily own their own `Uia` client.
 - `Outpost`, `run_pipe`, `run_attach` — the per-application runtime.
   `Outpost::new(writer, target_pid)` installs the process-scoped property,
   value, state, and selection subscriptions (`APP_SUBSCRIPTIONS`) for the
   fixed pid and announces `Ready` — but no focus registration and no focus
   or menu-popup hooks, which are the listener's now (decision D13); focus
-  arrives instead as a `DeliverFact`, handled on a short-lived per-fact thread
-  (`handle_deliver_fact` spawning `run_msaa_fact`/`run_uia_fact`, shaped like
-  the foreground fact's retry thread) that reuses the same acquisition,
-  enrichment, and emit code, with the listener's trace and timestamp threaded
-  through. The one difference from a self-hooked event is arbitration: a fact
-  resolves a *real* verdict inline (`resolve_fact_verdict` — a cached verdict,
-  else a `has_server_side_provider` probe on the deadline-guarded pool),
-  because a fact thread is allowed to block where an event-thread callback is
-  not. So exactly one backend announces every fact deterministically — a UIA
-  window's UIA fact delivers and its MSAA fact drops, an MSAA window's the
-  reverse — with no cold-case duplicate and no provisional announcement from a
-  genuinely UIA window. The first-ever fact for a window pays one probe
-  (bounded by the query deadline) before announcing; only a probe that times
-  out falls back to the old provisional behavior (the MSAA fact proceeds, the
-  UIA fact drops), so a hung window degrades to that contract rather than
-  silence. Concurrent fact threads emit in no fixed order, which the reducer's
-  last-observation-wins rule now resolves. `run_pipe` is the production mode
+  arrives instead as a `DeliverFact`, enqueued onto a per-outpost **announce
+  lane** — one long-lived thread (spawned in `Outpost::new`) draining a FIFO of
+  jobs, running each to completion before the next, so announcements emit in
+  arrival order, which is the listener's observation order (the pipe and the
+  supervisor's newest-wins flush preserve it). A foreground fact enqueues the
+  window job; MSAA-focus, menu, and UIA-focus facts enqueue their
+  `run_msaa_fact`/`run_uia_fact` bodies. The jobs still do their blocking work
+  on the deadline-guarded query pool; only their sequencing is serialized. This
+  is what guarantees NVDA's window-then-focus order: the window announcement is
+  spoken before the control it precedes rather than racing it on a separate
+  thread and losing to the reducer's last-observation-wins rule (the failure
+  three of three cold presses showed). The window job (`window_announce_job`)
+  holds the lane for a bounded nameless-retry — `WINDOW_LANE_ATTEMPTS` (3)
+  attempts spaced `WINDOW_LANE_INTERVAL` (200 ms), so the lane is held at most
+  ~600 ms plus read time; if the window is named within that it announces in
+  order, and if still nameless the lane must move on (it must never starve the
+  control), so the job hands the remaining `ANNOUNCE_RETRY` budget to a
+  background thread (`background_window_retry`) that emits the window late —
+  out of order but not lost, which the reducer's window carve-out speaks
+  without moving focus. The announce generation still aborts a superseded
+  window job. The `AnnounceFocus` poll fallback (`run_announce`) keeps its own
+  thread, off the lane.
+  The one difference from a self-hooked event is arbitration: a fact resolves a
+  *real* verdict inline (`resolve_fact_verdict` — a cached verdict, else a
+  `has_server_side_provider` probe on the deadline-guarded pool), because a lane
+  job is allowed to block where an event-thread callback is not. So exactly one
+  backend announces every fact deterministically — a UIA window's UIA fact
+  delivers and its MSAA fact drops, an MSAA window's the reverse — with no
+  cold-case duplicate and no provisional announcement from a genuinely UIA
+  window. The first-ever fact for a window pays one probe (bounded by the query
+  deadline) before announcing; only a probe that times out falls back to the
+  old provisional behavior (the MSAA fact proceeds, the UIA fact drops), so a
+  hung window degrades to that contract rather than silence. `run_pipe` is the
+  production mode
   over inherited pipe handles; `run_attach` watches a pid directly, immediately
   announces its focus by poll, and prints outbound messages as JSON lines to
   stdout, the standalone dev mode. The live pid-scoped hooks (value, state,
@@ -938,6 +970,15 @@ Implementation notes:
   longer writes an `AnnounceFocus` (decision D13): a fact-routing spawn wants
   the fact to do the announcing, and the two callers that still want the poll
   — the startup target and a listener-respawn recovery — write it themselves.
+  Each child is spawned with `STARTF_USESTDHANDLES` and an inheritable,
+  append-mode file handle as its standard error (and output), so the outpost's
+  and listener's own `tracing` output — which otherwise had no subscriber and
+  went nowhere — lands in a per-role log file (`logs/outpost-<target pid>.log`,
+  `logs/listener.log`, next to the outpost executable). The outpost binary
+  installs a stderr `tracing` subscriber at startup for exactly this; the E2E
+  harness fetches these logs alongside the timeline and stderr, so a silent
+  outpost is readable after the fact instead of theorized. Best-effort: a
+  failed log open leaves the child unredirected, never unspawned.
 - Foreground announcements (`AnnounceFocus`, `run_announce`, the announce-poll
   fallback): the outpost announces the top-level foreground window, then the
   focused control, both sharing one retry budget — up to ten attempts across
@@ -993,7 +1034,13 @@ Implementation notes:
   `None` naturally retries past it). The top-level-window announcement's
   own window search additionally skips hidden-frame windows when choosing
   among a process's top-level windows, so resolution lands on a real window
-  (a popup menu, a dialog) instead.
+  (a popup menu, a dialog) instead. The fact-announce paths
+  (`run_uia_fact`, `run_msaa_fact`, the window job) use a stricter check that
+  also walks to the window's top-level ancestor (`GetAncestor` `GA_ROOT`,
+  another hang-safe local read): the marker property sits on the frame window
+  only, so a control that lives in its own child `hwnd` inside the frame — a
+  wxWidgets panel has one — is not caught by reading the marker on that child
+  alone, and was announcing as a bare "pane" until the ancestor check was added.
 - `verbatim-gui`'s `force_foreground` (see that crate's section) injects a
   bare `VK_CONTROL` tap before attempting `SetForegroundWindow`: a gesture
   that arrived via the control plane (no physical input, as every E2E test
@@ -1430,8 +1477,12 @@ Public API:
   `kill_target`, `process_status`, `quit_verbatim`, and `report_latency`
   drive the running instance; `latency_snapshot` is the non-asserting,
   non-printing fetch the registry's run summary uses (see `registry`
-  below), and `collect_failure_artifacts` is what a failed scenario calls to
-  save its diagnostics (see `artifacts` below). Its `Drop` impl kills every
+  below), and `collect_run_artifacts` (timeline, stderr, and the per-process
+  outpost and listener logs fetched from the guest's `logs` directory — Core's
+  own outpost, the listener, and each launched target's outpost by pid) plus
+  `collect_flight_recorder` (the reducer flight recorder, dumped before the
+  clean quit) are what every run calls to save its diagnostics, pass or fail
+  (see `artifacts` below). Its `Drop` impl kills every
   process it launched, unconditionally, even after a panic — because every
   live scenario here launches a real `verbatim.exe` on the real desktop. A
   same-process `Mutex` (`live_instance_lock`) enforces one live instance
@@ -1469,9 +1520,10 @@ Public API:
   `quit_verbatim` only when both succeeded (an already-failed scenario's
   Verbatim is in an unknown state, and `Scenario::drop` kills it regardless,
   so nothing more is proved by also demanding a graceful quit), collects
-  failure artifacts on any failure, always writes a `ScenarioSummary`, then
-  re-raises whatever panic occurred so `cargo test` still reports the
-  original failure. None of this weakens `Scenario`'s own guard-struct
+  the run artifacts (timeline, stderr, and the reducer flight recorder — the
+  last dumped before the quit while Verbatim is still up) for every run pass
+  or fail, always writes a `ScenarioSummary`, then re-raises whatever panic
+  occurred so `cargo test` still reports the original failure. None of this weakens `Scenario`'s own guard-struct
   discipline; `setup`/`body`/`teardown` are structure on top of it for
   scenario-specific state `Scenario` itself does not track, not a
   replacement for it. `crates/verbatim-e2e/src/scenarios/` holds the actual
