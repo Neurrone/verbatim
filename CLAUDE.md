@@ -2,12 +2,13 @@
 
 ## What this repository is
 
-Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. Milestones M0 (foundations), M1 (the self-voicing prototype), and M2 (the test harness and VM) are implemented: `verbatim.exe` reads its own GUI through a real out-of-process outpost over UIA and MSAA, speaks through OneCore and WASAPI, and is drivable and inspectable live through the control plane (`verbatim-inspect`); `mockapp` exercises both client stacks cross-process against scripted providers, and an end-to-end suite drives a real Verbatim through an in-guest agent, either on the local machine or in a Hyper-V VM. The authoritative sources are:
+Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. Milestones M0 (foundations), M1 (the self-voicing prototype), M2 (the test harness and VM), and M3 (desktop usability core) are implemented: `verbatim.exe` reads its own GUI through a real out-of-process outpost over UIA and MSAA, speaks through OneCore and WASAPI, and is drivable and inspectable live through the control plane (`verbatim-inspect`); `mockapp` exercises both client stacks cross-process against scripted providers, and an end-to-end suite drives a real Verbatim through an in-guest agent, either on the local machine or in a Hyper-V VM. The authoritative sources are:
 
-- `docs/architecture.md` — decisions of record (D1–D10), process/thread model, crate map, testing strategy, and top risks (R1–R6). Read this before proposing any design or implementation work.
-- `docs/roadmap.md` — milestones M0–M12 scoped by risk retired, with explicit exit criteria, plus the NVDA app-module porting track.
-- `docs/overview.md` — the reviewer's guide to the implemented crates: what each does, its public API, and how the intricate parts work. Keep it current when public APIs change.
-- `docs/tooling.md` — how to actually drive this project: `verbatim-inspect` against a running instance, `mockapp`, the end-to-end suite, every `cargo xtask vm` verb, rebuilding the golden image, and the traps that cost us time (the interactive-session rule above all).
+- `docs/architecture.md` — decisions of record (D1–D13), process/thread model, crate map, testing strategy, and top risks (R1–R6). Read this before proposing any design or implementation work.
+- `docs/roadmap.md` — the milestones ahead (M4 onward), scoped by risk retired with explicit exit criteria, plus the NVDA app-module porting track; completed milestones are archived in `docs/roadmap-done.md`.
+- `docs/readme.md` — the index of all documentation, with reading paths; `docs/glossary.md` defines Verbatim's invented vocabulary.
+- `docs/crates/` — the reviewer's guide to the implemented crates, one file per crate (`docs/crates/readme.md` is the index): what each does, its public API, and how the intricate parts work. Keep the file for a crate current when its public API changes.
+- `docs/tooling.md` — how to actually drive this project: `verbatim-inspect` against a running instance, `mockapp`, the end-to-end suite, and the traps that cost us time (the interactive-session rule above all). `docs/vm.md` covers every `cargo xtask vm` verb and rebuilding the golden image.
 
 `nvda/` is the NVDA screen reader vendored as a git submodule **for reference only** (IA2 IDL under `nvda/include/ia2`, app modules under `nvda/source/appModules`, design docs under `nvda/projectDocs`). Never modify anything under `nvda/`; Verbatim is informed by NVDA but not constrained by its architecture.
 
