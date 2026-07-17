@@ -120,6 +120,20 @@ The founding responsiveness rule: **no thread that produces output (speech,
 braille, tones) or handles input may ever make a blocking call into another
 application.**
 
+The rule is empirically grounded, not a hunch. A cross-thread
+`SendMessage` blocks until the receiving thread processes it, and a COM
+call into a single-threaded apartment rides that same queue with no
+default timeout, so a hung or busy application blocks any synchronous
+caller indefinitely; NVDA's watchdog exists precisely to detect its one
+working thread stalling and recovers specifically by cancelling such
+calls, and its issue record documents both failure modes (the foreground
+app hanging the reader, and busy background apps lagging it through
+event floods serialized behind slow synchronous queries). The evidence
+is collected in
+[Main loop and watchdog](nvda/main-loop-and-watchdog.md); it is the
+justification for D9's per-application process isolation and D13's
+never-make-a-cross-process-call rule for the focus listener.
+
 Verbatim runs as three kinds of process:
 
 1. **Core process (`verbatim.exe`)**, containing these thread groups:
@@ -377,6 +391,20 @@ M13) for Java applications.
   announcer and an explicit flood policy: output is coalesced and speech for
   superseded screenfuls is dropped, bounded queue, never unbounded backlog.
   This is a headline scenario for the latency budget.
+- **Constraint: keep a remoted-UIA mode possible.** Windows can present a
+  legitimate UIA tree whose process identity and embedded window handles
+  are locally meaningless — Application Guard did exactly this (the tree
+  forwarded from a container VM through a projection window; NVDA's
+  accommodations are documented in `docs/nvda/uia.md`). MDAG is deprecated,
+  so nothing is built for it; the standing rule is cheaper: the UIA client
+  stack must remain able to operate UIA-only over a subtree without
+  dereferencing any native window handle found inside it, and
+  handle-dereferencing stays confined to identifiable modules (arbitration,
+  window-hierarchy navigation) rather than assumed throughout. If a
+  successor technology appears, the work is then an outpost mode (forced
+  UIA verdict, anchored to the projection window), not an architecture
+  change. The cloud-PC user need itself is served by M12 remote support,
+  not by local reading of forwarded trees.
 
 ### MSAA / IA2
 
