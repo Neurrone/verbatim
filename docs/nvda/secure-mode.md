@@ -28,6 +28,39 @@ off (braille displays are single-open devices —
 instance can grab it), and resumes when the secure desktop goes
 away.
 
+## Elevated applications on the user desktop
+
+Distinct from secure screens: an administrator command prompt, an
+elevated installer, or Task Manager runs elevated *on the normal
+desktop*, and it is the ordinary user-session NVDA that must read
+it — across the integrity-level wall
+([Processes and security](../explainers/processes-and-security.md)).
+Everything hinges on the uiAccess flag, which only an *installed*
+NVDA has (signed binaries in Program Files):
+
+- **With uiAccess** (installed copies): winevent hooks see elevated
+  processes, messages and input may be sent to them, UIA serves
+  their content, and the in-context hooks reach them too, so the
+  injected features (typed-character echo, IME reporting;
+  [Process injection](process-injection.md)) keep working in
+  elevated apps. An elevated console reads like any other console —
+  the UIA console path needs no injection at all
+  ([Editable text and terminals](editable-text-and-terminals.md)).
+- **Without uiAccess** (portable copies, source runs): UIPI blocks
+  the upward path; elevated windows are effectively unreadable and
+  cannot be interacted with. This is the documented limitation of
+  portable NVDA, the first diagnosis for "NVDA goes quiet in the
+  admin prompt," and why NVDA warns when run portable
+  ([Installation, portable copies, updates, and COM fixes](installation-and-updates.md)).
+
+So the full privilege map has three tiers: normal apps (everything
+works), elevated apps on the user desktop (everything works *if*
+uiAccess, else nothing), and secure screens (a separate SYSTEM
+instance in secure mode, previous sections). UAC prompts are the
+third tier, not the second — the consent dialog lives on the secure
+desktop, which is why reading it requires the ease-of-access
+integration rather than merely uiAccess.
+
 ## Secure mode
 
 Secure mode (`globalVars.appArgs.secure`) is a hardening flag, on

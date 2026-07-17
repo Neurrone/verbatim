@@ -63,6 +63,39 @@ Word `Range.Move*`), inheriting the native implementation's unit
 semantics — and its bugs; per-backend workarounds live in the
 respective TextInfo subclasses.
 
+## Word and character segmentation
+
+For offsets-based backends, unit boundaries are not left to naive
+string splitting: `OffsetsTextInfo`'s character and word units call
+into `nvdaHelperLocal` (`calculateCharacterOffsets` /
+`calculateWordOffsets`, `nvdaHelper/local/textUtils.cpp`), which runs
+**Uniscribe** (`ScriptBreak`) over the line and reads its logical
+attributes — `fCharStop` for character boundaries (so a "character"
+is a grapheme cluster: surrogate pairs, combining marks, and emoji
+sequences move as one) and `fWordStop` for word boundaries (giving
+linguistically informed segmentation, including for scripts without
+spaces). A plain whitespace/punctuation fallback exists for backends
+that opt out or when the helper is unavailable. Range-based backends
+(UIA, Word) instead inherit the native API's own unit semantics —
+one reason "word" does not segment identically across controls.
+
+## Paragraph styles
+
+Paragraph navigation (Ctrl+Up/Down and friends) has a user-facing
+*paragraph style* setting (`documentNavigation.paragraphStyle`, a
+feature flag; `source/config/featureFlagEnums.py`
+`ParagraphNavigationFlag`) with three values: **handled by
+application** (delegate to the backend's `UNIT_PARAGRAPH` — the
+default), **single line break** (each line is a paragraph), and
+**multi line break** (paragraphs separated by blank lines — the
+plain-text-file convention). The latter two are implemented
+generically in `source/documentNavigation/paragraphHelper.py` by
+scanning line by line from the caret (capped at `MAX_LINES` = 250
+before giving up), and are disabled on backends where per-line
+scanning is too slow (non-UIA Word, the display model — the
+`_isAcceptableTextInfo` check). A command cycles the style at
+runtime (`nextParagraphStyle`).
+
 ## Why this shape matters
 
 The design premise: *write reading features once, against ranges and

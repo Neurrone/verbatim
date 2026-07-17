@@ -48,22 +48,31 @@ Events NVDA consumes are split into two groups
   emulates the grouping API pre-Windows 11).
 - The *local* group — high-frequency text events (text changed,
   caret/text-selection changed, controller-for changes) — registered
-  *only on the focused element*, re-registered on every focus change
-  (config "Selective event registration" historically; now the
-  default). This is NVDA's answer to the cost of tree-wide
-  registrations for chatty events.
+  *only on the focused element*, re-registered on every focus change.
+  This is NVDA's answer to the cost of tree-wide registrations for
+  chatty events. The user-facing knob is the advanced setting
+  "registration for UI Automation events and property changes"
+  (`UIA.eventRegistration`: auto, selective, global — auto currently
+  means selective): *global* moves even the high-frequency events
+  into the tree-wide group, the compatibility escape hatch for
+  providers that mis-handle focused-element registration at the cost
+  of event-storm exposure.
 
 ## The C++ rate limiter
 
-When enabled (default), all handlers are wrapped by a native
-rate-limiting proxy created by
-`localLib.rateLimitedUIAEventHandler_create`
-(`nvdaHelper/local/UIAEventLimiter/`): UIA calls the C++ handler, which
-coalesces/deduplicates bursts (per event type and runtime ID, latest
-wins) on a background flushing thread before invoking the Python
-handlers. Purpose: survive event storms (terminal output, busy web
-apps) without the Python-side cost per event. This is the UIA
-counterpart of the MSAA ordered winevent limiter.
+This is what the advanced setting "enhanced event processing"
+(`UIA.enhancedEventProcessing`, a feature flag, default enabled)
+gates: when on, all handlers are wrapped by a native rate-limiting
+proxy created by `localLib.rateLimitedUIAEventHandler_create`
+(`nvdaHelper/local/UIAEventLimiter/`) — UIA calls the C++ handler,
+which coalesces/deduplicates bursts (per event type and runtime ID,
+latest wins) on a background flushing thread before invoking the
+Python handlers. Purpose: survive event storms (terminal output, busy
+web apps) without paying the Python-side cost per event while the
+main thread is busy. When off, UIA invokes the Python handlers
+directly — the fallback if the C++ layer is suspected of dropping or
+reordering something. This is the UIA counterpart of the MSAA ordered
+winevent limiter.
 
 ## Handler-side filtering
 
@@ -105,6 +114,17 @@ treats a window through UIA or leaves it to MSAA/IA2:
    unworkable UIA, and the object model is still richer;
    [Office through COM](office-com.md)), and Excel `EXCEL7` prefers the object model
    whenever in-process injection succeeded.
+
+The user-facing knobs for this referee live in the `[UIA]` config
+section (advanced settings): `enabled` (the master switch),
+`allowInMSWord` (the four-way above), `useInMSExcelWhenAvailable`,
+`allowInChromium` (default / only when necessary / yes / no — the
+per-engine override for Chromium's dual IA2/UIA exposure), and
+`winConsoleImplementation` (auto / legacy / UIA — which console era
+NVDA uses; [Editable text and terminals](editable-text-and-terminals.md)).
+These settings exist because the referee's defaults are fidelity
+bets that occasionally lose on specific app versions; each knob is
+the user-visible escape hatch for one bet.
 
 The net effect to remember: *NVDA runs MSAA/IA2 and UIA simultaneously,
 per window*, with this function as the referee, and its defaults encode

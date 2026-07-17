@@ -278,6 +278,10 @@ verified.
   yet (M4)**; the NVDA references to design against are
   [TextInfo](nvda/text-infos.md) and
   [Editable text and terminals](nvda/editable-text-and-terminals.md).
+- Word and character segmentation (Uniscribe grapheme clusters and
+  word stops) and the three-way paragraph-style setting. NVDA:
+  [TextInfo](nvda/text-infos.md). Verbatim: **not yet (M4)** — the
+  review module's flat-text walk explicitly defers both.
 - Browse mode, quick nav, pass-through rules, virtual-buffer
   equivalent: **not yet (M6)**; references
   [Browse mode](nvda/browse-mode.md), [Virtual buffers](nvda/virtual-buffers.md).
@@ -309,6 +313,14 @@ verified.
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),
   [OCR and content recognition](nvda/ocr-and-content-recognition.md),
   [Secure mode](nvda/secure-mode.md), [Remote access](nvda/remote-access.md).
+- Elevated applications on the user desktop (admin consoles,
+  elevated installers): reading them requires uiAccess — signed
+  binaries in a trusted install location. NVDA:
+  [Secure mode](nvda/secure-mode.md). Verbatim: **not yet** —
+  unsigned dev builds cannot reach elevated windows at all; the
+  signing/packaging work has no milestone, and M8's secure-desktop
+  work depends on it. Recognize the symptom now: "Verbatim goes
+  quiet in the admin prompt" is this, not a bug.
 - Braille: **not yet (M15, D7)**; the inputs braille needs preserved
   are listed at the end of [Braille](nvda/braille.md).
 - Configuration profiles and triggers (app, say-all, manual;
