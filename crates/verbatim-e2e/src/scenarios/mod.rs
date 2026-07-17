@@ -15,6 +15,7 @@ pub(crate) mod multi_outpost_switch;
 pub(crate) mod notepad_focus;
 pub(crate) mod object_navigation;
 pub(crate) mod start_menu;
+pub(crate) mod start_menu_repeat;
 pub(crate) mod tree_navigation;
 
 /// Opens the Verbatim menu with Verbatim+V and waits for the popup to be

@@ -38,11 +38,17 @@
 //!   wrote to its artifacts directory (`verbatim_e2e::artifacts`) — rather
 //!   than parsing the subprocess's stdout — and prints one line per
 //!   scenario at the end: pass or fail, and how many of its latency
-//!   timelines reached audio. On failure, the same artifacts directory also
-//!   holds the interleaved timeline, Verbatim's captured stderr log, and a
-//!   flight-recorder dump — collected by `verbatim_e2e::registry::run`
-//!   itself, inside the subprocess, since that is where the live control
-//!   and agent connections needed to fetch them still exist.
+//!   timelines reached audio. A selected scenario that exited but wrote *no*
+//!   summary is reported as a failure of the run, never a pass: a
+//!   `--scenario` typo or a missing `tests/<name>.rs` libtest wrapper makes
+//!   `cargo test <name> -- --exact` match zero tests and still exit 0, and
+//!   silently green-lighting that would defeat the point of running it. The
+//!   artifacts directory holds the interleaved timeline and Verbatim's
+//!   captured stderr log for every run (so a passing diagnostic leaves its
+//!   timings behind), plus a flight-recorder dump on failure — all collected
+//!   by `verbatim_e2e::registry::run` itself, inside the subprocess, since
+//!   that is where the live control and agent connections needed to fetch
+//!   them still exist.
 //! - There is still no retry of any kind, at any level: a scenario that
 //!   fails is reported failed, once, with its artifacts left for a human to
 //!   root-cause — never re-run automatically by this module or by
@@ -301,10 +307,10 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     // stopping and pulling the recording is never skipped over an already
     // failed scenario.
     let mut errors = Vec::new();
-    let mut summaries: Vec<(String, bool, Option<ScenarioSummary>)> = Vec::new();
+    let mut summaries: Vec<(String, Option<ScenarioSummary>)> = Vec::new();
 
     for def in &selected {
-        let (process_ok, summary) = run_one_scenario(
+        let summary = run_one_scenario(
             host,
             &credentials,
             repo_root,
@@ -315,7 +321,7 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
             def.name,
             &mut errors,
         );
-        summaries.push((def.name.to_owned(), process_ok, summary));
+        summaries.push((def.name.to_owned(), summary));
     }
 
     print_run_summary(&summaries);
@@ -348,7 +354,7 @@ fn run_one_scenario(
     record: bool,
     scenario_name: &str,
     errors: &mut Vec<String>,
-) -> (bool, Option<ScenarioSummary>) {
+) -> Option<ScenarioSummary> {
     println!("xtask vm test: running scenario '{scenario_name}'");
 
     let recording_pid = if record {
@@ -391,14 +397,28 @@ fn run_one_scenario(
         }
     }
 
-    // Read back what the scenario's own subprocess wrote, rather than
-    // parsing its stdout — see this module's own doc comment. Missing (the
-    // subprocess never got far enough to write one, e.g. launching Verbatim
-    // itself failed) is tolerated; the run summary falls back to the
-    // process exit status alone in that case.
+    // Read back what the scenario's own subprocess wrote, rather than parsing
+    // its stdout — see this module's own doc comment.
     let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), scenario_name);
     let summary = ScenarioSummary::read(&dir).ok();
-    (process_ok, summary)
+
+    // A selected scenario whose subprocess exited cleanly but wrote no summary
+    // never actually ran its body, and that is a run FAILURE, never a pass: a
+    // `--scenario` typo or a missing `tests/<name>.rs` libtest wrapper makes
+    // `cargo test <name> -- --exact` match zero tests and still exit 0 (libtest
+    // treats "no tests ran" as success), and a crash before
+    // `verbatim_e2e::registry::run` writes the summary lands here too. Without
+    // this, such a run would be green-lit forever. A subprocess that already
+    // failed to launch or exited non-zero pushed its own error above, so this
+    // does not double-count it.
+    if process_ok && summary.is_none() {
+        errors.push(format!(
+            "scenario '{scenario_name}' exited cleanly but wrote no run summary — it did not run \
+             (a `--scenario` name matching no test, or a missing tests/{scenario_name}.rs \
+             wrapper), or it crashed before writing the summary; treated as a failure, not a pass"
+        ));
+    }
+    summary
 }
 
 /// Prints [`registry::SCENARIOS`], one line per scenario naming it and its
@@ -414,30 +434,40 @@ fn print_scenario_list() {
 /// The one-line-per-scenario report `cargo xtask vm test` prints at the end
 /// of a multi-scenario run: pass or fail, and how many of that scenario's
 /// latency timelines reached audio, when known.
-fn print_run_summary(results: &[(String, bool, Option<ScenarioSummary>)]) {
+fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {
     println!("xtask vm test: run summary");
-    for (name, process_ok, summary) in results {
-        let (result_word, latency_text) = summary.as_ref().map_or_else(
+    for (name, summary) in results {
+        let latency_text = summary.as_ref().map_or_else(
             || {
-                (
-                    if *process_ok { "pass" } else { "fail" },
-                    "latency: no data (the scenario did not write a summary)".to_owned(),
-                )
+                "no run summary written — the scenario did not run (see the run error above)"
+                    .to_owned()
             },
             |summary| {
-                (
-                    if summary.passed { "pass" } else { "fail" },
-                    format!(
-                        "latency: {} of {} reached audio; pipeline max {} ms, audio max {} ms",
-                        format_optional_count(summary.latency_reached_audio),
-                        format_optional_count(summary.latency_records),
-                        format_optional_u64(summary.max_event_to_queue_ms),
-                        format_optional_u64(summary.max_event_to_audio_ms),
-                    ),
+                format!(
+                    "latency: {} of {} reached audio; pipeline max {} ms, audio max {} ms",
+                    format_optional_count(summary.latency_reached_audio),
+                    format_optional_count(summary.latency_records),
+                    format_optional_u64(summary.max_event_to_queue_ms),
+                    format_optional_u64(summary.max_event_to_audio_ms),
                 )
             },
         );
-        println!("  {result_word:<4} {name:<28} {latency_text}");
+        println!(
+            "  {:<4} {name:<28} {latency_text}",
+            result_word(summary.as_ref())
+        );
+    }
+}
+
+/// The pass/fail word for a scenario's run summary. A missing summary is
+/// always `"fail"`, never `"pass"`: a selected scenario that wrote no summary
+/// did not run (a `--scenario` typo, a missing libtest wrapper) or crashed
+/// before writing it — the same trap [`run_one_scenario`] records as a run
+/// error. Pure, so the pass/fail policy is unit-tested directly.
+fn result_word(summary: Option<&ScenarioSummary>) -> &'static str {
+    match summary {
+        Some(summary) if summary.passed => "pass",
+        _ => "fail",
     }
 }
 
@@ -565,5 +595,25 @@ fn start_recording_with_fallback(
             );
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_summary_is_a_failure_never_a_pass() {
+        // A selected scenario that wrote no summary did not run (a typo, a
+        // missing wrapper) or crashed before writing it — never a pass.
+        assert_eq!(result_word(None), "fail");
+    }
+
+    #[test]
+    fn a_present_summary_reports_its_own_pass_or_fail() {
+        let passed = ScenarioSummary::new("scenario", true, None);
+        let failed = ScenarioSummary::new("scenario", false, None);
+        assert_eq!(result_word(Some(&passed)), "pass");
+        assert_eq!(result_word(Some(&failed)), "fail");
     }
 }

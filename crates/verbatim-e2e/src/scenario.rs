@@ -36,12 +36,16 @@ use crate::speech::SpeechCollector;
 use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
 
-/// File names [`Scenario::collect_failure_artifacts`] writes a failed
-/// scenario's diagnostics under, inside the directory
-/// [`crate::artifacts::scenario_dir`] names.
-const FAILURE_TIMELINE_FILE_NAME: &str = "timeline.txt";
-const FAILURE_STDERR_FILE_NAME: &str = "stderr.log";
-const FAILURE_FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
+/// File names the artifact collectors write under, inside the directory
+/// [`crate::artifacts::scenario_dir`] names. The timeline and stderr log are
+/// written for every run by [`Scenario::collect_run_artifacts`] (so a passing
+/// diagnostic run leaves its announcement timings and outpost-ready timestamps
+/// behind, not only a failing one); the flight-recorder dump is the
+/// failure-only extra [`Scenario::collect_failure_artifacts`] adds, since it
+/// needs Verbatim still up to answer `DumpRecorder`.
+const TIMELINE_FILE_NAME: &str = "timeline.txt";
+const STDERR_FILE_NAME: &str = "stderr.log";
+const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
 /// `target/debug/verbatim.exe` under the workspace root — the ordinary
@@ -547,23 +551,64 @@ impl Scenario {
         crate::latency::fetch(&mut self.control, last_n)
     }
 
-    /// Collects failure diagnostics into `dir` (created if missing): the
-    /// interleaved [`crate::timeline::Timeline`] (also printed on an
-    /// `expect_*` panic — this additionally writes it to a file), Verbatim's
-    /// captured stderr log (via the agent's `read_file`, from the path this
-    /// launch already told the agent to capture into), and a flight-recorder
-    /// dump (`Request::DumpRecorder` returns the path Core wrote it to —
-    /// same machine as [`stderr_log_path`](Self::stderr_log_path) in either
-    /// mode, since Core and Verbatim's own stderr capture are the same
-    /// process — read back the same way).
+    /// Collects the always-on run artifacts into `dir` (created if missing):
+    /// the interleaved [`crate::timeline::Timeline`] (`timeline.txt`, also
+    /// printed on an `expect_*` panic — this additionally writes it to a file)
+    /// and Verbatim's captured stderr log (`stderr.log`, via the agent's
+    /// `read_file` from the path this launch already told the agent to capture
+    /// into). Written for every run, pass or fail, so a passing diagnostic run
+    /// still leaves enough to read announcement timings (the timeline's
+    /// millisecond offsets) and outpost-ready timestamps (Verbatim's stderr).
     ///
-    /// Best-effort throughout, deliberately never itself a source of test
-    /// failure: called from [`crate::registry::run`] only after a scenario
-    /// has already failed, where the control connection or the agent may
-    /// themselves be in a degraded state (Verbatim crashed, the tunnel
-    /// dropped). Each of the three pieces is attempted independently and a
-    /// failure on one is logged to stderr rather than aborting the other
-    /// two.
+    /// Reads only the agent and this scenario's own in-memory timeline, never
+    /// Verbatim's control connection, so it is correct to call after
+    /// [`Scenario::quit_verbatim`] has already torn Verbatim down — indeed the
+    /// stderr log is most complete once the process has exited and flushed.
+    ///
+    /// Best-effort: each piece is attempted independently and a failure on one
+    /// is logged to stderr rather than aborting the other or the run.
+    pub fn collect_run_artifacts(&mut self, dir: &Path) {
+        if let Err(error) = fs::create_dir_all(dir) {
+            eprintln!(
+                "could not create run-artifacts directory {}: {error}",
+                dir.display()
+            );
+            return;
+        }
+
+        if let Err(error) = fs::write(dir.join(TIMELINE_FILE_NAME), self.timeline.render()) {
+            eprintln!("could not write the run timeline: {error}");
+        }
+
+        match self.process_agent.read_file(&self.stderr_log_path) {
+            Ok(bytes) => {
+                if let Err(error) = fs::write(dir.join(STDERR_FILE_NAME), bytes) {
+                    eprintln!("could not write Verbatim's fetched stderr log: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "could not read Verbatim's stderr log at {} back through the agent: {error}",
+                    self.stderr_log_path
+                );
+            }
+        }
+    }
+
+    /// Collects the failure-only extra into `dir` (created if missing): a
+    /// flight-recorder dump (`Request::DumpRecorder` returns the path Core
+    /// wrote it to — same machine as [`stderr_log_path`](Self::stderr_log_path)
+    /// in either mode, since Core and Verbatim's own stderr capture are the
+    /// same process — read back through the agent). The always-on timeline and
+    /// stderr log are written separately by [`Scenario::collect_run_artifacts`].
+    ///
+    /// Requires Verbatim to still be answering its control plane, so
+    /// [`crate::registry::run`] calls this only after a scenario has *failed*,
+    /// where the run skips the clean quit and leaves Verbatim up; a passing run
+    /// has already quit and has no flight recorder to dump. Best-effort,
+    /// deliberately never itself a source of test failure — the control
+    /// connection or the agent may be in a degraded state (Verbatim crashed,
+    /// the tunnel dropped) — so a failure is logged, not propagated.
     pub fn collect_failure_artifacts(&mut self, dir: &Path) {
         if let Err(error) = fs::create_dir_all(dir) {
             eprintln!(
@@ -573,11 +618,6 @@ impl Scenario {
             return;
         }
 
-        if let Err(error) = fs::write(dir.join(FAILURE_TIMELINE_FILE_NAME), self.timeline.render())
-        {
-            eprintln!("could not write the failure timeline: {error}");
-        }
-
         match self.control.request(Request::DumpRecorder) {
             Ok(frame) => match ok_or_error(frame) {
                 Ok(Frame::Reply {
@@ -585,9 +625,7 @@ impl Scenario {
                     ..
                 }) => match self.process_agent.read_file(&path) {
                     Ok(bytes) => {
-                        if let Err(error) =
-                            fs::write(dir.join(FAILURE_FLIGHT_RECORDER_FILE_NAME), bytes)
-                        {
+                        if let Err(error) = fs::write(dir.join(FLIGHT_RECORDER_FILE_NAME), bytes) {
                             eprintln!("could not write the fetched flight-recorder dump: {error}");
                         }
                     }
@@ -605,20 +643,6 @@ impl Scenario {
                 Err(error) => eprintln!("DumpRecorder was refused: {error}"),
             },
             Err(error) => eprintln!("could not request a flight-recorder dump: {error}"),
-        }
-
-        match self.process_agent.read_file(&self.stderr_log_path) {
-            Ok(bytes) => {
-                if let Err(error) = fs::write(dir.join(FAILURE_STDERR_FILE_NAME), bytes) {
-                    eprintln!("could not write Verbatim's fetched stderr log: {error}");
-                }
-            }
-            Err(error) => {
-                eprintln!(
-                    "could not read Verbatim's stderr log at {} back through the agent: {error}",
-                    self.stderr_log_path
-                );
-            }
         }
     }
 }
