@@ -244,13 +244,25 @@ both facts and takes no side: arbitration is not a race between the pair
 but a sticky per-window verdict the app outpost already keeps, which each
 fact consults independently whenever it arrives — so deduplication does
 not depend on the two facts arriving together, or at all. For a window
-with no verdict yet, the existing asymmetric provisional rule applies
-unchanged: the MSAA fact proceeds provisionally while the UIA fact is
-dropped and the probe scheduled, so exactly one backend announces even in
-the cold case, in either arrival order. Resolving which window a
-non-windowed UIA element belongs to can itself take a cross-process
-normalize call, which is precisely why the verdict check runs in the app
-outpost and never in the listener.
+with no verdict yet, the fact resolves the real verdict on the spot:
+fact handling runs on the outpost's deadline-guarded query pool, where a
+blocking call is permitted, so the arbitration probe answers within the
+ordinary query deadline and exactly one backend announces,
+deterministically, in either arrival order. The earlier asymmetric
+provisional rule — discard the UIA fact and schedule a background probe,
+trusting the MSAA fact to carry the announcement — is deliberately not
+applied to facts: modern XAML surfaces fire no MSAA focus event at all
+(the Start menu's search box was the live reproducer), so the discarded
+UIA fact was the only announcement that control would ever get, and a
+focus event fires once, with nothing to retry. Legitimate evidence in
+hand is never discarded in favor of hypothetical evidence from the other
+backend. The provisional rule survives only where its founding
+constraint is real: on the live pid-scoped event-thread hooks, which
+must never block, and as the probe-timeout fallback, where the MSAA fact
+proceeds so a hung window degrades to a possible duplicate rather than
+to silence. Resolving which window a non-windowed UIA element belongs to
+can itself take a cross-process normalize call, which is precisely why
+the verdict check runs in the app outpost and never in the listener.
 
 What remains of the old poll is a genuine fallback, no longer the
 mechanism of record: it covers the listener's own respawn gap (on
