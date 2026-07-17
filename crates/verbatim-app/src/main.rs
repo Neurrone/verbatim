@@ -343,7 +343,7 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 
 /// Builds the speech pipeline: `OneCore` through WASAPI by default,
 /// observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
-/// test-only escape hatch (documented in docs/overview.md) that swaps in
+/// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that swaps in
 /// the device-free capture synth and [`NullSink`] instead, so E2E and CI
 /// runs work with no sound card.
 ///

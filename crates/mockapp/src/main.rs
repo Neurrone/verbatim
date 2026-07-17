@@ -8,7 +8,7 @@
 //! provider over the scripted tree, so Verbatim's real client stacks —
 //! `verbatim-uia` and `verbatim-ia2` — and its arbitration logic can be
 //! exercised cross-process with no real applications, on plain CI Windows
-//! runners. See `docs/overview.md` for the fixture format, CLI, and stdin
+//! runners. See `docs/crates/mockapp.md` for the fixture format, CLI, and stdin
 //! command reference.
 
 mod fixture;
