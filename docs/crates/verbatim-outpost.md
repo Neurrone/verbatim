@@ -388,8 +388,9 @@ Implementation notes:
   emit `NormalizedEvent::SelectionChanged` (the selected node's full
   snapshot) and UIA notifications emit `NormalizedEvent::Notification`,
   all through the same per-window arbitration cross-filter as every other
-  event — but the reducer does not announce either yet; its wildcard arm
-  drops them until the M3 selection-announcement policy lands.
+  event. The reducer announces both since M3: selection changes under a
+  focused selection container, and notification display strings at the
+  priority their processing hint implies ([verbatim-core](verbatim-core.md)).
 - `OutpostMessage::Event` boxes its `OutpostToSupervisor` payload: the M3
   replies grew the message enum well past the bare-pid `Retired` variant,
   and boxing keeps every channel send small.

@@ -24,11 +24,14 @@ Consequences worth internalizing:
   element does not pin app memory. Elements are snapshots-with-a-handle,
   identified by *runtime ID* (an int array, comparable across element
   instances while the node lives).
-- Cross-process fetches go through UIA's own channel with a
-  *configurable timeout* (`IUIAutomation2::ConnectionTimeout`, default on
-  the order of a couple of minutes — far too long for a screen reader;
-  clients that care must lower it). A hung provider still hurts, but
-  bounded-hurt is achievable without the heroics MSAA requires.
+- Cross-process fetches go through UIA's own channel with *configurable
+  timeouts*: `IUIAutomation2::ConnectionTimeout` (waiting for a provider
+  to return an element; default two seconds) and its sibling
+  `TransactionTimeout` (waiting for a provider to answer about an
+  element; default twenty seconds — long enough that a screen reader
+  hitting it feels frozen, so clients that care lower it). A hung
+  provider still hurts, but bounded-hurt is achievable without the
+  heroics MSAA requires.
 - The system MSAA-to-UIA proxy means a UIA client sees *something* for
   every window; whether it is good is another matter ([The accessibility landscape](accessibility-landscape.md)).
 
@@ -40,7 +43,7 @@ Consequences worth internalizing:
   over a chosen *condition* — walking is a sequence of cross-process
   calls unless cached (below).
 - **Properties** are fetched by numeric ID (`UIA_NamePropertyId`,
-  `UIA_ControlTypePropertyId` — about 50 control types —
+  `UIA_ControlTypePropertyId` — about 40 control types —
   `UIA_BoundingRectanglePropertyId`, …). Everything is
   `GetCurrentPropertyValue(id)` returning a `VARIANT`; there are typed
   convenience getters.

@@ -99,6 +99,35 @@ cancellable speech handle the remainder (a stale focus announcement is
 cancelled rather than spoken). There is no timestamp-based arbitration:
 freshness is by queue position and "is a newer focus pending."
 
+## The focus gate: what the default handlers actually speak
+
+The pipeline delivers far more than NVDA announces. The base
+`NVDAObject` handlers (`source/NVDAObjects/__init__.py`) apply a final,
+easily missed filter: property changes speak only when the changed
+object *is the focus*. `event_valueChange`, `event_nameChange`, and
+`event_descriptionChange` all skip speech unless
+`self is api.getFocusObject()` (braille and vision output still
+update). `event_stateChange` widens the gate to focus *ancestors* —
+pressing a focused button may flip a state on a container above it,
+the [#10890](https://github.com/nvaccess/nvda/issues/10890) case of a
+sort button inside a column header. `event_caret` acts only for the
+focus object and only when no gainFocus is pending.
+
+The consequence to internalize: a background window's name/value/state
+churn that survives `shouldAcceptEvent` (a topmost window, an
+explicitly opted-in process) is *still silent by default* — acceptance
+filtering bounds the cost of events; the focus gate decides the
+speech. Features that need otherwise (progress bars, live text) get it
+by overriding these handlers in their behavior mixins
+([Object model](object-model.md)), not by loosening the gate.
+
+Two default handlers also *cancel* in-flight speech:
+`event_focusEntered` cancels speech and returns without announcing
+when the entered container is a menu bar, popup menu, or menu item,
+and `event_foreground` cancels speech before the new window is
+announced (both in `source/NVDAObjects/__init__.py`) — a large part of
+why window switches and menu openings cut stale speech off crisply.
+
 ## Object presentation settings
 
 A cluster of config options (the Object Presentation panel; config

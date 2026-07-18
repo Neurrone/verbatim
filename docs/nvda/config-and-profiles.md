@@ -33,7 +33,8 @@ parameters (`config/registry.py` reads policy keys like
 A *configuration profile* is a sparse ini file containing only the
 keys it overrides. `ConfigManager` keeps a stack: base configuration,
 then each active profile in activation order; reads resolve top-down
-through `config/aggregatedSection.py` (`AggregatedSection`), which
+through `AggregatedSection` (`config/__init__.py`; the small
+`config/aggregatedSection.py` module holds only its type helpers), which
 merges sections key-by-key so a profile overriding one speech setting
 inherits everything else. Writes go to the *most recently activated
 profile being edited* — the GUI makes the editing target explicit.

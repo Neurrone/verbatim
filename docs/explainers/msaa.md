@@ -29,7 +29,7 @@ and get it wrong at the margins.
 The interface is small; the properties are per-child:
 
 - `get_accName`, `get_accRole` (a `VARIANT`: usually an integer from the
-  `ROLE_SYSTEM_*` set of about 60 — `PUSHBUTTON`, `LISTITEM`, `OUTLINE` for
+  `ROLE_SYSTEM_*` set of 64 — `PUSHBUTTON`, `LISTITEM`, `OUTLINE` for
   tree views…), `get_accState` (a 32-bit mask of `STATE_SYSTEM_*`:
   `FOCUSED`, `CHECKED`, `INVISIBLE`, `OFFSCREEN`, `UNAVAILABLE`, …),
   `get_accValue` (a string — sliders, edits), `get_accDescription`,

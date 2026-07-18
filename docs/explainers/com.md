@@ -34,9 +34,20 @@ routine when an app closes a window you hold a pointer into),
 [Main loop and watchdog](../nvda/main-loop-and-watchdog.md) for who does that on purpose).
 
 Data types to recognize: `BSTR` (length-prefixed wide string with mandated
-allocator), `VARIANT` (a 24-byte tagged union that can hold anything —
-MSAA uses it for child IDs), `SAFEARRAY` (a self-describing array — UIA
-returns them; ownership mistakes here corrupt the heap).
+allocator), `VARIANT` (a tagged union that can hold anything — 24 bytes on
+64-bit, 16 on 32-bit, which matters when a structure crosses a bitness
+boundary such as a 32-bit synth host; MSAA uses it for child IDs),
+`SAFEARRAY` (a self-describing array — UIA returns them; ownership
+mistakes here corrupt the heap).
+
+One piece of the "full generality" is still needed: *activation*. Objects
+mostly arrive in accessibility work by being handed to you (an event, a
+`WM_GETOBJECT` answer), but system services are created by class ID:
+`CoCreateInstance(clsid, iid, out ptr)` looks the CLSID up in the
+registry, loads or launches the registered server, and returns the
+requested interface. When [Speech APIs](speech-apis.md) says "`ISpVoice`
+(CLSID `SpVoice`)", this is the call it is assuming; the UIA client object
+(`CUIAutomation8`) is obtained the same way.
 
 ## Apartments: the threading model
 

@@ -27,20 +27,23 @@ Read in this order the first time; later, use each file as a reference.
 5. [IA2](ia2.md) — IAccessible2, the extension that made MSAA good enough for
    browsers.
 6. [UIA](uia.md) — UI Automation, the modern API, both client and provider sides.
-7. [The Java Access Bridge](java-access-bridge.md) — how Java
+7. [ARIA](aria.md) — the web-authored semantics layer that browsers map
+   into IA2 and UIA: roles, states, live regions, and the mapping
+   documents. For readers who have not done web work.
+8. [The Java Access Bridge](java-access-bridge.md) — how Java
    applications become readable at all: the bridge architecture, its C
    API, and its manual reference lifetime.
-8. [Windows IPC](ipc.md) — the inter-process communication primitives used by screen
+9. [Windows IPC](ipc.md) — the inter-process communication primitives used by screen
    readers: named pipes, shared memory, events, and MS-RPC.
-9. [Rust concurrency](rust-concurrency.md) — the Rust-side concurrency vocabulary Verbatim
-   is written in (threads, channels, arc-swap, RAII guards) and how it
-   meets the Windows primitives. Verbatim-specific, unlike its siblings.
-10. [Processes and security](processes-and-security.md) — integrity levels, UIPI, uiAccess, the secure
+10. [Rust concurrency](rust-concurrency.md) — the Rust-side concurrency vocabulary Verbatim
+    is written in (threads, channels, arc-swap, RAII guards) and how it
+    meets the Windows primitives. Verbatim-specific, unlike its siblings.
+11. [Processes and security](processes-and-security.md) — integrity levels, UIPI, uiAccess, the secure
     desktop, and AppContainer.
-11. [Input and text](input-and-text.md) — virtual keys, scan codes, keyboard layouts, and
+12. [Input and text](input-and-text.md) — virtual keys, scan codes, keyboard layouts, and
     enough IME/TSF to understand typed-character echo.
-12. [Audio](audio.md) — WASAPI concepts: shared-mode rendering, latency,
+13. [Audio](audio.md) — WASAPI concepts: shared-mode rendering, latency,
     cancellation, sessions, and ducking.
-13. [Speech APIs](speech-apis.md) — the Windows speech synthesis
+14. [Speech APIs](speech-apis.md) — the Windows speech synthesis
     landscape: OneCore, SAPI 5 and SAPI 4 in implementable depth, and
     embedded engines.

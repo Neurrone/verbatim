@@ -644,6 +644,8 @@ mechanism, the exact recipe for each, and the two dead ends (a registry
 - `verbatim-app` — `verbatim.exe` composition root.
 - `verbatim-inspect`, `mockapp`, `xtask` — dev tool; UIA/IA2 provider fake;
   automation.
+- `verbatim-agent` and `verbatim-e2e` — the in-guest test doorway and the
+  end-to-end scenario suite that drives it (section 13).
 
 ## 16. Top risks
 

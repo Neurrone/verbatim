@@ -43,9 +43,10 @@ Public API:
   container, carrying its snapshot), and `Notification` (UIA's
   app-initiated announcement channel, carrying a `Notification` payload of
   `NotificationKind`, `NotificationProcessing`, and optional display string
-  and activity id). The last two are emitted by outposts but deliberately
-  not yet announced: the reducer's wildcard arm drops them until M3's
-  selection-announcement policy work lands.
+  and activity id). The last two are announced by the reducer since M3:
+  selection under the focused selection container speaks the newly
+  selected item, and notifications speak their display string at a
+  priority chosen by the processing hint ([verbatim-core](verbatim-core.md)).
 - `Input` and `Effect` — the reducer's contract. Inputs are events, fetch
   completions, timer ticks, and `Command` (a review or object-navigation
   gesture carrying a `ReviewCommand` and a press-repeat count, roadmap M3).

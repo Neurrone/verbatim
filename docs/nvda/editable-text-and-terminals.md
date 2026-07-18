@@ -21,6 +21,20 @@ does not move any cursor itself.
   but haven't arrived) — then speak the new unit (line after
   up/down, character after left/right, deleted character after
   delete, and so on).
+- `_hasCaretMoved` has three short-circuits that matter as much as
+  the timeout: a pending `gainFocus` event returns "moved"
+  immediately (focus is about to be announced anyway, so the
+  caret-line announcement yields to it); `isScriptWaiting()` — a
+  newer keystroke already queued — returns "not moved" so the wait
+  aborts rather than lag behind fast typing; and for Delete, the
+  caret often *does not move*, so the word at the caret is compared
+  against the pre-keystroke `origWord` after a minimum wait and a
+  word change counts as evidence.
+- When the caret genuinely refuses to move, the scripts fire a
+  `caretMovementFailed` event (opt-in via
+  `shouldFireCaretMovementFailedEvents`, default off) — the hook
+  document implementations use to detect and react to document edges
+  rather than staying silent.
 - Backends with reliable caret events shortcut the polling
   (`caretMovementDetectionUsesEvents` — the `caret` event from
   IA2/UIA arrives and ends the wait); backends without get the

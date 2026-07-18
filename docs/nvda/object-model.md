@@ -61,7 +61,9 @@ identity primitives (IA2 uniqueID, UIA runtime ID, MSAA heuristics).
 
 Events arrive as `event_<name>` methods on these same objects
 ([Event handling](events.md)), so overlays override announcement behavior by overriding
-event handlers.
+event handlers. The base handlers gate property-change announcements
+on the object being the focus (states: focus or a focus ancestor) —
+the focus-gate rule detailed in [Event handling](events.md).
 
 ## Presentation classification
 

@@ -38,7 +38,13 @@ Public API:
   reference, so navigation resolves nodes directly instead of re-finding
   them by runtime id (an unscoped desktop-wide `FindFirst` per step,
   before this) — `element_by_runtime_id` remains as the fallback, now
-  scoped to a caller-supplied root.
+  scoped to a caller-supplied root. Its runtime-id `VARIANT` carries a
+  hard-won ownership lesson (commit c1d2d45): `windows`'s `VARIANT` has
+  a `Drop` that calls `VariantClear`, which for a `VT_ARRAY` variant
+  destroys the wrapped `SAFEARRAY` — so a manually built array variant
+  must *not* also be freed with `SafeArrayDestroy`. The double free was
+  latent heap corruption that surfaced as a continuous outpost
+  crash-respawn loop once M3 made runtime-id lookup per-focus-event.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then the legacy `DoDefaultAction` pattern, each fetched live since
   activation is an infrequent user action, not something the cache

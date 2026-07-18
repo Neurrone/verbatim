@@ -10,7 +10,13 @@ end-to-end narratives. Where a method's behavior is not obvious from
 its signature, an implementation note explains how it works and why.
 
 Keep the file for a crate current when its public API changes (this
-replaces the former single `docs/overview.md`).
+replaces the former single `docs/overview.md`). The rule has a second
+half that experience says is the one that actually slips: when a change
+lands behavior another crate's guide *describes* — a "not yet" that
+becomes true, a policy another file summarizes — search the docs for
+claims about that behavior and update them too. Both stale-claim
+incidents found in review survived precisely because the landing
+commit updated only the changed crate's own guide.
 
 ## The crates, in dependency order
 

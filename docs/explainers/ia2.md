@@ -14,7 +14,11 @@ dance:
 
 1. Obtain a real MSAA `IAccessible` (not a simple child) the normal way.
 2. `QueryInterface` it for `IServiceProvider`, then call
-   `QueryService(IID_IAccessible2, IID_IAccessible2, out)`. The
+   `QueryService(IID_IAccessible, IID_IAccessible2, out)` — the *service*
+   ID is `IID_IAccessible` (the service being asked about is the MSAA
+   object), and the second argument names the interface wanted from it.
+   NVDA's call is exactly this shape
+   (`source/IAccessibleHandler/__init__.py`, `normalizeIAccessible`). The
    QueryService indirection (rather than plain QueryInterface) was chosen
    so implementations can hand out the IA2 view without every wrapper layer
    having to forward an unknown interface.
@@ -72,9 +76,9 @@ IA2 keeps using WinEvents as the transport but extends the vocabulary with
 `IA2_EVENT_*` values (registered in a reserved range): text-changed
 (inserted/removed, with offsets), text-caret-moved, document-load-complete,
 object-attribute-changed, page-changed, and — significant for screen
-readers — the ARIA live-region machinery in browsers is surfaced through
-text-inserted events plus object attributes (`container-live`, `relevant`,
-`atomic`) that the client interprets. As with MSAA, events carry identity
+readers — the ARIA live-region machinery in browsers ([ARIA](aria.md))
+is surfaced through text-inserted events plus object attributes
+(`container-live`, `relevant`, `atomic`) that the client interprets. As with MSAA, events carry identity
 (window, IA2 unique ID as the child parameter), not payloads beyond what
 fits in the event; the client queries after the fact.
 

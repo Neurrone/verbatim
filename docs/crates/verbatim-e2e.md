@@ -60,18 +60,22 @@ Public API:
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
   and its recording file name prefix — one identifier, everywhere),
-  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, or `Navigation`, a coarse
-  `--group` selector, not a strict taxonomy — see the module's own doc
-  comment for what each currently holds), `target_images` (image names its
-  `setup`/`teardown` may launch or kill, unioned by
-  `swept_target_image_names`), and `setup`/`body`/`teardown` function
-  pointers. `SCENARIOS` is the fixed, ordered list of every registered
-  scenario — today `m1_exit_regression`, `notepad_focus`, and
-  `multi_outpost_switch`, each implemented in `crates/verbatim-e2e/src/
-  scenarios/`. `find` looks one up by name; `select` resolves
-  `--scenario`/`--group` filters (both repeatable, unioned, deduplicated,
-  registry order preserved, empty means "every scenario") into a list,
-  erroring on any unrecognized name; `run_named` is the thin entry point
+  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, `Navigation`, or
+  `Diagnostic`, a coarse `--group` selector, not a strict taxonomy — see
+  the module's own doc comment for what each currently holds),
+  `target_images` (image names its `setup`/`teardown` may launch or kill,
+  unioned by `swept_target_image_names`), and `setup`/`body`/`teardown`
+  function pointers. `SCENARIOS` is the fixed, ordered list of every
+  registered scenario — today eight: `m1_exit_regression` (Speech),
+  `notepad_focus` and `msinfo32` (Legacy), `multi_outpost_switch` and
+  `start_menu` (Shell), `object_navigation` and `tree_navigation`
+  (Navigation), and `start_menu_repeat` (Diagnostic), each implemented in
+  `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
+  `select` resolves `--scenario`/`--group` filters (both repeatable,
+  unioned, deduplicated, registry order preserved; no filters means every
+  scenario *except* the `Diagnostic` group, whose members — measurement
+  tools, not gates — run only when named explicitly) into a list, erroring
+  on any unrecognized name; `run_named` is the thin entry point
   every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
   `run_named`'s internal `run` launches, runs `setup` then `body` then
   `teardown` — `body` and `teardown` each in their own
@@ -116,8 +120,7 @@ set by `xtask vm test`, not normally by hand — and skips the two ordinary
 host-filesystem steps (`verbatim.exe` existence check, writing
 `settings.toml`) that `xtask vm deploy` has already done inside the guest
 instead. `crates/verbatim-e2e/tests/` holds one thin `#[test]` wrapper per
-registered scenario (`m1_exit_regression`, `notepad_focus`,
-`multi_outpost_switch`, each just calling `registry::run_named` with its own
+registered scenario (each just calling `registry::run_named` with its own
 name) plus `session_info` (the agent reports an interactive session — a
 precondition every scenario depends on, not itself a scenario, so it stays a
 plain `#[test]` outside the registry). The thin wrappers are what keep

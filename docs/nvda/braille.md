@@ -11,7 +11,7 @@ and braille input.
 - A **Region** (`braille/regions/base.py` and siblings) renders one
   source to cells: `NVDAObjectRegion` (an object's braille
   presentation: name, role abbreviation, states — the wording rules
-  live in `braille/labels.py` and `braille/properties.py`),
+  live in `braille/labels.py` and `braille/regions/properties.py`),
   `TextInfoRegion` (a range of text with its caret/selection dots
   and control-field markers; `regions/textInfo.py`), plus special
   regions (input composition, speech-in-braille when "show speech"
@@ -25,6 +25,16 @@ and braille input.
 - **Cursor routing**: each cell remembers the text position it came
   from (`regions/_routing.py`); routing keys route to click/caret
   placement at that position.
+- **Flash messages**: transient announcements (`ui.message` output,
+  mode switches) render on a *second buffer* — `BrailleHandler.message`
+  (`braille/brailleHandler.py`) switches the display to a dedicated
+  `messageBuffer`, separate from the steady-state `mainBuffer`, then
+  auto-dismisses back after `braille.messageTimeout` (or holds
+  indefinitely per the `showMessages` setting). Scrolling the message
+  resets the timer; a routing key press or the next content write
+  dismisses it immediately (`_resetMessageTimer`, `_dismissMessage`).
+  The dual-buffer structure is easy to miss: a braille implementation
+  that only renders steady state has nowhere to put announcements.
 
 ## Tethering
 
