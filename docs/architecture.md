@@ -28,12 +28,40 @@ screen reader in both rendered and source form.
   fixed-corpus comparison against NVDA (M6 exit) verifies the result.
   Keeping the helper off the correctness path keeps the x64/ARM64EC/x86
   binary matrix and antivirus friction out of the early milestones.
-- **D3 — E2E runs locally in a Hyper-V Windows 11 VM first**; CI automation
-  of E2E is deferred. CI still builds and runs unit and provider tests on
-  GitHub-hosted Windows runners. Rationale: GitHub-hosted Windows runners
-  cannot do nested virtualization; solve that later rather than now.
-- **D4 — GUI is wxWidgets via wxDragon.** Rationale: wxWidgets accessibility
-  is proven in exactly this role — NVDA's own GUI is wxPython.
+- **D3 — The end-to-end suite runs against any Windows session the
+  harness can reach; continuous integration uses GitHub-hosted runners
+  only.** The suite takes an address and talks to the in-guest agent, so
+  the same scenarios run runner-direct on a hosted Windows runner (whose
+  jobs execute in an interactive desktop session, the same way NVDA runs
+  its own system tests there), against a local Hyper-V VM, or against a VM
+  on a Proxmox host, which is the maintainer's own setup. Hosted runners
+  are the only CI: the end-to-end suite runs there silently with the
+  capture synthesizer on every change, recordings included (section 14),
+  and NVDA is never installed or run in CI. Everything else, including
+  audible runs against a real audio device, is the interactive loop, not
+  CI. There are no self-hosted runners and no nested virtualization on
+  hosted runners. Guest transport is standard tooling, not bespoke
+  protocol: OpenSSH on the guest carries file copies and remote commands
+  on every hypervisor, and the agent keeps only what SSH cannot do, which
+  is launching processes in the interactive session, reporting session
+  facts, and tunnelling the control-plane pipe. Hypervisor backends handle
+  lifecycle and snapshots only, and a snapshot restore is always an
+  explicit request, never something a test run does on its own. Amended
+  2026-09-02; the original D3 deferred CI because hosted runners cannot
+  nest virtualization, which stopped mattering once the suite no longer
+  needed a VM to run.
+- **D4 — GUI is wxWidgets through a minimal C++ layer compiled from the
+  GUI crate's build script via cxx; Rust keeps `main` and all logic.**
+  Rationale: wxWidgets accessibility is proven in exactly this role, since
+  NVDA's own GUI is wxPython, and a C++ layer gives full access to it
+  (`wxAccessible` subclassing for accessible descriptions, accelerator
+  tables) where the wxDragon binding used before 2026-09-02 did not.
+  Keeping `main` and the build in cargo preserves the single-command
+  build, the ARM64 cross-build, deploy, and the end-to-end suite unchanged;
+  the static wxWidgets build recipe for both architectures is adapted from
+  the wxdragon-sys build script rather than written fresh. The C++ layer
+  is widget glue only: typed page models are pulled from Rust, and a
+  callbacks object owned by Rust drives the dialogs.
 - **D5 — Audio backend is WASAPI behind an `AudioSink` trait.** Rationale:
   allows alternate backends without touching the speech pipeline.
 - **D6 — Extensions are Wasm components.** The WIT-defined API is the durable
@@ -113,6 +141,53 @@ screen reader in both rendered and source form.
   rare fallback; announcements keep flowing through the per-app outposts,
   so node identity, backend arbitration, and D9's isolation for every
   query are unchanged. Details in section 1.
+- **D14 — Attention follows focus; foreground is announced, not used as a
+  gate.** The reducer tracks an attention record: the process and root
+  window that most recently received a focus fact. It replaces the earlier
+  rule that dropped every event whose process did not own the foreground
+  window, which failed for broker-hosted applications (a Settings page
+  lives in the Settings process while its frame belongs to the frame
+  host), for windows of the already-running shell that never take the
+  foreground cleanly (an Explorer folder window), and for background
+  events users expect to hear. Event acceptance moves out of Core into the
+  outposts, which classify each event as attended or background with
+  hang-safe local reads following NVDA's `shouldAcceptEvent` rules: the
+  attention window, its descendants, windows sharing its root owner,
+  topmost windows, and the `Windows.UI.Core` case are attended; UIA
+  notifications, toast alerts, menu popups, tooltip and notification-bar
+  classes, and configured progress bars are accepted from anywhere as
+  background. Background events never move focus or the navigator, are
+  spoken at Queued priority, and sit under a per-source flood cap. So that
+  processes which never held focus can still be heard, the focus listener
+  additionally hooks `EVENT_SYSTEM_ALERT` and a desktop-wide UIA
+  notification registration and forwards them as facts that spawn an
+  outpost on demand, which stays within its never-block rule because both
+  are cached reads. Ratified 2026-09-02.
+- **D15 — The latency budget is split in two and measured per stage.**
+  From observation of the OS event to the utterance being queued: 10 ms
+  or under on every backend. From queued to the first audio sample: 10 ms
+  or under with eSpeak NG, through `IAudioClient3` shared-mode streams at
+  the device's minimum period and MMCSS registration of the synth thread;
+  OneCore is exempt from this half because it synthesizes whole utterances
+  before returning. The process model is not where the time goes (three
+  pipe hops cost under a millisecond); the cost is the per-hop ancestor
+  walk, cold arbitration probes, and lane serialization, so the first
+  half is met by batching ancestry through UIA remote operations, caching
+  MSAA ancestry per window, giving arbitration verdicts the window's
+  lifetime, and never delaying a control behind its window's announcement.
+  The latency ledger records a stage timeline (observed, routed, lane
+  start, verdict, acquired, enriched, emitted, reduced, queued, first
+  synth sample, first audio write), and the budgets are asserted per
+  stage once eSpeak is in. Ratified 2026-09-02.
+- **D16 — Recordings take their audio from Verbatim's own rendering.** A
+  tee at the `AudioSink` seam writes every utterance's PCM with its
+  wall-clock start time while still playing it, and the recording step
+  muxes that track with the screen grab. No virtual audio device is
+  involved, so recordings work on a hosted CI runner with no sound device,
+  on any hypervisor, and while the run is being heard live over RDP or
+  locally. Consequently everything Verbatim makes audible, earcons and
+  tones included, is rendered as PCM through the `AudioSink` seam and
+  mixed there, never through a separate path. Ratified 2026-09-02.
 
 ## 1. Process and thread model
 
@@ -140,7 +215,7 @@ Verbatim runs as three kinds of process:
    - the input hook thread, running the low-level keyboard hook;
    - the reducer thread, running the functional core;
    - the speech and audio threads (pipeline plus WASAPI);
-   - the GUI thread (wxDragon);
+   - the GUI thread (wxWidgets through the D4 C++ layer);
    - the extension-host threads (wasmtime with epoch preemption).
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
@@ -155,8 +230,8 @@ object with kill-on-job-close before it starts running (spawned suspended,
 assigned to the job, then resumed), and Core holds the job handles: if
 `verbatim.exe` exits for any reason, including a crash, the kernel closes
 those handles and kills everything in the jobs. Per-outpost jobs also carry
-a per-process memory cap, so a leaking outpost is killed by the kernel and
-respawned by the supervisor. The synth host's sandbox job (section 6) simply
+a per-process memory cap; past it the outpost's allocations fail, the
+resulting abort ends the process, and the supervisor respawns it. The synth host's sandbox job (section 6) simply
 carries the same kill-on-close flag; control-plane clients such as
 `verbatim-inspect` are deliberately not children and not in any job.
 
@@ -462,9 +537,11 @@ speech), language tagging, synth driver, PCM, `AudioSink`.
     hop is negligible).
 - **Audio**: `AudioSink` trait; WASAPI event-driven shared mode with small
   buffers as the only initial implementation.
-- **Latency budget** (enforced by tests, not aspiration): from key-down to
-  first audio sample, 50 ms or less with eSpeak on the harness VM.
-  Every stage is traced (section 9).
+- **Latency budget** (enforced by tests, not aspiration): per D15, 10 ms
+  or under from event observation to the utterance being queued on every
+  backend, and 10 ms or under from queued to the first audio sample with
+  eSpeak. eSpeak NG lands in M4 so the second half is measurable from the
+  first text work onward. Every stage is traced (section 9).
 
 ## 7. Extensions (Wasm)
 
@@ -542,11 +619,16 @@ it is the separate, opt-in TLS transport with pairing.
 
 ## 11. GUI
 
-wxDragon settings UI on its own thread in Core. The M1 prototype's defining
-test is Verbatim reading its own GUI via ordinary UIA through a real outpost
-process — no self-voicing side channel, no in-process shortcut — which
-validates the UIA stack and the outpost architecture end-to-end (and avoids
-same-process UIA client/provider hazards).
+A wxWidgets settings UI on its own thread in Core, built as the D4 C++
+layer over Rust-owned logic. The M1 prototype's defining test is Verbatim
+reading its own GUI via ordinary UIA through a real outpost process — no
+self-voicing side channel, no in-process shortcut — which validates the
+UIA stack and the outpost architecture end-to-end (and avoids same-process
+UIA client/provider hazards). NVDA reading the same dialogs is the source
+of their expected readings and the before-and-after check for the port
+from wxDragon: Verbatim runs silenced with the test-audio setting, the two
+readers use different modifier keys, and keys are injected as real OS
+input.
 
 ## 12. Security posture
 
@@ -581,42 +663,63 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
 3. **Pipeline tests** with a **capture synth** (records utterances plus
    timestamps instead of producing audio) — assertions on what would be
    spoken, plus latency assertions against the budget.
-4. **E2E in the local Hyper-V VM** (section 14): real Windows, real apps
-   (Notepad, Explorer, Terminal, Edge, Office), driven via the control plane;
-   speech asserted via capture synth; a separate WASAPI loopback smoke test
-   proves audio actually reaches the device.
+4. **E2E against a real Windows session** (section 14): real Windows, real
+   apps (Notepad, Explorer, Terminal, Edge, Office), driven via the control
+   plane, on a hosted CI runner, a local Hyper-V VM, or a Proxmox VM (D3);
+   speech asserted via capture synth; a separate WASAPI smoke test in the
+   interactive loop proves audio actually reaches a device.
 
-## 14. VM harness (local-first, per D3)
+Expected behaviour comes from NVDA, used as a reference rather than as an
+oracle in the tests: a small NVDA add-on captures what NVDA speaks for a
+scenario driven by real OS input, and that transcript is read interactively
+to decide what Verbatim should do and to write Verbatim's own assertions by
+hand, with legitimate divergences decided case by case and recorded in the
+parity ledger. Verbatim's tests never compare against NVDA output, and NVDA
+is never run in CI.
 
-`cargo xtask vm <cmd>` wraps Hyper-V PowerShell behind a `Host` trait;
-`HyperVHost` is its only implementation today, so the deferred CI story
-(QEMU/KVM on Linux runners, or whatever we choose) can add a second
-implementation later and reuse the same in-guest agent and test suites
-without rewriting verb logic. Verbs: `create` (Packer builds the base image
-from an unattended `autounattend.xml` install, then the VM is imported and
-checkpointed as a golden image), `start`/`stop`/`restart`/`restore
-[checkpoint]`, `deploy` (artifacts copied in and the in-guest agent
-restarted via PowerShell Direct), `test` (restore the golden checkpoint,
-deploy, then run the E2E suite via the in-guest agent tunneling Verbatim's
-control plane, audible by default now — real `OneCore` speech, real
-`WasapiSink`, no more capture-synth default or `--audible` flag on this
-path — with `--record` to also capture the run as an mp4), `logs`,
-`connect`, `delete`.
+## 14. VM harness (the interactive loop, per D3)
 
-Audio: a VB-CABLE virtual audio device gives the guest a real WASAPI render
-endpoint (Scream, tried first, fails to root-enumerate a device node under
-this image's Secure Boot; VB-CABLE is validly Authenticode-signed and
-installs headless). `test --record` captures desktop video plus that same
-device's loopback audio through ffmpeg, launched in the guest's interactive
-session via the in-guest agent — the same session-isolation reason the
-agent exists at all. Recording audio and a connected RDP session are
-mutually exclusive: RDP replaces the guest session's audio with its own
-"Remote Audio" endpoint and hides the VB-CABLE capture device from that
-session entirely, proven live with both ffmpeg and SoX failing identically
-to open it, so a run is either heard live over a connected session or
-recorded headless, never both at once. See `docs/tooling.md` for the full
-mechanism, the exact recipe for each, and the two dead ends (a registry
-"Listen to this device" mirror, and a SoX forwarder) already ruled out.
+`cargo xtask vm <cmd>` drives a Windows guest behind a `Host` trait that
+covers hypervisor lifecycle only: exists, start, stop, snapshot, restore,
+delete, and the guest's address. `HyperVHost` is the first implementation;
+a Proxmox implementation over its REST API is the maintainer's own setup;
+a fake implementation drives the verb logic in unit tests. Everything that
+touches the guest's contents goes over standard transport rather than a
+hypervisor channel: OpenSSH on the guest for file copies and remote
+commands, and the in-guest agent over TCP for the three things SSH cannot
+do (launching in the interactive session, reporting session facts, and
+tunnelling the control-plane pipe). The guest's provisioning script is
+hypervisor-agnostic: autologon, the agent as an at-logon interactive
+scheduled task, sshd with key authentication, and the runtime
+prerequisites. Verbs: `create` (Packer builds the base image from an
+unattended install, then the VM is imported and snapshotted as a golden
+image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
+(artifacts copied in over SSH and the agent restarted), `test` (deploy,
+then run the E2E suite through the agent, audible by default with real
+OneCore speech and the real `WasapiSink`, with `--record` to also capture
+the run as an mp4), `logs`, `connect`, `delete`. A restore is only ever
+explicit, through `restore` or an opt-in flag on `test`; nothing is
+installed into the guest by a run, so an ordinary run has nothing to undo.
+
+Audio: recordings take their audio from Verbatim's own rendering (D16), so
+no virtual audio device is provisioned and a run can be heard live over
+RDP or locally while it is recorded. On Proxmox the emulated HD Audio
+device is the guest's render endpoint and SPICE forwards playback to the
+viewer, so the maintainer hears the secondary VM without an RDP session
+taking over its desktop. The one remaining RDP caveat is video, not
+audio: the desktop stops rendering in a disconnected session, so screen
+capture needs the session attached, or a headless run. The pre-2026-09-02
+design captured loopback audio from a VB-CABLE device, which made
+recording and listening mutually exclusive; its dead ends are recorded in
+`docs/tooling.md` for history.
+
+Interactive-session rule: Verbatim, the agent, and screen capture only
+work in a session with a visible window station. SSH, WinRM, PowerShell
+Direct, and services run in session 0 and cannot see the desktop, which
+is why the agent is started at logon by a scheduled task rather than by
+any remote channel, and why both the agent and `verbatim.exe` check at
+startup that their window station is interactive and refuse to run
+otherwise.
 
 ## 15. Crate map
 
@@ -640,7 +743,8 @@ mechanism, the exact recipe for each, and the two dead ends (a registry
 - `verbatim-i18n` — Fluent localization (D10): embedded English fallback,
   runtime locale-folder loading.
 - `verbatim-input` — hook thread, gesture maps.
-- `verbatim-gui` — wxDragon settings UI.
+- `verbatim-gui` — settings UI: Rust logic plus the D4 C++ wxWidgets layer
+  compiled from its build script.
 - `verbatim-app` — `verbatim.exe` composition root.
 - `verbatim-inspect`, `mockapp`, `xtask` — dev tool; UIA/IA2 provider fake;
   automation.

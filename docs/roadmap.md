@@ -14,6 +14,13 @@ and exit-criteria evidence are archived in
 
 ## M4 — Text, editing, and terminals
 
+- Opening work, before the text features (decided 2026-09-02): the
+  latency stage ledger and UIA remote operations for the focus ancestor
+  walk (D15), eSpeak NG as the built-in reference synthesizer with
+  `IAudioClient3` low-latency audio and MMCSS (moved up from M8 so the
+  audio half of the budget is measurable from here on), and the attention
+  model replacing the foreground gate (D14), which is what the deferred
+  Explorer and Settings scenarios wait on.
 - TextPattern support in the model; caret tracking, typed-character echo,
   word/line/character navigation; say-all with index-mark continuation.
 - Text runs carry formatting attributes as utterance spans (spelling and
@@ -96,9 +103,6 @@ Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
 
 ## M8 — Breadth: speech configurability, profiles, overlays, OCR, secure desktop
 
-- eSpeak NG built-in synth (statically linked, x64 and ARM64) — the
-  reference synth for the latency budget, whose enforcement tightens from
-  the M3 capture-synth budget to the eSpeak reference number.
 - Input help mode; the gesture-remapping configuration GUI; full
   pronunciation/symbol dictionaries and their configuration UI (the
   data-driven infrastructure exists from M3/M4).
@@ -113,8 +117,7 @@ Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
   story in the VM (R5).
 - Installer/updater skeleton.
 
-Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E;
-eSpeak latency budget green.
+Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E.
 
 ## M9 — Logging and log viewer
 
@@ -284,8 +287,8 @@ Tiers, gated by the capabilities each module needs:
   lands as a replay test.
 - **Extension API growth**: only via porting real app modules/add-ons;
   each addition needs a consumer.
-- **Deferred**: CI automation for VM E2E (D3); revisit once local harness is
-  stable — candidates are QEMU/KVM Win11 guests on Linux runners or
-  self-hosted runners. `.github/workflows/vm-smoke.yml` (manual dispatch
-  only) checks whether GitHub's larger Windows runners can host nested
-  virtualization at all, a precondition for any of those candidates.
+- **Continuous integration** (D3, amended 2026-09-02): GitHub-hosted
+  Windows runners run the end-to-end suite runner-direct, silently, with
+  recordings from the audio tee (D16); that is the whole of CI. The VM
+  harness is the interactive loop. `.github/workflows/vm-smoke.yml`, which
+  probed nested virtualization on larger runners, is to be retired.
