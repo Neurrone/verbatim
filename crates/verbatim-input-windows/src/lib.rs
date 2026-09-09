@@ -41,9 +41,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_QUIT, WM_SYSKEYDOWN,
 };
 
-use crate::map::SharedGestureMap;
-use crate::state::{DecisionConfig, DecisionMachine, EmittedGesture};
-use crate::{KeyDecision, KeyEvent};
+use verbatim_input::map::SharedGestureMap;
+use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture};
+use verbatim_input::{KeyDecision, KeyEvent};
 
 /// Per-hook-thread state reached by the hook procedure.
 ///

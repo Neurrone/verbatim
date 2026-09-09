@@ -24,9 +24,12 @@ commit updated only the changed crate's own guide.
   identity vocabulary every other crate speaks.
 - [verbatim-i18n](verbatim-i18n.md) — Fluent localization (D10).
 - [verbatim-config](verbatim-config.md) — settings schema and persistence.
-- [verbatim-input](verbatim-input.md) — the keyboard hook and the pure
-  gesture decision machine.
-- [verbatim-audio](verbatim-audio.md) — the AudioSink seam and WASAPI (D5).
+- [verbatim-input](verbatim-input.md) — the pure gesture decision machine,
+  key names, and gesture tables.
+- [verbatim-input-windows](verbatim-input-windows.md) — the keyboard hook
+  thread.
+- [verbatim-audio](verbatim-audio.md) — the AudioSink seam and NullSink (D5).
+- [verbatim-audio-wasapi](verbatim-audio-wasapi.md) — the WASAPI sink.
 - [verbatim-speech](verbatim-speech.md) — priority lanes, synth threads,
   themes (D12), and the settings host.
 - [verbatim-synth-onecore](verbatim-synth-onecore.md) — the OneCore driver.

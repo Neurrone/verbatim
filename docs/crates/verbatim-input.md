@@ -1,7 +1,10 @@
 # verbatim-input
 
-The keyboard hook (architecture section 5), split into a pure decision
-state machine and a thin never-blocking hook shell.
+The operating-system-free half of keyboard input (architecture section 5):
+the pure decision state machine, the key-name vocabulary, and the gesture
+tables. The thin never-blocking hook thread that feeds the machine is
+[verbatim-input-windows](verbatim-input-windows.md); this crate has no
+Windows dependency.
 
 Public API:
 
@@ -25,8 +28,6 @@ Public API:
   so tests script entire key streams with fake time.
 - `GestureMap`, `SharedGestureMap` — the bound-gesture set behind an
   arc-swap snapshot the hook reads lock-free; rebinding is one atomic store.
-- `InputHook::start(config, map, events)` — installs `WH_KEYBOARD_LL` on a
-  dedicated thread; drop uninstalls.
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
   `Laptop`, redeclared here decoupled from `verbatim_config::KeyboardLayout`
   like `DecisionConfig` already is from `VerbatimKeys`) and `ScriptAction`
@@ -92,8 +93,5 @@ rules):
   directly in `verbatim-app`, bypassing the machine) always injects
   `repeat: 0`, a single first press.
 
-The hook shell (`hook.rs`) keeps the machine in a thread-local on the hook
-thread, forwards emitted gestures with a non-blocking `try_send` that drops
-on a full channel, and returns 1 to swallow or calls `CallNextHookEx` to
-pass. The never-block constraint is load-bearing: Windows silently removes
-low-level hooks that exceed the system timeout.
+The hook shell that drives the machine is described in
+[verbatim-input-windows](verbatim-input-windows.md).

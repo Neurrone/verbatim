@@ -13,5 +13,8 @@ verbatim-model.workspace = true
 verbatim-speech.workspace = true
 windows.workspace = true
 
+[dev-dependencies]
+verbatim-audio-wasapi.workspace = true
+
 [lints]
 workspace = true

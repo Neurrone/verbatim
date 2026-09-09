@@ -7,7 +7,7 @@
 //! plus V (bound below) to see the emitted gesture.
 //!
 //! ```text
-//! cargo run -p verbatim-input --example hook_echo
+//! cargo run -p verbatim-input-windows --example hook_echo
 //! ```
 
 #[cfg(windows)]
@@ -15,8 +15,8 @@ fn main() {
     use std::time::{Duration, Instant};
 
     use verbatim_input::GestureMap;
-    use verbatim_input::hook::InputHook;
     use verbatim_input::state::DecisionConfig;
+    use verbatim_input_windows::InputHook;
     use verbatim_model::GestureId;
 
     let bindings = ["kb:v+verbatim", "kb:t+verbatim"]

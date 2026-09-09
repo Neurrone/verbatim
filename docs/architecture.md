@@ -737,12 +737,14 @@ otherwise.
 - `verbatim-outpost` — the outpost actor and per-app outpost binary, plus the
   Core-side supervisor.
 - `verbatim-control` — control-plane protocol and server.
-- `verbatim-speech` and `verbatim-audio` — pipeline; `AudioSink` plus WASAPI.
+- `verbatim-speech` and `verbatim-audio` — pipeline; the `AudioSink` seam.
+- `verbatim-audio-wasapi` — the WASAPI sink.
 - `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers.
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.
 - `verbatim-i18n` — Fluent localization (D10): embedded English fallback,
   runtime locale-folder loading.
-- `verbatim-input` — hook thread, gesture maps.
+- `verbatim-input` — the pure decision machine, key names, gesture maps.
+- `verbatim-input-windows` — the hook thread.
 - `verbatim-gui` — settings UI: Rust logic plus the D4 C++ wxWidgets layer
   compiled from its build script.
 - `verbatim-app` — `verbatim.exe` composition root.

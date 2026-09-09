@@ -1915,12 +1915,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "verbatim-audio",
+ "verbatim-audio-wasapi",
  "verbatim-config",
  "verbatim-control",
  "verbatim-core",
  "verbatim-gui",
  "verbatim-i18n",
  "verbatim-input",
+ "verbatim-input-windows",
  "verbatim-model",
  "verbatim-outpost",
  "verbatim-speech",
@@ -1934,6 +1936,15 @@ name = "verbatim-audio"
 version = "0.1.0"
 dependencies = [
  "tracing",
+ "verbatim-model",
+]
+
+[[package]]
+name = "verbatim-audio-wasapi"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "verbatim-audio",
  "verbatim-model",
  "windows",
 ]
@@ -2030,6 +2041,16 @@ dependencies = [
  "crossbeam-channel",
  "tracing",
  "verbatim-model",
+]
+
+[[package]]
+name = "verbatim-input-windows"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "tracing",
+ "verbatim-input",
+ "verbatim-model",
  "windows",
 ]
 
@@ -2094,6 +2115,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-audio",
+ "verbatim-audio-wasapi",
  "verbatim-i18n",
  "verbatim-model",
  "verbatim-speech",

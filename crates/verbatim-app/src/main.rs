@@ -22,16 +22,17 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use verbatim_audio::{AudioSink, NullSink, WasapiSink};
+use verbatim_audio::{AudioSink, NullSink};
+use verbatim_audio_wasapi::WasapiSink;
 use verbatim_config::{ConfigStore, ConfigValue};
 use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{
-    DecisionConfig, EmittedGesture, GestureMap, InputHook, KeyboardLayout, ScriptAction,
-    SharedGestureMap,
+    DecisionConfig, EmittedGesture, GestureMap, KeyboardLayout, ScriptAction, SharedGestureMap,
 };
+use verbatim_input_windows::InputHook;
 use verbatim_model::{
     Effect, GestureId, Input, Pid, ReviewCommand, SpeechPriority, TraceId, TreeNode, Utterance,
     UtteranceSegment,

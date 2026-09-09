@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use verbatim_audio::WasapiSink;
+use verbatim_audio_wasapi::WasapiSink;
 use verbatim_model::{SpeechPriority, TraceId, Utterance, UtteranceSegment};
 use verbatim_speech::{SpeechManager, SpeechManagerConfig, SynthId, SynthRegistry};
 use verbatim_synth_onecore::{ONECORE_ID, register};

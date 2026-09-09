@@ -18,7 +18,7 @@ synth `speak`), which an async runtime cannot await anyway without
 parking a thread per call — so the thread-per-role design pays the
 same thread cost with far less machinery. Examples of the pattern:
 the speech queue thread and synth thread (`verbatim-speech`), the
-input hook thread (`verbatim-input`), one reader thread per outpost
+input hook thread (`verbatim-input-windows`), one reader thread per outpost
 pipe plus the heartbeat thread (`verbatim-outpost`'s supervisor), the
 query-pool workers, and the agent's two tunnel copy threads
 (`verbatim-agent`).
@@ -50,7 +50,7 @@ Vocabulary that matters when reading call sites:
 - `send` blocks (bounded, full); `try_send` never blocks and returns
   an error when full or disconnected. The input hook uses `try_send`
   and *drops the gesture on a full channel*
-  (`crates/verbatim-input/src/hook.rs`) — dropping is the correct
+  (`crates/verbatim-input-windows/src/lib.rs`) — dropping is the correct
   behavior there because the hook thread must never block
   ([Windows and messages](windows-and-messages.md) explains the OS
   timeout). When you see `let _ = tx.try_send(...)`, the dropped-work
@@ -144,7 +144,7 @@ modules:
 ## Reading order into the code
 
 Good first files, in order of increasing intricacy:
-`crates/verbatim-input/src/hook.rs` (thread + try_send + arc-swap),
+`crates/verbatim-input-windows/src/lib.rs` (thread + try_send + arc-swap),
 `crates/verbatim-speech` (two named threads, command channels, a
 cancellation flag), `crates/verbatim-outpost/src/query_pool.rs`
 (bounded deadlines, worker abandonment, watchdog thread),

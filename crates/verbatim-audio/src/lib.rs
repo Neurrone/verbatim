@@ -1,20 +1,19 @@
 //! Audio output (architecture section 6, decision D5).
 //!
 //! The [`AudioSink`] trait decouples the speech pipeline from the audio
-//! backend; the only initial implementation is WASAPI in event-driven shared
-//! mode with small buffers, in service of the 50 ms keypress-to-audio
-//! budget. The WASAPI sink lands with workstream WS-A of milestone M1; this
-//! module freezes the seam the pipeline and the synth threads code against.
+//! backend. This crate is the seam the pipeline and the synth threads code
+//! against, plus the device-free [`NullSink`]; the WASAPI implementation
+//! (event-driven shared mode with small buffers, in service of the 50 ms
+//! keypress-to-audio budget) lives in `verbatim-audio-wasapi`, so nothing
+//! here depends on Windows.
 
 mod null;
-mod wasapi;
 
 use std::fmt;
 
 use verbatim_model::TraceId;
 
 pub use null::NullSink;
-pub use wasapi::WasapiSink;
 
 /// The PCM stream format a synth driver produces and a sink consumes.
 ///

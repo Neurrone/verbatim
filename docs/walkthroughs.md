@@ -47,7 +47,7 @@ in order:
 6. **Speech renders and plays.** `verbatim-speech`'s queue thread
    flattens the utterance through the theme, dispatches at Interrupt
    priority (cancelling anything in flight), and the synth thread
-   drives the driver into the WASAPI sink (`verbatim-audio`), which
+   drives the driver into the WASAPI sink (`verbatim-audio-wasapi`), which
    emits `audio_started` with the same trace id — closing the latency
    timeline that began at step 2's observation timestamp.
 
@@ -62,7 +62,8 @@ and the announce poll (`AnnounceFocus`) covers the gap.
 The user presses Verbatim+numpad8 (report current object):
 
 1. **The hook decides.** The `WH_KEYBOARD_LL` hook thread
-   (`verbatim-input`) runs the pure `DecisionMachine`: the chord is
+   (`verbatim-input-windows`) runs `verbatim-input`'s pure
+   `DecisionMachine`: the chord is
    bound, so the keys are swallowed and an `EmittedGesture` (with a
    repeat count for multi-press semantics and a fresh trace id) is
    `try_send`-ed to the app — never blocking on the hook thread.

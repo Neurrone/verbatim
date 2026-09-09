@@ -1,37 +1,27 @@
-//! Input (architecture section 5).
+//! Input (architecture section 5): the operating-system-free half.
 //!
-//! A low-level keyboard hook on a dedicated, never-blocking thread in Core.
-//! The swallow-or-pass decision runs in microseconds against a read-only,
-//! lock-free snapshot of the gesture map (Windows silently removes hooks
-//! that exceed `LowLevelHooksTimeout`); the hook only decides and enqueues,
-//! and gesture semantics run outside it — accessibility scripts on the
-//! reducer thread, imperative commands in the shell's gesture router.
+//! The swallow-or-pass decision for every keystroke runs in microseconds
+//! against a read-only, lock-free snapshot of the gesture map; the hook that
+//! feeds it only decides and enqueues, and gesture semantics run outside it,
+//! accessibility scripts on the reducer thread and imperative commands in
+//! the shell's gesture router.
 //!
-//! Phase 1 of milestone M1 froze the vocabulary here: [`KeyEvent`],
-//! [`KeyDecision`], and the [`keys`] name table shared with the control
-//! plane's key injection. Workstream WS-C adds the pure decision
-//! [`state`] machine, the [`map`] of bound gestures, and the [`hook`] thread.
-//!
-//! The pieces layer cleanly: [`state::DecisionMachine`] is the pure heart,
-//! testable with scripted key streams and no operating system; [`map`] holds
-//! the lock-free bound-gesture snapshot the machine consults; and [`hook`] is
-//! the thin, never-blocking imperative shell that installs the real
-//! `WH_KEYBOARD_LL` hook and drives the machine.
+//! This crate holds the vocabulary ([`KeyEvent`], [`KeyDecision`], and the
+//! [`keys`] name table shared with the control plane's key injection), the
+//! pure decision [`state`] machine, the [`map`] of bound gestures, and the
+//! [`scripts`] tables. It depends on nothing from the operating system, so
+//! the whole of Verbatim's keyboard behaviour is testable with scripted key
+//! streams. The thin, never-blocking hook thread that installs the real
+//! `WH_KEYBOARD_LL` hook and drives the machine is `verbatim-input-windows`.
 
 pub mod keys;
 pub mod map;
 pub mod scripts;
 pub mod state;
 
-#[cfg(windows)]
-pub mod hook;
-
 pub use map::{GestureMap, SharedGestureMap};
 pub use scripts::{KeyboardLayout, ScriptAction, bindings_for, gesture_map_for};
 pub use state::{Decision, DecisionConfig, DecisionMachine, EmittedGesture};
-
-#[cfg(windows)]
-pub use hook::InputHook;
 
 /// One raw key transition as seen by the low-level hook, before any
 /// interpretation.

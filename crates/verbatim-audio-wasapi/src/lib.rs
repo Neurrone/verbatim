@@ -27,7 +27,7 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::core::{HRESULT, PCWSTR};
 
-use crate::{AudioError, AudioSink, PcmFormat};
+use verbatim_audio::{AudioError, AudioSink, PcmFormat};
 
 /// Requested render buffer, in 100-nanosecond units: about 40 ms.
 const BUFFER_DURATION_HNS: i64 = 400_000;
