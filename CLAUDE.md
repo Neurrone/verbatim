@@ -21,7 +21,7 @@ All documentation, comments, and commit messages in this repo must read well wit
 
 ## NVDA provenance
 
-The crates fall into two tiers. The platform-neutral crates, which are `verbatim-model`, `verbatim-core`, `verbatim-speech`, `verbatim-config`, `verbatim-i18n`, `verbatim-input`, and `verbatim-audio`, contain only original code, so that tier's licensing does not depend on NVDA's. Implement their behavior from `docs/parity.md` and the prose under `docs/nvda/`, never by translating NVDA source, and cite those docs in comments rather than NVDA file paths, function names, or line numbers. They never depend on a Windows-specific crate or on the Windows bindings; the hook thread and the WASAPI sink live in `verbatim-input-windows` and `verbatim-audio-wasapi` for that reason. NVDA's spoken vocabulary, messages, and key layouts are deliberately matched for user familiarity and are fine to use; NVDA's non-English translations are never imported.
+The crates fall into two tiers. The platform-neutral crates, which are `verbatim-model`, `verbatim-core`, `verbatim-speech`, `verbatim-config`, `verbatim-i18n`, `verbatim-input`, and `verbatim-audio`, contain only original code, so that tier's licensing does not depend on NVDA's. Implement their behavior from `docs/parity.md` and the prose under `docs/nvda/`, never by translating NVDA source, and cite those docs in comments rather than NVDA file paths, function names, or line numbers. They never depend on a Windows-specific crate or on the Windows bindings; the hook thread and the WASAPI sink live in `verbatim-input-windows` and `verbatim-audio-wasapi` for that reason, and `cargo xtask ci` fails if the rule is broken. NVDA's spoken vocabulary, messages, and key layouts are deliberately matched for user familiarity and are fine to use; NVDA's non-English translations are never imported.
 
 The Windows-specific crates are GPL like NVDA and may port NVDA code freely. Ported code never moves from a Windows crate into a platform-neutral one, and NVDA-core behavior destined for the reducer, such as browse mode, review modes, or symbol processing, is written from the parity docs rather than ported.
 
@@ -37,7 +37,7 @@ We are using GitHub actions for CI.
 
 ## Commands
 
-`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: rustfmt, clippy (pedantic via workspace lints, warnings denied) and unit tests on x64, then a release-profile ARM64 cross-build. ARM64 artifacts are build-verified only, never run on this x64 machine.
+`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: the platform-neutral dependency check (the crates listed under NVDA provenance must not pull in the Windows bindings), rustfmt, clippy (pedantic via workspace lints, warnings denied) and unit tests on x64, then a release-profile ARM64 cross-build. ARM64 artifacts are build-verified only, never run on this x64 machine.
 
 `cargo xtask vm <cmd>` drives the Hyper-V harness: `create` (Packer-built golden image, imported, deployed to, checkpointed), `start`, `stop`, `restart`, `restore`, `deploy`, `test` (the end-to-end suite against the VM), `logs`, and `delete`. Guest credentials come from a `.env` at the repo root, which is never committed. See `docs/tooling.md`.
 
