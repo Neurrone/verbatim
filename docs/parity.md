@@ -46,6 +46,16 @@ verified.
   ([The display model](nvda/display-model.md)). Verbatim: **different (D11)** —
   screen review will be a spatial projection of the tree (M6); GDI
   model deliberately last (M14, gated).
+- Spoken vocabulary and key layouts. NVDA: the spoken role and state
+  names, messages, synth setting labels, and the desktop and laptop
+  gesture layouts ([Speech](nvda/speech.md), [Keyboard input](nvda/input.md)).
+  Verbatim: **matched (verified)** by decision, not by accident: users'
+  ears and hands already know them, so Verbatim speaks the same English
+  words and binds the same keys wherever it implements the same command
+  (E2E scenarios assert the wording; the gesture tables live in
+  [verbatim-input](crates/verbatim-input.md)). Only the English catalogue
+  is shared vocabulary; Verbatim's other-language resources are written
+  fresh, never taken from NVDA's translations.
 
 ## Focus and announcements
 

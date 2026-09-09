@@ -868,33 +868,26 @@ fn entered_containers<'a>(
         .collect()
 }
 
-/// Whether a focus ancestor is worth announcing when first entered, at NVDA
-/// parity. This is exclusion-based, mirroring NVDA's
-/// `_get_isPresentableFocusAncestor` (`nvda/source/NVDAObjects/__init__.py`
-/// lines 1166-1180) layered over `_get_presentationType` (same file, lines
-/// 911-980): most roles announce as entered context, and only a specific set
-/// is filtered out.
+/// Whether a focus ancestor adds context worth speaking when focus first
+/// enters it. The rule is exclusion-based: an ancestor speaks unless it is
+/// one of the following.
 ///
-/// Translated to this role vocabulary:
+/// - An item-level or text-entry role (`TreeItem`, `ListItem`,
+///   `EditableText`). Focus lands on these; they are never context.
+/// - A structural node with no semantics of its own (`Unknown`, `Pane`).
+/// - The top-level `Window`, named or not. The foreground-change
+///   announcement (the outpost's foreground fact and the `AnnounceFocus`
+///   window step) owns it, and repeating it on every cross-application
+///   focus change would double-speak every switch. This is the one
+///   documented divergence from NVDA, which presents a named window.
+/// - A `Group` or `PropertyPage` with neither a name nor a description,
+///   which would speak as a bare role.
+/// - `StaticText` with no text, which is nothing.
 ///
-/// - `TreeItem`, `ListItem`, and `EditableText` never present, matching NVDA's
-///   ancestry exclusions (NVDA also excludes `ProgressBar`, a role this
-///   vocabulary does not have).
-/// - `Unknown` and `Pane` are always layout (NVDA's structural-role list), so
-///   they never present.
-/// - `Window` never presents, regardless of name: the foreground-change
-///   announcement (the outpost's foreground fact / `AnnounceFocus` window step)
-///   owns the top-level window, and repeating it on every cross-application
-///   focus change would double-speak every switch. This is a deliberate,
-///   documented divergence — NVDA would present a named window.
-/// - `Group` and `PropertyPage` present only when they carry a name or a
-///   description (NVDA makes these layout when both are empty; whitespace
-///   counts as empty).
-/// - `StaticText` presents only when it has real, non-whitespace text (its
-///   name), matching NVDA's static-text branch.
-/// - Every other role — dialogs, toolbars, an unnamed tree, and the rest —
-///   presents regardless of name. NVDA treats them as content; an unnamed
-///   tree ancestor announcing as a bare "tree view" is real NVDA behavior.
+/// Whitespace-only names and descriptions count as absent. Everything else
+/// speaks on entry whether named or not: dialogs, toolbars, and an unnamed
+/// tree, which announces as a bare "tree view", the same as NVDA. The
+/// behavior is recorded under focus-ancestry context in `docs/parity.md`.
 fn is_presentable_container(node: &NodeSnapshot) -> bool {
     let named = node
         .name
@@ -906,10 +899,9 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         .as_deref()
         .is_some_and(|description| !description.trim().is_empty());
     match node.role {
-        // NVDA's ancestry exclusions (item and editable-text roles), the
-        // always-layout structural roles (Unknown, Pane), and Window — which
-        // the foreground announcement owns and this never repeats, even named.
-        // See this function's doc for the per-role NVDA provenance.
+        // Never context: item-level and text-entry roles, structural roles
+        // with no semantics, and the window the foreground announcement
+        // owns. See this function's doc for the rule.
         Role::TreeItem
         | Role::ListItem
         | Role::EditableText
@@ -920,7 +912,7 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         Role::Group | Role::PropertyPage => named || described,
         // Static text: content only when it has real, non-whitespace text.
         Role::StaticText => named,
-        // Every other role NVDA treats as content, regardless of name.
+        // Every other role is context, named or not.
         _ => true,
     }
 }
