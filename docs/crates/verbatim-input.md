@@ -46,25 +46,29 @@ Public API:
   example on a layout change, is one atomic store on the existing
   `SharedGestureMap`, picked up by the hook on its next keystroke.
 
-Implementation notes, `DecisionMachine::on_key` (the intricate one — the
-semantics follow NVDA's `keyboardHandler`):
+Implementation notes, `DecisionMachine::on_key` (the intricate one;
+`docs/parity.md`'s input section is the behavioural record for these
+rules):
 
 - A Verbatim-modifier key-down is always swallowed, so caps lock never
   toggles while acting as the modifier. In share mode the modifier's
   transitions pass down the hook chain instead, so a screen reader hooked
   behind Verbatim sees the modifier held and swallows it itself.
-- A key-down forming a bound gesture is swallowed, recorded as trapped, and
-  emitted with a freshly minted `TraceId`. An unbound companion key falls
-  through to the application as a bare keypress — NVDA behavior, so an
-  unrecognized chord is not eaten.
-- Trapped keys are swallowed on their key-up too, so an application never
-  sees the release of a key whose press it never saw.
+- A key-down forming a bound gesture is swallowed, recorded in the
+  swallowed-downs set, and emitted with a freshly minted `TraceId`. An
+  unbound companion key falls through to the application as a bare
+  keypress — NVDA behavior, so an unrecognized chord is not eaten.
+- Keys swallowed on the way down are swallowed on their key-up too, so an
+  application never sees the release of a key whose press it never saw.
 - Double-tap passthrough: releasing the modifier with no other key pressed
   during the hold arms a window (`multi_press_timeout`, 500 ms). Pressing
-  the same physical key again inside the window bypasses modifier handling
-  for that entire press, including auto-repeats, so caps lock actually
-  toggles. The bypass ends at the next key-up and does not re-arm itself, so
-  a triple tap makes the third press a modifier again.
+  the same physical key again inside the window hands that whole press to the
+  operating system, auto-repeats included, so caps lock actually toggles. The
+  hand-over ends at the next key-up and does not re-arm itself, so a triple
+  tap makes the third press a modifier again. The three states of a lone tap
+  (held alone, released with the window running, being handed over) are one
+  `LoneModifier` enum inside the machine, so no combination of them can go
+  out of step.
 - Injected keys are processed identically to physical ones, which is what
   lets the control plane drive gestures with synthetic input.
 - Chords normalize modifiers to generic names (left and right control both
@@ -82,7 +86,8 @@ semantics follow NVDA's `keyboardHandler`):
   count; NVDA does not treat auto-repeat as a multi-press for
   script-repeat purposes, and every auto-repeated emission carries the
   same count as the genuine press that started the hold. The machine
-  detects auto-repeat as a key-down of a key that is still trapped.
+  detects auto-repeat as a key-down of a key it swallowed and has not yet
+  seen released.
   Control-plane gesture injection (which builds an `EmittedGesture`
   directly in `verbatim-app`, bypassing the machine) always injects
   `repeat: 0`, a single first press.

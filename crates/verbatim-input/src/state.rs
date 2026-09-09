@@ -1,16 +1,18 @@
 //! The pure decision state machine.
 //!
-//! This module is the heart of input handling and is deliberately free of any
-//! operating-system dependency: it turns a stream of [`KeyEvent`]s into
-//! swallow-or-pass [`Decision`]s and emitted gestures, driven only by its
-//! configuration, the bound-gesture snapshot, and a caller-supplied clock.
-//! The hook thread ([`crate::hook`]) is the thin imperative shell that feeds
-//! it real events; every behavioural rule lives here so it can be exercised
-//! by ordinary unit tests with scripted key streams.
+//! Every rule about what a keystroke means to Verbatim lives here, and
+//! nothing here touches the operating system: the machine turns a stream of
+//! [`KeyEvent`]s into swallow-or-pass [`Decision`]s and emitted gestures,
+//! driven only by its configuration, the bound-gesture snapshot, and a
+//! caller-supplied clock. The hook thread ([`crate::hook`]) is the thin
+//! imperative shell that feeds it real events, which is what lets the whole
+//! of Verbatim's keyboard behaviour be exercised by ordinary unit tests with
+//! scripted key streams and scripted time.
 //!
-//! The semantics follow NVDA's `keyboardHandler` (`internal_keyDownEvent`,
-//! `internal_keyUpEvent`, and `isNVDAModifierKey`) closely. The notable
-//! deliberate differences from NVDA are documented on [`DecisionMachine`].
+//! `docs/parity.md` (the input section) is the behavioural record: which of
+//! these rules exist for parity with other screen readers, and which
+//! behaviours Verbatim has decided not to have. [`DecisionMachine`] carries
+//! the summary of both.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -91,15 +93,14 @@ pub struct EmittedGesture {
     /// second, 2 for the third, and so on, saturating rather than
     /// overflowing. Incremented when the same gesture fires again within
     /// `multi_press_timeout` of its previous genuine press; a different
-    /// gesture or the window elapsing resets it to 0. NVDA semantics —
-    /// consumers dispatch on it for report-current (report, spell, copy),
-    /// speak time (time, then date), and show tray list (tray, then
-    /// taskbar). Auto-repeat (holding the gesture's key down, which
-    /// re-fires the gesture on every OS auto-repeat tick with no
-    /// intervening key-up) does not advance this count — NVDA does not
-    /// treat auto-repeat as a multi-press for script-repeat purposes, and
-    /// every auto-repeated emission of a held gesture carries the same
-    /// count as its initiating genuine press.
+    /// gesture or the window elapsing resets it to 0. Consumers dispatch on
+    /// it for report-current (report, spell, copy), speak time (time, then
+    /// date), and show tray list (tray, then taskbar). Auto-repeat (holding
+    /// the gesture's key down, which re-fires the gesture on every OS
+    /// auto-repeat tick with no intervening key-up) does not advance this
+    /// count: for parity with NVDA, a held key is one press for repeat
+    /// purposes, so every auto-repeated emission carries the same count as
+    /// the genuine press that started the hold.
     pub repeat: u8,
 }
 
@@ -139,73 +140,171 @@ impl Decision {
     }
 }
 
-/// Identity of a physical key for the trapped-key bookkeeping: the
-/// virtual-key code paired with the extended flag, so an extended key and its
-/// numpad twin are distinct.
+/// Identity of a physical key: the virtual-key code paired with the extended
+/// flag, so an extended key and its numpad twin are distinct keys.
 type KeyCode = (u16, bool);
+
+/// The part a key plays in the press currently being decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyRole {
+    /// The key is acting as the Verbatim modifier right now. It names itself
+    /// `verbatim` in a chord, and Verbatim owns its transitions.
+    Modifier,
+    /// An ordinary key Verbatim can name, and so can place in a chord.
+    Named(&'static str),
+    /// A key Verbatim has no name for. It can take no part in a gesture, so
+    /// it is the application's business alone.
+    Unnamed,
+}
+
+/// Where a lone press of a Verbatim-modifier key stands in its lifecycle.
+///
+/// Tapping a modifier key on its own is how the user asks for that key's
+/// ordinary meaning back: tap it once, then again before
+/// [`DecisionConfig::multi_press_timeout`] elapses, and the second press goes
+/// to the operating system, so caps lock toggles and insert inserts. The
+/// facts that lifecycle needs — which key is the candidate, when it was let
+/// go, and whether a press is being handed over — tell one story, so they are
+/// one value. The combinations this enum cannot express are exactly the ones
+/// that would be nonsense: a release time belonging to no key, or a hand-over
+/// with no tap behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoneModifier {
+    /// No tap is in flight. Either no modifier key is down, or another key
+    /// has gone down since one was, which disqualifies the hold: a modifier
+    /// used in a chord is not a lone tap.
+    Idle,
+    /// A Verbatim-modifier key is down and nothing else has gone down since,
+    /// so releasing it will still count as a lone tap.
+    HeldAlone(KeyCode),
+    /// The lone tap completed: `key` was pressed by itself and let go at
+    /// `released`. Pressing that same key again before the multi-press
+    /// timeout elapses hands the press to the operating system.
+    TapPending {
+        /// The key that was tapped alone; only that key re-taps it.
+        key: KeyCode,
+        /// When the tap ended, which starts the multi-press window.
+        released: Instant,
+    },
+    /// A press is being handed to the operating system, and so is every
+    /// transition after it until a key-up ends the hand-over. It has to
+    /// outlast a single key-down because a held key auto-repeats, and it
+    /// never re-arms itself, so the third tap of a triple tap is the
+    /// modifier again.
+    PassingThrough,
+}
+
+impl LoneModifier {
+    /// Whether a press of `key` belongs to the operating system rather than
+    /// to Verbatim: the second tap of a double tap, or any press while a
+    /// hand-over is still running.
+    fn hands_press_to_os(self, key: KeyCode, now: Instant, timeout: Duration) -> bool {
+        match self {
+            Self::PassingThrough => true,
+            Self::TapPending {
+                key: tapped,
+                released,
+            } => tapped == key && now.saturating_duration_since(released) < timeout,
+            Self::Idle | Self::HeldAlone(_) => false,
+        }
+    }
+
+    /// The lifecycle a key-down leaves behind: a hand-over outlives the press
+    /// that began it, a lone modifier press becomes the candidate for the
+    /// next double tap, and any other key going down spends whatever
+    /// candidate there was.
+    fn after_press(key: KeyCode, hands_to_os: bool, role: KeyRole) -> Self {
+        if hands_to_os {
+            Self::PassingThrough
+        } else if role == KeyRole::Modifier {
+            Self::HeldAlone(key)
+        } else {
+            Self::Idle
+        }
+    }
+
+    /// The lifecycle a key-up leaves behind: letting the candidate go starts
+    /// (or restarts) the multi-press window, any release ends a hand-over
+    /// since there will be no further auto-repeats, and a release of some
+    /// other key changes nothing.
+    fn after_release(self, key: KeyCode, now: Instant) -> Self {
+        match self {
+            Self::PassingThrough => Self::Idle,
+            Self::HeldAlone(candidate) | Self::TapPending { key: candidate, .. }
+                if candidate == key =>
+            {
+                Self::TapPending { key, released: now }
+            }
+            unchanged => unchanged,
+        }
+    }
+}
 
 /// The pure keyboard decision state machine.
 ///
 /// Construct one with [`DecisionMachine::new`], then call
 /// [`on_key`](DecisionMachine::on_key) for every raw key transition. The
-/// machine reads the bound-gesture set from a lock-free
-/// [`ArcSwap`] snapshot on each call, so rebinding gestures is a single
-/// atomic store elsewhere and never blocks the hook.
+/// machine reads the bound-gesture set from a lock-free [`ArcSwap`] snapshot
+/// on each call, so rebinding gestures is a single atomic store elsewhere and
+/// never blocks the hook.
 ///
-/// # Behaviour, following NVDA
+/// # The rules
 ///
-/// - A Verbatim-modifier key-down is always swallowed (so caps lock never
-///   toggles), unless the double-tap passthrough is active.
-/// - While the modifier is held, a key-down forming a bound gesture is
-///   swallowed and the gesture emitted; an unbound companion key falls
-///   through to the application as a bare keypress (the modifier itself
-///   stays swallowed), so unrecognized chords are not eaten.
-/// - Double-tapping the modifier alone within `multi_press_timeout` passes the
-///   second press-and-release through to the operating system, so caps lock
-///   toggles or insert inserts.
-/// - Keys swallowed on their way down are recorded as trapped and swallowed
-///   again on their way up.
-/// - Injected keys are processed identically to physical ones, so the control
-///   plane can drive gestures with synthetic input.
+/// - A Verbatim-modifier key-down is swallowed, so caps lock never toggles
+///   while it is serving as the modifier. The exception is the double-tap
+///   passthrough below.
+/// - While the modifier is held, a key-down completing a bound gesture is
+///   swallowed and the gesture emitted. A companion key that completes
+///   nothing reaches the application as a bare keypress instead of vanishing,
+///   while the modifier's own transitions stay swallowed.
+/// - Tapping the modifier alone and tapping it again within
+///   `multi_press_timeout` hands the second press, and everything up to its
+///   release, to the operating system, so the key does what it says on the
+///   keycap. That hand-over does not re-arm itself: a third tap is the
+///   modifier again.
+/// - A key swallowed on the way down is swallowed on the way up too, so no
+///   application ever sees the release of a press it never saw.
+/// - Injected keys are decided exactly like physical ones, which is what lets
+///   the control plane drive real gestures with synthetic input.
 /// - In share mode ([`DecisionConfig::share_modifier`]) the modifier's own
-///   transitions pass down the hook chain instead of being swallowed, so a
+///   transitions pass down the hook chain rather than being swallowed, so a
 ///   screen reader hooked behind Verbatim can use the same modifier for the
 ///   chords Verbatim leaves unbound.
 /// - Multi-press counting: each [`EmittedGesture`] carries a `repeat` count.
 ///   Pressing the same bound gesture again within `multi_press_timeout` of
-///   its previous genuine press increments the count (0, 1, 2, ...,
-///   saturating); a different gesture or the window elapsing resets it to
-///   0. Holding a gesture's key down auto-repeats key-downs with no
-///   intervening key-up; each auto-repeated emission carries the same count
-///   as the genuine press that started the hold, matching NVDA, which does
-///   not treat auto-repeat as a multi-press for script-repeat purposes.
+///   its previous genuine press increments the count (0, 1, 2, and on,
+///   saturating); a different gesture or the window elapsing resets it to 0.
+///   Holding a gesture's key down auto-repeats its key-down with no
+///   intervening key-up, and every such emission carries the count of the
+///   press that started the hold: for parity with NVDA, auto-repeat is not a
+///   multi-press.
 ///
-/// # Deliberate differences from NVDA
+/// `docs/parity.md` (the input section) records which of these match other
+/// screen readers and how far that has been verified.
 ///
-/// - Sticky Keys interaction (NVDA's `stickyNVDAModifier` latch/lock) is not
-///   modelled; that is a later accessibility-integration concern.
-/// - NVDA's `passNextKeyThrough` command (a user-requested one-shot
-///   passthrough counter) is not modelled; it is a separate feature.
-/// - Unknown virtual keys (those [`keys::name_from_vk`] cannot name) pass
-///   through unswallowed, in place of NVDA's elaborate `MapVirtualKeyEx` and
-///   `GetKeyNameText` fallbacks.
+/// # Behaviours Verbatim deliberately does not have
+///
+/// - No latching or locking of the Verbatim modifier for Sticky Keys users;
+///   that belongs with the wider accessibility-integration work.
+/// - No user-invoked one-shot passthrough command, the kind that arms the
+///   next keystroke to reach the application untouched. It is a feature in
+///   its own right, not part of these rules.
+/// - No name-guessing for virtual keys outside [`keys::name_from_vk`]'s
+///   vocabulary. A key Verbatim cannot name simply passes through, rather
+///   than being described by whatever the keyboard layout would call it.
 pub struct DecisionMachine {
     config: DecisionConfig,
     map: Arc<ArcSwap<GestureMap>>,
-    /// Modifier keys currently held down (normal modifiers and the Verbatim
-    /// modifier), each as its virtual-key code and extended flag.
-    current_modifiers: HashSet<KeyCode>,
-    /// Keys swallowed on their way down, so their key-up is swallowed too.
-    trapped: HashSet<KeyCode>,
-    /// The last Verbatim-modifier key pressed with no other key pressed since;
-    /// cleared the moment any other key goes down.
-    last_verbatim_modifier: Option<KeyCode>,
-    /// When [`last_verbatim_modifier`](Self::last_verbatim_modifier) was
-    /// released, used to time the double-tap passthrough window.
-    last_release: Option<Instant>,
-    /// Whether the modifier's special behaviour is currently bypassed (the
-    /// double-tap passthrough), until the next key-up ends the repeats.
-    bypass: bool,
+    /// Modifier keys currently held down, both normal modifiers and the
+    /// Verbatim modifier, so a later key-down can form a chord with them.
+    held_modifiers: HashSet<KeyCode>,
+    /// Keys Verbatim swallowed on the way down, and whose release it must
+    /// therefore swallow too. A key still in here has not been released, so
+    /// another key-down for it is the operating system's auto-repeat.
+    swallowed_downs: HashSet<KeyCode>,
+    /// How far a lone Verbatim-modifier tap has got towards handing its key
+    /// back to the operating system.
+    lone_modifier: LoneModifier,
     /// The gesture and observation time of the most recent genuine (not
     /// auto-repeated) bound-gesture press, for multi-press counting.
     last_gesture: Option<(GestureId, Instant)>,
@@ -223,11 +322,9 @@ impl DecisionMachine {
         Self {
             config,
             map,
-            current_modifiers: HashSet::new(),
-            trapped: HashSet::new(),
-            last_verbatim_modifier: None,
-            last_release: None,
-            bypass: false,
+            held_modifiers: HashSet::new(),
+            swallowed_downs: HashSet::new(),
+            lone_modifier: LoneModifier::Idle,
             last_gesture: None,
             repeat_count: 0,
         }
@@ -241,116 +338,121 @@ impl DecisionMachine {
     /// lock-free.
     pub fn on_key(&mut self, event: KeyEvent, now: Instant) -> Decision {
         if event.pressed {
-            self.on_down(event, now)
+            self.on_press(event, now)
         } else {
-            self.on_up(event, now)
+            self.on_release(event, now)
         }
     }
 
-    fn on_down(&mut self, event: KeyEvent, now: Instant) -> Decision {
+    /// Decides a key-down in three steps: what part the key plays, where that
+    /// leaves the lone-modifier lifecycle, and what chord it completes.
+    fn on_press(&mut self, event: KeyEvent, now: Instant) -> Decision {
         let key: KeyCode = (event.vk, event.extended);
-        let mut is_verbatim = self.is_verbatim_modifier(event.vk, event.extended);
 
-        // Double-tap passthrough: if we are already bypassing, or this is a
-        // fresh press of the same lone modifier within the timeout, the key
-        // serves its normal OS function instead of acting as the modifier.
-        // There may be auto-repeats, so keep bypassing until the next key-up.
-        let within_window = self.last_verbatim_modifier == Some(key)
-            && self.last_release.is_some_and(|t| {
-                now.saturating_duration_since(t) < self.config.multi_press_timeout
-            });
-        if self.bypass || within_window {
-            self.bypass = true;
-            is_verbatim = false;
-        }
-        // A key going down always ends the pending release window.
-        self.last_release = None;
+        // Step one: the key's part in this press. A modifier key whose press
+        // belongs to the operating system is not acting as the modifier, so
+        // it is named and treated like any other ordinary key.
+        let hands_to_os =
+            self.lone_modifier
+                .hands_press_to_os(key, now, self.config.multi_press_timeout);
+        let role = self.role_of(key, hands_to_os);
 
-        // Track the lone-modifier candidate for the next double-tap: a
-        // Verbatim modifier arms it, any other key clears it.
-        self.last_verbatim_modifier = if is_verbatim { Some(key) } else { None };
+        // Step two: advance the lifecycle, whatever this press turns out to
+        // mean, so the record of lone taps is right even for keys Verbatim
+        // will decline to name.
+        self.lone_modifier = LoneModifier::after_press(key, hands_to_os, role);
 
-        // The gesture's main key name. The Verbatim modifier names itself;
-        // every other key is named from the table, and unknown keys pass
-        // through unswallowed.
-        let main_name = if is_verbatim {
-            keys::VERBATIM_MODIFIER_NAME
-        } else if let Some(name) = keys::name_from_vk(event.vk, event.extended) {
-            name
-        } else {
-            return Decision::pass();
+        // Step three: name the key, build the chord it completes, and decide.
+        let main_name = match role {
+            KeyRole::Modifier => keys::VERBATIM_MODIFIER_NAME,
+            KeyRole::Named(name) => name,
+            KeyRole::Unnamed => return Decision::pass(),
         };
-
-        // Record held modifiers so later keys can form chords with them.
-        if is_verbatim || is_normal_modifier(event.vk) {
-            self.current_modifiers.insert(key);
+        if role == KeyRole::Modifier || is_normal_modifier(event.vk) {
+            self.held_modifiers.insert(key);
         }
 
         if let Some(gesture) = self.build_gesture(key, main_name)
             && self.map.load().contains(&gesture)
         {
-            // Auto-repeat: the OS keeps sending key-down for a held key with
-            // no intervening key-up, so a still-trapped key means this
-            // down is a repeat of the press already in progress, not a new
-            // one. NVDA does not count auto-repeat toward a script's
-            // multi-press repeat count, so the count carried on
-            // `last_gesture` from the initiating genuine press is reused
-            // unchanged rather than recomputed here.
-            let auto_repeat = self.trapped.contains(&key);
-            self.trapped.insert(key);
-            if !auto_repeat {
-                self.repeat_count = match &self.last_gesture {
-                    Some((last, at))
-                        if *last == gesture
-                            && now.saturating_duration_since(*at)
-                                < self.config.multi_press_timeout =>
-                    {
-                        self.repeat_count.saturating_add(1)
-                    }
-                    _ => 0,
-                };
-                self.last_gesture = Some((gesture.clone(), now));
-            }
+            let repeat = self.count_press(&gesture, key, now);
+            self.swallowed_downs.insert(key);
             return Decision::swallow_emit(EmittedGesture {
                 trace_id: TraceId::mint(),
                 gesture,
-                repeat: self.repeat_count,
+                repeat,
             });
         }
 
-        // Unbound. An unbound companion key falls through to the application
-        // as a bare keypress — NVDA's behavior, so an unrecognized chord
-        // like verbatim+pageup still pages the app instead of being eaten.
-        // The modifier key itself is normally swallowed (caps lock must not
-        // toggle); in share mode its real transitions pass down the hook
-        // chain instead, for a screen reader hooked behind Verbatim to see —
-        // that reader is then the one that swallows it before the OS.
-        if is_verbatim {
+        // Nothing bound. A companion key that completes no gesture reaches
+        // the application as a bare keypress, so pressing the modifier and
+        // page-up still pages the application instead of doing nothing at
+        // all. The modifier key itself is still swallowed, since caps lock
+        // must not toggle while it is the modifier; in share mode its real
+        // transitions go down the hook chain instead, for the screen reader
+        // hooked behind Verbatim to see and swallow in its turn.
+        if role == KeyRole::Modifier {
             if self.config.share_modifier {
                 return Decision::pass();
             }
-            self.trapped.insert(key);
+            self.swallowed_downs.insert(key);
             return Decision::swallow();
         }
         Decision::pass()
     }
 
-    fn on_up(&mut self, event: KeyEvent, now: Instant) -> Decision {
+    /// Decides a key-up: where the release leaves the lone-modifier
+    /// lifecycle, and whether Verbatim owes this key a swallowed release.
+    fn on_release(&mut self, event: KeyEvent, now: Instant) -> Decision {
         let key: KeyCode = (event.vk, event.extended);
 
-        // Releasing the lone modifier arms the double-tap window.
-        if self.last_verbatim_modifier == Some(key) {
-            self.last_release = Some(now);
-        }
-        // Any key-up ends a bypass: there will be no more auto-repeats.
-        self.bypass = false;
-        self.current_modifiers.remove(&key);
+        self.lone_modifier = self.lone_modifier.after_release(key, now);
+        self.held_modifiers.remove(&key);
 
-        if self.trapped.remove(&key) {
+        if self.swallowed_downs.remove(&key) {
             Decision::swallow()
         } else {
             Decision::pass()
         }
+    }
+
+    /// What part a key plays in the press being decided. A configured
+    /// modifier key acts as the modifier unless its press has been handed to
+    /// the operating system, in which case it is just the key on the keycap.
+    fn role_of(&self, key: KeyCode, hands_to_os: bool) -> KeyRole {
+        let (vk, extended) = key;
+        if !hands_to_os && self.is_verbatim_modifier(vk, extended) {
+            KeyRole::Modifier
+        } else if let Some(name) = keys::name_from_vk(vk, extended) {
+            KeyRole::Named(name)
+        } else {
+            KeyRole::Unnamed
+        }
+    }
+
+    /// The repeat count this emission carries, advancing the multi-press
+    /// streak if the press is a genuine one.
+    ///
+    /// A key-down for a key Verbatim swallowed and has not yet seen released
+    /// is the operating system auto-repeating a held key, not a fresh press:
+    /// it re-reports the streak's current count and leaves the streak alone,
+    /// for parity with NVDA, which does not count auto-repeat as a
+    /// multi-press.
+    fn count_press(&mut self, gesture: &GestureId, key: KeyCode, now: Instant) -> u8 {
+        if self.swallowed_downs.contains(&key) {
+            return self.repeat_count;
+        }
+        self.repeat_count = match &self.last_gesture {
+            Some((last, at))
+                if last == gesture
+                    && now.saturating_duration_since(*at) < self.config.multi_press_timeout =>
+            {
+                self.repeat_count.saturating_add(1)
+            }
+            _ => 0,
+        };
+        self.last_gesture = Some((gesture.clone(), now));
+        self.repeat_count
     }
 
     /// Whether the given key is configured to act as the Verbatim modifier.
@@ -365,8 +467,8 @@ impl DecisionMachine {
     /// key name. Returns `None` only if the identifier fails to parse, which
     /// the well-formed names here never do.
     fn build_gesture(&self, current_key: KeyCode, main_name: &str) -> Option<GestureId> {
-        let mut parts: Vec<&str> = Vec::with_capacity(self.current_modifiers.len() + 1);
-        for &(vk, extended) in &self.current_modifiers {
+        let mut parts: Vec<&str> = Vec::with_capacity(self.held_modifiers.len() + 1);
+        for &(vk, extended) in &self.held_modifiers {
             // The key going down is the main key, not one of its own
             // modifiers, even when it is a modifier held across an auto-repeat.
             if (vk, extended) == current_key {
