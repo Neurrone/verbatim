@@ -142,6 +142,14 @@ pub enum NormalizedEvent {
         /// The notification payload.
         notification: Notification,
     },
+    /// A toast notification (an MSAA `EVENT_SYSTEM_ALERT` from a window whose
+    /// parent has the class `ToastChildWindowClass`): the alerting object,
+    /// spoken queued and accepted from any application (decision D14), as
+    /// NVDA's notification behavior speaks it.
+    Alert {
+        /// The alerting object.
+        node: NodeSnapshot,
+    },
 }
 
 impl NormalizedEvent {
@@ -163,7 +171,9 @@ impl NormalizedEvent {
                     selected.assign_outpost(outpost);
                 }
             }
-            NormalizedEvent::SelectionChanged { node } => node.assign_outpost(outpost),
+            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+                node.assign_outpost(outpost);
+            }
             NormalizedEvent::PropertyChanged { node_id, .. }
             | NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::Notification { node_id, .. } => {

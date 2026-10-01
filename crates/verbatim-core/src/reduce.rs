@@ -99,6 +99,14 @@ fn classify(
         } => Acceptance::Attended,
         // UIA notifications are filtered by application, not window, as
         // NVDA filters them.
+        // A toast is spoken from anywhere.
+        NormalizedEvent::Alert { .. } => {
+            if window_is_attended(attention, source, window) {
+                Acceptance::Attended
+            } else {
+                Acceptance::Background
+            }
+        }
         NormalizedEvent::Notification { notification, .. } => {
             if source == attention.source {
                 Acceptance::Attended
@@ -174,6 +182,7 @@ fn reduce_event(
             node_id: _,
             notification,
         } => reduce_notification(trace_id, notification),
+        NormalizedEvent::Alert { node, .. } => reduce_alert(trace_id, node),
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
@@ -197,9 +206,11 @@ fn reduce_event(
 
 /// Speaks an event accepted from outside the attention record. Background
 /// events never move focus or the navigator and always queue behind current
-/// speech. The only background kind today is the shell's window-snap
-/// results notification.
+/// speech: a toast alert, and the shell's window-snap results notification.
 fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> {
+    if let NormalizedEvent::Alert { node, .. } = event {
+        return reduce_alert(trace_id, node);
+    }
     let NormalizedEvent::Notification { notification, .. } = event else {
         return Vec::new();
     };
@@ -409,6 +420,17 @@ fn reduce_name_changed(
         segments: vec![UtteranceSegment::label(text.clone())],
         source: Some(source_of(&focus.snapshot)),
     })]
+}
+
+/// Speaks a toast: the alerting object announced in full, queued behind
+/// current speech, as NVDA's notification behavior speaks it. A toast never
+/// moves focus or the navigator.
+fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
+    vec![Effect::Speak(announce_node(
+        trace_id,
+        SpeechPriority::Queued,
+        node,
+    ))]
 }
 
 /// Handles a UIA `AutomationNotification` event (NVDA's

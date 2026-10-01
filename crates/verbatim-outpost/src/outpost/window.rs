@@ -6,7 +6,7 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
+    EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW, GetWindowThreadProcessId,
     InternalGetWindowText, IsChild, IsHungAppWindow, IsWindowVisible, WS_EX_TOPMOST,
 };
@@ -62,6 +62,14 @@ pub(super) fn top_level_of(handle: isize) -> isize {
     // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
     // one.
     unsafe { GetAncestor(hwnd(handle), GA_ROOT) }.0 as isize
+}
+
+/// The class name of `handle`'s parent window, or `None` when it has none.
+pub(super) fn parent_class(handle: isize) -> Option<String> {
+    // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
+    // one.
+    let parent = unsafe { GetAncestor(hwnd(handle), GA_PARENT) };
+    (!parent.0.is_null()).then(|| window_class_name(parent.0 as isize))
 }
 
 /// `handle` as the model's opaque window handle.

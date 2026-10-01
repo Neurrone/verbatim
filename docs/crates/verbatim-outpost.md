@@ -76,10 +76,18 @@ Public API:
   `outpost` module; outpost redesign, "Inside an outpost"). Its parts:
   - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
     value, state, name, selection, menu end, and destroy, for the fixed pid),
-    the UIA property, selection, and notification callbacks, and the reader's
-    routed facts and queries only add an entry to the queue and return. A
-    UIA callback captures the element's cached parts, its cached window
-    handle, and an agile reference; it never calls into the application.
+    the focus-following UIA property callback, and the reader's routed facts
+    (focus, foreground, menus, and the listener's desktop-wide selections,
+    notifications, and alerts) and queries only add an entry to the queue and
+    return. A UIA callback captures the element's cached parts, its cached
+    window handle, and an agile reference; it never calls into the
+    application.
+  - The focus-following UIA property subscription, following NVDA's
+    selective registration on Windows 11: name, value, and state changes on
+    the focused element and its ancestors only. The worker moves it each time
+    it reports a focus, without waiting. This replaces the subscriptions on
+    the top-level windows that existed at spawn, under which a dialog or
+    window opened later received no UIA events at all.
   - The queue applies NVDA's limiter rules: one waiting entry per object and
     kind, a newer one replacing it and moving to the back; a batch is
     everything that accumulated while the worker handled the previous one;
@@ -109,14 +117,23 @@ Public API:
   `run_pipe` is the production mode over inherited pipe handles; `run_attach`
   watches a pid directly, asks for its focus, and prints outbound messages as
   JSON lines to stdout, the standalone dev mode.
-- `run_listener` — the focus-listener runtime (decision D13): sets up the
-  outbound writer, announces `Ready`, installs the desktop-global
-  `FocusRegistration` and the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`,
-  pid zero), and forwards each event as a `FocusFact` built entirely from
-  cached and hang-safe local reads. It answers `Ping` with a `Pong` (parked
-  count always zero — it never blocks on a cross-process call) and ignores
-  everything else. It holds no per-application
-  state, so a crash respawns into full capability instantly.
+- `run_listener` — the focus-listener runtime (decisions D13 and D14;
+  outpost redesign, "The focus listener"): sets up the writer, announces
+  `Ready`, and installs the desktop-global `FocusRegistration`, the global
+  MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
+  menu-popup, and alert), and desktop-wide UIA subscriptions for the events
+  NVDA registers globally on Windows 11: an element selected, a menu
+  opened, and notifications. Each event becomes a `FocusFact` (a
+  `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
+  cached and hang-safe local reads; a foreground event whose window is no
+  longer the foreground is dropped before it is sent. Outgoing facts are
+  coalesced with NVDA's UIA limiter rule, one waiting fact per element and
+  kind (`DeliveredFact::key`; notifications are never merged), with pongs
+  and `Ready` first. It answers `Ping` with a `Pong` and ignores everything
+  else. It holds no per-application state, so a crash respawns into full
+  capability instantly. Range-value changes and live regions, which NVDA
+  also registers globally, are not subscribed yet: the reducer speaks values
+  only for the focus, and live regions are milestone M6's.
 - `Supervisor` (the `supervisor` module; outpost redesign, "The
   supervisor") — `new(events_tx)` starts the lifecycle owner thread, which
   starts the focus listener at once; `ensure_spawned(pid)` starts an outpost

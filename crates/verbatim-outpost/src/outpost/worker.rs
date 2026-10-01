@@ -343,15 +343,41 @@ impl Worker<'_> {
             ancestors,
             selected_child,
         };
+        let followed = self.uia_elements(&event);
         if self.emit(trace, observed_at_ms, backend, window, event) {
             if !foreground {
                 self.context.intake.set_focused(object);
+                // Move the focus-following UIA property subscription to the
+                // new focus and its ancestors, without waiting. A foreground
+                // report is a window, not the control focus is in.
+                if let Some(subscription) = self.context.focus_properties.get() {
+                    subscription.retarget(verbatim_uia::Scope::Elements(followed));
+                }
             }
             let mut tracking = self.context.tracking();
             tracking.focus_role = Some(role);
             tracking.menu_closed = false;
             tracking.focus_batch = Some(self.batch);
         }
+    }
+
+    /// The live UIA elements behind a focus event's node and ancestors, for
+    /// the focus-following property subscription. MSAA nodes have none.
+    fn uia_elements(
+        &self,
+        event: &NormalizedEvent,
+    ) -> Vec<windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>>
+    {
+        let NormalizedEvent::FocusChanged {
+            node, ancestors, ..
+        } = event
+        else {
+            return Vec::new();
+        };
+        std::iter::once(node)
+            .chain(ancestors)
+            .filter_map(|node| self.context.uia_registry.element_of(node.id))
+            .collect()
     }
 
     /// An MSAA event from this outpost's own hooks.
@@ -489,15 +515,79 @@ impl Worker<'_> {
             DeliveredFact::UiaFocus { hwnd, snapshot } => {
                 self.uia_focus(hwnd, &snapshot, trace, observed_at_ms);
             }
-            // Menu openings are planned separately; one reaching here was
-            // planned as an ordinary entry by mistake and is handled the
-            // same way.
-            menu @ DeliveredFact::MenuPopup { .. } => self.menu_opened(&Entry {
-                item: Item::Fact(menu),
+            DeliveredFact::UiaSelection { hwnd, snapshot } => self.uia_event(
+                UiaEvent {
+                    kind: UiaKind::Selection,
+                    parts: snapshot,
+                    hwnd,
+                    element: None,
+                },
                 trace,
                 observed_at_ms,
-            }),
+            ),
+            DeliveredFact::UiaNotification {
+                hwnd,
+                snapshot,
+                notification,
+            } => self.uia_event(
+                UiaEvent {
+                    kind: UiaKind::Notification(notification),
+                    parts: snapshot,
+                    hwnd,
+                    element: None,
+                },
+                trace,
+                observed_at_ms,
+            ),
+            DeliveredFact::Alert {
+                hwnd,
+                id_object,
+                id_child,
+            } => self.alert(hwnd, id_object, id_child, trace, observed_at_ms),
+            // Menu openings are planned separately; one reaching here is
+            // handled the same way.
+            menu @ (DeliveredFact::MenuPopup { .. } | DeliveredFact::UiaMenuOpened { .. }) => {
+                self.menu_opened(&Entry {
+                    item: Item::Fact(menu),
+                    trace,
+                    observed_at_ms,
+                });
+            }
         }
+    }
+
+    /// An MSAA alert. Only a toast (its window's parent has the class
+    /// `ToastChildWindowClass`) is reported, for the reducer to speak queued
+    /// from any application, as NVDA's notification behavior speaks it.
+    /// NVDA speaks other alerts only when the object's role is alert, it has
+    /// content, and it is not already among the focus's ancestors; Verbatim
+    /// has no alert role yet, so those are not reported.
+    fn alert(
+        &mut self,
+        hwnd: isize,
+        id_object: i32,
+        id_child: i32,
+        trace: TraceId,
+        observed_at_ms: u64,
+    ) {
+        if super::window::parent_class(hwnd).as_deref() != Some("ToastChildWindowClass") {
+            return;
+        }
+        let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
+            hwnd,
+            id_object,
+            id_child,
+            &self.context.msaa_registry,
+        ) else {
+            return;
+        };
+        self.emit(
+            trace,
+            observed_at_ms,
+            Backend::Msaa,
+            Some(hwnd),
+            NormalizedEvent::Alert { node },
+        );
     }
 
     /// A foreground change: reported at once, named or not, as a focus on
@@ -630,6 +720,10 @@ impl Worker<'_> {
     /// its object is not a popup menu; otherwise it becomes a focus on the
     /// popup menu.
     fn menu_opened(&mut self, entry: &Entry) {
+        if let Item::Fact(DeliveredFact::UiaMenuOpened { hwnd, snapshot }) = &entry.item {
+            self.uia_menu_opened(*hwnd, snapshot, entry);
+            return;
+        }
         let Item::Fact(DeliveredFact::MenuPopup {
             hwnd,
             id_object,
@@ -668,6 +762,39 @@ impl Worker<'_> {
             node,
             false,
             Some(Object::Msaa(hwnd, id_object, id_child)),
+            (Vec::new(), None),
+        );
+    }
+
+    /// A UIA menu opening, which NVDA treats as a focus on the menu unless a
+    /// focus is already pending: ignored when a focus was reported in the same
+    /// batch, or when the window does not belong to UIA.
+    fn uia_menu_opened(&mut self, fact_hwnd: isize, parts: &UiaSnapshotFact, entry: &Entry) {
+        if self.context.tracking().focus_batch == Some(self.batch) {
+            return;
+        }
+        let hwnd = if fact_hwnd != 0 {
+            Some(fact_hwnd)
+        } else {
+            focus_window()
+        };
+        if hwnd.is_some_and(window_belongs_to_hidden_frame) {
+            return;
+        }
+        if let Some(hwnd) = hwnd
+            && !read::window_uses_uia(self.context, hwnd)
+        {
+            return;
+        }
+        let node = self.uia_node(parts, None);
+        self.emit_focus(
+            entry.trace,
+            entry.observed_at_ms,
+            Backend::Uia,
+            hwnd,
+            node,
+            false,
+            Some(Object::Uia(parts.runtime_id.clone())),
             (Vec::new(), None),
         );
     }

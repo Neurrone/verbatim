@@ -210,6 +210,18 @@ verified.
   **matched (unverified)**, foreground-gated in shell. NVDA speaks
   notifications only from the focus's application, plus
   per-application opt-ins; see "Event acceptance" above.
+- Toasts. NVDA: a toast's `alert` event is accepted from any application
+  ([Event handling](nvda/events.md), "Acceptance filtering"), and the
+  `Notification` behavior speaks the object. Verbatim: the listener hooks
+  `EVENT_SYSTEM_ALERT` desktop-wide; the outpost reports an alert only from
+  a window whose parent has the class `ToastChildWindowClass`, and the
+  reducer speaks the object queued from anywhere, never moving focus.
+  **matched (unverified)**; the setting to turn toast reporting off is
+  **not yet**.
+- Other alerts. NVDA speaks an alert at once when the object's role is
+  alert, it has a name, description, or children, and it is not already
+  among the focus's ancestors (`event_alert` on IAccessible objects).
+  Verbatim: **not yet**; it has no alert role, and reports no other alerts.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
 

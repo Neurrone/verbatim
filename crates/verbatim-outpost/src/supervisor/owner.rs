@@ -12,10 +12,12 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender, select, tick};
 use verbatim_model::{OutpostId, Pid, TraceId};
 
-use crate::protocol::{ListenerFact, OutpostToSupervisor, SupervisorToOutpost, read_message};
+use crate::protocol::{
+    DeliveredFact, ListenerFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
+};
 
 use super::policy::{
-    CrashHistory, FactKey, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
+    CrashHistory, HeldFact, HeldFacts, WedgeReason, retirement_decision, wedge_decision,
 };
 use super::process::{self, Launched, Role};
 use super::writer::{self, Outgoing, WriterHandle};
@@ -25,6 +27,10 @@ use super::{
 };
 
 /// A fact reported to the owner.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "an event is sent once and moved, never stored in bulk"
+)]
 pub(super) enum OwnerEvent {
     /// From the app: start an outpost for this application if none exists.
     EnsureSpawned(Pid),
@@ -389,7 +395,7 @@ impl Owner {
     /// try.
     fn route_fact(&mut self, trace_id: TraceId, observed_at_ms: u64, fact: ListenerFact) {
         let pid = fact.pid();
-        if matches!(fact, ListenerFact::Foreground { .. })
+        if matches!(fact.fact, DeliveredFact::Foreground { .. })
             && let Some(history) = self.crashes.get_mut(&pid)
         {
             history.reset();
@@ -405,7 +411,10 @@ impl Owner {
                 None => record.held.hold(held),
             },
             None => {
-                if self.respawn_stopped(pid) {
+                if !held.fact.may_start_outpost() {
+                    // A selection in an application with no outpost is not
+                    // worth starting one for.
+                } else if self.respawn_stopped(pid) {
                     tracing::debug!(%pid, "fact dropped: respawning is stopped after repeated crashes");
                 } else {
                     self.start_outpost(pid, Some(held));
@@ -571,7 +580,7 @@ impl Owner {
 
 /// Queues a routed fact for an outpost.
 fn deliver(writer: &WriterHandle, held: HeldFact) {
-    let key = FactKey::of(&held.fact);
+    let key = held.fact.key();
     let command = SupervisorToOutpost::DeliverFact {
         trace_id: held.trace_id,
         observed_at_ms: held.observed_at_ms,

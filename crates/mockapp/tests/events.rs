@@ -2,8 +2,8 @@
 //!
 //! After a `set-name`, `set-value`, `select`, or `notify` stdin command,
 //! asserts that the matching real client-side registration observes the
-//! change: `verbatim_uia::PropertyRegistration`, `SelectionRegistration`,
-//! and `NotificationRegistration` for UIA, `verbatim_ia2::WinEventHook` for
+//! change: `verbatim_uia::Registration` for UIA property changes, selection,
+//! and notifications, `verbatim_ia2::WinEventHook` for
 //! MSAA. Property, value, selection, and notification changes are used
 //! rather than focus, per the architecture note that these tests must pass
 //! headless on CI runners without real keyboard focus or
@@ -17,14 +17,15 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State};
 use verbatim_uia::{
-    NotificationRegistration, PropertyRegistration, SelectionRegistration, Uia,
+    FOCUS_PROPERTIES, Registration, Scope, Subscription, Uia,
     map::{notification_kind_from_uia, notification_processing_from_uia},
 };
-use windows::Win32::UI::Accessibility::{UIA_NamePropertyId, UIA_ValueValuePropertyId};
+use windows::Win32::UI::Accessibility::{
+    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
+};
 use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
 
-/// Serializes UIA registration setup (`PropertyRegistration`,
-/// `SelectionRegistration`, `NotificationRegistration`) across this
+/// Serializes UIA registration setup (`Registration`) across this
 /// binary's tests. `cargo test` runs `#[test]` functions concurrently on a
 /// thread pool by default, and empirically, two registration calls racing
 /// from different threads in the same process can make UI Automation's
@@ -50,16 +51,19 @@ fn uia_set_name_raises_a_property_changed_event() {
 
     let seen = Arc::new(Mutex::new(Vec::<i32>::new()));
     let seen_cb = seen.clone();
-    let _registration = PropertyRegistration::new(
-        vec![hwnd.0 as isize],
-        Arc::new(move |_element, property_id| {
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(property_id);
-        }),
+    let _registration = Registration::new(
+        Subscription::Properties {
+            properties: FOCUS_PROPERTIES.to_vec(),
+            callback: Arc::new(move |_element, property_id| {
+                seen_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(property_id);
+            }),
+        },
+        Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("PropertyRegistration::new");
+    .expect("Registration::new");
 
     app.send("set-name btn1 Renamed");
 
@@ -123,16 +127,19 @@ fn uia_set_value_raises_a_property_changed_event() {
 
     let seen = Arc::new(Mutex::new(Vec::<i32>::new()));
     let seen_cb = seen.clone();
-    let _registration = PropertyRegistration::new(
-        vec![hwnd.0 as isize],
-        Arc::new(move |_element, property_id| {
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(property_id);
-        }),
+    let _registration = Registration::new(
+        Subscription::Properties {
+            properties: FOCUS_PROPERTIES.to_vec(),
+            callback: Arc::new(move |_element, property_id| {
+                seen_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(property_id);
+            }),
+        },
+        Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("PropertyRegistration::new");
+    .expect("Registration::new");
 
     app.send("set-value slider1 77");
 
@@ -161,20 +168,23 @@ fn uia_select_raises_a_selection_event() {
     let seen_cb = seen.clone();
     let registry =
         verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    let _registration = SelectionRegistration::new(
-        vec![hwnd.0 as isize],
-        Arc::new(move |element| {
-            // SAFETY: the element was delivered with the registration's own
-            // base cache request, so the mapping reads only cached values.
-            let snapshot =
-                unsafe { verbatim_uia::map::snapshot_from_cached_element(element, &registry) };
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(snapshot);
-        }),
+    let _registration = Registration::new(
+        Subscription::Event {
+            event: UIA_SelectionItem_ElementSelectedEventId,
+            callback: Arc::new(move |element| {
+                // SAFETY: the element was delivered with the registration's own
+                // base cache request, so the mapping reads only cached values.
+                let snapshot =
+                    unsafe { verbatim_uia::map::snapshot_from_cached_element(element, &registry) };
+                seen_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(snapshot);
+            }),
+        },
+        Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("SelectionRegistration::new");
+    .expect("Registration::new");
 
     app.send("select item1");
 
@@ -210,21 +220,23 @@ fn uia_notify_raises_a_notification_event() {
 
     let seen = Arc::new(Mutex::new(Vec::<SeenNotification>::new()));
     let seen_cb = seen.clone();
-    let _registration = NotificationRegistration::new(
-        vec![hwnd.0 as isize],
-        Arc::new(move |_element, kind, processing, display, activity| {
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push((
-                    notification_kind_from_uia(kind),
-                    notification_processing_from_uia(processing),
-                    display,
-                    activity,
-                ));
-        }),
+    let _registration = Registration::new(
+        Subscription::Notifications {
+            callback: Arc::new(move |_element, kind, processing, display, activity| {
+                seen_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((
+                        notification_kind_from_uia(kind),
+                        notification_processing_from_uia(processing),
+                        display,
+                        activity,
+                    ));
+            }),
+        },
+        Scope::Windows(vec![hwnd.0 as isize]),
     )
-    .expect("NotificationRegistration::new");
+    .expect("Registration::new");
 
     app.send("notify Window snapped to the left");
 

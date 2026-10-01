@@ -15,7 +15,8 @@
 //! - Within a batch only the newest foreground change and the newest focus
 //!   from each backend are handled (the worker's arbitration then drops the
 //!   one whose backend does not own the window, as NVDA's separate MSAA and
-//!   UIA limiters do), and the newest menu opening is handled last.
+//!   UIA limiters do), and the newest menu opening from each backend is
+//!   handled last.
 //!
 //! Intake callbacks only push and return: they never call into the
 //! application and never wait on the worker.
@@ -93,6 +94,7 @@ pub(super) enum Key {
     MsaaFocus(isize, i32, i32),
     UiaFocus(Vec<i32>),
     MenuPopup(isize, i32, i32),
+    UiaMenuOpened(Vec<i32>),
     CheckFocus,
 }
 
@@ -104,9 +106,9 @@ impl Key {
             Key::Msaa(_, hwnd, object, child)
             | Key::MsaaFocus(hwnd, object, child)
             | Key::MenuPopup(hwnd, object, child) => Some(Object::Msaa(*hwnd, *object, *child)),
-            Key::Uia(_, _, runtime_id) | Key::UiaFocus(runtime_id) => {
-                Some(Object::Uia(runtime_id.clone()))
-            }
+            Key::Uia(_, _, runtime_id)
+            | Key::UiaFocus(runtime_id)
+            | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
             Key::Foreground(_) | Key::CheckFocus => None,
         }
     }
@@ -267,6 +269,37 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         }
         Item::Fact(fact) => {
             let (key, hwnd) = match fact {
+                // Selections, notifications, and alerts routed from the
+                // listener are ordinary events, limited per UI thread.
+                DeliveredFact::UiaSelection { hwnd, snapshot } => {
+                    return (
+                        Some(Key::Uia(1, 0, snapshot.runtime_id.clone())),
+                        Category::Other,
+                        *hwnd,
+                    );
+                }
+                DeliveredFact::UiaNotification { hwnd, .. } => {
+                    return (None, Category::Other, *hwnd);
+                }
+                DeliveredFact::Alert {
+                    hwnd,
+                    id_object,
+                    id_child,
+                } => {
+                    return (
+                        Some(Key::Msaa(
+                            WinEventKind::Alert as u8,
+                            *hwnd,
+                            *id_object,
+                            *id_child,
+                        )),
+                        Category::Other,
+                        *hwnd,
+                    );
+                }
+                DeliveredFact::UiaMenuOpened { hwnd, snapshot } => {
+                    (Key::UiaMenuOpened(snapshot.runtime_id.clone()), *hwnd)
+                }
                 DeliveredFact::Foreground { hwnd } => (Key::Foreground(*hwnd), *hwnd),
                 DeliveredFact::MsaaFocus {
                     hwnd,
@@ -340,26 +373,28 @@ fn plan(
     let foreground = newest(|key| matches!(key, Key::Foreground(_)));
     let msaa_focus = newest(|key| matches!(key, Key::MsaaFocus(..)));
     let uia_focus = newest(|key| matches!(key, Key::UiaFocus(_)));
-    let menu = newest(|key| matches!(key, Key::MenuPopup(..)));
+    let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
+    let uia_menu = newest(|key| matches!(key, Key::UiaMenuOpened(_)));
 
     let mut planned = Vec::with_capacity(kept.len());
-    let mut deferred = None;
+    let mut deferred = Vec::new();
     for (index, item) in kept.into_iter().enumerate() {
         match &item.key {
             Some(Key::Foreground(_)) if Some(index) != foreground => {}
             Some(Key::MsaaFocus(..)) if Some(index) != msaa_focus => {}
             Some(Key::UiaFocus(_)) if Some(index) != uia_focus => {}
-            Some(Key::MenuPopup(..)) => {
-                if Some(index) == menu {
-                    deferred = Some(item.entry);
+            Some(Key::MenuPopup(..) | Key::UiaMenuOpened(_)) => {
+                // The newest from each backend, as for focus: the worker's
+                // arbitration drops the one whose backend does not own the
+                // window.
+                if Some(index) == msaa_menu || Some(index) == uia_menu {
+                    deferred.push(item.entry);
                 }
             }
             _ => planned.push(Planned::Run(item.entry)),
         }
     }
-    if let Some(entry) = deferred {
-        planned.push(Planned::Menu(entry));
-    }
+    planned.extend(deferred.into_iter().map(Planned::Menu));
     planned
 }
 

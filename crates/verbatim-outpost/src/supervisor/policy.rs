@@ -119,38 +119,6 @@ pub(super) struct HeldFact {
     pub(super) fact: DeliveredFact,
 }
 
-/// The object and kind a fact concerns, for NVDA's limiter rule: one waiting
-/// entry per object and kind.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum FactKey {
-    Foreground(isize),
-    MsaaFocus(isize, i32, i32),
-    UiaFocus(Vec<i32>),
-    MenuPopup(isize, i32, i32),
-}
-
-impl FactKey {
-    /// The key of `fact`.
-    pub(super) fn of(fact: &DeliveredFact) -> Self {
-        match fact {
-            DeliveredFact::Foreground { hwnd } => FactKey::Foreground(*hwnd),
-            DeliveredFact::MsaaFocus {
-                hwnd,
-                id_object,
-                id_child,
-            } => FactKey::MsaaFocus(*hwnd, *id_object, *id_child),
-            DeliveredFact::UiaFocus { snapshot, .. } => {
-                FactKey::UiaFocus(snapshot.runtime_id.clone())
-            }
-            DeliveredFact::MenuPopup {
-                hwnd,
-                id_object,
-                id_child,
-            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child),
-        }
-    }
-}
-
 /// Facts that arrive while an outpost is starting, held in arrival order and
 /// released in that order once it is ready. A newer fact for the same object
 /// and kind replaces the older one and takes its place at the back, NVDA's
@@ -164,8 +132,10 @@ pub(super) struct HeldFacts {
 impl HeldFacts {
     /// Holds `fact`, replacing any older fact for the same object and kind.
     pub(super) fn hold(&mut self, fact: HeldFact) {
-        let key = FactKey::of(&fact.fact);
-        self.facts.retain(|held| FactKey::of(&held.fact) != key);
+        if let Some(key) = fact.fact.key() {
+            self.facts
+                .retain(|held| held.fact.key().as_ref() != Some(&key));
+        }
         self.facts.push(fact);
     }
 

@@ -64,18 +64,24 @@ Public API:
   focus listener, which watches every application at once; the per-application
   pid filter this module once carried is gone with that move (the sealed
   module made the relocation a change of caller, not a rewrite).
-- `PropertyRegistration::new(hwnds, callback)` — name, value, toggle-state,
-  enabled, and expand-collapse property changes, scoped to the target's
-  top-level windows with subtree scope.
-- `SelectionRegistration::new(hwnds, callback)` and
-  `NotificationRegistration::new(hwnds, callback)` — the M3 event
-  additions, following `PropertyRegistration`'s pattern exactly (own
-  thread, apartment, client, and handler; unregister on drop; windows that
-  fail to resolve are skipped rather than failing the rest).
-  `SelectionRegistration` subscribes `SelectionItem_ElementSelected`;
-  `NotificationRegistration` subscribes `AutomationNotification` via
-  `IUIAutomation5::AddNotificationEventHandler`, delivering the raising
-  element plus kind, processing, display string, and activity id.
+- `Registration::new(subscription, scope)` and `retarget(scope)` — one
+  subscription type for everything but focus: `Subscription::Properties`
+  (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
+  toggle state, enabled, and expand/collapse), `Subscription::Event` (an
+  automation event id, such as `SelectionItem_ElementSelected` or
+  `MenuOpened`), or `Subscription::Notifications`
+  (`IUIAutomation5::AddNotificationEventHandler`, delivering the raising
+  element plus kind, processing, display string, and activity id). The
+  `Scope` is nothing yet, the subtree of given top-level windows, the whole
+  desktop (the subtree of the root element), or exactly given elements.
+  Each registration owns its thread, apartment, client, and handler and
+  registers with the base cache request; `retarget` hands the new scope to
+  that thread, which removes everything its client registered and registers
+  again, so the caller never waits on UIA's removal (which waits for
+  running callbacks). Elements that fail to resolve are skipped. Dropping a
+  registration unregisters and ends its thread. The focus listener holds the
+  desktop-wide selection, menu-opened, and notification subscriptions; each
+  outpost holds one focus-following property subscription.
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
   as callable only from deadline-guarded query threads.

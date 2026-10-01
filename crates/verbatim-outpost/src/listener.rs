@@ -1,120 +1,196 @@
-//! The focus-listener runtime (architecture section 1, decision D13).
+//! The focus-listener runtime (architecture section 1, decisions D13 and D14;
+//! outpost redesign, "The focus listener").
 //!
 //! One permanent, stateless listener process holds the subscriptions that are
-//! global by nature — the single desktop-global UIA focus registration and the
-//! global MSAA `WinEvent` hooks for focus, foreground, and menu-popup opens
-//! (process id zero) — and forwards each captured focus fact to Core, which
-//! routes it to the target application's own outpost for acquisition,
-//! arbitration, enrichment, and announcement.
+//! global by nature and forwards each captured fact to Core, which routes it
+//! to the target application's own outpost:
+//!
+//! - MSAA focus, foreground, menu-popup, and alert events for every process;
+//! - the desktop-wide UIA focus subscription;
+//! - desktop-wide UIA subscriptions for the events NVDA registers globally on
+//!   Windows 11: an element selected, a menu opened, and notifications.
 //!
 //! The listener's one hard rule is that it never makes a cross-process call.
-//! A UIA focus callback delivers the element with its properties already
-//! cached, so building a fact is local memory reads (plus `GetRuntimeId`, a
-//! local read on a cached element); an MSAA `WinEvent` delivers a raw window
-//! and object address, forwarded untouched; the only other read is the
-//! hang-safe local `GetWindowThreadProcessId` that names the owning process.
-//! No cross-process calls means no deadlines, no query pool, no parked
-//! threads, and no way for any application to stall focus detection for the
-//! rest of the desktop. The listener holds no per-application state, so a
-//! crash respawns into full capability instantly.
+//! A UIA callback delivers the element with its properties already cached, so
+//! building a fact is local memory reads (plus `GetRuntimeId`, a local read
+//! on a cached element); an MSAA `WinEvent` delivers a raw window and object
+//! address, forwarded untouched; the only other reads are the hang-safe local
+//! `GetWindowThreadProcessId` that names the owning process and
+//! `GetForegroundWindow`, which drops a foreground event whose window is no
+//! longer the foreground, as NVDA's `processForegroundWinEvent` does. No
+//! cross-process calls means no deadlines and no way for any application to
+//! stall focus detection for the rest of the desktop.
+//!
+//! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
+//! sent: one waiting fact per element and kind, a newer one replacing it and
+//! moving to the back, so a flood from one busy process cannot pass through
+//! the listener and Core unthrottled. Pongs and `Ready` go ahead of facts.
 //!
 //! Run as `verbatim-outpost.exe --listener --pipe-in <handle> --pipe-out
 //! <handle>` — the same binary as a per-application outpost, with no target
-//! pid, spawned and supervised by the same machinery (job object, heartbeat,
-//! respawn).
+//! pid, supervised by the same machinery.
 
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::io::{self, BufReader, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{Sender, unbounded};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
-use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
+    UIA_SelectionItem_ElementSelectedEventId,
+};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEventCallback, WinEventKind};
-use verbatim_model::{Pid, TraceId};
-use verbatim_uia::FocusRegistration;
+use verbatim_model::{Notification, Pid, TraceId};
 use verbatim_uia::map::{
-    cached_native_window_handle, cached_process_id, snapshot_parts_from_cached_element,
+    cached_native_window_handle, cached_process_id, notification_kind_from_uia,
+    notification_processing_from_uia, snapshot_parts_from_cached_element,
 };
+use verbatim_uia::{FocusRegistration, Registration, Scope, Subscription};
 
 use crate::event_thread::EventThread;
 use crate::outpost::now_ms;
 use crate::protocol::{
-    ListenerFact, OutpostToSupervisor, SupervisorToOutpost, UiaSnapshotFact, read_message,
-    write_message,
+    DeliveredFact, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    UiaSnapshotFact, read_message, write_message,
 };
 
-/// The focus listener: owns the desktop-global UIA focus registration, the
-/// global MSAA hooks, and the outbound writer, for the whole life of the
-/// process. Dropping it tears them all down.
+/// The listener's outgoing queue: urgent messages first, then facts,
+/// coalesced one per element and kind.
+#[derive(Default)]
+struct Outgoing {
+    state: Mutex<OutgoingState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct OutgoingState {
+    urgent: VecDeque<OutpostToSupervisor>,
+    facts: VecDeque<(Option<(Pid, FactKey)>, OutpostToSupervisor)>,
+}
+
+impl Outgoing {
+    fn urgent(&self, message: OutpostToSupervisor) {
+        self.lock().urgent.push_back(message);
+        self.ready.notify_one();
+    }
+
+    /// Queues a fact, replacing any waiting fact for the same element and
+    /// kind.
+    fn fact(&self, pid: Pid, fact: DeliveredFact) {
+        let key = fact.key().map(|key| (pid, key));
+        let message = OutpostToSupervisor::FocusFact {
+            trace_id: TraceId::mint(),
+            observed_at_ms: now_ms(),
+            fact: ListenerFact { pid, fact },
+        };
+        let mut state = self.lock();
+        if let Some(key) = &key {
+            state
+                .facts
+                .retain(|(waiting, _)| waiting.as_ref() != Some(key));
+        }
+        state.facts.push_back((key, message));
+        drop(state);
+        self.ready.notify_one();
+    }
+
+    fn fault(&self, detail: String) {
+        self.urgent(OutpostToSupervisor::Fault { detail });
+    }
+
+    /// The next message to write, urgent ones first. Blocks while there is
+    /// none.
+    fn next(&self) -> OutpostToSupervisor {
+        let mut state = self.lock();
+        loop {
+            if let Some(message) = state.urgent.pop_front() {
+                return message;
+            }
+            if let Some((_, message)) = state.facts.pop_front() {
+                return message;
+            }
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, OutgoingState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The focus listener: owns its subscriptions and the writer for the whole
+/// life of the process.
 struct Listener {
-    outbound: Sender<OutpostToSupervisor>,
+    outgoing: Arc<Outgoing>,
     _focus_registration: Option<FocusRegistration>,
+    _registrations: Vec<Registration>,
     _event_thread: EventThread,
     _writer: JoinHandle<()>,
 }
 
 impl Listener {
-    /// Sets up the listener: starts the outbound writer, announces readiness,
-    /// installs the desktop-global UIA focus registration and the global MSAA
-    /// hooks, and reports either failure as a [`OutpostToSupervisor::Fault`].
+    /// Sets up the listener: starts the writer, announces readiness, and
+    /// installs every subscription, reporting a failure as a fault.
     ///
     /// # Panics
     ///
-    /// Panics if the outbound writer thread cannot be spawned, which indicates
-    /// the process is out of OS thread resources.
-    #[must_use]
-    fn new(writer: Box<dyn Write + Send>) -> Self {
-        let (outbound, outbound_rx) = unbounded::<OutpostToSupervisor>();
-        let writer_join = thread::Builder::new()
+    /// Panics if the writer thread cannot be spawned, which means the
+    /// process is out of OS thread resources.
+    fn new(mut pipe: Box<dyn Write + Send>) -> Self {
+        let outgoing = Arc::new(Outgoing::default());
+        let writer_outgoing = Arc::clone(&outgoing);
+        let writer = thread::Builder::new()
             .name("verbatim-listener-outbound".to_owned())
             .spawn(move || {
-                let mut writer = writer;
-                while let Ok(message) = outbound_rx.recv() {
-                    if write_message(&mut writer, &message).is_err() {
-                        break;
+                loop {
+                    let message = writer_outgoing.next();
+                    if write_message(&mut pipe, &message).is_err() {
+                        return;
                     }
                 }
             })
-            .expect("spawn listener outbound writer");
+            .expect("spawn the listener writer");
 
         // The listener has no target application; `target_pid` is a sentinel
-        // the supervisor only logs (it keeps the listener in a dedicated slot,
-        // never the per-pid map).
-        let _ = outbound.send(OutpostToSupervisor::Ready {
+        // the supervisor only logs.
+        outgoing.urgent(OutpostToSupervisor::Ready {
             outpost_pid: Pid(std::process::id()),
             target_pid: Pid(0),
         });
 
-        let focus_registration = install_focus_registration(&outbound);
+        let focus_registration = install_focus_registration(&outgoing);
+        let registrations = install_desktop_subscriptions(&outgoing);
 
-        let msaa_outbound = outbound.clone();
+        let msaa_outgoing = Arc::clone(&outgoing);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
-            let outbound = msaa_outbound.clone();
+            let outgoing = Arc::clone(&msaa_outgoing);
             Box::new(move |kind, hwnd, id_object, id_child| {
-                forward_msaa_event(&outbound, kind, hwnd, id_object, id_child);
+                forward_msaa_event(&outgoing, kind, hwnd, id_object, id_child);
             })
         });
         let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_callback);
 
         Self {
-            outbound,
+            outgoing,
             _focus_registration: focus_registration,
+            _registrations: registrations,
             _event_thread: event_thread,
-            _writer: writer_join,
+            _writer: writer,
         }
     }
 
-    /// Dispatches one supervisor command. The listener answers `Ping` with a
-    /// `Pong` (it never parks a thread, so its parked count is always zero)
-    /// and ignores everything else — it has no target to fetch from,
-    /// arbitrate for, or announce to.
+    /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
+    /// its count is always zero) and ignores everything else.
     fn handle_command(&self, command: &SupervisorToOutpost) {
         if let SupervisorToOutpost::Ping { seq } = command {
-            let _ = self.outbound.send(OutpostToSupervisor::Pong {
+            self.outgoing.urgent(OutpostToSupervisor::Pong {
                 seq: *seq,
                 parked_count: 0,
             });
@@ -122,61 +198,132 @@ impl Listener {
     }
 }
 
-/// Installs the desktop-global UIA focus registration, forwarding each focus
-/// change as a [`ListenerFact::UiaFocus`] built entirely from cached reads.
-/// A registration failure is reported as a fault and leaves the MSAA path
-/// running on its own.
-fn install_focus_registration(outbound: &Sender<OutpostToSupervisor>) -> Option<FocusRegistration> {
-    let focus_outbound = outbound.clone();
-    let focus_callback = Arc::new(move |element: &IUIAutomationElement| {
-        // SAFETY: `element` is a cached focus element from the registration's
-        // base cache request, so every read below is a cached local read and
-        // never a cross-process call — the listener's hard rule (decision D13).
-        unsafe {
-            let Some(pid) = cached_process_id(element) else {
-                return;
-            };
-            if pid == 0 {
-                return;
-            }
-            let hwnd = cached_native_window_handle(element);
-            let parts = snapshot_parts_from_cached_element(element);
-            let snapshot = UiaSnapshotFact {
+/// What a UIA callback captures from a cached element: its owning pid, its
+/// cached window handle, and its cached snapshot parts. `None` for an element
+/// with no owning process.
+///
+/// # Safety
+///
+/// `element` must be a cached element from the registration's base cache
+/// request, so every read is a cached local read.
+unsafe fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFact)> {
+    // SAFETY: forwarded to the caller's contract.
+    unsafe {
+        let pid = cached_process_id(element).filter(|&pid| pid != 0)?;
+        let hwnd = cached_native_window_handle(element);
+        let parts = snapshot_parts_from_cached_element(element);
+        Some((
+            Pid(pid),
+            hwnd,
+            UiaSnapshotFact {
                 runtime_id: parts.runtime_id,
                 role: parts.role,
                 name: parts.name,
                 value: parts.value,
                 states: parts.states,
                 details: parts.details,
-            };
-            let _ = focus_outbound.send(OutpostToSupervisor::FocusFact {
-                trace_id: TraceId::mint(),
-                observed_at_ms: now_ms(),
-                fact: ListenerFact::UiaFocus {
-                    pid: Pid(pid),
-                    hwnd,
-                    snapshot,
-                },
-            });
+            },
+        ))
+    }
+}
+
+/// Installs the desktop-global UIA focus registration. A failure is reported
+/// as a fault and leaves the MSAA path running on its own.
+fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistration> {
+    let callback_outgoing = Arc::clone(outgoing);
+    let callback = Arc::new(move |element: &IUIAutomationElement| {
+        // SAFETY: a cached focus element from the registration's base cache
+        // request.
+        if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+            callback_outgoing.fact(pid, DeliveredFact::UiaFocus { hwnd, snapshot });
         }
     });
-    match FocusRegistration::new(focus_callback) {
+    match FocusRegistration::new(callback) {
         Ok(registration) => Some(registration),
         Err(error) => {
-            let _ = outbound.send(OutpostToSupervisor::Fault {
-                detail: format!("listener UIA focus registration failed: {error}"),
-            });
+            outgoing.fault(format!("listener UIA focus registration failed: {error}"));
             None
         }
     }
 }
 
-/// Forwards one global MSAA `WinEvent` as a [`ListenerFact`]. Reads the owning
-/// pid with `GetWindowThreadProcessId` (a hang-safe local call) and drops a
-/// null window or a pid-zero owner; the raw object address is forwarded
-/// untouched — the app outpost does the acquisition.
+/// Installs the desktop-wide UIA subscriptions NVDA registers globally on
+/// Windows 11: an element selected, a menu opened, and notifications.
+fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> {
+    let mut registrations = Vec::new();
+
+    let selection_outgoing = Arc::clone(outgoing);
+    let selection = Subscription::Event {
+        event: UIA_SelectionItem_ElementSelectedEventId,
+        callback: Arc::new(move |element: &IUIAutomationElement| {
+            // SAFETY: a cached element from the registration's cache request.
+            if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+                selection_outgoing.fact(pid, DeliveredFact::UiaSelection { hwnd, snapshot });
+            }
+        }),
+    };
+
+    let menu_outgoing = Arc::clone(outgoing);
+    let menu = Subscription::Event {
+        event: UIA_MenuOpenedEventId,
+        callback: Arc::new(move |element: &IUIAutomationElement| {
+            // SAFETY: as above.
+            if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+                menu_outgoing.fact(pid, DeliveredFact::UiaMenuOpened { hwnd, snapshot });
+            }
+        }),
+    };
+
+    let notification_outgoing = Arc::clone(outgoing);
+    let notifications = Subscription::Notifications {
+        callback: Arc::new(
+            move |element: &IUIAutomationElement,
+                  kind: NotificationKind,
+                  processing: NotificationProcessing,
+                  display_string: Option<String>,
+                  activity_id: Option<String>| {
+                // SAFETY: as above.
+                if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+                    let notification = Notification {
+                        kind: notification_kind_from_uia(kind),
+                        processing: notification_processing_from_uia(processing),
+                        display_string,
+                        activity_id,
+                    };
+                    notification_outgoing.fact(
+                        pid,
+                        DeliveredFact::UiaNotification {
+                            hwnd,
+                            snapshot,
+                            notification,
+                        },
+                    );
+                }
+            },
+        ),
+    };
+
+    for (name, subscription) in [
+        ("selection", selection),
+        ("menu-opened", menu),
+        ("notification", notifications),
+    ] {
+        match Registration::new(subscription, Scope::Desktop) {
+            Ok(registration) => registrations.push(registration),
+            Err(error) => outgoing.fault(format!(
+                "listener desktop-wide UIA {name} subscription failed: {error}"
+            )),
+        }
+    }
+    registrations
+}
+
+/// Forwards one global MSAA `WinEvent` as a fact. Reads the owning pid with
+/// `GetWindowThreadProcessId` (a hang-safe local call) and drops a null
+/// window or a pid-zero owner; the raw object address is forwarded untouched,
+/// and the app outpost does the acquisition.
 fn forward_msaa_event(
-    outbound: &Sender<OutpostToSupervisor>,
+    outgoing: &Outgoing,
     kind: WinEventKind,
     hwnd: isize,
     id_object: i32,
@@ -190,18 +337,24 @@ fn forward_msaa_event(
         return;
     }
     let fact = match kind {
-        WinEventKind::Focus => ListenerFact::MsaaFocus {
-            pid: Pid(pid),
+        WinEventKind::Focus => DeliveredFact::MsaaFocus {
             hwnd,
             id_object,
             id_child,
         },
-        WinEventKind::Foreground => ListenerFact::Foreground {
-            pid: Pid(pid),
+        WinEventKind::Foreground => {
+            // SAFETY: GetForegroundWindow has no preconditions.
+            if unsafe { GetForegroundWindow() }.0 as isize != hwnd {
+                return; // No longer the foreground window: superseded.
+            }
+            DeliveredFact::Foreground { hwnd }
+        }
+        WinEventKind::MenuPopupStart => DeliveredFact::MenuPopup {
             hwnd,
+            id_object,
+            id_child,
         },
-        WinEventKind::MenuPopupStart => ListenerFact::MenuPopup {
-            pid: Pid(pid),
+        WinEventKind::Alert => DeliveredFact::Alert {
             hwnd,
             id_object,
             id_child,
@@ -209,19 +362,13 @@ fn forward_msaa_event(
         // The listener subscribes to nothing else (LISTENER_SUBSCRIPTIONS).
         _ => return,
     };
-    let _ = outbound.send(OutpostToSupervisor::FocusFact {
-        trace_id: TraceId::mint(),
-        observed_at_ms: now_ms(),
-        fact,
-    });
+    outgoing.fact(Pid(pid), fact);
 }
 
-/// The owning process id of `hwnd`, read with the hang-safe local
-/// `GetWindowThreadProcessId`. Returns 0 for an invalid or ownerless window.
+/// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
 fn window_pid(hwnd: isize) -> u32 {
-    // SAFETY: GetWindowThreadProcessId tolerates any window handle, writing 0
-    // for an invalid one.
     let mut pid = 0u32;
+    // SAFETY: GetWindowThreadProcessId tolerates any window handle.
     unsafe {
         GetWindowThreadProcessId(HWND(hwnd as *mut c_void), Some(&raw mut pid));
     }
@@ -229,8 +376,8 @@ fn window_pid(hwnd: isize) -> u32 {
 }
 
 /// Runs the focus listener driven by the Core pipes: reads commands from
-/// `pipe_in`, writes facts and replies to `pipe_out`, until end of stream
-/// (decision D13). Core ends a listener by closing its job handle.
+/// `pipe_in`, writes facts and replies to `pipe_out`, until end of stream.
+/// Core ends a listener by closing its job handle.
 ///
 /// # Errors
 ///

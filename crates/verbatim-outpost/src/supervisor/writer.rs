@@ -20,7 +20,7 @@ use std::thread;
 
 use crate::protocol::{SupervisorToOutpost, write_message};
 
-use super::policy::FactKey;
+use crate::protocol::FactKey;
 
 /// How many commands may wait for one child before the overload policy
 /// applies.
@@ -32,8 +32,9 @@ pub(super) const WRITER_CAPACITY: usize = 64;
 pub(super) enum Outgoing {
     /// A liveness ping.
     Ping(SupervisorToOutpost),
-    /// A routed fact, keyed by the object and kind it concerns.
-    Fact(FactKey, SupervisorToOutpost),
+    /// A routed fact, keyed by the object and kind it concerns (`None` for
+    /// a notification, which nothing replaces).
+    Fact(Option<FactKey>, SupervisorToOutpost),
     /// Anything else: a query, an activation, a configuration command.
     Other(SupervisorToOutpost),
 }
@@ -83,9 +84,11 @@ impl Queue {
         match item {
             Outgoing::Ping(_) => {}
             Outgoing::Fact(ref key, _) => {
-                let same = self.items.iter().position(
-                    |waiting| matches!(waiting, Outgoing::Fact(other, _) if other == key),
-                );
+                let same = key.as_ref().and_then(|key| {
+                    self.items.iter().position(
+                        |waiting| matches!(waiting, Outgoing::Fact(Some(other), _) if other == key),
+                    )
+                });
                 if let Some(index) = same {
                     self.items.remove(index);
                 } else if self.items.len() >= capacity
@@ -203,7 +206,7 @@ mod tests {
 
     fn fact(hwnd: isize) -> Outgoing {
         Outgoing::Fact(
-            FactKey::Foreground(hwnd),
+            Some(FactKey::Foreground(hwnd)),
             SupervisorToOutpost::Ping {
                 seq: hwnd.cast_unsigned() as u64,
             },

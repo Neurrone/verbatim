@@ -26,25 +26,19 @@ mod worker;
 
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use crossbeam_channel::{Sender, unbounded};
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, NotificationKind, NotificationProcessing,
-};
+use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEventCallback};
-use verbatim_model::{Backend, Notification, Pid, TraceId};
-use verbatim_uia::map::{
-    cached_native_window_handle, notification_kind_from_uia, notification_processing_from_uia,
-    snapshot_parts_from_cached_element,
-};
+use verbatim_model::{Backend, Pid, TraceId};
+use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
-    NodeIdRegistry as UiaRegistry, NotificationRegistration, PropertyRegistration,
-    SelectionRegistration,
+    FOCUS_PROPERTIES, NodeIdRegistry as UiaRegistry, Registration, Scope, Subscription,
 };
 
 use crate::arbitration::Arbitrator;
@@ -71,6 +65,8 @@ pub(crate) struct Context {
     tracking: Mutex<Tracking>,
     /// Arms the menu-close timer.
     timer: Sender<Instant>,
+    /// The focus-following UIA property subscription, which the worker moves.
+    focus_properties: OnceLock<Registration>,
 }
 
 impl Context {
@@ -99,23 +95,19 @@ impl Context {
     }
 }
 
-/// The outpost: owns the context, the event thread, and the UIA
-/// subscriptions for one target application, fixed for the outpost's whole
-/// life.
+/// The outpost: owns the context and the event thread for one target
+/// application, fixed for the outpost's whole life.
 pub struct Outpost {
     context: Arc<Context>,
     _event_thread: EventThread,
-    _property_registration: Option<PropertyRegistration>,
-    _selection_registration: Option<SelectionRegistration>,
-    _notification_registration: Option<NotificationRegistration>,
     _writer: JoinHandle<()>,
 }
 
 impl Outpost {
     /// Creates an outpost watching `target_pid` for its whole life: starts
     /// the writer, the worker, the watchdog, and the menu-close timer,
-    /// installs the MSAA hooks and UIA subscriptions once, and announces
-    /// readiness.
+    /// installs the MSAA hooks and the focus-following UIA property
+    /// subscription, and announces readiness.
     ///
     /// # Panics
     ///
@@ -136,7 +128,11 @@ impl Outpost {
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             tracking: Mutex::new(Tracking::default()),
             timer,
+            focus_properties: OnceLock::new(),
         });
+        if let Some(registration) = register_focus_properties(&context) {
+            let _ = context.focus_properties.set(registration);
+        }
 
         // The menu-close timer: one thread, so the worker never sleeps.
         let timer_context = Arc::clone(&context);
@@ -179,11 +175,7 @@ impl Outpost {
         });
         let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
 
-        let windows = window::top_level_windows(target_pid);
         let outpost = Self {
-            _property_registration: register_properties(&context, windows.clone()),
-            _selection_registration: register_selection(&context, windows.clone()),
-            _notification_registration: register_notifications(&context, windows),
             context,
             _event_thread: event_thread,
             _writer: writer,
@@ -292,78 +284,28 @@ unsafe fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
     }
 }
 
-fn register_properties(
-    context: &Arc<Context>,
-    windows: Vec<isize>,
-) -> Option<PropertyRegistration> {
+/// Starts the focus-following UIA property subscription (outpost redesign,
+/// "Focus-following UIA subscriptions"): name, value, and state changes on the
+/// focused element and its ancestors only, moved by the worker each time it
+/// reports a new focus. Selections and notifications come desktop-wide from
+/// the listener instead.
+fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
     let callback_context = Arc::clone(context);
     let callback = Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
         // SAFETY: the property element carries cached values.
         let event = unsafe { capture(element, UiaKind::Property(property_id)) };
         callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
     });
-    match PropertyRegistration::new(windows, callback) {
+    let subscription = Subscription::Properties {
+        properties: FOCUS_PROPERTIES.to_vec(),
+        callback,
+    };
+    match Registration::new(subscription, Scope::Nothing) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(
                 context,
-                format!("UIA property registration failed: {error}"),
-            );
-            None
-        }
-    }
-}
-
-fn register_selection(
-    context: &Arc<Context>,
-    windows: Vec<isize>,
-) -> Option<SelectionRegistration> {
-    let callback_context = Arc::clone(context);
-    let callback = Arc::new(move |element: &IUIAutomationElement| {
-        // SAFETY: the selected element carries cached values.
-        let event = unsafe { capture(element, UiaKind::Selection) };
-        callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
-    });
-    match SelectionRegistration::new(windows, callback) {
-        Ok(registration) => Some(registration),
-        Err(error) => {
-            fault(
-                context,
-                format!("UIA selection registration failed: {error}"),
-            );
-            None
-        }
-    }
-}
-
-fn register_notifications(
-    context: &Arc<Context>,
-    windows: Vec<isize>,
-) -> Option<NotificationRegistration> {
-    let callback_context = Arc::clone(context);
-    let callback = Arc::new(
-        move |element: &IUIAutomationElement,
-              kind: NotificationKind,
-              processing: NotificationProcessing,
-              display_string: Option<String>,
-              activity_id: Option<String>| {
-            let notification = Notification {
-                kind: notification_kind_from_uia(kind),
-                processing: notification_processing_from_uia(processing),
-                display_string,
-                activity_id,
-            };
-            // SAFETY: the notifying element carries cached values.
-            let event = unsafe { capture(element, UiaKind::Notification(notification)) };
-            callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
-        },
-    );
-    match NotificationRegistration::new(windows, callback) {
-        Ok(registration) => Some(registration),
-        Err(error) => {
-            fault(
-                context,
-                format!("UIA notification registration failed: {error}"),
+                format!("UIA property subscription failed: {error}"),
             );
             None
         }

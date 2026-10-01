@@ -12,8 +12,8 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryKind, Role,
-    StateSet, TraceId, TreeNode, WindowFacts,
+    Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification, OutpostId, Pid,
+    QueryKind, Role, StateSet, TraceId, TreeNode, WindowFacts,
 };
 
 /// The identity-free contents of a UIA focus element, as the focus listener
@@ -41,112 +41,42 @@ pub struct UiaSnapshotFact {
     pub details: NodeDetails,
 }
 
-/// A focus fact the listener forwards to Core, tagged with the pid Core routes
-/// it to (decision D13). The listener reads only what the event itself carries
+/// A fact the listener forwards to Core, tagged with the pid Core routes it
+/// to (decision D13). The listener reads only what the event itself carries
 /// plus hang-safe local reads (the owning pid, a cached window handle), never
-/// a cross-process call: a UIA focus fact is built from the element's cached
+/// a cross-process call: a UIA fact is built from the element's cached
 /// properties, an MSAA fact forwards the raw `WinEvent` address untouched.
-///
-/// [`DeliveredFact`] is the same address minus the pid, which the supervisor
-/// hands to the target's own outpost once routing is done.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ListenerFact {
-    /// A UIA focus change: the owning pid, the element's cached native window
-    /// handle (0 when the element is not itself a window), and its cached
-    /// snapshot parts.
-    UiaFocus {
-        /// The owning application's pid.
-        pid: Pid,
-        /// The element's cached native window handle, or 0 when it is not a
-        /// window in its own right (a menu item, a list item).
-        hwnd: isize,
-        /// The element's cached snapshot parts.
-        snapshot: UiaSnapshotFact,
-    },
-    /// An MSAA focus change: the owning pid and the raw `WinEvent` address.
-    MsaaFocus {
-        /// The owning application's pid.
-        pid: Pid,
-        /// The event's window handle.
-        hwnd: isize,
-        /// The event's `idObject`.
-        id_object: i32,
-        /// The event's `idChild`.
-        id_child: i32,
-    },
-    /// A foreground change: the owning pid and the new foreground window.
-    Foreground {
-        /// The new foreground window's owning pid.
-        pid: Pid,
-        /// The new foreground window handle.
-        hwnd: isize,
-    },
-    /// A popup menu opening: the owning pid and the raw `WinEvent` address.
-    MenuPopup {
-        /// The owning application's pid.
-        pid: Pid,
-        /// The event's window handle.
-        hwnd: isize,
-        /// The event's `idObject`.
-        id_object: i32,
-        /// The event's `idChild`.
-        id_child: i32,
-    },
+pub struct ListenerFact {
+    /// The application the fact concerns.
+    pub pid: Pid,
+    /// The fact itself, as the target outpost receives it.
+    pub fact: DeliveredFact,
 }
 
 impl ListenerFact {
     /// The pid the supervisor routes this fact to.
     #[must_use]
     pub fn pid(&self) -> Pid {
-        match *self {
-            ListenerFact::UiaFocus { pid, .. }
-            | ListenerFact::MsaaFocus { pid, .. }
-            | ListenerFact::Foreground { pid, .. }
-            | ListenerFact::MenuPopup { pid, .. } => pid,
-        }
+        self.pid
     }
 
     /// Strips the pid, yielding the [`DeliveredFact`] the supervisor hands to
     /// the target outpost once routing is done.
     #[must_use]
     pub fn into_delivered(self) -> DeliveredFact {
-        match self {
-            ListenerFact::UiaFocus { hwnd, snapshot, .. } => {
-                DeliveredFact::UiaFocus { hwnd, snapshot }
-            }
-            ListenerFact::MsaaFocus {
-                hwnd,
-                id_object,
-                id_child,
-                ..
-            } => DeliveredFact::MsaaFocus {
-                hwnd,
-                id_object,
-                id_child,
-            },
-            ListenerFact::Foreground { hwnd, .. } => DeliveredFact::Foreground { hwnd },
-            ListenerFact::MenuPopup {
-                hwnd,
-                id_object,
-                id_child,
-                ..
-            } => DeliveredFact::MenuPopup {
-                hwnd,
-                id_object,
-                id_child,
-            },
-        }
+        self.fact
     }
 }
 
-/// A focus fact the supervisor delivers to a target outpost (decision D13):
-/// the same address a [`ListenerFact`] carries, minus the pid, since routing
-/// is already done. The outpost turns it back into an announcement on its own
-/// deadline-guarded query pool — acquiring, arbitrating, enriching, and
-/// emitting exactly as it does for the events it still hooks itself.
+/// A fact the supervisor delivers to a target outpost (decision D13): what
+/// the listener captured, minus the pid, since routing is already done. The
+/// outpost's worker reads, arbitrates, and reports it exactly as it does the
+/// events it hooks itself.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum DeliveredFact {
-    /// A UIA focus change (see [`ListenerFact::UiaFocus`]).
+    /// A UIA focus change: the element's cached native window handle (0 when
+    /// the element is not itself a window) and its cached snapshot parts.
     UiaFocus {
         /// The element's cached native window handle, or 0 when it is not a
         /// window in its own right.
@@ -154,7 +84,7 @@ pub enum DeliveredFact {
         /// The element's cached snapshot parts.
         snapshot: UiaSnapshotFact,
     },
-    /// An MSAA focus change (see [`ListenerFact::MsaaFocus`]).
+    /// An MSAA focus change: the raw `WinEvent` address.
     MsaaFocus {
         /// The event's window handle.
         hwnd: isize,
@@ -163,12 +93,12 @@ pub enum DeliveredFact {
         /// The event's `idChild`.
         id_child: i32,
     },
-    /// A foreground change (see [`ListenerFact::Foreground`]).
+    /// A foreground change: the new foreground window.
     Foreground {
         /// The new foreground window handle.
         hwnd: isize,
     },
-    /// A popup menu opening (see [`ListenerFact::MenuPopup`]).
+    /// A popup menu opening: the raw `WinEvent` address.
     MenuPopup {
         /// The event's window handle.
         hwnd: isize,
@@ -177,6 +107,105 @@ pub enum DeliveredFact {
         /// The event's `idChild`.
         id_child: i32,
     },
+    /// A UIA menu opening (`MenuOpened`), which NVDA treats as a focus on
+    /// the menu.
+    UiaMenuOpened {
+        /// The element's cached native window handle, or 0.
+        hwnd: isize,
+        /// The menu's cached snapshot parts.
+        snapshot: UiaSnapshotFact,
+    },
+    /// A UIA element selected within its container
+    /// (`SelectionItem_ElementSelected`).
+    UiaSelection {
+        /// The element's cached native window handle, or 0.
+        hwnd: isize,
+        /// The selected element's cached snapshot parts.
+        snapshot: UiaSnapshotFact,
+    },
+    /// A UIA notification (`AutomationNotification`).
+    UiaNotification {
+        /// The element's cached native window handle, or 0.
+        hwnd: isize,
+        /// The raising element's cached snapshot parts.
+        snapshot: UiaSnapshotFact,
+        /// The notification.
+        notification: Notification,
+    },
+    /// An MSAA alert (`EVENT_SYSTEM_ALERT`): the raw `WinEvent` address.
+    Alert {
+        /// The event's window handle.
+        hwnd: isize,
+        /// The event's `idObject`.
+        id_object: i32,
+        /// The event's `idChild`.
+        id_child: i32,
+    },
+}
+
+impl DeliveredFact {
+    /// Whether this fact may start an outpost for an application that has
+    /// none (outpost redesign, "The focus listener"): focus, foreground,
+    /// menu, notification, and alert facts may; a selection without an
+    /// outpost is dropped.
+    #[must_use]
+    pub fn may_start_outpost(&self) -> bool {
+        !matches!(self, DeliveredFact::UiaSelection { .. })
+    }
+
+    /// The object and kind this fact concerns, for NVDA's limiter rule (one
+    /// waiting entry per object and kind, a newer one replacing it). `None`
+    /// for a notification, whose text makes each one distinct.
+    #[must_use]
+    pub fn key(&self) -> Option<FactKey> {
+        Some(match self {
+            DeliveredFact::Foreground { hwnd } => FactKey::Foreground(*hwnd),
+            DeliveredFact::MsaaFocus {
+                hwnd,
+                id_object,
+                id_child,
+            } => FactKey::MsaaFocus(*hwnd, *id_object, *id_child),
+            DeliveredFact::UiaFocus { snapshot, .. } => {
+                FactKey::UiaFocus(snapshot.runtime_id.clone())
+            }
+            DeliveredFact::MenuPopup {
+                hwnd,
+                id_object,
+                id_child,
+            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child),
+            DeliveredFact::UiaMenuOpened { snapshot, .. } => {
+                FactKey::UiaMenuOpened(snapshot.runtime_id.clone())
+            }
+            DeliveredFact::UiaSelection { snapshot, .. } => {
+                FactKey::UiaSelection(snapshot.runtime_id.clone())
+            }
+            DeliveredFact::Alert {
+                hwnd,
+                id_object,
+                id_child,
+            } => FactKey::Alert(*hwnd, *id_object, *id_child),
+            DeliveredFact::UiaNotification { .. } => return None,
+        })
+    }
+}
+
+/// The object and kind a [`DeliveredFact`] concerns.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FactKey {
+    /// A foreground change to this window.
+    Foreground(isize),
+    /// An MSAA focus at this address.
+    MsaaFocus(isize, i32, i32),
+    /// A UIA focus on this runtime id.
+    UiaFocus(Vec<i32>),
+    /// An MSAA menu opening at this address.
+    MenuPopup(isize, i32, i32),
+    /// A UIA menu opening on this runtime id.
+    UiaMenuOpened(Vec<i32>),
+    /// A UIA selection of this runtime id.
+    UiaSelection(Vec<i32>),
+    /// An MSAA alert at this address.
+    Alert(isize, i32, i32),
 }
 
 /// Messages from the Core-side supervisor to an outpost.
@@ -187,6 +216,10 @@ pub enum DeliveredFact {
 /// handle; there is no shutdown message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a command is built once and moved, never stored in bulk"
+)]
 pub enum SupervisorToOutpost {
     /// Forces one backend for every window of the target application,
     /// overriding arbitration; used by tests and per-app config overrides.
@@ -634,10 +667,12 @@ mod tests {
             states: StateSet::new().with(State::Focused),
             details: NodeDetails::default(),
         };
-        let fact = ListenerFact::UiaFocus {
+        let fact = ListenerFact {
             pid: Pid(1234),
-            hwnd: 0,
-            snapshot: snapshot.clone(),
+            fact: DeliveredFact::UiaFocus {
+                hwnd: 0,
+                snapshot: snapshot.clone(),
+            },
         };
         let focus_fact = OutpostToSupervisor::FocusFact {
             trace_id: TraceId::mint(),
@@ -678,46 +713,37 @@ mod tests {
     }
 
     #[test]
-    fn every_listener_fact_variant_routes_and_strips_its_pid() {
-        let variants = [
-            (
-                ListenerFact::MsaaFocus {
-                    pid: Pid(1),
-                    hwnd: 10,
-                    id_object: -4,
-                    id_child: 0,
-                },
-                DeliveredFact::MsaaFocus {
-                    hwnd: 10,
-                    id_object: -4,
-                    id_child: 0,
-                },
-            ),
-            (
-                ListenerFact::Foreground {
-                    pid: Pid(2),
-                    hwnd: 20,
-                },
-                DeliveredFact::Foreground { hwnd: 20 },
-            ),
-            (
-                ListenerFact::MenuPopup {
-                    pid: Pid(3),
-                    hwnd: 30,
-                    id_object: -3,
-                    id_child: 0,
-                },
-                DeliveredFact::MenuPopup {
-                    hwnd: 30,
-                    id_object: -3,
-                    id_child: 0,
-                },
-            ),
-        ];
-        for (index, (fact, expected)) in variants.into_iter().enumerate() {
-            let pid = Pid(u32::try_from(index).unwrap() + 1);
-            assert_eq!(fact.pid(), pid);
-            assert_eq!(fact.into_delivered(), expected);
+    fn only_a_selection_may_not_start_an_outpost() {
+        let snapshot = UiaSnapshotFact {
+            runtime_id: vec![1],
+            role: Role::ListItem,
+            name: None,
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        };
+        let selection = DeliveredFact::UiaSelection {
+            hwnd: 0,
+            snapshot: snapshot.clone(),
+        };
+        assert!(!selection.may_start_outpost());
+        for fact in [
+            DeliveredFact::Foreground { hwnd: 1 },
+            DeliveredFact::UiaFocus {
+                hwnd: 0,
+                snapshot: snapshot.clone(),
+            },
+            DeliveredFact::UiaMenuOpened {
+                hwnd: 0,
+                snapshot: snapshot.clone(),
+            },
+            DeliveredFact::Alert {
+                hwnd: 1,
+                id_object: -4,
+                id_child: 0,
+            },
+        ] {
+            assert!(fact.may_start_outpost(), "{fact:?}");
         }
     }
 

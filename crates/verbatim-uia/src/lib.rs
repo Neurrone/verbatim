@@ -17,11 +17,11 @@
 //!   `Invoke`/`Toggle`/legacy-`DoDefaultAction` pattern ladder.
 //! - [`FocusRegistration`] — the self-contained global focus-change handler
 //!   (its narrow seam is what the M3 sentinel split relocates).
-//! - [`PropertyRegistration`] — name/value change handlers scoped to the target
-//!   app's top-level windows.
-//! - [`SelectionRegistration`] and [`NotificationRegistration`] —
-//!   `SelectionItem_ElementSelected` and `AutomationNotification`, scoped
-//!   the same way (roadmap M3).
+//! - [`Registration`] — a property-change, automation-event, or notification
+//!   subscription over a [`Scope`] (given windows, the whole desktop, or
+//!   given elements) that can be moved without waiting: the listener's
+//!   desktop-wide subscriptions and an outpost's focus-following property
+//!   subscription.
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from UIA
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
 //! - [`has_server_side_provider`] — the arbitration probe (blocking; see its
@@ -34,22 +34,21 @@
 mod cache;
 mod client;
 mod com;
-mod events;
 mod focus;
 pub mod map;
 mod nearest;
-mod notify;
 mod probe;
 mod registry;
+mod subscribe;
 
 pub use cache::base_cache_request;
 pub use client::Uia;
 pub use com::init_mta;
-pub use events::{PropertyCallback, PropertyRegistration};
 pub use focus::{FocusCallback, FocusRegistration};
 pub use nearest::nearest_window_handle;
-pub use notify::{
-    NotificationCallback, NotificationRegistration, SelectionCallback, SelectionRegistration,
-};
 pub use probe::has_server_side_provider;
 pub use registry::NodeIdRegistry;
+pub use subscribe::{
+    ElementCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback, Registration, Scope,
+    Subscription,
+};

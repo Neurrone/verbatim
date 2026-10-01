@@ -2276,3 +2276,38 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
         ]
     );
 }
+
+fn toast_in(source: Pid, facts: WindowFacts) -> Input {
+    event_in(
+        source,
+        Some(facts),
+        NormalizedEvent::Alert {
+            node: node(
+                9,
+                Role::Window,
+                Some("Download complete"),
+                None,
+                StateSet::new(),
+            ),
+        },
+    )
+}
+
+#[test]
+fn a_toast_is_spoken_from_anywhere_queued() {
+    let state = switch_to(&SrState::new(), Pid(1));
+
+    let (next, effects) = reduce(&state, &toast_in(Pid(2), window(20)));
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
+    assert_eq!(
+        utterances[0].segments[0],
+        UtteranceSegment::label("Download complete")
+    );
+    assert_eq!(
+        next.attention(),
+        Some(Pid(1)),
+        "a toast never moves attention"
+    );
+}

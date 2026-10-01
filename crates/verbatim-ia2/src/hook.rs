@@ -28,9 +28,9 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWi
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
     EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
-    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_FOREGROUND,
-    EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART,
-    WINEVENT_OUTOFCONTEXT,
+    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
+    EVENT_SYSTEM_MENUPOPUPSTART, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -67,6 +67,9 @@ pub enum WinEventKind {
     MenuEnd,
     /// `EVENT_OBJECT_DESTROY` — an object, possibly a window, was destroyed.
     Destroy,
+    /// `EVENT_SYSTEM_ALERT` — an alert was generated; toast notifications
+    /// arrive this way (decision D14).
+    Alert,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -74,7 +77,7 @@ pub enum WinEventKind {
 /// [`kind_of`] maps a delivered event id back to its kind against this whole
 /// table. `Selection` maps four raw ids to the one kind, so a caller that
 /// wants selection events gets all four hooks from naming it once.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 13] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 14] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -88,6 +91,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 13] = [
     (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuEnd),
     (EVENT_SYSTEM_MENUEND, WinEventKind::MenuEnd),
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
+    (EVENT_SYSTEM_ALERT, WinEventKind::Alert),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
@@ -104,12 +108,13 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Destroy,
 ];
 
-/// The focus listener's subscription set (decision D13): the three events
-/// that are global by nature, installed with `idProcess` zero.
+/// The focus listener's subscription set (decisions D13 and D14): the
+/// events that are global by nature, installed with `idProcess` zero.
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
     WinEventKind::MenuPopupStart,
+    WinEventKind::Alert,
 ];
 
 /// Called on the installing thread for each in-scope event, with the event
