@@ -25,7 +25,7 @@
 //! - [`NodeIdRegistry`] — stable [`NodeId`](verbatim_model::NodeId)s from UIA
 //!   runtime IDs, sharing a mint counter with the MSAA backend.
 //! - [`has_server_side_provider`] — the arbitration probe (blocking; see its
-//!   docs and run it only on a deadline-guarded query-pool thread).
+//!   docs and run it only on a deadline-guarded worker).
 //! - [`nearest_window_handle`] — NVDA's `getNearestWindowHandle`: resolves the
 //!   window an arbitrary element belongs to, for elements (menu items, list
 //!   items) that are not windows themselves. Also blocking; see its docs.

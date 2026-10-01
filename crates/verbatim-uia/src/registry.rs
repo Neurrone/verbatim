@@ -42,7 +42,7 @@ pub struct Released {
 /// with a live-element cache per node (module doc).
 ///
 /// Cloning shares the underlying tables and counter, so the focus callback
-/// thread and the query-pool threads mint from one consistent namespace.
+/// thread and the worker mint from one consistent namespace.
 #[derive(Clone)]
 pub struct NodeIdRegistry {
     counter: Arc<AtomicU64>,
@@ -162,7 +162,7 @@ impl NodeIdRegistry {
     }
 
     /// Returns the runtime ID previously mapped to `node`, for re-fetching the
-    /// node's current state on a query-pool thread.
+    /// node's current state on the worker.
     #[must_use]
     pub fn runtime_id_of(&self, node: NodeId) -> Option<Vec<i32>> {
         self.inner

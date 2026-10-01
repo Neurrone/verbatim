@@ -1,7 +1,7 @@
 //! The per-thread UIA client wrapper.
 //!
 //! Every outpost thread that talks to UIA — the focus-registration thread and
-//! each query-pool worker — owns its own [`Uia`]. Construction joins the
+//! the outpost's worker — owns its own [`Uia`]. Construction joins the
 //! multithreaded apartment (architecture section 4) and creates a fresh
 //! `IUIAutomation`; the in-process client library gives each thread an
 //! independent object, so nothing is shared across threads and there is no COM
@@ -71,7 +71,7 @@ impl Uia {
 
     /// Fetches the currently focused element with the M1 properties prefetched.
     /// Runs a cross-process call, so callers must invoke it only on a
-    /// deadline-guarded query-pool thread.
+    /// deadline-guarded worker.
     ///
     /// # Errors
     ///
@@ -86,7 +86,7 @@ impl Uia {
     }
 
     /// Fetches the element for a top-level window handle with properties
-    /// prefetched. Cross-process; query-pool threads only.
+    /// prefetched. Cross-process; the outpost's worker only.
     ///
     /// # Errors
     ///
@@ -108,7 +108,7 @@ impl Uia {
     /// for answering a node re-read when no live element is cached (the
     /// registry's element cache is the fast path — see its module doc).
     /// Returns `Ok(None)` when the element no longer exists there.
-    /// Cross-process; query-pool threads only.
+    /// Cross-process; the outpost's worker only.
     ///
     /// `root` scopes the search: `FindFirst` has no index behind it, so an
     /// unscoped search from the desktop root walks every application's
@@ -176,7 +176,7 @@ impl Uia {
     /// Walks the raw-view subtree rooted at `element` (already built with
     /// `cache`), bounded by `max_depth` (the root is depth 0) and
     /// `max_nodes` (the total number of nodes across the whole walk,
-    /// including the root). Cross-process; query-pool threads only, guarded
+    /// including the root). Cross-process; the outpost's worker only, guarded
     /// by the caller's deadline since a hung provider can stall any step.
     /// Returns the walked tree and whether either cap was hit before the
     /// walk reached every node.
@@ -219,7 +219,7 @@ impl Uia {
     /// time, each hop its own cross-process round trip using `cache` — the
     /// same per-hop walk NVDA shipped for years. Capped at `max_hops`
     /// ancestors; stops early (without error) when a hop finds no further
-    /// parent. Cross-process; query-pool threads only, guarded by the
+    /// parent. Cross-process; the outpost's worker only, guarded by the
     /// caller's deadline since a hung provider can stall any hop.
     ///
     /// This is deliberately the simplest correct implementation, behind this
@@ -279,7 +279,7 @@ impl Uia {
     /// outcome — the element does not expose the pattern, or nothing is
     /// selected. Multi-selections report their first element; the reducer
     /// speaks one item, and richer multi-selection reporting is deliberately
-    /// out of M3's scope. Cross-process; query-pool threads only, guarded
+    /// out of M3's scope. Cross-process; the outpost's worker only, guarded
     /// by the caller's deadline.
     ///
     /// # Errors
@@ -345,7 +345,7 @@ impl Uia {
     ///
     /// Returns `Ok(None)` for a genuine "no such neighbor" (a root's
     /// parent, a last child's next sibling), a first-class outcome distinct
-    /// from an error. Cross-process; query-pool threads only, guarded by
+    /// from an error. Cross-process; the outpost's worker only, guarded by
     /// the caller's deadline.
     ///
     /// # Errors
@@ -392,7 +392,7 @@ impl Uia {
     /// controls. Each pattern is fetched live (`GetCurrentPatternAs`, not a
     /// cached read), since activation is an infrequent, user-triggered
     /// action rather than something the base cache request prefetches.
-    /// Cross-process; query-pool threads only, guarded by the caller's
+    /// Cross-process; the outpost's worker only, guarded by the caller's
     /// deadline.
     ///
     /// # Errors

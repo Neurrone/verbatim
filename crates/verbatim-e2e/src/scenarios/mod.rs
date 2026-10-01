@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use crate::scenario::Scenario;
 
+pub(crate) mod focus_churn;
 pub(crate) mod m1_exit_regression;
 pub(crate) mod msinfo32;
 pub(crate) mod multi_outpost_switch;

@@ -1,7 +1,7 @@
-//! Query-pool-side MSAA acquisition.
+//! MSAA acquisition on the outpost's worker.
 //!
 //! Everything here makes blocking cross-process COM calls and must run only on
-//! a deadline-guarded query-pool thread, never on the event thread. Starting
+//! the outpost's deadline-guarded worker, never on the event thread. Starting
 //! from a `WinEvent` address, or from the focused window, it acquires an
 //! `IAccessible`, reads name/role/value/state, and maps to a [`NodeSnapshot`].
 //!
@@ -18,8 +18,8 @@
 //! messages instead of `accNavigate`/`accParent`, mirroring NVDA's
 //! `sysTreeView32.py`. Those messages are sent with plain `SendMessageW`,
 //! which can block if the owning application is wedged — acceptable only
-//! because every caller of this module already runs on a deadline-guarded
-//! query-pool thread (never the event thread), the same bound every other
+//! because every caller of this module already runs on the outpost's
+//! deadline-guarded worker (never the event thread), the same bound every other
 //! blocking call in this module already relies on.
 
 use std::ffi::c_void;
@@ -107,7 +107,7 @@ fn locate(
 }
 
 /// Acquires the object named by a `WinEvent` and maps it to a [`NodeSnapshot`].
-/// Returns `None` if the object cannot be acquired. Blocking; query pool only.
+/// Returns `None` if the object cannot be acquired. Blocking; worker only.
 #[must_use]
 pub fn snapshot_from_event(
     hwnd: isize,
@@ -124,7 +124,7 @@ pub fn snapshot_from_event(
 
 /// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent`, applying
 /// NVDA's child-0-on-a-list redirect before mapping to a [`NodeSnapshot`].
-/// Returns `None` if the object cannot be acquired. Blocking; query pool only.
+/// Returns `None` if the object cannot be acquired. Blocking; worker only.
 ///
 /// NVDA's `processFocusWinEvent`
 /// (`nvda/source/IAccessibleHandler/__init__.py`): some controls fire
@@ -275,7 +275,7 @@ unsafe fn accessible_and_child(
 /// whose immediate parent is the object it is a child of, since plain MSAA
 /// has no `accParent` for a child id, only for a full object. Capped at
 /// `max_hops` ancestors; stops early, without error, once a hop finds no
-/// further parent or fails. Blocking; query pool only.
+/// further parent or fails. Blocking; worker only.
 ///
 /// For a `SysTreeView32` item addressed as a simple child (see this module's
 /// top doc comment), the walk first follows the item's own logical
@@ -524,7 +524,7 @@ enum NavigateDirection {
 /// `accParent` for a child id) and `IAccessible::accNavigate` for the other
 /// three directions.
 ///
-/// Blocking; query pool only.
+/// Blocking; worker only.
 ///
 /// # Errors
 ///
@@ -732,7 +732,7 @@ pub fn activate(node: NodeId, registry: &NodeIdRegistry) -> Result<(), AcquireEr
 }
 
 /// Re-reads a node previously seen at `key`. Returns `None` if it can no longer
-/// be acquired. Blocking; query pool only.
+/// be acquired. Blocking; worker only.
 #[must_use]
 pub fn resnapshot(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
     let (hwnd, id_object, id_child) = key;
@@ -746,7 +746,7 @@ pub fn resnapshot(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapsho
 /// report `None` — the reducer speaks one item, and richer multi-selection
 /// reporting is deliberately out of M3's scope. Only meaningful for a key
 /// addressing a full object (`CHILDID_SELF`); a child-id key reports `None`
-/// since a simple child cannot contain anything. Blocking; query pool only.
+/// since a simple child cannot contain anything. Blocking; worker only.
 #[must_use]
 pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
     let (acc, child, (hwnd, id_object, _), at) = locate(node, registry).ok()?;
@@ -787,9 +787,9 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
     None
 }
 
-/// Reads the currently focused object of `target_pid` for the synthetic focus
-/// event an `AnnounceFocus` triggers. Uses `GetGUIThreadInfo` then `accFocus`, with
-/// a fallback to the focused window itself. Blocking; query pool only.
+/// Reads the currently focused object of `target_pid`, for a focus-now query
+/// or the check after a menu closes. Uses `GetGUIThreadInfo` then `accFocus`,
+/// with a fallback to the focused window itself. Blocking; worker only.
 ///
 /// M1 keys the focused node by its window and child id; a focused child exposed
 /// only as a distinct `IDispatch` is keyed to its own window, which is adequate
@@ -836,7 +836,7 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
 /// across the whole walk, including the root). Unlike UIA there are no
 /// cache requests on this backend, so every step is its own cross-process
 /// COM round trip (architecture section 4's IA2 cost model); blocking,
-/// query pool only, guarded by the caller's deadline. Returns `None` if the
+/// worker only, guarded by the caller's deadline. Returns `None` if the
 /// window has no accessible client object.
 #[must_use]
 pub fn walk_tree(
@@ -1035,8 +1035,8 @@ unsafe fn resolve_child(
 /// Whether `hwnd` is a window a user would navigate onto — NVDA's
 /// `isUsableWindow`, reduced to its load-bearing check: it must be visible.
 /// (NVDA also rejects hung and DWM-ghost windows; those are a
-/// responsiveness guard, not a correctness one, and the query pool's
-/// deadline already bounds a hung provider here.)
+/// responsiveness guard, not a correctness one, and the worker's deadline
+/// already bounds a hung provider here.)
 fn is_usable_window(hwnd: isize) -> bool {
     // SAFETY: IsWindowVisible tolerates any handle, returning false for an
     // invalid one.

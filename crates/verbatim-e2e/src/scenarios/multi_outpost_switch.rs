@@ -1,20 +1,19 @@
 //! Multi-outpost regression (decision D9): a real switch between two
 //! applications' outposts, each staying alive while the other holds
 //! foreground, exercising the whole foreground-announcement flow — window
-//! then focused control, generation-guarded retries, hidden-frame
-//! suppression, and re-announcing an existing outpost rather than
-//! respawning it — end to end against real Windows 11 Notepad and
-//! Verbatim's own GUI.
+//! then focused control, hidden-frame suppression, and an existing outpost
+//! reporting the foreground again rather than being respawned — end to end
+//! against real Windows 11 Notepad and Verbatim's own GUI.
 //!
 //! Windows 11 Notepad focuses its edit control almost instantly on launch,
 //! and its top-level window's own name never arrives as a focus event (only
 //! as a name-changed property on a node nothing ever focuses) — so "Notepad"
-//! is heard at all only because the newly authoritative outpost announces
-//! the top-level window deliberately, before the focused control. That is
+//! is heard at all only because the foreground change is reported as a
+//! focus on the top-level window, before the focused control. That is
 //! exactly what this scenario proves, twice: once for the freshly spawned
 //! outpost, and again after Verbatim's own outpost took foreground and gave
-//! it back, proving Notepad's outpost was kept alive and re-announced rather
-//! than respawned.
+//! it back, proving Notepad's outpost was kept alive and reported the
+//! foreground again rather than being respawned.
 //!
 //! Same discipline as every other live scenario in this crate: single
 //! generous waits, substring matchers, tolerant of unrelated intervening
@@ -59,9 +58,8 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Launching Notepad brings it to the foreground; a fresh outpost spawns
-    // to watch it, and the newly authoritative outpost announces the
-    // top-level window ("Notepad", from the window-level synthetic
-    // FocusChanged) followed by the focused control (Notepad's edit area,
+    // to watch it and reports the foreground change as a focus on the
+    // top-level window ("Notepad") followed by the focused control (Notepad's edit area,
     // role "edit" — see crates/verbatim-i18n/i18n/en/verbatim.ftl's
     // role-editable-text).
     scenario
@@ -92,9 +90,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
     // Notepad regains foreground. Its outpost was never retired (it lost
     // foreground for only a few keystrokes' worth of time, nowhere near the
-    // idle-retirement threshold), so this exercises the "send the existing
-    // outpost an AnnounceFocus" path, not a respawn: the same window and
-    // control announcement sequence as the first launch, heard again.
+    // idle-retirement threshold), so the existing outpost reports the
+    // foreground change, not a respawn: the window and the focused control,
+    // heard again as on the first launch.
     scenario
         .speech()
         .expect_in_order(&["Notepad", "edit"], STEP_TIMEOUT);

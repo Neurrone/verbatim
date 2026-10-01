@@ -38,9 +38,9 @@ Two channel families appear:
 - `crossbeam_channel` — the de-facto standard upgrade
   (multi-consumer, `select!` over several channels, better
   performance). Verbatim uses it wherever a channel is load-bearing:
-  the outpost runtime, listener, and query pool
-  (`crates/verbatim-outpost/src/query_pool.rs` uses `bounded` and
-  `unbounded` plus `recv_timeout` for deadline waits).
+  the outpost's writer, the listener, and Core's supervisor
+  (`crates/verbatim-outpost/src/outpost/outbound.rs` uses `bounded` and
+  `unbounded` plus `select!` to send pongs ahead of ordinary messages).
 
 Vocabulary that matters when reading call sites:
 
@@ -68,7 +68,7 @@ Vocabulary that matters when reading call sites:
   small (e.g. the E2E suite's one-live-instance lock); most sharing
   is message passing instead.
 - Atomics (`AtomicU64`, `AtomicBool` with `Ordering`) — lock-free
-  counters and flags, e.g. the query pool's parked-worker count and
+  counters and flags, e.g. the outpost's abandoned-worker count and
   the speech pipeline's cancellation flag that the synth sink checks
   cooperatively. For counters and flags, `Ordering::Relaxed` vs
   `SeqCst` subtleties rarely matter; treat any *pair* of atomics that

@@ -75,7 +75,8 @@ Public API:
   `target_images` (image names its `setup`/`teardown` may launch or kill,
   unioned by `swept_target_image_names`), and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario — today eight: `m1_exit_regression` (Speech),
+  registered scenario — today nine: `m1_exit_regression` and
+  `focus_churn` (Speech),
   `notepad_focus` and `msinfo32` (Legacy), `multi_outpost_switch` and
   `start_menu` (Shell), `object_navigation` and `tree_navigation`
   (Navigation), and `start_menu_repeat` (Diagnostic), each implemented in

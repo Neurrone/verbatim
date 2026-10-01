@@ -9,7 +9,7 @@ use windows::Win32::UI::Accessibility::UiaHasServerSideProvider;
 ///
 /// This sends `WM_GETOBJECT` to the target window and therefore blocks on the
 /// target application's message pump. A hung app will hang this call. It MUST
-/// be called only from a deadline-guarded query-pool thread, never from an
+/// be called only from a deadline-guarded worker, never from an
 /// event thread; the outpost wraps it in a timeout and treats expiry as
 /// non-UIA. See [`crate::probe`] module docs and the outpost arbitration.
 #[must_use]

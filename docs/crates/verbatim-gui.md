@@ -38,7 +38,7 @@ Public API:
   control-view walk with the base cache request extended by the bounding
   rectangle — and collects named, on-screen buttons. A hung shell cannot
   hang Verbatim: a guard thread abandons the worker after a three second
-  deadline (the outpost query pool's discipline, kept local and simple
+  deadline (the outpost watchdog's discipline, kept local and simple
   for a one-shot query) and the request just logs and presents nothing.
 - `plan` — the pure, unit-tested layer: `plan_for(descriptor, value)` maps
   a `SettingDescriptor` to a `ControlPlan` (slider, choice, or check box

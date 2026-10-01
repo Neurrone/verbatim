@@ -274,7 +274,9 @@ Verbatim survives Notepad exiting), `multi_outpost_switch` (switching
 foreground between Notepad and Verbatim's own menu keeps both outposts
 alive and re-announces correctly), `m1_exit_regression` (the scripted
 walk of the M1 exit criteria — see `docs/roadmap.md`'s M2 section for
-exactly what it asserts and does not assert), `object_navigation` (the M3
+exactly what it asserts and does not assert), `focus_churn` (a burst of
+Tab and Shift+Tab presses in Verbatim's settings dialog must leave focus
+and the navigator on the control that really has focus), `object_navigation` (the M3
 object-navigation and review commands against Verbatim's own settings
 dialog), `msinfo32` (an MSAA-only legacy application reaches Verbatim
 through the MSAA stack), and `tree_navigation` (logical object navigation
@@ -581,6 +583,21 @@ Enhanced Session) RDP disconnect that locks the workstation behind it,
 reintroduces the problem. If gestures and status queries succeed but
 nothing is ever heard or focus never seems to move, check the VM's console
 is actually sitting at an unlocked desktop before looking anywhere else.
+
+**A desktop with no real foreground window makes launched applications
+silent.** Since the outpost redesign, attention moves only when a window
+becomes the foreground, and events from other windows are dropped. In
+October 2026, a development machine reached over RDP spent hours with
+either no foreground window at all (`GetForegroundWindow` returned null,
+and `SendInput` injected nothing) or with the foreground held by a cloaked
+window (the Start search host's `Windows.UI.Core.CoreWindow`, cloaked, so
+invisible). Applications the suite launched then never took the
+foreground, their foreground facts were dropped, and the scenarios that
+launch Notepad or msinfo32 failed while those that drive Verbatim's own
+dialog passed. Before a local run, check that `GetForegroundWindow`
+returns a window and that `DwmGetWindowAttribute` with
+`DWMWA_CLOAKED` (14) reads 0 for it; if not, click into a real window on
+the session's console first.
 
 **Stray processes survive a failed run.** `Scenario`'s `Drop` impl always
 tries a clean `Quit` through the control plane, then unconditionally kills

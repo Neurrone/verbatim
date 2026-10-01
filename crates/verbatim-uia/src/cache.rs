@@ -17,7 +17,7 @@ use windows::Win32::UI::Accessibility::{
 };
 
 /// The properties prefetched for every event and query. Kept in one place
-/// so the focus handler, property-change handler, and query pool all cache the
+/// so the focus handler, property-change handler, and worker all cache the
 /// same set and mapping never faces an unexpectedly absent property.
 ///
 /// The `IsTogglePatternAvailable`, `IsExpandCollapsePatternAvailable`, and

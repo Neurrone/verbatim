@@ -74,32 +74,27 @@ verified.
 - Top-level windows in the ancestry. NVDA presents an entered window
   like any other container when it has a name or a description, and
   treats an unnamed window as layout ([Event handling](nvda/events.md),
-  "Foreground windows"). Verbatim today never presents a window as an
-  entered container, because a separate foreground announcement owns
-  it: **different (documented in
-  [verbatim-core](crates/verbatim-core.md))**. Planned: the window
-  joins the roles that are presentable only when named or described,
-  as NVDA does, and the separate announcement goes. **not yet (outpost
-  redesign, step 1)**.
+  "Foreground windows"). Verbatim: the window is one of the roles
+  presentable only when named or described, as in NVDA, and there is
+  no separate foreground announcement. **matched (unverified)**.
 - Window announcement on switching applications. NVDA: a foreground
   event is a focus on the window; it is ignored when the latest focus
   is already in that window, and the window is otherwise announced as
   the focus. A window that is an ancestor of the new focus is spoken
   as an entered container. Nothing speaks a window just because it
   became the foreground ([Event handling](nvda/events.md), "Foreground
-  windows"). Verbatim today: a separate foreground announcement from
-  the outpost's announce lane, **matched (verified)** for the Start
-  menu and window-switch scenarios. Planned: a foreground fact
-  arrives as a focus on the window, and the reducer ignores it when
-  its window handle equals the current focus's top-level window
-  handle. Window handles are compared rather than node ids because
+  windows"). Verbatim: a foreground fact arrives as a focus on the
+  window, and the reducer ignores it when its window handle equals the
+  current focus's top-level window handle. Window handles are compared
+  rather than node ids because
   one window has different node ids in different outposts (a Settings
   page whose frame belongs to `ApplicationFrameHost.exe`), and an
   ancestor walk that timed out leaves no ancestors to compare. A
   window that has no name when focus enters it is not announced
   later, and a foreground change to a nameless window moves
   attention without speaking (a bare "window" says nothing).
-  **not yet (outpost redesign, step 1)**.
+  **matched (unverified)**; the Start menu and window-switch scenarios
+  verified the earlier, separate announcement.
 - Duplicate focus suppression (same control announced once when two
   paths report it). NVDA: "already the focus" early return.
   Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md),
@@ -107,30 +102,26 @@ verified.
   sees focus across applications, so this stays in the reducer.
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
-  ([Event handling](nvda/events.md), [Speech](nvda/speech.md)). Verbatim
-  today: **different (documented)** — snapshot versions and
-  last-observation-wins timestamps in the reducer; windows still
-  spoken, stale control focus dropped. Planned: both mechanisms are
-  removed and order comes from the outpost's single queue, as in
-  NVDA; the observation time stays on inputs for latency records
-  only. Until the outpost's single worker lands, live runs may show
-  ordering races. **not yet (outpost redesign, steps 1 and 4)**;
-  verify with the rapid focus-churn scenario.
+  ([Event handling](nvda/events.md), [Speech](nvda/speech.md)). Verbatim:
+  snapshot versions and observation-time arbitration are gone; order
+  comes from each outpost's single queue and worker, as in NVDA, and the
+  observation time stays on inputs for latency records only. A UIA focus
+  fact whose element is no longer the focused element when the worker
+  reads it is dropped, since the newer fact follows. **matched
+  (unverified)**; the `focus_churn` scenario covers it.
 - Name change on the focus. NVDA: when the focused object's name
   changes, the new name alone is spoken, queued behind current
   speech; a name change on any other object, including an ancestor
   of the focus, is silent ([Event handling](nvda/events.md), "The focus
-  gate" and "Foreground windows"). Verbatim today updates the stored
-  name silently. Planned: speak the new name alone at `Queued`
-  priority, only for the focused node. **not yet (outpost redesign,
-  step 1)**.
+  gate" and "Foreground windows"). Verbatim: the new name alone is
+  spoken at `Queued` priority, only for the focused node.
+  **matched (unverified)**.
 - Entered menus. NVDA: when focus newly enters a menu bar, a popup
   menu, or a menu item as an ancestor, speech is cancelled and the
   ancestor is not announced; the focused item is announced as usual
-  ([Event handling](nvda/events.md), "The focus gate"). Verbatim today
-  announces those ancestors as entered containers. Planned: entering
-  one cancels current speech and it is not announced. **not yet
-  (outpost redesign, step 1)**.
+  ([Event handling](nvda/events.md), "The focus gate"). Verbatim: entering
+  one interrupts current speech and it is not announced.
+  **matched (unverified)**.
 - Event acceptance. NVDA: every event except UIA notifications must
   come from a window related to the system's foreground window: a
   descendant of it, sharing its root owner, a topmost window or one
@@ -141,9 +132,7 @@ verified.
   notifications are spoken only from the focus's application, with
   per-application opt-ins such as the shell's window-snap results
   ([Event handling](nvda/events.md), "Acceptance filtering"). Verbatim
-  today: the shell drops events whose application is not the
-  foreground application (the foreground pid gate). Planned (D14,
-  amended by the outpost redesign): the reducer keeps an attention
+  (D14, amended by the outpost redesign): the reducer keeps an attention
   record, the application and top-level window of the most recent
   foreground change, standing in for the system's foreground window
   NVDA compares against. A foreground fact is always accepted and
@@ -155,24 +144,26 @@ verified.
   input thread's active window. Nothing else moves attention, so a
   topmost popup menu that takes focus without becoming the
   foreground leaves attention where it was, and focus returning from
-  it is still attended. Background acceptance follows
-  NVDA's categories: tooltips and notification bars, toast alerts,
-  configured progress bars, and the shell's window-snap results; other
-  UIA notifications only from the attention application. Accepted
-  background events never move focus or the navigator, are spoken
-  queued, and are capped per source.
-  **not yet (outpost redesign, steps 1 and 2)**.
+  it is still attended. Accepted from anywhere as background: toast
+  alerts and the shell's window-snap results; other UIA notifications
+  only from the attention application. Accepted background events
+  never move focus or the navigator and are spoken queued.
+  **matched (unverified)** for these; the tooltip and notification-bar
+  windows, background progress bars, and a per-source cap on
+  background events are **not yet**.
 - Recovery after an outpost is replaced. NVDA has no equivalent: it
   is one process, and after an application crash it re-queries the
   real focus ([Focus and the navigator](nvda/focus-and-navigator.md)).
-  Verbatim (**different (D9, D13)**, planned): when an outpost ends,
-  the reducer keeps the focus's copied data but treats its node ids
-  as dead, and clears the navigator if it belonged to that outpost.
-  When the replacement's focus-now reply arrives, it is compared with
-  the kept copy (role, name, value, states, and the ancestors' names
-  and roles); if all match, the new node ids are taken silently,
-  otherwise the focus is announced as usual. **not yet (outpost
-  redesign, step 1)**.
+  Verbatim (**different (D9, D13)**): when an outpost ends, the reducer
+  keeps the focus's copied data but treats its node ids as dead, and
+  clears the navigator if it belonged to that outpost. If the
+  application holds attention, a replacement starts at once and is
+  asked for its current focus; when the reply arrives, it is compared
+  with the kept copy (role, name, value, states, and the ancestors'
+  names and roles), and if all match, the new node ids are taken
+  silently, otherwise the focus is announced as usual. The same
+  question is asked after the focus listener is replaced.
+  **unverified**.
 - Held objects. NVDA: an object lives as long as something refers to
   it, and an MSAA event, which names its object only by window, object
   id, and child id, is directed to the existing focus object when the
@@ -207,15 +198,16 @@ verified.
   equivalent validity check in the speech queue; Interrupt priority
   masks most cases. Candidate gap for fast-typing scenarios.
 - Menu popup announcements. NVDA: menu events with fake-focus
-  fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **matched (verified)**
-  for the Start menu path (MenuPopupStart event-driven); the fake
-  focus fallback when no real focus event follows a menu open is
-  **not yet** — NVDA fabricates focus on the menu item, Verbatim
-  relies on the real event arriving. Planned: NVDA's menu rules move
-  into the outpost's worker, so the reducer receives only focus
-  events for menus, and a menu closing with no focus event within 50
-  milliseconds makes the outpost read and report the real focus.
-  **not yet (outpost redesign, step 4)**.
+  fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim:
+  NVDA's menu rules run in the outpost's worker. Within a batch, focus
+  events are handled first and the newest menu opening from each
+  backend last; a menu opening is ignored if a focus in the batch
+  already put focus on a menu or menu item, and otherwise becomes a
+  focus on the popup menu, so the reducer receives only focus events
+  for menus. A menu closing with no focus event within 50 milliseconds
+  makes the outpost read and report the real focus. **matched
+  (unverified)**; the Start menu path was verified before the
+  redesign.
 - Toggle button role and "pressed"/"not pressed" wording (UIA Toggle
   pattern on a Button; no separate Switch role). NVDA: UIA
   detection. Verbatim: **matched (verified)** (cross-process test;

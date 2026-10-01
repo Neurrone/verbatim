@@ -145,6 +145,16 @@ screen reader in both rendered and source form.
   rare fallback; announcements keep flowing through the per-app outposts,
   so node identity, backend arbitration, and D9's isolation for every
   query are unchanged. Details in section 1.
+  Amended 2026-10-01 (the outpost redesign): the announce poll is removed
+  rather than kept as a fallback; after a listener or outpost restart Core
+  asks the attention application for its current focus once instead. The
+  listener also holds the alert hook and desktop-wide UIA subscriptions
+  for selection, menu opening, and notifications, coalesces its facts
+  with NVDA's limiter rule (one waiting fact per element and kind), and
+  may start an outpost only for focus, foreground, menu, notification, and
+  alert facts. Outposts lose their window-scoped UIA subscriptions in
+  favour of one property subscription that follows the focus and its
+  ancestors.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier
@@ -167,6 +177,19 @@ screen reader in both rendered and source form.
   notification registration and forwards them as facts that spawn an
   outpost on demand, which stays within its never-block rule because both
   are cached reads. Ratified 2026-09-02.
+  Amended 2026-10-01 (the outpost redesign): acceptance is classified by
+  the reducer, not the outposts. Outposts attach window facts read with
+  local calls (top-level window, root owner, topmost, and for
+  `Windows.UI.Core` windows whether the window is under the input
+  thread's active window); the reducer compares them with its attention
+  record, so attention is never broadcast to outposts. Attention moves
+  only on a foreground change, reported as a focus on the window, which
+  the listener has confirmed is still the foreground window; an ordinary
+  focus fact is classified like any other event, so a topmost popup that
+  takes focus does not take attention. UIA notifications are accepted
+  from the attention application only, except the shell's window-snap
+  results. Of the alerts, only toasts are reported for now. The attention
+  model is implemented in this redesign instead of at M4.
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms
@@ -183,6 +206,13 @@ screen reader in both rendered and source form.
   start, verdict, acquired, enriched, emitted, reduced, queued, first
   synth sample, first audio write), and the budgets are asserted per
   stage once eSpeak is in. Ratified 2026-09-02.
+  Amended 2026-10-01 (the outpost redesign): there are no lanes; each
+  outpost has one worker, so the planned outpost stages become routed,
+  worker start, backend decided, read, ancestors read, and sent. The
+  arbitration verdict is kept for the window's lifetime and dropped when
+  the window is destroyed, and a UIA element is resolved once per event.
+  The ledger still records only observed, queued, and first audio; the
+  per-stage timeline is not implemented yet.
 - **D16 — Recordings take their audio from Verbatim's own rendering.** A
   tee at the `AudioSink` seam writes every utterance's PCM with its
   wall-clock start time while still playing it, and the recording step
@@ -254,24 +284,40 @@ Outposts are created when an app first gains focus (or raises a subscribed
 event), retired when the app exits, and may be retired early when idle to
 bound memory use; state rebuilds from live queries on demand.
 
+Inside, an outpost follows NVDA's model of one thread doing all the work
+for an application (the outpost redesign, 2026-10-01). Intake callbacks
+only add entries to one queue, which applies NVDA's limiter rules (one
+waiting entry per object and event kind, and per batch the newest four
+focus events and ten other events per UI thread). One worker thread takes
+the entries in order and is the only thread that calls into the
+application, so events and query replies leave the outpost in the order
+they were queued. Every query gets exactly one reply: done, gone, failed,
+not started, or abandoned. The outpost keeps the live UIA element or MSAA
+object behind every node Core still holds, and releases the rest when Core
+reports which nodes it holds; a node id names its outpost incarnation, so
+an id from a replaced outpost can never reach its successor.
+
 Recovery is a ladder, cheapest rung first:
 
-1. **Deadline expiry.** Every cross-process accessibility call carries a
-   deadline. When one expires, the reducer proceeds with cached
-   (stale-flagged) data and may emit an "application not responding" earcon
-   rather than waiting.
+1. **Deadline expiry.** Every entry the worker handles carries a deadline,
+   watched by a watchdog thread.
 2. **Thread abandonment.** A thread blocked inside a hung app's COM call
    cannot be safely reclaimed: `ICancelMethodCalls` is unreliable and
    `TerminateThread` corrupts the calling process (abandoned locks, broken
-   apartment state). So the outpost abandons the call — stops awaiting the
-   result, discards it if it ever arrives — and spawns a replacement worker.
-   The blocked thread stays parked (roughly a megabyte of stack and a
-   handle) until the call returns or the outpost exits.
-3. **Kill and respawn.** If an outpost accumulates too many parked threads,
-   stops heartbeating, or crashes, the supervisor kills the process and
-   spawns a fresh one; caches rebuild from live queries. This is the uniform
-   hard-recovery path — and, because abandoned threads are only truly freed
-   by process exit, the only one that reclaims everything.
+   apartment state). So when the worker passes its deadline the watchdog
+   abandons it, answers its query "abandoned" if it was running one, and
+   starts a replacement worker that continues with the rest of the queue.
+   The abandoned thread publishes nothing if its call ever returns, and
+   stays parked (roughly a megabyte of stack and a handle) until then or
+   until the outpost exits.
+3. **Kill and respawn.** If an outpost accumulates eight abandoned workers
+   (unless its application's windows are reported hung), stops answering
+   pings for nine seconds, or crashes, the supervisor ends it and, if its
+   application holds attention, starts a fresh one and asks it for the
+   current focus; Core's references to the old outpost's nodes are dead.
+   This is the uniform hard-recovery path — and, because abandoned threads
+   are only truly freed by process exit, the only one that reclaims
+   everything.
 
 Because outposts are per-app processes, a hang or crash in one app's
 accessibility plumbing cannot affect reading any other app, and Core (input,
@@ -320,12 +366,11 @@ each captured focus fact (source process, window, backend address or
 cached snapshot) to Core; the supervisor ensures the target's own outpost
 exists — a spawn now merely delays the announcement by the spawn latency,
 where before it lost the event outright — and hands the fact to it. Facts
-for an outpost still spawning queue per process with newest-wins for
-focus: three focus changes during one spawn deliver one announcement, the
-current one. The app outpost then does everything it already does today,
-on its deadline-guarded query pool: acquisition, cross-backend
-arbitration, ancestry and selection enrichment, and the announced focus
-event — degrading rather than falling silent when enrichment times out
+for an outpost still starting are held in arrival order, merged with
+NVDA's one-per-object rule, and released in that order when it is ready.
+The app outpost's worker then does the acquisition, cross-backend
+arbitration, ancestry and selection enrichment, and reports the focus
+event, degrading rather than falling silent when enrichment times out
 (the event-carried snapshot always suffices to announce name, role,
 value, and state). Node identity therefore never crosses processes — the
 navigator, object navigation, and every fetch keep routing to the per-app
@@ -338,7 +383,7 @@ but a sticky per-window verdict the app outpost already keeps, which each
 fact consults independently whenever it arrives — so deduplication does
 not depend on the two facts arriving together, or at all. For a window
 with no verdict yet, the fact resolves the real verdict on the spot:
-fact handling runs on the outpost's deadline-guarded query pool, where a
+fact handling runs on the outpost's deadline-guarded worker, where a
 blocking call is permitted, so the arbitration probe answers within the
 ordinary query deadline and exactly one backend announces,
 deterministically, in either arrival order. The earlier asymmetric
@@ -349,25 +394,27 @@ applied to facts: modern XAML surfaces fire no MSAA focus event at all
 UIA fact was the only announcement that control would ever get, and a
 focus event fires once, with nothing to retry. Legitimate evidence in
 hand is never discarded in favor of hypothetical evidence from the other
-backend. The provisional rule survives only where its founding
-constraint is real: on the live pid-scoped event-thread hooks, which
-must never block, and as the probe-timeout fallback, where the MSAA fact
-proceeds so a hung window degrades to a possible duplicate rather than
-to silence. Resolving which window a non-windowed UIA element belongs to
+backend. Since the outpost redesign there is no provisional rule at all:
+the outpost's own hooks only queue events, the worker decides every
+window's backend before reading, and a probe that hangs is handled by
+the watchdog like any other hung call. Resolving which window a
+non-windowed UIA element belongs to
 can itself take a cross-process normalize call, which is precisely why
 the verdict check runs in the app outpost and never in the listener.
 
-What remains of the old poll is a genuine fallback, no longer the
-mechanism of record: it covers the listener's own respawn gap (on
-listener death the supervisor re-announces the current foreground once
-the replacement is up) and the irreducible case NVDA shares — a specific
-control that exists but is not yet readable (a window before its name),
-retried briefly against a known address rather than guessed at.
+Nothing remains of the old poll. After the listener is replaced, Core
+reads the foreground window itself and asks that application's outpost
+for its current focus once; desktop-wide UIA events from the gap are lost.
+A window that has no name when focus enters it is not announced later,
+as in NVDA.
 
 The per-app outposts shed their focus-shaped subscriptions — the
 per-outpost UIA focus registration, the MSAA focus hook, and the
-menu-popup hook — and keep their process-scoped property, value, state,
-name, and selection subscriptions unchanged. One extra hop (listener to
+menu-popup hook. They keep process-scoped MSAA hooks for value, state,
+name, selection, menu end, and window destruction, and one UIA property
+subscription that follows the focus and its ancestors (NVDA's selective
+registration on Windows 11); selection and notifications come
+desktop-wide from the listener. One extra hop (listener to
 Core to app outpost) costs well under a millisecond against the tens of
 milliseconds acquisition already costs, and removes the zero-to-seconds
 discovery latency of polling.
@@ -406,7 +453,8 @@ fn reduce(state: &SrState, input: Input) -> (SrState, Vec<Effect>)
 ```
 
 - `SrState`: focus context, review cursor, active modes (focus/browse/scan),
-  per-app tree snapshots (normalized, versioned), speech-relevant config.
+  the attention record, the node references it holds (focus, ancestors,
+  navigator), speech-relevant config.
 - `Input`: normalized accessibility events, gesture invocations, effect
   completions (e.g., a property fetch finishing), timers.
 - `Effect`: `Speak(Utterance)`, `Braille(..)`, `PlayEarcon(..)`,
@@ -432,10 +480,12 @@ text ranges, relationships, node identity — as a superset that both backends
 (UIA and MSAA/IA2) map into. This is the load-bearing abstraction for D1/D2:
 the reducer, browse mode, extensions, and all tests speak this model only.
 
-- Node identity: backend runtime IDs map to stable internal `NodeId`s per
-  outpost.
-- Trees are versioned snapshots; events reference snapshot versions so the
-  reducer can detect and re-fetch stale reads.
+- Node identity: backend runtime IDs and MSAA objects map to `NodeId`s
+  issued per outpost incarnation; a `NodeId` carries its outpost id, so an
+  id from a replaced outpost can never name a node in its successor.
+- Snapshots are not versioned. Events and replies from one outpost reach
+  the reducer in the order the outpost queued them, so the reducer needs
+  no staleness check; a node that is no longer reachable answers "gone".
 - Synthetic nodes (OCR results, future AI screen recognition, extension-created
   nodes) are first-class citizens of the model, flagged as synthetic, so
   review/navigation work uniformly over real and synthetic content.

@@ -16,7 +16,7 @@
 //! thread spawned per request. A hung shell must not hang Verbatim: a
 //! sibling guard thread waits on the worker with a deadline and abandons it
 //! on expiry (a blocked cross-process COM call cannot be safely cancelled —
-//! the same reasoning as `verbatim-outpost`'s query pool, kept local and
+//! the same reasoning as `verbatim-outpost`'s watchdog, kept local and
 //! simple here because this is a one-shot query, not an outpost). Either
 //! way the outcome is handed to the GUI thread through wxDragon's
 //! call-after queue, the same channel [`GuiHandle`](crate::GuiHandle)

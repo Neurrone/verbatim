@@ -91,7 +91,7 @@ fn main() -> ExitCode {
 
 /// Installs a tracing subscriber writing to this process's stderr (which the
 /// supervisor redirects to a log file). Respects `RUST_LOG`, defaulting to
-/// `info` so the announce-lane and query-pool diagnostics land without extra
+/// `info` so the worker and watchdog diagnostics land without extra
 /// configuration. Never a hard failure: if a subscriber is somehow already
 /// set, `try_init` returns an error that is ignored.
 fn init_tracing() {

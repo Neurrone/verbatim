@@ -44,7 +44,9 @@
 //!
 //! - [`Group::Speech`]: Verbatim's own menu and Speech settings dialog, and
 //!   the latency reporting built into walking them —
-//!   [`m1_exit_regression`](crate::scenarios::m1_exit_regression) today.
+//!   [`m1_exit_regression`](crate::scenarios::m1_exit_regression), and
+//!   [`focus_churn`](crate::scenarios::focus_churn), a burst of focus changes
+//!   in the settings dialog that must leave focus where it really is.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
@@ -75,8 +77,8 @@ use verbatim_control::protocol::LatencyRecord;
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
-    m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus, object_navigation,
-    start_menu, start_menu_repeat, tree_navigation,
+    focus_churn, m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus,
+    object_navigation, start_menu, start_menu_repeat, tree_navigation,
 };
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
@@ -206,6 +208,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: multi_outpost_switch::setup,
         body: multi_outpost_switch::body,
         teardown: multi_outpost_switch::teardown,
+    },
+    ScenarioDef {
+        name: "focus_churn",
+        group: Group::Speech,
+        target_images: &[],
+        setup: focus_churn::setup,
+        body: focus_churn::body,
+        teardown: focus_churn::teardown,
     },
     ScenarioDef {
         name: "object_navigation",
