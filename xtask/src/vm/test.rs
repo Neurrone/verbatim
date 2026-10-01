@@ -357,6 +357,21 @@ fn run_one_scenario(
 ) -> Option<ScenarioSummary> {
     println!("xtask vm test: running scenario '{scenario_name}'");
 
+    // Clear this scenario's artifacts before its subprocess starts, so the
+    // summary read back below can only be one this run wrote. The subprocess
+    // clears the directory too, but only once it reaches the scenario runner;
+    // a subprocess that dies or matches no test before that would otherwise
+    // leave the previous run's summary to be read as this run's result.
+    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), scenario_name);
+    if let Err(error) = clear_scenario_artifacts(&dir) {
+        errors.push(format!(
+            "scenario '{scenario_name}': could not clear its previous artifacts at {}, so its \
+             result cannot be trusted and it was not run: {error}",
+            dir.display()
+        ));
+        return None;
+    }
+
     let recording_pid = if record {
         start_recording_with_fallback(host, credentials, endpoint)
     } else {
@@ -398,8 +413,9 @@ fn run_one_scenario(
     }
 
     // Read back what the scenario's own subprocess wrote, rather than parsing
-    // its stdout — see this module's own doc comment.
-    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), scenario_name);
+    // its stdout — see this module's own doc comment. The directory was
+    // cleared before the subprocess started, so any summary here is this
+    // run's own.
     let summary = ScenarioSummary::read(&dir).ok();
 
     // A selected scenario whose subprocess exited cleanly but wrote no summary
@@ -407,10 +423,11 @@ fn run_one_scenario(
     // `--scenario` typo or a missing `tests/<name>.rs` libtest wrapper makes
     // `cargo test <name> -- --exact` match zero tests and still exit 0 (libtest
     // treats "no tests ran" as success), and a crash before
-    // `verbatim_e2e::registry::run` writes the summary lands here too. Without
-    // this, such a run would be green-lit forever. A subprocess that already
-    // failed to launch or exited non-zero pushed its own error above, so this
-    // does not double-count it.
+    // `verbatim_e2e::registry::run` writes the summary lands here too. This
+    // holds only because the directory was cleared above; otherwise a
+    // previous run's summary would be read in place of the missing one. A
+    // subprocess that already failed to launch or exited non-zero pushed its
+    // own error above, so this does not double-count it.
     if process_ok && summary.is_none() {
         errors.push(format!(
             "scenario '{scenario_name}' exited cleanly but wrote no run summary — it did not run \
@@ -419,6 +436,15 @@ fn run_one_scenario(
         ));
     }
     summary
+}
+
+/// Removes `dir` and everything in it; a directory that does not exist yet
+/// is already clear and is not an error.
+fn clear_scenario_artifacts(dir: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
 }
 
 /// Prints [`registry::SCENARIOS`], one line per scenario naming it and its
@@ -607,6 +633,24 @@ mod tests {
         // A selected scenario that wrote no summary did not run (a typo, a
         // missing wrapper) or crashed before writing it — never a pass.
         assert_eq!(result_word(None), "fail");
+    }
+
+    #[test]
+    fn clearing_removes_a_previous_runs_summary() {
+        let dir = std::env::temp_dir()
+            .join("xtask-vm-test-tests")
+            .join("stale-summary");
+        ScenarioSummary::new("scenario", true, None)
+            .write(&dir)
+            .expect("plants a previous run's passing summary");
+
+        clear_scenario_artifacts(&dir).expect("clears the directory");
+
+        assert!(
+            ScenarioSummary::read(&dir).is_err(),
+            "a previous run's summary must not survive to be read as this run's result"
+        );
+        clear_scenario_artifacts(&dir).expect("an already-clear directory is not an error");
     }
 
     #[test]
