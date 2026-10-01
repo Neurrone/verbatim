@@ -345,7 +345,9 @@ fn forward_msaa_event(
         WinEventKind::Foreground => {
             // SAFETY: GetForegroundWindow has no preconditions.
             if unsafe { GetForegroundWindow() }.0 as isize != hwnd {
-                return; // No longer the foreground window: superseded.
+                // No longer the foreground window: superseded.
+                tracing::debug!(hwnd, "foreground dropped: no longer the foreground window");
+                return;
             }
             DeliveredFact::Foreground { hwnd }
         }

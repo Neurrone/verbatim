@@ -427,6 +427,7 @@ impl Worker<'_> {
         (ancestors, selected_child): (Vec<NodeSnapshot>, Option<NodeSnapshot>),
     ) {
         let role = node.role;
+        tracing::debug!(?role, name = ?node.name, foreground, ?backend, "focus reported");
         let event = NormalizedEvent::FocusChanged {
             node,
             foreground,
@@ -687,6 +688,7 @@ impl Worker<'_> {
     /// window by the time it is read.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
+            tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
         }
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
@@ -722,7 +724,9 @@ impl Worker<'_> {
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {
-            return; // UIA owns this window; its UIA fact reports the focus.
+            // UIA owns this window; its UIA fact reports the focus.
+            tracing::debug!(hwnd, "MSAA focus dropped: UIA owns the window");
+            return;
         }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_focus_event(
             hwnd,
@@ -730,6 +734,7 @@ impl Worker<'_> {
             id_child,
             &self.context.msaa_registry,
         ) else {
+            tracing::debug!(hwnd, id_object, id_child, "MSAA focus dropped: unreadable");
             return;
         };
         let enrichment = read::msaa_enrichment(self.context, &node);
@@ -770,12 +775,19 @@ impl Worker<'_> {
             return;
         };
         let Ok(element) = uia.focused_element(&cache) else {
+            tracing::debug!("UIA focus dropped: no focused element");
             return;
         };
         // SAFETY: `element` was built with the base cache request.
         let parts = unsafe { snapshot_parts_from_cached_element(&element) };
         if parts.runtime_id != fact.runtime_id {
-            return; // Focus has moved on; the newer fact follows.
+            // Focus has moved on; the newer fact follows.
+            tracing::debug!(
+                fact = ?fact.runtime_id,
+                focused = ?parts.runtime_id,
+                "UIA focus dropped: no longer the focused element"
+            );
+            return;
         }
         let hwnd = if fact_hwnd != 0 {
             Some(fact_hwnd)
@@ -788,7 +800,9 @@ impl Worker<'_> {
         if let Some(hwnd) = hwnd
             && !read::window_uses_uia(context, hwnd)
         {
-            return; // MSAA owns this window; its MSAA fact reports the focus.
+            // MSAA owns this window; its MSAA fact reports the focus.
+            tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
+            return;
         }
         // SAFETY: `element` was built with the base cache request.
         let node = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
