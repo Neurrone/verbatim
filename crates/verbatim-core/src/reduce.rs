@@ -129,8 +129,8 @@ fn classify(
 /// Whether an event's window is one the attention record covers: the same
 /// top-level window, the same root owner, a topmost window, or a
 /// `Windows.UI.Core` window under the input thread's active window — NVDA's
-/// foreground test, made against the attention record instead of a live
-/// system call. When either side has no window facts there is nothing to
+/// foreground test, made against the attention record — or a window its
+/// outpost found in the system's foreground window when it read the event. When either side has no window facts there is nothing to
 /// compare, so the application decides.
 fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowFacts>) -> bool {
     match (attention.window, window) {
@@ -139,6 +139,7 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
                 || event.root_owner == attended.root_owner
                 || event.topmost
                 || event.under_active_window == Some(true)
+                || event.in_foreground
         }
         _ => source == attention.source,
     }
@@ -272,6 +273,23 @@ fn reduce_focus_changed(
         {
             return Vec::new();
         }
+    } else if let Some(window) = window
+        && window.in_foreground
+        && !state
+            .attention
+            .and_then(|attention| attention.window)
+            .is_some_and(|attended| {
+                attended.top_level == window.top_level || attended.root_owner == window.root_owner
+            })
+    {
+        // Focus in the system's foreground window, unrelated to the attention
+        // window: the foreground moved without a foreground fact, so
+        // attention follows, as NVDA takes the foreground from the focus's
+        // ancestry.
+        state.attention = Some(Attention {
+            source,
+            window: Some(window),
+        });
     }
 
     let new_focus = FocusContext {

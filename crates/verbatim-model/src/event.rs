@@ -49,6 +49,15 @@ pub struct WindowFacts {
     /// `None` for every other window class.
     #[serde(default)]
     pub under_active_window: Option<bool>,
+    /// Whether the window is in the system's foreground window when the
+    /// event is read: its top-level window is the foreground window, or its
+    /// root owner is the foreground window or the foreground window's root
+    /// owner — NVDA's live foreground test. Windows can raise a window's
+    /// foreground event while refusing it the foreground, and raises none
+    /// when it is given the foreground later, so this is how the reducer
+    /// learns the foreground moved without a foreground fact.
+    #[serde(default)]
+    pub in_foreground: bool,
 }
 
 /// Identifies one in-flight fetch so its completion can re-enter the reducer.

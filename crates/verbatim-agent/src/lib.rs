@@ -9,6 +9,8 @@
 //!   inside the interactive session. `WinRM` and PowerShell Direct hand a
 //!   process a non-interactive window station (the "session 0" problem),
 //!   which can never host a screen reader test.
+//! - Brings a launched application's window to the foreground, as a user's
+//!   launch would, past Windows' foreground lock.
 //! - Tunnels a connection through to Verbatim's own control-plane named
 //!   pipe, which deliberately never listens on the network itself
 //!   (architecture section 10, decision D8): a Verbatim inside a VM is
@@ -21,6 +23,7 @@
 //! binary for real guest deployment.
 
 mod files;
+mod foreground;
 mod process;
 pub mod protocol;
 pub mod server;

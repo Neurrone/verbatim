@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this vocabulary defines.
-pub const AGENT_PROTOCOL_VERSION: u32 = 0;
+pub const AGENT_PROTOCOL_VERSION: u32 = 1;
 
 /// The default TCP port the agent listens on.
 ///
@@ -98,6 +98,20 @@ pub enum Request {
         /// The image file name to match.
         name: String,
     },
+    /// Waits up to `timeout_ms` for a visible top-level window of a process
+    /// whose image name is `image_name` (matched like
+    /// [`Request::KillProcessesByName`], so a Notepad hand-off to another
+    /// pid is still found), and brings it to the foreground. Windows keeps a
+    /// newly launched application behind the current foreground window for
+    /// 200 seconds after the last input, injected keystrokes included; a
+    /// user's own launch would put it in front. Answered by
+    /// [`ReplyPayload::Foreground`].
+    BringToForeground {
+        /// The image file name to match.
+        image_name: String,
+        /// How long to wait for the window, in milliseconds.
+        timeout_ms: u64,
+    },
     /// Asks whether a process is still running.
     ProcessStatus {
         /// The OS process id.
@@ -167,6 +181,12 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::ProcessStatus`].
     ProcessStatus(ProcessState),
+    /// Answer to [`Request::BringToForeground`]: whether a matching window
+    /// is the foreground window.
+    Foreground {
+        /// `false` if no matching window appeared in time or Windows refused.
+        taken: bool,
+    },
     /// Answer to [`Request::SessionInfo`].
     SessionInfo(SessionInfo),
     /// Answer to [`Request::ReadFile`]: the file's raw bytes, base64

@@ -15,7 +15,7 @@ use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
 use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
-use crate::{files, process, session, tunnel};
+use crate::{files, foreground, process, session, tunnel};
 
 /// Accepts connections on `listener` until it errors, spawning a thread
 /// per connection. Each connection is pointed at `pipe_name` for
@@ -202,6 +202,19 @@ fn dispatch(id: u64, request: Request) -> Frame {
             Ok(terminated) => Frame::Reply {
                 to: id,
                 payload: ReplyPayload::KilledByName { terminated },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::BringToForeground {
+            image_name,
+            timeout_ms,
+        } => match foreground::bring_to_foreground(
+            &image_name,
+            std::time::Duration::from_millis(timeout_ms),
+        ) {
+            Ok(taken) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Foreground { taken },
             },
             Err(error) => error_frame(id, &error),
         },

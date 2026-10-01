@@ -166,7 +166,7 @@ pub fn kill_by_name(name: &str) -> io::Result<u32> {
 
 /// Snapshots every running process and returns the pids whose image file
 /// name matches `name`, case-insensitively.
-fn matching_pids(name: &str) -> io::Result<Vec<u32>> {
+pub(crate) fn matching_pids(name: &str) -> io::Result<Vec<u32>> {
     // SAFETY: `TH32CS_SNAPPROCESS` with a `th32ProcessID` of 0 snapshots
     // every process system-wide; the returned handle is checked below and
     // closed via `CloseHandle` before returning.

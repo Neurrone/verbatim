@@ -45,6 +45,10 @@ use crate::{ENDPOINT_ENV, endpoint};
 /// clean quit since it needs Verbatim still up to answer `DumpRecorder`.
 const TIMELINE_FILE_NAME: &str = "timeline.txt";
 const STDERR_FILE_NAME: &str = "stderr.log";
+
+/// How long [`Scenario::launch_target`] waits for the launched application's
+/// window before bringing it to the foreground.
+const LAUNCH_FOREGROUND_TIMEOUT: Duration = Duration::from_secs(10);
 const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
@@ -425,7 +429,19 @@ impl Scenario {
         let pid = self
             .process_agent
             .launch_process(command, &args, None, &[], None)?;
-        self.launched.push((pid, image_name(command)));
+        let image = image_name(command);
+        self.launched.push((pid, image.clone()));
+        // A user's launch puts the application in front; Windows' foreground
+        // lock would otherwise keep it behind whatever had the foreground
+        // when earlier scenarios last injected keys.
+        match self
+            .process_agent
+            .bring_to_foreground(&image, LAUNCH_FOREGROUND_TIMEOUT)
+        {
+            Ok(true) => {}
+            Ok(false) => eprintln!("{image} did not take the foreground after launch"),
+            Err(error) => eprintln!("could not bring {image} to the foreground: {error}"),
+        }
         Ok(pid)
     }
 

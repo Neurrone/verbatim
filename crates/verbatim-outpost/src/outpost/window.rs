@@ -89,7 +89,8 @@ fn window_is_topmost(window: HWND) -> bool {
 /// (`docs/parity.md`, "Event acceptance"): its top-level window, the top of
 /// its owner chain, whether it or its top-level window is topmost, and, for a
 /// `Windows.UI.Core` window only, whether it is the input thread's active
-/// window or inside it — NVDA's test for UWP windows.
+/// window or inside it — NVDA's test for UWP windows — and whether it is in
+/// the system's foreground window right now.
 pub(super) fn window_facts(handle: isize) -> WindowFacts {
     let window = hwnd(handle);
     // SAFETY: GetAncestor tolerates any handle, returning null for an
@@ -121,11 +122,21 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
                     && (info.hwndActive == window || IsChild(info.hwndActive, window).as_bool())
             }
         });
+    // SAFETY: GetForegroundWindow has no preconditions; GetAncestor
+    // tolerates any handle.
+    let in_foreground = unsafe {
+        let foreground = GetForegroundWindow();
+        !foreground.0.is_null()
+            && (root == foreground
+                || root_owner == foreground
+                || root_owner == GetAncestor(foreground, GA_ROOTOWNER))
+    };
     WindowFacts {
         top_level: window_handle(root.0 as isize),
         root_owner: window_handle(root_owner.0 as isize),
         topmost: window_is_topmost(window) || window_is_topmost(root),
         under_active_window,
+        in_foreground,
     }
 }
 

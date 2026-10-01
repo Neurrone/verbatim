@@ -67,6 +67,7 @@ fn window(handle: u64) -> WindowFacts {
         root_owner: WindowHandle(handle),
         topmost: false,
         under_active_window: None,
+        in_foreground: false,
     }
 }
 
@@ -2202,6 +2203,33 @@ fn the_same_node_number_from_another_outpost_never_reaches_the_focus() {
 
     let (_, effects) = reduce_from(&state, &value_changed, OutpostId(1));
     assert_eq!(effects.len(), 1, "the focus's own outpost");
+}
+
+#[test]
+fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_fact() {
+    // Windows raised the new window's foreground event while refusing it the
+    // foreground, so that fact was dropped; when it got the foreground later
+    // no second event came. Its focus says it is in the foreground window.
+    let state = switch_to(&SrState::new(), Pid(1));
+    let item = node(
+        2,
+        Role::TreeItem,
+        Some("System Summary"),
+        None,
+        StateSet::new(),
+    );
+    let facts = WindowFacts {
+        in_foreground: true,
+        ..window(30)
+    };
+
+    let (state, effects) = reduce(&state, &focus_in(Pid(2), facts, item, vec![]));
+
+    assert_eq!(effects.len(), 1, "the focus is spoken");
+    assert_eq!(state.attention(), Some(Pid(2)), "attention follows it");
+    let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
+    let (_, effects) = reduce(&state, &focus_in(Pid(2), window(30), button, vec![]));
+    assert_eq!(effects.len(), 1, "the window's later events are attended");
 }
 
 #[test]

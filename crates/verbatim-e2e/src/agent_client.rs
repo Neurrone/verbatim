@@ -173,6 +173,31 @@ impl AgentClient {
         }
     }
 
+    /// Brings a visible top-level window of a process named `image_name` to
+    /// the foreground on the guest, waiting up to `timeout` for one to
+    /// appear (`verbatim_agent::protocol::Request::BringToForeground`).
+    /// Returns whether such a window is the foreground window afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn bring_to_foreground(
+        &mut self,
+        image_name: &str,
+        timeout: std::time::Duration,
+    ) -> io::Result<bool> {
+        match self.request(Request::BringToForeground {
+            image_name: image_name.to_owned(),
+            timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::Foreground { taken },
+                ..
+            } => Ok(taken),
+            other => Err(unexpected("BringToForeground", &other)),
+        }
+    }
+
     /// Asks whether `pid` is still running on the guest.
     ///
     /// # Errors
