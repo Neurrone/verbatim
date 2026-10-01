@@ -43,8 +43,16 @@ const SUMMARY_FILE_NAME: &str = "summary.txt";
 /// [`crate::scenario`]'s own `workspace_root` uses for `target/e2e-stage`).
 #[must_use]
 pub fn artifacts_root() -> PathBuf {
-    if let Ok(overridden) = std::env::var(ARTIFACTS_DIR_ENV) {
-        return PathBuf::from(overridden);
+    resolve_artifacts_root(std::env::var(ARTIFACTS_DIR_ENV).ok())
+}
+
+/// The pure resolution logic behind [`artifacts_root`], split out so it can
+/// be unit tested without mutating the real process environment:
+/// `override_path`, when given, wins outright, otherwise the default under
+/// the workspace root.
+fn resolve_artifacts_root(override_path: Option<String>) -> PathBuf {
+    if let Some(path) = override_path {
+        return PathBuf::from(path);
     }
     crate::scenario::workspace_root()
         .join("target")
@@ -289,26 +297,21 @@ mod tests {
     }
 
     #[test]
-    fn artifacts_root_honors_the_env_override() {
-        // SAFETY (env mutation): this test's own doc — see
-        // `resolve_verbatim_exe_path`'s equivalent test in scenario.rs for
-        // why this crate's existing tests already mutate process env
-        // directly; the override is restored in every path, including panic
-        // unwind, via a guard.
-        struct RestoreEnv(Option<String>);
-        impl Drop for RestoreEnv {
-            fn drop(&mut self) {
-                match &self.0 {
-                    Some(value) => unsafe { std::env::set_var(ARTIFACTS_DIR_ENV, value) },
-                    None => unsafe { std::env::remove_var(ARTIFACTS_DIR_ENV) },
-                }
-            }
-        }
-        let _restore = RestoreEnv(std::env::var(ARTIFACTS_DIR_ENV).ok());
-        unsafe {
-            std::env::set_var(ARTIFACTS_DIR_ENV, r"C:\overridden\artifacts");
-        }
-        assert_eq!(artifacts_root(), PathBuf::from(r"C:\overridden\artifacts"));
+    fn resolve_artifacts_root_honors_the_override() {
+        assert_eq!(
+            resolve_artifacts_root(Some(r"C:\overridden\artifacts".to_owned())),
+            PathBuf::from(r"C:\overridden\artifacts")
+        );
+    }
+
+    #[test]
+    fn resolve_artifacts_root_defaults_under_the_workspace_root() {
+        assert_eq!(
+            resolve_artifacts_root(None),
+            crate::scenario::workspace_root()
+                .join("target")
+                .join("e2e-artifacts")
+        );
     }
 
     #[test]
