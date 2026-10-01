@@ -21,7 +21,13 @@ Public API:
   version mismatch), `LaunchProcess`, `KillProcess`,
   `KillProcessesByName` (every process with a given image name, for
   sweeping target applications that hand off to another process),
-  `ProcessStatus`, `SessionInfo`, `ReadFile`, `OpenControlTunnel`. `KillOutcome` makes
+  `BringToForeground` (wait for a visible top-level window of a given
+  image name and bring it to the foreground past Windows' foreground lock:
+  a Control tap and `SetForegroundWindow`, then the call attached to the
+  foreground thread's input queue, then one injected Alt+Tab when a cloaked
+  window such as the Start search host holds the foreground; protocol
+  version 1), `ProcessStatus`, `SessionInfo`, `ReadFile`,
+  `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` inherits the launched child's stdio (uncaptured) by

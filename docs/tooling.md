@@ -599,6 +599,19 @@ returns a window and that `DwmGetWindowAttribute` with
 `DWMWA_CLOAKED` (14) reads 0 for it; if not, click into a real window on
 the session's console first.
 
+**Windows' foreground lock keeps launched applications behind.** For 200
+seconds after the last input (`ForegroundLockTimeout`), injected keystrokes
+from earlier scenarios included, a newly launched application is refused
+the foreground: Windows raises its foreground event but keeps the previous
+window in front, and raises no second event if the application is given
+the foreground later. Verbatim, like NVDA, then rightly says nothing about
+it. `Scenario::launch_target` therefore asks the agent
+(`BringToForeground`) to put the application in front, as NVDA's system
+tests make sure a launched Notepad really is the foreground window. The
+agent prints which way it got there. A cloaked Start search window left
+holding the foreground after the Start menu scenarios refuses every API
+call, so the agent's last resort is one injected Alt+Tab.
+
 **Stray processes survive a failed run.** `Scenario`'s `Drop` impl always
 tries a clean `Quit` through the control plane, then unconditionally kills
 `verbatim.exe` (and anything launched via `launch_target`, such as

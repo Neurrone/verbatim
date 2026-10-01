@@ -11,6 +11,12 @@
 //! same technique `verbatim-gui` uses for its own popup: a bare Control tap
 //! to satisfy the lock's input heuristic, `SetForegroundWindow`, and, failing
 //! that, the call made while attached to the foreground thread's input queue.
+//!
+//! None of those can displace a cloaked `Windows.UI.Core` window, which the
+//! Start menu's search host leaves as the foreground window after it closes
+//! (found live). As a last resort, as NVDA's system tests fall back to the
+//! task switcher, one Alt+Tab is injected: the shell switches to a real
+//! window, after which the call succeeds.
 
 use std::ffi::c_void;
 use std::io;
@@ -22,7 +28,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VK_CONTROL,
+    VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, EnumWindows, GW_OWNER, GetForegroundWindow, GetWindow, GetWindowTextLengthW,
@@ -36,6 +42,9 @@ use crate::process::matching_pids;
 /// foreground.
 const POLL: Duration = Duration::from_millis(50);
 
+/// How long the shell is given to finish an Alt+Tab switch.
+const SWITCH_SETTLE: Duration = Duration::from_millis(500);
+
 /// Waits up to `timeout` for a visible, titled, unowned top-level window
 /// belonging to a process whose image name is `image_name`, and brings it to
 /// the foreground. Returns whether such a window is the foreground window
@@ -46,18 +55,37 @@ const POLL: Duration = Duration::from_millis(50);
 /// Returns an error if the process list cannot be read.
 pub fn bring_to_foreground(image_name: &str, timeout: Duration) -> io::Result<bool> {
     let deadline = Instant::now() + timeout;
+    let mut switched = false;
     loop {
         let pids = matching_pids(image_name)?;
         if let Some(window) = main_window_of(&pids) {
             if foreground_is(&pids) {
+                eprintln!("verbatim-agent: {image_name} is already the foreground window");
                 return Ok(true);
             }
             force_foreground(window);
             if foreground_is(&pids) {
+                eprintln!(
+                    "verbatim-agent: {image_name} brought to the foreground{}",
+                    if switched { " after an Alt+Tab" } else { "" }
+                );
                 return Ok(true);
+            }
+            if !switched {
+                switched = true;
+                // SAFETY: GetForegroundWindow has no preconditions.
+                let stuck = unsafe { GetForegroundWindow() };
+                eprintln!(
+                    "verbatim-agent: {image_name} refused the foreground (held by window {:?}); trying Alt+Tab",
+                    stuck.0
+                );
+                alt_tab();
+                thread::sleep(SWITCH_SETTLE);
+                continue;
             }
         }
         if Instant::now() >= deadline {
+            eprintln!("verbatim-agent: {image_name} did not take the foreground in time");
             return Ok(false);
         }
         thread::sleep(POLL);
@@ -117,26 +145,45 @@ fn main_window_of(pids: &[u32]) -> Option<HWND> {
     search.found
 }
 
-/// Injects a bare Control down-then-up tap, which satisfies the foreground
-/// lock's input heuristic before `SetForegroundWindow` (see
-/// `verbatim-gui`'s `foreground` module for why Control and not Alt).
-fn nudge_foreground_lock() {
-    let key = |flags| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VK_CONTROL,
-                dwFlags: flags,
-                ..Default::default()
+/// Injects one Alt+Tab, leaving Alt held briefly so the shell completes the
+/// switch rather than showing its switcher.
+fn alt_tab() {
+    send_keys(&[(VK_MENU, false), (VK_TAB, false), (VK_TAB, true)]);
+    thread::sleep(Duration::from_millis(150));
+    send_keys(&[(VK_MENU, true)]);
+}
+
+/// Injects key presses (`true` for a release).
+fn send_keys(keys: &[(VIRTUAL_KEY, bool)]) {
+    let inputs: Vec<INPUT> = keys
+        .iter()
+        .map(|&(key, up)| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: key,
+                    dwFlags: if up {
+                        KEYEVENTF_KEYUP
+                    } else {
+                        KEYBD_EVENT_FLAGS(0)
+                    },
+                    ..Default::default()
+                },
             },
-        },
-    };
-    let inputs = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
-    // SAFETY: `inputs` is a fully initialized array of INPUT structures,
+        })
+        .collect();
+    // SAFETY: `inputs` is a fully initialized slice of INPUT structures,
     // copied by SendInput.
     unsafe {
         SendInput(&inputs, i32::try_from(size_of::<INPUT>()).unwrap_or(0));
     }
+}
+
+/// Injects a bare Control down-then-up tap, which satisfies the foreground
+/// lock's input heuristic before `SetForegroundWindow` (see
+/// `verbatim-gui`'s `foreground` module for why Control and not Alt).
+fn nudge_foreground_lock() {
+    send_keys(&[(VK_CONTROL, false), (VK_CONTROL, true)]);
 }
 
 /// Brings `window` to the foreground: directly after the nudge, else while

@@ -24,7 +24,7 @@ Public API:
   number, and the facts about an event's window its outpost reads with
   local calls: top-level window, root owner, whether it is topmost, and for
   `Windows.UI.Core` windows whether it is under the input thread's active
-  window. The reducer classifies events against its attention record with
+  window, and whether it is in the system's foreground window. The reducer classifies events against its attention record with
   these.
 - `Backend` — `Uia` or `Msaa`; which client stack sourced a node or event.
   Diagnostics only above the outpost.

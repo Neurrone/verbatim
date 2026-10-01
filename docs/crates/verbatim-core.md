@@ -83,12 +83,16 @@ Implementation notes, `reduce`:
   accepted, because its outpost has already checked that the window is
   still the system's foreground window. Any other event is attended when
   its window facts share the attention window's top-level window or root
-  owner, are topmost, or report a `Windows.UI.Core` window under the input
-  thread's active window; when either side has no window facts, the
+  owner, are topmost, report a `Windows.UI.Core` window under the input
+  thread's active window, or say the window is in the system's foreground
+  window; when either side has no window facts, the
   application decides. UIA notifications are filtered by application
   instead, as NVDA filters them, except the shell's window-snap results,
-  which are spoken from anywhere. Only a foreground change moves
-  attention, so a topmost popup menu taking focus leaves it where it was.
+  which are spoken from anywhere. A foreground change moves attention, and
+  so does a focus in the system's foreground window that is unrelated to
+  the attention window (Windows can raise no foreground event for a window
+  given the foreground after its launch); a topmost popup menu taking focus
+  without becoming the foreground leaves it where it was.
   Events from elsewhere are dropped, except background kinds, which are spoken
   queued and never move focus or the navigator. With no attention yet,
   everything is accepted.

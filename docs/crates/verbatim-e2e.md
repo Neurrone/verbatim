@@ -45,7 +45,10 @@ Public API:
   happens to a gesture sent before that pause. `control()` and `speech()`
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
   `kill_target`, `process_status`, `quit_verbatim`, and `report_latency`
-  drive the running instance; `latency_snapshot` is the non-asserting,
+  drive the running instance (`launch_target` also asks the agent to bring
+  the launched application's window to the foreground, as a user's launch
+  would, since Windows' foreground lock otherwise keeps it behind the window
+  earlier scenarios typed into); `latency_snapshot` is the non-asserting,
   non-printing fetch the registry's run summary uses (see `registry`
   below), and `collect_run_artifacts` (timeline, stderr, and the per-process
   outpost and listener logs fetched from the guest's `logs` directory — Core's

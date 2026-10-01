@@ -107,7 +107,8 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Window facts** — what an outpost attaches to each event about the
   window it concerns, read with local calls: its top-level window,
   root owner, whether it is topmost, and for `Windows.UI.Core` windows
-  whether it is under the input thread's active window; the reducer
+  whether it is under the input thread's active window, and whether it is
+  in the system's foreground window; the reducer
   classifies the event against attention with them.
   [verbatim-model](crates/verbatim-model.md).
 - **Worker** — the one thread per outpost that takes entries from the

@@ -140,11 +140,20 @@ verified.
   is no longer the system's foreground. Every other event, focus
   events included, is classified against the record from window
   facts its outpost attached: top-level window, root owner, topmost,
-  and for `Windows.UI.Core` windows whether the window is under the
-  input thread's active window. Nothing else moves attention, so a
-  topmost popup menu that takes focus without becoming the
-  foreground leaves attention where it was, and focus returning from
-  it is still attended. Accepted from anywhere as background: toast
+  for `Windows.UI.Core` windows whether the window is under the
+  input thread's active window, and whether the window is in the
+  system's foreground window when the outpost read the event (NVDA's
+  live test: its top-level window is the foreground window, or its root
+  owner is the foreground window or that window's root owner). Such an
+  event is attended. Windows can raise a window's foreground event while
+  its foreground lock keeps another window in front, and raises none
+  when the window is given the foreground later (found live), so a
+  focus in the system's foreground window that is unrelated to the
+  attention window moves attention, as NVDA takes the foreground from
+  the focus's ancestry. Nothing else moves attention, so a topmost
+  popup menu that takes focus without becoming the foreground leaves
+  attention where it was, and focus returning from it is still
+  attended. Accepted from anywhere as background: toast
   alerts and the shell's window-snap results; other UIA notifications
   only from the attention application. Accepted background events
   never move focus or the navigator and are spoken queued.

@@ -288,8 +288,9 @@ Implementation notes:
   ledger and `WindowFacts` for the window it concerns (`window_facts`:
   top-level window and root owner from `GetAncestor`, the topmost extended
   style on the window or its top-level window, and for `Windows.UI.Core`
-  windows whether `GetGUIThreadInfo`'s active window is it or contains it),
-  all local calls.
+  windows whether `GetGUIThreadInfo`'s active window is it or contains it,
+  and whether it is in `GetForegroundWindow`'s window by NVDA's test), all
+  local calls.
 - A UIA focus fact is resolved with one `focused_element` call compared
   against the fact's runtime id. A mismatch means focus has already moved
   and the newer fact will arrive, so the stale one is dropped; there is no
