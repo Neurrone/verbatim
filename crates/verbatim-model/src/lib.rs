@@ -16,7 +16,7 @@ mod tree;
 pub use event::{
     Earcon, Effect, FetchResult, Input, NormalizedEvent, Notification, NotificationKind,
     NotificationProcessing, Pid, PropertyChange, Query, QueryId, QueryKind, ReviewCommand,
-    SnapshotVersion,
+    WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use speech::{
@@ -80,19 +80,87 @@ impl fmt::Display for TraceId {
 /// the UIA focus callback, and the synthetic focus query alike.
 pub const HIDDEN_FRAME_WINDOW_PROP: &str = "VerbatimHiddenFrame";
 
-/// Stable identity of one node in an outpost's normalized tree fragment.
+/// Names one outpost process incarnation.
+///
+/// The supervisor assigns a fresh one at every spawn and never reuses one, so
+/// a node id from a replaced outpost can never name a node in its successor.
+/// Core attaches it to everything an outpost sends according to the pipe the
+/// message arrived on, never from the message body; an outpost itself only
+/// ever mints ids with [`OutpostId::UNASSIGNED`].
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub struct OutpostId(pub u64);
+
+impl OutpostId {
+    /// The placeholder an outpost mints its node ids with, before Core stamps
+    /// the real incarnation on them. Never assigned to a running outpost.
+    pub const UNASSIGNED: OutpostId = OutpostId(0);
+}
+
+impl fmt::Display for OutpostId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Identity of one node: the outpost incarnation that issued it plus a number
+/// unique within that incarnation.
 ///
 /// Backend runtime identifiers (UIA runtime IDs, MSAA object and child IDs)
-/// are mapped to `NodeId`s by the owning outpost; the reducer and everything
-/// above it never see backend identifiers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct NodeId(u64);
+/// are mapped to numbers by the owning outpost; the reducer and everything
+/// above it never see backend identifiers. Node ids are comparable only within
+/// one outpost: the same window seen by two outposts has two different ids.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct NodeId {
+    outpost: OutpostId,
+    number: u64,
+}
 
 impl NodeId {
-    /// Wraps a raw outpost-assigned identifier.
+    /// A node id as an outpost mints it: `number` with the outpost left
+    /// [`OutpostId::UNASSIGNED`] for Core to stamp.
     #[must_use]
-    pub const fn new(raw: u64) -> Self {
-        Self(raw)
+    pub const fn new(number: u64) -> Self {
+        Self {
+            outpost: OutpostId::UNASSIGNED,
+            number,
+        }
+    }
+
+    /// A node id issued by `outpost`.
+    #[must_use]
+    pub const fn in_outpost(outpost: OutpostId, number: u64) -> Self {
+        Self { outpost, number }
+    }
+
+    /// The outpost incarnation that issued this id.
+    #[must_use]
+    pub const fn outpost(self) -> OutpostId {
+        self.outpost
+    }
+
+    /// The number the issuing outpost gave the node.
+    #[must_use]
+    pub const fn number(self) -> u64 {
+        self.number
+    }
+
+    /// This id with its outpost replaced by `outpost`, the stamp Core applies
+    /// to everything arriving on that outpost's pipe.
+    #[must_use]
+    pub const fn with_outpost(self, outpost: OutpostId) -> Self {
+        Self {
+            outpost,
+            number: self.number,
+        }
+    }
+
+    /// This id as its issuing outpost knows it, with the outpost part
+    /// cleared, for looking the node up inside that outpost.
+    #[must_use]
+    pub const fn unstamped(self) -> Self {
+        Self::new(self.number)
     }
 }
 
@@ -111,5 +179,14 @@ mod tests {
     fn node_ids_compare_by_value() {
         assert_eq!(NodeId::new(7), NodeId::new(7));
         assert_ne!(NodeId::new(7), NodeId::new(8));
+    }
+
+    #[test]
+    fn the_same_number_from_two_outposts_names_two_nodes() {
+        let old = NodeId::in_outpost(OutpostId(1), 7);
+        let new = NodeId::in_outpost(OutpostId(2), 7);
+        assert_ne!(old, new);
+        assert_eq!(old.unstamped(), new.unstamped());
+        assert_eq!(NodeId::new(7).with_outpost(OutpostId(2)), new);
     }
 }

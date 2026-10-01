@@ -8,8 +8,9 @@
 //! property handlers and its out-of-context MSAA `WinEvent` hooks run
 //! simultaneously; the arbitration cross-filter (see [`crate::arbitration`])
 //! ensures only one backend announces any given change. Trace IDs are minted
-//! the moment an OS event is observed; the snapshot version increments on
-//! every emitted event.
+//! the moment an OS event is observed, and every emitted event carries facts
+//! about its window, read with local calls, for the reducer's attention
+//! classification.
 
 use std::ffi::c_void;
 use std::io::{self, BufReader, Write};
@@ -26,9 +27,10 @@ use windows::Win32::UI::Accessibility::{
     UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GA_ROOT, GUITHREADINFO, GetAncestor, GetForegroundWindow,
-    GetGUIThreadInfo, GetMessageW, GetPropW, GetWindowThreadProcessId, IsWindowVisible, MSG,
-    OBJID_CLIENT, PostThreadMessageW, TranslateMessage,
+    DispatchMessageW, EnumWindows, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
+    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetPropW, GetWindowLongW,
+    GetWindowThreadProcessId, IsChild, IsWindowVisible, MSG, OBJID_CLIENT, PostThreadMessageW,
+    TranslateMessage, WS_EX_TOPMOST,
 };
 use windows::core::{BOOL, HSTRING};
 
@@ -38,7 +40,7 @@ use verbatim_ia2::{
 };
 use verbatim_model::{
     Backend, FetchResult, HIDDEN_FRAME_WINDOW_PROP, NodeDetails, NodeSnapshot, NormalizedEvent,
-    Pid, PropertyChange, SnapshotVersion, TraceId,
+    Pid, PropertyChange, TraceId, WindowFacts, WindowHandle,
 };
 use verbatim_uia::map::{
     cached_native_window_handle, notification_kind_from_uia, notification_processing_from_uia,
@@ -124,28 +126,11 @@ const ANNOUNCE_RETRY_ATTEMPTS: u32 = 10;
 /// Spacing between announce retry attempts.
 const ANNOUNCE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
-/// How many attempts the window announcement job holds the serial announce
-/// lane for while its window is still nameless: three, spaced
-/// [`WINDOW_LANE_INTERVAL`] apart, so the lane is held at most roughly 600
-/// milliseconds plus the reads' own time. The lane must never starve the
-/// control announcement queued behind the window — the failure the old
-/// per-fact threads produced was the window emitting *after* the control and
-/// being dropped by the reducer as stale — so the window job releases the lane
-/// after this bound whether or not it has succeeded, continuing any remaining
-/// retries off the lane (see [`window_announce_job`]).
-const WINDOW_LANE_ATTEMPTS: u32 = 3;
-
-/// Spacing between the window job's on-lane nameless-retry attempts — tighter
-/// than [`ANNOUNCE_RETRY_INTERVAL`] because these attempts hold the lane and so
-/// must be brief; the background remainder uses the wider spacing.
-const WINDOW_LANE_INTERVAL: Duration = Duration::from_millis(200);
-
 /// Shared state cloned into every callback and query. All fields are cheap to
 /// clone (channels, atomics, and `Arc`-backed registries and the arbitrator).
 #[derive(Clone)]
 struct Shared {
     outbound: Sender<OutpostToSupervisor>,
-    version: Arc<AtomicU64>,
     arbitrator: Arc<Mutex<Arbitrator>>,
     pool: QueryPool,
     uia_registry: UiaRegistry,
@@ -164,11 +149,18 @@ struct Shared {
 }
 
 impl Shared {
-    /// Sends one normalized event, stamping it with the next snapshot version
-    /// and the current time as the observation timestamp — for an event this
-    /// outpost observed itself through its own hook.
-    fn emit(&self, trace: TraceId, backend: Backend, event: NormalizedEvent) {
-        self.emit_at(trace, now_ms(), backend, event);
+    /// Sends one normalized event, stamping it with the current time as the
+    /// observation timestamp and with the facts of `window`, the window the
+    /// event concerns — for an event this outpost observed itself through its
+    /// own hook.
+    fn emit(
+        &self,
+        trace: TraceId,
+        backend: Backend,
+        window: Option<isize>,
+        event: NormalizedEvent,
+    ) {
+        self.emit_at(trace, now_ms(), backend, window, event);
     }
 
     /// Sends one normalized event with an explicit observation timestamp — for
@@ -181,14 +173,14 @@ impl Shared {
         trace: TraceId,
         observed_at_ms: u64,
         backend: Backend,
+        window: Option<isize>,
         event: NormalizedEvent,
     ) {
-        let version = SnapshotVersion(self.version.fetch_add(1, Ordering::Relaxed) + 1);
         let _ = self.outbound.send(OutpostToSupervisor::Event {
             trace_id: trace,
             observed_at_ms,
             backend,
-            version,
+            window: window.map(window_facts),
             event,
         });
     }
@@ -256,6 +248,75 @@ pub(crate) fn now_ms() -> u64 {
             .as_millis(),
     )
     .unwrap_or(u64::MAX)
+}
+
+/// `hwnd` as the model's opaque window handle.
+fn window_handle(hwnd: isize) -> WindowHandle {
+    WindowHandle(u64::from_ne_bytes(hwnd.to_ne_bytes()))
+}
+
+/// Whether `hwnd` has the topmost extended style. A local read that tolerates
+/// any handle.
+fn window_is_topmost(hwnd: HWND) -> bool {
+    // SAFETY: GetWindowLongW reads a window's style word; an invalid handle
+    // yields 0.
+    let style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
+    style.cast_unsigned() & WS_EX_TOPMOST.0 != 0
+}
+
+/// Facts about `hwnd`'s window for the reducer's attention classification
+/// (`docs/parity.md`, "Event acceptance"): its top-level window, the top of
+/// its owner chain, whether it or its top-level window is topmost, and, for a
+/// `Windows.UI.Core` window only, whether it is the input thread's active
+/// window or inside it — NVDA's test for UWP windows. Every read is a local
+/// call, so this is safe on any thread and cannot block on a hung
+/// application.
+fn window_facts(hwnd: isize) -> WindowFacts {
+    let window = HWND(hwnd as *mut c_void);
+    // SAFETY: GetAncestor tolerates any handle, returning null for an
+    // invalid one.
+    let (root, root_owner) = unsafe {
+        (
+            GetAncestor(window, GA_ROOT),
+            GetAncestor(window, GA_ROOTOWNER),
+        )
+    };
+    let root = if root.0.is_null() { window } else { root };
+    let root_owner = if root_owner.0.is_null() {
+        root
+    } else {
+        root_owner
+    };
+    let under_active_window = window_class_name(hwnd)
+        .starts_with("Windows.UI.Core")
+        .then(|| {
+            let mut info = GUITHREADINFO {
+                cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
+                ..Default::default()
+            };
+            // SAFETY: `info` has cbSize set before the call; IsChild tolerates
+            // any pair of handles.
+            unsafe {
+                GetGUIThreadInfo(0, &raw mut info).is_ok()
+                    && !info.hwndActive.0.is_null()
+                    && (info.hwndActive == window || IsChild(info.hwndActive, window).as_bool())
+            }
+        });
+    WindowFacts {
+        top_level: window_handle(root.0 as isize),
+        root_owner: window_handle(root_owner.0 as isize),
+        topmost: window_is_topmost(window) || window_is_topmost(root),
+        under_active_window,
+    }
+}
+
+/// Whether `hwnd` is still the system's foreground window. A foreground fact
+/// whose window is no longer the foreground is dropped before it is sent, as
+/// NVDA's `processForegroundWinEvent` drops it; the reducer accepts every
+/// foreground fact on the strength of this check.
+fn window_is_foreground(hwnd: isize) -> bool {
+    // SAFETY: GetForegroundWindow has no preconditions.
+    unsafe { GetForegroundWindow() }.0 as isize == hwnd
 }
 
 /// Whether `hwnd` carries Core's hidden-main-frame marker property (decision
@@ -362,6 +423,7 @@ fn handle_msaa_event(
             let event = if kind == WinEventKind::Focus {
                 let (ancestors, selected_child) = focus_enrichment_query(worker, &shared, &node);
                 NormalizedEvent::FocusChanged {
+                    foreground: false,
                     node: node.clone(),
                     ancestors,
                     selected_child,
@@ -369,7 +431,7 @@ fn handle_msaa_event(
             } else {
                 msaa_event(kind, &node)
             };
-            shared.emit_at(trace, observed_at_ms, Backend::Msaa, event);
+            shared.emit_at(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
         }
     });
 }
@@ -393,6 +455,7 @@ fn msaa_event(kind: WinEventKind, node: &NodeSnapshot) -> NormalizedEvent {
         // same bare focus shape defensively.
         WinEventKind::Focus | WinEventKind::MenuPopupStart | WinEventKind::Foreground => {
             NormalizedEvent::FocusChanged {
+                foreground: false,
                 node: node.clone(),
                 ancestors: Vec::new(),
                 selected_child: None,
@@ -491,18 +554,6 @@ unsafe fn resolve_window_and_filter(
         }
     };
     (deliver, Some(hwnd))
-}
-
-/// Applies the UIA cross-filter for an element on a callback thread, for
-/// callers (the property-change path) that do not also need the resolved
-/// window handle. See [`resolve_window_and_filter`] for the full reasoning.
-///
-/// # Safety
-///
-/// `element` must be a cached element from the base cache request.
-unsafe fn uia_passes_filter(shared: &Shared, element: &IUIAutomationElement) -> bool {
-    // SAFETY: forwarded.
-    unsafe { resolve_window_and_filter(shared, element).0 }
 }
 
 /// The event thread: installs the requested MSAA hooks once (scoped to the
@@ -645,7 +696,6 @@ impl Outpost {
         let id_counter = Arc::new(AtomicU64::new(1));
         let shared = Shared {
             outbound,
-            version: Arc::new(AtomicU64::new(0)),
             arbitrator: Arc::new(Mutex::new(Arbitrator::new(&[]))),
             pool: QueryPool::new(2),
             uia_registry: UiaRegistry::new(id_counter.clone()),
@@ -733,7 +783,8 @@ impl Outpost {
             Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
                 // SAFETY: as above, the property element carries cached values.
                 unsafe {
-                    if !uia_passes_filter(&property_shared, element) {
+                    let (deliver, hwnd) = resolve_window_and_filter(&property_shared, element);
+                    if !deliver {
                         return;
                     }
                     let node = snapshot_from_cached_element(element, &property_shared.uia_registry);
@@ -756,7 +807,7 @@ impl Outpost {
                             change: PropertyChange::States(node.states),
                         }
                     };
-                    property_shared.emit(TraceId::mint(), Backend::Uia, event);
+                    property_shared.emit(TraceId::mint(), Backend::Uia, hwnd, event);
                 }
             });
         let windows = top_level_windows(target_pid);
@@ -778,13 +829,15 @@ impl Outpost {
         let selection_callback = Arc::new(move |element: &IUIAutomationElement| {
             // SAFETY: as above, the selected element carries cached values.
             unsafe {
-                if !uia_passes_filter(&selection_shared, element) {
+                let (deliver, hwnd) = resolve_window_and_filter(&selection_shared, element);
+                if !deliver {
                     return;
                 }
                 let node = snapshot_from_cached_element(element, &selection_shared.uia_registry);
                 selection_shared.emit(
                     TraceId::mint(),
                     Backend::Uia,
+                    hwnd,
                     NormalizedEvent::SelectionChanged { node },
                 );
             }
@@ -812,7 +865,8 @@ impl Outpost {
                   activity_id: Option<String>| {
                 // SAFETY: as above, the notifying element carries cached values.
                 unsafe {
-                    if !uia_passes_filter(&notification_shared, element) {
+                    let (deliver, hwnd) = resolve_window_and_filter(&notification_shared, element);
+                    if !deliver {
                         return;
                     }
                     let node =
@@ -826,6 +880,7 @@ impl Outpost {
                     notification_shared.emit(
                         TraceId::mint(),
                         Backend::Uia,
+                        hwnd,
                         NormalizedEvent::Notification {
                             node_id: node.id,
                             notification,
@@ -938,47 +993,28 @@ impl Outpost {
         let _ = self.announce_tx.send(job);
     }
 
-    /// Answers a fetch by re-reading the node from whichever backend owns it.
+    /// Answers a fetch: one object-navigation step, which can block on a hung
+    /// provider and so runs deadline-guarded like the other navigation
+    /// queries, abandoning rather than wedging the outpost. A kind this
+    /// outpost does not know answers "gone".
     fn handle_fetch(&self, trace: TraceId, query: verbatim_model::Query) {
         let shared = self.shared.clone();
         let node_id = query.node_id;
-        let query_id = query.query_id;
-        // A re-read is fire-and-forget on a worker; the object-navigation
-        // kinds walk one step and can block on a hung provider, so they run
-        // deadline-guarded like the other navigation queries, abandoning
-        // rather than wedging the outpost. Both reply on the same
-        // query-id-correlated FetchReply path so the reducer's completion
-        // handling is identical for either.
-        match navigate_direction_of(query.kind) {
-            None => {
-                // Deadline-guarded like every cross-process call: a plain
-                // re-read on a hung provider abandons its worker rather than
-                // draining the pool (QUERY_DEADLINE — a single-node re-read).
-                self.shared
-                    .pool
-                    .submit_deadline(QUERY_DEADLINE, move |worker| {
-                        let result = refetch_node(worker, &shared, node_id)
-                            .map_or(FetchResult::Gone, FetchResult::Node);
-                        let _ = shared.outbound.send(OutpostToSupervisor::FetchReply {
-                            trace_id: trace,
-                            query_id,
-                            result,
-                        });
-                    });
-            }
+        let result = match navigate_direction_of(query.kind) {
             Some(direction) => {
-                let outbound = self.shared.outbound.clone();
                 let outcome = self.shared.pool.run(NAVIGATE_DEADLINE, move |worker| {
                     navigate_query(worker, &shared, node_id, direction)
                 });
-                let result = fetch_result_for_navigate(outcome);
-                let _ = outbound.send(OutpostToSupervisor::FetchReply {
-                    trace_id: trace,
-                    query_id,
-                    result,
-                });
+                fetch_result_for_navigate(outcome)
             }
-        }
+            None => FetchResult::Gone,
+        };
+        let _ = self.shared.outbound.send(OutpostToSupervisor::FetchReply {
+            trace_id: trace,
+            query_id: query.query_id,
+            kind: query.kind,
+            result,
+        });
     }
 
     /// Answers a `DumpTree` request by walking the target application's
@@ -1090,7 +1126,11 @@ impl Outpost {
                 true
             }
             SupervisorToOutpost::Fetch { trace_id, query } => {
-                self.handle_fetch(*trace_id, *query);
+                let query = verbatim_model::Query {
+                    node_id: query.node_id.unstamped(),
+                    ..*query
+                };
+                self.handle_fetch(*trace_id, query);
                 true
             }
             SupervisorToOutpost::Ping { seq } => {
@@ -1105,7 +1145,7 @@ impl Outpost {
                 true
             }
             SupervisorToOutpost::AncestorChain { trace_id, node_id } => {
-                self.handle_ancestor_chain(*trace_id, *node_id);
+                self.handle_ancestor_chain(*trace_id, node_id.unstamped());
                 true
             }
             SupervisorToOutpost::Navigate {
@@ -1113,11 +1153,11 @@ impl Outpost {
                 node_id,
                 direction,
             } => {
-                self.handle_navigate(*trace_id, *node_id, *direction);
+                self.handle_navigate(*trace_id, node_id.unstamped(), *direction);
                 true
             }
             SupervisorToOutpost::Activate { trace_id, node_id } => {
-                self.handle_activate(*trace_id, *node_id);
+                self.handle_activate(*trace_id, node_id.unstamped());
                 true
             }
             SupervisorToOutpost::Shutdown => false,
@@ -1172,29 +1212,23 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
                 window_snapshot(worker, hwnd, &shared_for_window)
             });
             if let Some(Some((backend, node))) = window {
-                // A window with no name yet announces as a bare "window" —
-                // pure noise. Observed live on a cold guest: the menu popup
-                // window exists before the platform gives it its accessible
-                // name, and announcing that instant was the "window window"
-                // heard on the first Verbatim+V after a fresh restore. Skip
-                // it and let the next attempt read the name that arrives a
-                // beat later; a window still nameless when the attempts run
-                // out simply goes unannounced, which says exactly as much
-                // as "window" did.
-                let named = node.name.as_deref().is_some_and(|name| !name.is_empty());
-                if named {
-                    window_done = true;
-                    if still_current() {
-                        shared.emit(
-                            TraceId::mint(),
-                            backend,
-                            NormalizedEvent::FocusChanged {
-                                node,
-                                ancestors: Vec::new(),
-                                selected_child: None,
-                            },
-                        );
-                    }
+                // Reported named or not: the foreground change is what moves
+                // the reducer's attention, and the reducer does not announce
+                // a nameless window (the "window window" once heard on a
+                // cold guest's first Verbatim+V).
+                window_done = true;
+                if still_current() && window_is_foreground(hwnd) {
+                    shared.emit(
+                        TraceId::mint(),
+                        backend,
+                        Some(hwnd),
+                        NormalizedEvent::FocusChanged {
+                            foreground: true,
+                            node,
+                            ancestors: Vec::new(),
+                            selected_child: None,
+                        },
+                    );
                 }
             }
         }
@@ -1225,7 +1259,9 @@ fn run_announce(shared: &Shared, target_pid: u32, generation: u64) {
                     shared.emit(
                         TraceId::mint(),
                         backend,
+                        focused_window(target_pid),
                         NormalizedEvent::FocusChanged {
+                            foreground: false,
                             node,
                             ancestors,
                             selected_child,
@@ -1284,23 +1320,18 @@ fn uia_fact_window(
     nearest_window_handle(&element)
 }
 
-/// The foreground window's announce-lane job (decision D13): read and announce
-/// the snapshot of `hwnd` — a known foreground window address — so it is spoken
-/// before the focused control queued behind it. Reuses [`run_announce`]'s
-/// window-step reasoning: a window with no accessible name yet announces as a
-/// bare "window", pure noise, so it retries while nameless rather than guessing.
+/// The foreground window's announce-lane job (decision D13): read `hwnd` — a
+/// known foreground window address — and report it as a foreground change, a
+/// focus on the window, before the focused control queued behind it.
 ///
-/// It holds the lane for at most [`WINDOW_LANE_ATTEMPTS`] attempts spaced
-/// [`WINDOW_LANE_INTERVAL`] apart. If the window is named within that budget it
-/// announces in order and the lane moves on. If it is still nameless, the lane
-/// must move on regardless (it must never starve the control announcement), so
-/// this hands the remaining retry budget to [`background_window_retry`] off the
-/// lane and returns; that background retry emits the window announcement late —
-/// out of order rather than lost — when the name finally arrives, and the
-/// reducer's window carve-out speaks a late window announcement without moving
-/// focus. `generation` is the announce generation captured at enqueue; a
-/// superseding announce or foreground fact bumps it and aborts the retry. Core's
-/// own hidden main frame is never announced (decision D9).
+/// The window is reported once, named or not: the foreground change is what
+/// moves the reducer's attention to this application, so it must never wait
+/// for a name, and the reducer decides what to say (a nameless window is not
+/// announced, then or later, as in NVDA). A window that is no longer the
+/// system's foreground window by the time it is read is not reported, since a
+/// newer foreground change has superseded it. `generation` is the announce
+/// generation captured at enqueue; a superseding announce or foreground fact
+/// bumps it. Core's own hidden main frame is never reported (decision D9).
 fn window_announce_job(
     shared: &Shared,
     hwnd: isize,
@@ -1309,97 +1340,30 @@ fn window_announce_job(
     generation: u64,
 ) {
     let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
-    if window_belongs_to_hidden_frame(hwnd) {
+    if window_belongs_to_hidden_frame(hwnd) || !still_current() {
         return;
     }
-    for attempt in 0..WINDOW_LANE_ATTEMPTS {
-        if !still_current() {
-            return;
-        }
-        if let Some((backend, node)) = read_named_window(shared, hwnd) {
-            if still_current() {
-                shared.emit_at(
-                    trace,
-                    observed_at_ms,
-                    backend,
-                    NormalizedEvent::FocusChanged {
-                        node,
-                        ancestors: Vec::new(),
-                        selected_child: None,
-                    },
-                );
-            }
-            return;
-        }
-        if attempt + 1 < WINDOW_LANE_ATTEMPTS {
-            thread::sleep(WINDOW_LANE_INTERVAL);
-        }
-    }
-    // Still nameless after holding the lane: release it (the control behind us
-    // must not wait) and finish the retry budget on a background thread.
-    if still_current() {
-        let shared = shared.clone();
-        let _ = thread::Builder::new()
-            .name("verbatim-window-late".to_owned())
-            .spawn(move || {
-                background_window_retry(&shared, hwnd, trace, observed_at_ms, generation);
-            });
-    }
-}
-
-/// The off-lane remainder of [`window_announce_job`]'s retry budget: the
-/// window was still nameless when the lane had to move on, so this finishes the
-/// [`ANNOUNCE_RETRY_ATTEMPTS`] budget (the attempts the lane did not spend), at
-/// the wider [`ANNOUNCE_RETRY_INTERVAL`], and emits the window announcement the
-/// moment the name arrives — late, out of order, but not lost. Aborts if the
-/// announce generation is superseded, exactly as the on-lane phase does.
-fn background_window_retry(
-    shared: &Shared,
-    hwnd: isize,
-    trace: TraceId,
-    observed_at_ms: u64,
-    generation: u64,
-) {
-    let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
-    for _ in WINDOW_LANE_ATTEMPTS..ANNOUNCE_RETRY_ATTEMPTS {
-        thread::sleep(ANNOUNCE_RETRY_INTERVAL);
-        if !still_current() {
-            return;
-        }
-        if let Some((backend, node)) = read_named_window(shared, hwnd) {
-            if still_current() {
-                shared.emit_at(
-                    trace,
-                    observed_at_ms,
-                    backend,
-                    NormalizedEvent::FocusChanged {
-                        node,
-                        ancestors: Vec::new(),
-                        selected_child: None,
-                    },
-                );
-            }
-            return;
-        }
-    }
-}
-
-/// Reads `hwnd`'s window snapshot on a deadline-guarded worker and returns it
-/// only when the window has a non-empty accessible name — the shared "is it
-/// named yet?" step of both the on-lane and background window retries. `None`
-/// covers a read that timed out, found nothing, or found a still-nameless
-/// window.
-fn read_named_window(shared: &Shared, hwnd: isize) -> Option<(Backend, NodeSnapshot)> {
     let shared_for_window = shared.clone();
     let window = shared.pool.run(FOCUS_DEADLINE, move |worker| {
         window_snapshot(worker, hwnd, &shared_for_window)
     });
     if let Some(Some((backend, node))) = window
-        && node.name.as_deref().is_some_and(|name| !name.is_empty())
+        && still_current()
+        && window_is_foreground(hwnd)
     {
-        return Some((backend, node));
+        shared.emit_at(
+            trace,
+            observed_at_ms,
+            backend,
+            Some(hwnd),
+            NormalizedEvent::FocusChanged {
+                foreground: true,
+                node,
+                ancestors: Vec::new(),
+                selected_child: None,
+            },
+        );
     }
-    None
 }
 
 /// Resolves the real arbitration verdict for a fact's window, blocking on the
@@ -1495,6 +1459,7 @@ fn run_msaa_fact(
             })
             .unwrap_or_default();
         NormalizedEvent::FocusChanged {
+            foreground: false,
             node,
             ancestors,
             selected_child,
@@ -1502,7 +1467,7 @@ fn run_msaa_fact(
     } else {
         msaa_event(kind, &node)
     };
-    shared.emit_at(trace, observed_at_ms, Backend::Msaa, event);
+    shared.emit_at(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
 }
 
 /// The per-fact-thread body for a UIA focus fact (decision D13). Mints the node
@@ -1568,7 +1533,9 @@ fn run_uia_fact(
         trace,
         observed_at_ms,
         Backend::Uia,
+        window,
         NormalizedEvent::FocusChanged {
+            foreground: false,
             node,
             ancestors,
             selected_child,
@@ -1655,25 +1622,6 @@ fn resolve_uia_element(
     None
 }
 
-/// Re-reads a node by id from whichever registry knows it.
-fn refetch_node(
-    worker: &mut Worker,
-    shared: &Shared,
-    node_id: verbatim_model::NodeId,
-) -> Option<NodeSnapshot> {
-    if shared.uia_registry.runtime_id_of(node_id).is_some() {
-        let uia = worker.uia()?;
-        let cache = uia.base_cache_request().ok()?;
-        let element = resolve_uia_element(uia, &cache, shared, node_id)?;
-        // SAFETY: `element` was built with the base cache request.
-        return Some(unsafe { snapshot_from_cached_element(&element, &shared.uia_registry) });
-    }
-    if let Some(key) = shared.msaa_registry.key_of(node_id) {
-        return verbatim_ia2::acquire::resnapshot(key, &shared.msaa_registry);
-    }
-    None
-}
-
 /// Whether a focused node's role is a selection container whose selected
 /// child is announced with it (roadmap M3: a list's selected item, a tab
 /// control's active tab).
@@ -1734,7 +1682,7 @@ fn focus_enrichment_query(
 /// Walks the ancestor chain of a node by id, on a query worker: UIA via
 /// [`verbatim_uia::Uia::ancestor_chain`], MSAA via
 /// [`verbatim_ia2::acquire::ancestor_chain`] — whichever registry knows the
-/// id, the same dispatch [`refetch_node`] uses.
+/// id, checking the UIA registry first.
 fn ancestor_chain_query(
     worker: &mut Worker,
     shared: &Shared,

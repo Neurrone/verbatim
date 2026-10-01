@@ -94,7 +94,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{PCWSTR, PWSTR};
 
-use verbatim_model::{Pid, TraceId};
+use verbatim_model::{OutpostId, Pid, TraceId};
 
 use crate::protocol::{
     DeliveredFact, ListenerFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
@@ -172,6 +172,8 @@ pub struct Supervisor {
 struct SupervisorShared {
     exe_path: PathBuf,
     events_tx: Sender<OutpostMessage>,
+    /// Numbers every spawn, outposts and listener alike, and never reuses a
+    /// number. An outpost's number is its [`OutpostId`].
     generation: AtomicU64,
     outposts: Mutex<HashMap<Pid, Running>>,
     /// The focus listener's dedicated slot (decision D13): one permanent,
@@ -344,6 +346,32 @@ impl Supervisor {
         let running = outposts
             .get_mut(&target_pid)
             .ok_or_else(|| io::Error::other(format!("no outpost is watching pid {target_pid}")))?;
+        write_message(&mut running.to_outpost, command)
+    }
+
+    /// Sends a command to one outpost incarnation, the one named by
+    /// `outpost`, which is how anything carrying a node id is routed: a node
+    /// id names the incarnation that issued it, so a command for a replaced
+    /// outpost's node can never reach its successor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if that incarnation is no longer running or the write
+    /// fails.
+    pub fn send_to_outpost(
+        &self,
+        outpost: OutpostId,
+        command: &SupervisorToOutpost,
+    ) -> io::Result<()> {
+        let mut outposts = self
+            .shared
+            .outposts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let running = outposts
+            .values_mut()
+            .find(|running| running.generation == outpost.0)
+            .ok_or_else(|| io::Error::other(format!("outpost {outpost} is no longer running")))?;
         write_message(&mut running.to_outpost, command)
     }
 }
@@ -1106,7 +1134,10 @@ fn reader_loop(
     from_outpost: File,
 ) {
     let mut reader = BufReader::new(from_outpost);
-    while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+    while let Ok(Some(mut message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+        // Node ids name the incarnation whose pipe they arrived on, never
+        // whatever the message body claims.
+        message.assign_outpost(OutpostId(generation));
         if let OutpostToSupervisor::Pong { parked_count, .. } = message {
             shared.record_pong(target_pid, generation, parked_count);
             continue;

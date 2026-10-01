@@ -12,8 +12,8 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, FetchResult, NodeDetails, NormalizedEvent, Pid, Query, QueryId, Role, SnapshotVersion,
-    StateSet, TraceId, TreeNode,
+    Backend, FetchResult, NodeDetails, NormalizedEvent, OutpostId, Pid, Query, QueryId, QueryKind,
+    Role, StateSet, TraceId, TreeNode, WindowFacts,
 };
 
 /// The identity-free contents of a UIA focus element, as the focus listener
@@ -324,6 +324,10 @@ pub enum NavigateOutcome {
 /// Messages from an outpost to the Core-side supervisor.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a message is decoded once and moved; the supervisor boxes it on its channel"
+)]
 pub enum OutpostToSupervisor {
     /// First message after startup or reconfiguration.
     Ready {
@@ -344,8 +348,10 @@ pub enum OutpostToSupervisor {
         observed_at_ms: u64,
         /// Which backend sourced the event.
         backend: Backend,
-        /// The outpost's tree snapshot version at event time.
-        version: SnapshotVersion,
+        /// Facts about the window the event concerns, read with local calls
+        /// when the event was observed; `None` when it had no window.
+        #[serde(default)]
+        window: Option<WindowFacts>,
         /// The event itself.
         event: NormalizedEvent,
     },
@@ -355,6 +361,9 @@ pub enum OutpostToSupervisor {
         trace_id: TraceId,
         /// The request this answers.
         query_id: QueryId,
+        /// What the request asked for, echoed so the reducer needs no record
+        /// of it.
+        kind: QueryKind,
         /// What was found.
         result: FetchResult,
     },
@@ -426,6 +435,33 @@ pub enum OutpostToSupervisor {
     },
 }
 
+impl OutpostToSupervisor {
+    /// Stamps `outpost` on every node id this message carries. Core applies
+    /// it to everything arriving on an outpost's pipe, so node ids name their
+    /// outpost incarnation and never come from the message body.
+    pub fn assign_outpost(&mut self, outpost: OutpostId) {
+        match self {
+            OutpostToSupervisor::Event { event, .. } => event.assign_outpost(outpost),
+            OutpostToSupervisor::FetchReply { result, .. } => result.assign_outpost(outpost),
+            OutpostToSupervisor::DumpTreeReply {
+                result: Ok(dumped), ..
+            } => dumped.root.assign_outpost(outpost),
+            OutpostToSupervisor::AncestorChainReply {
+                result: Ok(chain), ..
+            } => {
+                for node in chain {
+                    node.assign_outpost(outpost);
+                }
+            }
+            OutpostToSupervisor::NavigateReply {
+                result: Ok(NavigateOutcome::Found(node)),
+                ..
+            } => node.assign_outpost(outpost),
+            _ => {}
+        }
+    }
+}
+
 /// One completed tree walk from a target application's top-level window
 /// (architecture section 1). The walk is bounded by a depth cap of 64 and a
 /// node-count cap of 4096; `truncated` notes when it stopped early against
@@ -479,8 +515,9 @@ mod tests {
             trace_id: TraceId::mint(),
             observed_at_ms: 1_752_000_000_000,
             backend: Backend::Msaa,
-            version: SnapshotVersion(3),
+            window: None,
             event: NormalizedEvent::FocusChanged {
+                foreground: false,
                 ancestors: Vec::new(),
                 selected_child: None,
                 node: NodeSnapshot {
@@ -514,6 +551,65 @@ mod tests {
         assert_eq!(second, ready);
         let end: Option<OutpostToSupervisor> = read_message(&mut reader).expect("reads");
         assert!(end.is_none(), "end of stream reads as None");
+    }
+
+    #[test]
+    fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
+        let snapshot = |number| NodeSnapshot {
+            id: NodeId::new(number),
+            backend: Backend::Uia,
+            role: Role::Button,
+            name: None,
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        };
+        let mut event = OutpostToSupervisor::Event {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 0,
+            backend: Backend::Uia,
+            window: None,
+            event: NormalizedEvent::FocusChanged {
+                node: snapshot(1),
+                foreground: false,
+                ancestors: vec![snapshot(2)],
+                selected_child: Some(snapshot(3)),
+            },
+        };
+        let mut chain = OutpostToSupervisor::AncestorChainReply {
+            trace_id: TraceId::mint(),
+            result: Ok(vec![snapshot(4)]),
+        };
+        event.assign_outpost(OutpostId(7));
+        chain.assign_outpost(OutpostId(7));
+
+        let OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    ancestors,
+                    selected_child,
+                    ..
+                },
+            ..
+        } = event
+        else {
+            panic!("still a focus event");
+        };
+        let OutpostToSupervisor::AncestorChainReply {
+            result: Ok(chain), ..
+        } = chain
+        else {
+            panic!("still an ancestor chain");
+        };
+        for (id, number) in [
+            (node.id, 1),
+            (ancestors[0].id, 2),
+            (selected_child.expect("kept").id, 3),
+            (chain[0].id, 4),
+        ] {
+            assert_eq!(id, NodeId::in_outpost(OutpostId(7), number));
+        }
     }
 
     #[test]

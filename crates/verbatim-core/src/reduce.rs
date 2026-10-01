@@ -6,16 +6,25 @@
 //! passed to [`reduce`]. That purity is what lets the flight recorder turn a
 //! captured sequence of inputs into a deterministic regression test (see
 //! [`crate::replay`]).
+//!
+//! The behavior is specified in `docs/parity.md` under "Focus and
+//! announcements", written from the NVDA behavior documented in
+//! `docs/nvda/events.md`.
 
 use verbatim_model::{
     Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    NotificationProcessing, Pid, PropertyChange, Query, QueryKind, ReviewCommand, Role,
-    SegmentContent, SnapshotVersion, SpeechPriority, State, StateSet, TraceId, Utterance,
-    UtteranceSegment, UtteranceSource,
+    NotificationProcessing, OutpostId, Pid, PropertyChange, Query, QueryId, QueryKind,
+    ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance,
+    UtteranceSegment, UtteranceSource, WindowFacts,
 };
 
 use crate::review;
-use crate::state::{FetchReason, FocusContext, Navigator, PendingFetch, SrState};
+use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState};
+
+/// The activity id of the shell's window-snap results notification, the one
+/// UIA notification spoken from any application (`docs/parity.md`, "Event
+/// acceptance").
+const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
 
 /// Advances `state` by one `input`, returning the new state and the effects
 /// the imperative shell must execute.
@@ -28,24 +37,21 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
     let effects = match input {
         Input::Event {
             trace_id,
-            observed_at_ms,
             source,
-            backend: _,
-            version,
+            window,
             event,
-        } => reduce_event(
-            &mut next,
-            *trace_id,
-            *observed_at_ms,
-            *source,
-            *version,
-            event,
-        ),
+            ..
+        } => reduce_event(&mut next, *trace_id, *source, *window, event),
         Input::FetchCompleted {
             trace_id,
             query_id,
+            kind,
             result,
-        } => reduce_fetch_completed(&mut next, *trace_id, *query_id, result),
+        } => reduce_navigate_completed(&mut next, *trace_id, *query_id, *kind, result),
+        Input::OutpostEnded { outpost } => {
+            outpost_ended(&mut next, *outpost);
+            Vec::new()
+        }
         Input::Command {
             trace_id,
             command,
@@ -60,147 +66,126 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
     (next, effects)
 }
 
+/// How an event relates to the attention record (`docs/parity.md`, "Event
+/// acceptance").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Acceptance {
+    /// The event concerns what the user is attending to and is handled in
+    /// full.
+    Attended,
+    /// The event comes from elsewhere but is of a kind spoken from
+    /// anywhere: spoken queued, never moving focus or the navigator.
+    Background,
+    /// The event is dropped unheard.
+    Dropped,
+}
+
+/// Classifies one event against the attention record. A foreground change is
+/// always attended: its intake has already confirmed the window is the
+/// system's foreground window. With no attention yet, everything is
+/// attended, since there is nothing to compare against.
+fn classify(
+    attention: Option<&Attention>,
+    source: Pid,
+    window: Option<WindowFacts>,
+    event: &NormalizedEvent,
+) -> Acceptance {
+    let Some(attention) = attention else {
+        return Acceptance::Attended;
+    };
+    match event {
+        NormalizedEvent::FocusChanged {
+            foreground: true, ..
+        } => Acceptance::Attended,
+        // UIA notifications are filtered by application, not window, as
+        // NVDA filters them.
+        NormalizedEvent::Notification { notification, .. } => {
+            if source == attention.source {
+                Acceptance::Attended
+            } else if notification.activity_id.as_deref() == Some(SNAP_RESULTS_ACTIVITY) {
+                Acceptance::Background
+            } else {
+                Acceptance::Dropped
+            }
+        }
+        _ => {
+            if window_is_attended(attention, source, window) {
+                Acceptance::Attended
+            } else {
+                Acceptance::Dropped
+            }
+        }
+    }
+}
+
+/// Whether an event's window is one the attention record covers: the same
+/// top-level window, the same root owner, a topmost window, or a
+/// `Windows.UI.Core` window under the input thread's active window — NVDA's
+/// foreground test, made against the attention record instead of a live
+/// system call. When either side has no window facts there is nothing to
+/// compare, so the application decides.
+fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowFacts>) -> bool {
+    match (attention.window, window) {
+        (Some(attended), Some(event)) => {
+            event.top_level == attended.top_level
+                || event.root_owner == attended.root_owner
+                || event.topmost
+                || event.under_active_window == Some(true)
+        }
+        _ => source == attention.source,
+    }
+}
+
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
-    observed_at_ms: u64,
     source: Pid,
-    version: SnapshotVersion,
+    window: Option<WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if state.is_stale(source, version) {
-        return refetch_focus(state);
+    match classify(state.attention.as_ref(), source, window, event) {
+        Acceptance::Dropped => return Vec::new(),
+        Acceptance::Background => return reduce_background(trace_id, event),
+        Acceptance::Attended => {}
     }
-    state.record_version(source, version);
 
     match event {
         NormalizedEvent::FocusChanged {
             node,
+            foreground,
             ancestors,
             selected_child,
-        } => {
-            // Last-observation-wins: a FocusChanged from the same application
-            // observed strictly earlier than the focus currently held is not
-            // the real focus, and moving focus and the navigator to it would
-            // send both backward. A zero timestamp (an older recorded stream)
-            // can never be strictly earlier, so it always proceeds and replay
-            // stays deterministic; a different application is unaffected — the
-            // shell's cross-app foreground gate owns that staleness.
-            //
-            // Two kinds of stale event are still *spoken* — but never move the
-            // focus context or navigator: a window, and an ancestor of the
-            // current focus. The window announcement is foreground context the
-            // maintainer requires never lost. It can legitimately arrive late,
-            // after the control it precedes, when the announce lane in the app
-            // outpost had to release the lane while the window was still
-            // nameless and finished reading it in the background (see
-            // `window_announce_job` in `verbatim-outpost`). Everything else
-            // stale is a stale *control* focus: noise, and a navigator hazard,
-            // so it stays dropped.
-            if observed_at_ms != 0
-                && let Some(focus) = state.focus.as_ref()
-                && focus.source == source
-                && focus.observed_at_ms > observed_at_ms
-            {
-                let is_window = node.role == Role::Window;
-                let is_ancestor = focus
-                    .ancestors
-                    .iter()
-                    .any(|ancestor| ancestor.id == node.id);
-                if is_window || is_ancestor {
-                    // The same utterance a fresh window FocusChanged produces —
-                    // just the node, no entered-container replay — spoken as
-                    // foreground context, leaving focus and the navigator on
-                    // the real, later-observed focus.
-                    return vec![Effect::Speak(Utterance {
-                        trace_id,
-                        priority: SpeechPriority::Interrupt,
-                        segments: node_segments(node),
-                        source: Some(source_of(node)),
-                    })];
-                }
-                return Vec::new();
-            }
-            // Suppress a focus event identical to the one already announced
-            // from the same application, back to back: the UIA focus
-            // callback and a foreground re-announcement can both emit a
-            // FocusChanged for one control, and rapid duplicate foreground
-            // events re-report an unchanged focus. This is NVDA's
-            // already-the-focus early return. It never suppresses a genuine
-            // return to a window after visiting another: that path focuses
-            // the other application's control in between, so this event is
-            // no longer identical to the last announced one.
-            if let Some(focus) = state.focus.as_ref()
-                && focus.source == source
-                && &focus.last_announced == node
-                && focus.ancestors == *ancestors
-                && focus.last_selection == selected_child.as_ref().map(|selected| selected.id)
-            {
-                return Vec::new();
-            }
-            let mut segments = Vec::new();
-            for container in entered_containers(state.focus.as_ref(), source, ancestors) {
-                segments.extend(container_segments(container));
-            }
-            segments.extend(node_segments(node));
-            // A selection container introduces its selected item right
-            // after itself — the roadmap's "announce a focused list's
-            // selected item".
-            if let Some(selected) = selected_child {
-                segments.extend(node_segments(selected));
-            }
-            let utterance = Utterance {
-                trace_id,
-                priority: SpeechPriority::Interrupt,
-                segments,
-                source: Some(source_of(node)),
-            };
-            state.focus = Some(FocusContext {
-                source,
-                observed_at_ms,
-                snapshot: node.clone(),
-                last_announced: node.clone(),
-                ancestors: ancestors.clone(),
-                last_selection: selected_child.as_ref().map(|selected| selected.id),
-            });
-            // The review cursor follows focus (roadmap M3): every focus
-            // change snaps the navigator object to the new focus and resets
-            // the review cursor to its start. This deliberately does not
-            // touch `latest_navigation`: an app-initiated focus event is not
-            // newer user intent than an object-navigation command already
-            // in flight, so a completion for that command must still be
-            // free to apply once it lands (see `SrState::latest_navigation`).
-            state.navigator = Some(Navigator {
-                source,
-                object: node.clone(),
-                review_offset: 0,
-            });
-            vec![Effect::Speak(utterance)]
-        }
+        } => reduce_focus_changed(
+            state,
+            trace_id,
+            source,
+            window,
+            &FocusReport {
+                node,
+                foreground: *foreground,
+                ancestors,
+                selected_child: selected_child.as_ref(),
+            },
+        ),
         NormalizedEvent::SelectionChanged { node } => {
-            reduce_selection_changed(state, trace_id, source, node)
+            reduce_selection_changed(state, trace_id, node)
         }
         NormalizedEvent::Notification {
             node_id: _,
             notification,
         } => reduce_notification(trace_id, notification),
         NormalizedEvent::ValueChanged { node_id, value } => {
-            reduce_value_changed(state, trace_id, source, *node_id, value.clone())
+            reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
         NormalizedEvent::PropertyChanged { node_id, change } => match change {
             PropertyChange::Name(name) => {
-                if state.focus_matches(source, *node_id)
-                    && let Some(focus) = state.focus.as_mut()
-                {
-                    focus.snapshot.name.clone_from(name);
-                }
-                Vec::new()
+                reduce_name_changed(state, trace_id, *node_id, name.as_ref())
             }
             PropertyChange::Value(value) => {
-                reduce_value_changed(state, trace_id, source, *node_id, value.clone())
+                reduce_value_changed(state, trace_id, *node_id, value.clone())
             }
             PropertyChange::States(new_states) => {
-                reduce_states_changed(state, trace_id, source, *node_id, *new_states)
+                reduce_states_changed(state, trace_id, *node_id, *new_states)
             }
             // `PropertyChange` is `#[non_exhaustive]`.
             _ => Vec::new(),
@@ -210,17 +195,231 @@ fn reduce_event(
     }
 }
 
+/// Speaks an event accepted from outside the attention record. Background
+/// events never move focus or the navigator and always queue behind current
+/// speech. The only background kind today is the shell's window-snap
+/// results notification.
+fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> {
+    let NormalizedEvent::Notification { notification, .. } = event else {
+        return Vec::new();
+    };
+    let Some(text) = notification
+        .display_string
+        .as_ref()
+        .filter(|display| !display.is_empty())
+    else {
+        return Vec::new();
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments: vec![UtteranceSegment::text(text.clone())],
+        source: None,
+    })]
+}
+
+/// The parts of a `FocusChanged` event the focus handling reads.
+struct FocusReport<'a> {
+    node: &'a NodeSnapshot,
+    foreground: bool,
+    ancestors: &'a [NodeSnapshot],
+    selected_child: Option<&'a NodeSnapshot>,
+}
+
+/// Handles an accepted focus change (`docs/parity.md`, "Focus and
+/// announcements"):
+///
+/// - A foreground change moves attention to its application and window, and
+///   is otherwise ignored when focus is already in that window, compared by
+///   window handle because the same window has different node ids in
+///   different outposts. Only a foreground change moves attention, as only
+///   the system's foreground window counts for NVDA: a topmost popup menu
+///   takes focus without becoming the foreground, and focus returning from
+///   it must still be attended.
+/// - A foreground window with no name becomes the focus silently: a bare
+///   "window" says nothing, and the window is not announced later.
+/// - While the focus is dead (its outpost ended), a report of the same focus
+///   from a replacement outpost is taken silently.
+/// - A focus identical to the one already announced is not spoken again
+///   (NVDA's already-the-focus early return): the UIA focus callback and a
+///   delivered fact can both report one control.
+/// - Otherwise the newly entered containers, the node, and a selection
+///   container's selected item are spoken, interrupting current speech, and
+///   the navigator follows focus.
+fn reduce_focus_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    source: Pid,
+    window: Option<WindowFacts>,
+    report: &FocusReport<'_>,
+) -> Vec<Effect> {
+    if report.foreground {
+        state.attention = Some(Attention { source, window });
+        if let Some(focus) = state.focus.as_ref()
+            && let (Some(focus_window), Some(window)) = (focus.window, window)
+            && focus_window.top_level == window.top_level
+        {
+            return Vec::new();
+        }
+    }
+
+    let new_focus = FocusContext {
+        source,
+        window,
+        snapshot: report.node.clone(),
+        ancestors: report.ancestors.to_vec(),
+        last_selection: report.selected_child.map(|selected| selected.id),
+        alive: true,
+    };
+
+    if let Some(focus) = state.focus.as_ref() {
+        if focus.alive {
+            // Already the focus: nothing changes, and a navigator the user
+            // moved away stays where it is.
+            if focus.snapshot == *report.node
+                && focus.ancestors == report.ancestors
+                && focus.last_selection == new_focus.last_selection
+            {
+                return Vec::new();
+            }
+        } else if reads_the_same(focus, report.node, report.ancestors) {
+            // The silent re-read: the replacement outpost reports the focus
+            // the user already heard, so take its ids without speaking.
+            state.focus = Some(new_focus);
+            if state.navigator.is_none() {
+                state.navigator = Some(Navigator {
+                    object: report.node.clone(),
+                    review_offset: 0,
+                });
+            }
+            return Vec::new();
+        }
+    }
+
+    // The review cursor follows focus (roadmap M3): every focus change snaps
+    // the navigator object to the new focus and resets the review cursor to
+    // its start. This deliberately does not touch `latest_navigation`: an
+    // app-initiated focus event is not newer user intent than an
+    // object-navigation command already in flight, so a completion for that
+    // command must still be free to apply once it lands (see
+    // `SrState::latest_navigation`).
+    let navigator = Navigator {
+        object: report.node.clone(),
+        review_offset: 0,
+    };
+    if report.foreground && !has_text(report.node.name.as_deref()) {
+        state.focus = Some(new_focus);
+        state.navigator = Some(navigator);
+        return Vec::new();
+    }
+
+    let mut segments = Vec::new();
+    for container in entered_containers(state.focus.as_ref(), window, report.ancestors) {
+        segments.extend(container_segments(container));
+    }
+    segments.extend(node_segments(report.node));
+    // A selection container introduces its selected item right after
+    // itself — the roadmap's "announce a focused list's selected item".
+    if let Some(selected) = report.selected_child {
+        segments.extend(node_segments(selected));
+    }
+    let utterance = Utterance {
+        trace_id,
+        priority: SpeechPriority::Interrupt,
+        segments,
+        source: Some(source_of(report.node)),
+    };
+    state.focus = Some(new_focus);
+    state.navigator = Some(navigator);
+    vec![Effect::Speak(utterance)]
+}
+
+/// Whether a name or description has real, non-whitespace text.
+fn has_text(text: Option<&str>) -> bool {
+    text.is_some_and(|text| !text.trim().is_empty())
+}
+
+/// Whether a reported focus reads the same as the dead focus's kept copy:
+/// role, name, value, and states, and the ancestors' names and roles. Node
+/// ids are not compared, since a replacement outpost issues new ones.
+fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) -> bool {
+    let kept = &focus.snapshot;
+    kept.role == node.role
+        && kept.name == node.name
+        && kept.value == node.value
+        && kept.states == node.states
+        && focus.ancestors.len() == ancestors.len()
+        && focus
+            .ancestors
+            .iter()
+            .zip(ancestors)
+            .all(|(old, new)| old.role == new.role && old.name == new.name)
+}
+
+/// Handles the end of an outpost incarnation: the focus keeps its copied
+/// data but its ids are dead, and a navigator or pending navigation in that
+/// outpost is cleared. Navigation then does nothing until focus is reported
+/// again.
+fn outpost_ended(state: &mut SrState, outpost: OutpostId) {
+    if let Some(focus) = state.focus.as_mut()
+        && focus.snapshot.id.outpost() == outpost
+    {
+        focus.alive = false;
+    }
+    if state
+        .navigator
+        .as_ref()
+        .is_some_and(|navigator| navigator.object.id.outpost() == outpost)
+    {
+        state.navigator = None;
+    }
+    if state
+        .latest_navigation
+        .is_some_and(|pending| pending.from.outpost() == outpost)
+    {
+        state.latest_navigation = None;
+    }
+}
+
+/// Handles a name change: when the focused node's name changes, the new name
+/// alone is spoken, queued behind current speech, as NVDA does. A name
+/// change on any other node, including an ancestor of the focus, is silent.
+fn reduce_name_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    name: Option<&String>,
+) -> Vec<Effect> {
+    if !state.focus_matches(node_id) {
+        return Vec::new();
+    }
+    let Some(focus) = state.focus.as_mut() else {
+        return Vec::new();
+    };
+    if focus.snapshot.name.as_ref() == name {
+        return Vec::new();
+    }
+    focus.snapshot.name = name.cloned();
+    let Some(text) = name.filter(|name| !name.trim().is_empty()) else {
+        return Vec::new();
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments: vec![UtteranceSegment::label(text.clone())],
+        source: Some(source_of(&focus.snapshot)),
+    })]
+}
+
 /// Handles a UIA `AutomationNotification` event (NVDA's
-/// `event_UIA_notification`): announce the application-supplied display
-/// string, if any, and nothing when there is none — a notification with no
-/// text has nothing to say. Foreground gating already happened in the
-/// shell (only the foreground application's events reach the reducer), so
-/// this needs no application check of its own. The processing hint sets the
-/// priority: `MostRecent` and `ImportantMostRecent` supersede earlier
-/// speech and so interrupt; every other kind queues behind current speech,
-/// NVDA's exact split. The notification kind and activity id are not used
-/// yet — they exist for later per-kind policy and for correlating an
-/// activity's notifications, which M3 does not need.
+/// `event_UIA_notification`) from the attention application: announce the
+/// application-supplied display string, if any, and nothing when there is
+/// none — a notification with no text has nothing to say. The processing
+/// hint sets the priority: `MostRecent` and `ImportantMostRecent` supersede
+/// earlier speech and so interrupt; every other kind queues behind current
+/// speech, NVDA's exact split. The notification kind and activity id are not
+/// used here; the activity id matters only for acceptance (see
+/// [`classify`]).
 fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Effect> {
     let Some(text) = notification
         .display_string
@@ -269,7 +468,6 @@ fn reduce_command(
         ReviewCommand::ToFocus => unreachable!("handled above"),
         ReviewCommand::ReportObject => report_object(navigator, trace_id, repeat),
         ReviewCommand::Activate => vec![Effect::Activate {
-            source: navigator.source,
             node_id: navigator.object.id,
         }],
         ReviewCommand::Parent => navigate(state, trace_id, QueryKind::Parent),
@@ -281,26 +479,23 @@ fn reduce_command(
 }
 
 /// Snaps the navigator (and review cursor) back to the current focus and
-/// reports it. A no-op with nothing focused — including when a navigation
-/// fetch is still pending, in which case its eventual completion must not
-/// override this explicit return to focus, so this also clears
-/// `latest_navigation`. Also reused to re-seed the navigator when a
-/// navigation fetch reports `FetchResult::Gone` (the outpost could not
-/// re-acquire the navigator's node): the same "fall back to focus and
-/// announce it" behavior applies there too.
+/// reports it, and clears `latest_navigation` so a navigation still pending
+/// cannot override this explicit return to focus. Does nothing else with
+/// nothing focused, or with a focus whose outpost has ended. Also reused to
+/// re-seed the navigator when a navigation fetch reports `FetchResult::Gone`
+/// (the outpost could not reach the navigator's node): the same "fall back to
+/// focus and announce it" behavior applies there too.
 fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    let Some(focus) = state.focus.as_ref() else {
+    state.latest_navigation = None;
+    let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return Vec::new();
     };
     let object = focus.snapshot.clone();
-    let source = focus.source;
     let utterance = announce_node(trace_id, SpeechPriority::Interrupt, &object);
     state.navigator = Some(Navigator {
-        source,
         object,
         review_offset: 0,
     });
-    state.latest_navigation = None;
     vec![Effect::Speak(utterance)]
 }
 
@@ -368,22 +563,14 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
     let Some(navigator) = state.navigator.as_ref() else {
         return Vec::new();
     };
-    let source = navigator.source;
     let node_id = navigator.object.id;
     let query_id = state.allocate_query_id();
-    state.pending_fetches.insert(
+    state.latest_navigation = Some(PendingNavigation {
         query_id,
-        PendingFetch {
-            source,
-            node_id,
-            reason: FetchReason::Navigate,
-            kind,
-        },
-    );
-    state.latest_navigation = Some(query_id);
+        from: node_id,
+    });
     vec![Effect::Fetch(Query {
         query_id,
-        source,
         node_id,
         kind,
     })]
@@ -502,7 +689,7 @@ fn is_selection_container(role: Role) -> bool {
 
 /// Handles a `SelectionChanged` event: a node was selected within its
 /// container. Announced only when the selection happened under the focused
-/// container — the event's source application is the focused one, focus
+/// container — the event's outpost is the focused node's, focus
 /// sits on a selection container, and the selected node is neither the
 /// focused node itself nor the item most recently announced (the focus
 /// event's own `selected_child`, or the previous selection event). This is
@@ -512,13 +699,12 @@ fn is_selection_container(role: Role) -> bool {
 fn reduce_selection_changed(
     state: &mut SrState,
     trace_id: TraceId,
-    source: Pid,
     node: &NodeSnapshot,
 ) -> Vec<Effect> {
-    let Some(focus) = state.focus.as_mut() else {
+    let Some(focus) = state.focus.as_mut().filter(|focus| focus.alive) else {
         return Vec::new();
     };
-    if focus.source != source
+    if focus.snapshot.id.outpost() != node.id.outpost()
         || !is_selection_container(focus.snapshot.role)
         || node.id == focus.snapshot.id
         || focus.last_selection == Some(node.id)
@@ -539,18 +725,16 @@ fn reduce_selection_changed(
 fn reduce_value_changed(
     state: &mut SrState,
     trace_id: TraceId,
-    source: Pid,
     node_id: NodeId,
     value: Option<String>,
 ) -> Vec<Effect> {
-    if !state.focus_matches(source, node_id) {
+    if !state.focus_matches(node_id) {
         return Vec::new();
     }
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
     };
     focus.snapshot.value.clone_from(&value);
-    focus.last_announced.value.clone_from(&value);
     let Some(text) = value else {
         return Vec::new();
     };
@@ -575,11 +759,10 @@ fn reduce_value_changed(
 fn reduce_states_changed(
     state: &mut SrState,
     trace_id: TraceId,
-    source: Pid,
     node_id: NodeId,
     new_states: StateSet,
 ) -> Vec<Effect> {
-    if !state.focus_matches(source, node_id) {
+    if !state.focus_matches(node_id) {
         return Vec::new();
     }
     let Some(focus) = state.focus.as_mut() else {
@@ -592,7 +775,6 @@ fn reduce_states_changed(
     let role = focus.snapshot.role;
     let utterance_source = source_of(&focus.snapshot);
     focus.snapshot.states = new_states;
-    focus.last_announced.states = new_states;
 
     let mut segments = Vec::new();
 
@@ -651,86 +833,43 @@ fn reduce_states_changed(
     })]
 }
 
-/// Emits a `Fetch` for the currently focused node, recording it as a
-/// staleness re-fetch so the eventual `FetchCompleted` is handled correctly.
-/// A no-op when nothing is focused: there is nothing to re-read.
-fn refetch_focus(state: &mut SrState) -> Vec<Effect> {
-    let Some(focus) = state.focus.as_ref() else {
-        return Vec::new();
-    };
-    let source = focus.source;
-    let node_id = focus.snapshot.id;
-    let query_id = state.allocate_query_id();
-    state.pending_fetches.insert(
-        query_id,
-        PendingFetch {
-            source,
-            node_id,
-            reason: FetchReason::Staleness,
-            kind: QueryKind::NodeSnapshot,
-        },
-    );
-    vec![Effect::Fetch(Query {
-        query_id,
-        source,
-        node_id,
-        kind: QueryKind::NodeSnapshot,
-    })]
-}
-
-fn reduce_fetch_completed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query_id: verbatim_model::QueryId,
-    result: &FetchResult,
-) -> Vec<Effect> {
-    let Some(pending) = state.pending_fetches.remove(&query_id) else {
-        return Vec::new();
-    };
-    match pending.reason {
-        FetchReason::Staleness => reduce_staleness_completed(state, trace_id, &pending, result),
-        FetchReason::Navigate => {
-            reduce_navigate_completed(state, trace_id, &pending, query_id, result)
-        }
-    }
-}
-
 /// Completes an object-navigation fetch.
 ///
 /// Applied if and only if `query_id` is still [`SrState::latest_navigation`]
 /// — the most recently issued navigation command, tracked independently of
-/// the navigator's identity. This is what a focus event arriving between
-/// the command and its completion used to break: focus snaps the navigator
-/// (review follows focus) but no longer touches `latest_navigation`, so the
-/// user's own pending navigation still lands. A second navigation issued
-/// before the first completes replaces `latest_navigation`, so the first's
-/// late completion is dropped as stale; `ToFocus` clears it outright, so a
-/// late completion cannot override the user's explicit return to focus.
+/// the navigator's identity. A focus event arriving between the command and
+/// its completion snaps the navigator (review follows focus) but does not
+/// touch `latest_navigation`, so the user's own pending navigation still
+/// lands. A second navigation issued before the first completes replaces
+/// `latest_navigation`, so the first's late completion is dropped as stale;
+/// `ToFocus` clears it outright, so a late completion cannot override the
+/// user's explicit return to focus; and the end of the outpost it was sent
+/// to clears it too.
 ///
 /// On `FetchResult::Node`, moves the navigator to the returned neighbor and
 /// announces it. On `FetchResult::NoNeighbor`, leaves the navigator put and
 /// speaks the direction's edge message — NVDA's wording: "No next", "No
-/// previous", "No containing object", "No objects inside". An earlier
-/// revision stayed silent here (with an M11 earcon planned on top); live
-/// testing found silence indistinguishable from a broken command, exactly
-/// as NVDA's spoken messages predict, so the messages are the behavior now
-/// and M11's earcon becomes an addition rather than the only feedback.
-/// On `FetchResult::Gone` — the navigator's node could no longer be
-/// re-acquired, distinct from a genuine tree edge — re-seeds the navigator
-/// from the current focus and announces it (via [`navigator_to_focus`])
-/// rather than staying silent, so a dead navigator object never presents as
-/// the command having done nothing; if nothing is focused either, that stays
-/// silent too.
+/// previous", "No containing object", "No objects inside". Live testing
+/// found silence indistinguishable from a broken command, exactly as NVDA's
+/// spoken messages predict. On `FetchResult::Gone` — the navigator's node
+/// could no longer be reached, distinct from a genuine tree edge — re-seeds
+/// the navigator from the current focus and announces it (via
+/// [`navigator_to_focus`]) rather than staying silent; if nothing live is
+/// focused either, that stays silent too.
 fn reduce_navigate_completed(
     state: &mut SrState,
     trace_id: TraceId,
-    pending: &PendingFetch,
-    query_id: verbatim_model::QueryId,
+    query_id: QueryId,
+    kind: QueryKind,
     result: &FetchResult,
 ) -> Vec<Effect> {
-    if state.latest_navigation != Some(query_id) {
-        // Superseded by a newer navigation, or cleared by `ToFocus`: this
-        // completion no longer describes user intent worth acting on.
+    if state
+        .latest_navigation
+        .is_none_or(|pending| pending.query_id != query_id)
+    {
+        // Superseded by a newer navigation, or cleared by `ToFocus` or the
+        // outpost's end: this completion no longer describes user intent
+        // worth acting on.
         return Vec::new();
     }
     match result {
@@ -738,7 +877,6 @@ fn reduce_navigate_completed(
             state.latest_navigation = None;
             let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
             state.navigator = Some(Navigator {
-                source: pending.source,
                 object: snapshot.clone(),
                 review_offset: 0,
             });
@@ -751,7 +889,7 @@ fn reduce_navigate_completed(
         // silent until given a meaning here.
         _ => {
             state.latest_navigation = None;
-            let Some(message) = edge_message_of(pending.kind) else {
+            let Some(message) = edge_message_of(kind) else {
                 return Vec::new();
             };
             vec![Effect::Speak(Utterance {
@@ -765,8 +903,7 @@ fn reduce_navigate_completed(
 }
 
 /// The edge message a navigation `QueryKind` speaks when there is no
-/// neighbor in its direction — NVDA's messages, one per command. `None`
-/// for kinds that are not navigations (a plain re-read has no edge).
+/// neighbor in its direction — NVDA's messages, one per command.
 fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
     use verbatim_model::Message;
     match kind {
@@ -775,63 +912,6 @@ fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
         QueryKind::PreviousSibling => Some(Message::NoPreviousObject),
         QueryKind::FirstChild => Some(Message::NoObjectsInside),
         _ => None,
-    }
-}
-
-/// Completes a staleness re-fetch of the focused node (the original M1
-/// path): announce only a real change against what was last announced, and
-/// drop a result whose focus has moved on.
-fn reduce_staleness_completed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    pending: &PendingFetch,
-    result: &FetchResult,
-) -> Vec<Effect> {
-    if !state.focus_matches(pending.source, pending.node_id) {
-        // Focus moved on while the fetch was in flight; the result no
-        // longer describes anything the reducer should announce.
-        return Vec::new();
-    }
-
-    match result {
-        FetchResult::Gone => {
-            state.focus = None;
-            Vec::new()
-        }
-        FetchResult::Node(snapshot) => {
-            let Some(focus) = state.focus.as_ref() else {
-                return Vec::new();
-            };
-            let changed = snapshot.name != focus.last_announced.name
-                || snapshot.value != focus.last_announced.value
-                || snapshot.states != focus.last_announced.states;
-
-            if changed {
-                let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
-                // A re-fetch refreshes the node, not its ancestry, its
-                // selection history, or its observation time; what the focus
-                // event carried stays authoritative.
-                let ancestors = focus.ancestors.clone();
-                let last_selection = focus.last_selection;
-                let observed_at_ms = focus.observed_at_ms;
-                state.focus = Some(FocusContext {
-                    source: pending.source,
-                    observed_at_ms,
-                    snapshot: snapshot.clone(),
-                    last_announced: snapshot.clone(),
-                    ancestors,
-                    last_selection,
-                });
-                vec![Effect::Speak(utterance)]
-            } else {
-                if let Some(focus) = state.focus.as_mut() {
-                    focus.snapshot = snapshot.clone();
-                }
-                Vec::new()
-            }
-        }
-        // `FetchResult` is `#[non_exhaustive]`.
-        _ => Vec::new(),
     }
 }
 
@@ -846,25 +926,46 @@ fn source_of(node: &NodeSnapshot) -> UtteranceSource {
 
 /// The ancestors of a newly focused node worth announcing as entered
 /// context, outermost first: presentable containers (see
-/// [`is_presentable_container`]) that were not already in the previous
-/// focus's ancestry — NVDA's focus-ancestry behavior, where tabbing within
-/// one dialog stays quiet about the dialog but entering it announces it.
-/// A focus change from a different application treats the whole chain as
-/// newly entered.
+/// [`is_presentable_container`]) that the previous focus was not already
+/// inside — NVDA's focus-ancestry behavior, where tabbing within one dialog
+/// stays quiet about the dialog but entering it announces it.
+///
+/// An ancestor counts as already entered when the previous focus or one of
+/// its ancestors is the same node. Node ids are comparable only within one
+/// outpost, and one top-level window can hold elements of two processes (a
+/// Settings page's frame belongs to `ApplicationFrameHost.exe`), so when the
+/// new focus is in the same top-level window as the previous one, a previous
+/// node with the same role and name also counts. A focus in a different
+/// top-level window, or with no previous focus, enters its whole chain.
+///
+/// Entered menu bars, menus, and menu items are never announced: NVDA
+/// cancels speech and stays silent for them, and the focus announcement
+/// that follows interrupts current speech anyway.
 fn entered_containers<'a>(
     previous: Option<&FocusContext>,
-    source: Pid,
+    window: Option<WindowFacts>,
     ancestors: &'a [NodeSnapshot],
 ) -> Vec<&'a NodeSnapshot> {
+    let same_window = previous.is_some_and(|previous| {
+        matches!((previous.window, window), (Some(old), Some(new)) if old.top_level == new.top_level)
+    });
+    let already_entered = |ancestor: &NodeSnapshot| {
+        let Some(previous) = previous else {
+            return false;
+        };
+        previous
+            .ancestors
+            .iter()
+            .chain(std::iter::once(&previous.snapshot))
+            .any(|old| {
+                old.id == ancestor.id
+                    || (same_window && old.role == ancestor.role && old.name == ancestor.name)
+            })
+    };
     ancestors
         .iter()
         .filter(|ancestor| is_presentable_container(ancestor))
-        .filter(|ancestor| match previous {
-            Some(prev) if prev.source == source => {
-                !prev.ancestors.iter().any(|old| old.id == ancestor.id)
-            }
-            _ => true,
-        })
+        .filter(|ancestor| !already_entered(ancestor))
         .collect()
 }
 
@@ -875,13 +976,10 @@ fn entered_containers<'a>(
 /// - An item-level or text-entry role (`TreeItem`, `ListItem`,
 ///   `EditableText`). Focus lands on these; they are never context.
 /// - A structural node with no semantics of its own (`Unknown`, `Pane`).
-/// - The top-level `Window`, named or not. The foreground-change
-///   announcement (the outpost's foreground fact and the `AnnounceFocus`
-///   window step) owns it, and repeating it on every cross-application
-///   focus change would double-speak every switch. This is the one
-///   documented divergence from NVDA, which presents a named window.
-/// - A `Group` or `PropertyPage` with neither a name nor a description,
-///   which would speak as a bare role.
+/// - A menu bar, menu, or menu item: entering one is silent, as in NVDA.
+/// - A `Window`, `Group`, or `PropertyPage` with neither a name nor a
+///   description, which would speak as a bare role. NVDA treats these as
+///   layout; a named window is announced on entry like any container.
 /// - `StaticText` with no text, which is nothing.
 ///
 /// Whitespace-only names and descriptions count as absent. Everything else
@@ -889,27 +987,21 @@ fn entered_containers<'a>(
 /// tree, which announces as a bare "tree view", the same as NVDA. The
 /// behavior is recorded under focus-ancestry context in `docs/parity.md`.
 fn is_presentable_container(node: &NodeSnapshot) -> bool {
-    let named = node
-        .name
-        .as_deref()
-        .is_some_and(|name| !name.trim().is_empty());
-    let described = node
-        .details
-        .description
-        .as_deref()
-        .is_some_and(|description| !description.trim().is_empty());
+    let named = has_text(node.name.as_deref());
+    let described = has_text(node.details.description.as_deref());
     match node.role {
         // Never context: item-level and text-entry roles, structural roles
-        // with no semantics, and the window the foreground announcement
-        // owns. See this function's doc for the rule.
+        // with no semantics, and menus. See this function's doc for the rule.
         Role::TreeItem
         | Role::ListItem
         | Role::EditableText
         | Role::Unknown
         | Role::Pane
-        | Role::Window => false,
+        | Role::MenuBar
+        | Role::Menu
+        | Role::MenuItem => false,
         // Layout-when-unlabeled roles: content only when named or described.
-        Role::Group | Role::PropertyPage => named || described,
+        Role::Window | Role::Group | Role::PropertyPage => named || described,
         // Static text: content only when it has real, non-whitespace text.
         Role::StaticText => named,
         // Every other role is context, named or not.
@@ -970,7 +1062,7 @@ fn node_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
 }
 
 /// Builds a complete announcement utterance for a node (no entered-context
-/// prefix) — the staleness re-fetch path's announcement.
+/// prefix): navigation and report-object announcements.
 fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapshot) -> Utterance {
     Utterance {
         trace_id,

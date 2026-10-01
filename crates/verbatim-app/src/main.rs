@@ -34,8 +34,8 @@ use verbatim_input::{
 };
 use verbatim_input_windows::InputHook;
 use verbatim_model::{
-    Effect, GestureId, Input, Pid, ReviewCommand, SpeechPriority, TraceId, TreeNode, Utterance,
-    UtteranceSegment,
+    Effect, FetchResult, GestureId, Input, Pid, ReviewCommand, SpeechPriority, TraceId, TreeNode,
+    Utterance, UtteranceSegment,
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::{OutpostMessage, Supervisor};
@@ -563,7 +563,7 @@ fn incoming_input(
             trace_id,
             observed_at_ms,
             backend,
-            version,
+            window,
             event,
         } => {
             if !is_current_foreground(source, current_foreground.load(Ordering::SeqCst)) {
@@ -571,24 +571,26 @@ fn incoming_input(
             }
             ledger.event_observed(trace_id, observed_at_ms);
             if let Some(server) = server_slot.get() {
-                server.broadcast_event(trace_id, source, backend, version, event.clone());
+                server.broadcast_event(trace_id, source, backend, window, event.clone());
             }
             Some(Input::Event {
                 trace_id,
                 observed_at_ms,
                 source,
                 backend,
-                version,
+                window,
                 event,
             })
         }
         OutpostToSupervisor::FetchReply {
             trace_id,
             query_id,
+            kind,
             result,
         } => Some(Input::FetchCompleted {
             trace_id,
             query_id,
+            kind,
             result,
         }),
         OutpostToSupervisor::Ready {
@@ -704,6 +706,9 @@ fn apply_input(state: &SrState, input: Input, context: &ReducerContext) -> SrSta
         recorder.record_input(input, effects.len());
     }
 
+    // A query that cannot reach its outpost is answered "gone" at once, so
+    // the reducer never waits on a query no outpost will ever answer.
+    let mut unanswerable = Vec::new();
     for effect in effects {
         match effect {
             Effect::Speak(utterance) => context.manager.speak(utterance),
@@ -713,18 +718,24 @@ fn apply_input(state: &SrState, input: Input, context: &ReducerContext) -> SrSta
                 tracing::debug!("StopSpeech effect ignored");
             }
             Effect::Fetch(query) => {
-                if let Err(error) = context.supervisor.send_to(
-                    query.source,
+                if let Err(error) = context.supervisor.send_to_outpost(
+                    query.node_id.outpost(),
                     &SupervisorToOutpost::Fetch { trace_id, query },
                 ) {
                     tracing::warn!(%error, "fetch could not reach the outpost");
+                    unanswerable.push(Input::FetchCompleted {
+                        trace_id,
+                        query_id: query.query_id,
+                        kind: query.kind,
+                        result: FetchResult::Gone,
+                    });
                 }
             }
-            Effect::Activate { source, node_id } => {
-                if let Err(error) = context
-                    .supervisor
-                    .send_to(source, &SupervisorToOutpost::Activate { trace_id, node_id })
-                {
+            Effect::Activate { node_id } => {
+                if let Err(error) = context.supervisor.send_to_outpost(
+                    node_id.outpost(),
+                    &SupervisorToOutpost::Activate { trace_id, node_id },
+                ) {
                     tracing::warn!(%error, "activate could not reach the outpost");
                 }
             }
@@ -732,7 +743,9 @@ fn apply_input(state: &SrState, input: Input, context: &ReducerContext) -> SrSta
             _ => {}
         }
     }
-    next
+    unanswerable
+        .into_iter()
+        .fold(next, |state, input| apply_input(&state, input, context))
 }
 
 /// The router thread body: bound gestures become imperative commands —

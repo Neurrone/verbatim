@@ -46,7 +46,8 @@ Public API:
   sibling, or first child, the protocol's own `NavigateDirection`),
   `Activate` (invoke the node's activation action), `Shutdown`.
   `OutpostToSupervisor`: `Ready`, `Event` (trace id, observation timestamp,
-  backend, snapshot version, normalized event), `FetchReply`, `Pong` (echoes
+  backend, the event window's `WindowFacts`, normalized event), `FetchReply`
+  (echoing the query's kind), `Pong` (echoes
   the ping's sequence number and reports the outpost's current `QueryPool`
   parked-thread count — recovery ladder rung 2's bounded garbage — so the
   supervisor's heartbeat can judge rung 3's wedge-kill decision from the same
@@ -61,9 +62,11 @@ Public API:
   observation). A `ListenerFact` strips to a pid-less `DeliveredFact` once
   the supervisor has routed it. The three M3 query
   pairs are deliberately outpost-protocol-only rather than carried by the
-  reducer-facing `Fetch`: none of them re-reads one already-known node's
-  own snapshot (the one thing `QueryKind::NodeSnapshot` answers), and each
-  needs input `Query`'s node-id-only shape does not carry. Framing is
+  reducer-facing `Fetch`, which answers object-navigation steps only; each
+  needs input `Query`'s node-id-only shape does not carry. Node ids arrive
+  from Core stamped with this outpost's id; the outpost looks them up with
+  the stamp cleared (`NodeId::unstamped`). `OutpostToSupervisor::assign_outpost`
+  is the stamp Core applies to every node id in a message. Framing is
   newline-delimited compact JSON via `write_message` and `read_message`.
 - `Arbitrator` — NVDA's per-window backend decision:
   `resolve_with(hwnd, class, probe)` walks the ladder (good class list, bad
@@ -108,16 +111,13 @@ Public API:
   on the deadline-guarded query pool; only their sequencing is serialized. This
   is what guarantees NVDA's window-then-focus order: the window announcement is
   spoken before the control it precedes rather than racing it on a separate
-  thread and losing to the reducer's last-observation-wins rule (the failure
-  three of three cold presses showed). The window job (`window_announce_job`)
-  holds the lane for a bounded nameless-retry — `WINDOW_LANE_ATTEMPTS` (3)
-  attempts spaced `WINDOW_LANE_INTERVAL` (200 ms), so the lane is held at most
-  ~600 ms plus read time; if the window is named within that it announces in
-  order, and if still nameless the lane must move on (it must never starve the
-  control), so the job hands the remaining `ANNOUNCE_RETRY` budget to a
-  background thread (`background_window_retry`) that emits the window late —
-  out of order but not lost, which the reducer's window carve-out speaks
-  without moving focus. The announce generation still aborts a superseded
+  thread (the failure three of three cold presses showed). The window job (`window_announce_job`)
+  reads the window once and reports it as a foreground change at once, named
+  or not, since the foreground change is what moves the reducer's attention;
+  the reducer does not speak a nameless foreground window, and nothing
+  announces the window later. The job, and the `AnnounceFocus` window step,
+  drop the report if the window is no longer the system's foreground window
+  when it is ready to send (`window_is_foreground`). The announce generation still aborts a superseded
   window job. The `AnnounceFocus` poll fallback (`run_announce`) keeps its own
   thread, off the lane.
   The one difference from a self-hooked event is arbitration: a fact resolves a
@@ -152,7 +152,9 @@ Public API:
   recovery, no longer every foreground change), `ensure_spawned(pid)` (warm
   an outpost without touching foreground tracking — used once, at Core
   startup, for Core's own pid; see its doc comment), `send_to(pid,
-  command)`. Focus facts from the listener are routed by `route_fact`: for a
+  command)`, and `send_to_outpost(outpost_id, command)`, which reaches only
+  that incarnation and fails if it has ended; commands carrying a node id
+  are routed this way. Focus facts from the listener are routed by `route_fact`: for a
   foreground fact it records the new foreground and emits
   `OutpostMessage::ForegroundChanged(pid)` before delivering, so the
   reducer's stale-event gate has the new foreground by the time the fact's
@@ -171,8 +173,10 @@ Public API:
   queueing
   policy is the pure `PendingFacts` type, unit-tested like `idle_decision` and
   `wedge_decision`. State is a map keyed by target pid,
-  genuinely N-ready now: a reader thread per outpost forwards messages into
-  the channel as `OutpostMessage::Event(pid, message)`, respawning on end
+  genuinely N-ready now: a reader thread per outpost stamps every node id in
+  each message with the outpost's id (its spawn generation, never reused) and
+  forwards it into the channel as `OutpostMessage::Event(pid, message)`,
+  respawning on end
   of stream only if that pid's map entry still has the same generation
   *and* the watched application's process is itself still alive (checked
   via `OpenProcess`/`GetExitCodeProcess`) — otherwise the entry is dropped
@@ -323,8 +327,12 @@ Implementation notes:
   every Win32 and wx control is its own window handle, per-window
   arbitration is per-control there, while a WinUI top level resolves once
   for its whole subtree. Trace IDs are minted when the OS event first
-  arrives, snapshot versions increment per emitted event, and each event
-  carries its observation timestamp for the latency ledger.
+  arrives, and each event carries its observation timestamp for the
+  latency ledger and `WindowFacts` for the window it concerns (`window_facts`:
+  top-level window and root owner from `GetAncestor`, the topmost extended
+  style on the window or its top-level window, and for `Windows.UI.Core`
+  windows whether `GetGUIThreadInfo`'s active window is it or contains it),
+  all local calls safe on a callback thread.
   - MSAA side (`handle_msaa_event`): the event's own hwnd is exact — MSAA
     events always carry the real window, never an inferred one — so the
     filter just arbitrates it directly. A UIA verdict drops the MSAA event;
@@ -332,7 +340,7 @@ Implementation notes:
     the no-verdict case. Delivering on an unresolved verdict is what makes
     dropping safe on the UIA side below: MSAA is the backend of record
     whenever arbitration has not yet decided.
-  - UIA side (`uia_passes_filter`): most elements that raise UIA events are
+  - UIA side (`resolve_window_and_filter`): most elements that raise UIA events are
     not windows themselves — a menu item or a list item is a descendant of
     one — so the cached native window handle is usually 0. Attribution
     resolves the window in three tiers: the cached handle when the element

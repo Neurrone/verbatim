@@ -403,14 +403,21 @@ The supervisor stays inside Core.
   an ancestor, current speech stops and the menu is not announced, as
   NVDA's `event_focusEntered` does.
 - Attention (D14, amended): the reducer keeps the process and top-level
-  window that most recently received an accepted focus. A foreground
+  window of the most recent foreground change, its stand-in for the
+  system's foreground window that NVDA compares against. A foreground
   fact is always accepted and moves attention to its window; its intake
   has already confirmed, with a local call, that the window is still
   the system's foreground window, as NVDA's `processForegroundWinEvent`
   does. Every other event, focus events included, is classified against
   the attention record from the window facts the outpost attached, and
-  an accepted focus event then moves attention to its own top-level
-  window. NVDA filters focus events the same way. Attended: the
+  nothing else moves attention. NVDA filters focus events the same way.
+  (Revised during step 1: an earlier wording let every accepted focus
+  move attention, and the step's review found that a topmost popup menu
+  then kept attention after focus returned to its owner, and that a
+  foreground fact held back while its window was nameless left the new
+  application's events dropped. Outposts therefore report a foreground
+  change at once, named or not; the reducer does not speak a nameless
+  foreground window.) Attended: the
   attention window and anything with the same top-level window,
   anything sharing its root owner, topmost windows, and a
   `Windows.UI.Core` window that its outpost reported as under the input

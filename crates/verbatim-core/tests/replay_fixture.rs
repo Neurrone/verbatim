@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use verbatim_core::{RecordedInput, SrState, dump, reduce, replay};
 use verbatim_model::{
     Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, Role,
-    SnapshotVersion, State, StateSet, TraceId,
+    State, StateSet, TraceId,
 };
 
 fn fixture_path() -> PathBuf {
@@ -41,8 +41,9 @@ fn scripted_inputs() -> Vec<Input> {
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
-            version: SnapshotVersion(1),
+            window: None,
             event: NormalizedEvent::FocusChanged {
+                foreground: false,
                 node: slider,
                 ancestors: Vec::new(),
                 selected_child: None,
@@ -53,7 +54,7 @@ fn scripted_inputs() -> Vec<Input> {
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
-            version: SnapshotVersion(2),
+            window: None,
             event: NormalizedEvent::ValueChanged {
                 node_id,
                 value: Some("55".to_owned()),
@@ -64,7 +65,7 @@ fn scripted_inputs() -> Vec<Input> {
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
-            version: SnapshotVersion(3),
+            window: None,
             event: NormalizedEvent::PropertyChanged {
                 node_id,
                 change: PropertyChange::States(StateSet::new().with(State::Disabled)),

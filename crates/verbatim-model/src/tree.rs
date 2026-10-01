@@ -270,6 +270,13 @@ pub struct NodeSnapshot {
     pub details: NodeDetails,
 }
 
+impl NodeSnapshot {
+    /// Stamps `outpost` on this snapshot's id (see [`NodeId::with_outpost`]).
+    pub fn assign_outpost(&mut self, outpost: OutpostId) {
+        self.id = self.id.with_outpost(outpost);
+    }
+}
+
 /// One node of a walked accessibility tree: a snapshot plus its children in
 /// tree order.
 ///
@@ -286,7 +293,17 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
-use crate::NodeId;
+impl TreeNode {
+    /// Stamps `outpost` on every node id in this tree.
+    pub fn assign_outpost(&mut self, outpost: OutpostId) {
+        self.snapshot.assign_outpost(outpost);
+        for child in &mut self.children {
+            child.assign_outpost(outpost);
+        }
+    }
+}
+
+use crate::{NodeId, OutpostId};
 
 #[cfg(test)]
 mod tests {

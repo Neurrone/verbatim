@@ -13,7 +13,19 @@ Public API:
   the counter with the process id in the high 32 bits, called once at every
   process's startup so IDs minted in Core and in each outpost never collide
   when they meet in the latency ledger.
-- `NodeId`, `Pid`, `SnapshotVersion`, `QueryId` — small identity types.
+- `OutpostId`, `NodeId`, `Pid`, `QueryId` — small identity types. An
+  `OutpostId` names one outpost process incarnation and is never reused. A
+  `NodeId` is an outpost id plus a number that outpost issued: outposts mint
+  ids with `NodeId::new(number)`, leaving the outpost `UNASSIGNED`, and Core
+  stamps the real incarnation on everything arriving on that outpost's pipe
+  (`assign_outpost` on snapshots, trees, events, and fetch results), so an
+  id from a replaced outpost can never name a node in its successor.
+- `WindowHandle` and `WindowFacts` — a native window handle as an opaque
+  number, and the facts about an event's window its outpost reads with
+  local calls: top-level window, root owner, whether it is topmost, and for
+  `Windows.UI.Core` windows whether it is under the input thread's active
+  window. The reducer classifies events against its attention record with
+  these.
 - `Backend` — `Uia` or `Msaa`; which client stack sourced a node or event.
   Diagnostics only above the outpost.
 - `Role`, `State`, `StateSet` — the role vocabulary (window, dialog, menu
@@ -33,8 +45,10 @@ Public API:
   protocol's `DumpTree` reply and the control protocol's `DumpTree` reply,
   so a tree dump travels from the outpost through Core to
   `verbatim-inspect` without translation.
-- `NormalizedEvent` — `FocusChanged` (carrying a full snapshot plus the
-  node's ancestor chain, outermost first, and — for selection containers —
+- `NormalizedEvent` — `FocusChanged` (carrying a full snapshot, a
+  `foreground` flag set when the focus is a window that just became the
+  system's foreground window, the node's ancestor chain, outermost first,
+  and — for selection containers —
   the container's selected child, both gathered by the outpost on a query
   worker before emitting: deadline-guarded, degrading to empty on failure,
   so enrichment never blocks or loses a focus announcement),
@@ -47,12 +61,16 @@ Public API:
   selection under the focused selection container speaks the newly
   selected item, and notifications speak their display string at a
   priority chosen by the processing hint ([verbatim-core](verbatim-core.md)).
-- `Input` and `Effect` — the reducer's contract. Inputs are events, fetch
-  completions, timer ticks, and `Command` (a review or object-navigation
-  gesture carrying a `ReviewCommand` and a press-repeat count, roadmap M3).
-  Effects are `Speak`, `StopSpeech`, `Fetch` (whose `QueryKind` now also
-  names the navigation directions parent, next/previous sibling, first
-  child, with a `NoNeighbor` `FetchResult` for a genuine tree edge and
+- `Input` and `Effect` — the reducer's contract. Inputs are events (each
+  carrying its source pid, backend, optional `WindowFacts`, and the
+  observation time, which is for the latency record only), fetch
+  completions (echoing their `QueryKind`), `OutpostEnded` (an outpost
+  incarnation ended, so its node ids are dead), timer ticks, and `Command`
+  (a review or object-navigation gesture carrying a `ReviewCommand` and a
+  press-repeat count, roadmap M3). Effects are `Speak`, `StopSpeech`,
+  `Fetch` (a `Query` naming the node, whose outpost is the one asked, and
+  a `QueryKind`: the navigation directions parent, next/previous sibling,
+  first child, with a `NoNeighbor` `FetchResult` for a genuine tree edge and
   `Gone` for a node that could no longer be re-acquired — the outpost
   never conflates the two), `PlayEarcon`
   (an `Earcon` names a sound semantically — `AppNotResponding` first — and

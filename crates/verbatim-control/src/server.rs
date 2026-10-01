@@ -43,7 +43,7 @@ use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use tracing::warn;
-use verbatim_model::{Backend, NormalizedEvent, Pid, SnapshotVersion, TraceId};
+use verbatim_model::{Backend, NormalizedEvent, Pid, TraceId, WindowFacts};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GetLastError, HANDLE,
     HLOCAL, LocalFree,
@@ -889,14 +889,14 @@ impl ControlServer {
         trace_id: TraceId,
         source: Pid,
         backend: Backend,
-        version: SnapshotVersion,
+        window: Option<WindowFacts>,
         event: NormalizedEvent,
     ) {
         let frame = Frame::Event {
             trace_id,
             source,
             backend,
-            version,
+            window,
             event,
         };
         self.fan_out(&frame, |entry| {
@@ -1142,7 +1142,7 @@ mod tests {
                     trace_id,
                     source: Pid(999),
                     backend: Backend::Uia,
-                    version: SnapshotVersion(1),
+                    window: None,
                     event: NormalizedEvent::ValueChanged {
                         node_id: NodeId::new(1),
                         value: Some("hello".to_owned()),
@@ -1312,7 +1312,7 @@ mod tests {
             trace_id,
             Pid(999),
             Backend::Msaa,
-            SnapshotVersion(1),
+            None,
             NormalizedEvent::ValueChanged {
                 node_id: NodeId::new(1),
                 value: Some("hi".to_owned()),

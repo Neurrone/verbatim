@@ -10,7 +10,7 @@ use std::io::{self, BufRead, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, NormalizedEvent, Pid, SnapshotVersion, TraceId, TreeNode};
+use verbatim_model::{Backend, NormalizedEvent, Pid, TraceId, TreeNode, WindowFacts};
 
 /// The protocol version this vocabulary defines.
 pub const PROTOCOL_VERSION: u32 = 0;
@@ -101,8 +101,9 @@ pub enum Frame {
         source: Pid,
         /// Which backend sourced it.
         backend: Backend,
-        /// Outpost snapshot version at event time.
-        version: SnapshotVersion,
+        /// Facts about the window the event concerns, when it had one.
+        #[serde(default)]
+        window: Option<WindowFacts>,
         /// The event itself.
         event: NormalizedEvent,
     },

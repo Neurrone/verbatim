@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::speech::Utterance;
 use crate::tree::{Backend, NodeSnapshot, StateSet};
-use crate::{NodeId, TraceId};
+use crate::{NodeId, OutpostId, TraceId};
 
 /// A Windows process identifier, used to name the application an outpost
 /// watches and to key supervisor state.
@@ -23,13 +23,33 @@ impl std::fmt::Display for Pid {
     }
 }
 
-/// Version of an outpost's tree snapshot at the moment an event was
-/// produced. The reducer detects stale reads by comparing versions and
-/// re-fetches (architecture section 3).
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
-pub struct SnapshotVersion(pub u64);
+/// A native window handle, as an opaque number.
+///
+/// Window handles are the one identity that means the same thing in every
+/// process, so they are how windows are compared across outposts (node ids
+/// are per outpost).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WindowHandle(pub u64);
+
+/// Facts about the window an event concerns, read by its outpost with local
+/// calls when the event is observed. The reducer classifies every event
+/// against its attention record with these (decision D14 as amended by the
+/// outpost redesign; `docs/parity.md`, "Event acceptance").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowFacts {
+    /// The event's top-level window.
+    pub top_level: WindowHandle,
+    /// The top of the event window's owner chain.
+    pub root_owner: WindowHandle,
+    /// Whether the window or its top-level window is topmost (menus, combo
+    /// box popups, the task switcher).
+    pub topmost: bool,
+    /// For a `Windows.UI.Core` window only: whether it is the input thread's
+    /// active window or inside it, the test NVDA uses for UWP windows.
+    /// `None` for every other window class.
+    #[serde(default)]
+    pub under_active_window: Option<bool>,
+}
 
 /// Identifies one in-flight fetch so its completion can re-enter the reducer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -60,6 +80,14 @@ pub enum NormalizedEvent {
     FocusChanged {
         /// Snapshot of the newly focused node.
         node: NodeSnapshot,
+        /// Whether this focus is a foreground change: the window became the
+        /// system's foreground window, and `node` is that window. Following
+        /// NVDA, a foreground change is a focus on the window; the reducer
+        /// always accepts it and ignores it when focus is already inside
+        /// that window (`docs/parity.md`, "Window announcement on switching
+        /// applications").
+        #[serde(default)]
+        foreground: bool,
         /// The focused node's ancestors, outermost first, walked by the
         /// outpost before emitting (deadline-guarded; empty when the walk
         /// timed out or the backend could not answer). Carried on the event
@@ -114,6 +142,35 @@ pub enum NormalizedEvent {
         /// The notification payload.
         notification: Notification,
     },
+}
+
+impl NormalizedEvent {
+    /// Stamps `outpost` on every node id this event carries, the stamp Core
+    /// applies according to the pipe the event arrived on.
+    pub fn assign_outpost(&mut self, outpost: OutpostId) {
+        match self {
+            NormalizedEvent::FocusChanged {
+                node,
+                ancestors,
+                selected_child,
+                ..
+            } => {
+                node.assign_outpost(outpost);
+                for ancestor in ancestors {
+                    ancestor.assign_outpost(outpost);
+                }
+                if let Some(selected) = selected_child {
+                    selected.assign_outpost(outpost);
+                }
+            }
+            NormalizedEvent::SelectionChanged { node } => node.assign_outpost(outpost),
+            NormalizedEvent::PropertyChanged { node_id, .. }
+            | NormalizedEvent::ValueChanged { node_id, .. }
+            | NormalizedEvent::Notification { node_id, .. } => {
+                *node_id = node_id.with_outpost(outpost);
+            }
+        }
+    }
 }
 
 /// What kind of change a [`NormalizedEvent::Notification`] reports —
@@ -182,14 +239,20 @@ pub enum FetchResult {
     NoNeighbor,
 }
 
-/// What to fetch. Re-reading one node's snapshot (staleness re-fetch), or
-/// navigating one step from a node to a neighbor (object navigation,
-/// roadmap M3). Later milestones add text ranges and subtree queries.
+impl FetchResult {
+    /// Stamps `outpost` on the node id a found node carries.
+    pub fn assign_outpost(&mut self, outpost: OutpostId) {
+        if let FetchResult::Node(node) = self {
+            node.assign_outpost(outpost);
+        }
+    }
+}
+
+/// What to fetch: one object-navigation step from a node to a neighbor
+/// (roadmap M3). Later milestones add text ranges and subtree queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum QueryKind {
-    /// Re-read the node's name, role, value, and states.
-    NodeSnapshot,
     /// The node's parent.
     Parent,
     /// The node's next sibling in tree order.
@@ -205,9 +268,7 @@ pub enum QueryKind {
 pub struct Query {
     /// Correlates the eventual [`FetchResult`] back to this request.
     pub query_id: QueryId,
-    /// The application (and therefore outpost) to ask.
-    pub source: Pid,
-    /// The node to read.
+    /// The node to read. Its outpost is the one asked.
     pub node_id: NodeId,
     /// What to read.
     pub kind: QueryKind,
@@ -216,27 +277,31 @@ pub struct Query {
 /// One input to the reducer. Strictly accessibility-shaped.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "an input is built once per event and moved, never stored in bulk"
+)]
 pub enum Input {
     /// A normalized accessibility event from an outpost.
     Event {
         /// Trace ID minted when the OS event was first observed.
         trace_id: TraceId,
         /// Milliseconds since the Unix epoch when the OS event was first
-        /// observed — the same stamp the outpost put on the wire. The reducer
-        /// keeps focus state last-observation-wins: a `FocusChanged` observed
-        /// strictly earlier than the focus currently held (same source) is
-        /// dropped, since two focus announcements can race on different outpost
-        /// threads and the later-observed one is the real focus. Defaults to 0
-        /// for flight-recorder streams recorded before this field existed, and
-        /// a zero always proceeds (it can never be "strictly earlier").
+        /// observed — the same stamp the outpost put on the wire. Kept for
+        /// the latency record only; the reducer never reads it, since order
+        /// comes from the outpost's queue (`docs/parity.md`, "Stale focus
+        /// events").
         #[serde(default)]
         observed_at_ms: u64,
-        /// The application the event came from.
+        /// The application the event came from: information about its
+        /// source, for attention and logs. Node ids carry the outpost.
         source: Pid,
         /// Which backend sourced the event (diagnostics only).
         backend: Backend,
-        /// Outpost snapshot version at event time.
-        version: SnapshotVersion,
+        /// Facts about the window the event concerns, or `None` when the
+        /// event has no window to read them from.
+        #[serde(default)]
+        window: Option<WindowFacts>,
         /// The event itself.
         event: NormalizedEvent,
     },
@@ -246,8 +311,16 @@ pub enum Input {
         trace_id: TraceId,
         /// The request this result answers.
         query_id: QueryId,
+        /// What the request asked for, echoed by the outpost.
+        kind: QueryKind,
         /// What the outpost found.
         result: FetchResult,
+    },
+    /// An outpost incarnation ended: it exited, was killed, or was retired.
+    /// Every node id it issued is dead from now on.
+    OutpostEnded {
+        /// The incarnation that ended.
+        outpost: OutpostId,
     },
     /// A review or object-navigation command, from a bound gesture
     /// (roadmap M3). The imperative shell translates a keyboard script
@@ -353,9 +426,7 @@ pub enum Effect {
     /// application that owns it. Fire-and-forget from the reducer's view;
     /// the shell routes it to the outpost.
     Activate {
-        /// The application (and outpost) that owns the node.
-        source: Pid,
-        /// The node to activate.
+        /// The node to activate. Its outpost is the one asked.
         node_id: NodeId,
     },
     /// Copy text to the system clipboard through the shell's shared

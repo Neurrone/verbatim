@@ -2,12 +2,28 @@
 //! milestone's exit-criteria scenarios, plus flight-recorder replay
 //! determinism.
 
-use verbatim_core::{ReducerRecorder, SrState, reduce, replay};
+use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::{
-    Backend, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid,
-    PropertyChange, Query, QueryId, QueryKind, Role, SegmentContent, SnapshotVersion,
-    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
+    Backend, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
+    OutpostId, Pid, PropertyChange, QueryId, QueryKind, Role, SegmentContent, SpeechPriority,
+    State, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts, WindowHandle,
 };
+
+/// The outpost standing for application `source` in these tests: one per
+/// pid, as in production.
+fn outpost_of(source: Pid) -> OutpostId {
+    OutpostId(u64::from(source.0))
+}
+
+/// Runs the reducer the way Core feeds it: an event's node ids are stamped
+/// with the outpost of the pipe it arrived on, here the outpost of its pid.
+fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
+    let mut input = input.clone();
+    if let Input::Event { source, event, .. } = &mut input {
+        event.assign_outpost(outpost_of(*source));
+    }
+    verbatim_core::reduce(state, &input)
+}
 
 fn node(
     id: u64,
@@ -27,14 +43,15 @@ fn node(
     }
 }
 
-fn focus_event(trace_id: TraceId, source: Pid, version: u64, snapshot: NodeSnapshot) -> Input {
+fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(version),
+        window: None,
         event: NormalizedEvent::FocusChanged {
+            foreground: false,
             node: snapshot,
             ancestors: Vec::new(),
             selected_child: None,
@@ -42,27 +59,70 @@ fn focus_event(trace_id: TraceId, source: Pid, version: u64, snapshot: NodeSnaps
     }
 }
 
-/// A focus change carrying an explicit observation timestamp, for the
-/// last-observation-wins gate.
-fn focus_event_at(
-    trace_id: TraceId,
-    observed_at_ms: u64,
-    source: Pid,
-    version: u64,
-    snapshot: NodeSnapshot,
-) -> Input {
+/// Window facts for a plain top-level window: its own top-level window and
+/// root owner, not topmost.
+fn window(handle: u64) -> WindowFacts {
+    WindowFacts {
+        top_level: WindowHandle(handle),
+        root_owner: WindowHandle(handle),
+        topmost: false,
+        under_active_window: None,
+    }
+}
+
+/// An event from `source` concerning the window described by `facts`.
+fn event_in(source: Pid, facts: Option<WindowFacts>, event: NormalizedEvent) -> Input {
     Input::Event {
-        observed_at_ms,
-        trace_id,
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(version),
-        event: NormalizedEvent::FocusChanged {
+        window: facts,
+        event,
+    }
+}
+
+/// A focus change in the window described by `facts`.
+fn focus_in(
+    source: Pid,
+    facts: WindowFacts,
+    snapshot: NodeSnapshot,
+    ancestors: Vec<NodeSnapshot>,
+) -> Input {
+    event_in(
+        source,
+        Some(facts),
+        NormalizedEvent::FocusChanged {
             node: snapshot,
+            foreground: false,
+            ancestors,
+            selected_child: None,
+        },
+    )
+}
+
+/// A foreground change: the window `snapshot` of application `source`
+/// became the system's foreground window.
+fn foreground_in(source: Pid, facts: WindowFacts, snapshot: NodeSnapshot) -> Input {
+    event_in(
+        source,
+        Some(facts),
+        NormalizedEvent::FocusChanged {
+            node: snapshot,
+            foreground: true,
             ancestors: Vec::new(),
             selected_child: None,
         },
-    }
+    )
+}
+
+/// Switches to application `source`: a foreground change to a window of its
+/// own, so attention moves there as it does when the user switches
+/// applications.
+fn switch_to(state: &SrState, source: Pid) -> SrState {
+    let handle = u64::from(source.0) * 1000;
+    let window_node = node(handle, Role::Window, Some("App"), None, StateSet::new());
+    reduce(state, &foreground_in(source, window(handle), window_node)).0
 }
 
 fn speak_effects(effects: &[Effect]) -> Vec<&Utterance> {
@@ -88,7 +148,7 @@ fn focus_menu_item_with_popup_speaks_name_role_and_submenu() {
         StateSet::new().with(State::HasPopup),
     );
 
-    let (next, effects) = reduce(&state, &focus_event(trace_id, source, 1, snapshot));
+    let (next, effects) = reduce(&state, &focus_event(trace_id, source, snapshot));
 
     assert_eq!(effects.len(), 1);
     let utterances = speak_effects(&effects);
@@ -112,7 +172,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     let trace_1 = TraceId::mint();
     let slider = node(2, Role::Slider, Some("Rate"), Some("50"), StateSet::new());
 
-    let (state, effects) = reduce(&state, &focus_event(trace_1, source, 1, slider));
+    let (state, effects) = reduce(&state, &focus_event(trace_1, source, slider));
     let utterances = speak_effects(&effects);
     assert_eq!(
         utterances[0].segments,
@@ -129,7 +189,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
         trace_id: trace_2,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(2),
+        window: None,
         event: NormalizedEvent::ValueChanged {
             node_id: NodeId::new(2),
             value: Some("55".to_string()),
@@ -159,7 +219,7 @@ fn unchecked_checkbox_announces_negated_checked() {
         StateSet::new(),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, checkbox));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), checkbox));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -183,7 +243,7 @@ fn checked_checkbox_announces_checked() {
         StateSet::new().with(State::Checked),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, checkbox));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), checkbox));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -207,7 +267,7 @@ fn mixed_checkbox_does_not_announce_negated_checked() {
         StateSet::new().with(State::Mixed),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, checkbox));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), checkbox));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -225,10 +285,7 @@ fn unpressed_toggle_button_announces_negated_pressed() {
     let state = SrState::new();
     let toggle_button = node(900, Role::ToggleButton, Some("Bold"), None, StateSet::new());
 
-    let (_, effects) = reduce(
-        &state,
-        &focus_event(TraceId::mint(), Pid(1), 1, toggle_button),
-    );
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), toggle_button));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -252,10 +309,7 @@ fn pressed_toggle_button_announces_pressed() {
         StateSet::new().with(State::Pressed),
     );
 
-    let (_, effects) = reduce(
-        &state,
-        &focus_event(TraceId::mint(), Pid(1), 1, toggle_button),
-    );
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), toggle_button));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -279,7 +333,7 @@ fn disabled_button_announces_unavailable_state() {
         StateSet::new().with(State::Disabled),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, button));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -302,7 +356,7 @@ fn focus_related_states_are_never_announced_but_unselected_is() {
     states.insert(State::Offscreen);
     let item = node(7, Role::ListItem, Some("Row"), None, states);
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, item));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -325,7 +379,7 @@ fn selected_items_do_not_announce_positive_selected_on_focus() {
     states.insert(State::Selected);
     let item = node(7, Role::ListItem, Some("Row"), None, states);
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, item));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -349,14 +403,14 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
         Some("a"),
         StateSet::new(),
     );
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 1, focused));
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, focused));
 
     let other_value_changed = Input::Event {
         observed_at_ms: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(2),
+        window: None,
         event: NormalizedEvent::ValueChanged {
             node_id: NodeId::new(9),
             value: Some("changed".to_string()),
@@ -372,7 +426,7 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
 }
 
 #[test]
-fn property_changed_name_on_focused_node_updates_silently() {
+fn a_name_change_on_the_focus_speaks_the_new_name_alone_queued() {
     let state = SrState::new();
     let source = Pid(1);
     let node_id = NodeId::new(10);
@@ -385,14 +439,14 @@ fn property_changed_name_on_focused_node_updates_silently() {
         states: StateSet::new(),
         details: NodeDetails::default(),
     };
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 1, focused));
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, focused));
 
     let name_changed = Input::Event {
         observed_at_ms: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(2),
+        window: None,
         event: NormalizedEvent::PropertyChanged {
             node_id,
             change: PropertyChange::Name(Some("New name".to_string())),
@@ -400,7 +454,14 @@ fn property_changed_name_on_focused_node_updates_silently() {
     };
     let (state, effects) = reduce(&state, &name_changed);
 
-    assert!(effects.is_empty(), "name changes are not announced in M1");
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances.len(), 1);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::label("New name")],
+        "the new name alone, as NVDA speaks it"
+    );
     assert_eq!(
         state.focused().map(|(_, n)| n.name.clone()),
         Some(Some("New name".to_string()))
@@ -418,7 +479,7 @@ fn states_changed_input(
         trace_id,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(2),
+        window: None,
         event: NormalizedEvent::PropertyChanged {
             node_id,
             change: PropertyChange::States(states),
@@ -433,7 +494,7 @@ fn states_changed_checkbox_toggle_on_announces_checked() {
     let checkbox = node(20, Role::CheckBox, Some("Agree"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, checkbox),
+        &focus_event(TraceId::mint(), source, checkbox),
     );
 
     let trace_id = TraceId::mint();
@@ -472,7 +533,7 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
     );
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, checkbox),
+        &focus_event(TraceId::mint(), source, checkbox),
     );
 
     let trace_id = TraceId::mint();
@@ -502,7 +563,7 @@ fn states_changed_disabled_appearing_announces_unavailable() {
     let button = node(22, Role::Button, Some("Submit"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, button),
+        &focus_event(TraceId::mint(), source, button),
     );
 
     let disabled = states_changed_input(
@@ -530,7 +591,7 @@ fn states_changed_identical_set_is_silent() {
     let checkbox = node(23, Role::CheckBox, Some("Agree"), None, states);
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, checkbox),
+        &focus_event(TraceId::mint(), source, checkbox),
     );
 
     let same = states_changed_input(TraceId::mint(), source, node_id, states);
@@ -546,7 +607,7 @@ fn states_changed_for_non_focused_node_is_ignored() {
     let focused = node(24, Role::CheckBox, Some("Agree"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, focused),
+        &focus_event(TraceId::mint(), source, focused),
     );
 
     let other_changed = states_changed_input(
@@ -564,172 +625,13 @@ fn states_changed_for_non_focused_node_is_ignored() {
     );
 }
 
-/// A focused node plus a state that has already seen version 5 from its
-/// source, ready for the out-of-order-delivery scenarios below.
-fn focused_static_text() -> (SrState, Pid, NodeId, NodeSnapshot) {
-    let source = Pid(1);
-    let node_id = NodeId::new(11);
-    let snapshot = NodeSnapshot {
-        id: node_id,
-        backend: Backend::Uia,
-        role: Role::StaticText,
-        name: Some("Status".to_string()),
-        value: Some("Ready".to_string()),
-        states: StateSet::new(),
-        details: NodeDetails::default(),
-    };
-    let (state, _) = reduce(
-        &SrState::new(),
-        &focus_event(TraceId::mint(), source, 5, snapshot.clone()),
-    );
-    (state, source, node_id, snapshot)
-}
-
-/// Sends an event with an older-than-seen version for `node_id` and returns
-/// the resulting state and the `QueryId` of the `Fetch` effect it produced.
-fn trigger_staleness(
-    state: &SrState,
-    source: Pid,
-    node_id: NodeId,
-    older_version: u64,
-) -> (SrState, QueryId) {
-    let event = Input::Event {
-        observed_at_ms: 0,
-        trace_id: TraceId::mint(),
-        source,
-        backend: Backend::Uia,
-        version: SnapshotVersion(older_version),
-        event: NormalizedEvent::ValueChanged {
-            node_id,
-            value: Some("Value from the reordered event".to_string()),
-        },
-    };
-    let (next, effects) = reduce(state, &event);
-    assert_eq!(
-        effects.len(),
-        1,
-        "a stale event must produce exactly one Fetch"
-    );
-    let query_id = match &effects[0] {
-        Effect::Fetch(query) => query.query_id,
-        other => panic!("expected Fetch effect, got {other:?}"),
-    };
-    (next, query_id)
-}
-
-#[test]
-fn out_of_order_version_triggers_fetch_for_focused_node() {
-    let (state, source, node_id, _) = focused_static_text();
-    assert_eq!(state.last_seen_version(source), Some(SnapshotVersion(5)));
-
-    let older = Input::Event {
-        observed_at_ms: 0,
-        trace_id: TraceId::mint(),
-        source,
-        backend: Backend::Uia,
-        version: SnapshotVersion(3),
-        event: NormalizedEvent::ValueChanged {
-            node_id,
-            value: Some("Stale value".to_string()),
-        },
-    };
-    let (state, effects) = reduce(&state, &older);
-
-    assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::Fetch(Query {
-            source: query_source,
-            node_id: query_node,
-            kind,
-            ..
-        }) => {
-            assert_eq!(*query_source, source);
-            assert_eq!(*query_node, node_id);
-            assert_eq!(*kind, QueryKind::NodeSnapshot);
-        }
-        other => panic!("expected Fetch effect, got {other:?}"),
-    }
-    // The stale event must not overwrite the last-seen version or the
-    // stored value with untrustworthy data.
-    assert_eq!(state.last_seen_version(source), Some(SnapshotVersion(5)));
-    assert_eq!(
-        state.focused().map(|(_, n)| n.value.clone()),
-        Some(Some("Ready".to_string()))
-    );
-}
-
-#[test]
-fn fetch_completed_with_changed_data_announces_it() {
-    let (state, source, node_id, focused) = focused_static_text();
-    let (state, query_id) = trigger_staleness(&state, source, node_id, 3);
-
-    let changed = NodeSnapshot {
-        value: Some("Busy".to_string()),
-        ..focused
-    };
-    let trace_id = TraceId::mint();
-    let completed = Input::FetchCompleted {
-        trace_id,
-        query_id,
-        result: FetchResult::Node(changed),
-    };
-    let (_, effects) = reduce(&state, &completed);
-
-    assert_eq!(effects.len(), 1);
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
-    assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Status"),
-            UtteranceSegment::new(SegmentContent::Role(Role::StaticText)),
-            UtteranceSegment::value("Busy"),
-        ]
-    );
-}
-
-#[test]
-fn fetch_completed_with_unchanged_data_does_not_announce() {
-    let (state, source, node_id, focused) = focused_static_text();
-    let (state, query_id) = trigger_staleness(&state, source, node_id, 3);
-
-    let completed = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
-        query_id,
-        result: FetchResult::Node(focused),
-    };
-    let (state, effects) = reduce(&state, &completed);
-
-    assert!(
-        effects.is_empty(),
-        "unchanged data from a re-fetch must not be announced"
-    );
-    assert_eq!(state.pending_fetch_count(), 0);
-}
-
-#[test]
-fn fetch_completed_gone_clears_focus_without_announcing() {
-    let (state, source, node_id, _) = focused_static_text();
-    let (state, query_id) = trigger_staleness(&state, source, node_id, 3);
-
-    let completed = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
-        query_id,
-        result: FetchResult::Gone,
-    };
-    let (state, effects) = reduce(&state, &completed);
-
-    assert!(effects.is_empty());
-    assert!(state.focused().is_none());
-}
-
 #[test]
 fn fetch_completed_for_unknown_query_id_is_ignored() {
     let state = SrState::new();
     let completed = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: QueryId(9999),
+        kind: QueryKind::Parent,
         result: FetchResult::Gone,
     };
     let (state, effects) = reduce(&state, &completed);
@@ -746,14 +648,15 @@ fn sample_script() -> Vec<Input> {
         ..node(1, Role::CheckBox, Some("Agree"), None, StateSet::new())
     };
     vec![
-        focus_event(TraceId::mint(), source, 1, button),
+        focus_event(TraceId::mint(), source, button),
         Input::Event {
             observed_at_ms: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
-            version: SnapshotVersion(2),
+            window: None,
             event: NormalizedEvent::FocusChanged {
+                foreground: false,
                 node: checkbox,
                 ancestors: Vec::new(),
                 selected_child: None,
@@ -764,7 +667,7 @@ fn sample_script() -> Vec<Input> {
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
-            version: SnapshotVersion(1),
+            window: None,
             event: NormalizedEvent::ValueChanged {
                 node_id,
                 value: Some("x".to_string()),
@@ -794,7 +697,7 @@ fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
 
     let mut live_effects = Vec::new();
     for input in &script {
-        let (next, effects) = reduce(&state, input);
+        let (next, effects) = verbatim_core::reduce(&state, input);
         recorder.record_input(input.clone(), effects.len());
         live_effects.push(effects);
         state = next;
@@ -812,7 +715,6 @@ fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
 fn focus_event_with_ancestors(
     trace_id: TraceId,
     source: Pid,
-    version: u64,
     snapshot: NodeSnapshot,
     ancestors: Vec<NodeSnapshot>,
 ) -> Input {
@@ -821,8 +723,9 @@ fn focus_event_with_ancestors(
         trace_id,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(version),
+        window: None,
         event: NormalizedEvent::FocusChanged {
+            foreground: false,
             node: snapshot,
             ancestors,
             selected_child: None,
@@ -852,15 +755,17 @@ fn entering_a_dialog_announces_it_before_the_control() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![window, dialog]),
+        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![window, dialog]),
     );
 
     let utterances = speak_effects(&effects);
     assert_eq!(
         utterances[0].segments,
         vec![
-            // The dialog introduces itself first; the window is never
-            // spoken here (the foreground announcement owns it).
+            // The named window and then the dialog introduce themselves,
+            // outermost first.
+            UtteranceSegment::label("Settings - App"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
             UtteranceSegment::label("Save changes"),
             UtteranceSegment::new(SegmentContent::Role(Role::Dialog)),
             UtteranceSegment::label("Save"),
@@ -885,11 +790,11 @@ fn moving_within_the_same_dialog_does_not_reannounce_it() {
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, save, vec![dialog.clone()]),
+        &focus_event_with_ancestors(TraceId::mint(), source, save, vec![dialog.clone()]),
     );
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 2, cancel, vec![dialog]),
+        &focus_event_with_ancestors(TraceId::mint(), source, cancel, vec![dialog]),
     );
 
     let utterances = speak_effects(&effects);
@@ -924,11 +829,12 @@ fn focus_from_another_application_treats_the_chain_as_new() {
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), 1, edit_a, vec![dialog]),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), edit_a, vec![dialog]),
     );
+    let state = switch_to(&state, Pid(2));
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), Pid(2), 1, edit_b, vec![dialog_b]),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(2), edit_b, vec![dialog_b]),
     );
 
     let utterances = speak_effects(&effects);
@@ -949,7 +855,7 @@ fn nameless_groups_are_not_announced_but_named_ones_are() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, field, vec![nameless, named]),
+        &focus_event_with_ancestors(TraceId::mint(), source, field, vec![nameless, named]),
     );
 
     let utterances = speak_effects(&effects);
@@ -975,7 +881,7 @@ fn a_named_list_ancestor_is_announced_as_entered_context() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, item, vec![list]),
+        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![list]),
     );
 
     let utterances = speak_effects(&effects);
@@ -1001,7 +907,7 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, item, vec![tree]),
+        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![tree]),
     );
 
     let utterances = speak_effects(&effects);
@@ -1024,7 +930,7 @@ fn an_unnamed_group_ancestor_is_dropped() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![group]),
+        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![group]),
     );
 
     let utterances = speak_effects(&effects);
@@ -1039,10 +945,9 @@ fn an_unnamed_group_ancestor_is_dropped() {
 }
 
 #[test]
-fn a_named_window_ancestor_is_never_announced_as_context() {
-    // The window is owned by the foreground announcement, never repeated as
-    // entered focus context — even when it carries a name (a documented
-    // divergence from NVDA).
+fn a_named_window_ancestor_is_announced_as_entered_context() {
+    // NVDA presents a named window entered as an ancestor like any other
+    // container; an unnamed one is layout.
     let state = SrState::new();
     let source = Pid(1);
     let window = node(
@@ -1056,7 +961,29 @@ fn a_named_window_ancestor_is_never_announced_as_context() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![window]),
+        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![window]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("App - Window"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+            UtteranceSegment::label("OK"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+#[test]
+fn an_unnamed_window_ancestor_is_not_announced() {
+    let window_node = node(632, Role::Window, Some("  "), None, StateSet::new());
+    let button = node(633, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), button, vec![window_node]),
     );
 
     let utterances = speak_effects(&effects);
@@ -1087,7 +1014,7 @@ fn list_item_and_editable_text_ancestors_are_dropped() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, 1, button, vec![list_item, edit]),
+        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![list_item, edit]),
     );
 
     let utterances = speak_effects(&effects);
@@ -1098,174 +1025,6 @@ fn list_item_and_editable_text_ancestors_are_dropped() {
             UtteranceSegment::new(SegmentContent::Role(Role::Button)),
         ]
     );
-}
-
-#[test]
-fn a_stale_window_focus_is_spoken_but_never_moves_focus() {
-    // msinfo32's race: the control ("System Summary", observed later) is
-    // announced first, then the window ("System Information", observed earlier)
-    // arrives late from the announce lane. The window is foreground context the
-    // maintainer requires never lost, so it must still be spoken — but it must
-    // not move focus or the navigator back to the window.
-    let state = SrState::new();
-    let source = Pid(1);
-    let item = node(
-        700,
-        Role::TreeItem,
-        Some("System Summary"),
-        None,
-        StateSet::new(),
-    );
-    let window = node(
-        701,
-        Role::Window,
-        Some("System Information"),
-        None,
-        StateSet::new(),
-    );
-
-    let (state, _) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, source, 1, item.clone()),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 500, source, 2, window.clone()),
-    );
-
-    let utterances = speak_effects(&effects);
-    assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("System Information"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
-        ],
-        "the late window announcement is spoken as foreground context"
-    );
-    assert_eq!(
-        state.focused().map(|(_, node)| node.id),
-        Some(item.id),
-        "focus stays on the later-observed control, not the late window"
-    );
-}
-
-#[test]
-fn a_stale_control_focus_is_dropped_silently() {
-    // A stale *control* focus (not a window, not an ancestor of the current
-    // focus) is noise and a navigator hazard, so it stays dropped entirely.
-    let state = SrState::new();
-    let source = Pid(1);
-    let current = node(704, Role::Button, Some("Save"), None, StateSet::new());
-    let superseded = node(705, Role::Button, Some("Cancel"), None, StateSet::new());
-
-    let (state, _) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, source, 1, current.clone()),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 500, source, 2, superseded),
-    );
-
-    assert!(
-        effects.is_empty(),
-        "a stale control focus is dropped silently"
-    );
-    assert_eq!(
-        state.focused().map(|(_, node)| node.id),
-        Some(current.id),
-        "focus stays on the later-observed control"
-    );
-}
-
-#[test]
-fn a_focus_observed_at_the_same_time_proceeds() {
-    let state = SrState::new();
-    let source = Pid(1);
-    let first = node(710, Role::Button, Some("A"), None, StateSet::new());
-    let second = node(711, Role::Button, Some("B"), None, StateSet::new());
-
-    let (state, _) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, source, 1, first),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, source, 2, second.clone()),
-    );
-
-    assert!(!effects.is_empty(), "an equal-observation focus proceeds");
-    assert_eq!(state.focused().map(|(_, node)| node.id), Some(second.id));
-}
-
-#[test]
-fn a_focus_observed_later_proceeds() {
-    let state = SrState::new();
-    let source = Pid(1);
-    let first = node(712, Role::Button, Some("A"), None, StateSet::new());
-    let second = node(713, Role::Button, Some("B"), None, StateSet::new());
-
-    let (state, _) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, source, 1, first),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 2000, source, 2, second.clone()),
-    );
-
-    assert!(!effects.is_empty(), "a later-observed focus proceeds");
-    assert_eq!(state.focused().map(|(_, node)| node.id), Some(second.id));
-}
-
-#[test]
-fn an_earlier_focus_from_a_different_application_still_proceeds() {
-    // The observation gate is per-source; a different application's staleness
-    // is the shell's cross-app foreground gate, not this reducer rule.
-    let state = SrState::new();
-    let first = node(720, Role::Button, Some("A"), None, StateSet::new());
-    let second = node(721, Role::Button, Some("B"), None, StateSet::new());
-
-    let (state, _) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, Pid(1), 1, first),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 500, Pid(2), 1, second.clone()),
-    );
-
-    assert!(
-        !effects.is_empty(),
-        "a different application's focus is not gated by observation time here"
-    );
-    assert_eq!(
-        state.focused().map(|(pid, node)| (pid, node.id)),
-        Some((Pid(2), second.id))
-    );
-}
-
-#[test]
-fn a_zero_observation_always_proceeds() {
-    // A flight-recorder stream recorded before observed_at_ms existed carries 0
-    // for every event; those must never be dropped, so replay stays
-    // deterministic.
-    let state = SrState::new();
-    let source = Pid(1);
-    let first = node(730, Role::Button, Some("A"), None, StateSet::new());
-    let second = node(731, Role::Button, Some("B"), None, StateSet::new());
-
-    let (state, _) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 1000, source, 1, first),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &focus_event_at(TraceId::mint(), 0, source, 2, second.clone()),
-    );
-
-    assert!(!effects.is_empty(), "a zero-timestamp focus proceeds");
-    assert_eq!(state.focused().map(|(_, node)| node.id), Some(second.id));
 }
 
 #[test]
@@ -1287,7 +1046,7 @@ fn details_speak_in_nvda_property_order() {
         rect: None,
     };
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, item));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
 
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -1310,7 +1069,6 @@ fn details_speak_in_nvda_property_order() {
 fn focus_event_with_selection(
     trace_id: TraceId,
     source: Pid,
-    version: u64,
     snapshot: NodeSnapshot,
     selected_child: Option<NodeSnapshot>,
 ) -> Input {
@@ -1319,8 +1077,9 @@ fn focus_event_with_selection(
         trace_id,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(version),
+        window: None,
         event: NormalizedEvent::FocusChanged {
+            foreground: false,
             node: snapshot,
             ancestors: Vec::new(),
             selected_child,
@@ -1328,13 +1087,13 @@ fn focus_event_with_selection(
     }
 }
 
-fn selection_event(trace_id: TraceId, source: Pid, version: u64, node: NodeSnapshot) -> Input {
+fn selection_event(trace_id: TraceId, source: Pid, node: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_ms: 0,
         trace_id,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(version),
+        window: None,
         event: NormalizedEvent::SelectionChanged { node },
     }
 }
@@ -1348,7 +1107,7 @@ fn focusing_a_list_announces_its_selected_item() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), source, 1, list, Some(item)),
+        &focus_event_with_selection(TraceId::mint(), source, list, Some(item)),
     );
 
     let utterances = speak_effects(&effects);
@@ -1373,13 +1132,13 @@ fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), source, 1, list, Some(speech)),
+        &focus_event_with_selection(TraceId::mint(), source, list, Some(speech)),
     );
 
     // Arrowing to another item announces it.
     let (state, effects) = reduce(
         &state,
-        &selection_event(TraceId::mint(), source, 2, keyboard.clone()),
+        &selection_event(TraceId::mint(), source, keyboard.clone()),
     );
     let utterances = speak_effects(&effects);
     assert_eq!(
@@ -1391,10 +1150,7 @@ fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
     );
 
     // A duplicate selection event for the same item stays silent.
-    let (_, effects) = reduce(
-        &state,
-        &selection_event(TraceId::mint(), source, 3, keyboard),
-    );
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, keyboard));
     assert!(effects.is_empty(), "the same selection is not spoken twice");
 }
 
@@ -1407,12 +1163,12 @@ fn the_focus_events_own_selected_item_is_not_reannounced_by_a_selection_event() 
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), source, 1, list, Some(speech.clone())),
+        &focus_event_with_selection(TraceId::mint(), source, list, Some(speech.clone())),
     );
 
     // Platforms often raise a selection event right after focus lands; the
     // focus announcement already spoke this item.
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, 2, speech));
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, speech));
     assert!(effects.is_empty());
 }
 
@@ -1423,10 +1179,10 @@ fn selection_changes_outside_a_focused_container_stay_silent() {
     let item = node(601, Role::ListItem, Some("Row"), None, StateSet::new());
 
     // Focus on a non-container: selection noise elsewhere is not announced.
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 1, button));
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
     let (state, effects) = reduce(
         &state,
-        &selection_event(TraceId::mint(), Pid(1), 2, item.clone()),
+        &selection_event(TraceId::mint(), Pid(1), item.clone()),
     );
     assert!(effects.is_empty(), "focus is not on a selection container");
 
@@ -1435,16 +1191,15 @@ fn selection_changes_outside_a_focused_container_stay_silent() {
     let list = node(602, Role::List, Some("Files"), None, StateSet::new());
     let (state, _) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), Pid(1), 3, list, None),
+        &focus_event_with_selection(TraceId::mint(), Pid(1), list, None),
     );
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), Pid(2), 1, item));
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), Pid(2), item));
     assert!(effects.is_empty(), "another application's selection");
 }
 
 fn notification_event(
     trace_id: TraceId,
     source: Pid,
-    version: u64,
     processing: verbatim_model::NotificationProcessing,
     display: Option<&str>,
 ) -> Input {
@@ -1453,7 +1208,7 @@ fn notification_event(
         trace_id,
         source,
         backend: Backend::Uia,
-        version: SnapshotVersion(version),
+        window: None,
         event: NormalizedEvent::Notification {
             node_id: NodeId::new(1),
             notification: verbatim_model::Notification {
@@ -1476,7 +1231,6 @@ fn notification_with_text_is_announced_and_priority_follows_processing() {
         &notification_event(
             TraceId::mint(),
             Pid(1),
-            1,
             NotificationProcessing::MostRecent,
             Some("Snap layout available"),
         ),
@@ -1494,7 +1248,6 @@ fn notification_with_text_is_announced_and_priority_follows_processing() {
         &notification_event(
             TraceId::mint(),
             Pid(1),
-            2,
             NotificationProcessing::All,
             Some("Download complete"),
         ),
@@ -1509,13 +1262,7 @@ fn notification_without_text_is_silent() {
 
     let (_, effects) = reduce(
         &SrState::new(),
-        &notification_event(
-            TraceId::mint(),
-            Pid(1),
-            1,
-            NotificationProcessing::All,
-            None,
-        ),
+        &notification_event(TraceId::mint(), Pid(1), NotificationProcessing::All, None),
     );
     assert!(
         effects.is_empty(),
@@ -1530,12 +1277,12 @@ fn identical_back_to_back_focus_is_suppressed() {
 
     let (state, effects) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, button.clone()),
+        &focus_event(TraceId::mint(), source, button.clone()),
     );
     assert_eq!(effects.len(), 1, "first focus is announced");
 
     // The exact same node focusing again from the same app: suppressed.
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), source, 2, button));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), source, button));
     assert!(
         effects.is_empty(),
         "a redundant identical focus event is not re-announced"
@@ -1549,11 +1296,13 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
 
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), Pid(1), 1, a.clone()),
+        &focus_event(TraceId::mint(), Pid(1), a.clone()),
     );
     // Visit another control (different app), then come back to the first.
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(2), 1, b));
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), 2, a));
+    let state = switch_to(&state, Pid(2));
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(2), b));
+    let state = switch_to(&state, Pid(1));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), a));
     assert_eq!(
         effects.len(),
         1,
@@ -1577,7 +1326,7 @@ fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
 fn focused(source: Pid, snapshot: NodeSnapshot) -> SrState {
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, 1, snapshot),
+        &focus_event(TraceId::mint(), source, snapshot),
     );
     state
 }
@@ -1642,13 +1391,14 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
         other => panic!("expected Fetch, got {other:?}"),
     };
     assert_eq!(query.kind, QueryKind::Parent);
-    assert_eq!(query.node_id, NodeId::new(10));
+    assert_eq!(query.node_id, NodeId::in_outpost(outpost_of(source), 10));
 
     // The completion moves the navigator to the parent and announces it.
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: query.query_id,
+        kind: query.kind,
         result: FetchResult::Node(parent),
     };
     let (_, effects) = reduce(&state, &completion);
@@ -1673,6 +1423,7 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: query.query_id,
+        kind: query.kind,
         result: FetchResult::NoNeighbor,
     };
     let (after, effects) = reduce(&state, &completion);
@@ -1714,6 +1465,7 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
         let completion = Input::FetchCompleted {
             trace_id: TraceId::mint(),
             query_id: query.query_id,
+            kind: query.kind,
             result: FetchResult::NoNeighbor,
         };
         let (_, effects) = reduce(&state, &completion);
@@ -1744,12 +1496,13 @@ fn navigate_completion_after_an_intervening_focus_event_still_applies() {
     // snaps to it, but this must not discard the user's still-pending
     // navigation.
     let elsewhere = node(20, Role::Button, Some("Cancel"), None, StateSet::new());
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 2, elsewhere));
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, elsewhere));
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: query.query_id,
+        kind: query.kind,
         result: FetchResult::Node(parent),
     };
     let (_, effects) = reduce(&state, &completion);
@@ -1787,6 +1540,7 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
     let stale_completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: first_query.query_id,
+        kind: first_query.kind,
         result: FetchResult::Node(stale_parent),
     };
     let (state, effects) = reduce(&state, &stale_completion);
@@ -1800,6 +1554,7 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: second_query.query_id,
+        kind: second_query.kind,
         result: FetchResult::Node(sibling),
     };
     let (_, effects) = reduce(&state, &completion);
@@ -1827,6 +1582,7 @@ fn to_focus_after_a_navigation_drops_its_late_completion() {
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: query.query_id,
+        kind: query.kind,
         result: FetchResult::Node(parent),
     };
     let (_, effects) = reduce(&state, &completion);
@@ -1854,6 +1610,7 @@ fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: query.query_id,
+        kind: query.kind,
         result: FetchResult::Gone,
     };
     let (_, effects) = reduce(&state, &completion);
@@ -1872,9 +1629,8 @@ fn activate_emits_activate_for_the_navigator_object() {
         &command(TraceId::mint(), ReviewCommand::Activate, 0),
     );
     match &effects[0] {
-        Effect::Activate { source: s, node_id } => {
-            assert_eq!(*s, source);
-            assert_eq!(*node_id, NodeId::new(10));
+        Effect::Activate { node_id } => {
+            assert_eq!(*node_id, NodeId::in_outpost(outpost_of(source), 10));
         }
         other => panic!("expected Activate, got {other:?}"),
     }
@@ -1973,6 +1729,7 @@ fn navigator_follows_focus_and_returns_to_focus() {
         &Input::FetchCompleted {
             trace_id: TraceId::mint(),
             query_id: query.query_id,
+            kind: query.kind,
             result: FetchResult::Node(parent),
         },
     );
@@ -1985,7 +1742,7 @@ fn navigator_follows_focus_and_returns_to_focus() {
         Some("x"),
         StateSet::new(),
     );
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, 2, second));
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, second));
     let (state, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
@@ -2016,4 +1773,506 @@ fn commands_with_no_navigator_yet_do_nothing() {
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
     assert!(effects.is_empty());
+}
+
+// ---- Windows, menus, and name changes (outpost redesign step 1) ----
+
+#[test]
+fn a_foreground_change_into_the_focused_window_is_ignored() {
+    let source = Pid(1);
+    let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
+    let (state, _) = reduce(&SrState::new(), &focus_in(source, window(10), edit, vec![]));
+
+    let window_node = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
+    let (state, effects) = reduce(&state, &foreground_in(source, window(10), window_node));
+
+    assert!(effects.is_empty(), "focus is already inside that window");
+    assert_eq!(
+        state.focused().map(|(_, node)| node.name.clone()),
+        Some(Some("Text".to_owned()))
+    );
+}
+
+#[test]
+fn a_foreground_change_to_another_window_announces_the_window_as_the_focus() {
+    let source = Pid(1);
+    let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
+    let (state, _) = reduce(&SrState::new(), &focus_in(source, window(10), edit, vec![]));
+
+    let other = node(3, Role::Window, Some("Find"), None, StateSet::new());
+    let (state, effects) = reduce(&state, &foreground_in(source, window(20), other));
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Find"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+        ]
+    );
+    assert_eq!(
+        state.focused().map(|(_, node)| node.role),
+        Some(Role::Window)
+    );
+}
+
+#[test]
+fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
+    let source = Pid(1);
+    let window_node = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &foreground_in(source, window(10), window_node),
+    );
+
+    // The control's ancestry reaches the same window through another path,
+    // so its node id differs; the same top-level window with the same role
+    // and name counts as already entered.
+    let same_window = node(5, Role::Window, Some("Notepad"), None, StateSet::new());
+    let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(source, window(10), edit, vec![same_window]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Text"),
+            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
+        ]
+    );
+}
+
+#[test]
+fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
+    // A Settings page: the frame window belongs to one process, the page to
+    // another, both inside one top-level window.
+    let frame_host = Pid(1);
+    let settings = Pid(2);
+    let frame = node(1, Role::Window, Some("Settings"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &foreground_in(frame_host, window(10), frame),
+    );
+
+    let frame_seen_from_page = node(1, Role::Window, Some("Settings"), None, StateSet::new());
+    let group = node(2, Role::Group, Some("Display"), None, StateSet::new());
+    let toggle = node(
+        3,
+        Role::ToggleButton,
+        Some("Night light"),
+        None,
+        StateSet::new(),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            settings,
+            window(10),
+            toggle,
+            vec![frame_seen_from_page, group],
+        ),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments[..2],
+        [
+            UtteranceSegment::label("Display"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Group)),
+        ],
+        "the frame window is not spoken a second time"
+    );
+}
+
+#[test]
+fn a_name_change_on_a_focus_ancestor_is_silent() {
+    let source = Pid(1);
+    let window_node = node(1, Role::Window, None, None, StateSet::new());
+    let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(source, window(10), edit, vec![window_node]),
+    );
+
+    let (_, effects) = reduce(
+        &state,
+        &event_in(
+            source,
+            Some(window(10)),
+            NormalizedEvent::PropertyChanged {
+                node_id: NodeId::new(1),
+                change: PropertyChange::Name(Some("Untitled - Notepad".to_owned())),
+            },
+        ),
+    );
+
+    assert!(
+        effects.is_empty(),
+        "a window nameless when focus entered it is not announced later"
+    );
+}
+
+#[test]
+fn entering_menus_is_silent_and_only_the_item_is_announced() {
+    let menu_bar = node(1, Role::MenuBar, Some("Application"), None, StateSet::new());
+    let menu = node(2, Role::Menu, Some("File"), None, StateSet::new());
+    let item = node(3, Role::MenuItem, Some("Open"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![menu_bar, menu]),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(
+        utterances[0].segments,
+        vec![
+            UtteranceSegment::label("Open"),
+            UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
+        ]
+    );
+}
+
+// ---- Attention (decision D14 as amended by the outpost redesign) ----
+
+#[test]
+fn a_focus_from_a_window_outside_attention_is_dropped() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (state, effects) = reduce(&state, &focus_in(Pid(2), window(20), button, vec![]));
+
+    assert!(effects.is_empty());
+    assert_eq!(state.attention(), Some(Pid(1)));
+    assert_eq!(state.focused().map(|(pid, _)| pid), Some(Pid(1)));
+}
+
+#[test]
+fn topmost_shared_owner_and_active_uwp_windows_are_attended() {
+    let attended = [
+        WindowFacts {
+            topmost: true,
+            ..window(20)
+        },
+        WindowFacts {
+            root_owner: WindowHandle(1000),
+            ..window(30)
+        },
+        WindowFacts {
+            under_active_window: Some(true),
+            ..window(40)
+        },
+    ];
+    for facts in attended {
+        let state = switch_to(&SrState::new(), Pid(1));
+        let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
+        let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, button, vec![]));
+        assert_eq!(effects.len(), 1, "attended: {facts:?}");
+    }
+}
+
+#[test]
+fn without_window_facts_the_application_decides() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event(TraceId::mint(), Pid(2), button.clone()),
+    );
+    assert!(effects.is_empty(), "another application without facts");
+
+    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
+    assert_eq!(effects.len(), 1, "the attention application without facts");
+}
+
+#[test]
+fn a_foreground_change_is_always_accepted_and_moves_attention() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let other = node(2, Role::Window, Some("Calculator"), None, StateSet::new());
+
+    let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), other));
+    assert_eq!(effects.len(), 1);
+    assert_eq!(state.attention(), Some(Pid(2)));
+
+    // The previous application is now in the background.
+    let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
+    let (_, effects) = reduce(&state, &focus_in(Pid(1), window(1000), button, vec![]));
+    assert!(effects.is_empty());
+}
+
+fn notification_in(source: Pid, activity_id: Option<&str>) -> Input {
+    event_in(
+        source,
+        None,
+        NormalizedEvent::Notification {
+            node_id: NodeId::new(1),
+            notification: verbatim_model::Notification {
+                kind: verbatim_model::NotificationKind::Other,
+                processing: verbatim_model::NotificationProcessing::MostRecent,
+                display_string: Some("Snapped".to_owned()),
+                activity_id: activity_id.map(str::to_owned),
+            },
+        },
+    )
+}
+
+#[test]
+fn notifications_are_spoken_only_from_the_attention_application() {
+    let state = switch_to(&SrState::new(), Pid(1));
+
+    let (_, effects) = reduce(&state, &notification_in(Pid(2), None));
+    assert!(
+        effects.is_empty(),
+        "a background application's notification"
+    );
+
+    let (_, effects) = reduce(&state, &notification_in(Pid(1), None));
+    assert_eq!(
+        speak_effects(&effects)[0].priority,
+        SpeechPriority::Interrupt
+    );
+}
+
+#[test]
+fn the_snap_results_notification_is_spoken_from_anywhere_queued() {
+    let state = switch_to(&SrState::new(), Pid(1));
+
+    let (next, effects) = reduce(
+        &state,
+        &notification_in(
+            Pid(2),
+            Some("Windows.Shell.SnapComponent.SnapHotKeyResults"),
+        ),
+    );
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::text("Snapped")]
+    );
+    assert_eq!(
+        next.attention(),
+        Some(Pid(1)),
+        "background never moves attention"
+    );
+}
+
+// ---- Outpost replacement ----
+
+/// Feeds `input` as though it arrived on the pipe of outpost `outpost`.
+fn reduce_from(state: &SrState, input: &Input, outpost: OutpostId) -> (SrState, Vec<Effect>) {
+    let mut input = input.clone();
+    if let Input::Event { event, .. } = &mut input {
+        event.assign_outpost(outpost);
+    }
+    verbatim_core::reduce(state, &input)
+}
+
+fn ended(outpost: OutpostId) -> Input {
+    Input::OutpostEnded { outpost }
+}
+
+#[test]
+fn an_ended_outposts_focus_is_dead_and_navigation_does_nothing() {
+    let source = Pid(1);
+    let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+
+    let (state, effects) = reduce(&state, &ended(outpost_of(source)));
+    assert!(effects.is_empty());
+    assert!(state.focused().is_none());
+    assert!(state.held_nodes().is_empty());
+
+    for cmd in [
+        ReviewCommand::Parent,
+        ReviewCommand::ToFocus,
+        ReviewCommand::ReportObject,
+        ReviewCommand::Activate,
+    ] {
+        let (_, effects) = reduce(&state, &command(TraceId::mint(), cmd, 0));
+        assert!(effects.is_empty(), "{cmd:?} after the outpost ended");
+    }
+}
+
+#[test]
+fn a_pending_navigation_to_an_ended_outpost_is_dropped() {
+    let source = Pid(1);
+    let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let Effect::Fetch(query) = effects[0] else {
+        panic!("expected Fetch, got {effects:?}");
+    };
+
+    let (state, _) = reduce(&state, &ended(outpost_of(source)));
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        kind: query.kind,
+        result: FetchResult::Node(node(6, Role::Group, Some("Buttons"), None, StateSet::new())),
+    };
+    let (_, effects) = reduce(&state, &completion);
+    assert!(effects.is_empty());
+}
+
+#[test]
+fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
+    let source = Pid(1);
+    let dialog = node(4, Role::Dialog, Some("Save"), None, StateSet::new());
+    let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    let report = focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]);
+    let (state, _) = reduce_from(&SrState::new(), &report, OutpostId(1));
+    let (state, _) = reduce(&state, &ended(OutpostId(1)));
+
+    // The replacement numbers its nodes afresh.
+    let dialog = node(1, Role::Dialog, Some("Save"), None, StateSet::new());
+    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
+    let report = focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]);
+    let (state, effects) = reduce_from(&state, &report, OutpostId(2));
+
+    assert!(effects.is_empty(), "the user already heard this focus");
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id),
+        Some(NodeId::in_outpost(OutpostId(2), 2))
+    );
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::Activate, 0),
+    );
+    assert_eq!(
+        effects,
+        vec![Effect::Activate {
+            node_id: NodeId::in_outpost(OutpostId(2), 2)
+        }],
+        "the navigator follows the re-read focus"
+    );
+}
+
+#[test]
+fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
+    let source = Pid(1);
+    let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, _) = reduce_from(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, button),
+        OutpostId(1),
+    );
+    let (state, _) = reduce(&state, &ended(OutpostId(1)));
+
+    let other = node(1, Role::Button, Some("Cancel"), None, StateSet::new());
+    let (_, effects) = reduce_from(
+        &state,
+        &focus_event(TraceId::mint(), source, other),
+        OutpostId(2),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments[0],
+        UtteranceSegment::label("Cancel")
+    );
+}
+
+#[test]
+fn the_same_node_number_from_another_outpost_never_reaches_the_focus() {
+    // A successor, or any other outpost, issues the same number for an
+    // unrelated element; only the outpost stamp tells them apart.
+    let source = Pid(1);
+    let slider = node(500, Role::Slider, Some("Rate"), Some("50"), StateSet::new());
+    let (state, _) = reduce_from(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, slider),
+        OutpostId(1),
+    );
+
+    let value_changed = event_in(
+        source,
+        None,
+        NormalizedEvent::ValueChanged {
+            node_id: NodeId::new(500),
+            value: Some("90".to_owned()),
+        },
+    );
+    let (_, effects) = reduce_from(&state, &value_changed, OutpostId(2));
+    assert!(effects.is_empty(), "another outpost's node 500");
+
+    let (_, effects) = reduce_from(&state, &value_changed, OutpostId(1));
+    assert_eq!(effects.len(), 1, "the focus's own outpost");
+}
+
+#[test]
+fn focus_returning_from_a_topmost_popup_is_still_attended() {
+    // A context menu is topmost and takes focus without becoming the
+    // foreground window, so it must not take attention with it.
+    let source = Pid(1);
+    let state = switch_to(&SrState::new(), source);
+    let item = node(2, Role::MenuItem, Some("Copy"), None, StateSet::new());
+    let popup = WindowFacts {
+        topmost: true,
+        ..window(77)
+    };
+    let (state, effects) = reduce(&state, &focus_in(source, popup, item, vec![]));
+    assert_eq!(effects.len(), 1, "the topmost menu is attended");
+
+    let edit = node(3, Role::EditableText, Some("Text"), None, StateSet::new());
+    let (_, effects) = reduce(&state, &focus_in(source, window(1000), edit, vec![]));
+    assert_eq!(effects.len(), 1, "focus back in the foreground window");
+}
+
+#[test]
+fn a_nameless_foreground_window_moves_attention_silently() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let nameless = node(5, Role::Window, None, None, StateSet::new());
+
+    let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), nameless));
+    assert!(effects.is_empty(), "a bare window says nothing");
+    assert_eq!(state.attention(), Some(Pid(2)));
+
+    // The window has its name by the time its control takes focus, so it is
+    // entered as named context.
+    let named = node(6, Role::Window, Some("Calculator"), None, StateSet::new());
+    let button = node(7, Role::Button, Some("Seven"), None, StateSet::new());
+    let (_, effects) = reduce(&state, &focus_in(Pid(2), window(20), button, vec![named]));
+    assert_eq!(
+        speak_effects(&effects)[0].segments[..2],
+        [
+            UtteranceSegment::label("Calculator"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+        ]
+    );
+}
+
+#[test]
+fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
+    let source = Pid(3);
+    let list = node(1, Role::List, Some("Files"), None, StateSet::new());
+    let pane = node(2, Role::Pane, None, None, StateSet::new());
+    let item = node(3, Role::ListItem, Some("a.txt"), None, StateSet::new());
+    let input = event_in(
+        source,
+        None,
+        NormalizedEvent::FocusChanged {
+            node: list,
+            foreground: false,
+            ancestors: vec![pane],
+            selected_child: Some(item),
+        },
+    );
+    let (state, _) = reduce(&SrState::new(), &input);
+
+    let outpost = outpost_of(source);
+    let held = state.held_nodes();
+    assert_eq!(held.len(), 1);
+    assert_eq!(
+        held[&outpost].iter().copied().collect::<Vec<_>>(),
+        vec![
+            NodeId::in_outpost(outpost, 1),
+            NodeId::in_outpost(outpost, 2),
+            NodeId::in_outpost(outpost, 3),
+        ]
+    );
 }

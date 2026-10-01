@@ -20,7 +20,9 @@ use crate::recorder::RecordedInput;
 
 /// Format version this module reads and writes. Bumped whenever the header
 /// or per-line shape changes in a way that is not backward compatible.
-pub const DUMP_FORMAT_VERSION: u32 = 0;
+/// Version 1: node ids carry their outpost, events carry window facts, and
+/// snapshot versions are gone.
+pub const DUMP_FORMAT_VERSION: u32 = 1;
 
 /// The first line of a dump: format version, the crate version that wrote
 /// it, and a caller-supplied timestamp string.
@@ -230,8 +232,8 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 mod tests {
     use super::*;
     use verbatim_model::{
-        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role,
-        SnapshotVersion, StateSet, TraceId,
+        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role, StateSet,
+        TraceId,
     };
 
     fn sample_inputs() -> Vec<RecordedInput> {
@@ -242,8 +244,9 @@ mod tests {
                     observed_at_ms: 0,
                     source: Pid(1),
                     backend: Backend::Uia,
-                    version: SnapshotVersion(1),
+                    window: None,
                     event: NormalizedEvent::FocusChanged {
+                        foreground: false,
                         ancestors: Vec::new(),
                         selected_child: None,
                         node: NodeSnapshot {
@@ -323,7 +326,7 @@ mod tests {
                 observed_at_ms: 0,
                 source: Pid(2),
                 backend: Backend::Uia,
-                version: SnapshotVersion(9),
+                window: None,
                 event: NormalizedEvent::ValueChanged {
                     node_id: NodeId::new(9),
                     value: Some("cut off here".to_owned()),

@@ -97,7 +97,9 @@ verified.
   page whose frame belongs to `ApplicationFrameHost.exe`), and an
   ancestor walk that timed out leaves no ancestors to compare. A
   window that has no name when focus enters it is not announced
-  later. **not yet (outpost redesign, step 1)**.
+  later, and a foreground change to a nameless window moves
+  attention without speaking (a bare "window" says nothing).
+  **not yet (outpost redesign, step 1)**.
 - Duplicate focus suppression (same control announced once when two
   paths report it). NVDA: "already the focus" early return.
   Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md),
@@ -142,15 +144,18 @@ verified.
   today: the shell drops events whose application is not the
   foreground application (the foreground pid gate). Planned (D14,
   amended by the outpost redesign): the reducer keeps an attention
-  record, the application and top-level window that most recently
-  received an accepted focus. A foreground fact is always accepted
-  and moves attention; its intake has already dropped it if the
-  window is no longer the system's foreground. Every other event,
-  focus events included, is classified against the record from
-  window facts its outpost attached: top-level window, root owner,
-  topmost, and for `Windows.UI.Core` windows whether the window is
-  under the input thread's active window. An accepted focus event
-  moves attention to its own window. Background acceptance follows
+  record, the application and top-level window of the most recent
+  foreground change, standing in for the system's foreground window
+  NVDA compares against. A foreground fact is always accepted and
+  moves attention; its intake has already dropped it if the window
+  is no longer the system's foreground. Every other event, focus
+  events included, is classified against the record from window
+  facts its outpost attached: top-level window, root owner, topmost,
+  and for `Windows.UI.Core` windows whether the window is under the
+  input thread's active window. Nothing else moves attention, so a
+  topmost popup menu that takes focus without becoming the
+  foreground leaves attention where it was, and focus returning from
+  it is still attended. Background acceptance follows
   NVDA's categories: tooltips and notification bars, toast alerts,
   configured progress bars, and the shell's window-snap results; other
   UIA notifications only from the attention application. Accepted
