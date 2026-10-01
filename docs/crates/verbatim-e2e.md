@@ -25,7 +25,10 @@ Public API:
   `verbatim_control::client::Client`.
 - `Scenario` — the lifecycle owner for one live, agent-driven Verbatim run:
   a guard struct, not a manual-cleanup checklist. In runner-direct mode
-  `Scenario::launch` copies `verbatim.exe` and `verbatim-outpost.exe` into
+  `Scenario::launch` first builds `verbatim-app` and `verbatim-outpost`
+  (once per test binary, skipped when `VERBATIM_E2E_VERBATIM_EXE` names a
+  build to stage instead), then copies `verbatim.exe` and
+  `verbatim-outpost.exe` into
   `target/e2e-stage` and writes `Settings::for_e2e`'s fixed `settings.toml`
   there; in remote mode `cargo xtask vm deploy` has already staged the
   guest side. The synthesizer is the capture synthesizer by default

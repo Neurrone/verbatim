@@ -188,16 +188,19 @@ anywhere.
 To actually run the suite locally:
 
 ```
-cargo build -p verbatim-app -p verbatim-agent
+cargo build -p verbatim-agent
 target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001
 ```
+
+The suite builds Verbatim itself (see below), so only the agent needs
+building first.
 
 Leave that agent running in its own terminal (loopback avoids a firewall
 prompt that binding all interfaces would trigger on a dev machine), then in
 a second terminal:
 
 ```
-set VERBATIM_E2E_ENDPOINT=127.0.0.1:44001
+$env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'
 cargo test -p verbatim-e2e -- --test-threads=1
 ```
 
@@ -213,8 +216,14 @@ exactly what `.github/workflows/ci.yml`'s `e2e` job does, on a plain
 
 The suite always runs against a fixed, generated configuration, never
 whatever `settings.toml` a developer's own manual runs left behind.
-Concretely, in this runner-direct mode, `Scenario::launch` copies
-`verbatim.exe` and `verbatim-outpost.exe` into `target/e2e-stage` under the
+Concretely, in this runner-direct mode, `Scenario::launch` first runs
+`cargo build -p verbatim-app -p verbatim-outpost`, once per test binary, so
+a run can never stage an executable older than the source under test
+(`cargo test -p verbatim-e2e` alone builds only this crate and its
+libraries, not Verbatim's executables). That build needs `LIBCLANG_PATH`
+like any direct build of `verbatim-app`, and is a no-op when nothing
+changed. It then copies `verbatim.exe` and `verbatim-outpost.exe` into
+`target/e2e-stage` under the
 workspace root (skipping a copy when the destination already matches
 byte-for-byte) and writes a fresh `settings.toml` there — `Settings::default`
 plus exactly the synthesizer choice — before launching that staged copy.
@@ -230,8 +239,9 @@ Two more environment variables matter for less common cases:
   binaries *from* — the source build, not where it actually launches from.
   It defaults to `target/debug/verbatim.exe` under the workspace root
   (computed from the crate's own manifest directory, so it does not depend
-  on your working directory). Setting it chooses a different source build;
-  the fixed, staged configuration regime is unaffected either way.
+  on your working directory). Setting it chooses a different source build
+  and skips the automatic build: the named binaries are staged as they
+  are. The fixed, staged configuration regime is unaffected either way.
 - `VERBATIM_E2E_REMOTE=1` marks a remote run, where the agent, Verbatim, and
   its configuration live on another machine (the Hyper-V guest) — set by
   `cargo xtask vm test`, not something you normally set by hand. It skips

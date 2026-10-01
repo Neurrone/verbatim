@@ -49,8 +49,9 @@ const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
 /// `target/debug/verbatim.exe` under the workspace root — the ordinary
-/// local debug build, and what the CI job in `.github/workflows/ci.yml`
-/// builds before running this suite.
+/// local debug build, which a runner-direct run builds itself before
+/// staging it (see [`build_default_source_binaries`]). Setting this skips
+/// that build: the named binaries are staged as they are.
 ///
 /// This names where [`Scenario::launch`] finds the *source* binaries to
 /// stage from in runner-direct mode, not where it launches from: setting it
@@ -198,6 +199,8 @@ impl Scenario {
     /// [`crate::ENDPOINT_ENV`].
     ///
     /// In runner-direct mode (the default — see [`REMOTE_ENV`]), first
+    /// builds the default source binaries unless [`VERBATIM_EXE_ENV`]
+    /// overrides them (see [`build_default_source_binaries`]), then
     /// stages `verbatim.exe` and `verbatim-outpost.exe` into
     /// `target/e2e-stage` under the workspace root (see [`stage_binaries`]),
     /// then writes [`verbatim_config::Settings::for_e2e`]'s fixed
@@ -228,9 +231,10 @@ impl Scenario {
     ///
     /// # Errors
     ///
-    /// Returns an error if [`crate::ENDPOINT_ENV`] is unset, the source
-    /// `verbatim.exe` (or, in runner-direct mode, `verbatim-outpost.exe`
-    /// next to it) cannot be found, staging fails, the agent cannot be
+    /// Returns an error if [`crate::ENDPOINT_ENV`] is unset, building the
+    /// default source binaries fails, the source `verbatim.exe` (or, in
+    /// runner-direct mode, `verbatim-outpost.exe` next to it) cannot be
+    /// found, staging fails, the agent cannot be
     /// reached, or Verbatim's control plane never comes up within the
     /// launch timeout.
     pub fn launch() -> io::Result<Self> {
@@ -243,6 +247,13 @@ impl Scenario {
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
         let audible = is_audible();
+        // A runner-direct run of the default source build builds it first, so
+        // it can never stage a binary older than the source under test (see
+        // build_default_source_binaries). An override names a build the
+        // caller chose, and a remote run's binaries were deployed by xtask.
+        if !remote && std::env::var_os(VERBATIM_EXE_ENV).is_none() {
+            build_default_source_binaries()?;
+        }
         if !remote && !verbatim_exe.is_file() {
             return Err(io::Error::other(format!(
                 "verbatim.exe not found at {} (set {VERBATIM_EXE_ENV} to override, or {REMOTE_ENV} if it lives in a guest)",
@@ -254,8 +265,8 @@ impl Scenario {
         // neither staging nor the config write can happen here; `cargo
         // xtask vm deploy` staged both inside the guest already (always
         // selecting OneCore, since every VM run is audible). In
-        // runner-direct mode, stage a private copy so this suite never reads or writes the developer's
-        // own build output directory.
+        // runner-direct mode, stage a private copy so this suite never
+        // reads or writes the developer's own build output directory.
         let (launch_exe, launch_dir) = if remote {
             let exe_dir = verbatim_exe
                 .parent()
@@ -839,6 +850,45 @@ fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> 
         .to_str()
         .map(str::to_owned)
         .ok_or_else(|| io::Error::other("stderr log path is not valid UTF-8"))
+}
+
+/// Builds `verbatim-app` and `verbatim-outpost` (debug profile, the default
+/// source build [`verbatim_exe_path`] resolves to) once per test process.
+///
+/// `cargo test -p verbatim-e2e` builds only this crate and its library
+/// dependencies, never Verbatim's executables, so without this a
+/// runner-direct run silently staged whatever `target/debug/verbatim.exe`
+/// a past build left behind. Building here is a no-op when nothing changed.
+/// The build needs `LIBCLANG_PATH` the same way any direct `cargo build` of
+/// `verbatim-app` does (see `CLAUDE.md`); its output goes straight to the
+/// terminal. The outcome is remembered, so each test process builds at most
+/// once.
+///
+/// # Errors
+///
+/// Returns an error if cargo cannot be launched or the build fails.
+fn build_default_source_binaries() -> io::Result<()> {
+    static OUTCOME: OnceLock<Result<(), String>> = OnceLock::new();
+    OUTCOME
+        .get_or_init(|| {
+            // Cargo sets CARGO for the processes it runs, tests included.
+            let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+            let status = std::process::Command::new(cargo)
+                .args(["build", "-p", "verbatim-app", "-p", "verbatim-outpost"])
+                .current_dir(workspace_root())
+                .status()
+                .map_err(|error| format!("could not launch cargo build: {error}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "cargo build -p verbatim-app -p verbatim-outpost failed ({status}); set \
+                     {VERBATIM_EXE_ENV} to stage an existing build instead"
+                ))
+            }
+        })
+        .clone()
+        .map_err(io::Error::other)
 }
 
 /// Copies `verbatim.exe` and `verbatim-outpost.exe` from `source_dir` (the
