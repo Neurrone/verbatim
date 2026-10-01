@@ -11,12 +11,12 @@ mod clipboard;
 mod datetime;
 mod flight_dump;
 mod latency;
+mod requests;
 mod single_instance;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -34,8 +34,8 @@ use verbatim_input::{
 };
 use verbatim_input_windows::InputHook;
 use verbatim_model::{
-    Effect, FetchResult, GestureId, Input, Pid, ReviewCommand, SpeechPriority, TraceId, TreeNode,
-    Utterance, UtteranceSegment,
+    Effect, GestureId, Input, OutpostId, Pid, Query, QueryId, ReviewCommand, SpeechPriority,
+    TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::{OutpostMessage, Supervisor};
@@ -46,14 +46,7 @@ use verbatim_speech::{
 use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
-
-/// Tracks the current foreground application's pid (0 for none yet), shared
-/// between the foreground trigger and the reducer thread so the reducer can
-/// drop events from outposts whose application does not currently hold
-/// foreground (the stale-cache policy: an outpost that keeps running in the
-/// background per decision D9 still emits events, which must not be spoken
-/// as though they were happening on screen right now).
-type CurrentForeground = Arc<AtomicU32>;
+use requests::{Asker, DumpTreeResult, Outcome, RequestId, RequestTable};
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -64,17 +57,6 @@ const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
 /// How long a `DumpTree` control-plane request waits for the outpost's
 /// answer before giving up.
 const DUMP_TREE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The one-shot reply channel for an in-flight `DumpTree` request.
-type DumpTreeReplySender = Sender<Result<(TreeNode, bool), String>>;
-
-/// A slot for at most one in-flight `DumpTree` request at a time: the
-/// control-plane handler registers a sender here and waits on its
-/// receiver; `reducer_loop` routes the outpost's `DumpTreeReply` into it
-/// instead of the reducer, since a tree dump is a one-shot diagnostic
-/// query, not reducer-shaped input. A second concurrent request finds the
-/// slot occupied and fails immediately rather than queuing.
-type PendingDumpTree = Arc<Mutex<Option<DumpTreeReplySender>>>;
 
 /// The reducer's flight recorder, shared between the reducer thread (which
 /// records each input as it processes it) and both dump triggers: a
@@ -133,7 +115,6 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // handlers), but earlier pieces need to reach it for broadcasting.
     let server_slot: Arc<OnceLock<ControlServer>> = Arc::new(OnceLock::new());
     let ledger = Arc::new(LatencyLedger::new(256, Arc::clone(&server_slot)));
-    let pending_dump_tree: PendingDumpTree = Arc::new(Mutex::new(None));
 
     // The flight recorder, and its panic-time dump trigger: installed as
     // early as possible, chaining the previous hook, so a panic on any
@@ -166,20 +147,19 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // dedicated focus listener (decision D13), which detects focus and
     // foreground changes desktop-wide and reports them as facts the supervisor
     // routes; outpost status is mirrored for the control plane. Core no longer
-    // runs its own foreground hook — the listener absorbs it, and the reducer
-    // loop learns of foreground changes through
-    // `OutpostMessage::ForegroundChanged`.
+    // runs its own foreground hook — the listener absorbs it, and a foreground
+    // change reaches the reducer as a focus on the window, which moves its
+    // attention.
     let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
     let supervisor = Arc::new(Supervisor::new(outpost_tx)?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
-    let current_foreground: CurrentForeground = Arc::new(AtomicU32::new(0));
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
-    // Review and object-navigation commands from the router reach the
-    // reducer over this channel; the reducer thread selects on it alongside
-    // the outpost stream (see `reducer_loop`).
-    let (command_tx, command_rx) = unbounded::<Input>();
+    // Review and object-navigation commands from the router, and tree dumps
+    // from the control plane, reach the reducer thread over this channel; it
+    // selects on it alongside the outpost stream (see `reducer_loop`).
+    let (command_tx, command_rx) = unbounded::<ShellCommand>();
 
     // The reducer thread: normalized events and review commands in, speech,
     // fetches, activations, and clipboard copies out.
@@ -190,9 +170,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             ledger: Arc::clone(&ledger),
             server_slot: Arc::clone(&server_slot),
             outposts: Arc::clone(&outposts),
-            pending_dump_tree: Arc::clone(&pending_dump_tree),
             recorder: Arc::clone(&recorder),
-            current_foreground: Arc::clone(&current_foreground),
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
@@ -242,11 +220,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         bound_gestures: Arc::clone(&bound_gestures),
         gesture_tx: gesture_tx.clone(),
         gui_handle: Arc::clone(&gui_handle),
-        supervisor: Arc::clone(&supervisor),
-        pending_dump_tree: Arc::clone(&pending_dump_tree),
+        command_tx: command_tx.clone(),
         recorder: Arc::clone(&recorder),
         dumps_dir: dumps_dir.clone(),
-        current_foreground: Arc::clone(&current_foreground),
     }))?;
     server_slot
         .set(server)
@@ -268,7 +244,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
         source: None,
     });
-    target_current_foreground(&supervisor, &outposts, &current_foreground);
+    target_current_foreground(&supervisor, &outposts);
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
@@ -501,7 +477,6 @@ fn warm_own_outpost(
 fn target_current_foreground(
     supervisor: &Arc<Supervisor>,
     outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-    current_foreground: &CurrentForeground,
 ) {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     // SAFETY: reading the current foreground window and its process id.
@@ -514,7 +489,6 @@ fn target_current_foreground(
     if pid == 0 {
         return;
     }
-    current_foreground.store(pid, Ordering::SeqCst);
     note_targeted_pid(outposts, Pid(pid));
     if let Err(error) = supervisor.note_foreground(Pid(pid)) {
         tracing::warn!(%error, pid, "failed to target the initial foreground application");
@@ -529,223 +503,275 @@ struct ReducerContext {
     ledger: Arc<LatencyLedger>,
     server_slot: Arc<OnceLock<ControlServer>>,
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-    pending_dump_tree: PendingDumpTree,
     recorder: SharedRecorder,
-    current_foreground: CurrentForeground,
 }
 
-/// Whether `source` is the application currently holding foreground — the
-/// stale-cache policy's routing gate (architecture section 1; decision D9's
-/// outposts keep running in the background, so their events must be dropped
-/// before the reducer rather than spoken as though on screen right now).
-/// Pure and unit-tested in isolation below.
-fn is_current_foreground(source: Pid, current_foreground: u32) -> bool {
-    source.0 == current_foreground
+/// Work handed to the reducer thread by other threads: a reducer input (a
+/// review or object-navigation command from the router), or a control-plane
+/// tree dump, answered on the given channel.
+enum ShellCommand {
+    Input(Box<Input>),
+    DumpTree(Sender<DumpTreeResult>),
 }
 
-/// Turns one message from an outpost into a reducer [`Input`], handling the
-/// side effects (status mirroring, event broadcast, routing a `DumpTree`
-/// reply into its one-shot slot) that happen either way. `None` for message
-/// kinds that carry nothing for the reducer: `Ready`, `Fault`,
-/// `DumpTreeReply`, `Pong`, an event from a non-foreground outpost (the
-/// stale-cache policy), and any future kind.
-fn incoming_input(
-    source: Pid,
-    message: OutpostToSupervisor,
-    ledger: &LatencyLedger,
-    server_slot: &OnceLock<ControlServer>,
-    outposts: &Mutex<HashMap<Pid, OutpostStatus>>,
-    pending_dump_tree: &PendingDumpTree,
-    current_foreground: &CurrentForeground,
-) -> Option<Input> {
-    match message {
-        OutpostToSupervisor::Event {
-            trace_id,
-            observed_at_ms,
-            backend,
-            window,
-            event,
-        } => {
-            if !is_current_foreground(source, current_foreground.load(Ordering::SeqCst)) {
-                return None;
+/// What the reducer thread owns: the reducer state, the request table, and
+/// the live-outpost set. The thread never blocks on a handoff: speech and
+/// control-plane broadcasts are channel sends that never wait, a control
+/// request is answered on a channel with room for its one answer, and every
+/// query gets its outcome through the request table. Writes to an outpost's
+/// pipe still happen here until the supervisor gives each outpost a writer
+/// thread.
+struct ReducerThread<'a> {
+    context: &'a ReducerContext,
+    state: SrState,
+    requests: RequestTable,
+    /// Outpost incarnations that have sent something and not yet ended, with
+    /// the application each watches. A message from an outpost that has
+    /// ended is dropped before the reducer sees it.
+    live: HashMap<OutpostId, Pid>,
+}
+
+impl ReducerThread<'_> {
+    /// Handles one message from the supervisor.
+    fn on_outpost_message(&mut self, message: OutpostMessage) {
+        match message {
+            OutpostMessage::Event(source, outpost, message) => {
+                self.live.entry(outpost).or_insert(source);
+                self.on_outpost_input(source, outpost, *message);
             }
-            ledger.event_observed(trace_id, observed_at_ms);
-            if let Some(server) = server_slot.get() {
-                server.broadcast_event(trace_id, source, backend, window, event.clone());
+            OutpostMessage::Ended {
+                outpost,
+                target_pid,
+            } => {
+                tracing::info!(%outpost, %target_pid, "outpost ended");
+                self.live.remove(&outpost);
+                self.apply(Input::OutpostEnded { outpost });
+                for input in self.requests.outpost_ended(outpost) {
+                    self.apply(input);
+                }
             }
-            Some(Input::Event {
+            OutpostMessage::Retired(pid) => {
+                self.context
+                    .outposts
+                    .lock()
+                    .expect("outposts lock")
+                    .remove(&pid);
+            }
+            OutpostMessage::ForegroundChanged(pid) => {
+                // The status mirror lists the targeted application at once;
+                // acceptance is the reducer's, from the foreground fact.
+                note_targeted_pid(&self.context.outposts, pid);
+            }
+        }
+    }
+
+    /// Turns one message from a live outpost into reducer input, or routes a
+    /// reply to whoever asked.
+    fn on_outpost_input(&mut self, source: Pid, outpost: OutpostId, message: OutpostToSupervisor) {
+        match message {
+            OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
-                source,
                 backend,
                 window,
                 event,
-            })
-        }
-        OutpostToSupervisor::FetchReply {
-            trace_id,
-            query_id,
-            kind,
-            result,
-        } => Some(Input::FetchCompleted {
-            trace_id,
-            query_id,
-            kind,
-            result,
-        }),
-        OutpostToSupervisor::Ready {
-            outpost_pid,
-            target_pid,
-        } => {
-            tracing::info!(%outpost_pid, %target_pid, "outpost ready");
-            outposts.lock().expect("outposts lock").insert(
-                target_pid,
-                OutpostStatus {
-                    target_pid,
-                    outpost_pid: Some(outpost_pid),
-                    state: OutpostState::Ready,
-                },
-            );
-            None
-        }
-        OutpostToSupervisor::Fault { detail } => {
-            tracing::warn!(%source, detail, "outpost fault");
-            None
-        }
-        OutpostToSupervisor::DumpTreeReply { result, .. } => {
-            // A tree dump is a one-shot diagnostic query, not reducer-shaped
-            // input: route it straight into the pending control-plane
-            // request's reply slot instead.
-            let sender = pending_dump_tree
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            match sender {
-                Some(sender) => {
-                    let _ = sender.send(result.map(|dumped| (dumped.root, dumped.truncated)));
+            } => {
+                self.context.ledger.event_observed(trace_id, observed_at_ms);
+                if let Some(server) = self.context.server_slot.get() {
+                    server.broadcast_event(trace_id, source, backend, window, event.clone());
                 }
-                None => {
-                    tracing::warn!("received a DumpTree reply with no pending request; dropped");
-                }
-            }
-            None
-        }
-        // Pong and any future message kinds carry nothing for the reducer.
-        _ => None,
-    }
-}
-
-/// The reducer thread body: drains outpost messages and router commands,
-/// feeds the pure reducer, and executes its effects. Selects on both
-/// sources so a review or object-navigation gesture is handled with the
-/// same reduce-and-execute step as an accessibility event.
-fn reducer_loop(
-    outpost_rx: &Receiver<OutpostMessage>,
-    command_rx: &Receiver<Input>,
-    context: &ReducerContext,
-) {
-    let mut state = SrState::new();
-    loop {
-        crossbeam_channel::select! {
-            recv(outpost_rx) -> message => {
-                let Ok(message) = message else { break };
-                let (source, message) = match message {
-                    OutpostMessage::Event(source, message) => (source, *message),
-                    OutpostMessage::Retired(pid) => {
-                        context.outposts.lock().expect("outposts lock").remove(&pid);
-                        continue;
-                    }
-                    OutpostMessage::ForegroundChanged(pid) => {
-                        // The focus listener reported a new foreground (decision
-                        // D13). Record it for the stale-event gate and note the
-                        // pid as targeted — exactly what the old in-Core
-                        // foreground trigger did — but the supervisor drives the
-                        // spawn and announcement from the fact itself, so there
-                        // is nothing more to do here.
-                        context.current_foreground.store(pid.0, Ordering::SeqCst);
-                        note_targeted_pid(&context.outposts, pid);
-                        continue;
-                    }
-                };
-                let Some(input) = incoming_input(
+                self.apply(Input::Event {
+                    trace_id,
+                    observed_at_ms,
                     source,
-                    message,
-                    &context.ledger,
-                    &context.server_slot,
-                    &context.outposts,
-                    &context.pending_dump_tree,
-                    &context.current_foreground,
-                ) else {
-                    continue;
-                };
-                state = apply_input(&state, input, context);
+                    backend,
+                    window,
+                    event,
+                });
             }
-            recv(command_rx) -> command => {
-                let Ok(input) = command else { break };
-                state = apply_input(&state, input, context);
+            OutpostToSupervisor::FetchReply {
+                query_id, result, ..
+            } => self.finish(RequestId(query_id.0), outpost, Outcome::Fetched(result)),
+            OutpostToSupervisor::DumpTreeReply {
+                request_id, result, ..
+            } => self.finish(
+                RequestId(request_id),
+                outpost,
+                Outcome::Dumped(result.map(|dumped| (dumped.root, dumped.truncated))),
+            ),
+            OutpostToSupervisor::ActivateReply {
+                request_id, result, ..
+            } => self.finish(RequestId(request_id), outpost, Outcome::Activated(result)),
+            OutpostToSupervisor::Ready {
+                outpost_pid,
+                target_pid,
+            } => {
+                tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
+                self.context.outposts.lock().expect("outposts lock").insert(
+                    target_pid,
+                    OutpostStatus {
+                        target_pid,
+                        outpost_pid: Some(outpost_pid),
+                        state: OutpostState::Ready,
+                    },
+                );
             }
+            OutpostToSupervisor::Fault { detail } => {
+                tracing::warn!(%source, %outpost, detail, "outpost fault");
+            }
+            // Pong and any future message kinds carry nothing for the reducer.
+            _ => {}
         }
     }
-}
 
-/// Runs one input through the reducer, records it in the flight recorder,
-/// and executes the resulting effects; returns the next state.
-fn apply_input(state: &SrState, input: Input, context: &ReducerContext) -> SrState {
-    let trace_id = match &input {
-        Input::Event { trace_id, .. }
-        | Input::FetchCompleted { trace_id, .. }
-        | Input::Command { trace_id, .. } => *trace_id,
-        _ => TraceId::mint(),
-    };
-    let (next, effects) = reduce(state, &input);
-    {
-        let mut recorder = context
-            .recorder
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        recorder.record_input(input, effects.len());
+    /// Handles work handed over by another thread.
+    fn on_command(&mut self, command: ShellCommand) {
+        match command {
+            ShellCommand::Input(input) => self.apply(*input),
+            ShellCommand::DumpTree(reply) => self.dump_tree(reply),
+        }
     }
 
-    // A query that cannot reach its outpost is answered "gone" at once, so
-    // the reducer never waits on a query no outpost will ever answer.
-    let mut unanswerable = Vec::new();
-    for effect in effects {
+    /// Delivers a query's outcome through the request table, applying the
+    /// reducer input it produces, if any.
+    fn finish(&mut self, id: RequestId, outpost: OutpostId, outcome: Outcome) {
+        if let Some(input) = self.requests.finish(id, outpost, outcome) {
+            self.apply(input);
+        }
+    }
+
+    /// Runs one input through the reducer, records it in the flight
+    /// recorder, and executes the resulting effects.
+    fn apply(&mut self, input: Input) {
+        let trace_id = match &input {
+            Input::Event { trace_id, .. }
+            | Input::FetchCompleted { trace_id, .. }
+            | Input::Command { trace_id, .. } => *trace_id,
+            _ => TraceId::mint(),
+        };
+        let (next, effects) = reduce(&self.state, &input);
+        self.state = next;
+        {
+            let mut recorder = self
+                .context
+                .recorder
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            recorder.record_input(input, effects.len());
+        }
+        for effect in effects {
+            self.execute(trace_id, effect);
+        }
+    }
+
+    /// Executes one reducer effect.
+    fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
-            Effect::Speak(utterance) => context.manager.speak(utterance),
+            Effect::Speak(utterance) => self.context.manager.speak(utterance),
             Effect::StopSpeech => {
                 // The reducer interrupts through utterance priority and
                 // never emits this; log so a future change is visible.
                 tracing::debug!("StopSpeech effect ignored");
             }
             Effect::Fetch(query) => {
-                if let Err(error) = context.supervisor.send_to_outpost(
-                    query.node_id.outpost(),
-                    &SupervisorToOutpost::Fetch { trace_id, query },
-                ) {
-                    tracing::warn!(%error, "fetch could not reach the outpost");
-                    unanswerable.push(Input::FetchCompleted {
-                        trace_id,
+                let outpost = query.node_id.outpost();
+                let id = self.requests.begin(
+                    outpost,
+                    Asker::Reducer {
                         query_id: query.query_id,
                         kind: query.kind,
-                        result: FetchResult::Gone,
-                    });
-                }
+                        trace_id,
+                    },
+                );
+                // On the wire the query carries the request id, so the reply
+                // is matched by the table, never by the reducer's own id.
+                let command = SupervisorToOutpost::Fetch {
+                    trace_id,
+                    query: Query {
+                        query_id: QueryId(id.0),
+                        ..query
+                    },
+                };
+                self.send(outpost, id, &command);
             }
             Effect::Activate { node_id } => {
-                if let Err(error) = context.supervisor.send_to_outpost(
-                    node_id.outpost(),
-                    &SupervisorToOutpost::Activate { trace_id, node_id },
-                ) {
-                    tracing::warn!(%error, "activate could not reach the outpost");
-                }
+                let outpost = node_id.outpost();
+                let id = self.requests.begin(outpost, Asker::Activation);
+                let command = SupervisorToOutpost::Activate {
+                    trace_id,
+                    request_id: id.0,
+                    node_id,
+                };
+                self.send(outpost, id, &command);
             }
-            Effect::CopyToClipboard(text) => clipboard::copy(&context.manager, &text),
+            Effect::CopyToClipboard(text) => clipboard::copy(&self.context.manager, &text),
             _ => {}
         }
     }
-    unanswerable
-        .into_iter()
-        .fold(next, |state, input| apply_input(&state, input, context))
+
+    /// Sends request `id` to `outpost`, failing it at once when it cannot be
+    /// sent, so it still gets its one outcome.
+    fn send(&mut self, outpost: OutpostId, id: RequestId, command: &SupervisorToOutpost) {
+        if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
+            tracing::warn!(%error, %outpost, "a query could not reach its outpost");
+            self.finish(id, outpost, Outcome::Failed(error.to_string()));
+        }
+    }
+
+    /// Starts a control-plane tree dump of the application holding attention.
+    /// The answer goes to `reply`; the requester waits on it with its own
+    /// timeout, and a late answer to a request it gave up on is dropped.
+    fn dump_tree(&mut self, reply: Sender<DumpTreeResult>) {
+        let Some(pid) = self.state.attention() else {
+            let _ = reply.try_send(Err("no application holds attention yet".to_owned()));
+            return;
+        };
+        let Some(outpost) = self
+            .live
+            .iter()
+            .filter(|(_, watched)| **watched == pid)
+            .map(|(outpost, _)| *outpost)
+            .max()
+        else {
+            let _ = reply.try_send(Err(format!("no outpost is watching pid {pid}")));
+            return;
+        };
+        let id = self.requests.begin(outpost, Asker::DumpTree(reply));
+        let command = SupervisorToOutpost::DumpTree {
+            trace_id: TraceId::mint(),
+            request_id: id.0,
+        };
+        self.send(outpost, id, &command);
+    }
+}
+
+/// The reducer thread body: drains outpost messages and commands from other
+/// threads, feeds the pure reducer, and executes its effects. Selects on
+/// both sources so a review or object-navigation gesture is handled with the
+/// same reduce-and-execute step as an accessibility event.
+fn reducer_loop(
+    outpost_rx: &Receiver<OutpostMessage>,
+    command_rx: &Receiver<ShellCommand>,
+    context: &ReducerContext,
+) {
+    let mut thread = ReducerThread {
+        context,
+        state: SrState::new(),
+        requests: RequestTable::default(),
+        live: HashMap::new(),
+    };
+    loop {
+        crossbeam_channel::select! {
+            recv(outpost_rx) -> message => {
+                let Ok(message) = message else { break };
+                thread.on_outpost_message(message);
+            }
+            recv(command_rx) -> command => {
+                let Ok(command) = command else { break };
+                thread.on_command(command);
+            }
+        }
+    }
 }
 
 /// The router thread body: bound gestures become imperative commands —
@@ -762,7 +788,7 @@ fn router_loop(
     gesture_rx: &Receiver<EmittedGesture>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
     manager: &Arc<SpeechManager>,
-    command_tx: &crossbeam_channel::Sender<Input>,
+    command_tx: &crossbeam_channel::Sender<ShellCommand>,
     layout: KeyboardLayout,
 ) {
     let show_menu = GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding");
@@ -793,7 +819,10 @@ fn router_loop(
                         command,
                         repeat: emitted.repeat,
                     };
-                    if command_tx.send(input).is_err() {
+                    if command_tx
+                        .send(ShellCommand::Input(Box::new(input)))
+                        .is_err()
+                    {
                         tracing::warn!("reducer command channel closed; dropping gesture");
                     }
                 }
@@ -926,11 +955,9 @@ struct ControlHandlersConfig {
     bound_gestures: SharedGestureMap,
     gesture_tx: crossbeam_channel::Sender<EmittedGesture>,
     gui_handle: Arc<OnceLock<GuiHandle>>,
-    supervisor: Arc<Supervisor>,
-    pending_dump_tree: PendingDumpTree,
+    command_tx: Sender<ShellCommand>,
     recorder: SharedRecorder,
     dumps_dir: PathBuf,
-    current_foreground: CurrentForeground,
 }
 
 /// Builds the control-plane handlers over the app's live pieces.
@@ -943,11 +970,9 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         bound_gestures,
         gesture_tx,
         gui_handle,
-        supervisor,
-        pending_dump_tree,
+        command_tx,
         recorder,
         dumps_dir,
-        current_foreground,
     } = config;
     ServerHandlers {
         status: Box::new(move || StatusInfo {
@@ -978,9 +1003,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .map_err(|_| "the gesture router is gone".to_owned())
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
-        dump_tree: Box::new(move || {
-            request_dump_tree(&supervisor, &pending_dump_tree, &current_foreground)
-        }),
+        dump_tree: Box::new(move || request_dump_tree(&command_tx)),
         dump_recorder: Box::new(move || {
             flight_dump::dump_now(&recorder, &dumps_dir)
                 .map(|path| path.display().to_string())
@@ -991,64 +1014,24 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
 }
 
 /// Answers [`Request::DumpTree`](verbatim_control::protocol::Request::DumpTree):
-/// registers a one-shot reply sender in `pending_dump_tree`, sends
-/// `DumpTree` to the current foreground application's outpost through
-/// `supervisor`, and waits with a timeout. `reducer_loop` routes the
-/// outpost's answer into the slot. A second concurrent request while one is
-/// already pending is rejected immediately rather than queued.
-fn request_dump_tree(
-    supervisor: &Arc<Supervisor>,
-    pending_dump_tree: &PendingDumpTree,
-    current_foreground: &CurrentForeground,
-) -> Result<(TreeNode, bool), String> {
-    let foreground = current_foreground.load(Ordering::SeqCst);
-    if foreground == 0 {
-        return Err("no foreground application is known yet".to_owned());
-    }
-
+/// hands the request to the reducer thread, which sends `DumpTree` to the
+/// outpost of the application holding attention and records it in its
+/// request table, then waits for the answer with a timeout. Every request
+/// has its own id, so a late answer to one that timed out can never satisfy
+/// a newer one.
+fn request_dump_tree(command_tx: &Sender<ShellCommand>) -> DumpTreeResult {
     let (reply_tx, reply_rx) = bounded(1);
-    {
-        let mut slot = pending_dump_tree
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if slot.is_some() {
-            return Err("a tree dump is already in progress".to_owned());
-        }
-        *slot = Some(reply_tx);
-    }
-
-    let trace_id = TraceId::mint();
-    if let Err(error) =
-        supervisor.send_to(Pid(foreground), &SupervisorToOutpost::DumpTree { trace_id })
-    {
-        *pending_dump_tree
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
-        return Err(format!("could not reach the outpost: {error}"));
-    }
-
-    if let Ok(result) = reply_rx.recv_timeout(DUMP_TREE_TIMEOUT) {
-        return result;
-    }
-    *pending_dump_tree
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = None;
-    Err("tree dump timed out".to_owned())
+    command_tx
+        .send(ShellCommand::DumpTree(reply_tx))
+        .map_err(|_| "the reducer thread is gone".to_owned())?;
+    reply_rx
+        .recv_timeout(DUMP_TREE_TIMEOUT)
+        .unwrap_or_else(|_| Err("tree dump timed out".to_owned()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn events_from_the_foreground_application_pass() {
-        assert!(is_current_foreground(Pid(1234), 1234));
-    }
-
-    #[test]
-    fn events_from_a_backgrounded_application_are_dropped() {
-        assert!(!is_current_foreground(Pid(1234), 5678));
-    }
 
     #[test]
     fn a_single_press_lists_the_system_tray() {
@@ -1062,13 +1045,5 @@ mod tests {
         // taskbar list.
         assert_eq!(shell_list_kind(1), ShellItemKind::Taskbar);
         assert_eq!(shell_list_kind(3), ShellItemKind::Taskbar);
-    }
-
-    #[test]
-    fn events_before_any_foreground_is_known_are_dropped() {
-        // current_foreground starts at 0 until the first foreground change
-        // (or the startup target_current_foreground call) sets it; no
-        // outpost's pid is ever 0, so this can never spuriously pass.
-        assert!(!is_current_foreground(Pid(1234), 0));
     }
 }

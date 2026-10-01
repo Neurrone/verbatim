@@ -254,6 +254,8 @@ pub enum SupervisorToOutpost {
     DumpTree {
         /// Trace ID of the request that caused this dump.
         trace_id: TraceId,
+        /// Core's id for this request, echoed in the reply.
+        request_id: u64,
     },
     /// Asks for the chain of ancestors of a node, outermost first, as
     /// [`NodeSnapshot`]s; answered by
@@ -285,6 +287,8 @@ pub enum SupervisorToOutpost {
     Activate {
         /// Trace ID of the request that caused this activation.
         trace_id: TraceId,
+        /// Core's id for this request, echoed in the reply.
+        request_id: u64,
         /// The node to activate.
         node_id: verbatim_model::NodeId,
     },
@@ -324,10 +328,6 @@ pub enum NavigateOutcome {
 /// Messages from an outpost to the Core-side supervisor.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a message is decoded once and moved; the supervisor boxes it on its channel"
-)]
 pub enum OutpostToSupervisor {
     /// First message after startup or reconfiguration.
     Ready {
@@ -381,6 +381,8 @@ pub enum OutpostToSupervisor {
     DumpTreeReply {
         /// Trace ID carried through from the request.
         trace_id: TraceId,
+        /// The request this answers.
+        request_id: u64,
         /// `Ok` with the walked tree, or `Err` with a human-readable reason
         /// the walk could not complete (no accessible top-level window, or
         /// the query-pool deadline expired against a hung application).
@@ -408,6 +410,8 @@ pub enum OutpostToSupervisor {
     ActivateReply {
         /// Trace ID carried through from the request.
         trace_id: TraceId,
+        /// The request this answers.
+        request_id: u64,
         /// `Ok(())` if the activation was invoked, or `Err` with a
         /// human-readable reason it could not be (the node has no
         /// activation action, or the call failed).
@@ -647,6 +651,7 @@ mod tests {
     fn dump_tree_request_and_reply_round_trip() {
         let request = SupervisorToOutpost::DumpTree {
             trace_id: TraceId::mint(),
+            request_id: 1,
         };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &request).expect("writes");
@@ -658,6 +663,7 @@ mod tests {
 
         let success = OutpostToSupervisor::DumpTreeReply {
             trace_id: TraceId::mint(),
+            request_id: 1,
             result: Ok(DumpedTree {
                 root: TreeNode {
                     snapshot: NodeSnapshot {
@@ -676,6 +682,7 @@ mod tests {
         };
         let failure = OutpostToSupervisor::DumpTreeReply {
             trace_id: TraceId::mint(),
+            request_id: 1,
             result: Err("no accessible top-level window".to_owned()),
         };
 
@@ -884,6 +891,7 @@ mod tests {
     fn activate_request_and_reply_round_trip() {
         let request = SupervisorToOutpost::Activate {
             trace_id: TraceId::mint(),
+            request_id: 1,
             node_id: NodeId::new(9),
         };
         let mut buffer = Vec::new();
@@ -896,10 +904,12 @@ mod tests {
 
         let success = OutpostToSupervisor::ActivateReply {
             trace_id: TraceId::mint(),
+            request_id: 1,
             result: Ok(()),
         };
         let failure = OutpostToSupervisor::ActivateReply {
             trace_id: TraceId::mint(),
+            request_id: 1,
             result: Err("element exposes no activation pattern".to_owned()),
         };
         let mut buffer = Vec::new();

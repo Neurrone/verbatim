@@ -29,8 +29,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumWindows, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetPropW, GetWindowLongW,
-    GetWindowThreadProcessId, IsChild, IsWindowVisible, MSG, OBJID_CLIENT, PostThreadMessageW,
-    TranslateMessage, WS_EX_TOPMOST,
+    GetWindowThreadProcessId, InternalGetWindowText, IsChild, IsWindowVisible, MSG, OBJID_CLIENT,
+    OBJID_WINDOW, PostThreadMessageW, TranslateMessage, WS_EX_TOPMOST,
 };
 use windows::core::{BOOL, HSTRING};
 
@@ -1021,7 +1021,7 @@ impl Outpost {
     /// tree from its top-level window, on a deadline-guarded query-pool
     /// thread — the same pattern [`Self::handle_announce_focus`] uses — so a
     /// hung application abandons the call rather than wedging the outpost.
-    fn handle_dump_tree(&self, trace: TraceId) {
+    fn handle_dump_tree(&self, trace: TraceId, request_id: u64) {
         let target_pid = self.target_pid;
         let shared = self.shared.clone();
         let result = self
@@ -1036,6 +1036,7 @@ impl Outpost {
             .outbound
             .send(OutpostToSupervisor::DumpTreeReply {
                 trace_id: trace,
+                request_id,
                 result,
             });
     }
@@ -1088,7 +1089,7 @@ impl Outpost {
 
     /// Answers an `Activate` request, on a deadline-guarded query-pool
     /// thread — the same pattern [`Self::handle_dump_tree`] uses.
-    fn handle_activate(&self, trace: TraceId, node_id: verbatim_model::NodeId) {
+    fn handle_activate(&self, trace: TraceId, request_id: u64, node_id: verbatim_model::NodeId) {
         let shared = self.shared.clone();
         let result = self
             .shared
@@ -1102,6 +1103,7 @@ impl Outpost {
             .outbound
             .send(OutpostToSupervisor::ActivateReply {
                 trace_id: trace,
+                request_id,
                 result,
             });
     }
@@ -1140,8 +1142,11 @@ impl Outpost {
                 });
                 true
             }
-            SupervisorToOutpost::DumpTree { trace_id } => {
-                self.handle_dump_tree(*trace_id);
+            SupervisorToOutpost::DumpTree {
+                trace_id,
+                request_id,
+            } => {
+                self.handle_dump_tree(*trace_id, *request_id);
                 true
             }
             SupervisorToOutpost::AncestorChain { trace_id, node_id } => {
@@ -1156,8 +1161,12 @@ impl Outpost {
                 self.handle_navigate(*trace_id, node_id.unstamped(), *direction);
                 true
             }
-            SupervisorToOutpost::Activate { trace_id, node_id } => {
-                self.handle_activate(*trace_id, node_id.unstamped());
+            SupervisorToOutpost::Activate {
+                trace_id,
+                request_id,
+                node_id,
+            } => {
+                self.handle_activate(*trace_id, *request_id, node_id.unstamped());
                 true
             }
             SupervisorToOutpost::Shutdown => false,
@@ -1327,7 +1336,12 @@ fn uia_fact_window(
 /// The window is reported once, named or not: the foreground change is what
 /// moves the reducer's attention to this application, so it must never wait
 /// for a name, and the reducer decides what to say (a nameless window is not
-/// announced, then or later, as in NVDA). A window that is no longer the
+/// announced, then or later, as in NVDA). A window whose accessible object
+/// cannot be read yet (a freshly created msinfo32 window, found live) or
+/// whose read times out is still reported, from local window data
+/// ([`local_window_snapshot`]), and a window whose accessible name is still
+/// empty takes its window text: NVDA names a top-level window by its text.
+/// A window that is no longer the
 /// system's foreground window by the time it is read is not reported, since a
 /// newer foreground change has superseded it. `generation` is the announce
 /// generation captured at enqueue; a superseding announce or foreground fact
@@ -1340,17 +1354,38 @@ fn window_announce_job(
     generation: u64,
 ) {
     let still_current = || shared.generation.load(Ordering::SeqCst) == generation;
-    if window_belongs_to_hidden_frame(hwnd) || !still_current() {
+    if window_belongs_to_hidden_frame(hwnd) {
+        return;
+    }
+    if !still_current() {
+        tracing::info!(hwnd, "foreground report superseded before it was read");
         return;
     }
     let shared_for_window = shared.clone();
     let window = shared.pool.run(FOCUS_DEADLINE, move |worker| {
         window_snapshot(worker, hwnd, &shared_for_window)
     });
-    if let Some(Some((backend, node))) = window
-        && still_current()
-        && window_is_foreground(hwnd)
+    let (backend, mut node) = window
+        .flatten()
+        .unwrap_or_else(|| (Backend::Msaa, local_window_snapshot(shared, hwnd)));
+    if node
+        .name
+        .as_deref()
+        .is_none_or(|name| name.trim().is_empty())
     {
+        node.name = window_text(hwnd);
+    }
+    if !still_current() {
+        tracing::info!(hwnd, "foreground report superseded by a newer one");
+    } else if !window_is_foreground(hwnd) {
+        // SAFETY: GetForegroundWindow has no preconditions.
+        let actual = unsafe { GetForegroundWindow() }.0 as isize;
+        tracing::info!(
+            hwnd,
+            actual,
+            "foreground report dropped: no longer the foreground window"
+        );
+    } else {
         shared.emit_at(
             trace,
             observed_at_ms,
@@ -1884,6 +1919,36 @@ fn window_snapshot(
         let node = msaa_window_snapshot(hwnd, &shared.msaa_registry)?;
         Some((Backend::Msaa, node))
     }
+}
+
+/// A window snapshot built from local window data only, for a foreground
+/// window whose accessible object could not be read: role window, named by
+/// its window text, under the same registry key as [`msaa_window_snapshot`]
+/// uses for that window.
+fn local_window_snapshot(shared: &Shared, hwnd: isize) -> NodeSnapshot {
+    NodeSnapshot {
+        id: shared
+            .msaa_registry
+            .id_for((hwnd, OBJID_WINDOW.0, CHILDID_SELF)),
+        backend: Backend::Msaa,
+        role: verbatim_model::Role::Window,
+        name: window_text(hwnd),
+        value: None,
+        states: verbatim_model::StateSet::new(),
+        details: NodeDetails::default(),
+    }
+}
+
+/// `hwnd`'s window text, read with `InternalGetWindowText`, which never sends
+/// the window a message and so cannot block on a hung application. `None`
+/// when the window has no text.
+fn window_text(hwnd: isize) -> Option<String> {
+    let mut buffer = [0u16; 512];
+    // SAFETY: the buffer outlives the call, which writes at most its length.
+    let length = unsafe { InternalGetWindowText(HWND(hwnd as *mut c_void), &mut buffer) };
+    let length = usize::try_from(length).ok()?;
+    let text = String::from_utf16_lossy(&buffer[..length.min(buffer.len())]);
+    (!text.trim().is_empty()).then_some(text)
 }
 
 /// Reads the MSAA accessible object for the window itself — `OBJID_WINDOW`,

@@ -26,6 +26,35 @@ knowing for review:
   (an abandoned mutex — a crashed predecessor — still grants ownership,
   with a warning). `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.
+- `ReducerThread` — owns the reducer state, the request table, and the
+  live-outpost set, and is the only thread that touches them. It selects on
+  the supervisor's stream and on a `ShellCommand` channel (router inputs and
+  control-plane tree dumps). Every outpost message arrives tagged with the
+  outpost incarnation whose pipe carried it; an outpost joins the live set
+  with its first message and leaves it on `OutpostMessage::Ended`, which the
+  supervisor sends after forwarding everything that outpost wrote, so
+  nothing from an ended outpost reaches the reducer. On an end the reducer
+  gets `Input::OutpostEnded`, then a "gone" outcome for each of that
+  outpost's outstanding queries. There is no foreground pid gate: which
+  events are spoken is the reducer's attention model. Events go to the
+  reducer, the latency ledger, and the control plane's event subscribers;
+  replies go through the request table. The thread never waits on a
+  handoff to speech or the control plane; writes to an outpost's pipe are
+  still made here until the supervisor gives each outpost a writer thread.
+- `requests::RequestTable` — the single owner of "exactly one outcome per
+  query" (outpost redesign, "The app shell"). Every query sent to an
+  outpost (a navigation `Fetch`, an `Activate`, a tree dump) is recorded
+  with a fresh `RequestId` and the outpost incarnation it went to; on the
+  wire the request id travels as the fetch's query id or the message's
+  `request_id`, and the reply echoes it. The first outcome removes the
+  entry and goes to the asker: a navigation outcome re-enters the reducer
+  as `Input::FetchCompleted` under the reducer's own query id, an
+  activation's is logged, and a tree dump's is sent on its reply channel.
+  Later outcomes for the same id, and outcomes from any other outpost, are
+  dropped. Core makes the outcome itself when a query cannot be sent
+  ("failed", which a navigation sees as `Gone`) and when the outpost ends
+  ("gone"), so an old reply or a timed-out request can never satisfy or
+  clear a newer one.
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
   ID, fed from three threads across two processes: the reducer thread
   records event observation (using the outpost's own timestamp), and the
@@ -64,23 +93,16 @@ knowing for review:
   config store, the supervisor with its focus listener (decision D13;
   targeting the current foreground once at startup by poll, since the
   listener thereafter reports foreground changes as facts — Core no longer
-  runs its own foreground hook, and learns of a foreground change through
-  `OutpostMessage::ForegroundChanged`, which it stores into the
-  current-foreground atomic and notes as a targeted pid), the reducer thread
-  (drains outpost messages via `incoming_input`, feeds `reduce`, records each
-  input into the shared
-  flight recorder, executes effects — `Speak` to the pipeline, `Fetch`
-  back to the outpost; a `DumpTreeReply` is routed around the reducer
-  entirely, straight into whatever one-shot sender is parked in the
-  `PendingDumpTree` slot, since a tree dump is a one-shot diagnostic query
-  rather than reducer-shaped input), the gesture router (bound gestures to
-  imperative commands — `GuiCommand`s or direct speech — never into the
-  reducer), the control server with its
-  injected handlers (`dump_tree` registers that one-shot sender, sends
-  `DumpTree` to the outpost through the supervisor, and waits with a five
-  second timeout, a second concurrent request finding the slot already
-  occupied and failing immediately rather than queuing; `dump_recorder`
-  calls `flight_dump::dump_now` directly, no outpost round trip needed),
+  runs its own foreground hook; `OutpostMessage::ForegroundChanged` only
+  updates the status mirror, and a foreground change reaches the reducer as
+  a focus on the window, which moves its attention), the reducer thread
+  (`ReducerThread`, described below), the gesture router (bound gestures to
+  imperative commands — `GuiCommand`s or direct speech — or, for review and
+  object navigation, reducer commands), the control server with its
+  injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
+  one-answer reply channel to the reducer thread and waits five seconds for
+  the answer; `dump_recorder` calls `flight_dump::dump_now` directly, no
+  outpost round trip needed),
   the keyboard hook last among input paths, the startup announcement, and
   finally the GUI loop on the main thread. The gesture router binds three
   gestures in M3: Verbatim+V pops the menu, Verbatim+F12 speaks the time

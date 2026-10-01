@@ -175,8 +175,9 @@ Public API:
   `wedge_decision`. State is a map keyed by target pid,
   genuinely N-ready now: a reader thread per outpost stamps every node id in
   each message with the outpost's id (its spawn generation, never reused) and
-  forwards it into the channel as `OutpostMessage::Event(pid, message)`,
-  respawning on end
+  forwards it into the channel as `OutpostMessage::Event(pid, outpost_id,
+  message)`; at end of stream it sends `OutpostMessage::Ended` for that
+  incarnation, after everything it wrote, before respawning on end
   of stream only if that pid's map entry still has the same generation
   *and* the watched application's process is itself still alive (checked
   via `OpenProcess`/`GetExitCodeProcess`) — otherwise the entry is dropped
