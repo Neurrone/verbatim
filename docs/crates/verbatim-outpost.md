@@ -125,8 +125,10 @@ Public API:
   NVDA registers globally on Windows 11: an element selected, a menu
   opened, and notifications. Each event becomes a `FocusFact` (a
   `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
-  cached and hang-safe local reads; a foreground event whose window is no
-  longer the foreground is dropped before it is sent. Outgoing facts are
+  cached and hang-safe local reads. A foreground event is forwarded without
+  checking the foreground: a starting application's window raises it before
+  it actually becomes the foreground window, so the check waits for the
+  outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
   kind (`DeliveredFact::key`; notifications are never merged), with pongs
   and `Ready` first. It answers `Ping` with a `Pong` and ignores everything

@@ -41,7 +41,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
     UIA_SelectionItem_ElementSelectedEventId,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEventCallback, WinEventKind};
 use verbatim_model::{Notification, Pid, TraceId};
@@ -342,15 +342,13 @@ fn forward_msaa_event(
             id_object,
             id_child,
         },
-        WinEventKind::Foreground => {
-            // SAFETY: GetForegroundWindow has no preconditions.
-            if unsafe { GetForegroundWindow() }.0 as isize != hwnd {
-                // No longer the foreground window: superseded.
-                tracing::debug!(hwnd, "foreground dropped: no longer the foreground window");
-                return;
-            }
-            DeliveredFact::Foreground { hwnd }
-        }
+        // Forwarded unchecked: whether the window is still the foreground
+        // window is checked later, by the outpost's worker when it handles
+        // the fact. NVDA deliberately does not filter in the event callback,
+        // because a starting application's window raises its foreground
+        // event before it actually becomes the foreground window (NVDA's
+        // issue 4001; found live with msinfo32).
+        WinEventKind::Foreground => DeliveredFact::Foreground { hwnd },
         WinEventKind::MenuPopupStart => DeliveredFact::MenuPopup {
             hwnd,
             id_object,

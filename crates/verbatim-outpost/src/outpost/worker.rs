@@ -781,12 +781,17 @@ impl Worker<'_> {
         // SAFETY: `element` was built with the base cache request.
         let parts = unsafe { snapshot_parts_from_cached_element(&element) };
         if parts.runtime_id != fact.runtime_id {
-            // Focus has moved on; the newer fact follows.
+            // Not the focused element, which is no proof that focus moved on:
+            // the Start menu's search results raise focus events while the
+            // keyboard focus stays in the search box. NVDA trusts the event's
+            // sender, so the fact's own snapshot is reported; there is no
+            // live element, so no ancestors.
             tracing::debug!(
                 fact = ?fact.runtime_id,
                 focused = ?parts.runtime_id,
-                "UIA focus dropped: no longer the focused element"
+                "UIA focus reported from the fact: not the focused element"
             );
+            self.uia_fact_focus(fact_hwnd, fact, trace, observed_at_ms);
             return;
         }
         let hwnd = if fact_hwnd != 0 {
@@ -816,6 +821,53 @@ impl Worker<'_> {
             false,
             Some(Object::Uia(parts.runtime_id)),
             enrichment,
+        );
+    }
+
+    /// A UIA focus fact whose element is not the focused element, reported from
+    /// the fact's cached snapshot alone when its window is in the system's
+    /// foreground window.
+    fn uia_fact_focus(
+        &mut self,
+        fact_hwnd: isize,
+        fact: &UiaSnapshotFact,
+        trace: TraceId,
+        observed_at_ms: u64,
+    ) {
+        let hwnd = if fact_hwnd != 0 {
+            Some(fact_hwnd)
+        } else {
+            focus_window()
+        };
+        if hwnd.is_some_and(window_belongs_to_hidden_frame) {
+            return;
+        }
+        if let Some(hwnd) = hwnd
+            && !read::window_uses_uia(self.context, hwnd)
+        {
+            tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
+            return;
+        }
+        // NVDA trusts the sender but still requires its window to be in the
+        // foreground window when it handles the event; without the live
+        // element there is nothing else to tell a stale fact by.
+        if !hwnd.is_some_and(|hwnd| window_facts(hwnd).in_foreground) {
+            tracing::debug!(
+                ?hwnd,
+                "UIA focus dropped: not the focused element and not in the foreground window"
+            );
+            return;
+        }
+        let node = self.uia_node(fact, None);
+        self.emit_focus(
+            trace,
+            observed_at_ms,
+            Backend::Uia,
+            hwnd,
+            node,
+            false,
+            Some(Object::Uia(fact.runtime_id.clone())),
+            (Vec::new(), None),
         );
     }
 

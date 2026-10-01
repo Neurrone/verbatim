@@ -42,8 +42,32 @@ use crate::process::matching_pids;
 /// foreground.
 const POLL: Duration = Duration::from_millis(50);
 
-/// How long the shell is given to finish an Alt+Tab switch.
-const SWITCH_SETTLE: Duration = Duration::from_millis(500);
+/// Waits, up to [`SWITCH_SETTLE`], until the foreground has left `stuck` and
+/// stayed on one window for [`HOLD_CHECK`]: the shell finishes an Alt+Tab
+/// switch asynchronously, and forcing the target before it has would let
+/// the switch take the foreground back.
+fn settle_after_switch(stuck: HWND) {
+    let deadline = Instant::now() + SWITCH_SETTLE;
+    let mut last = stuck;
+    let mut since = Instant::now();
+    while Instant::now() < deadline {
+        thread::sleep(POLL);
+        // SAFETY: GetForegroundWindow has no preconditions.
+        let now = unsafe { GetForegroundWindow() };
+        if now != last {
+            last = now;
+            since = Instant::now();
+        } else if now != stuck && since.elapsed() >= HOLD_CHECK {
+            return;
+        }
+    }
+}
+
+/// How long a window must keep the foreground to count as having it.
+const HOLD_CHECK: Duration = Duration::from_millis(300);
+
+/// The longest the shell is given to finish an Alt+Tab switch.
+const SWITCH_SETTLE: Duration = Duration::from_secs(3);
 
 /// Waits up to `timeout` for a visible, titled, unowned top-level window
 /// belonging to a process whose image name is `image_name`, and brings it to
@@ -64,7 +88,7 @@ pub fn bring_to_foreground(image_name: &str, timeout: Duration) -> io::Result<bo
                 return Ok(true);
             }
             force_foreground(window);
-            if foreground_is(&pids) {
+            if holds_foreground(&pids) {
                 eprintln!(
                     "verbatim-agent: {image_name} brought to the foreground{}",
                     if switched { " after an Alt+Tab" } else { "" }
@@ -80,7 +104,7 @@ pub fn bring_to_foreground(image_name: &str, timeout: Duration) -> io::Result<bo
                     stuck.0
                 );
                 alt_tab();
-                thread::sleep(SWITCH_SETTLE);
+                settle_after_switch(stuck);
                 continue;
             }
         }
@@ -90,6 +114,17 @@ pub fn bring_to_foreground(image_name: &str, timeout: Duration) -> io::Result<bo
         }
         thread::sleep(POLL);
     }
+}
+
+/// Whether the foreground window belongs to one of `pids`, and still does a
+/// moment later: a shell switch still settling (an Alt+Tab) can take the
+/// foreground back just after it was given.
+fn holds_foreground(pids: &[u32]) -> bool {
+    if !foreground_is(pids) {
+        return false;
+    }
+    thread::sleep(HOLD_CHECK);
+    foreground_is(pids)
 }
 
 /// Whether the foreground window belongs to one of `pids`.

@@ -11,8 +11,9 @@ handoff's hot-path notes, and decisions D13 to D15.
 It replaces the contents of the handoff's old phase 4 (review and
 simplify Core-outpost coordination) and pulls the D14 attention model
 forward from M4. All seven steps are implemented on the branch
-`phase3-outposts` (2026-10-01); live verification of steps 3 to 7 is
-still to do. Deviations from the text below, decided while implementing,
+`phase3-outposts` (2026-10-01). Live verification is not finished; where
+it stopped, and the root causes still open, are in the handoff's "Current
+state". Deviations from the text below, decided while implementing,
 are recorded in the commits and the crate guides: toasts are the only
 alerts reported; range-value and live-region subscriptions are not added;
 held nodes are also re-sent every 256 messages; an MSAA object reached
@@ -124,9 +125,14 @@ It subscribes to:
   regions, menu opened, and range value changes.
 
 A foreground event whose window is no longer the system's foreground
-window (`GetForegroundWindow`, a local call) is dropped before it is
-sent, as NVDA's `processForegroundWinEvent` does; the reducer relies on
-this when it accepts every foreground fact.
+window (`GetForegroundWindow`, a local call) is dropped, as NVDA's
+`processForegroundWinEvent` does; the reducer relies on this when it
+accepts every foreground fact. (Revised during live verification: the
+check is made by the outpost's worker when it handles the fact, not by
+the listener when the event arrives. A starting application's window
+raises its foreground event before it actually becomes the foreground
+window, which is why NVDA, too, filters in its main-thread pump rather
+than in the event callback, NVDA issue 4001.)
 
 Each event becomes a fact carrying the owning pid, the trace id, the
 observation time (used for the latency record only), and what the event

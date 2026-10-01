@@ -371,6 +371,12 @@ pub fn ancestor_chain(
         };
         // SAFETY: `parent_acc` was just acquired above.
         let parent_hwnd = unsafe { window_of(&parent_acc) }.unwrap_or(hwnd);
+        // The desktop is the root, never an ancestor: NVDA's focus ancestors
+        // stop below it, so it is never announced as an entered container.
+        // SAFETY: GetDesktopWindow has no preconditions.
+        if parent_hwnd == unsafe { GetDesktopWindow() }.0 as isize {
+            break;
+        }
         let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
         // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
         let snapshot = unsafe {

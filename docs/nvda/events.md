@@ -123,7 +123,11 @@ window is spoken only through the two ordinary focus paths.
   `processForegroundWinEvent` drops a foreground event when its window
   is no longer the system's foreground window, when the most recently
   queued focus is in that window or a window inside it, and when it
-  names exactly the object that is already the focus. Otherwise it is
+  names exactly the object that is already the focus. These checks run
+  in NVDA's main-thread pump, not in the event callback: a starting
+  application's window raises its foreground event before it actually
+  becomes the foreground window, and filtering in the callback caused
+  focus problems when starting applications (NVDA issue 4001). Otherwise it is
   queued as a `gainFocus` on the window object, and the window is
   announced the way any focused object is. When a control inside the
   window takes focus afterwards, the window is already an ancestor of

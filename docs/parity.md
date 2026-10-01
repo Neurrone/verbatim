@@ -136,8 +136,8 @@ verified.
   record, the application and top-level window of the most recent
   foreground change, standing in for the system's foreground window
   NVDA compares against. A foreground fact is always accepted and
-  moves attention; its intake has already dropped it if the window
-  is no longer the system's foreground. Every other event, focus
+  moves attention; its outpost has already dropped it if the window
+  was no longer the system's foreground when the outpost handled it. Every other event, focus
   events included, is classified against the record from window
   facts its outpost attached: top-level window, root owner, topmost,
   for `Windows.UI.Core` windows whether the window is under the
