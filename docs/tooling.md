@@ -351,9 +351,11 @@ with its audio, per invocation, and the two never overlap:
 - `cargo xtask vm test --record` is also audible, and additionally records
   the run as a video with audio, for headless CI and developer review
   after the fact.
-- `--no-restore` stays, orthogonal to both, exactly as before: it skips the
-  checkpoint restore and its post-restore agent wait for fast local
-  iteration, and must never be used for an acceptance run.
+- `--restore`, orthogonal to both, restores the `golden` checkpoint before
+  deploying. Restoring is never automatic: an ordinary run deploys onto the
+  guest as it is, since deploy only copies files and nothing is installed
+  into the guest. An acceptance run, which must start from a known-clean
+  guest, passes `--restore`.
 
 **The key constraint: recording audio and a connected RDP session are
 mutually exclusive. You cannot do both at once.** The moment an RDP
@@ -391,7 +393,7 @@ the same user the guest's autologon session already runs as, the RDP
 session takes over that session rather than creating a second one — the
 same session the agent and tests run in, so a following test run drives
 exactly what you are watching and listening to. Then, in a second terminal,
-`cargo xtask vm test --no-restore` (audible by default, no flag needed for
+`cargo xtask vm test` (audible by default, no flag needed for
 that anymore). Closing the RDP window disconnects rather than logging off,
 leaving the guest running for the test to reuse. Run
 `cargo xtask vm connect --forget` afterward to remove the stored
@@ -417,7 +419,7 @@ somewhere in the real `OneCore`/`WasapiSink` audio path, unrelated to and
 unresolved independently of the speech assertions above.
 
 **To record a run:** make sure no RDP session is connected to the guest,
-then `cargo xtask vm test --record` (combinable with `--no-restore`, in
+then `cargo xtask vm test --record` (combinable with `--restore`, in
 either order). Before starting ffmpeg, this re-asserts VB-CABLE as the
 guest's default render device (`vm/scripts/Set-DefaultAudioRenderDevice.ps1`,
 already staged to `C:\VerbatimLab\tools` by the golden image, run again at
@@ -516,7 +518,7 @@ so a golden checkpoint restored after the host rebooted leaves the guest
 on an unroutable address: the agent listens, PowerShell Direct works, but
 no host-side TCP probe can connect (diagnosed live: guest on a 172.18.x
 lease while the switch had moved to 172.21.x). Every restore path
-(`vm restore`, `vm test`) now renews the guest's lease over PowerShell
+(`vm restore`, `vm test --restore`) now renews the guest's lease over PowerShell
 Direct before waiting for the agent, so this fixes itself; if an agent
 wait ever times out anyway, compare the guest's IP
 (`Get-VMNetworkAdapter`) against the host's `vEthernet (Default Switch)`

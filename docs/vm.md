@@ -51,43 +51,41 @@ arguments for the full verb list printed from the source of truth.
   checkpoints at all.
 - `test` builds the current source first, before touching the VM at all
   (needs `LIBCLANG_PATH`, set automatically when found — see "Hearing and
-  recording a run" above), then restores `golden`, stages and copies that
-  build onto it (always with the real `OneCore` synthesizer — no more
-  capture-synth choice on the VM path), discovers the guest's IP address,
-  runs `session_info`'s own test once as a precondition (not itself a
-  scenario, not recorded, and not affected by `--scenario`/`--group` — a
-  failure here aborts the whole run, since nothing downstream can work from
-  a non-interactive agent session), and then runs the selected scenarios
+  recording a run" in the tooling guide), then starts the guest if it is
+  not running and waits for its agent, stages and copies that build onto it
+  (always with the real `OneCore` synthesizer — no more capture-synth
+  choice on the VM path), discovers the guest's IP address, runs
+  `session_info`'s own test once as a precondition (not itself a scenario,
+  not recorded, and not affected by `--scenario`/`--group` — a failure here
+  aborts the whole run, since nothing downstream can work from a
+  non-interactive agent session), and then runs the selected scenarios
   from `crates/verbatim-e2e/src/registry.rs`, one at a time. Each scenario
   runs as its own `cargo test -p verbatim-e2e <name> -- --exact` subprocess
   on the host with `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
   `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path,
   `VERBATIM_E2E_REMOTE=1`, and `VERBATIM_E2E_AUDIBLE=1` set — this is what
   gives `--record` a clean, one-scenario-at-a-time recording boundary (see
-  "Hearing and recording a run" above) with no new machinery inside
-  `verbatim-e2e` itself. Building first, ahead of the restore, is
-  deliberate: a compile failure is then caught with zero VM state changes,
-  rather than after a restore that then has to be paid for again on the
-  next attempt. `--no-restore` does not change this — the build still runs
-  first either way. This is the one-command loop `docs/roadmap.md`'s M2
-  exit criteria describes.
+  "Hearing and recording a run" in the tooling guide) with no new
+  machinery inside `verbatim-e2e` itself. Building first is deliberate: a
+  compile failure is then caught with zero VM state changes. This is the
+  one-command loop `docs/roadmap.md`'s M2 exit criteria describes.
   - `--scenario <name>` (repeatable) and `--group <name>` (repeatable, one
-    of `speech`, `shell`, `legacy`, `navigation`) select which scenarios
-    run; with neither given, every registered scenario runs, the same as
-    before milestone M3 Track B's restructuring. An unrecognized name is
-    reported and the run aborts before anything touches the VM.
+    of `speech`, `shell`, `legacy`, `navigation`, `diagnostic`) select
+    which scenarios run; with neither given, every registered scenario
+    runs except the `diagnostic` group, whose members run only when named
+    explicitly. An unrecognized name is reported and the run aborts before
+    anything touches the VM.
   - `--list` prints the scenario registry (name and group, one per line)
     and exits immediately — no build, no restore, no deploy, nothing
     touches the VM at all.
-  - `cargo xtask vm test --no-restore` skips the checkpoint restore (and
-    its post-restore agent wait) entirely, deploying straight onto whatever
-    the guest is currently running, and prints a prominent line stating the
-    guest was not restored and its state may be dirty. Combined with
-    `deploy`'s hash-skipping, this makes a rerun after a small code change
-    fast — restore plus its agent wait is most of an ordinary run's
-    wall-clock cost. Never use `--no-restore` for an acceptance run: only a
-    run that actually restored `golden` first demonstrates the harness's
-    real exit criteria.
+  - `--restore` restores the `golden` checkpoint first (then starts the
+    guest, renews its DHCP lease, and waits for the agent) before deploying.
+    Restoring is never automatic: deploy only copies files, skipping
+    unchanged ones, and nothing is installed into the guest, so a restore
+    buys nothing on an ordinary run while it and its agent wait are most of
+    a run's wall-clock cost. An acceptance run must pass `--restore`, since
+    only a run that restored `golden` first demonstrates the harness's real
+    exit criteria.
   - `--record` additionally captures each scenario as its own video with
     audio into `artifacts/vm-recordings`, one file per scenario named after
     it; see "Hearing and recording a run" above for the key constraint that

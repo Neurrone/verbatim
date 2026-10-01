@@ -1,14 +1,16 @@
-//! `cargo xtask vm test`: builds the current source, restores the golden
-//! checkpoint, stages and copies the build onto it, discovers the guest's
-//! IP, then runs `crates/verbatim-e2e`'s scenarios on the host against it,
-//! one at a time.
+//! `cargo xtask vm test`: builds the current source, starts the guest if it
+//! is not running (or, with `--restore`, restores the golden checkpoint
+//! first), stages and copies the build onto it, discovers the guest's IP,
+//! then runs `crates/verbatim-e2e`'s scenarios on the host against it, one
+//! at a time.
 //!
 //! Milestone M3 Track B replaced "the whole suite runs as one blob with one
 //! recording" with per-scenario selection and boundaries:
 //!
 //! - `--scenario <name>` (repeatable) and `--group <name>` (repeatable)
 //!   choose which of `verbatim_e2e::registry::SCENARIOS` to run; with
-//!   neither given, every registered scenario runs, the same as before.
+//!   neither given, every registered scenario runs except the `Diagnostic`
+//!   group, whose members run only when named explicitly.
 //!   `--list` prints the registry (name and group, one per line) and exits
 //!   without touching the VM at all — no build, no restore, no deploy.
 //! - `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is not a
@@ -54,31 +56,28 @@
 //!   root-cause — never re-run automatically by this module or by
 //!   `verbatim-e2e` itself.
 //!
-//! The build ([`deploy::build`]) deliberately runs *before* the checkpoint
-//! restore, not after: [`deploy::run`]'s original ordering built only after
+//! The build ([`deploy::build`]) deliberately runs *before* the guest is
+//! touched at all: [`deploy::run`]'s original ordering built only after
 //! restoring, so a compile failure wasted the restore and the next attempt,
 //! once the code was fixed, paid for another one. Building first means a
-//! compile failure costs zero VM state changes — the guest is never touched
-//! at all until the source is known to build. `--no-restore` does not
-//! change this ordering: the build still runs first regardless, since a
-//! broken build is exactly as pointless to discover after skipping the
-//! restore as after performing it.
+//! compile failure costs zero VM state changes, with or without
+//! `--restore`.
 //!
 //! The suite's two host-filesystem steps — checking `verbatim.exe` exists
-//! and writing the capture-synth `settings.toml` next to it — are correct
+//! and writing the fixed `settings.toml` next to it — are correct
 //! only in runner-direct mode, where the suite and Verbatim share a
 //! filesystem. Here `VERBATIM_E2E_VERBATIM_EXE` names a path inside the
 //! guest, so this verb sets `VERBATIM_E2E_REMOTE` as well, which tells
 //! `verbatim_e2e::Scenario::launch` to skip both: [`super::deploy::stage_and_copy`]
 //! has already staged that same configuration inside the guest.
 //!
-//! `--no-restore` (`no_restore` here) skips the checkpoint restore and its
-//! post-restore agent wait entirely, deploying straight onto whatever the
-//! guest is currently running. This exists purely for fast local iteration
-//! on top of [`deploy::stage_and_copy`]'s own hash-skipping — restore plus
-//! its agent wait is most of a normal run's wall-clock cost. It is never
-//! appropriate for an acceptance run, since the guest may carry state left
-//! over from a previous test.
+//! Restoring is opt-in (`--restore`, `restore` here), never automatic: an
+//! ordinary run deploys onto whatever the guest is currently running,
+//! starting it first if it is off. Nothing is installed into the guest —
+//! [`deploy::stage_and_copy`] copies files and skips unchanged ones — so a
+//! restore buys nothing on an ordinary run, while it and its agent wait are
+//! most of a run's wall-clock cost. An acceptance run, which must start
+//! from a known-clean guest, asks for one with `--restore`.
 //!
 //! `test` is audible by default now, unconditionally: [`deploy::stage_and_copy`]
 //! always stages a `settings.toml` selecting the real `OneCore` synthesizer
@@ -160,21 +159,24 @@ use super::{AGENT_PORT, CHECKPOINT_NAME, VERBATIM_DIR, VM_NAME, VmResult, deploy
 /// deliberately has no [`registry::ScenarioDef`] to look up.
 const SESSION_INFO_TEST_NAME: &str = "agent_reports_an_interactive_window_station";
 
-/// The flags `cargo xtask vm test` accepts, all defaulting to off or empty:
-/// The acceptance run's checkpoint restore: golden checkpoint, start, a
-/// DHCP renewal (the restored guest may hold a lease from a Default Switch
-/// subnet that no longer exists — see `renew_guest_dhcp`), then the agent
-/// wait. `--no-restore` skips all of it, loudly.
-fn restore_golden_unless_skipped(
+/// Readies the guest before deploying. By default it only makes sure the
+/// guest is running (a no-op when it already is) and its agent answers.
+/// With `restore` (`--restore`), it restores the golden checkpoint first,
+/// starts the guest, and renews its DHCP lease (the restored guest may hold
+/// a lease from a Default Switch subnet that no longer exists — see
+/// `renew_guest_dhcp`) before the agent wait.
+fn prepare_guest(
     host: &dyn Host,
-    no_restore: bool,
+    restore: bool,
     credentials: &dotenv::GuestCredentials,
 ) -> VmResult<()> {
-    if no_restore {
+    if !restore {
         println!(
-            "xtask vm test: --no-restore set — SKIPPING the checkpoint restore; guest state              may be dirty from a previous run; do not use --no-restore for an acceptance run"
+            "xtask vm test: deploying onto the guest as it is (pass --restore to restore \
+             '{CHECKPOINT_NAME}' first, as an acceptance run needs)"
         );
-        return Ok(());
+        host.start_vm(VM_NAME)?;
+        return wait_for_agent(host, VM_NAME);
     }
     println!("xtask vm test: restoring checkpoint '{CHECKPOINT_NAME}'");
     host.restore_checkpoint(VM_NAME, CHECKPOINT_NAME)?;
@@ -185,9 +187,10 @@ fn restore_golden_unless_skipped(
     wait_for_agent(host, VM_NAME)
 }
 
-/// `--no-restore` skips the checkpoint restore, `--record` captures a video
-/// per scenario, `--paced` waits for each utterance to finish before the
-/// next input, `--list` prints the scenario registry and exits, and
+/// The flags `cargo xtask vm test` accepts, all defaulting to off or empty:
+/// `--restore` restores the golden checkpoint first, `--record` captures a
+/// video per scenario, `--paced` waits for each utterance to finish before
+/// the next input, `--list` prints the scenario registry and exits, and
 /// `--scenario`/`--group` (each repeatable) select which scenarios run. See
 /// this module's own doc comment for the details, and `parse_test_flags` in
 /// `super` for the parsing.
@@ -197,7 +200,7 @@ fn restore_golden_unless_skipped(
     reason = "each bool is an independent, orthogonal command-line flag parsed straight off argv; a state machine or enum would not make any combination of them clearer"
 )]
 pub(crate) struct TestFlags {
-    pub no_restore: bool,
+    pub restore: bool,
     pub record: bool,
     pub paced: bool,
     pub list: bool,
@@ -208,8 +211,8 @@ pub(crate) struct TestFlags {
 /// # Errors
 ///
 /// Returns an error if `--scenario`/`--group` name something unregistered,
-/// the checkpoint restore (when not skipped), the deploy, IP discovery, the
-/// `session_info` precondition, or any selected scenario itself fails. A
+/// readying the guest (including the checkpoint restore when `--restore` is
+/// given), the deploy, IP discovery, the `session_info` precondition, or any selected scenario itself fails. A
 /// recording failure never aborts the run — see this module's own doc
 /// comment — so `record` contributes no new error case of its own;
 /// recording problems are printed as warnings and, if a video was at least
@@ -217,7 +220,7 @@ pub(crate) struct TestFlags {
 /// failures, never in place of running the scenarios.
 pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmResult<()> {
     let TestFlags {
-        no_restore,
+        restore,
         record,
         paced,
         list,
@@ -252,7 +255,7 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     );
     let built = deploy::build(repo_root)?;
 
-    restore_golden_unless_skipped(host, no_restore, &credentials)?;
+    prepare_guest(host, restore, &credentials)?;
 
     println!(
         "xtask vm test: audible by default — deploying and running with the real OneCore \

@@ -112,7 +112,7 @@ fn unknown_arg(verb: &str, arg: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Parses `test`'s flags — `--no-restore`, `--record`, `--paced`, `--list`,
+/// Parses `test`'s flags — `--restore`, `--record`, `--paced`, `--list`,
 /// and the repeatable `--scenario <name>` and `--group <name>` — accepted in
 /// any order and independently. Returns a [`test::TestFlags`], or the first
 /// unrecognized argument (or a `--scenario`/`--group` missing its value) as
@@ -123,7 +123,7 @@ fn parse_test_flags(args: &[String]) -> Result<test::TestFlags, String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--no-restore" => flags.no_restore = true,
+            "--restore" => flags.restore = true,
             "--record" => flags.record = true,
             "--paced" => flags.paced = true,
             "--list" => flags.list = true,
@@ -189,53 +189,31 @@ fn print_usage() {
         "  deploy           build verbatim.exe, verbatim-outpost.exe, and the agent, and copy"
     );
     eprintln!("                   them (plus settings.toml) into the guest");
-    eprintln!("  test             restore 'golden', deploy, then run the E2E suite against it,");
+    eprintln!("  test             deploy onto the running guest (starting it if needed), then run");
+    eprintln!("                   the E2E suite against it, audible by default (real OneCore");
+    eprintln!("                   synthesizer, real WASAPI): heard live over a connected");
+    eprintln!("                   `cargo xtask vm connect` session, or played to VB-CABLE unheard");
+    eprintln!("                   when headless; --restore first restores 'golden' for a clean");
     eprintln!(
-        "                   audible by default (real OneCore synthesizer, real WASAPI): heard"
+        "                   guest, as an acceptance run needs; --record additionally captures"
     );
+    eprintln!("                   desktop video and VB-CABLE audio to an mp4 under");
+    eprintln!("                   artifacts/vm-recordings — recording audio and a connected RDP");
+    eprintln!("                   session are mutually exclusive (RDP hides the VB-CABLE capture");
+    eprintln!("                   device), so --record against a connected guest degrades to");
+    eprintln!("                   video-only, tagged -no-audio, with a warning, rather than");
+    eprintln!("                   aborting; --paced waits for each utterance's audio to finish");
     eprintln!(
-        "                   live over a connected `cargo xtask vm connect` session, or played"
+        "                   before the next keystroke so speech is heard in full (implied by"
     );
-    eprintln!(
-        "                   to VB-CABLE unheard when headless; --no-restore skips the restore"
-    );
-    eprintln!("                   and reuses the live guest as-is — faster for iteration, but");
-    eprintln!(
-        "                   the guest may carry state from a previous run; never use it for an"
-    );
-    eprintln!(
-        "                   acceptance run; --record additionally captures desktop video and"
-    );
-    eprintln!(
-        "                   VB-CABLE audio to an mp4 under artifacts/vm-recordings — recording"
-    );
-    eprintln!(
-        "                   audio and a connected RDP session are mutually exclusive (RDP hides"
-    );
-    eprintln!(
-        "                   the VB-CABLE capture device), so --record against a connected guest"
-    );
-    eprintln!(
-        "                   degrades to video-only, tagged -no-audio, with a warning, rather"
-    );
-    eprintln!("                   than aborting; --paced waits for each utterance's audio to");
-    eprintln!("                   finish before the next keystroke so speech is heard in full");
-    eprintln!(
-        "                   (implied by --record; recording, when on, is per scenario, not per"
-    );
-    eprintln!(
-        "                   whole run); --scenario <name> and --group <name> (each repeatable)"
-    );
+    eprintln!("                   --record; recording, when on, is per scenario, not per whole");
+    eprintln!("                   run); --scenario <name> and --group <name> (each repeatable)");
     eprintln!(
         "                   select which scenarios run; with neither given, every registered"
     );
-    eprintln!(
-        "                   scenario runs; --list prints the scenario registry (name and group)"
-    );
-    eprintln!(
-        "                   and exits without touching the VM; all flags may be given, in any"
-    );
-    eprintln!("                   order");
+    eprintln!("                   scenario except the diagnostic group runs; --list prints the");
+    eprintln!("                   scenario registry (name and group) and exits without touching");
+    eprintln!("                   the VM; all flags may be given, in any order");
     eprintln!("  logs [dir]       pull flight-recorder dumps and the agent log out of the guest");
     eprintln!("                   (default dir: artifacts/vm-logs)");
     eprintln!(
@@ -249,4 +227,34 @@ fn print_usage() {
     );
     eprintln!("                   the stored credentials and exits without connecting");
     eprintln!("  delete           remove the VM and its disks, for a clean rebuild");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn test_does_not_restore_unless_asked() {
+        let flags = parse_test_flags(&args(&[])).expect("no flags parse");
+        assert!(
+            !flags.restore,
+            "restoring must be opt-in, never the default"
+        );
+    }
+
+    #[test]
+    fn restore_flag_opts_in() {
+        let flags = parse_test_flags(&args(&["--record", "--restore"])).expect("flags parse");
+        assert!(flags.restore);
+        assert!(flags.record);
+    }
+
+    #[test]
+    fn the_retired_no_restore_flag_is_rejected() {
+        assert!(parse_test_flags(&args(&["--no-restore"])).is_err());
+    }
 }

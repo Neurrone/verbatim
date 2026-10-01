@@ -43,7 +43,8 @@ module tree, not a library):
   `--list` prints the registry (name and group) and exits, touching neither
   build nor VM. Otherwise `test::test` resolves `--scenario`/`--group` via
   `registry::select` (erroring out before any build or restore on an
-  unrecognized name), builds, restores (unless `--no-restore`), deploys,
+  unrecognized name), builds, readies the guest (starting it if needed, or
+  restoring `golden` first when `--restore` is given), deploys,
   then runs `session_info`'s own test as a precondition — once, unrecorded,
   regardless of selection — before entering `run_one_scenario`'s per-scenario
   loop: `--record` (when set) brackets exactly that scenario's own `cargo
