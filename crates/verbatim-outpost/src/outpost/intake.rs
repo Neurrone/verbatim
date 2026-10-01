@@ -9,7 +9,8 @@
 //!   previous batch.
 //! - Per batch, the newest 4 focus events and the newest 10 other events per
 //!   application UI thread are kept; the focused object's events are always
-//!   kept, and so are queries and housekeeping entries.
+//!   kept, and so are queries and housekeeping entries. A newer list of the
+//!   nodes Core holds replaces a waiting one.
 //! - Events from a window the system reports as hung are dropped before any
 //!   read.
 //! - Within a batch only the newest foreground change and the newest focus
@@ -75,6 +76,9 @@ pub(super) enum Item {
     CheckFocus,
     /// A query from Core.
     Query { request_id: u64, query: Query },
+    /// The nodes Core still holds, and the position of the last message it
+    /// has handled: release the rest.
+    NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
 }
 
 /// An item with its trace and observation time.
@@ -96,6 +100,7 @@ pub(super) enum Key {
     MenuPopup(isize, i32, i32),
     UiaMenuOpened(Vec<i32>),
     CheckFocus,
+    NodesHeld,
 }
 
 impl Key {
@@ -109,7 +114,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(_) | Key::CheckFocus => None,
+            Key::Foreground(_) | Key::CheckFocus | Key::NodesHeld => None,
         }
     }
 }
@@ -318,6 +323,8 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             (Some(key), Category::Focus, hwnd)
         }
         Item::CheckFocus => (Some(Key::CheckFocus), Category::Exempt, 0),
+        // Only the newest list of held nodes matters.
+        Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
         Item::Query { .. } => (None, Category::Exempt, 0),
     }
 }
@@ -573,6 +580,33 @@ mod tests {
             }
         }
         assert_eq!(order, vec![20, 30]);
+    }
+
+    #[test]
+    fn a_newer_list_of_held_nodes_replaces_the_waiting_one_and_is_never_limited() {
+        let intake = Intake::default();
+        for acknowledged in [1, 2] {
+            intake.push(Entry {
+                item: Item::NodesHeld {
+                    nodes: Vec::new(),
+                    acknowledged,
+                },
+                trace: TraceId::mint(),
+                observed_at_ms: 0,
+            });
+        }
+        let Some((Planned::Run(entry), _)) = intake.next() else {
+            panic!("the list is planned");
+        };
+        assert!(matches!(
+            entry.item,
+            Item::NodesHeld {
+                acknowledged: 2,
+                ..
+            }
+        ));
+        let (_, category, _) = classify(&entry.item);
+        assert_eq!(category, Category::Exempt);
     }
 
     #[test]

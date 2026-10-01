@@ -38,7 +38,12 @@ knowing for review:
   mirror follows the same notices. After each input the thread sends the
   supervisor the derived views (`note_views`) when they change: the
   application holding attention and the outposts in which the reducer holds
-  nodes. On an end the reducer
+  nodes. It also tells each live outpost which of its nodes the reducer
+  holds (`send_nodes_held`), with the position of the last of that
+  outpost's messages it has handled, whenever that set changes and every
+  256 messages besides, so the outpost can release everything else
+  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). On an end the
+  reducer
   gets `Input::OutpostEnded`, then a "gone" outcome for each of that
   outpost's outstanding queries. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the

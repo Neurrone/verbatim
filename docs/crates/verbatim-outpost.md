@@ -306,7 +306,29 @@ Implementation notes:
   milliseconds, the worker reads the real focus and reports it; a timer
   thread queues that check, so the worker never sleeps.
 - Window destruction: an `EVENT_OBJECT_DESTROY` for a window drops its kept
-  arbitration verdict, so a reused handle is probed afresh.
+  arbitration verdict and its MSAA nodes, so a reused handle is probed
+  afresh and never inherits them.
+- Held objects (outpost redesign, "Held objects"): both registries keep
+  every node the outpost reports, with the live UIA element or MSAA object
+  behind it where it has one.
+  Each message that carries node ids (an event, or a reply with a result:
+  `OutpostToSupervisor::carries_nodes`) takes the next position when the
+  worker publishes it, and every node issued or looked up since the last
+  publish is recorded as reported at that position. Core's reader counts
+  the same messages and hands the app each message's position. The app
+  sends `SupervisorToOutpost::NodesHeld` with the node numbers the reducer
+  holds in that outpost and the position of the last message it has
+  handled, whenever that set changes and also every 256 messages, so an
+  outpost whose held set stays the same still releases what it reported
+  meanwhile. The worker then releases every node not held that was
+  reported at or before the acknowledged position; a node reported later,
+  or not yet reported, is kept, since Core may not have seen it. The
+  released nodes leave both registries under the watch lock, and their
+  objects are dropped after it is released, so a worker that replaces an
+  abandoned one can never report a node that is about to vanish. A query
+  for a released node answers `Gone`. Core's writer replaces a waiting
+  list with a newer one and lets it past a full queue; the intake queue
+  likewise keeps only the newest and never limits it.
 - Queries (the worker): `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::walk_tree` with the base cache request, MSAA via
@@ -314,12 +336,15 @@ Implementation notes:
   and 4096 nodes, reporting whether a cap cut it short. `Ancestors`,
   `Navigate`, and `Activate` dispatch to whichever registry issued the node:
   UIA hops through the raw-view tree walker with the base cache request, MSAA
-  through `accParent`, `accNavigate`, and `accDoDefaultAction`. A node no
-  registry knows, or one that can no longer be reached, answers `Gone`.
+  through `accParent`, `accNavigate`, and `accDoDefaultAction` on the object
+  the registry kept for the node. A node no registry knows, or one that can
+  no longer be reached, answers `Gone`.
 - Selection and notification events: both backends' selection events emit
   `NormalizedEvent::SelectionChanged` (the selected node's full snapshot)
   and UIA notifications emit `NormalizedEvent::Notification`. The reducer
   announces both ([verbatim-core](verbatim-core.md)).
-- `OutpostMessage::Event` boxes its `OutpostToSupervisor` payload: the M3
+- `OutpostMessage::Event` carries the target pid, the outpost id, the
+  message's position, and the boxed `OutpostToSupervisor` payload: the
   replies grew the message enum well past the lifecycle notices, and boxing
-  keeps every channel send small.
+  keeps every channel send small. `Supervisor::send_nodes_held` queues a
+  `NodesHeld` list for one incarnation.

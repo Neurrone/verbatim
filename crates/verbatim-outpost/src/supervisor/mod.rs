@@ -103,9 +103,20 @@ pub enum OutpostMessage {
         target_pid: Pid,
     },
     /// A message an outpost sent, tagged with its target pid and the outpost
-    /// incarnation whose pipe it arrived on. Boxed so every channel send is
-    /// small, not sized to the largest reply.
-    Event(Pid, OutpostId, Box<OutpostToSupervisor>),
+    /// incarnation whose pipe it arrived on.
+    Event {
+        /// The application the outpost watches.
+        pid: Pid,
+        /// The incarnation whose pipe the message arrived on.
+        outpost: OutpostId,
+        /// How many messages carrying node ids the outpost has sent up to and
+        /// including this one: what the app acknowledges in
+        /// [`Supervisor::send_nodes_held`] once it has handled the message.
+        position: u64,
+        /// The message, boxed so every channel send is small, not sized to
+        /// the largest reply.
+        message: Box<OutpostToSupervisor>,
+    },
     /// The focus listener was replaced and its replacement is ready. Facts
     /// were lost in the gap, so the app asks the foreground application for
     /// its current focus.
@@ -194,6 +205,27 @@ impl Supervisor {
             .cloned()
             .ok_or(QueueError::Closed)?;
         writer.push(writer::Outgoing::Other(command))
+    }
+
+    /// Tells one outpost incarnation which of its nodes Core still holds, and
+    /// the position of the last of its messages the app has handled. A newer
+    /// list replaces one still waiting to be written, and gets through even
+    /// when the queue is full. Nothing happens if the incarnation has ended.
+    pub fn send_nodes_held(&self, outpost: OutpostId, nodes: Vec<u64>, acknowledged: u64) {
+        let writer = self
+            .writers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&outpost)
+            .cloned();
+        if let Some(writer) = writer {
+            let _ = writer.push(writer::Outgoing::NodesHeld(
+                SupervisorToOutpost::NodesHeld {
+                    nodes,
+                    acknowledged,
+                },
+            ));
+        }
     }
 
     /// Tells the owner the views the app derives from the reducer state:

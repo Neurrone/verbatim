@@ -24,11 +24,15 @@
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{
+    CO_E_OBJNOTCONNECTED, HWND, LPARAM, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED,
+    RPC_E_SERVER_DIED_DNE, WPARAM,
+};
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_I4};
 use windows::Win32::UI::Accessibility::{
-    AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccessible,
-    NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, WindowFromAccessibleObject,
+    AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccIdentity,
+    IAccessible, NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, WindowFromAccessibleObject,
 };
 use windows::Win32::UI::Controls::{
     TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM,
@@ -37,15 +41,70 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_PARENT, GUITHREADINFO, GW_HWNDNEXT, GW_HWNDPREV, GetAncestor, GetClassNameW,
     GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowThreadProcessId,
-    IsWindowVisible, OBJID_CLIENT, OBJID_WINDOW, SendMessageW,
+    IsWindow, IsWindowVisible, OBJID_CLIENT, OBJID_WINDOW, SendMessageW,
 };
-use windows::core::Interface;
+use windows::core::{AgileReference, IUnknown, Interface};
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, QueryKind, Rect, Role, TreeNode};
+use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Rect, Role, TreeNode};
 
 use crate::com::{CHILDID_SELF, bstr_to_option, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
-use crate::registry::{MsaaKey, NodeIdRegistry};
+use crate::registry::{Found, Held, MsaaKey, NodeIdRegistry};
+
+/// Why a read of a node this outpost issued failed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AcquireError {
+    /// The node is no longer reachable: it was released, its window was
+    /// destroyed, or its object has disconnected.
+    Gone,
+    /// The read failed for another reason.
+    Failed(String),
+}
+
+/// Whether `error` says the object's process or the object itself has gone.
+fn disconnected(error: &windows::core::Error) -> bool {
+    [
+        RPC_E_DISCONNECTED,
+        CO_E_OBJNOTCONNECTED,
+        RPC_E_SERVER_DIED,
+        RPC_E_SERVER_DIED_DNE,
+    ]
+    .contains(&error.code())
+}
+
+/// Whether `hwnd` still names a window.
+fn window_exists(hwnd: isize) -> bool {
+    // SAFETY: IsWindow tolerates any handle.
+    unsafe { IsWindow(Some(HWND(hwnd as *mut c_void))) }.as_bool()
+}
+
+/// The kept object behind `node`, with its child variant and address (outpost
+/// redesign, "Held objects"): the object that was announced, never whatever
+/// now sits at its address. A node issued from local window data has no
+/// object and is acquired at its address. `Gone` when the node is not kept,
+/// its window no longer exists, or its object cannot be reached.
+///
+/// Also returns whether the object was acquired at its address, which a
+/// neighbor addressed by child id on the same object inherits.
+fn locate(
+    node: NodeId,
+    registry: &NodeIdRegistry,
+) -> Result<(IAccessible, VARIANT, MsaaKey, bool), AcquireError> {
+    let (key, held, at_address) = registry.locate(node).ok_or(AcquireError::Gone)?;
+    if !window_exists(key.0) {
+        return Err(AcquireError::Gone);
+    }
+    match held {
+        Some((object, child)) => object
+            .resolve()
+            .map(|acc| (acc, child_variant(child), key, at_address))
+            .map_err(|_| AcquireError::Gone),
+        // SAFETY: forwarded to `accessible_and_child`'s contract.
+        None => unsafe { accessible_and_child(key.0, key.1, key.2) }
+            .map(|(acc, child)| (acc, child, key, at_address))
+            .ok_or(AcquireError::Gone),
+    }
+}
 
 /// Acquires the object named by a `WinEvent` and maps it to a [`NodeSnapshot`].
 /// Returns `None` if the object cannot be acquired. Blocking; query pool only.
@@ -60,7 +119,7 @@ pub fn snapshot_from_event(
     let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
     // SAFETY: `acc` and `child` were just acquired together and are valid
     // for each other.
-    Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry) })
+    Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), true, registry) })
 }
 
 /// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent`, applying
@@ -94,10 +153,10 @@ pub fn snapshot_from_focus_event(
     {
         // SAFETY: `focus_acc` and `focus_child` are a valid pair — a real
         // child addressed by id on `acc`.
-        return Some(unsafe { read_snapshot(&focus_acc, &focus_child, key, registry) });
+        return Some(unsafe { read_snapshot(&focus_acc, &focus_child, key, true, registry) });
     }
     // SAFETY: `acc` and `child` are valid for each other.
-    Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), registry) })
+    Some(unsafe { read_snapshot(&acc, &child, (hwnd, id_object, id_child), true, registry) })
 }
 
 /// NVDA's `processFocusWinEvent` redirect: when a focus event names a list
@@ -233,13 +292,17 @@ unsafe fn accessible_and_child(
 /// has no remote-operations analog to migrate to, so this stays the
 /// permanent MSAA implementation — but callers should still depend only on
 /// the result, never on how many round trips producing it took.
-#[must_use]
-pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) -> Vec<NodeSnapshot> {
-    let (hwnd, id_object, id_child) = key;
-    // SAFETY: forwarded to `accessible_and_child`'s contract.
-    let Some((acc, child)) = (unsafe { accessible_and_child(hwnd, id_object, id_child) }) else {
-        return Vec::new();
-    };
+///
+/// # Errors
+///
+/// [`AcquireError::Gone`] when `node` is no longer reachable; a hop that
+/// fails after that only ends the chain early.
+pub fn ancestor_chain(
+    node: NodeId,
+    registry: &NodeIdRegistry,
+    max_hops: u32,
+) -> Result<Vec<NodeSnapshot>, AcquireError> {
+    let (acc, child, (hwnd, id_object, _), at) = locate(node, registry)?;
     let mut chain = Vec::new();
     // SAFETY: `child` is valid for `acc`, just acquired together above.
     let is_simple_child = unsafe { child_id_of(&child) } != CHILDID_SELF;
@@ -258,8 +321,15 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
             let parent_key = (hwnd, id_object, parent_acc_id);
             // SAFETY: `acc` is the tree control's own live IAccessible;
             // `parent_acc_id` addresses one of its simple children.
-            let snapshot =
-                unsafe { read_snapshot(&acc, &child_variant(parent_acc_id), parent_key, registry) };
+            let snapshot = unsafe {
+                read_snapshot(
+                    &acc,
+                    &child_variant(parent_acc_id),
+                    parent_key,
+                    at,
+                    registry,
+                )
+            };
             chain.push(snapshot);
             hops_used += 1;
             current_acc_id = parent_acc_id;
@@ -274,9 +344,18 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
             // acquisition.
             let self_hwnd = unsafe { window_of(&current) }.unwrap_or(hwnd);
             let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            // The object a simple child belongs to sits at the client address
+            // of the child's own window, when the child was acquired there.
+            let self_at = at && id_object == OBJID_CLIENT.0 && self_hwnd == hwnd;
             // SAFETY: `current` is live; CHILDID_SELF addresses it directly.
             let snapshot = unsafe {
-                read_snapshot(&current, &child_variant(CHILDID_SELF), self_key, registry)
+                read_snapshot(
+                    &current,
+                    &child_variant(CHILDID_SELF),
+                    self_key,
+                    self_at,
+                    registry,
+                )
             };
             chain.push(snapshot);
             at_self = true;
@@ -299,6 +378,7 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
                 &parent_acc,
                 &child_variant(CHILDID_SELF),
                 parent_key,
+                false,
                 registry,
             )
         };
@@ -307,7 +387,7 @@ pub fn ancestor_chain(key: MsaaKey, registry: &NodeIdRegistry, max_hops: u32) ->
         current = parent_acc;
     }
     chain.reverse();
-    chain
+    Ok(chain)
 }
 
 /// Reads a window's class name via `GetClassNameW` — a local, non-blocking
@@ -448,25 +528,33 @@ enum NavigateDirection {
 ///
 /// # Errors
 ///
-/// Returns `Err` only when the source node itself — the one named by `key`
-/// — can no longer be re-acquired; this is the "the node is gone" case.
+/// Returns [`AcquireError::Gone`] when the source node itself is no longer
+/// reachable.
 /// `Ok(None)` is a genuine edge: the source node is fine, but there is no
 /// neighbor in that direction (a root's parent, a last child's next
 /// sibling, a leaf's first child). The two are never conflated, so callers
 /// can distinguish "this node vanished" from "this is the end of the tree".
+#[expect(
+    clippy::too_many_lines,
+    reason = "the window-root, tree-view, simple-child, and accNavigate cases read best side by side"
+)]
 pub fn navigate(
-    key: MsaaKey,
+    node: NodeId,
     registry: &NodeIdRegistry,
     kind: QueryKind,
-) -> Result<Option<NodeSnapshot>, String> {
+) -> Result<Option<NodeSnapshot>, AcquireError> {
     let direction = match kind {
         QueryKind::Parent => NavigateDirection::Parent,
         QueryKind::NextSibling => NavigateDirection::NextSibling,
         QueryKind::PreviousSibling => NavigateDirection::PreviousSibling,
         QueryKind::FirstChild => NavigateDirection::FirstChild,
-        _ => return Err("not a navigation direction".to_owned()),
+        _ => {
+            return Err(AcquireError::Failed(
+                "not a navigation direction".to_owned(),
+            ));
+        }
     };
-    let (hwnd, id_object, id_child) = key;
+    let (hwnd, id_object, id_child) = registry.key_of(node).ok_or(AcquireError::Gone)?;
     // A window-root object (a windowed control's window face, keyed under
     // OBJID_WINDOW — see `read_snapshot`) navigates the Win32 window
     // hierarchy, not `accNavigate`/`accParent`, mirroring NVDA's Window and
@@ -477,11 +565,12 @@ pub fn navigate(
     // navigates between are sibling windows the window hierarchy walks
     // directly.
     if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
+        if !window_exists(hwnd) {
+            return Err(AcquireError::Gone);
+        }
         return Ok(window_navigate(hwnd, direction, registry));
     }
-    // SAFETY: forwarded to `accessible_and_child`'s contract.
-    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }
-        .ok_or_else(|| "could not acquire the node".to_owned())?;
+    let (acc, child, _, at) = locate(node, registry)?;
     // SAFETY: `child` is valid for `acc`, just acquired together above.
     let is_simple_child = unsafe { child_id_of(&child) } != CHILDID_SELF;
     let tree_view = is_simple_child && is_systreeview32(hwnd);
@@ -495,7 +584,13 @@ pub fn navigate(
                 // SAFETY: `acc` is the tree control's own live IAccessible;
                 // `parent_acc_id` addresses one of its simple children.
                 return Ok(Some(unsafe {
-                    read_snapshot(&acc, &child_variant(parent_acc_id), parent_key, registry)
+                    read_snapshot(
+                        &acc,
+                        &child_variant(parent_acc_id),
+                        parent_key,
+                        at,
+                        registry,
+                    )
                 }));
             }
             // The item is a root: fall through to the ordinary simple-child
@@ -508,14 +603,23 @@ pub fn navigate(
             // SAFETY: `acc` is live.
             let self_hwnd = unsafe { window_of(&acc) }.unwrap_or(hwnd);
             let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            let self_at = at && id_object == OBJID_CLIENT.0 && self_hwnd == hwnd;
             // SAFETY: `acc` is live; CHILDID_SELF addresses it directly.
             return Ok(Some(unsafe {
-                read_snapshot(&acc, &child_variant(CHILDID_SELF), self_key, registry)
+                read_snapshot(
+                    &acc,
+                    &child_variant(CHILDID_SELF),
+                    self_key,
+                    self_at,
+                    registry,
+                )
             }));
         }
         // SAFETY: `acc` is live.
-        let Ok(parent_dispatch) = (unsafe { acc.accParent() }) else {
-            return Ok(None);
+        let parent_dispatch = match unsafe { acc.accParent() } {
+            Ok(parent) => parent,
+            Err(error) if disconnected(&error) => return Err(AcquireError::Gone),
+            Err(_) => return Ok(None),
         };
         let Ok(parent_acc) = parent_dispatch.cast::<IAccessible>() else {
             return Ok(None);
@@ -529,6 +633,7 @@ pub fn navigate(
                 &parent_acc,
                 &child_variant(CHILDID_SELF),
                 parent_key,
+                false,
                 registry,
             )
         }));
@@ -553,6 +658,7 @@ pub fn navigate(
                         &acc,
                         &child_variant(neighbor_acc_id),
                         neighbor_key,
+                        at,
                         registry,
                     )
                 }
@@ -567,8 +673,10 @@ pub fn navigate(
         NavigateDirection::Parent => unreachable!("handled above"),
     };
     // SAFETY: `acc` is live; `child` is valid for it.
-    let Ok(result) = (unsafe { acc.accNavigate(navdir.cast_signed(), &child) }) else {
-        return Ok(None);
+    let result = match unsafe { acc.accNavigate(navdir.cast_signed(), &child) } {
+        Ok(result) => result,
+        Err(error) if disconnected(&error) => return Err(AcquireError::Gone),
+        Err(_) => return Ok(None),
     };
     // SAFETY: `result` is the VARIANT `accNavigate` just returned; `acc` is
     // live, matching `resolve_child`'s contract even though this result did
@@ -597,27 +705,30 @@ pub fn navigate(
     // SAFETY: `target_acc` is live and `target_child` valid for it, per
     // `resolve_child`.
     Ok(Some(unsafe {
-        read_snapshot(&target_acc, &target_child, target_key, registry)
+        read_snapshot(&target_acc, &target_child, target_key, false, registry)
     }))
 }
 
-/// Activates the node named by `key`: `IAccessible::accDoDefaultAction`, the
-/// only activation MSAA offers (UIA's richer `Invoke`/`Toggle` ladder has no
-/// MSAA equivalent). Blocking; query pool only.
+/// Activates `node` through its kept object: `IAccessible::accDoDefaultAction`,
+/// the only activation MSAA offers (UIA's richer `Invoke`/`Toggle` ladder has
+/// no MSAA equivalent). Blocking; worker only.
 ///
 /// # Errors
 ///
-/// Returns a human-readable reason if the node cannot be acquired or the
-/// call fails (including "not implemented", MSAA's answer for a node with no
-/// default action).
-pub fn activate(key: MsaaKey) -> Result<(), String> {
-    let (hwnd, id_object, id_child) = key;
-    // SAFETY: forwarded to `accessible_and_child`'s contract.
-    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }
-        .ok_or_else(|| "could not acquire the node".to_owned())?;
+/// [`AcquireError::Gone`] if the node is no longer reachable;
+/// [`AcquireError::Failed`] with a human-readable reason if the call fails
+/// (including "not implemented", MSAA's answer for a node with no default
+/// action).
+pub fn activate(node: NodeId, registry: &NodeIdRegistry) -> Result<(), AcquireError> {
+    let (acc, child, _, _) = locate(node, registry)?;
     // SAFETY: `acc` is live; `child` is valid for it.
-    unsafe { acc.accDoDefaultAction(&child) }
-        .map_err(|error| format!("accDoDefaultAction failed: {error}"))
+    unsafe { acc.accDoDefaultAction(&child) }.map_err(|error| {
+        if disconnected(&error) {
+            AcquireError::Gone
+        } else {
+            AcquireError::Failed(format!("accDoDefaultAction failed: {error}"))
+        }
+    })
 }
 
 /// Re-reads a node previously seen at `key`. Returns `None` if it can no longer
@@ -637,10 +748,8 @@ pub fn resnapshot(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapsho
 /// addressing a full object (`CHILDID_SELF`); a child-id key reports `None`
 /// since a simple child cannot contain anything. Blocking; query pool only.
 #[must_use]
-pub fn selected_child(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
-    let (hwnd, id_object, id_child) = key;
-    // SAFETY: forwarded to `accessible_and_child`'s contract.
-    let (acc, child) = unsafe { accessible_and_child(hwnd, id_object, id_child) }?;
+pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
+    let (acc, child, (hwnd, id_object, _), at) = locate(node, registry).ok()?;
     // SAFETY: `child` was just acquired together with `acc`.
     if unsafe { child_id_of(&child) } != CHILDID_SELF {
         return None;
@@ -657,6 +766,7 @@ pub fn selected_child(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSna
                 &acc,
                 &child_variant(child_id),
                 child_key,
+                at,
                 registry,
             ));
         }
@@ -669,6 +779,7 @@ pub fn selected_child(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSna
                 &child_acc,
                 &child_variant(CHILDID_SELF),
                 child_key,
+                false,
                 registry,
             ));
         }
@@ -707,10 +818,16 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
             return None;
         }
         let client = accessible_from_window(hwnd)?;
-        let (acc, child) = resolve_focus(&client);
+        // A child object reached through `accFocus` has no address of its
+        // own; the client and its children by id do.
+        let (acc, child, at_address) = match read_acc_focus(&client) {
+            FocusTarget::ChildObject(child_acc) => (child_acc, child_variant(CHILDID_SELF), false),
+            FocusTarget::ChildId(child_id) => (client.clone(), child_variant(child_id), true),
+            FocusTarget::None => (client.clone(), child_variant(CHILDID_SELF), true),
+        };
         let node_hwnd = window_of(&acc).unwrap_or(hwnd.0 as isize);
         let key = (node_hwnd, OBJID_CLIENT.0, child_id_of(&child));
-        Some(read_snapshot(&acc, &child, key, registry))
+        Some(read_snapshot(&acc, &child, key, at_address, registry))
     }
 }
 
@@ -748,7 +865,7 @@ pub fn walk_tree(
             &acc,
             &child_variant(CHILDID_SELF),
             hwnd,
-            key,
+            (key, true),
             &limits,
             0,
             &mut state,
@@ -785,13 +902,13 @@ unsafe fn walk_recursive(
     acc: &IAccessible,
     child: &VARIANT,
     hwnd: isize,
-    key: MsaaKey,
+    (key, at_address): (MsaaKey, bool),
     limits: &WalkLimits<'_>,
     depth: u32,
     state: &mut WalkState,
 ) -> TreeNode {
     // SAFETY: forwarded to this function's contract.
-    let snapshot = unsafe { read_snapshot(acc, child, key, limits.registry) };
+    let snapshot = unsafe { read_snapshot(acc, child, key, at_address, limits.registry) };
 
     // SAFETY: `child` is valid for `acc` per the caller's contract.
     if unsafe { child_id_of(child) } != CHILDID_SELF {
@@ -855,9 +972,11 @@ unsafe fn walk_recursive(
         state.visited += 1;
         // SAFETY: `child_child` is valid for `child_acc` per
         // `resolve_child`'s construction.
-        let child_key = (child_hwnd, OBJID_CLIENT.0, unsafe {
-            child_id_of(&child_child)
-        });
+        let child_id = unsafe { child_id_of(&child_child) };
+        let child_key = (child_hwnd, OBJID_CLIENT.0, child_id);
+        // A child by id is addressed on this object, as this object is; a
+        // child object has no address of its own.
+        let child_at = at_address && child_id != CHILDID_SELF;
         // SAFETY: `child_acc` is a live IAccessible and `child_child` a
         // valid child variant for it, per `resolve_child`.
         let child_node = unsafe {
@@ -865,7 +984,7 @@ unsafe fn walk_recursive(
                 &child_acc,
                 &child_child,
                 child_hwnd,
-                child_key,
+                (child_key, child_at),
                 limits,
                 depth + 1,
                 state,
@@ -881,7 +1000,8 @@ unsafe fn walk_recursive(
 /// variant, hwnd)` to recurse into: a `VT_I4` entry is a simple element
 /// addressed by child id on `parent`; a `VT_DISPATCH` entry carries its own
 /// `IAccessible`, addressed by `CHILDID_SELF`, and may belong to a distinct
-/// window (a nested control), resolved the same way `resolve_focus` does.
+/// window (a nested control), resolved the same way [`focused_snapshot`]
+/// resolves a focused child object.
 ///
 /// # Safety
 ///
@@ -931,7 +1051,15 @@ fn window_object_snapshot(hwnd: isize, registry: &NodeIdRegistry) -> Option<Node
     let (acc, child) = unsafe { accessible_and_child(hwnd, OBJID_WINDOW.0, CHILDID_SELF) }?;
     // SAFETY: `acc`/`child` were just acquired together; the key names the
     // same window object `read_snapshot` will re-key under OBJID_WINDOW.
-    Some(unsafe { read_snapshot(&acc, &child, (hwnd, OBJID_WINDOW.0, CHILDID_SELF), registry) })
+    Some(unsafe {
+        read_snapshot(
+            &acc,
+            &child,
+            (hwnd, OBJID_WINDOW.0, CHILDID_SELF),
+            true,
+            registry,
+        )
+    })
 }
 
 /// Navigates the Win32 window hierarchy from a window-root object, NVDA's
@@ -974,7 +1102,7 @@ fn window_navigate(
                     unsafe { accessible_and_child(hwnd, OBJID_CLIENT.0, CHILDID_SELF) }?;
                 let key = (hwnd, OBJID_CLIENT.0, CHILDID_SELF);
                 // SAFETY: `acc`/`ch` just acquired together.
-                return Some(unsafe { read_snapshot(&acc, &ch, key, registry) });
+                return Some(unsafe { read_snapshot(&acc, &ch, key, true, registry) });
             }
             window_object_snapshot(child.0 as isize, registry)
         }
@@ -1035,6 +1163,7 @@ unsafe fn read_snapshot(
     acc: &IAccessible,
     child: &VARIANT,
     key: MsaaKey,
+    at_address: bool,
     registry: &NodeIdRegistry,
 ) -> NodeSnapshot {
     // SAFETY: forwarded to the caller's contract; each accessor tolerates an
@@ -1090,7 +1219,7 @@ unsafe fn read_snapshot(
             key
         };
         NodeSnapshot {
-            id: registry.id_for(key),
+            id: node_for(registry, key, at_address, acc, child_id_of(child), role),
             backend: Backend::Msaa,
             role,
             name,
@@ -1105,6 +1234,110 @@ unsafe fn read_snapshot(
                 rect,
             },
         }
+    }
+}
+
+/// The node for an object just read for `key`, matched against the kept
+/// nodes in NVDA's comparison order for MSAA objects (`docs/parity.md`,
+/// "Held objects"): a kept node that is the same COM object with the same
+/// child id in the same window, and the same role, is that node; otherwise,
+/// if the object was acquired at `key` (`at_address`), a kept node acquired
+/// at the same address is that node unless its role differs or both objects
+/// have identity strings (`IAccIdentity`) that differ. Anything else is
+/// issued a new node, which keeps `acc` as its object. An address made up
+/// for an object reached through `accParent` or as a child object is never
+/// compared, since other objects in the same window share it.
+///
+/// NVDA also compares `IAccessible2` unique ids, which Verbatim does not read
+/// yet, and the location and name; those two change while an object lives,
+/// and Verbatim would compare them with values read when the node was issued
+/// rather than a fresh read of both, so they are left out.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible`.
+unsafe fn node_for(
+    registry: &NodeIdRegistry,
+    key: MsaaKey,
+    at_address: bool,
+    acc: &IAccessible,
+    child: i32,
+    role: Role,
+) -> NodeId {
+    let identity = canonical(acc);
+    match registry.find(key, identity, child, at_address) {
+        // The kept object must still have that identity: while it is kept
+        // its address cannot be reused by another object.
+        Found::Object(id, held, held_role)
+            if held_role.is_none_or(|held_role| held_role == role)
+                && held.as_ref().is_some_and(|(object, _)| {
+                    object.resolve().ok().as_ref().and_then(canonical) == identity
+                }) =>
+        {
+            registry.touch(id);
+            return id;
+        }
+        Found::Key(id, held, held_role) => {
+            let same_role = held_role.is_none_or(|held_role| held_role == role);
+            let same_identity = held
+                .and_then(|(object, held_child)| {
+                    let object = object.resolve().ok()?;
+                    // SAFETY: both objects are live.
+                    unsafe {
+                        Some((
+                            identity_string(&object, held_child)?,
+                            identity_string(acc, child)?,
+                        ))
+                    }
+                })
+                .is_none_or(|(held, new)| held == new);
+            if same_role && same_identity {
+                registry.touch(id);
+                return id;
+            }
+        }
+        Found::Object(..) | Found::Nothing => {}
+    }
+    let held = identity.and_then(|identity| {
+        Some(Held {
+            object: AgileReference::new(acc).ok()?,
+            child,
+            identity,
+        })
+    });
+    registry.insert(key, held, role, at_address)
+}
+
+/// The address of `acc`'s canonical `IUnknown`, which identifies the COM
+/// object while a reference to it is held.
+fn canonical(acc: &IAccessible) -> Option<usize> {
+    acc.cast::<IUnknown>()
+        .ok()
+        .map(|unknown| unknown.as_raw() as usize)
+}
+
+/// The object's MSAA identity string for `child` (`IAccIdentity`), or `None`
+/// when it offers none.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible`.
+unsafe fn identity_string(acc: &IAccessible, child: i32) -> Option<Vec<u8>> {
+    let identity = acc.cast::<IAccIdentity>().ok()?;
+    let mut data: *mut u8 = std::ptr::null_mut();
+    let mut length = 0u32;
+    // SAFETY: the out-parameters are local; on success `data` holds `length`
+    // bytes allocated with the COM allocator, freed below.
+    unsafe {
+        identity
+            .GetIdentityString(child.cast_unsigned(), &raw mut data, &raw mut length)
+            .ok()?;
+        if data.is_null() {
+            return None;
+        }
+        let bytes = std::slice::from_raw_parts(data, usize::try_from(length).ok()?).to_vec();
+        CoTaskMemFree(Some(data.cast_const().cast()));
+        Some(bytes)
     }
 }
 
@@ -1165,9 +1398,9 @@ unsafe fn accessible_from_window(hwnd: HWND) -> Option<IAccessible> {
 
 /// What `accFocus` named on a client accessible: nothing distinct, a child by
 /// id (`VT_I4`), or a child's own object (`VT_DISPATCH`). The single place that
-/// parses the `accFocus` `VARIANT`, shared by [`resolve_focus`] (which flattens
-/// it to an accessible-plus-child pair) and [`snapshot_from_focus_event`]
-/// (which needs to distinguish the forms to apply NVDA's redirect rule).
+/// parses the `accFocus` `VARIANT`, shared by [`focused_snapshot`] and
+/// [`snapshot_from_focus_event`] (which needs to distinguish the forms to
+/// apply NVDA's redirect rule).
 enum FocusTarget {
     /// `accFocus` failed, or named the client itself (`CHILDID_SELF`), or an
     /// unhandled variant form.
@@ -1203,22 +1436,6 @@ unsafe fn read_acc_focus(client: &IAccessible) -> FocusTarget {
         } else {
             FocusTarget::None
         }
-    }
-}
-
-/// Resolves `accFocus` on a client accessible into the focused accessible and
-/// its child id, handling both the child-id (`VT_I4`) and child-object
-/// (`VT_DISPATCH`) forms, falling back to the client itself.
-///
-/// # Safety
-///
-/// `client` must be a live `IAccessible`.
-unsafe fn resolve_focus(client: &IAccessible) -> (IAccessible, VARIANT) {
-    // SAFETY: forwarded to `read_acc_focus`'s contract.
-    match unsafe { read_acc_focus(client) } {
-        FocusTarget::ChildObject(child_acc) => (child_acc, child_variant(CHILDID_SELF)),
-        FocusTarget::ChildId(child_id) => (client.clone(), child_variant(child_id)),
-        FocusTarget::None => (client.clone(), child_variant(CHILDID_SELF)),
     }
 }
 

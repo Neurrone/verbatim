@@ -40,20 +40,39 @@ Public API:
   different, so a container that fires focus on itself, like the wxWidgets
   generic list, announces the focused item rather than the container; the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
-  `resolve_focus` also uses, so the child-id and child-object forms are
-  handled once), `resnapshot` for fetches,
+  `focused_snapshot` also uses, so the child-id and child-object forms are
+  handled once), `resnapshot` for re-reading whatever is at an address,
   `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
   for the synthetic focus event an outpost emits after a foreground
-  change), and the M3 node-relative operations: `ancestor_chain`
+  change), and the node-relative operations, which take a `NodeId` and
+  read through the object the registry kept for it (a node issued from
+  local window data, which has no object, is acquired at its address).
+  `navigate`, `activate`, and `ancestor_chain` answer `AcquireError::Gone`
+  when the node is no longer kept, its window no longer exists, or its
+  object has disconnected, and `selected_child` answers `None`:
+  `ancestor_chain`
   (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent
   implementation), `navigate` (parent via `accParent`, siblings and first
-  child via `accNavigate`; returns `Ok(None)` for a genuine edge and `Err`
-  only when the source node itself can no longer be acquired, so the
-  outpost can report `Gone` rather than a fake edge), and `activate`
-  (`accDoDefaultAction`, MSAA's only activation primitive). Two seams
+  child via `accNavigate`; returns `Ok(None)` for a genuine edge and
+  `Err(AcquireError::Gone)` when the source node itself is no longer
+  reachable, so the outpost can report `Gone` rather than a fake edge),
+  `selected_child`, and `activate` (`accDoDefaultAction`, MSAA's only
+  activation primitive). Every snapshot is minted through `node_for`,
+  which matches a new sighting against the kept nodes in NVDA's
+  comparison order (`docs/parity.md`, "Held objects"): the same COM
+  object (by its canonical `IUnknown`, confirmed against the kept object)
+  with the same child id in the same window and the same role, else, for
+  an object acquired at its address, a kept node acquired at the same
+  address with the same role and, when both objects offer one, the same
+  `IAccIdentity` string; anything else is a new node that keeps the
+  object just read. Each snapshot is read with its provenance: objects
+  acquired at an event or window address, and children by id on them,
+  are at their address; objects reached through `accParent`, through
+  `accNavigate`, or as child objects are not, and never claim the address
+  made up for them. Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping
@@ -78,5 +97,14 @@ Public API:
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, pinned by unit tests against
   raw state words captured from live controls.
-- `NodeIdRegistry` keyed by window handle, object id, and child id, sharing
-  the outpost-wide counter with the UIA registry.
+- `NodeIdRegistry` — the nodes the outpost has issued, each with its
+  address (window handle, object id, and child id), the role read when it
+  was issued, and the accessible object it was read from, kept as an agile
+  reference; it shares the outpost-wide counter with the UIA registry. It
+  only stores and looks up, and never makes a COM call under its lock;
+  `acquire` makes the comparisons. `retain` releases the nodes the outpost
+  no longer needs (objects are dropped after the lock is released, since
+  releasing one can call into its process), `forget_window` drops a
+  destroyed window's nodes so a reused handle never inherits them, and
+  `take_touched` reports the nodes issued or looked up since the last
+  call, so the outpost can record which message reported them.

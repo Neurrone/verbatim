@@ -102,9 +102,12 @@ Public API:
   request, lazily built the first time a given thread calls it and reused
   after that, matching `Uia`'s one-client-per-thread rule so nothing COM
   here crosses a thread boundary.
-- `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s; takes an
-  injected shared counter so the UIA and MSAA registries in one outpost
-  never hand out the same id. `init_mta()`, role and state mapping in
+- `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
+  live element behind each; takes an injected shared counter so the UIA and
+  MSAA registries in one outpost never hand out the same id. Nodes stay
+  until the outpost releases them with `retain` (the clear-at-2048 element
+  cache is gone), and `take_touched` reports the nodes issued or looked up
+  since the last call. `init_mta()`, role and state mapping in
   `map`, plus `map`'s total `notification_kind_from_uia` and
   `notification_processing_from_uia` tables for the notification payload.
 

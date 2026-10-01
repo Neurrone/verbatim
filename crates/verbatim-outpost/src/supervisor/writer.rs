@@ -6,6 +6,9 @@
 //!
 //! - a ping always gets through, past the bound, since a missed ping would
 //!   get a healthy outpost killed;
+//! - a list of the nodes Core holds replaces any older list still waiting,
+//!   and otherwise gets through past the bound, since only the newest list
+//!   matters and an outpost that never hears one keeps every node;
 //! - a routed fact replaces any older fact still waiting for the same object
 //!   and kind; if there is none, the oldest waiting fact is dropped to make
 //!   room, so the newest facts survive;
@@ -32,6 +35,8 @@ pub(super) const WRITER_CAPACITY: usize = 64;
 pub(super) enum Outgoing {
     /// A liveness ping.
     Ping(SupervisorToOutpost),
+    /// The nodes Core holds.
+    NodesHeld(SupervisorToOutpost),
     /// A routed fact, keyed by the object and kind it concerns (`None` for
     /// a notification, which nothing replaces).
     Fact(Option<FactKey>, SupervisorToOutpost),
@@ -42,9 +47,10 @@ pub(super) enum Outgoing {
 impl Outgoing {
     fn command(&self) -> &SupervisorToOutpost {
         match self {
-            Outgoing::Ping(command) | Outgoing::Fact(_, command) | Outgoing::Other(command) => {
-                command
-            }
+            Outgoing::Ping(command)
+            | Outgoing::NodesHeld(command)
+            | Outgoing::Fact(_, command)
+            | Outgoing::Other(command) => command,
         }
     }
 }
@@ -83,6 +89,10 @@ impl Queue {
         }
         match item {
             Outgoing::Ping(_) => {}
+            Outgoing::NodesHeld(_) => {
+                self.items
+                    .retain(|waiting| !matches!(waiting, Outgoing::NodesHeld(_)));
+            }
             Outgoing::Fact(ref key, _) => {
                 let same = key.as_ref().and_then(|key| {
                     self.items.iter().position(
@@ -246,6 +256,31 @@ mod tests {
         queue.push(fact(2), 2).expect("queued");
         queue.push(fact(3), 2).expect("the oldest fact makes room");
         assert_eq!(seqs(&mut queue), vec![2, 3]);
+    }
+
+    #[test]
+    fn a_held_list_replaces_a_waiting_one_and_gets_through_a_full_queue() {
+        let held = |acknowledged| {
+            Outgoing::NodesHeld(SupervisorToOutpost::NodesHeld {
+                nodes: Vec::new(),
+                acknowledged,
+            })
+        };
+        let mut queue = Queue::default();
+        queue.push(held(1), 1).expect("room for one");
+        queue.push(held(2), 1).expect("replaces the waiting list");
+        queue.push(query(), 3).expect("room for a query");
+        queue.push(query(), 3).expect("room for another");
+        queue
+            .push(held(3), 2)
+            .expect("replaces it again and gets through the full queue");
+        let acknowledged: Vec<u64> = std::iter::from_fn(|| queue.pop())
+            .filter_map(|item| match item.command() {
+                SupervisorToOutpost::NodesHeld { acknowledged, .. } => Some(*acknowledged),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(acknowledged, vec![3]);
     }
 
     #[test]

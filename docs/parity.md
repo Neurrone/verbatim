@@ -173,6 +173,35 @@ verified.
   and roles); if all match, the new node ids are taken silently,
   otherwise the focus is announced as usual. **not yet (outpost
   redesign, step 1)**.
+- Held objects. NVDA: an object lives as long as something refers to
+  it, and an MSAA event, which names its object only by window, object
+  id, and child id, is directed to the existing focus object when the
+  two compare equal ([Event handling](nvda/events.md)). The comparison
+  requires equal child ids; the same COM object is equal; two
+  `IAccessible2` objects in the same window compare by unique id;
+  otherwise differing event addresses are unequal, and the MSAA
+  identity strings, location, role, and name must all match.
+  Verbatim: each outpost keeps its nodes, with the live UIA element or
+  MSAA object behind each where it has one (a UIA node reported from a
+  listener fact carries only cached properties), for every node Core
+  still holds, plus every node reported after the last message Core has
+  acknowledged, and releases the rest; a query for a released node
+  answers "gone". Navigation, activation, and ancestor reads of an MSAA
+  node use the object that was announced. A new MSAA sighting is the
+  same node when it is the same COM object with the same child id in the
+  same window and has the same role, or when it was acquired at the same
+  address as the node, has the same role, and, if both objects offer
+  one, the same identity string. An object reached through `accParent`
+  or as a child object has no address of its own (other objects in its
+  window share the one Verbatim would make up), so it is matched only as
+  the same COM object. `IAccessible2` unique ids are
+  not read yet, and location and name are not compared, because
+  Verbatim would compare them with values read when the node was
+  issued rather than a fresh read of both. A window's nodes are
+  dropped when the window is destroyed. Positional child ids in simple
+  list controls remain a known limitation that NVDA shares.
+  **different (unverified)**: NVDA releases an object when nothing
+  refers to it, Verbatim when Core reports it no longer holds the node.
 - Cancellation of expired focus speech (focus left before speaking).
   NVDA: `_CancellableSpeechCommand`. Verbatim: **not yet** — no
   equivalent validity check in the speech queue; Interrupt priority

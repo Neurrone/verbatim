@@ -17,6 +17,14 @@
 //!
 //! Workers run in COM's multithreaded apartment; the registries keep agile
 //! references, so a replacement worker can use what an abandoned one minted.
+//!
+//! Held objects (outpost redesign, "Held objects"): the registries keep the
+//! live UIA element or MSAA object behind every node the outpost reports.
+//! Each message that carries node ids has a position, counted the same way
+//! by Core; when Core reports the nodes it still holds and the position of
+//! the last message it has handled, the worker releases every other node
+//! reported at or before that position. A node reported later, or issued and
+//! not yet reported, is kept: Core may not have seen it yet.
 
 mod intake;
 mod outbound;
@@ -232,6 +240,17 @@ impl Outpost {
                     parked_count: context.watch.abandoned(),
                 });
             }
+            SupervisorToOutpost::NodesHeld {
+                nodes,
+                acknowledged,
+            } => context.push(
+                Item::NodesHeld {
+                    nodes: nodes.clone(),
+                    acknowledged: *acknowledged,
+                },
+                TraceId::mint(),
+                now_ms(),
+            ),
         }
     }
 }

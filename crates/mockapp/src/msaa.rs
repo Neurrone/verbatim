@@ -506,7 +506,34 @@ mod handler {
         }
 
         fn accSelection(&self) -> WinResult<VARIANT> {
-            Err(Error::from_hresult(S_FALSE))
+            // The selected child, as its own object, as a real container
+            // reports it; an empty variant when none of the children is
+            // selected.
+            let selected = {
+                let guard = self
+                    .tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.nodes[self.index]
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&child| {
+                        guard.nodes[child]
+                            .states
+                            .contains(verbatim_model::State::Selected)
+                    })
+            };
+            let Some(index) = selected else {
+                return Ok(VARIANT::default());
+            };
+            let accessible: IAccessible = NodeAccessible {
+                tree: self.tree.clone(),
+                hwnd: self.hwnd,
+                index,
+            }
+            .into();
+            Ok(dispatch_variant(accessible.into()))
         }
 
         fn get_accDefaultAction(&self, _varchild: &VARIANT) -> WinResult<BSTR> {

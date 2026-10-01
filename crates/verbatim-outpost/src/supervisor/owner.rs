@@ -650,9 +650,10 @@ fn start_reader(
     Ok(())
 }
 
-/// An outpost's reader: stamps every node id with the outpost's id, forwards
-/// each message to the app, reports `Ready` and pongs to the owner, and
-/// reports the pipe's end once everything has been forwarded.
+/// An outpost's reader: stamps every node id with the outpost's id, numbers
+/// the messages that carry node ids as the outpost does, forwards each
+/// message to the app with the position reached, reports `Ready` and pongs to
+/// the owner, and reports the pipe's end once everything has been forwarded.
 fn read_outpost(
     outpost: OutpostId,
     pid: Pid,
@@ -661,10 +662,14 @@ fn read_outpost(
     own_tx: &Sender<OwnerEvent>,
 ) {
     let mut reader = BufReader::new(from_child);
+    let mut position = 0u64;
     while let Ok(Some(mut message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
         // Node ids name the incarnation whose pipe they arrived on, never
         // whatever the message body claims.
         message.assign_outpost(outpost);
+        if message.carries_nodes() {
+            position += 1;
+        }
         match message {
             OutpostToSupervisor::Pong { parked_count, .. } => {
                 let _ = own_tx.send(OwnerEvent::Pong {
@@ -679,7 +684,12 @@ fn read_outpost(
             _ => {}
         }
         if events_tx
-            .send(OutpostMessage::Event(pid, outpost, Box::new(message)))
+            .send(OutpostMessage::Event {
+                pid,
+                outpost,
+                position,
+                message: Box::new(message),
+            })
             .is_err()
         {
             return; // The app is gone.

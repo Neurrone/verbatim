@@ -129,15 +129,20 @@ every node's details must read back exactly what was scripted, and
 all-`None` for every node the fixture left plain, so both presence and
 absence are pinned (rectangles excluded: mockapp scripts no geometry, but
 UIA merges the real window's rectangle into the hwnd-hosted root).
+`msaa_tree.rs` also reads a list's selected child through
+`verbatim_ia2::acquire::selected_child`, from the list object kept when the
+tree was walked, after a scripted `select`: the MSAA provider's
+`accSelection` returns the selected child as its own object, or an empty
+variant when none is selected.
 `arbitration.rs` asserts `verbatim_uia::has_server_side_provider` and
 `verbatim_outpost::Arbitrator` resolve a `uia`-backend window to UIA and a
 `msaa`-backend one to MSAA. `events.rs` asserts that
-`set-name`/`set-value` commands are observed by
-`verbatim_uia::PropertyRegistration` and `verbatim_ia2::WinEventHook`,
-that `select` is observed by `verbatim_uia::SelectionRegistration` (with
+`set-name`/`set-value` commands are observed by a property
+`verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`,
+that `select` is observed by a selection `verbatim_uia::Registration` (with
 the delivered element's mapped snapshot carrying its name and `Selected`
 state) and by the WinEvent hook as `WinEventKind::Selection`, and that
-`notify` is observed by `verbatim_uia::NotificationRegistration` with its
+`notify` is observed by a notification `verbatim_uia::Registration` with its
 full payload — property, value, selection, and notification changes are
 used rather than focus, so the tests never depend on real keyboard focus
 or `SetForegroundWindow` succeeding, and pass headless on GitHub

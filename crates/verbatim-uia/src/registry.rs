@@ -15,8 +15,11 @@
 //! elements entirely. NVDA never re-finds: it holds the live element on its
 //! `NVDAObject`. Caching here gives the same property: object navigation and
 //! node re-reads resolve the cached element directly, falling back to a
-//! (scoped) search only when the cache has been dropped or the element has
-//! died.
+//! (scoped) search only when the element has died.
+//!
+//! Nodes stay until the outpost releases them ([`NodeIdRegistry::retain`]),
+//! which it does for every node Core no longer holds (outpost redesign,
+//! "Held objects").
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,12 +30,13 @@ use windows::core::AgileReference;
 
 use verbatim_model::NodeId;
 
-/// Cap on cached live elements. Refusing unbounded growth without yet
-/// having a real staleness policy (that policy is M3's outpost-hardening
-/// work): when the cache reaches this size it is simply cleared — every
-/// lookup after that falls back to the search path until re-populated,
-/// which is correct, just slower.
-const MAX_CACHED_ELEMENTS: usize = 2048;
+/// Elements a [`NodeIdRegistry`] has released. Releasing an element can call
+/// into its process, so the caller drops this after any lock it holds is
+/// released.
+#[must_use = "drop the released elements once no lock is held"]
+pub struct Released {
+    _elements: Vec<AgileReference<IUIAutomationElement>>,
+}
 
 /// Maps UIA runtime IDs to stable [`NodeId`]s, and back for re-fetching,
 /// with a live-element cache per node (module doc).
@@ -50,6 +54,8 @@ struct Inner {
     forward: HashMap<Vec<i32>, NodeId>,
     reverse: HashMap<NodeId, Vec<i32>>,
     elements: HashMap<NodeId, AgileReference<IUIAutomationElement>>,
+    /// Nodes issued or looked up since the outpost last took them.
+    touched: Vec<NodeId>,
 }
 
 impl NodeIdRegistry {
@@ -84,9 +90,6 @@ impl NodeIdRegistry {
         if !runtime_id.is_empty()
             && let Ok(agile) = AgileReference::new(element)
         {
-            if inner.elements.len() >= MAX_CACHED_ELEMENTS {
-                inner.elements.clear();
-            }
             inner.elements.insert(id, agile);
         }
         id
@@ -94,16 +97,68 @@ impl NodeIdRegistry {
 
     fn id_for_locked(counter: &AtomicU64, inner: &mut Inner, runtime_id: &[i32]) -> NodeId {
         if !runtime_id.is_empty()
-            && let Some(id) = inner.forward.get(runtime_id)
+            && let Some(&id) = inner.forward.get(runtime_id)
         {
-            return *id;
+            inner.touched.push(id);
+            return id;
         }
         let id = NodeId::new(counter.fetch_add(1, Ordering::Relaxed));
         if !runtime_id.is_empty() {
             inner.forward.insert(runtime_id.to_vec(), id);
             inner.reverse.insert(id, runtime_id.to_vec());
+            inner.touched.push(id);
         }
         id
+    }
+
+    /// Every kept node.
+    #[must_use]
+    pub fn ids(&self) -> Vec<NodeId> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reverse
+            .keys()
+            .copied()
+            .collect()
+    }
+
+    /// Takes the nodes issued or looked up since the last call, so the
+    /// outpost can record which message reported them.
+    #[must_use]
+    pub fn take_touched(&self) -> Vec<NodeId> {
+        std::mem::take(
+            &mut self
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .touched,
+        )
+    }
+
+    /// Keeps only the nodes for which `keep` returns `true`. The others are
+    /// forgotten at once and their elements returned, for the caller to drop
+    /// once no lock is held: releasing an element can call into its process.
+    pub fn retain(&self, mut keep: impl FnMut(NodeId) -> bool) -> Released {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let gone: Vec<NodeId> = inner
+            .reverse
+            .keys()
+            .copied()
+            .filter(|&id| !keep(id))
+            .collect();
+        let elements = gone
+            .iter()
+            .filter_map(|id| {
+                if let Some(runtime_id) = inner.reverse.remove(id) {
+                    inner.forward.remove(&runtime_id);
+                }
+                inner.elements.remove(id)
+            })
+            .collect();
+        Released {
+            _elements: elements,
+        }
     }
 
     /// Returns the runtime ID previously mapped to `node`, for re-fetching the
@@ -163,6 +218,18 @@ mod tests {
         let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
         let id = registry.id_for(&[1, 2, 3]);
         assert_eq!(registry.runtime_id_of(id), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn released_nodes_are_forgotten_and_their_runtime_id_issues_anew() {
+        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+        let kept = registry.id_for(&[1]);
+        let released = registry.id_for(&[2]);
+        assert_eq!(registry.take_touched(), vec![kept, released]);
+        drop(registry.retain(|id| id == kept));
+        assert_eq!(registry.ids(), vec![kept]);
+        assert_eq!(registry.runtime_id_of(released), None);
+        assert_ne!(registry.id_for(&[2]), released);
     }
 
     #[test]

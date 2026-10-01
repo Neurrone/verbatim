@@ -30,4 +30,4 @@ pub use com::CHILDID_SELF;
 pub use hook::{
     APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, WinEventCallback, WinEventHook, WinEventKind,
 };
-pub use registry::{MsaaKey, NodeIdRegistry};
+pub use registry::{MsaaKey, NodeIdRegistry, Released};

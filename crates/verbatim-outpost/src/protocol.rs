@@ -264,6 +264,18 @@ pub enum SupervisorToOutpost {
         /// Echoed in the matching pong.
         seq: u64,
     },
+    /// The nodes from this outpost that Core still holds (outpost redesign,
+    /// "Held objects"), as the numbers the outpost issued, and the position
+    /// of the last message from this outpost that Core has handled
+    /// ([`OutpostToSupervisor::carries_nodes`] says which messages count).
+    /// The outpost releases every other node it reported at or before that
+    /// position, and answers a query for a released node "gone".
+    NodesHeld {
+        /// The held nodes' numbers.
+        nodes: Vec<u64>,
+        /// The position of the last message Core has handled.
+        acknowledged: u64,
+    },
 }
 
 /// What a [`SupervisorToOutpost::Query`] asks for.
@@ -436,6 +448,22 @@ pub enum OutpostToSupervisor {
 }
 
 impl OutpostToSupervisor {
+    /// Whether this message counts toward the message positions that
+    /// [`SupervisorToOutpost::NodesHeld`] acknowledges: an event or a
+    /// completed query's reply, the messages that carry node ids. The
+    /// outpost and Core count the same messages, in pipe order.
+    #[must_use]
+    pub fn carries_nodes(&self) -> bool {
+        matches!(
+            self,
+            OutpostToSupervisor::Event { .. }
+                | OutpostToSupervisor::Reply {
+                    outcome: QueryOutcome::Done(_),
+                    ..
+                }
+        )
+    }
+
     /// Stamps `outpost` on every node id this message carries. Core applies
     /// it to everything arriving on an outpost's pipe, so node ids name their
     /// outpost incarnation and never come from the message body.

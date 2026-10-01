@@ -539,7 +539,16 @@ struct ReducerThread<'a> {
 struct Live {
     target_pid: Pid,
     ready: bool,
+    /// The position of the last of its messages handled here.
+    position: u64,
+    /// The held nodes last sent to it, and the position acknowledged then.
+    held_sent: (BTreeSet<u64>, u64),
 }
+
+/// How many messages from an outpost may be handled before the nodes held in
+/// it are sent again although they have not changed, so that it can release
+/// the nodes it reported meanwhile.
+const HELD_RESEND_INTERVAL: u64 = 256;
 
 impl ReducerThread<'_> {
     /// Handles one message from the supervisor.
@@ -554,6 +563,8 @@ impl ReducerThread<'_> {
                     Live {
                         target_pid,
                         ready: false,
+                        position: 0,
+                        held_sent: (BTreeSet::new(), 0),
                     },
                 );
                 self.context.outposts.lock().expect("outposts lock").insert(
@@ -565,11 +576,19 @@ impl ReducerThread<'_> {
                     },
                 );
             }
-            OutpostMessage::Event(source, outpost, message) => {
+            OutpostMessage::Event {
+                pid,
+                outpost,
+                position,
+                message,
+            } => {
                 // An outpost the supervisor has ended can still have messages
                 // in flight; they are dropped here, before the reducer.
-                if self.live.contains_key(&outpost) {
-                    self.on_outpost_input(source, outpost, *message);
+                if let Some(live) = self.live.get_mut(&outpost) {
+                    // Handled from here on: anything the reducer keeps from
+                    // it is in the held nodes sent after this input.
+                    live.position = position;
+                    self.on_outpost_input(pid, outpost, *message);
                 }
             }
             OutpostMessage::Ended {
@@ -739,17 +758,37 @@ impl ReducerThread<'_> {
         self.send_views();
     }
 
-    /// Sends the supervisor the views derived from the reducer state, when
-    /// they change: the application holding attention, and the outposts in
-    /// which the state holds nodes.
+    /// Sends the views derived from the reducer state, when they change: to
+    /// the supervisor, the application holding attention and the outposts in
+    /// which the state holds nodes; to each live outpost, the nodes held in
+    /// it with the position of its last message handled here (outpost
+    /// redesign, "Held objects"). The held nodes are also sent again every
+    /// [`HELD_RESEND_INTERVAL`] messages, so an outpost whose held nodes do
+    /// not change still releases what it reported meanwhile.
     fn send_views(&mut self) {
+        let held = self.state.held_nodes();
         let views = (
             self.state.attention(),
-            self.state.held_nodes().into_keys().collect::<BTreeSet<_>>(),
+            held.keys().copied().collect::<BTreeSet<_>>(),
         );
         if views != self.views {
             self.context.supervisor.note_views(views.0, views.1.clone());
             self.views = views;
+        }
+        for (outpost, live) in &mut self.live {
+            let nodes: BTreeSet<u64> = held
+                .get(outpost)
+                .map(|nodes| nodes.iter().map(|id| id.number()).collect())
+                .unwrap_or_default();
+            let (sent, acknowledged) = &live.held_sent;
+            if nodes != *sent || live.position >= acknowledged + HELD_RESEND_INTERVAL {
+                self.context.supervisor.send_nodes_held(
+                    *outpost,
+                    nodes.iter().copied().collect(),
+                    live.position,
+                );
+                live.held_sent = (nodes, live.position);
+            }
         }
     }
 

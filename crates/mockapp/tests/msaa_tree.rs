@@ -455,3 +455,47 @@ fn msaa_client_reads_the_scripted_tree() {
 
     app.send("quit");
 }
+
+/// The node named `name` in a dumped tree.
+fn find(node: &verbatim_model::TreeNode, name: &str) -> Option<verbatim_model::NodeId> {
+    if node.snapshot.name.as_deref() == Some(name) {
+        return Some(node.snapshot.id);
+    }
+    node.children.iter().find_map(|child| find(child, name))
+}
+
+/// The selected child of a list, read through `verbatim-ia2`'s own
+/// `selected_child` from the list object kept when the tree was walked, after
+/// a scripted selection (audit item 21: `accSelection` used to be stubbed).
+#[test]
+fn msaa_client_reads_a_lists_selected_child() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-selection");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
+        std::sync::atomic::AtomicU64::new(1),
+    ));
+    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096)
+        .expect("walk the tree");
+    let list = find(&root, "Items").expect("the list is in the tree");
+    assert_eq!(
+        verbatim_ia2::acquire::selected_child(list, &registry),
+        None,
+        "nothing is selected yet"
+    );
+
+    app.send("select item2");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let selected = loop {
+        let selected =
+            verbatim_ia2::acquire::selected_child(list, &registry).and_then(|node| node.name);
+        if selected.is_some() || std::time::Instant::now() > deadline {
+            break selected;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(selected.as_deref(), Some("Second"));
+
+    app.send("quit");
+}

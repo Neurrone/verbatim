@@ -38,6 +38,15 @@ pub(super) enum ReadError {
     Failed(String),
 }
 
+impl From<verbatim_ia2::acquire::AcquireError> for ReadError {
+    fn from(error: verbatim_ia2::acquire::AcquireError) -> Self {
+        match error {
+            verbatim_ia2::acquire::AcquireError::Gone => ReadError::Gone,
+            verbatim_ia2::acquire::AcquireError::Failed(reason) => ReadError::Failed(reason),
+        }
+    }
+}
+
 /// The worker's own UIA client, created on first use on the worker's thread
 /// so it never crosses threads.
 #[derive(Default)]
@@ -193,13 +202,11 @@ pub(super) fn msaa_enrichment(
     context: &Context,
     node: &NodeSnapshot,
 ) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
-    let Some(key) = context.msaa_registry.key_of(node.id) else {
-        return (Vec::new(), None);
-    };
     let ancestors =
-        verbatim_ia2::acquire::ancestor_chain(key, &context.msaa_registry, MAX_ANCESTOR_HOPS);
+        verbatim_ia2::acquire::ancestor_chain(node.id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
+            .unwrap_or_default();
     let selected = if wants_selected_child(node.role) {
-        verbatim_ia2::acquire::selected_child(key, &context.msaa_registry)
+        verbatim_ia2::acquire::selected_child(node.id, &context.msaa_registry)
     } else {
         None
     };
@@ -312,15 +319,8 @@ pub(super) fn ancestors(
         }
         .map_err(|error| ReadError::Failed(format!("UIA ancestor walk failed: {error}")));
     }
-    let key = context
-        .msaa_registry
-        .key_of(node_id)
-        .ok_or(ReadError::Gone)?;
-    Ok(verbatim_ia2::acquire::ancestor_chain(
-        key,
-        &context.msaa_registry,
-        MAX_ANCESTOR_HOPS,
-    ))
+    verbatim_ia2::acquire::ancestor_chain(node_id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
+        .map_err(ReadError::from)
 }
 
 /// One object-navigation step: the neighbor, or `None` for a genuine tree
@@ -337,17 +337,7 @@ pub(super) fn navigate(
         return unsafe { uia.navigate(&element, &cache, &context.uia_registry, kind) }
             .map_err(|error| ReadError::Failed(format!("UIA navigation failed: {error}")));
     }
-    let key = context
-        .msaa_registry
-        .key_of(node_id)
-        .ok_or(ReadError::Gone)?;
-    verbatim_ia2::acquire::navigate(key, &context.msaa_registry, kind).map_err(|error| {
-        if error == "could not acquire the node" {
-            ReadError::Gone
-        } else {
-            ReadError::Failed(error)
-        }
-    })
+    verbatim_ia2::acquire::navigate(node_id, &context.msaa_registry, kind).map_err(ReadError::from)
 }
 
 /// Activates a node.
@@ -362,11 +352,7 @@ pub(super) fn activate(
         return unsafe { uia.activate(&element) }
             .map_err(|error| ReadError::Failed(format!("UIA activation failed: {error}")));
     }
-    let key = context
-        .msaa_registry
-        .key_of(node_id)
-        .ok_or(ReadError::Gone)?;
-    verbatim_ia2::acquire::activate(key).map_err(ReadError::Failed)
+    verbatim_ia2::acquire::activate(node_id, &context.msaa_registry).map_err(ReadError::from)
 }
 
 /// The application's tree from its top-level window.
