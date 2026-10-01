@@ -36,6 +36,13 @@ enum TimelineKind {
     /// matching them as utterances is exactly the off-by-one that broke the
     /// M1 walk on a cold guest.
     AudioStarted(String),
+    /// A paced run confirmed that this utterance played to completion: its
+    /// own `SpeechFinished` frame arrived.
+    Played(String),
+    /// A paced run gave up waiting for this utterance's `SpeechFinished`.
+    /// It may have been interrupted, failed, or simply not finished in time;
+    /// the speech pipeline cannot yet say which. Never successful playback.
+    PlaybackUnconfirmed(String),
 }
 
 /// One [`TimelineKind`] paired with the [`Instant`] it was recorded at.
@@ -94,6 +101,16 @@ impl Timeline {
         self.push(TimelineKind::AudioStarted(text.to_owned()));
     }
 
+    /// Records that a paced wait saw this utterance play to completion.
+    pub fn push_played(&self, text: &str) {
+        self.push(TimelineKind::Played(text.to_owned()));
+    }
+
+    /// Records that a paced wait ended without this utterance's completion.
+    pub fn push_playback_unconfirmed(&self, text: &str) {
+        self.push(TimelineKind::PlaybackUnconfirmed(text.to_owned()));
+    }
+
     fn push(&self, kind: TimelineKind) {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         entries.push(TimelineEntry {
@@ -114,7 +131,9 @@ impl Timeline {
                 TimelineKind::Utterance(text) => Some(text.clone()),
                 TimelineKind::Gesture(_)
                 | TimelineKind::Keys(_)
-                | TimelineKind::AudioStarted(_) => None,
+                | TimelineKind::AudioStarted(_)
+                | TimelineKind::Played(_)
+                | TimelineKind::PlaybackUnconfirmed(_) => None,
             })
             .collect()
     }
@@ -147,6 +166,12 @@ impl Timeline {
                 }
                 TimelineKind::AudioStarted(text) => {
                     format!("+{elapsed}ms audio {text:?}")
+                }
+                TimelineKind::Played(text) => {
+                    format!("+{elapsed}ms played {text:?}")
+                }
+                TimelineKind::PlaybackUnconfirmed(text) => {
+                    format!("+{elapsed}ms playback not confirmed {text:?}")
                 }
             };
             let _ = writeln!(out, "{line}");

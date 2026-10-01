@@ -11,11 +11,7 @@ tracing.workspace = true
 verbatim-agent.workspace = true
 verbatim-config.workspace = true
 verbatim-control.workspace = true
-
-[dev-dependencies]
-# TraceId, for building LatencyRecord fixtures in artifacts.rs's own unit
-# tests; nothing outside tests needs to construct one (production code only
-# ever reads a TraceId back off the wire).
+# TraceId, which speech.rs's paced waits match utterance completions by.
 verbatim-model.workspace = true
 
 [lints]
