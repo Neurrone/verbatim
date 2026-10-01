@@ -220,7 +220,8 @@ fn artifacts_needing_copy(
 /// Stops the guest (only if an executable needs copying, since a live
 /// process can hold an executable open but never `settings.toml`), copies
 /// every mismatched artifact, then restarts the `VerbatimAgent` scheduled
-/// task if it was stopped or `verbatim-agent.exe` itself was copied.
+/// task if it was stopped or `verbatim-agent.exe` itself was copied — even
+/// when a copy failed (see [`copy_then_restart`]).
 fn copy_mismatched_artifacts(
     host: &dyn Host,
     credentials: &GuestCredentials,
@@ -254,27 +255,31 @@ fn copy_mismatched_artifacts(
 
     let mut copied_labels = Vec::new();
     let mut skipped_labels = Vec::new();
-    for (index, artifact) in artifacts.iter().enumerate() {
-        if needs_copy.contains(&index) {
-            println!(
-                "xtask vm deploy: copying {} to {}",
-                artifact.label, artifact.remote_path
-            );
-            host.copy_file_to_guest(VM_NAME, &artifact.local_path, &artifact.remote_path)?;
-            copied_labels.push(artifact.label);
-        } else {
-            skipped_labels.push(artifact.label);
+    let copy_all = || -> VmResult<()> {
+        for (index, artifact) in artifacts.iter().enumerate() {
+            if needs_copy.contains(&index) {
+                println!(
+                    "xtask vm deploy: copying {} to {}",
+                    artifact.label, artifact.remote_path
+                );
+                host.copy_file_to_guest(VM_NAME, &artifact.local_path, &artifact.remote_path)?;
+                copied_labels.push(artifact.label);
+            } else {
+                skipped_labels.push(artifact.label);
+            }
         }
-    }
-
-    if stopped_guest || agent_needs_copy {
+        Ok(())
+    };
+    let restart_agent = || -> VmResult<()> {
         println!("xtask vm deploy: starting the VerbatimAgent scheduled task");
         host.run_in_guest(
             VM_NAME,
             credentials,
             "Start-ScheduledTask -TaskName 'VerbatimAgent'",
         )?;
-    }
+        Ok(())
+    };
+    copy_then_restart(copy_all, stopped_guest || agent_needs_copy, restart_agent)?;
 
     println!(
         "xtask vm deploy: done; copied [{}], skipped [{}]",
@@ -282,6 +287,28 @@ fn copy_mismatched_artifacts(
         skipped_labels.join(", ")
     );
     Ok(())
+}
+
+/// Runs `copy`, then `restart` when `restart_needed`, whether or not `copy`
+/// succeeded: a copy that fails partway must not leave the guest with its
+/// agent stopped, or the next run waits for an agent that never comes back.
+/// The copy's error, when there is one, is the one returned; a restart that
+/// also fails is appended to it, since the guest's agent is then down.
+fn copy_then_restart(
+    copy: impl FnOnce() -> VmResult<()>,
+    restart_needed: bool,
+    restart: impl FnOnce() -> VmResult<()>,
+) -> VmResult<()> {
+    let copied = copy();
+    let restarted = if restart_needed { restart() } else { Ok(()) };
+    match (copied, restarted) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(copy_error), Err(restart_error)) => Err(format!(
+            "{copy_error}; restarting the VerbatimAgent scheduled task afterwards also failed, \
+             so the guest's agent is stopped: {restart_error}"
+        )),
+    }
 }
 
 /// Fetches the SHA-256 hashes of `remote_paths` inside the guest in one
@@ -457,6 +484,47 @@ mod tests {
             parsed.get("C:\\a\\settings.toml").map(String::as_str),
             Some("MISSING")
         );
+    }
+
+    #[test]
+    fn a_failed_copy_still_restarts_the_agent_and_reports_the_copy_error() {
+        let mut restarted = false;
+        let result = copy_then_restart(
+            || Err("copy failed".to_owned()),
+            true,
+            || {
+                restarted = true;
+                Ok(())
+            },
+        );
+        assert!(restarted, "the agent must be restarted after a failed copy");
+        assert_eq!(result, Err("copy failed".to_owned()));
+    }
+
+    #[test]
+    fn a_failed_copy_and_restart_report_both() {
+        let result = copy_then_restart(
+            || Err("copy failed".to_owned()),
+            true,
+            || Err("restart failed".to_owned()),
+        );
+        let error = result.expect_err("both failures are an error");
+        assert!(error.contains("copy failed") && error.contains("restart failed"));
+    }
+
+    #[test]
+    fn no_restart_when_none_is_needed() {
+        let mut restarted = false;
+        let result = copy_then_restart(
+            || Ok(()),
+            false,
+            || {
+                restarted = true;
+                Ok(())
+            },
+        );
+        assert!(!restarted);
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
