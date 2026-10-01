@@ -18,8 +18,10 @@ Public API:
   naming a process a test is driving (Notepad, `verbatim.exe` itself), not
   `verbatim_model::Pid`, which names an application Verbatim is
   *observing*. `Request`: `Hello` (must be first, refused outright on any
-  version mismatch), `LaunchProcess`, `KillProcess`, `ProcessStatus`,
-  `SessionInfo`, `ReadFile`, `OpenControlTunnel`. `KillOutcome` makes
+  version mismatch), `LaunchProcess`, `KillProcess`,
+  `KillProcessesByName` (every process with a given image name, for
+  sweeping target applications that hand off to another process),
+  `ProcessStatus`, `SessionInfo`, `ReadFile`, `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` inherits the launched child's stdio (uncaptured) by
@@ -65,6 +67,14 @@ of the same kind of pipe, for the identical reason documented there: a
 synchronous handle serializes reads and writes at the driver level even
 across independent handles to the same instance, which would deadlock a
 full-duplex relay needing one thread reading and another writing at once.
-Two threads copy bytes in each direction; whichever direction finishes
-first cancels the pipe's pending I/O (`CancelIoEx`) and shuts down the TCP
-socket, so the other thread also unwinds instead of hanging.
+Two threads copy bytes, one per direction, and whichever direction finishes
+first ends the other. It stops the pipe and shuts down the TCP socket. The
+socket shutdown ends a blocked socket read. Stopping the pipe signals a
+third event that every pipe read and write waits on alongside its own I/O
+event; a waiting operation is then cancelled and waited out, and because
+the stop event is never reset, an operation issued after the stop ends at
+once too. That last case is the one cancellation alone missed: a direction
+that was between reads when the other ended would block on its next read
+until Verbatim closed the pipe. The tunnel's closing log line gives each
+direction's byte count and why it ended, telling Verbatim closing the pipe
+apart from a stop and from an error.
