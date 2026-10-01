@@ -33,8 +33,10 @@ screen reader in both rendered and source form.
   only.** The suite takes an address and talks to the in-guest agent, so
   the same scenarios run runner-direct on a hosted Windows runner (whose
   jobs execute in an interactive desktop session, the same way NVDA runs
-  its own system tests there), against a local Hyper-V VM, or against a VM
-  on a Proxmox host, which is the maintainer's own setup. Hosted runners
+  its own system tests there), runner-direct on a developer's own machine
+  or VM, or against a local Hyper-V VM. The maintainer develops in a single
+  Windows VM on a Proxmox host and runs the suite runner-direct there;
+  there is no Proxmox backend for the harness. Hosted runners
   are the only CI: the end-to-end suite runs there silently with the
   capture synthesizer on every change, recordings included (section 14),
   and NVDA is never installed or run in CI. Everything else, including
@@ -49,7 +51,9 @@ screen reader in both rendered and source form.
   explicit request, never something a test run does on its own. Amended
   2026-09-02; the original D3 deferred CI because hosted runners cannot
   nest virtualization, which stopped mattering once the suite no longer
-  needed a VM to run.
+  needed a VM to run. Amended again 2026-10-01: the planned Proxmox
+  backend and second test VM were dropped in favour of runner-direct runs
+  on the maintainer's development VM.
 - **D4 — GUI is wxWidgets through a minimal C++ layer compiled from the
   GUI crate's build script via cxx; Rust keeps `main` and all logic.**
   Rationale: wxWidgets accessibility is proven in exactly this role, since
@@ -665,7 +669,8 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
    spoken, plus latency assertions against the budget.
 4. **E2E against a real Windows session** (section 14): real Windows, real
    apps (Notepad, Explorer, Terminal, Edge, Office), driven via the control
-   plane, on a hosted CI runner, a local Hyper-V VM, or a Proxmox VM (D3);
+   plane, on a hosted CI runner, a developer's own machine or VM, or a
+   local Hyper-V VM (D3);
    speech asserted via capture synth; a separate WASAPI smoke test in the
    interactive loop proves audio actually reaches a device.
 
@@ -681,9 +686,10 @@ is never run in CI.
 
 `cargo xtask vm <cmd>` drives a Windows guest behind a `Host` trait that
 covers hypervisor lifecycle only: exists, start, stop, snapshot, restore,
-delete, and the guest's address. `HyperVHost` is the first implementation;
-a Proxmox implementation over its REST API is the maintainer's own setup;
-a fake implementation drives the verb logic in unit tests. Everything that
+delete, and the guest's address. `HyperVHost` is the only implementation,
+kept for contributors who test in a local VM; the maintainer runs the suite
+runner-direct on a development VM instead (D3). A fake implementation
+drives the verb logic in unit tests. Everything that
 touches the guest's contents goes over standard transport rather than a
 hypervisor channel: OpenSSH on the guest for file copies and remote
 commands, and the in-guest agent over TCP for the three things SSH cannot
@@ -703,10 +709,8 @@ installed into the guest by a run, so an ordinary run has nothing to undo.
 
 Audio: recordings take their audio from Verbatim's own rendering (D16), so
 no virtual audio device is provisioned and a run can be heard live over
-RDP or locally while it is recorded. On Proxmox the emulated HD Audio
-device is the guest's render endpoint and SPICE forwards playback to the
-viewer, so the maintainer hears the secondary VM without an RDP session
-taking over its desktop. The one remaining RDP caveat is video, not
+RDP or locally while it is recorded. A runner-direct run plays through
+the machine's own audio device. The one remaining RDP caveat is video, not
 audio: the desktop stops rendering in a disconnected session, so screen
 capture needs the session attached, or a headless run. The pre-2026-09-02
 design captured loopback audio from a VB-CABLE device, which made
