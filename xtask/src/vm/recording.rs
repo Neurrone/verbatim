@@ -34,7 +34,7 @@
 //! protocol.
 
 use std::io::BufReader;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fs, thread};
@@ -98,10 +98,46 @@ const STARTUP_SETTLE: Duration = Duration::from_secs(2);
 /// termination reached it.
 const STOP_SETTLE: Duration = Duration::from_secs(2);
 
-/// The guest-side path the recording is written to, alongside Verbatim's
-/// own install directory.
-fn recording_guest_path() -> String {
-    format!(r"{VERBATIM_DIR}\recording.mp4")
+/// Bounds every [`RecordingAgentClient`] reply and write, so an agent that
+/// stops answering fails the recording step instead of hanging the run.
+/// Every request this module sends is answered by the agent at once
+/// (launching, polling, or killing a process), so this is a hang guard, not
+/// a latency expectation.
+const AGENT_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Per-attempt cap on connecting to the agent, matching `verbatim-e2e`'s own
+/// agent client.
+const AGENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The guest-side path `scenario_name`'s recording is written to, alongside
+/// Verbatim's own install directory. Named per scenario, and deleted before
+/// each capture starts ([`remove_guest_recording`]), so a capture that
+/// produced nothing can never be pulled as an older file under this
+/// scenario's name.
+fn recording_guest_path(scenario_name: &str) -> String {
+    format!(r"{VERBATIM_DIR}\recording-{scenario_name}.mp4")
+}
+
+/// Deletes `scenario_name`'s guest-side recording, if one exists, over
+/// PowerShell Direct. Called before each capture starts, so whatever
+/// [`pull_recording`] later finds was written by this capture, and after a
+/// successful pull, so finished recordings do not accumulate in the guest.
+///
+/// # Errors
+///
+/// Returns an error if the guest call fails or the file exists but cannot
+/// be removed (for example, a previous ffmpeg still holds it open).
+pub(crate) fn remove_guest_recording(
+    host: &dyn Host,
+    credentials: &GuestCredentials,
+    scenario_name: &str,
+) -> VmResult<()> {
+    let path = super::host::ps_quote(&recording_guest_path(scenario_name));
+    let script = format!(
+        "if (Test-Path -LiteralPath {path}) {{ Remove-Item -LiteralPath {path} -Force -ErrorAction Stop }}"
+    );
+    host.run_in_guest(VM_NAME, credentials, &script)?;
+    Ok(())
 }
 
 /// Pins the guest's default audio render device to VB-CABLE, over
@@ -135,8 +171,10 @@ pub(crate) fn pin_default_render_device(
 
 /// Launches ffmpeg in the guest through the agent, capturing the desktop
 /// (`gdigrab`) and, when `with_audio` is set, [`VB_CABLE_CAPTURE_DEVICE`]
-/// (`dshow`) into [`recording_guest_path`] as fragmented MP4. Returns the
-/// guest-side pid, which [`stop_recording`] needs.
+/// (`dshow`) into `scenario_name`'s [`recording_guest_path`] as fragmented
+/// MP4. Returns the guest-side pid, which [`stop_recording`] needs. The
+/// caller removes any earlier file at that path first
+/// ([`remove_guest_recording`]).
 ///
 /// `with_audio` is false for the video-only fallback `xtask::vm::test`
 /// retries with after an audio-capturing launch fails to come up — see that
@@ -148,9 +186,13 @@ pub(crate) fn pin_default_render_device(
 /// Returns an error if the agent connection or `LaunchProcess` request
 /// fails, or the agent refuses to launch ffmpeg (for example because
 /// `Install-Ffmpeg` never ran on this image).
-pub(crate) fn start_recording(agent_addr: &str, with_audio: bool) -> VmResult<u32> {
+pub(crate) fn start_recording(
+    agent_addr: &str,
+    scenario_name: &str,
+    with_audio: bool,
+) -> VmResult<u32> {
     let mut client = RecordingAgentClient::connect(agent_addr)?;
-    let args = ffmpeg_args(&recording_guest_path(), with_audio);
+    let args = ffmpeg_args(&recording_guest_path(scenario_name), with_audio);
     match client.request(Request::LaunchProcess {
         command: FFMPEG_GUEST_PATH.to_owned(),
         args,
@@ -289,7 +331,8 @@ pub(crate) fn stop_recording(agent_addr: &str, pid: u32) -> VmResult<()> {
     Ok(())
 }
 
-/// Pulls [`recording_guest_path`] back to the host over PowerShell Direct
+/// Pulls `scenario_name`'s [`recording_guest_path`] back to the host over
+/// PowerShell Direct, then removes the guest copy
 /// (`Host::read_guest_file`, the same mechanism `xtask vm logs` already
 /// uses for flight-recorder dumps — Hyper-V's `Copy-VMFile` only copies
 /// host-to-guest, never the other direction), writing it to
@@ -332,7 +375,7 @@ pub(crate) fn pull_recording(
     repo_root: &Path,
     scenario_name: &str,
 ) -> VmResult<PathBuf> {
-    let has_audio = match probe_has_audio(host, credentials) {
+    let has_audio = match probe_has_audio(host, credentials, scenario_name) {
         Ok(has_audio) => has_audio,
         Err(error) => {
             println!(
@@ -343,7 +386,7 @@ pub(crate) fn pull_recording(
         }
     };
 
-    let bytes = host.read_guest_file(VM_NAME, credentials, &recording_guest_path())?;
+    let bytes = host.read_guest_file(VM_NAME, credentials, &recording_guest_path(scenario_name))?;
 
     let out_dir = repo_root.join("artifacts").join("vm-recordings");
     fs::create_dir_all(&out_dir)
@@ -355,6 +398,13 @@ pub(crate) fn pull_recording(
     ));
     fs::write(&out_path, bytes)
         .map_err(|error| format!("could not write {}: {error}", out_path.display()))?;
+    // Housekeeping only: the next capture of this scenario removes the file
+    // before starting anyway, so a failure here cannot misattribute anything.
+    if let Err(error) = remove_guest_recording(host, credentials, scenario_name) {
+        println!(
+            "xtask vm test: WARNING — could not remove the pulled recording from the guest: {error}"
+        );
+    }
     Ok(out_path)
 }
 
@@ -369,7 +419,11 @@ pub(crate) fn pull_recording(
 /// parsed as the expected JSON is not an error — [`parse_has_audio`]
 /// reports that as "no audio", the same conservative default
 /// [`pull_recording`] uses for an outright probe failure.
-fn probe_has_audio(host: &dyn Host, credentials: &GuestCredentials) -> VmResult<bool> {
+fn probe_has_audio(
+    host: &dyn Host,
+    credentials: &GuestCredentials,
+    scenario_name: &str,
+) -> VmResult<bool> {
     // A single -show_entries with a colon-separated stream:format section
     // list, not two separate -show_entries flags: confirmed live that
     // passing -show_entries twice (even each with a distinct section)
@@ -377,7 +431,7 @@ fn probe_has_audio(host: &dyn Host, credentials: &GuestCredentials) -> VmResult<
     // "duration" argument instead of the input path.
     let script = format!(
         r#"& "{FFPROBE_GUEST_PATH}" -v error -of json -show_entries "stream=codec_type,duration:format=duration" "{path}""#,
-        path = recording_guest_path(),
+        path = recording_guest_path(scenario_name),
     );
     let output = host.run_in_guest(VM_NAME, credentials, &script)?;
     Ok(parse_has_audio(&output))
@@ -424,8 +478,17 @@ struct RecordingAgentClient {
 
 impl RecordingAgentClient {
     fn connect(addr: &str) -> VmResult<Self> {
-        let stream = TcpStream::connect(addr)
+        let socket_addr = addr
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .ok_or_else(|| format!("the agent address {addr} resolved to no socket address"))?;
+        let stream = TcpStream::connect_timeout(&socket_addr, AGENT_CONNECT_TIMEOUT)
             .map_err(|error| format!("could not connect to the agent at {addr}: {error}"))?;
+        stream
+            .set_read_timeout(Some(AGENT_REPLY_TIMEOUT))
+            .and_then(|()| stream.set_write_timeout(Some(AGENT_REPLY_TIMEOUT)))
+            .map_err(|error| format!("could not set timeouts on the agent connection: {error}"))?;
         let reader =
             BufReader::new(stream.try_clone().map_err(|error| {
                 format!("could not clone the agent connection to {addr}: {error}")
@@ -531,10 +594,15 @@ mod tests {
     }
 
     #[test]
-    fn recording_guest_path_sits_alongside_verbatims_install_directory() {
+    fn recording_guest_path_is_per_scenario_alongside_verbatims_install_directory() {
         assert_eq!(
-            recording_guest_path(),
-            r"C:\VerbatimLab\verbatim\recording.mp4"
+            recording_guest_path("notepad_focus"),
+            r"C:\VerbatimLab\verbatim\recording-notepad_focus.mp4"
+        );
+        assert_ne!(
+            recording_guest_path("notepad_focus"),
+            recording_guest_path("start_menu"),
+            "two scenarios must never share a guest recording path"
         );
     }
 

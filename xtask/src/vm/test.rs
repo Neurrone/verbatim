@@ -373,7 +373,7 @@ fn run_one_scenario(
     }
 
     let recording_pid = if record {
-        start_recording_with_fallback(host, credentials, endpoint)
+        start_recording_with_fallback(host, credentials, endpoint, scenario_name)
     } else {
         None
     };
@@ -556,7 +556,10 @@ fn run_scenario_subprocess(
 /// falls back to a video-only launch instead of propagating the error.
 /// Returns the guest-side ffmpeg pid on any successful launch (with or
 /// without audio), or `None` if even the video-only fallback could not be
-/// started — in which case the suite still runs, just unrecorded.
+/// started — in which case the suite still runs, just unrecorded. Before
+/// any of that, removes `scenario_name`'s previous guest-side recording; if
+/// that fails, the scenario runs unrecorded rather than risk pulling an
+/// older file under its name.
 ///
 /// [`recording::pull_recording`]'s own ffprobe-based check is what actually
 /// decides the `-no-audio` filename tag later; this function does not need
@@ -565,7 +568,17 @@ fn start_recording_with_fallback(
     host: &dyn Host,
     credentials: &dotenv::GuestCredentials,
     endpoint: &str,
+    scenario_name: &str,
 ) -> Option<u32> {
+    if let Err(error) = recording::remove_guest_recording(host, credentials, scenario_name) {
+        println!(
+            "xtask vm test: WARNING — could not remove the guest's previous recording for \
+             '{scenario_name}' ({error}); continuing the scenario without a recording so an \
+             older file cannot be pulled under its name"
+        );
+        return None;
+    }
+
     println!(
         "xtask vm test: pinning the guest's default audio render device to VB-CABLE (a \
          connected cargo xtask vm connect session can otherwise have switched it to Remote \
@@ -585,7 +598,7 @@ fn start_recording_with_fallback(
     };
 
     println!("xtask vm test: starting the ffmpeg recording in the guest's interactive session");
-    let attempt = recording::start_recording(endpoint, with_audio)
+    let attempt = recording::start_recording(endpoint, scenario_name, with_audio)
         .and_then(|pid| recording::confirm_recording_alive(endpoint, pid).map(|()| pid));
     match attempt {
         Ok(pid) => {
@@ -607,7 +620,7 @@ fn start_recording_with_fallback(
         }
     }
 
-    let fallback = recording::start_recording(endpoint, false)
+    let fallback = recording::start_recording(endpoint, scenario_name, false)
         .and_then(|pid| recording::confirm_recording_alive(endpoint, pid).map(|()| pid));
     match fallback {
         Ok(pid) => {
