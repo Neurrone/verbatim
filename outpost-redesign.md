@@ -8,11 +8,16 @@ on 2026-10-01 while reading the reducer and outpost code in phase 1 of
 `audit-2026-09-02.md`, the five additional findings in the handoff, the
 handoff's hot-path notes, and decisions D13 to D15.
 
-Nothing here is implemented yet. It replaces the contents of the handoff's
-old phase 4 (review and simplify Core-outpost coordination) and pulls the
-D14 attention model forward from M4. Implementation waits until the
-harness repairs (handoff phase 2) have landed, so that every step can be
-verified live as it is built.
+It replaces the contents of the handoff's old phase 4 (review and
+simplify Core-outpost coordination) and pulls the D14 attention model
+forward from M4. All seven steps are implemented on the branch
+`phase3-outposts` (2026-10-01); live verification of steps 3 to 7 is
+still to do. Deviations from the text below, decided while implementing,
+are recorded in the commits and the crate guides: toasts are the only
+alerts reported; range-value and live-region subscriptions are not added;
+held nodes are also re-sent every 256 messages; an MSAA object reached
+through `accParent` or as a child object is matched only as the same COM
+object; and the ledger's per-stage timeline is not implemented.
 
 ## Why redesign rather than repair
 
