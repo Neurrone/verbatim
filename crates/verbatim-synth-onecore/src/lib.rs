@@ -458,8 +458,10 @@ fn parse_wav(bytes: &[u8]) -> Result<(PcmFormat, Vec<i16>), SynthError> {
     let data = data.ok_or_else(|| SynthError::Synthesis("missing data chunk".to_owned()))?;
 
     let samples = data
-        .chunks_exact(2)
-        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| i16::from_le_bytes(*pair))
         .collect();
     Ok((
         PcmFormat {

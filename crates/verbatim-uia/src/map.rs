@@ -109,8 +109,7 @@ unsafe fn cached_bool(element: &IUIAutomationElement, property: i32) -> bool {
     unsafe {
         element
             .GetCachedPropertyValue(UIA_PROPERTY_ID(property))
-            .ok()
-            .is_some_and(|value| variant_bool(&value))
+            .is_ok_and(|value| variant_bool(&value))
     }
 }
 
