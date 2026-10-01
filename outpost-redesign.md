@@ -118,6 +118,11 @@ It subscribes to:
   `nvda/source/UIAHandler/__init__.py`): selection, notifications, live
   regions, menu opened, and range value changes.
 
+A foreground event whose window is no longer the system's foreground
+window (`GetForegroundWindow`, a local call) is dropped before it is
+sent, as NVDA's `processForegroundWinEvent` does; the reducer relies on
+this when it accepts every foreground fact.
+
 Each event becomes a fact carrying the owning pid, the trace id, the
 observation time (used for the latency record only), and what the event
 itself delivered: a raw MSAA address, or a UIA element's cached
@@ -225,8 +230,10 @@ item 25).
 - A focus event carries the focused node, its ancestors, its selected
   child for lists and tab controls, and window facts: its top-level
   window handle (`GetAncestor` with `GA_ROOT`), its root owner
-  (`GA_ROOTOWNER`), and whether it or its root is topmost. All three are
-  local calls. Every other event carries the same window facts for the
+  (`GA_ROOTOWNER`), and whether it or its root is topmost. For a
+  `Windows.UI.Core` window only, a fourth fact says whether the window
+  is the input thread's active window or inside it (`GetGUIThreadInfo`),
+  the check NVDA uses for UWP windows. All of these are local calls. Every other event carries the same window facts for the
   window it concerns.
 - Hidden-frame suppression for Verbatim's own hidden main window stays in
   the outpost, unchanged in substance.
@@ -396,12 +403,23 @@ The supervisor stays inside Core.
   an ancestor, current speech stops and the menu is not announced, as
   NVDA's `event_focusEntered` does.
 - Attention (D14, amended): the reducer keeps the process and top-level
-  window that most recently received focus. Each event is classified
-  against it from the window facts the outpost attached. Attended: the
-  attention window and anything with the same top-level window, anything
-  sharing its root owner, topmost windows, and the `Windows.UI.Core`
-  case. Accepted from anywhere as background: UIA notifications, toast
-  alerts, tooltips and notification bars, and configured progress bars.
+  window that most recently received an accepted focus. A foreground
+  fact is always accepted and moves attention to its window; its intake
+  has already confirmed, with a local call, that the window is still
+  the system's foreground window, as NVDA's `processForegroundWinEvent`
+  does. Every other event, focus events included, is classified against
+  the attention record from the window facts the outpost attached, and
+  an accepted focus event then moves attention to its own top-level
+  window. NVDA filters focus events the same way. Attended: the
+  attention window and anything with the same top-level window,
+  anything sharing its root owner, topmost windows, and a
+  `Windows.UI.Core` window that its outpost reported as under the input
+  thread's active window. Accepted from anywhere as background: toast
+  alerts, tooltips and notification bars, configured progress bars,
+  and the shell's window-snap results notification (activity id
+  `Windows.Shell.SnapComponent.SnapHotKeyResults`). Other UIA
+  notifications are accepted only from the attention application,
+  because NVDA speaks notifications only from the focus's application.
   Everything else is dropped. Background events never move focus or the
   navigator, are spoken queued, and are capped per source. NVDA tests
   "inside the foreground window" with a parent-child check between two
@@ -598,8 +616,22 @@ require, and committed separately. The harness repairs land before step
    the entered-menu rule; outpost-ended handling and the silent re-read;
    the attention model with window facts; the derived views of held nodes
    and attention. Deterministic tests for each, retiring the tests listed
-   below. Current outposts stamp a placeholder outpost id and window facts
-   until steps 3 and 4 land.
+   below. Current outposts stamp a placeholder outpost id until step 3
+   lands, but attach real window facts from this step on (top-level
+   window, root owner, topmost, and the `Windows.UI.Core` active-window
+   fact, all local calls), and drop foreground facts whose window is no
+   longer the foreground, so that when step 2
+   removes the foreground pid gate the attention model classifies events
+   against real data.
+
+   Decided on 2026-10-01: the version and timestamp checks are removed in
+   this step, although the multi-threaded outposts they guard against are
+   replaced only in step 4. Until step 4 lands, live runs may show the
+   ordering races those checks covered, such as a menu fact arriving after
+   focus has reached the menu's first item. Dickson accepted that the
+   end-to-end suite may fail intermittently between steps 1 and 4. Such
+   failures are not chased or worked around in steps 1 to 3; a failure
+   that remains after step 4 is investigated as a real defect.
 2. The app: the request table, the live-outpost set, control-plane
    queries through the reducer thread, the never-block rule, the
    foreground pid gate removed, and the derived views sent out.

@@ -48,6 +48,28 @@ This is NVDA's version of foreground gating: *background applications'
 events are mostly dropped unheard*, by design, with explicit opt-ins per
 feature that needs otherwise.
 
+Three details of how the filter is applied matter for parity:
+
+- It applies to focus events too. MSAA focus and foreground events,
+  and UIA focus-changed events, pass through `shouldAcceptEvent`
+  under the name "gainFocus", so a focus event from a window outside
+  the foreground (and not topmost, not sharing the root owner) is
+  dropped.
+- "The foreground" is the operating system's foreground window at the
+  moment the main thread processes the event batch, not NVDA's own
+  record of it.
+- UIA notification events do not pass through `shouldAcceptEvent`.
+  They are filtered by application instead: the base
+  `event_UIA_notification` on UIA objects returns without speaking
+  when the notifying element's application differs from the focus's
+  application. Exceptions are per-application opt-ins: the File
+  Explorer app module speaks the shell's window-snap results
+  (activity id `Windows.Shell.SnapComponent.SnapHotKeyResults`) from
+  anywhere, and the Voice Access app module accepts notifications
+  from elements without a window. Toast notifications reach the user
+  through the `alert` event instead, which the filter accepts when
+  the window's parent has the class `ToastChildWindowClass`.
+
 ## Execution and the handler chain
 
 `eventHandler.executeEvent` runs an event: lock-screen safety check
@@ -91,6 +113,42 @@ behavior:
 4. Tree interceptor bookkeeping: if the focus moved into or out of a
    document with a tree interceptor, `event_treeInterceptor_loseFocus` /
    `gainFocus` fire (browse mode entry/exit; [Browse mode](browse-mode.md)).
+
+## Foreground windows
+
+NVDA never announces a window because it became the foreground. A
+window is spoken only through the two ordinary focus paths.
+
+- A foreground event is a focus on the window. The MSAA handler's
+  `processForegroundWinEvent` drops a foreground event when its window
+  is no longer the system's foreground window, when the most recently
+  queued focus is in that window or a window inside it, and when it
+  names exactly the object that is already the focus. Otherwise it is
+  queued as a `gainFocus` on the window object, and the window is
+  announced the way any focused object is. When a control inside the
+  window takes focus afterwards, the window is already an ancestor of
+  the focus, so it is not spoken again.
+- A window that is an ancestor of a new focus is spoken by
+  `focusEntered` like any other entered container. A window is
+  presentable in the focus ancestry only when it has a name or a
+  description: an unnamed or whitespace-named `WINDOW` has the layout
+  presentation type (`_get_presentationType` in
+  `source/NVDAObjects/__init__.py`), and layout objects are not
+  presentable focus ancestors.
+
+`event_foreground`, run from `doPreGainFocus` whenever the top of the
+ancestry changes, only cancels speech; its own documentation says it
+must not speak the object, because `focusEntered` or `gainFocus`
+will.
+
+A window that has no name when focus enters it is never announced
+later. `event_nameChange` speaks only when the changed object is the
+focus itself, so a name arriving on a window that is merely an
+ancestor of the focus is silent. When the window is itself the focus,
+the name change speaks the new name alone, through
+`speakObjectProperties(name=True)`, queued behind current speech
+rather than interrupting it, as all NVDA speech is unless something
+cancels it.
 
 A note on ordering: nothing guarantees platform events arrive in a sane
 order. The MSAA side re-orders and coalesces before queuing (the ordered
