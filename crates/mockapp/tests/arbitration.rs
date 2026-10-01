@@ -23,14 +23,20 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
 
     let class = window_class_name(hwnd_value);
     let mut arbitrator = Arbitrator::new(&[]);
-    let resolution = arbitrator.resolve_with(hwnd_value, &class, |h| {
-        Some(common::eventually_true(|| has_server_side_provider(h)))
-    });
-    assert!(
-        resolution.is_uia,
+    assert_eq!(
+        arbitrator.verdict(hwnd_value, &class),
+        None,
+        "only the probe decides"
+    );
+    arbitrator.record_probe(
+        hwnd_value,
+        common::eventually_true(|| has_server_side_provider(hwnd_value)),
+    );
+    assert_eq!(
+        arbitrator.verdict(hwnd_value, &class),
+        Some(true),
         "the real arbitrator must resolve a uia-backend window to UIA"
     );
-    assert!(!resolution.probe_timed_out);
 
     app.send("quit");
 }
@@ -49,13 +55,17 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
 
     let class = window_class_name(hwnd_value);
     let mut arbitrator = Arbitrator::new(&[]);
-    let resolution =
-        arbitrator.resolve_with(hwnd_value, &class, |h| Some(has_server_side_provider(h)));
-    assert!(
-        !resolution.is_uia,
+    assert_eq!(
+        arbitrator.verdict(hwnd_value, &class),
+        None,
+        "only the probe decides"
+    );
+    arbitrator.record_probe(hwnd_value, has_server_side_provider(hwnd_value));
+    assert_eq!(
+        arbitrator.verdict(hwnd_value, &class),
+        Some(false),
         "the real arbitrator must resolve a msaa-backend window to MSAA"
     );
-    assert!(!resolution.probe_timed_out);
 
     app.send("quit");
 }

@@ -41,7 +41,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::Interface;
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Rect, Role, TreeNode};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, QueryKind, Rect, Role, TreeNode};
 
 use crate::com::{CHILDID_SELF, bstr_to_option, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
@@ -409,12 +409,10 @@ fn tree_view_relation_acc_id(hwnd: isize, acc_id: i32, relation: u32) -> Option<
     Some(acc_id_for_htreeitem(hwnd, neighbor_hitem))
 }
 
-/// A direction to navigate from a node with [`navigate`], mirroring
-/// [`verbatim_uia`]'s equivalent (the crates do not depend on each other, so
-/// each carries its own copy) and the object-navigation commands milestone
-/// M3 adds (roadmap: parent, next and previous sibling, first child).
+/// The four navigation directions of a navigation [`QueryKind`] (parent,
+/// next and previous sibling, first child), as this module matches on them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NavigateDirection {
+enum NavigateDirection {
     /// The node's parent.
     Parent,
     /// The next sibling in tree order.
@@ -425,7 +423,8 @@ pub enum NavigateDirection {
     FirstChild,
 }
 
-/// Navigates one step from the node named by `key` in `direction`.
+/// Navigates one step from the node named by `key` in the direction `kind`
+/// names; any other kind is an error.
 ///
 /// For a `SysTreeView32` item addressed as a simple child (see this
 /// module's top doc comment), every direction routes through the tree
@@ -458,8 +457,15 @@ pub enum NavigateDirection {
 pub fn navigate(
     key: MsaaKey,
     registry: &NodeIdRegistry,
-    direction: NavigateDirection,
+    kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, String> {
+    let direction = match kind {
+        QueryKind::Parent => NavigateDirection::Parent,
+        QueryKind::NextSibling => NavigateDirection::NextSibling,
+        QueryKind::PreviousSibling => NavigateDirection::PreviousSibling,
+        QueryKind::FirstChild => NavigateDirection::FirstChild,
+        _ => return Err("not a navigation direction".to_owned()),
+    };
     let (hwnd, id_object, id_child) = key;
     // A window-root object (a windowed control's window face, keyed under
     // OBJID_WINDOW — see `read_snapshot`) navigates the Win32 window

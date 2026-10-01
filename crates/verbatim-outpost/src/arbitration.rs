@@ -4,23 +4,23 @@
 //! class list forces UIA; a "bad" class list (seeded from NVDA's, where UIA
 //! implementations are known to interfere with MSAA) forces MSAA; otherwise the
 //! window is probed with `UiaHasServerSideProvider`. Class-list checks are fast
-//! local window calls and run inline on any thread; the probe blocks on the
-//! target's message pump and must run only on a deadline-guarded query-pool
-//! thread ([`verbatim_uia::has_server_side_provider`]). Verdicts are cached per
-//! window handle for 500 ms.
+//! local window calls; the probe blocks on the target's message pump and runs
+//! only on the outpost's worker, under its deadline
+//! ([`verbatim_uia::has_server_side_provider`]).
 //!
-//! At event delivery the cross-filter (see [`Arbitrator::verdict`]) drops MSAA
-//! events whose window arbitrates to UIA and UIA focus events whose nearest
-//! window does not, so the two backends never both announce the same change.
+//! A probed verdict is kept for the window's lifetime and forgotten when the
+//! window is destroyed ([`Arbitrator::forget`]), as decision D15 specifies.
+//! NVDA's 500 ms cache throttles a check it makes on every event; it is not
+//! there because answers go stale.
+//!
+//! The worker drops MSAA events whose window arbitrates to UIA and UIA events
+//! whose window does not, so the two backends never both announce the same
+//! change.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
-
-/// How long a probe verdict stays valid, matching NVDA's window.
-const CACHE_TTL: Duration = Duration::from_millis(500);
 
 /// The classification a window's class name yields before any probe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +37,8 @@ enum ClassVerdict {
 pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
-    cache: HashMap<isize, (bool, Instant)>,
+    /// Probed verdicts, kept until the window is destroyed.
+    cache: HashMap<isize, bool>,
     /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
     /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
@@ -75,10 +76,16 @@ impl Arbitrator {
         self.forced = forced;
     }
 
-    /// Records a probe result for `hwnd` without holding a lock across the
-    /// (blocking) probe. Used by the runtime's non-blocking probe path.
+    /// Records a probe result for `hwnd`, kept until the window is
+    /// destroyed.
     pub fn record_probe(&mut self, hwnd: isize, is_uia: bool) {
-        self.cache.insert(hwnd, (is_uia, Instant::now()));
+        self.cache.insert(hwnd, is_uia);
+    }
+
+    /// Forgets `hwnd`'s probed verdict: the window was destroyed, and its
+    /// handle may be reused by an unrelated window.
+    pub fn forget(&mut self, hwnd: isize) {
+        self.cache.remove(&hwnd);
     }
 
     fn classify(&self, class_name: &str) -> ClassVerdict {
@@ -91,11 +98,9 @@ impl Arbitrator {
         }
     }
 
-    /// Non-blocking verdict for event delivery. Returns `Some(true)` for a UIA
-    /// window, `Some(false)` for a non-UIA window, and `None` when only the
-    /// (blocking) probe could decide and no fresh cached verdict exists. On
-    /// `None` the caller treats the window as non-UIA provisionally and should
-    /// schedule a probe with [`Arbitrator::resolve_with`].
+    /// The verdict without probing: `Some(true)` for a UIA window,
+    /// `Some(false)` for a non-UIA window, and `None` when only the blocking
+    /// probe can decide and the window has not been probed yet.
     #[must_use]
     pub fn verdict(&self, hwnd: isize, class_name: &str) -> Option<bool> {
         if self.forced.is_some() {
@@ -104,68 +109,9 @@ impl Arbitrator {
         match self.classify(class_name) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
-            ClassVerdict::Unknown => self.cached_probe(hwnd),
+            ClassVerdict::Unknown => self.cache.get(&hwnd).copied(),
         }
     }
-
-    fn cached_probe(&self, hwnd: isize) -> Option<bool> {
-        self.cache
-            .get(&hwnd)
-            .and_then(|(verdict, at)| (at.elapsed() < CACHE_TTL).then_some(*verdict))
-    }
-
-    /// Resolves a window's backend, running `probe` only if the class lists do
-    /// not decide it and no fresh verdict is cached. `probe` returns `None` when
-    /// it could not complete within its deadline; that is cached as non-UIA and
-    /// surfaced via the returned `probe_timed_out` flag so the caller can emit a
-    /// fault. Runs on a query-pool thread because `probe` may block.
-    pub fn resolve_with<P>(&mut self, hwnd: isize, class_name: &str, probe: P) -> Resolution
-    where
-        P: FnOnce(isize) -> Option<bool>,
-    {
-        if let Some(forced) = self.forced {
-            return Resolution {
-                is_uia: forced,
-                probe_timed_out: false,
-            };
-        }
-        match self.classify(class_name) {
-            ClassVerdict::Uia => Resolution {
-                is_uia: true,
-                probe_timed_out: false,
-            },
-            ClassVerdict::NonUia => Resolution {
-                is_uia: false,
-                probe_timed_out: false,
-            },
-            ClassVerdict::Unknown => {
-                if let Some(cached) = self.cached_probe(hwnd) {
-                    return Resolution {
-                        is_uia: cached,
-                        probe_timed_out: false,
-                    };
-                }
-                let (is_uia, timed_out) = match probe(hwnd) {
-                    Some(result) => (result, false),
-                    None => (false, true),
-                };
-                self.cache.insert(hwnd, (is_uia, Instant::now()));
-                Resolution {
-                    is_uia,
-                    probe_timed_out: timed_out,
-                }
-            }
-        }
-    }
-}
-
-/// The outcome of [`Arbitrator::resolve_with`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Resolution {
-    /// Whether the window should use UIA.
-    pub is_uia: bool,
-    /// Whether the probe timed out (verdict defaulted to non-UIA; emit a fault).
-    pub probe_timed_out: bool,
 }
 
 /// Reads a window's class name, an inexpensive local call safe on any thread.
@@ -250,14 +196,8 @@ mod tests {
 
     #[test]
     fn good_class_is_uia_without_probing() {
-        let mut arb = Arbitrator::new(&[]);
-        let mut probed = false;
-        let resolution = arb.resolve_with(1, "RAIL_WINDOW", |_| {
-            probed = true;
-            Some(false)
-        });
-        assert!(resolution.is_uia);
-        assert!(!probed, "good class must not invoke the probe");
+        let arb = Arbitrator::new(&[]);
+        assert_eq!(arb.verdict(1, "RAIL_WINDOW"), Some(true));
     }
 
     #[test]
@@ -274,32 +214,17 @@ mod tests {
     }
 
     #[test]
-    fn unknown_class_needs_probe_then_caches() {
+    fn a_probed_verdict_lasts_until_the_window_is_destroyed() {
         let mut arb = Arbitrator::new(&[]);
         assert_eq!(arb.verdict(42, "SomeUnknownClass"), None);
-        let mut calls = 0;
-        let first = arb.resolve_with(42, "SomeUnknownClass", |_| {
-            calls += 1;
-            Some(true)
-        });
-        assert!(first.is_uia);
-        assert_eq!(calls, 1);
-        // Second resolve within the TTL uses the cache, not the probe.
-        let second = arb.resolve_with(42, "SomeUnknownClass", |_| {
-            calls += 1;
-            Some(false)
-        });
-        assert!(second.is_uia);
-        assert_eq!(calls, 1, "cached verdict must not re-probe");
+        arb.record_probe(42, true);
         assert_eq!(arb.verdict(42, "SomeUnknownClass"), Some(true));
-    }
-
-    #[test]
-    fn probe_timeout_is_non_uia_and_flagged() {
-        let mut arb = Arbitrator::new(&[]);
-        let resolution = arb.resolve_with(7, "AnotherClass", |_| None);
-        assert!(!resolution.is_uia);
-        assert!(resolution.probe_timed_out);
+        arb.forget(42);
+        assert_eq!(
+            arb.verdict(42, "SomeUnknownClass"),
+            None,
+            "a reused handle is probed afresh"
+        );
     }
 
     /// Pins the good-class list to its two NVDA sources, so a future NVDA
@@ -354,20 +279,18 @@ mod tests {
 
     #[test]
     fn shell_classes_arbitrate_to_uia_without_probing() {
-        let mut arb = Arbitrator::new(&[]);
+        let arb = Arbitrator::new(&[]);
         for class in [
             "Shell_TrayWnd",
             "Shell_InputSwitchTopLevelWindow",
             "XamlExplorerHostIslandWindow",
             "TopLevelWindowForOverflowXamlIsland",
         ] {
-            let mut probed = false;
-            let resolution = arb.resolve_with(1, class, |_| {
-                probed = true;
-                Some(false)
-            });
-            assert!(resolution.is_uia, "{class} must arbitrate to UIA");
-            assert!(!probed, "{class} must not invoke the probe");
+            assert_eq!(
+                arb.verdict(1, class),
+                Some(true),
+                "{class} must arbitrate to UIA"
+            );
         }
     }
 }

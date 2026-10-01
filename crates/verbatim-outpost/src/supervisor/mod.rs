@@ -106,6 +106,10 @@ pub enum OutpostMessage {
     /// incarnation whose pipe it arrived on. Boxed so every channel send is
     /// small, not sized to the largest reply.
     Event(Pid, OutpostId, Box<OutpostToSupervisor>),
+    /// The focus listener was replaced and its replacement is ready. Facts
+    /// were lost in the gap, so the app asks the foreground application for
+    /// its current focus.
+    ListenerReplaced,
     /// An outpost incarnation ended. Its node ids are dead from now on.
     Ended {
         /// The incarnation that ended.
@@ -166,13 +170,6 @@ impl Supervisor {
         let _ = self
             .owner
             .send(owner::OwnerEvent::EnsureSpawned(target_pid));
-    }
-
-    /// Asks the outpost for `target_pid` to report the current foreground
-    /// window and focus (the announce poll), starting it if needed. Used for
-    /// the foreground application at startup.
-    pub fn announce(&self, target_pid: Pid) {
-        let _ = self.owner.send(owner::OwnerEvent::Announce(target_pid));
     }
 
     /// Queues `command` for one outpost incarnation without waiting. A node

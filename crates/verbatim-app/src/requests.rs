@@ -12,7 +12,11 @@
 use std::collections::HashMap;
 
 use crossbeam_channel::Sender;
-use verbatim_model::{FetchResult, Input, OutpostId, QueryId, QueryKind, TraceId, TreeNode};
+use verbatim_model::{
+    FetchResult, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, QueryKind, TraceId,
+    TreeNode, WindowFacts,
+};
+use verbatim_outpost::protocol::{FocusNow, QueryOutcome, QueryResult};
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
 /// walk was truncated, or a reason it failed.
@@ -42,20 +46,10 @@ pub(crate) enum Asker {
     /// bounded with room for the one answer, so sending never blocks; a
     /// requester that already gave up has dropped its receiver.
     DumpTree(Sender<DumpTreeResult>),
-}
-
-/// What became of a query.
-pub(crate) enum Outcome {
-    /// An object-navigation step finished.
-    Fetched(FetchResult),
-    /// A tree dump finished, or failed with a reason.
-    Dumped(DumpTreeResult),
-    /// An activation was invoked, or failed with a reason.
-    Activated(Result<(), String>),
-    /// The outpost ended before answering.
-    Gone,
-    /// The query could not be sent.
-    Failed(String),
+    /// The shell's focus-now query, at startup or after an outpost or the
+    /// listener was replaced: its answer re-enters the reducer as a
+    /// foreground change and a focus, from application `source`.
+    FocusNow { source: Pid, trace_id: TraceId },
 }
 
 struct Entry {
@@ -80,24 +74,26 @@ impl RequestTable {
     }
 
     /// Delivers the outcome of request `id`, reported by `outpost`. Returns
-    /// the reducer input it produces, if the asker was the reducer. Does
-    /// nothing for an id that already has its outcome, or for an outcome
-    /// from an outpost other than the one asked.
+    /// the reducer inputs it produces. Does nothing for an id that already
+    /// has its outcome, or for an outcome from an outpost other than the one
+    /// asked.
     pub(crate) fn finish(
         &mut self,
         id: RequestId,
         outpost: OutpostId,
-        outcome: Outcome,
-    ) -> Option<Input> {
+        outcome: QueryOutcome,
+    ) -> Vec<Input> {
         if self
             .entries
             .get(&id)
             .is_none_or(|entry| entry.outpost != outpost)
         {
-            return None;
+            return Vec::new();
         }
-        let entry = self.entries.remove(&id)?;
-        deliver(entry.asker, outcome)
+        self.entries
+            .remove(&id)
+            .map(|entry| deliver(entry.asker, outcome))
+            .unwrap_or_default()
     }
 
     /// Ends every request still outstanding at `outpost` with "gone",
@@ -111,10 +107,8 @@ impl RequestTable {
             .collect();
         ended
             .into_iter()
-            .filter_map(|id| {
-                let entry = self.entries.remove(&id)?;
-                deliver(entry.asker, Outcome::Gone)
-            })
+            .filter_map(|id| self.entries.remove(&id))
+            .flat_map(|entry| deliver(entry.asker, QueryOutcome::Gone))
             .collect()
     }
 
@@ -125,8 +119,20 @@ impl RequestTable {
     }
 }
 
+/// A short description of an outcome other than success, for logs and
+/// control-plane errors.
+fn describe(outcome: &QueryOutcome) -> String {
+    match outcome {
+        QueryOutcome::Gone => "the node or its outpost is gone".to_owned(),
+        QueryOutcome::Failed(reason) => reason.clone(),
+        QueryOutcome::NotStarted => "the query was withdrawn before it started".to_owned(),
+        QueryOutcome::Abandoned => "the query passed its deadline".to_owned(),
+        _ => "the query returned an unexpected answer".to_owned(),
+    }
+}
+
 /// Hands one outcome to its asker.
-fn deliver(asker: Asker, outcome: Outcome) -> Option<Input> {
+fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
     match asker {
         Asker::Reducer {
             query_id,
@@ -134,46 +140,91 @@ fn deliver(asker: Asker, outcome: Outcome) -> Option<Input> {
             trace_id,
         } => {
             let result = match outcome {
-                Outcome::Fetched(result) => result,
-                Outcome::Failed(reason) => {
-                    tracing::warn!(reason, "a navigation query failed");
+                QueryOutcome::Done(QueryResult::Navigated(Some(node))) => FetchResult::Node(node),
+                QueryOutcome::Done(QueryResult::Navigated(None)) => FetchResult::NoNeighbor,
+                other => {
+                    if !matches!(other, QueryOutcome::Gone) {
+                        tracing::warn!(reason = describe(&other), "a navigation query failed");
+                    }
                     FetchResult::Gone
                 }
-                _ => FetchResult::Gone,
             };
-            Some(Input::FetchCompleted {
+            vec![Input::FetchCompleted {
                 trace_id,
                 query_id,
                 kind,
                 result,
-            })
+            }]
         }
         Asker::Activation => {
-            match outcome {
-                Outcome::Activated(Ok(())) => {}
-                Outcome::Activated(Err(reason)) | Outcome::Failed(reason) => {
-                    tracing::warn!(reason, "activation failed");
-                }
-                _ => tracing::warn!("activation got no answer: its outpost ended"),
+            if !matches!(outcome, QueryOutcome::Done(QueryResult::Activated)) {
+                tracing::warn!(reason = describe(&outcome), "activation did not complete");
             }
-            None
+            Vec::new()
         }
         Asker::DumpTree(reply) => {
             let answer = match outcome {
-                Outcome::Dumped(answer) => answer,
-                Outcome::Failed(reason) => Err(format!("could not reach the outpost: {reason}")),
-                _ => Err("the outpost ended before answering".to_owned()),
+                QueryOutcome::Done(QueryResult::Tree(dumped)) => {
+                    Ok((dumped.root, dumped.truncated))
+                }
+                other => Err(describe(&other)),
             };
             // The requester may have timed out and dropped its receiver.
             let _ = reply.try_send(answer);
-            None
+            Vec::new()
         }
+        Asker::FocusNow { source, trace_id } => match outcome {
+            QueryOutcome::Done(QueryResult::Focus(focus)) => focus_inputs(source, trace_id, focus),
+            other => {
+                tracing::warn!(reason = describe(&other), %source, "focus-now query failed");
+                Vec::new()
+            }
+        },
     }
+}
+
+/// The reducer inputs a focus-now answer becomes: a foreground change to the
+/// window, when the application holds the foreground, then a focus on the
+/// focused control. The same rules as live events then apply, so a report of
+/// the focus the user already heard after a replacement is taken silently.
+fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
+    let event =
+        |node: NodeSnapshot, window: Option<WindowFacts>, foreground, ancestors, selected_child| {
+            Input::Event {
+                trace_id,
+                observed_at_ms: 0,
+                source,
+                backend: node.backend,
+                window,
+                event: NormalizedEvent::FocusChanged {
+                    node,
+                    foreground,
+                    ancestors,
+                    selected_child,
+                },
+            }
+        };
+    let mut inputs = Vec::new();
+    if let Some((window, facts)) = focus.window {
+        inputs.push(event(window, Some(facts), true, Vec::new(), None));
+    }
+    if let Some(control) = focus.focus {
+        inputs.push(event(
+            control.node,
+            control.window,
+            false,
+            control.ancestors,
+            control.selected_child,
+        ));
+    }
+    inputs
 }
 
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
+    use verbatim_model::{Backend, NodeDetails, NodeId, Role, StateSet};
+    use verbatim_outpost::protocol::{DumpedTree, FocusedControl};
 
     use super::*;
 
@@ -185,24 +236,40 @@ mod tests {
         }
     }
 
+    fn node(role: Role, name: &str) -> NodeSnapshot {
+        NodeSnapshot {
+            id: NodeId::new(1),
+            backend: Backend::Uia,
+            role,
+            name: Some(name.to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        }
+    }
+
     #[test]
     fn the_first_outcome_wins_and_a_second_is_dropped() {
         let mut table = RequestTable::default();
         let id = table.begin(OutpostId(1), navigation(7));
 
-        let first = table.finish(id, OutpostId(1), Outcome::Fetched(FetchResult::NoNeighbor));
+        let first = table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Navigated(None)),
+        );
         assert!(matches!(
-            first,
-            Some(Input::FetchCompleted {
+            first.as_slice(),
+            [Input::FetchCompleted {
                 query_id: QueryId(7),
                 result: FetchResult::NoNeighbor,
                 ..
-            })
+            }]
         ));
         assert!(
             table
-                .finish(id, OutpostId(1), Outcome::Fetched(FetchResult::Gone))
-                .is_none()
+                .finish(id, OutpostId(1), QueryOutcome::Gone)
+                .is_empty()
         );
     }
 
@@ -212,10 +279,25 @@ mod tests {
         let id = table.begin(OutpostId(1), navigation(7));
         assert!(
             table
-                .finish(id, OutpostId(2), Outcome::Fetched(FetchResult::NoNeighbor))
-                .is_none()
+                .finish(id, OutpostId(2), QueryOutcome::Gone)
+                .is_empty()
         );
         assert_eq!(table.len(), 1, "the real answer can still arrive");
+    }
+
+    #[test]
+    fn an_abandoned_or_unstarted_navigation_reads_as_gone() {
+        for outcome in [QueryOutcome::Abandoned, QueryOutcome::NotStarted] {
+            let mut table = RequestTable::default();
+            let id = table.begin(OutpostId(1), navigation(7));
+            assert!(matches!(
+                table.finish(id, OutpostId(1), outcome).as_slice(),
+                [Input::FetchCompleted {
+                    result: FetchResult::Gone,
+                    ..
+                }]
+            ));
+        }
     }
 
     #[test]
@@ -247,10 +329,59 @@ mod tests {
         let new = table.begin(OutpostId(1), Asker::DumpTree(new_tx));
 
         // The old request's late reply arrives first.
-        table.finish(old, OutpostId(1), Outcome::Dumped(Err("old".to_owned())));
+        table.finish(old, OutpostId(1), QueryOutcome::Failed("old".to_owned()));
         assert!(new_rx.try_recv().is_err(), "the newer request is untouched");
 
-        table.finish(new, OutpostId(1), Outcome::Dumped(Err("new".to_owned())));
-        assert_eq!(new_rx.try_recv().expect("answered"), Err("new".to_owned()));
+        let tree = DumpedTree {
+            root: TreeNode {
+                snapshot: node(Role::Window, "new"),
+                children: Vec::new(),
+            },
+            truncated: false,
+        };
+        table.finish(
+            new,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Tree(tree)),
+        );
+        let (root, _) = new_rx.try_recv().expect("answered").expect("a tree");
+        assert_eq!(root.snapshot.name.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn a_focus_now_answer_becomes_a_foreground_change_then_a_focus() {
+        let mut table = RequestTable::default();
+        let id = table.begin(
+            OutpostId(1),
+            Asker::FocusNow {
+                source: Pid(5),
+                trace_id: TraceId::mint(),
+            },
+        );
+        let answer = FocusNow {
+            window: None,
+            focus: Some(FocusedControl {
+                node: node(Role::Button, "OK"),
+                ancestors: Vec::new(),
+                selected_child: None,
+                window: None,
+            }),
+        };
+        let inputs = table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Focus(answer)),
+        );
+        assert!(matches!(
+            inputs.as_slice(),
+            [Input::Event {
+                source: Pid(5),
+                event: NormalizedEvent::FocusChanged {
+                    foreground: false,
+                    ..
+                },
+                ..
+            }]
+        ));
     }
 }

@@ -26,9 +26,10 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD,
-    EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_STATECHANGE,
-    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUPOPUPSTART,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
+    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
+    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_FOREGROUND,
+    EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART,
     WINEVENT_OUTOFCONTEXT,
 };
 
@@ -60,6 +61,12 @@ pub enum WinEventKind {
     /// foreground-change retry loop, measured live) leaves a noticeable
     /// pause between opening a menu and hearing it.
     MenuPopupStart,
+    /// `EVENT_SYSTEM_MENUPOPUPEND` or `EVENT_SYSTEM_MENUEND` — a popup menu
+    /// closed, or menu mode ended. If no focus event follows, the outpost
+    /// reads and reports the real focus, as NVDA does.
+    MenuEnd,
+    /// `EVENT_OBJECT_DESTROY` — an object, possibly a window, was destroyed.
+    Destroy,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -67,7 +74,7 @@ pub enum WinEventKind {
 /// [`kind_of`] maps a delivered event id back to its kind against this whole
 /// table. `Selection` maps four raw ids to the one kind, so a caller that
 /// wants selection events gets all four hooks from naming it once.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 10] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 13] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -78,17 +85,23 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 10] = [
     (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::Selection),
     (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::Selection),
     (EVENT_SYSTEM_MENUPOPUPSTART, WinEventKind::MenuPopupStart),
+    (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuEnd),
+    (EVENT_SYSTEM_MENUEND, WinEventKind::MenuEnd),
+    (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
-/// process-scoped property, value, state, and selection events. Focus and
-/// menu-popup are no longer here — the focus listener owns them globally and
+/// process-scoped property, value, state, and selection events, the end of
+/// a menu, and object destruction (for windows going away). Focus and
+/// menu-popup are not here — the focus listener owns them globally and
 /// routes each back to the app outpost as a fact.
 pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ValueChange,
     WinEventKind::StateChange,
     WinEventKind::NameChange,
     WinEventKind::Selection,
+    WinEventKind::MenuEnd,
+    WinEventKind::Destroy,
 ];
 
 /// The focus listener's subscription set (decision D13): the three events

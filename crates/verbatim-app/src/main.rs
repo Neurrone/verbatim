@@ -14,7 +14,7 @@ mod latency;
 mod requests;
 mod single_instance;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -34,10 +34,11 @@ use verbatim_input::{
 };
 use verbatim_input_windows::InputHook;
 use verbatim_model::{
-    Effect, GestureId, Input, OutpostId, Pid, Query, QueryId, ReviewCommand, SpeechPriority,
-    TraceId, Utterance, UtteranceSegment,
+    Effect, GestureId, Input, OutpostId, Pid, ReviewCommand, SpeechPriority, TraceId, Utterance,
+    UtteranceSegment,
 };
-use verbatim_outpost::protocol::{OutpostToSupervisor, SupervisorToOutpost};
+use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
+use verbatim_outpost::supervisor::EndReason;
 use verbatim_outpost::{OutpostMessage, Supervisor};
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
@@ -46,7 +47,7 @@ use verbatim_speech::{
 use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
-use requests::{Asker, DumpTreeResult, Outcome, RequestId, RequestTable};
+use requests::{Asker, DumpTreeResult, RequestId, RequestTable};
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -244,7 +245,12 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
         source: None,
     });
-    target_current_foreground(&supervisor, &outposts);
+    // Ask the foreground application for its current focus: its outpost is
+    // started if needed, and the answer is spoken like a switch to it.
+    if let Some(pid) = foreground_pid() {
+        note_targeted_pid(&outposts, pid);
+        let _ = command_tx.send(ShellCommand::FocusNow(pid));
+    }
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
@@ -470,12 +476,9 @@ fn warm_own_outpost(
     supervisor.ensure_spawned(Pid(own_pid));
 }
 
-/// Targets whatever is in the foreground right now, so the first outpost
-/// exists before the first foreground *change*.
-fn target_current_foreground(
-    supervisor: &Arc<Supervisor>,
-    outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-) {
+/// The application holding the system foreground right now, read with a
+/// local call.
+fn foreground_pid() -> Option<Pid> {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     // SAFETY: reading the current foreground window and its process id.
     let pid = unsafe {
@@ -484,11 +487,7 @@ fn target_current_foreground(
         GetWindowThreadProcessId(hwnd, Some(&raw mut pid));
         pid
     };
-    if pid == 0 {
-        return;
-    }
-    note_targeted_pid(outposts, Pid(pid));
-    supervisor.announce(Pid(pid));
+    (pid != 0).then_some(Pid(pid))
 }
 
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
@@ -508,6 +507,9 @@ struct ReducerContext {
 enum ShellCommand {
     Input(Box<Input>),
     DumpTree(Sender<DumpTreeResult>),
+    /// Ask this application for its current focus: at startup, for the
+    /// foreground application.
+    FocusNow(Pid),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -522,11 +524,21 @@ struct ReducerThread<'a> {
     state: SrState,
     requests: RequestTable,
     /// Outpost incarnations that have started and not yet ended, with
-    /// the application each watches. A message from an outpost that has
-    /// ended is dropped before the reducer sees it.
-    live: HashMap<OutpostId, Pid>,
+    /// the application each watches and whether it is ready. A message from
+    /// an outpost that has ended is dropped before the reducer sees it.
+    live: HashMap<OutpostId, Live>,
+    /// Applications to ask for their current focus as soon as their outpost
+    /// is ready: the startup foreground application, and the attention
+    /// application after its outpost or the listener was replaced.
+    focus_now_wanted: HashSet<Pid>,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
+}
+
+/// A live outpost incarnation.
+struct Live {
+    target_pid: Pid,
+    ready: bool,
 }
 
 impl ReducerThread<'_> {
@@ -537,7 +549,13 @@ impl ReducerThread<'_> {
                 outpost,
                 target_pid,
             } => {
-                self.live.insert(outpost, target_pid);
+                self.live.insert(
+                    outpost,
+                    Live {
+                        target_pid,
+                        ready: false,
+                    },
+                );
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -560,6 +578,12 @@ impl ReducerThread<'_> {
                 reason,
             } => {
                 tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
+                // A crashed or killed outpost of the attention application
+                // is replaced at once; ask the replacement for the focus,
+                // which is taken silently if the user already heard it.
+                if reason != EndReason::Retired && self.state.attention() == Some(target_pid) {
+                    self.focus_now_wanted.insert(target_pid);
+                }
                 if self.live.remove(&outpost).is_some() {
                     self.context
                         .outposts
@@ -572,7 +596,48 @@ impl ReducerThread<'_> {
                     self.apply(input);
                 }
             }
+            OutpostMessage::ListenerReplaced => {
+                // Facts were lost while there was no listener: read the
+                // foreground afresh and ask its application for the focus.
+                if let Some(pid) = foreground_pid() {
+                    self.want_focus_now(pid);
+                }
+            }
         }
+    }
+
+    /// Asks `pid`'s outpost for the current focus now if it is ready, or as
+    /// soon as it is, starting one if there is none.
+    fn want_focus_now(&mut self, pid: Pid) {
+        let ready = self
+            .live
+            .iter()
+            .filter(|(_, live)| live.target_pid == pid && live.ready)
+            .map(|(outpost, _)| *outpost)
+            .max();
+        if let Some(outpost) = ready {
+            self.focus_now(outpost, pid);
+        } else {
+            self.focus_now_wanted.insert(pid);
+            self.context.supervisor.ensure_spawned(pid);
+        }
+    }
+
+    /// Sends the focus-now query.
+    fn focus_now(&mut self, outpost: OutpostId, source: Pid) {
+        let trace_id = TraceId::mint();
+        let id = self
+            .requests
+            .begin(outpost, Asker::FocusNow { source, trace_id });
+        self.send(
+            outpost,
+            id,
+            SupervisorToOutpost::Query {
+                trace_id,
+                request_id: id.0,
+                query: Query::FocusNow,
+            },
+        );
     }
 
     /// Turns one message from a live outpost into reducer input, or routes a
@@ -599,24 +664,22 @@ impl ReducerThread<'_> {
                     event,
                 });
             }
-            OutpostToSupervisor::FetchReply {
-                query_id, result, ..
-            } => self.finish(RequestId(query_id.0), outpost, Outcome::Fetched(result)),
-            OutpostToSupervisor::DumpTreeReply {
-                request_id, result, ..
-            } => self.finish(
-                RequestId(request_id),
-                outpost,
-                Outcome::Dumped(result.map(|dumped| (dumped.root, dumped.truncated))),
-            ),
-            OutpostToSupervisor::ActivateReply {
-                request_id, result, ..
-            } => self.finish(RequestId(request_id), outpost, Outcome::Activated(result)),
+            OutpostToSupervisor::Reply {
+                request_id,
+                outcome,
+                ..
+            } => self.finish(RequestId(request_id), outpost, outcome),
             OutpostToSupervisor::Ready {
                 outpost_pid,
                 target_pid,
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
+                if let Some(live) = self.live.get_mut(&outpost) {
+                    live.ready = true;
+                }
+                if self.focus_now_wanted.remove(&target_pid) {
+                    self.focus_now(outpost, target_pid);
+                }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -639,13 +702,14 @@ impl ReducerThread<'_> {
         match command {
             ShellCommand::Input(input) => self.apply(*input),
             ShellCommand::DumpTree(reply) => self.dump_tree(reply),
+            ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
         }
     }
 
     /// Delivers a query's outcome through the request table, applying the
     /// reducer input it produces, if any.
-    fn finish(&mut self, id: RequestId, outpost: OutpostId, outcome: Outcome) {
-        if let Some(input) = self.requests.finish(id, outpost, outcome) {
+    fn finish(&mut self, id: RequestId, outpost: OutpostId, outcome: QueryOutcome) {
+        for input in self.requests.finish(id, outpost, outcome) {
             self.apply(input);
         }
     }
@@ -708,13 +772,12 @@ impl ReducerThread<'_> {
                         trace_id,
                     },
                 );
-                // On the wire the query carries the request id, so the reply
-                // is matched by the table, never by the reducer's own id.
-                let command = SupervisorToOutpost::Fetch {
+                let command = SupervisorToOutpost::Query {
                     trace_id,
-                    query: Query {
-                        query_id: QueryId(id.0),
-                        ..query
+                    request_id: id.0,
+                    query: Query::Navigate {
+                        node_id: query.node_id,
+                        kind: query.kind,
                     },
                 };
                 self.send(outpost, id, command);
@@ -722,10 +785,10 @@ impl ReducerThread<'_> {
             Effect::Activate { node_id } => {
                 let outpost = node_id.outpost();
                 let id = self.requests.begin(outpost, Asker::Activation);
-                let command = SupervisorToOutpost::Activate {
+                let command = SupervisorToOutpost::Query {
                     trace_id,
                     request_id: id.0,
-                    node_id,
+                    query: Query::Activate { node_id },
                 };
                 self.send(outpost, id, command);
             }
@@ -739,7 +802,7 @@ impl ReducerThread<'_> {
     fn send(&mut self, outpost: OutpostId, id: RequestId, command: SupervisorToOutpost) {
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             tracing::warn!(%error, %outpost, "a query could not reach its outpost");
-            self.finish(id, outpost, Outcome::Failed(error.to_string()));
+            self.finish(id, outpost, QueryOutcome::Failed(error.to_string()));
         }
     }
 
@@ -754,7 +817,7 @@ impl ReducerThread<'_> {
         let Some(outpost) = self
             .live
             .iter()
-            .filter(|(_, watched)| **watched == pid)
+            .filter(|(_, live)| live.target_pid == pid)
             .map(|(outpost, _)| *outpost)
             .max()
         else {
@@ -762,9 +825,10 @@ impl ReducerThread<'_> {
             return;
         };
         let id = self.requests.begin(outpost, Asker::DumpTree(reply));
-        let command = SupervisorToOutpost::DumpTree {
+        let command = SupervisorToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
+            query: Query::DumpTree,
         };
         self.send(outpost, id, command);
     }
@@ -784,6 +848,7 @@ fn reducer_loop(
         state: SrState::new(),
         requests: RequestTable::default(),
         live: HashMap::new(),
+        focus_now_wanted: HashSet::new(),
         views: (None, BTreeSet::new()),
     };
     loop {

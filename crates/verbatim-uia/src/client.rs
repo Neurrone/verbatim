@@ -7,7 +7,7 @@
 //! independent object, so nothing is shared across threads and there is no COM
 //! marshaling hazard.
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayPutElement};
 use windows::Win32::System::Variant::{
@@ -21,7 +21,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_RuntimeIdPropertyId, UIA_SelectionPatternId, UIA_TogglePatternId,
 };
 
-use verbatim_model::{NodeSnapshot, TreeNode};
+use verbatim_model::{NodeSnapshot, QueryKind, TreeNode};
 
 use crate::cache::base_cache_request;
 use crate::com::init_mta;
@@ -360,23 +360,21 @@ impl Uia {
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
-        direction: NavigateDirection,
+        direction: QueryKind,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         // SAFETY: `self.client` is a live IUIAutomation instance.
         let walker = unsafe { self.client.RawViewWalker() }?;
         // SAFETY: `element` and `cache` are valid per the caller's contract.
         let neighbor = unsafe {
             match direction {
-                NavigateDirection::Parent => walker.GetParentElementBuildCache(element, cache),
-                NavigateDirection::NextSibling => {
-                    walker.GetNextSiblingElementBuildCache(element, cache)
-                }
-                NavigateDirection::PreviousSibling => {
+                QueryKind::Parent => walker.GetParentElementBuildCache(element, cache),
+                QueryKind::NextSibling => walker.GetNextSiblingElementBuildCache(element, cache),
+                QueryKind::PreviousSibling => {
                     walker.GetPreviousSiblingElementBuildCache(element, cache)
                 }
-                NavigateDirection::FirstChild => {
-                    walker.GetFirstChildElementBuildCache(element, cache)
-                }
+                QueryKind::FirstChild => walker.GetFirstChildElementBuildCache(element, cache),
+                // Not a navigation direction.
+                _ => return Err(windows::core::Error::from(E_INVALIDARG)),
             }
         };
         match neighbor {
@@ -433,21 +431,6 @@ impl Uia {
             "element exposes no Invoke, Toggle, or legacy DoDefaultAction pattern",
         ))
     }
-}
-
-/// A direction to navigate from an element with [`Uia::navigate`], mirroring
-/// the object-navigation commands milestone M3 adds (roadmap: parent, next
-/// and previous sibling, first child).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NavigateDirection {
-    /// The element's parent.
-    Parent,
-    /// The next sibling in tree order.
-    NextSibling,
-    /// The previous sibling in tree order.
-    PreviousSibling,
-    /// The first child.
-    FirstChild,
 }
 
 /// The per-walk parameters threaded through every level of

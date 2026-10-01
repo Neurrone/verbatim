@@ -28,9 +28,6 @@ use super::{
 pub(super) enum OwnerEvent {
     /// From the app: start an outpost for this application if none exists.
     EnsureSpawned(Pid),
-    /// From the app: have this application's outpost report the current
-    /// foreground and focus, starting it if needed.
-    Announce(Pid),
     /// From the app: the views derived from the reducer state.
     Views {
         attention: Option<Pid>,
@@ -85,8 +82,6 @@ struct Record {
     ready: bool,
     /// Facts that arrived before `Ready`, released in order on `Ready`.
     held: HeldFacts,
-    /// Whether to send the announce poll on `Ready`.
-    announce_on_ready: bool,
     last_pong_at: Instant,
     abandoned: usize,
     /// When the application last held attention.
@@ -168,10 +163,9 @@ impl Owner {
         match event {
             OwnerEvent::EnsureSpawned(pid) => {
                 if !self.records.contains_key(&pid) && !self.respawn_stopped(pid) {
-                    self.start_outpost(pid, false, None);
+                    self.start_outpost(pid, None);
                 }
             }
-            OwnerEvent::Announce(pid) => self.announce(pid),
             OwnerEvent::Views { attention, holding } => {
                 if attention != self.attention {
                     let now = Instant::now();
@@ -228,7 +222,7 @@ impl Owner {
     }
 
     /// Records `pid` as starting and hands its launch to a helper thread.
-    fn start_outpost(&mut self, pid: Pid, announce_on_ready: bool, first: Option<HeldFact>) {
+    fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) {
         let outpost = self.next_outpost_id();
         let now = Instant::now();
         let mut held = HeldFacts::default();
@@ -242,7 +236,6 @@ impl Owner {
                 child: None,
                 ready: false,
                 held,
-                announce_on_ready,
                 last_pong_at: now,
                 abandoned: 0,
                 last_attention_at: now,
@@ -356,10 +349,9 @@ impl Owner {
         }
     }
 
-    /// Releases held facts on `Ready`, in arrival order, then the announce
-    /// poll if one was asked for. A replacement listener's `Ready` asks the
-    /// attention application to report again, since facts were lost in the
-    /// gap.
+    /// Releases held facts on `Ready`, in arrival order. A replacement
+    /// listener's `Ready` is reported to the app: facts were lost in the gap,
+    /// so the app asks for the current focus.
     fn on_ready(&mut self, outpost: OutpostId) {
         if let Some(listener) = self
             .listener
@@ -367,10 +359,8 @@ impl Owner {
             .filter(|listener| listener.outpost == outpost)
         {
             tracing::info!(%outpost, "focus listener ready");
-            if listener.replacement
-                && let Some(pid) = self.attention
-            {
-                self.announce(pid);
+            if listener.replacement {
+                let _ = self.events_tx.send(OutpostMessage::ListenerReplaced);
             }
             return;
         }
@@ -383,32 +373,6 @@ impl Owner {
         };
         for held in record.held.take() {
             deliver(&writer, held);
-        }
-        if std::mem::take(&mut record.announce_on_ready) {
-            let _ = writer.push(Outgoing::Other(SupervisorToOutpost::AnnounceFocus {
-                trace_id: TraceId::mint(),
-            }));
-        }
-    }
-
-    fn announce(&mut self, pid: Pid) {
-        match self.records.get_mut(&pid) {
-            Some(record) => match record.child.as_ref().filter(|_| record.ready) {
-                Some(child) => {
-                    let _ =
-                        child
-                            .writer
-                            .push(Outgoing::Other(SupervisorToOutpost::AnnounceFocus {
-                                trace_id: TraceId::mint(),
-                            }));
-                }
-                None => record.announce_on_ready = true,
-            },
-            None => {
-                if !self.respawn_stopped(pid) {
-                    self.start_outpost(pid, true, None);
-                }
-            }
         }
     }
 
@@ -444,7 +408,7 @@ impl Owner {
                 if self.respawn_stopped(pid) {
                     tracing::debug!(%pid, "fact dropped: respawning is stopped after repeated crashes");
                 } else {
-                    self.start_outpost(pid, false, Some(held));
+                    self.start_outpost(pid, Some(held));
                 }
             }
         }
@@ -509,7 +473,7 @@ impl Owner {
             return;
         }
         if self.attention == Some(pid) {
-            self.start_outpost(pid, true, None);
+            self.start_outpost(pid, None);
         }
     }
 

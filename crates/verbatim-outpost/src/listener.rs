@@ -40,11 +40,12 @@ use verbatim_uia::map::{
     cached_native_window_handle, cached_process_id, snapshot_parts_from_cached_element,
 };
 
+use crate::event_thread::EventThread;
+use crate::outpost::now_ms;
 use crate::protocol::{
     ListenerFact, OutpostToSupervisor, SupervisorToOutpost, UiaSnapshotFact, read_message,
     write_message,
 };
-use crate::runtime::{EventThread, now_ms};
 
 /// The focus listener: owns the desktop-global UIA focus registration, the
 /// global MSAA hooks, and the outbound writer, for the whole life of the

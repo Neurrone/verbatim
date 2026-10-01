@@ -28,7 +28,8 @@ Public API:
   with a single batched round trip inside the provider process, so
   callers must depend only on the resulting list.
 - `Uia::navigate` — one raw-view tree-walker step (parent, next or
-  previous sibling, first child; the `NavigateDirection` enum) returning
+  previous sibling, first child, named by a navigation `QueryKind` from
+  `verbatim-model`) returning
   the neighbor's snapshot, with `Ok(None)` as the first-class "no such
   neighbor" outcome distinct from an error. Deliberately the full,
   unfiltered tree: a recorded decision matching NVDA with its simple

@@ -12,8 +12,8 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, FetchResult, NodeDetails, NormalizedEvent, OutpostId, Pid, Query, QueryId, QueryKind,
-    Role, StateSet, TraceId, TreeNode, WindowFacts,
+    Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryKind, Role,
+    StateSet, TraceId, TreeNode, WindowFacts,
 };
 
 /// The identity-free contents of a UIA focus element, as the focus listener
@@ -183,12 +183,8 @@ pub enum DeliveredFact {
 ///
 /// An outpost's target application is fixed at spawn (decision D9: one
 /// outpost per application, for its whole life) and passed on its command
-/// line, not by any message here — there is no cross-pid retarget in this
-/// protocol. What remains after that split are three genuinely independent
-/// concerns the old M1 `Configure` conflated: backend-override
-/// configuration ([`SetBackendOverride`](Self::SetBackendOverride)),
-/// announcing a foreground change ([`AnnounceFocus`](Self::AnnounceFocus)),
-/// and everything else this outpost already answered on its own.
+/// line, not by any message here. Core ends an outpost by closing its job
+/// handle; there is no shutdown message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SupervisorToOutpost {
@@ -199,31 +195,11 @@ pub enum SupervisorToOutpost {
         /// The forced backend, or `None` for normal arbitration.
         backend_override: Option<Backend>,
     },
-    /// Announces the target application's foreground by polling: the outpost
-    /// emits a synthetic `FocusChanged` for the application's top-level
-    /// foreground window, then the synthetic focus for its focused control,
-    /// retrying a bounded number of times against a control or window that
-    /// has not readied itself yet.
-    ///
-    /// Under decision D13 this is a fallback, no longer the mechanism of
-    /// record. The focus listener detects focus from the OS event directly
-    /// and Core delivers it as a [`DeliverFact`](Self::DeliverFact); the poll
-    /// remains only for the supervisor's own startup target and to re-announce
-    /// the current foreground across a listener respawn gap. It is still sent
-    /// when Core spawns or re-targets an outpost for a foreground application
-    /// (see `verbatim-outpost::supervisor`).
-    AnnounceFocus {
-        /// Trace ID of the foreground-change observation that caused this
-        /// announcement, for diagnostics; the emitted events mint their own
-        /// trace IDs, since each is its own observably-caused utterance.
-        trace_id: TraceId,
-    },
     /// Delivers a focus fact the focus listener captured, for this outpost's
-    /// target application (decision D13). The outpost acquires, arbitrates,
-    /// enriches, and announces it on its query pool exactly as it does for
-    /// the events it hooks itself, but threading the listener's `trace_id`
-    /// and `observed_at_ms` through to the emitted event so the latency
-    /// timeline starts at the real OS event rather than this delivery.
+    /// target application (decision D13), threading the listener's
+    /// `trace_id` and `observed_at_ms` through to the emitted event so the
+    /// latency timeline starts at the real OS event rather than this
+    /// delivery.
     DeliverFact {
         /// Trace ID the listener minted when it observed the OS event.
         trace_id: TraceId,
@@ -233,101 +209,134 @@ pub enum SupervisorToOutpost {
         /// The routed fact, minus the pid (routing is done).
         fact: DeliveredFact,
     },
-    /// Asks for more data about a node; answered by
-    /// [`OutpostToSupervisor::FetchReply`].
-    Fetch {
-        /// Trace ID of the reducer input that caused this fetch.
+    /// A query, answered by exactly one [`OutpostToSupervisor::Reply`]
+    /// carrying the same `request_id`.
+    Query {
+        /// Trace ID of the input that caused the query.
         trace_id: TraceId,
-        /// What to read.
+        /// Core's id for this request, echoed in the reply.
+        request_id: u64,
+        /// What to do.
         query: Query,
+    },
+    /// Withdraws a query that has not started: it is answered
+    /// [`QueryOutcome::NotStarted`] instead of being run. A query already
+    /// running is not affected.
+    Cancel {
+        /// The query to withdraw.
+        request_id: u64,
     },
     /// Liveness probe; answered by [`OutpostToSupervisor::Pong`].
     Ping {
         /// Echoed in the matching pong.
         seq: u64,
     },
-    /// Asks the outpost to walk the target application's tree from its
-    /// top-level window and return it; answered by
-    /// [`OutpostToSupervisor::DumpTreeReply`]. Runs on a query-pool thread
-    /// with a deadline, so a hung application abandons the call rather than
-    /// wedging the outpost.
-    DumpTree {
-        /// Trace ID of the request that caused this dump.
-        trace_id: TraceId,
-        /// Core's id for this request, echoed in the reply.
-        request_id: u64,
-    },
-    /// Asks for the chain of ancestors of a node, outermost first, as
-    /// [`NodeSnapshot`]s; answered by
-    /// [`OutpostToSupervisor::AncestorChainReply`]. Runs on a query-pool
-    /// thread with a deadline (the same pattern as
-    /// [`DumpTree`](Self::DumpTree)), so a hung application abandons the
-    /// call rather than wedging the outpost. Capped at 64 hops.
-    AncestorChain {
-        /// Trace ID of the request that caused this walk.
-        trace_id: TraceId,
-        /// The node whose ancestors are wanted.
-        node_id: verbatim_model::NodeId,
-    },
-    /// Asks for a node found by navigating from `node_id`; answered by
-    /// [`OutpostToSupervisor::NavigateReply`]. Runs on a query-pool thread
-    /// with a deadline, the same pattern as [`DumpTree`](Self::DumpTree).
+}
+
+/// What a [`SupervisorToOutpost::Query`] asks for.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Query {
+    /// The application's current foreground window, if it is the system's
+    /// foreground window, and its focused control with that control's
+    /// ancestors and selected child. Used at startup and after an outpost or
+    /// the listener is replaced, in place of retrying until focus settles.
+    FocusNow,
+    /// One object-navigation step from `node_id` in the direction `kind`
+    /// names.
     Navigate {
-        /// Trace ID of the request that caused this navigation.
-        trace_id: TraceId,
         /// The node to navigate from.
-        node_id: verbatim_model::NodeId,
-        /// Which direction to navigate.
-        direction: NavigateDirection,
+        node_id: NodeId,
+        /// Which way: parent, next or previous sibling, or first child.
+        kind: QueryKind,
     },
-    /// Asks the outpost to activate a node (UIA `Invoke`/`Toggle`/legacy
-    /// `DoDefaultAction`; MSAA `accDoDefaultAction`); answered by
-    /// [`OutpostToSupervisor::ActivateReply`]. Runs on a query-pool thread
-    /// with a deadline, the same pattern as [`DumpTree`](Self::DumpTree).
+    /// Activate a node: UIA `Invoke`, `Toggle`, or the legacy default
+    /// action; MSAA `accDoDefaultAction`.
     Activate {
-        /// Trace ID of the request that caused this activation.
-        trace_id: TraceId,
-        /// Core's id for this request, echoed in the reply.
-        request_id: u64,
         /// The node to activate.
-        node_id: verbatim_model::NodeId,
+        node_id: NodeId,
     },
+    /// The node's ancestors, outermost first, capped at 64.
+    Ancestors {
+        /// The node whose ancestors are wanted.
+        node_id: NodeId,
+    },
+    /// The application's tree from its top-level window, capped at a depth
+    /// of 64 and 4096 nodes.
+    DumpTree,
 }
 
-/// A direction to navigate from a node, for [`SupervisorToOutpost::Navigate`]
-/// (roadmap M3's object-navigation bullet: parent, next and previous
-/// sibling, and first child).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NavigateDirection {
-    /// The node's parent.
-    Parent,
-    /// The next sibling in tree order.
-    NextSibling,
-    /// The previous sibling in tree order.
-    PreviousSibling,
-    /// The first child.
-    FirstChild,
+/// The one outcome of a query.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a reply is built once and moved, never stored in bulk"
+)]
+pub enum QueryOutcome {
+    /// The query finished.
+    Done(QueryResult),
+    /// The node the query named is no longer reachable.
+    Gone,
+    /// The query failed, for the reason given.
+    Failed(String),
+    /// The query was withdrawn or expired before it started: it had no side
+    /// effects.
+    NotStarted,
+    /// The query started and passed its deadline: side effects, such as an
+    /// activation, may already have happened.
+    Abandoned,
 }
 
-/// The answer to a [`SupervisorToOutpost::Navigate`] or an
-/// [`SupervisorToOutpost::AncestorChain`] hop's single-node counterpart: a
-/// found node is distinguished from "no such neighbor" as a first-class
-/// outcome, never conflated with an error (a genuinely absent parent of a
-/// root node, or a list's last item asked for its next sibling, are not
-/// failures).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NavigateOutcome {
-    /// A node was found in that direction.
-    Found(verbatim_model::NodeSnapshot),
-    /// There is no neighbor in that direction (not an error).
-    NoNeighbor,
+/// What a finished query found.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a reply is built once and moved, never stored in bulk"
+)]
+pub enum QueryResult {
+    /// The answer to [`Query::FocusNow`].
+    Focus(FocusNow),
+    /// The answer to [`Query::Navigate`]: the neighbor, or `None` for a
+    /// genuine tree edge (not an error).
+    Navigated(Option<NodeSnapshot>),
+    /// The answer to [`Query::Activate`].
+    Activated,
+    /// The answer to [`Query::Ancestors`], outermost first.
+    Ancestors(Vec<NodeSnapshot>),
+    /// The answer to [`Query::DumpTree`].
+    Tree(DumpedTree),
+}
+
+/// The answer to [`Query::FocusNow`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FocusNow {
+    /// The application's top-level window and its facts, when it is the
+    /// system's foreground window.
+    pub window: Option<(NodeSnapshot, WindowFacts)>,
+    /// The focused control and its facts, when the application has one.
+    pub focus: Option<FocusedControl>,
+}
+
+/// The focused control in a [`FocusNow`] answer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FocusedControl {
+    /// The control.
+    pub node: NodeSnapshot,
+    /// Its ancestors, outermost first.
+    pub ancestors: Vec<NodeSnapshot>,
+    /// The selected child, for a selection container.
+    pub selected_child: Option<NodeSnapshot>,
+    /// Its window's facts.
+    pub window: Option<WindowFacts>,
 }
 
 /// Messages from an outpost to the Core-side supervisor.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum OutpostToSupervisor {
-    /// First message after startup or reconfiguration.
+    /// First message after startup.
     Ready {
         /// The outpost's own process id.
         outpost_pid: Pid,
@@ -353,67 +362,23 @@ pub enum OutpostToSupervisor {
         /// The event itself.
         event: NormalizedEvent,
     },
-    /// Answer to [`SupervisorToOutpost::Fetch`].
-    FetchReply {
-        /// Trace ID carried through from the fetch.
+    /// The one answer to a [`SupervisorToOutpost::Query`].
+    Reply {
+        /// Trace ID carried through from the query.
         trace_id: TraceId,
         /// The request this answers.
-        query_id: QueryId,
-        /// What the request asked for, echoed so the reducer needs no record
-        /// of it.
-        kind: QueryKind,
-        /// What was found.
-        result: FetchResult,
+        request_id: u64,
+        /// What became of it.
+        outcome: QueryOutcome,
     },
     /// Answer to [`SupervisorToOutpost::Ping`].
     Pong {
         /// The probed sequence number.
         seq: u64,
-        /// This outpost's current count of query-pool workers parked on
-        /// abandoned calls (recovery ladder rung 2's bounded garbage); the
-        /// supervisor watches this, alongside missed pongs, to detect a
-        /// wedged-but-alive outpost (recovery ladder rung 3).
+        /// How many of this outpost's workers have been abandoned to calls
+        /// that passed their deadline and have not yet returned; the
+        /// supervisor ends an outpost that piles them up.
         parked_count: usize,
-    },
-    /// Answer to [`SupervisorToOutpost::DumpTree`].
-    DumpTreeReply {
-        /// Trace ID carried through from the request.
-        trace_id: TraceId,
-        /// The request this answers.
-        request_id: u64,
-        /// `Ok` with the walked tree, or `Err` with a human-readable reason
-        /// the walk could not complete (no accessible top-level window, or
-        /// the query-pool deadline expired against a hung application).
-        result: Result<DumpedTree, String>,
-    },
-    /// Answer to [`SupervisorToOutpost::AncestorChain`].
-    AncestorChainReply {
-        /// Trace ID carried through from the request.
-        trace_id: TraceId,
-        /// `Ok` with the ancestor chain (outermost first, possibly empty for
-        /// a root node), or `Err` with a human-readable reason the walk
-        /// could not complete.
-        result: Result<Vec<verbatim_model::NodeSnapshot>, String>,
-    },
-    /// Answer to [`SupervisorToOutpost::Navigate`].
-    NavigateReply {
-        /// Trace ID carried through from the request.
-        trace_id: TraceId,
-        /// `Ok` with the navigation outcome (a found node, or a first-class
-        /// "no such neighbor"), or `Err` with a human-readable reason the
-        /// navigation could not complete.
-        result: Result<NavigateOutcome, String>,
-    },
-    /// Answer to [`SupervisorToOutpost::Activate`].
-    ActivateReply {
-        /// Trace ID carried through from the request.
-        trace_id: TraceId,
-        /// The request this answers.
-        request_id: u64,
-        /// `Ok(())` if the activation was invoked, or `Err` with a
-        /// human-readable reason it could not be (the node has no
-        /// activation action, or the call failed).
-        result: Result<(), String>,
     },
     /// A backend error worth reporting without dying — a failed event
     /// registration, an arbitration probe that keeps timing out.
@@ -444,21 +409,33 @@ impl OutpostToSupervisor {
     pub fn assign_outpost(&mut self, outpost: OutpostId) {
         match self {
             OutpostToSupervisor::Event { event, .. } => event.assign_outpost(outpost),
-            OutpostToSupervisor::FetchReply { result, .. } => result.assign_outpost(outpost),
-            OutpostToSupervisor::DumpTreeReply {
-                result: Ok(dumped), ..
-            } => dumped.root.assign_outpost(outpost),
-            OutpostToSupervisor::AncestorChainReply {
-                result: Ok(chain), ..
-            } => {
-                for node in chain {
-                    node.assign_outpost(outpost);
-                }
-            }
-            OutpostToSupervisor::NavigateReply {
-                result: Ok(NavigateOutcome::Found(node)),
+            OutpostToSupervisor::Reply {
+                outcome: QueryOutcome::Done(result),
                 ..
-            } => node.assign_outpost(outpost),
+            } => match result {
+                QueryResult::Focus(focus) => {
+                    if let Some((window, _)) = &mut focus.window {
+                        window.assign_outpost(outpost);
+                    }
+                    if let Some(control) = &mut focus.focus {
+                        control.node.assign_outpost(outpost);
+                        for ancestor in &mut control.ancestors {
+                            ancestor.assign_outpost(outpost);
+                        }
+                        if let Some(selected) = &mut control.selected_child {
+                            selected.assign_outpost(outpost);
+                        }
+                    }
+                }
+                QueryResult::Navigated(Some(node)) => node.assign_outpost(outpost),
+                QueryResult::Ancestors(chain) => {
+                    for node in chain {
+                        node.assign_outpost(outpost);
+                    }
+                }
+                QueryResult::Tree(dumped) => dumped.root.assign_outpost(outpost),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -578,9 +555,10 @@ mod tests {
                 selected_child: Some(snapshot(3)),
             },
         };
-        let mut chain = OutpostToSupervisor::AncestorChainReply {
+        let mut chain = OutpostToSupervisor::Reply {
             trace_id: TraceId::mint(),
-            result: Ok(vec![snapshot(4)]),
+            request_id: 1,
+            outcome: QueryOutcome::Done(QueryResult::Ancestors(vec![snapshot(4)])),
         };
         event.assign_outpost(OutpostId(7));
         chain.assign_outpost(OutpostId(7));
@@ -598,8 +576,9 @@ mod tests {
         else {
             panic!("still a focus event");
         };
-        let OutpostToSupervisor::AncestorChainReply {
-            result: Ok(chain), ..
+        let OutpostToSupervisor::Reply {
+            outcome: QueryOutcome::Done(QueryResult::Ancestors(chain)),
+            ..
         } = chain
         else {
             panic!("still an ancestor chain");
@@ -643,149 +622,6 @@ mod tests {
         let mut reader: &[u8] = b"not json\n";
         let result: io::Result<Option<SupervisorToOutpost>> = read_message(&mut reader);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn dump_tree_request_and_reply_round_trip() {
-        let request = SupervisorToOutpost::DumpTree {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &request).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_back: SupervisorToOutpost = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_back, request);
-
-        let success = OutpostToSupervisor::DumpTreeReply {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-            result: Ok(DumpedTree {
-                root: TreeNode {
-                    snapshot: NodeSnapshot {
-                        id: NodeId::new(1),
-                        backend: Backend::Uia,
-                        role: Role::Window,
-                        name: Some("Verbatim".into()),
-                        value: None,
-                        states: StateSet::new(),
-                        details: NodeDetails::default(),
-                    },
-                    children: Vec::new(),
-                },
-                truncated: true,
-            }),
-        };
-        let failure = OutpostToSupervisor::DumpTreeReply {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-            result: Err("no accessible top-level window".to_owned()),
-        };
-
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &success).expect("writes");
-        write_message(&mut buffer, &failure).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_success: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        let read_failure: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_success, success);
-        assert_eq!(read_failure, failure);
-    }
-
-    #[test]
-    fn ancestor_chain_request_and_reply_round_trip() {
-        let request = SupervisorToOutpost::AncestorChain {
-            trace_id: TraceId::mint(),
-            node_id: NodeId::new(7),
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &request).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_back: SupervisorToOutpost = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_back, request);
-
-        let ancestor = NodeSnapshot {
-            id: NodeId::new(1),
-            backend: Backend::Uia,
-            role: Role::Window,
-            name: Some("Verbatim".into()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        };
-        let success = OutpostToSupervisor::AncestorChainReply {
-            trace_id: TraceId::mint(),
-            result: Ok(vec![ancestor]),
-        };
-        let failure = OutpostToSupervisor::AncestorChainReply {
-            trace_id: TraceId::mint(),
-            result: Err("the node no longer exists".to_owned()),
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &success).expect("writes");
-        write_message(&mut buffer, &failure).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_success: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        let read_failure: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_success, success);
-        assert_eq!(read_failure, failure);
-    }
-
-    #[test]
-    fn navigate_request_and_reply_round_trip() {
-        let request = SupervisorToOutpost::Navigate {
-            trace_id: TraceId::mint(),
-            node_id: NodeId::new(3),
-            direction: NavigateDirection::NextSibling,
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &request).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_back: SupervisorToOutpost = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_back, request);
-
-        let found = OutpostToSupervisor::NavigateReply {
-            trace_id: TraceId::mint(),
-            result: Ok(NavigateOutcome::Found(NodeSnapshot {
-                id: NodeId::new(4),
-                backend: Backend::Msaa,
-                role: Role::Button,
-                name: Some("OK".into()),
-                value: None,
-                states: StateSet::new(),
-                details: NodeDetails::default(),
-            })),
-        };
-        let no_neighbor = OutpostToSupervisor::NavigateReply {
-            trace_id: TraceId::mint(),
-            result: Ok(NavigateOutcome::NoNeighbor),
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &found).expect("writes");
-        write_message(&mut buffer, &no_neighbor).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_found: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        let read_no_neighbor: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_found, found);
-        assert_eq!(read_no_neighbor, no_neighbor);
     }
 
     #[test]
@@ -886,41 +722,90 @@ mod tests {
     }
 
     #[test]
-    fn activate_request_and_reply_round_trip() {
-        let request = SupervisorToOutpost::Activate {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-            node_id: NodeId::new(9),
+    fn queries_and_every_outcome_round_trip() {
+        let node = NodeSnapshot {
+            id: NodeId::new(9),
+            backend: Backend::Uia,
+            role: Role::Window,
+            name: Some("Verbatim".into()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
         };
         let mut buffer = Vec::new();
-        write_message(&mut buffer, &request).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_back: SupervisorToOutpost = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_back, request);
+        let queries = [
+            Query::FocusNow,
+            Query::Navigate {
+                node_id: NodeId::new(9),
+                kind: QueryKind::NextSibling,
+            },
+            Query::Activate {
+                node_id: NodeId::new(9),
+            },
+            Query::Ancestors {
+                node_id: NodeId::new(9),
+            },
+            Query::DumpTree,
+        ];
+        let commands: Vec<SupervisorToOutpost> = queries
+            .into_iter()
+            .map(|query| SupervisorToOutpost::Query {
+                trace_id: TraceId::mint(),
+                request_id: 3,
+                query,
+            })
+            .chain([SupervisorToOutpost::Cancel { request_id: 3 }])
+            .collect();
+        for command in &commands {
+            write_message(&mut buffer, command).expect("writes");
+        }
+        let outcomes = [
+            QueryOutcome::Done(QueryResult::Focus(FocusNow {
+                window: None,
+                focus: Some(FocusedControl {
+                    node: node.clone(),
+                    ancestors: Vec::new(),
+                    selected_child: None,
+                    window: None,
+                }),
+            })),
+            QueryOutcome::Done(QueryResult::Navigated(None)),
+            QueryOutcome::Done(QueryResult::Tree(DumpedTree {
+                root: TreeNode {
+                    snapshot: node,
+                    children: Vec::new(),
+                },
+                truncated: true,
+            })),
+            QueryOutcome::Gone,
+            QueryOutcome::Failed("no activation pattern".to_owned()),
+            QueryOutcome::NotStarted,
+            QueryOutcome::Abandoned,
+        ];
+        let replies: Vec<OutpostToSupervisor> = outcomes
+            .into_iter()
+            .map(|outcome| OutpostToSupervisor::Reply {
+                trace_id: TraceId::mint(),
+                request_id: 3,
+                outcome,
+            })
+            .collect();
+        for reply in &replies {
+            write_message(&mut buffer, reply).expect("writes");
+        }
 
-        let success = OutpostToSupervisor::ActivateReply {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-            result: Ok(()),
-        };
-        let failure = OutpostToSupervisor::ActivateReply {
-            trace_id: TraceId::mint(),
-            request_id: 1,
-            result: Err("element exposes no activation pattern".to_owned()),
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &success).expect("writes");
-        write_message(&mut buffer, &failure).expect("writes");
         let mut reader = buffer.as_slice();
-        let read_success: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        let read_failure: OutpostToSupervisor = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_success, success);
-        assert_eq!(read_failure, failure);
+        for command in &commands {
+            let read: SupervisorToOutpost = read_message(&mut reader)
+                .expect("reads")
+                .expect("not end of stream");
+            assert_eq!(&read, command);
+        }
+        for reply in &replies {
+            let read: OutpostToSupervisor = read_message(&mut reader)
+                .expect("reads")
+                .expect("not end of stream");
+            assert_eq!(&read, reply);
+        }
     }
 }

@@ -23,121 +23,92 @@ captured focus fact to Core. The supervisor routes every fact to the target
 application's own outpost, which acquires, arbitrates, enriches, and
 announces it exactly as it does for the events it still hooks itself. Node
 identity never crosses a process: the listener forwards a UIA runtime id,
-and the receiving outpost mints the `NodeId` from it. The announce poll
-(`AnnounceFocus`/`run_announce`) demotes to a fallback for the listener's
-own respawn gap and for a window that exists before it has a readable name.
+and the receiving outpost mints the `NodeId` from it. There is no announce
+poll: at startup, and after an outpost or the listener is replaced, Core
+asks the application for its current focus with a single focus-now query.
 
 Public API:
 
 - `protocol` — the wire vocabulary the supervisor and each outpost speak.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
-  window of the target, or restores normal arbitration — the old
-  `Configure`'s backend-override half), `AnnounceFocus` (the announce-poll
-  fallback, decision D13; a synthetic top-level-window-then-focused-control
-  announcement, still used for the supervisor's startup target and to
-  re-announce across a listener respawn), `DeliverFact` (a focus fact the
-  listener captured, routed to this outpost — a UIA focus element's cached
-  snapshot parts, an MSAA focus or menu-popup address, or a foreground
-  window — carrying the listener's own trace id and observation timestamp so
-  the latency timeline starts at the OS event), `Fetch`, `Ping`, `DumpTree`
-  (walk the target's tree from its top-level window), `AncestorChain` (the
-  chain of ancestors of a node, outermost first, as `NodeSnapshot`s, capped
-  at 64 hops), `Navigate` (one step from a node — parent, next or previous
-  sibling, or first child, the protocol's own `NavigateDirection`),
-  `Activate` (invoke the node's activation action). There is no shutdown
-  message: Core ends a child by closing its job handle.
-  `OutpostToSupervisor`: `Ready`, `Event` (trace id, observation timestamp,
-  backend, the event window's `WindowFacts`, normalized event), `FetchReply`
-  (echoing the query's kind), `Pong` (echoes
-  the ping's sequence number and reports the outpost's current `QueryPool`
-  parked-thread count — recovery ladder rung 2's bounded garbage — so the
-  supervisor's heartbeat can judge rung 3's wedge-kill decision from the same
-  message that proves the outpost is still answering at all), `DumpTreeReply`
-  (a `DumpedTree` — the root `verbatim_model::TreeNode` plus whether the walk
-  was truncated — or a human-readable failure reason), `AncestorChainReply`,
-  `NavigateReply` (whose success payload is a `NavigateOutcome`: a found
-  snapshot, or a first-class `NoNeighbor` distinct from an error — a root's
-  missing parent is not a failure), `ActivateReply`, `Fault`, `FocusFact`
-  (sent only by the listener: a `ListenerFact` — the pid to route to plus the
-  captured address — with the trace id and timestamp the listener stamped at
-  observation). A `ListenerFact` strips to a pid-less `DeliveredFact` once
-  the supervisor has routed it. The three M3 query
-  pairs are deliberately outpost-protocol-only rather than carried by the
-  reducer-facing `Fetch`, which answers object-navigation steps only; each
-  needs input `Query`'s node-id-only shape does not carry. Node ids arrive
-  from Core stamped with this outpost's id; the outpost looks them up with
-  the stamp cleared (`NodeId::unstamped`). `OutpostToSupervisor::assign_outpost`
-  is the stamp Core applies to every node id in a message. Framing is
-  newline-delimited compact JSON via `write_message` and `read_message`.
-- `Arbitrator` — NVDA's per-window backend decision:
-  `resolve_with(hwnd, class, probe)` walks the ladder (good class list, bad
-  class list, then the injected probe), caches verdicts per window handle
-  for 500 ms, and supports a forced override from `SetBackendOverride`.
-  The probe is a closure so tests fake it. Both class lists are lifted
-  from NVDA and pinned by unit tests naming their exact NVDA source
+  window of the target, or restores normal arbitration), `DeliverFact` (a
+  focus fact the listener captured, routed to this outpost — a UIA focus
+  element's cached snapshot parts, an MSAA focus or menu-popup address, or a
+  foreground window — carrying the listener's own trace id and observation
+  timestamp so the latency timeline starts at the OS event), `Query` (a
+  request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
+  `Activate`, `Ancestors`, or `DumpTree`), `Cancel` (withdraws a query that
+  has not started), and `Ping`. There is no shutdown message: Core ends a
+  child by closing its job handle. `OutpostToSupervisor`: `Ready`, `Event`
+  (trace id, observation timestamp, backend, the event window's
+  `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
+  echoing its request id, with a `QueryOutcome`: `Done` with a
+  `QueryResult`, `Gone` when the node is no longer reachable, `Failed` with
+  a reason, `NotStarted` when it was withdrawn before it ran, or `Abandoned`
+  when it started and passed its deadline, so side effects such as an
+  activation may already have happened), `Pong` (echoes the ping's sequence
+  number and reports how many abandoned workers have not yet returned, which
+  the supervisor watches), `Fault`, and `FocusFact` (sent only by the
+  listener). A `FocusNow` answer carries the application's foreground
+  window and its facts, when it holds the system foreground, and its focused
+  control with ancestors, selected child, and window facts. A
+  `ListenerFact` strips to a pid-less `DeliveredFact` once the supervisor
+  has routed it. Node ids arrive from Core stamped with this outpost's id;
+  the outpost looks them up with the stamp cleared (`NodeId::unstamped`).
+  `OutpostToSupervisor::assign_outpost` is the stamp Core applies to every
+  node id in a message. Framing is newline-delimited compact JSON via
+  `write_message` and `read_message`.
+- `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
+  `verdict(hwnd, class)` answers from the good class list, the bad class
+  list, a forced override from `SetBackendOverride`, or a kept probe result,
+  and `None` when only the `UiaHasServerSideProvider` probe can decide; the
+  worker then probes and calls `record_probe`. A probed verdict is kept for
+  the window's lifetime and dropped by `forget` when the window is destroyed,
+  as decision D15 specifies; NVDA's 500 ms cache throttles a check it makes on
+  every event and is not there because answers go stale. Both class lists are
+  lifted from NVDA and pinned by unit tests naming their exact NVDA source
   locations, so a future NVDA sync is a diff of two lists: the bad list is
-  `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and
-  the good list concatenates `goodUIAWindowClassNames` from the same file
-  with the Windows 11 shell tuple from the Explorer app module's
-  `isGoodUIAWindow` (`nvda/source/appModules/explorer.py`): taskbar,
-  input switcher, Task View and snap layouts, and the systray overflow —
-  the roadmap's shell window-classification rules as generic policy.
-- `QueryPool` — the deadline-guarded workers. Every cross-process call carries
-  a deadline (the founding rule of architecture section 1), request/response or
-  fire-and-forget: `run(deadline, work)` blocks the caller up to the deadline
-  and abandons the call on expiry (the worker stays parked, a counter
-  increments, and a replacement spawns — recovery ladder rung two, since a
-  thread blocked in a hung app's COM call cannot be safely killed);
-  `submit_deadline(deadline, work)` is fire-and-forget whose result nobody
-  awaits, but a single watchdog thread tracks each job's deadline and applies
-  the identical abandonment on expiry (park the worker, spawn a replacement,
-  same warning). The old unbounded `submit` is gone: it let one hung
-  acquisition block a worker forever *without* bumping the parked count, so the
-  wedge policy was blind to it and every replacement a later `run` timeout
-  spawned immediately picked the next hung job off the shared backlog — the
-  pool poisoned itself to zero capacity and every announcement silently failed.
-  Workers lazily own their own `Uia` client.
-- `Outpost`, `run_pipe`, `run_attach` — the per-application runtime.
-  `Outpost::new(writer, target_pid)` installs the process-scoped property,
-  value, state, and selection subscriptions (`APP_SUBSCRIPTIONS`) for the
-  fixed pid and announces `Ready` — but no focus registration and no focus
-  or menu-popup hooks, which are the listener's now (decision D13); focus
-  arrives instead as a `DeliverFact`, enqueued onto a per-outpost **announce
-  lane** — one long-lived thread (spawned in `Outpost::new`) draining a FIFO of
-  jobs, running each to completion before the next, so announcements emit in
-  arrival order, which is the listener's observation order (the pipe and the
-  supervisor's newest-wins flush preserve it). A foreground fact enqueues the
-  window job; MSAA-focus, menu, and UIA-focus facts enqueue their
-  `run_msaa_fact`/`run_uia_fact` bodies. The jobs still do their blocking work
-  on the deadline-guarded query pool; only their sequencing is serialized. This
-  is what guarantees NVDA's window-then-focus order: the window announcement is
-  spoken before the control it precedes rather than racing it on a separate
-  thread (the failure three of three cold presses showed). The window job (`window_announce_job`)
-  reads the window once and reports it as a foreground change at once, named
-  or not, since the foreground change is what moves the reducer's attention;
-  the reducer does not speak a nameless foreground window, and nothing
-  announces the window later. The job, and the `AnnounceFocus` window step,
-  drop the report if the window is no longer the system's foreground window
-  when it is ready to send (`window_is_foreground`). The announce generation still aborts a superseded
-  window job. The `AnnounceFocus` poll fallback (`run_announce`) keeps its own
-  thread, off the lane.
-  The one difference from a self-hooked event is arbitration: a fact resolves a
-  *real* verdict inline (`resolve_fact_verdict` — a cached verdict, else a
-  `has_server_side_provider` probe on the deadline-guarded pool), because a lane
-  job is allowed to block where an event-thread callback is not. So exactly one
-  backend announces every fact deterministically — a UIA window's UIA fact
-  delivers and its MSAA fact drops, an MSAA window's the reverse — with no
-  cold-case duplicate and no provisional announcement from a genuinely UIA
-  window. The first-ever fact for a window pays one probe (bounded by the query
-  deadline) before announcing; only a probe that times out falls back to the
-  old provisional behavior (the MSAA fact proceeds, the UIA fact drops), so a
-  hung window degrades to that contract rather than silence. `run_pipe` is the
-  production mode
-  over inherited pipe handles; `run_attach` watches a pid directly, immediately
-  announces its focus by poll, and prints outbound messages as JSON lines to
-  stdout, the standalone dev mode. The live pid-scoped hooks (value, state,
-  name, selection) keep the non-blocking provisional cross-filter on the event
-  thread, where blocking is still forbidden.
+  `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and the
+  good list concatenates `goodUIAWindowClassNames` from the same file with the
+  Windows 11 shell tuple from the Explorer app module's `isGoodUIAWindow`
+  (`nvda/source/appModules/explorer.py`).
+- `Outpost`, `run_pipe`, `run_attach` — the per-application outpost (the
+  `outpost` module; outpost redesign, "Inside an outpost"). Its parts:
+  - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
+    value, state, name, selection, menu end, and destroy, for the fixed pid),
+    the UIA property, selection, and notification callbacks, and the reader's
+    routed facts and queries only add an entry to the queue and return. A
+    UIA callback captures the element's cached parts, its cached window
+    handle, and an agile reference; it never calls into the application.
+  - The queue applies NVDA's limiter rules: one waiting entry per object and
+    kind, a newer one replacing it and moving to the back; a batch is
+    everything that accumulated while the worker handled the previous one;
+    per batch the newest 4 focus events and the newest 10 other events per
+    application UI thread are kept, the focused object's events always;
+    events from a window the system reports hung (`IsHungAppWindow`) are
+    dropped before any read; and within a batch only the newest foreground
+    change and the newest focus are handled, with the newest menu opening
+    last.
+  - The worker (`outpost::worker`): one thread takes entries in order and
+    finishes each before the next. It is the only thread that calls into the
+    application, so events and replies leave in the order their entries
+    joined the queue. It replaces the announce lane, the query pool, the
+    announce poll, the probe threads, and the late window retry.
+  - The watchdog abandons a worker whose call passes its deadline (an event
+    400 ms, a focus 1.5 s, a navigation or activation 400 ms, a focus-now
+    query 2 s, an ancestor walk or tree dump 5 s), answers the stuck query
+    `Abandoned`, and starts a replacement that continues with the queue. An
+    abandoned worker that returns publishes nothing, since publishing checks
+    under the watchdog's lock that the worker is still in charge, lowers the
+    abandoned count, and exits.
+  - The reader (`Outpost::handle_command`, driven by `run_pipe`) answers
+    pings itself, withdraws a cancelled query that has not started with a
+    `NotStarted` reply, and queues everything else.
+  - The writer (`outpost::outbound`) sends pongs and `Ready` ahead of
+    ordinary messages, which wait in a bounded queue.
+  `run_pipe` is the production mode over inherited pipe handles; `run_attach`
+  watches a pid directly, asks for its focus, and prints outbound messages as
+  JSON lines to stdout, the standalone dev mode.
 - `run_listener` — the focus-listener runtime (decision D13): sets up the
   outbound writer, announces `Ready`, installs the desktop-global
   `FocusRegistration` and the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`,
@@ -151,13 +122,13 @@ Public API:
   starts the focus listener at once; `ensure_spawned(pid)` starts an outpost
   without asking it to report anything (used once, at Core startup, for
   Core's own pid, so its outpost is warm before the first gesture);
-  `announce(pid)` asks an application's outpost for the announce poll,
-  starting it if needed (the startup foreground application);
   `send_to_outpost(outpost_id, command)` queues a command for one outpost
   incarnation without waiting, failing at once with a `QueueError` when that
   incarnation has ended or its queue is full; and `note_views(attention,
   holding)` passes the views the app derives from the reducer state. The
-  app hears of each incarnation through `OutpostMessage`: `Started` before
+  app hears that the listener was replaced through
+  `OutpostMessage::ListenerReplaced`, and of each incarnation through
+  `OutpostMessage`: `Started` before
   any of its messages, `Event(pid, outpost_id, message)` for each message,
   and `Ended` with a reason (exited, killed, or retired).
   - The lifecycle owner (`owner`) is one thread that makes every lifecycle
@@ -222,10 +193,7 @@ Implementation notes:
   instruction. Core holds the only job handle, so kernel teardown of Core,
   however it dies, kills every outpost. A per-application outpost's command
   line carries `--target-pid`, fixing the watched application for its whole
-  life; the listener's carries `--listener` and no pid. `spawn` itself no
-  longer writes an `AnnounceFocus` (decision D13): a fact-routing spawn wants
-  the fact to do the announcing, and the two callers that still want the poll
-  — the startup target and a listener-respawn recovery — write it themselves.
+  life; the listener's carries `--listener` and no pid.
   Each child is spawned with `STARTF_USESTDHANDLES` and an inheritable,
   append-mode file handle as its standard error (and output), so the outpost's
   and listener's own `tracing` output — which otherwise had no subscriber and
@@ -235,43 +203,29 @@ Implementation notes:
   harness fetches these logs alongside the timeline and stderr, so a silent
   outpost is readable after the fact instead of theorized. Best-effort: a
   failed log open leaves the child unredirected, never unspawned.
-- Foreground announcements (`AnnounceFocus`, `run_announce`, the announce-poll
-  fallback): the outpost announces the top-level foreground window, then the
-  focused control, both sharing one retry budget — up to ten attempts across
-  roughly five seconds. The window step stops retrying once it
-  succeeds (or is deliberately skipped, when every top-level window is
-  Core's own hidden frame); the control step keeps going until it succeeds
-  or the attempts run out. A single deadline-guarded attempt for the window
-  step was tried first, reasoned as safe because Windows raises the
-  foreground event only once the application's top-level window already
-  exists — true in the common case, but live testing against the VM under
-  load found `EnumWindows` and `GetForegroundWindow` can still race a
-  window's own creation closely enough to miss it on the very first
-  attempt, losing the window announcement outright with no later chance to
-  recover it; the window step now retries for exactly that reason. It
-  reads the window's own accessible object specifically: UIA via
-  `element_from_handle`, MSAA via a direct `OBJID_WINDOW` query (not
-  `OBJID_CLIENT`, which is what `DumpTree`'s walk starts from and which
-  reads back as role "client", unmapped to anything nameable — confirmed
-  live against Windows 11 Notepad, whose window announcement read "Untitled
-  - Notepad, unknown" until this was fixed). The window itself is located
-  by `GetForegroundWindow`, deliberately not `GetGUIThreadInfo`'s
-  `hwndFocus`: the latter can legitimately name a non-top-level descendant
-  that still belongs to the target process (Windows 11 Notepad hosts its
-  text area in its own child `hwnd` distinct from the frame), which made an
-  earlier version of this code read the edit control's own snapshot instead
-  of the window's. The control step's retries answer a different race —
-  the second focus-timing race `docs/roadmap.md`'s M2 section names, the
-  announce poll and this query racing the target process's own control
-  creation — using `GetGUIThreadInfo`'s `hwndFocus` specifically,
-  since that question ("what control is focused") is genuinely different
-  from "what is the top-level window". The whole loop runs off the command
-  loop on its own thread so `Ping` and `Fetch` stay responsive during the
-  retry window; a per-outpost generation counter, bumped on every
-  `AnnounceFocus`, is compared before every attempt and before every
-  emission, so a superseding announce (a rapid re-foreground, or several in
-  Notepad's own bursty startup events) aborts a stale retry loop rather
-  than letting it starve real event acquisition or emit late.
+- Foreground changes (the worker): a foreground fact is reported at once,
+  named or not, as a focus on the window, since the foreground change is what
+  moves the reducer's attention; the reducer does not speak a nameless
+  foreground window, and nothing announces it later. The window's own
+  accessible object is read: UIA via `element_from_handle`, MSAA via the
+  `OBJID_WINDOW` object (not `OBJID_CLIENT`, which reads back as role
+  "client" — confirmed live against Windows 11 Notepad, whose window
+  announcement read "Untitled - Notepad, unknown" until this was fixed). A
+  window whose accessible object cannot be read yet (a freshly created
+  msinfo32 window, found live) is reported from local window data, and a
+  window whose accessible name is still empty takes its window text
+  (`InternalGetWindowText`, which never sends the window a message). A
+  report whose window is no longer the system's foreground window when it is
+  ready to send is dropped, as NVDA's `processForegroundWinEvent` drops it.
+- Focus-now (the worker): the answer to Core's focus-now query is the
+  target's foreground window, when it holds the system foreground
+  (`GetForegroundWindow`, never `GetGUIThreadInfo`'s `hwndFocus`, which can
+  name a child window such as Windows 11 Notepad's text area), and its
+  focused control (`hwndFocus`, through that window's backend) with its
+  ancestors and selected child. There are no retries: a nameless window is
+  not announced later, a control that takes focus later raises its own focus
+  event, and the query covers focus that settled before the listener
+  existed.
 - Hidden-frame suppression (decision D9): Core's hidden 1x1 main frame is
   marked with the `verbatim_model::HIDDEN_FRAME_WINDOW_PROP` window
   property by `verbatim-gui` (see that crate's section) and must never be
@@ -283,16 +237,10 @@ Implementation notes:
   path (scoped to `id_child == verbatim_ia2::CHILDID_SELF`, re-exported
   from that crate's `com` module for exactly this check, so a child
   element's event on some unrelated window is never accidentally
-  suppressed by hwnd coincidence), the UIA focus callback (reusing the
-  window handle the arbitration filter already resolved, rather than
-  resolving it twice), and the synthetic focus query (`focused_snapshot`
-  treats the hidden frame as "nothing focused", so a caller retrying on
-  `None` naturally retries past it). The top-level-window announcement's
-  own window search additionally skips hidden-frame windows when choosing
-  among a process's top-level windows, so resolution lands on a real window
-  (a popup menu, a dialog) instead. The fact-announce paths
-  (`run_uia_fact`, `run_msaa_fact`, the window job) use a stricter check that
-  also walks to the window's top-level ancestor (`GetAncestor` `GA_ROOT`,
+  suppressed by hwnd coincidence), the UIA focus path, and the focus-now
+  query (`focused_control` treats the hidden frame as "nothing focused").
+  The foreground and focus-now window choices skip hidden-frame windows. The
+  checks also walk to the window's top-level ancestor (`GetAncestor` `GA_ROOT`,
   another hang-safe local read): the marker property sits on the frame window
   only, so a control that lives in its own child `hwnd` inside the frame — a
   wxWidgets panel has one — is not caught by reading the marker on that child
@@ -305,89 +253,56 @@ Implementation notes:
   at roughly two seconds; the tap satisfies the heuristic directly, cutting
   that to roughly 150 to 450 ms. `VK_MENU` was tried and rejected — a lone
   Alt press activates menu bars and bounces foreground straight back.
-- Event flow (runtime): the event thread hosts the WinEvent hooks,
+- Event flow (the worker): the event thread hosts the WinEvent hooks,
   installed once for the fixed target pid before the message loop starts
   (never rebound — a second live `WINEVENT_OUTOFCONTEXT` hook set on a
   thread that already has one has been observed to permanently kill
-  WinEvent delivery on that thread for the rest of the process, which decision
-  D9's one-pid-per-outpost-for-life design sidesteps entirely rather than
-  risking); UIA registration lives on its own thread; both funnel through
-  the cross-filter so exactly one backend survives per window. Because
-  every Win32 and wx control is its own window handle, per-window
+  WinEvent delivery on that thread for the rest of the process, which
+  decision D9's one-pid-per-outpost-for-life design sidesteps). Every event
+  is arbitrated per window so exactly one backend reports it: an MSAA event
+  for a UIA window is dropped, and a UIA event for an MSAA window. An MSAA
+  event's window is exact; a UIA element that is not a window itself is
+  attributed to its window by `nearest_window_handle` (NVDA's
+  `getNearestWindowHandle`), on the worker, since it is a cross-process call.
+  Because every Win32 and wx control is its own window handle, per-window
   arbitration is per-control there, while a WinUI top level resolves once
   for its whole subtree. Trace IDs are minted when the OS event first
-  arrives, and each event carries its observation timestamp for the
-  latency ledger and `WindowFacts` for the window it concerns (`window_facts`:
+  arrives, and each event carries its observation timestamp for the latency
+  ledger and `WindowFacts` for the window it concerns (`window_facts`:
   top-level window and root owner from `GetAncestor`, the topmost extended
   style on the window or its top-level window, and for `Windows.UI.Core`
   windows whether `GetGUIThreadInfo`'s active window is it or contains it),
-  all local calls safe on a callback thread.
-  - MSAA side (`handle_msaa_event`): the event's own hwnd is exact — MSAA
-    events always carry the real window, never an inferred one — so the
-    filter just arbitrates it directly. A UIA verdict drops the MSAA event;
-    a non-UIA verdict or no verdict yet delivers it, scheduling a probe in
-    the no-verdict case. Delivering on an unresolved verdict is what makes
-    dropping safe on the UIA side below: MSAA is the backend of record
-    whenever arbitration has not yet decided.
-  - UIA side (`resolve_window_and_filter`): most elements that raise UIA events are
-    not windows themselves — a menu item or a list item is a descendant of
-    one — so the cached native window handle is usually 0. Attribution
-    resolves the window in three tiers: the cached handle when the element
-    is itself a window, otherwise `verbatim_uia::nearest_window_handle`
-    (NVDA's `getNearestWindowHandle`, one cross-process call that walks up
-    to the nearest ancestor with a real handle), and only if that itself
-    fails, the window holding keyboard focus as a last resort; finding no
-    window at all keeps the event, since there is nothing to arbitrate on.
-    Once a window is attributed, a UIA verdict delivers, a non-UIA verdict
-    drops, and no verdict yet drops while scheduling a probe — symmetric
-    with the MSAA side's delivery in that case, because the MSAA hook for
-    the same logical element carries the event instead. This replaced an
-    M1 heuristic that used the keyboard-focus window unconditionally, which
-    is wrong for a popup menu: a popup never takes keyboard focus, so the
-    heuristic found the menu's *owner* window while the MSAA event for the
-    same menu item carried the popup window itself, and the two backends
-    could both defer on their two different windows, losing the
-    announcement entirely (found by the M2 E2E suite against the VM). The
-    heuristic's compensation was to keep every event on an unresolved
-    verdict rather than risk that silence, at the cost of occasional
-    duplicate announcements. `nearest_window_handle` resolves a popup menu
-    item straight to the popup window itself — the same window the MSAA
-    event for that item carries — so both backends now arbitrate on one
-    shared hwnd and the compensation is no longer needed.
-- `DumpTree` (runtime): answered on a query-pool thread guarded by a five
-  second deadline (`QueryPool::run`), the same pattern the foreground
-  announcement's queries use, so a hung target abandons the call rather
-  than wedging the outpost. Finds the target's currently active top-level
-  window the same way the announcement's window step does (`GetForegroundWindow`,
-  falling back to its first non-hidden-frame top-level window), arbitrates
-  its backend, then walks it: UIA via `Uia::walk_tree`, a raw-view
-  `IUIAutomationTreeWalker` driven with the same cache request as every
-  other UIA read, so no step of the walk blocks on an uncached property;
-  MSAA via `verbatim_ia2::acquire::walk_tree` (rooted at `OBJID_CLIENT`,
-  unlike the window announcement's `OBJID_WINDOW` query — a tree dump wants
-  the client subtree, not the window's own accessible object), recursing
-  through `AccessibleChildren` since this backend has no cache requests to
-  prefetch with. Both walkers share the same caps — depth 64, node count
-  4096 across the whole walk — and report whether either cap cut the walk
-  short.
-- `AncestorChain`, `Navigate`, and `Activate` (runtime): each answered on
-  a deadline-guarded query-pool thread exactly like `DumpTree`
-  (`AncestorChain` shares its five-second deadline, since it chains up to
-  64 per-hop round trips; `Navigate` and `Activate` use the standard
-  single-query deadline), dispatched to whichever backend's registry knows
-  the node id — the same dispatch a `Fetch` re-read uses. UIA hops go
-  through the raw-view tree walker with the base cache request; MSAA
-  through `accParent`, `accNavigate`, and `accDoDefaultAction`.
-- Selection and notification events (runtime): the outpost installs
-  `verbatim-uia`'s `SelectionRegistration` and `NotificationRegistration`
-  alongside the focus and property registrations, and the MSAA hook set
-  includes the four selection WinEvents. Both backends' selection events
-  emit `NormalizedEvent::SelectionChanged` (the selected node's full
-  snapshot) and UIA notifications emit `NormalizedEvent::Notification`,
-  all through the same per-window arbitration cross-filter as every other
-  event. The reducer announces both since M3: selection changes under a
-  focused selection container, and notification display strings at the
-  priority their processing hint implies ([verbatim-core](verbatim-core.md)).
+  all local calls.
+- A UIA focus fact is resolved with one `focused_element` call compared
+  against the fact's runtime id. A mismatch means focus has already moved
+  and the newer fact will arrive, so the stale one is dropped; there is no
+  runtime-id search. The element in hand serves the window, the ancestors,
+  and the selected child. An MSAA focus fact is read with NVDA's
+  child-0-on-a-list redirect (`snapshot_from_focus_event`).
+- Menus (the worker), following NVDA's MSAA handler: within a batch, focus
+  and foreground events are handled first and the menu opening last. If a
+  focus in the batch already put focus on a menu or menu item, the menu
+  opening is ignored; if its object is not a popup menu, it is ignored;
+  otherwise it becomes a focus on the popup menu, so the reducer never
+  receives a separate menu event. When a menu closes (`EVENT_SYSTEM_MENUEND`
+  or `EVENT_SYSTEM_MENUPOPUPEND`) and no focus event follows within 50
+  milliseconds, the worker reads the real focus and reports it; a timer
+  thread queues that check, so the worker never sleeps.
+- Window destruction: an `EVENT_OBJECT_DESTROY` for a window drops its kept
+  arbitration verdict, so a reused handle is probed afresh.
+- Queries (the worker): `DumpTree` walks the target's foreground window (or
+  its first visible top-level window) through its backend — UIA via
+  `Uia::walk_tree` with the base cache request, MSAA via
+  `verbatim_ia2::acquire::walk_tree` from `OBJID_CLIENT` — capped at depth 64
+  and 4096 nodes, reporting whether a cap cut it short. `Ancestors`,
+  `Navigate`, and `Activate` dispatch to whichever registry issued the node:
+  UIA hops through the raw-view tree walker with the base cache request, MSAA
+  through `accParent`, `accNavigate`, and `accDoDefaultAction`. A node no
+  registry knows, or one that can no longer be reached, answers `Gone`.
+- Selection and notification events: both backends' selection events emit
+  `NormalizedEvent::SelectionChanged` (the selected node's full snapshot)
+  and UIA notifications emit `NormalizedEvent::Notification`. The reducer
+  announces both ([verbatim-core](verbatim-core.md)).
 - `OutpostMessage::Event` boxes its `OutpostToSupervisor` payload: the M3
   replies grew the message enum well past the lifecycle notices, and boxing
   keeps every channel send small.

@@ -26,18 +26,17 @@ in order:
    thread; facts arriving before its `Ready` are held in arrival order,
    one per object and kind, then released in that order (`route_fact`,
    `HeldFacts`). Facts reach the outpost through its writer thread.
-4. **The outpost announces on its lane.** The per-app outpost enqueues
-   the fact onto its single announce lane (a FIFO thread), which is
-   what guarantees window-before-control ordering. The lane job
-   resolves a real backend verdict for the window
-   (`resolve_fact_verdict`: cached, else a server-side-provider probe
-   on the deadline-guarded `QueryPool`), so exactly one backend's fact
-   announces. It acquires the node, walks its ancestor chain, and
-   emits an `Event` (trace id, timestamp, backend, window facts,
-   normalized event) back up the pipe; a foreground change arrives as a
-   focus on the window. Every cross-process call inside
-   this runs under a `QueryPool` deadline; a hang parks the worker and
-   spawns a replacement (recovery ladder rung 2).
+4. **The outpost's worker handles it.** The per-app outpost queues the
+   fact on its intake queue, with NVDA's limiter rules; its single worker
+   takes entries in order, so a foreground change is reported before the
+   control behind it. The worker decides the window's backend (a kept
+   verdict, else a server-side-provider probe), so exactly one backend
+   reports, acquires the node (a UIA focus is resolved with one
+   `focused_element` call), walks its ancestor chain, and emits an `Event`
+   (trace id, timestamp, backend, window facts, normalized event) back up
+   the pipe; a foreground change arrives as a focus on the window. Every
+   call runs under the watchdog's deadline; a hang abandons the worker and
+   a replacement continues with the queue (recovery ladder rung 2).
 5. **The reducer decides what to say.** Core feeds the event into the
    pure `reduce` in `verbatim-core`: acceptance against the attention
    record (a foreground change moves it), NVDA's window rules,
@@ -51,12 +50,12 @@ in order:
    emits `audio_started` with the same trace id — closing the latency
    timeline that began at step 2's observation timestamp.
 
-Failure paths to know: a hung app degrades to the provisional
-announce contract (MSAA proceeds, UIA drops) after one probe timeout;
-a wedged outpost is ended by the heartbeat (`wedge_decision`, rung 3)
+Failure paths to know: events from a window the system reports hung are
+dropped unread, and a call that hangs past its deadline abandons the
+worker, which a replacement takes over from; a wedged outpost is ended by the heartbeat (`wedge_decision`, rung 3)
 and replaced if its application holds attention; the listener crashing
 is replaced at once and the attention application is asked to report
-again (`AnnounceFocus`) to cover the gap.
+again with a focus-now query to cover the gap.
 
 ## 2. The life of a command keystroke
 

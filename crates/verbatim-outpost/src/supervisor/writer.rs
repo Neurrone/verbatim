@@ -194,9 +194,10 @@ mod tests {
     }
 
     fn query() -> Outgoing {
-        Outgoing::Other(SupervisorToOutpost::DumpTree {
+        Outgoing::Other(SupervisorToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: 1,
+            query: crate::protocol::Query::DumpTree,
         })
     }
 

@@ -49,13 +49,20 @@ knowing for review:
   is full.
 - `requests::RequestTable` — the single owner of "exactly one outcome per
   query" (outpost redesign, "The app shell"). Every query sent to an
-  outpost (a navigation `Fetch`, an `Activate`, a tree dump) is recorded
-  with a fresh `RequestId` and the outpost incarnation it went to; on the
-  wire the request id travels as the fetch's query id or the message's
-  `request_id`, and the reply echoes it. The first outcome removes the
+  outpost (a navigation step, an activation, a tree dump, a focus-now
+  query) is recorded with a fresh `RequestId` and the outpost incarnation it
+  went to, and sent as a `Query` carrying that id; the outpost's one `Reply`
+  echoes it with one of five outcomes. The first outcome removes the
   entry and goes to the asker: a navigation outcome re-enters the reducer
   as `Input::FetchCompleted` under the reducer's own query id, an
-  activation's is logged, and a tree dump's is sent on its reply channel.
+  activation's is logged, a tree dump's is sent on its reply channel, and a
+  focus-now query's becomes reducer input: a foreground change to the window,
+  when the application holds the foreground, then a focus on its focused
+  control. The reducer thread sends a focus-now query at startup (for the
+  foreground application), when the attention application's outpost was
+  replaced after a crash or kill, and when the supervisor reports
+  `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
+  if it is still starting.
   Later outcomes for the same id, and outcomes from any other outpost, are
   dropped. Core makes the outcome itself when a query cannot be sent
   ("failed", which a navigation sees as `Gone`) and when the outpost ends

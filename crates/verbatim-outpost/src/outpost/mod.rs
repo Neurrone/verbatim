@@ -1,0 +1,416 @@
+//! The per-application outpost (outpost redesign, "Inside an outpost";
+//! decision D9). One outpost watches one application for its whole life.
+//! Its parts:
+//!
+//! 1. Intake ([`intake`]): the MSAA hook callbacks, the UIA subscription
+//!    callbacks, and the reader's routed facts and queries only add an entry
+//!    to the queue and return. They never call into the application and never
+//!    wait on the worker.
+//! 2. The queue: one per application, with NVDA's limiter rules.
+//! 3. The worker ([`worker`]): one thread that takes entries in order, the
+//!    only thread that calls into the application.
+//! 4. The watchdog: abandons and replaces a worker whose call hangs.
+//! 5. The reader ([`Outpost::handle_command`], driven by [`run_pipe`]):
+//!    answers pings itself, so a busy or hung worker never makes the outpost
+//!    look dead.
+//! 6. The writer ([`outbound`]): pongs and `Ready` go first.
+//!
+//! Workers run in COM's multithreaded apartment; the registries keep agile
+//! references, so a replacement worker can use what an abandoned one minted.
+
+mod intake;
+mod outbound;
+mod read;
+mod window;
+mod worker;
+
+use std::io::{self, BufReader, Write};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::{self, JoinHandle};
+use std::time::Instant;
+
+use crossbeam_channel::{Sender, unbounded};
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, NotificationKind, NotificationProcessing,
+};
+use windows::core::AgileReference;
+
+use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEventCallback};
+use verbatim_model::{Backend, Notification, Pid, TraceId};
+use verbatim_uia::map::{
+    cached_native_window_handle, notification_kind_from_uia, notification_processing_from_uia,
+    snapshot_parts_from_cached_element,
+};
+use verbatim_uia::{
+    NodeIdRegistry as UiaRegistry, NotificationRegistration, PropertyRegistration,
+    SelectionRegistration,
+};
+
+use crate::arbitration::Arbitrator;
+use crate::event_thread::EventThread;
+use crate::protocol::{
+    OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaSnapshotFact, read_message,
+};
+
+use intake::{Entry, Intake, Item, UiaEvent, UiaKind};
+use outbound::Outbound;
+use worker::{MENU_CLOSE_GRACE, Tracking, Watch};
+
+pub(crate) use window::now_ms;
+
+/// What the outpost's threads share.
+pub(crate) struct Context {
+    target_pid: u32,
+    outbound: Outbound,
+    intake: Intake,
+    watch: Watch,
+    uia_registry: UiaRegistry,
+    msaa_registry: MsaaRegistry,
+    arbitrator: Mutex<Arbitrator>,
+    tracking: Mutex<Tracking>,
+    /// Arms the menu-close timer.
+    timer: Sender<Instant>,
+}
+
+impl Context {
+    fn arbitrator(&self) -> MutexGuard<'_, Arbitrator> {
+        self.arbitrator
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn tracking(&self) -> MutexGuard<'_, Tracking> {
+        self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Asks the timer to queue a focus check once the menu-close grace has
+    /// passed, so the worker never sleeps.
+    fn arm_focus_check(&self) {
+        let _ = self.timer.send(Instant::now() + MENU_CLOSE_GRACE);
+    }
+
+    fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64) {
+        self.intake.push(Entry {
+            item,
+            trace,
+            observed_at_ms,
+        });
+    }
+}
+
+/// The outpost: owns the context, the event thread, and the UIA
+/// subscriptions for one target application, fixed for the outpost's whole
+/// life.
+pub struct Outpost {
+    context: Arc<Context>,
+    _event_thread: EventThread,
+    _property_registration: Option<PropertyRegistration>,
+    _selection_registration: Option<SelectionRegistration>,
+    _notification_registration: Option<NotificationRegistration>,
+    _writer: JoinHandle<()>,
+}
+
+impl Outpost {
+    /// Creates an outpost watching `target_pid` for its whole life: starts
+    /// the writer, the worker, the watchdog, and the menu-close timer,
+    /// installs the MSAA hooks and UIA subscriptions once, and announces
+    /// readiness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread cannot be spawned, which means the process is out
+    /// of OS thread resources.
+    #[must_use]
+    pub fn new(pipe: Box<dyn Write + Send>, target_pid: u32) -> Self {
+        let (outbound, writer) = Outbound::start(pipe);
+        let (timer, timer_rx) = unbounded::<Instant>();
+        let id_counter = Arc::new(AtomicU64::new(1));
+        let context = Arc::new(Context {
+            target_pid,
+            outbound,
+            intake: Intake::default(),
+            watch: Watch::default(),
+            uia_registry: UiaRegistry::new(Arc::clone(&id_counter)),
+            msaa_registry: MsaaRegistry::new(id_counter),
+            arbitrator: Mutex::new(Arbitrator::new(&[])),
+            tracking: Mutex::new(Tracking::default()),
+            timer,
+        });
+
+        // The menu-close timer: one thread, so the worker never sleeps.
+        let timer_context = Arc::clone(&context);
+        thread::Builder::new()
+            .name("verbatim-menu-timer".to_owned())
+            .spawn(move || {
+                while let Ok(at) = timer_rx.recv() {
+                    thread::sleep(at.saturating_duration_since(Instant::now()));
+                    timer_context.push(Item::CheckFocus, TraceId::mint(), now_ms());
+                }
+            })
+            .expect("spawn the menu timer");
+
+        worker::start(&context);
+
+        // The MSAA hooks: process-scoped value, state, name, selection, menu
+        // end, and destroy events (decision D13). A destroy is queued only for
+        // a window, the one kind of object whose end the outpost tracks.
+        let hook_context = Arc::clone(&context);
+        let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
+            let context = Arc::clone(&hook_context);
+            Box::new(move |kind, hwnd, id_object, id_child| {
+                if kind == verbatim_ia2::WinEventKind::Destroy
+                    && (id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
+                        || id_child != verbatim_ia2::CHILDID_SELF)
+                {
+                    return;
+                }
+                context.push(
+                    Item::Msaa {
+                        kind,
+                        hwnd,
+                        id_object,
+                        id_child,
+                    },
+                    TraceId::mint(),
+                    now_ms(),
+                );
+            })
+        });
+        let event_thread = EventThread::spawn(target_pid, APP_SUBSCRIPTIONS, make_callback);
+
+        let windows = window::top_level_windows(target_pid);
+        let outpost = Self {
+            _property_registration: register_properties(&context, windows.clone()),
+            _selection_registration: register_selection(&context, windows.clone()),
+            _notification_registration: register_notifications(&context, windows),
+            context,
+            _event_thread: event_thread,
+            _writer: writer,
+        };
+        outpost.context.outbound.urgent(OutpostToSupervisor::Ready {
+            outpost_pid: Pid(std::process::id()),
+            target_pid: Pid(target_pid),
+        });
+        outpost
+    }
+
+    /// Handles one command from Core, on the reader thread. Pings are
+    /// answered here; everything that reads the application is queued for
+    /// the worker.
+    pub fn handle_command(&self, command: &SupervisorToOutpost) {
+        let context = &self.context;
+        match command {
+            SupervisorToOutpost::SetBackendOverride { backend_override } => {
+                context
+                    .arbitrator()
+                    .set_forced(backend_override.map(|backend| backend == Backend::Uia));
+            }
+            SupervisorToOutpost::DeliverFact {
+                trace_id,
+                observed_at_ms,
+                fact,
+            } => context.push(Item::Fact(fact.clone()), *trace_id, *observed_at_ms),
+            SupervisorToOutpost::Query {
+                trace_id,
+                request_id,
+                query,
+            } => context.push(
+                Item::Query {
+                    request_id: *request_id,
+                    query: unstamped(query),
+                },
+                *trace_id,
+                now_ms(),
+            ),
+            SupervisorToOutpost::Cancel { request_id } => {
+                if context.intake.cancel(*request_id) {
+                    // Sent ahead of ordinary messages, so the reader never
+                    // waits on a full queue.
+                    context.outbound.urgent(OutpostToSupervisor::Reply {
+                        trace_id: TraceId::mint(),
+                        request_id: *request_id,
+                        outcome: QueryOutcome::NotStarted,
+                    });
+                }
+            }
+            SupervisorToOutpost::Ping { seq } => {
+                context.outbound.urgent(OutpostToSupervisor::Pong {
+                    seq: *seq,
+                    parked_count: context.watch.abandoned(),
+                });
+            }
+        }
+    }
+}
+
+/// A query with its node ids as this outpost issued them: they arrive
+/// stamped with Core's outpost id.
+fn unstamped(query: &Query) -> Query {
+    match query {
+        Query::Navigate { node_id, kind } => Query::Navigate {
+            node_id: node_id.unstamped(),
+            kind: *kind,
+        },
+        Query::Activate { node_id } => Query::Activate {
+            node_id: node_id.unstamped(),
+        },
+        Query::Ancestors { node_id } => Query::Ancestors {
+            node_id: node_id.unstamped(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// What a UIA callback captures: the element's cached parts, its cached
+/// window handle, and an agile reference for anything the worker must ask
+/// it. No call reaches the application.
+///
+/// # Safety
+///
+/// `element` must be a cached element from the base cache request.
+unsafe fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
+    // SAFETY: forwarded to the caller's contract; both reads are cached.
+    let (parts, hwnd) = unsafe {
+        (
+            snapshot_parts_from_cached_element(element),
+            cached_native_window_handle(element),
+        )
+    };
+    UiaEvent {
+        kind,
+        parts: UiaSnapshotFact {
+            runtime_id: parts.runtime_id,
+            role: parts.role,
+            name: parts.name,
+            value: parts.value,
+            states: parts.states,
+            details: parts.details,
+        },
+        hwnd,
+        element: AgileReference::new(element).ok(),
+    }
+}
+
+fn register_properties(
+    context: &Arc<Context>,
+    windows: Vec<isize>,
+) -> Option<PropertyRegistration> {
+    let callback_context = Arc::clone(context);
+    let callback = Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
+        // SAFETY: the property element carries cached values.
+        let event = unsafe { capture(element, UiaKind::Property(property_id)) };
+        callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
+    });
+    match PropertyRegistration::new(windows, callback) {
+        Ok(registration) => Some(registration),
+        Err(error) => {
+            fault(
+                context,
+                format!("UIA property registration failed: {error}"),
+            );
+            None
+        }
+    }
+}
+
+fn register_selection(
+    context: &Arc<Context>,
+    windows: Vec<isize>,
+) -> Option<SelectionRegistration> {
+    let callback_context = Arc::clone(context);
+    let callback = Arc::new(move |element: &IUIAutomationElement| {
+        // SAFETY: the selected element carries cached values.
+        let event = unsafe { capture(element, UiaKind::Selection) };
+        callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
+    });
+    match SelectionRegistration::new(windows, callback) {
+        Ok(registration) => Some(registration),
+        Err(error) => {
+            fault(
+                context,
+                format!("UIA selection registration failed: {error}"),
+            );
+            None
+        }
+    }
+}
+
+fn register_notifications(
+    context: &Arc<Context>,
+    windows: Vec<isize>,
+) -> Option<NotificationRegistration> {
+    let callback_context = Arc::clone(context);
+    let callback = Arc::new(
+        move |element: &IUIAutomationElement,
+              kind: NotificationKind,
+              processing: NotificationProcessing,
+              display_string: Option<String>,
+              activity_id: Option<String>| {
+            let notification = Notification {
+                kind: notification_kind_from_uia(kind),
+                processing: notification_processing_from_uia(processing),
+                display_string,
+                activity_id,
+            };
+            // SAFETY: the notifying element carries cached values.
+            let event = unsafe { capture(element, UiaKind::Notification(notification)) };
+            callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
+        },
+    );
+    match NotificationRegistration::new(windows, callback) {
+        Ok(registration) => Some(registration),
+        Err(error) => {
+            fault(
+                context,
+                format!("UIA notification registration failed: {error}"),
+            );
+            None
+        }
+    }
+}
+
+fn fault(context: &Context, detail: String) {
+    context.outbound.send(OutpostToSupervisor::Fault { detail });
+}
+
+/// Runs an outpost driven by the Core pipes, watching `target_pid` for its
+/// whole life: reads commands from `pipe_in` and writes outbound messages to
+/// `pipe_out` until end of stream. Core ends an outpost by closing its job
+/// handle.
+///
+/// # Errors
+///
+/// Returns any I/O error reading the command stream.
+pub fn run_pipe(
+    pipe_in: Box<dyn io::Read + Send>,
+    pipe_out: Box<dyn Write + Send>,
+    target_pid: u32,
+) -> io::Result<()> {
+    let outpost = Outpost::new(pipe_out, target_pid);
+    let mut reader = BufReader::new(pipe_in);
+    while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
+        outpost.handle_command(&command);
+    }
+    Ok(())
+}
+
+/// Runs an outpost in dev-attach mode: writes outbound messages as JSON lines
+/// to stdout, watches the given target for its whole life, asks for the
+/// current focus, and streams events until the process is killed.
+///
+/// # Errors
+///
+/// Returns an I/O error only if dev-mode setup fails before the event loop
+/// begins; once running it blocks until the process is terminated.
+pub fn run_attach(target_pid: u32) -> io::Result<()> {
+    let outpost = Outpost::new(Box::new(io::stdout()), target_pid);
+    outpost.handle_command(&SupervisorToOutpost::Query {
+        trace_id: TraceId::mint(),
+        request_id: 0,
+        query: Query::FocusNow,
+    });
+    loop {
+        thread::park();
+    }
+}
