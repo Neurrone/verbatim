@@ -45,6 +45,6 @@ The end-to-end suite also runs without a VM, against this machine, by pointing i
 
 The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual Studio and LLVM install paths for `libclang.dll` automatically; when invoking cargo directly on targets that build `verbatim-gui`, set `LIBCLANG_PATH` yourself if `libclang.dll` is not on `PATH`. On this machine, use:
 
-`$env:LIBCLANG_PATH='C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin'`
+`$env:LIBCLANG_PATH='C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin'`
 
 Use release profile for the ARM64 workspace build until upstream wxDragon fixes debug-profile ARM64 MSVC builds: https://github.com/AllenDang/wxDragon/issues/162 (`cargo xtask ci` already does this).

@@ -192,6 +192,7 @@ fn check_platform_neutral_deps() -> Result<(), String> {
 /// shared probe stays in lockstep rather than two copies drifting apart.
 pub(crate) fn find_libclang() -> Option<PathBuf> {
     const CANDIDATES: &[&str] = &[
+        r"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin",
         r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin",
         r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin",
         r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin",
