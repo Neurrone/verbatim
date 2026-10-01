@@ -44,7 +44,8 @@ Public API:
   chain of ancestors of a node, outermost first, as `NodeSnapshot`s, capped
   at 64 hops), `Navigate` (one step from a node — parent, next or previous
   sibling, or first child, the protocol's own `NavigateDirection`),
-  `Activate` (invoke the node's activation action), `Shutdown`.
+  `Activate` (invoke the node's activation action). There is no shutdown
+  message: Core ends a child by closing its job handle.
   `OutpostToSupervisor`: `Ready`, `Event` (trace id, observation timestamp,
   backend, the event window's `WindowFacts`, normalized event), `FetchReply`
   (echoing the query's kind), `Pong` (echoes
@@ -142,88 +143,75 @@ Public API:
   `FocusRegistration` and the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`,
   pid zero), and forwards each event as a `FocusFact` built entirely from
   cached and hang-safe local reads. It answers `Ping` with a `Pong` (parked
-  count always zero — it never blocks on a cross-process call), exits on
-  `Shutdown`, and ignores everything else. It holds no per-application
+  count always zero — it never blocks on a cross-process call) and ignores
+  everything else. It holds no per-application
   state, so a crash respawns into full capability instantly.
-- `Supervisor` — `new(events_tx)` (which also spawns the focus listener into
-  its dedicated slot), `note_foreground(pid)` (the announce-poll fallback:
-  spawn if this pid has no outpost yet, otherwise send the existing one an
-  `AnnounceFocus`; used for the startup target and listener-respawn
-  recovery, no longer every foreground change), `ensure_spawned(pid)` (warm
-  an outpost without touching foreground tracking — used once, at Core
-  startup, for Core's own pid; see its doc comment), `send_to(pid,
-  command)`, and `send_to_outpost(outpost_id, command)`, which reaches only
-  that incarnation and fails if it has ended; commands carrying a node id
-  are routed this way. Focus facts from the listener are routed by `route_fact`: for a
-  foreground fact it records the new foreground and emits
-  `OutpostMessage::ForegroundChanged(pid)` before delivering, so the
-  reducer's stale-event gate has the new foreground by the time the fact's
-  own event arrives; for every fact it ensures the target outpost exists
-  (spawning it if needed) and delivers the fact, or — if the outpost has not
-  sent `Ready` yet — queues it newest-wins per category, flushed when `Ready`
-  is intercepted. The categories are foreground, MSAA focus, UIA focus, and
-  menu-popup, with separate slots for the two backends' focus facts
-  deliberately: both can report the same focus and the app outpost's per-window
-  verdict decides which announces, so both must survive the spawn. Which fact
-  is the one that announces depends on the window's backend — a UIA window's
-  UIA fact, an MSAA window's MSAA fact — so a shared slot that let one overwrite
-  the other could keep the wrong one and drop it against the verdict, silencing
-  the control (found live for a UIA search box that fires no MSAA focus event
-  at all). Flush order is foreground, MSAA focus, UIA focus, menu-popup. That
-  queueing
-  policy is the pure `PendingFacts` type, unit-tested like `idle_decision` and
-  `wedge_decision`. State is a map keyed by target pid,
-  genuinely N-ready now: a reader thread per outpost stamps every node id in
-  each message with the outpost's id (its spawn generation, never reused) and
-  forwards it into the channel as `OutpostMessage::Event(pid, outpost_id,
-  message)`; at end of stream it sends `OutpostMessage::Ended` for that
-  incarnation, after everything it wrote, before respawning on end
-  of stream only if that pid's map entry still has the same generation
-  *and* the watched application's process is itself still alive (checked
-  via `OpenProcess`/`GetExitCodeProcess`) — otherwise the entry is dropped
-  and Core is told via `OutpostMessage::Retired(pid)`. A background sweep
-  (every foreground change, plus a coarse 30-second timer) retires any
-  outpost whose application has not held foreground for two minutes
-  (`IDLE_RETIREMENT`, risk R2's memory-use mitigation), skipping whichever
-  pid currently holds foreground; retirement removes the map entry *before*
-  sending `Shutdown`, which is what makes the ordinary respawn path
-  correctly do nothing for a deliberate retirement instead of resurrecting
-  it.
-- Wedge detection and kill-and-respawn (recovery ladder rung 3, completing
-  the M2-era respawn-on-crash path): a dedicated heartbeat thread pings
-  every live outpost every three seconds (`PING_INTERVAL`) and, from each
-  `Pong`, records the outpost's last-answered time and reported
-  parked-thread count. The pure policy function `wedge_decision` — given a
-  last-pong time, now, and a parked count, decide kill or not, and why —
-  is unit-tested in isolation from the ping/kill I/O, the same split
-  `idle_decision` uses for idle retirement. An outpost is declared wedged,
-  and killed and respawned, if either: no pong has arrived for three
-  consecutive ping intervals (`MISSED_PONG_THRESHOLD`, tolerating one slow
-  tick before concluding the outpost has actually stopped answering), or
-  its last reported parked-thread count reached 8 (`PARKED_THREAD_KILL_THRESHOLD`
-  — each parked thread is roughly a megabyte of stack and a handle, so 8 is
-  already several megabytes of garbage and evidence of repeated hangs, not
-  one isolated slow call). The kill itself reuses the same job object every
-  outpost is spawned into: removing the map entry drops its job handle, and
-  the kill-on-job-close limit set at spawn turns that into an immediate
-  kernel-level kill, so no message needs to reach an outpost that is by
-  definition not reliably answering. Both the kill and the subsequent
-  respawn are generation-checked exactly like the crash path, so a kill
-  decision computed a moment earlier cannot race a retirement or a natural
-  respawn that already replaced the entry, and the killed process's late
-  pong or end-of-stream is generation-mismatched against the replacement
-  and ignored. Every kill logs at warn level with the target pid, the
-  outpost's own pid, and the reason (`"missed heartbeats"` or `"parked
-  threads"`), for a flight-recorder-plus-stderr investigation to grep for.
-  The focus listener is supervised by this same machinery (decision D13),
-  but from a dedicated slot rather than the per-pid map: it is spawned at
-  startup (a failed initial spawn is retried on the heartbeat interval),
-  pinged and wedge-killed by the same policy (its parked count is always
-  zero, so only the missed-heartbeat rule can fire), and respawned on
-  end-of-stream — after which the supervisor fires one synthetic announce for
-  the current foreground to cover the gap during which no facts flowed. Being
-  outside the per-pid map, the idle sweep structurally never touches it and
-  no listener entry ever reaches Core's status mirror.
+- `Supervisor` (the `supervisor` module; outpost redesign, "The
+  supervisor") — `new(events_tx)` starts the lifecycle owner thread, which
+  starts the focus listener at once; `ensure_spawned(pid)` starts an outpost
+  without asking it to report anything (used once, at Core startup, for
+  Core's own pid, so its outpost is warm before the first gesture);
+  `announce(pid)` asks an application's outpost for the announce poll,
+  starting it if needed (the startup foreground application);
+  `send_to_outpost(outpost_id, command)` queues a command for one outpost
+  incarnation without waiting, failing at once with a `QueueError` when that
+  incarnation has ended or its queue is full; and `note_views(attention,
+  holding)` passes the views the app derives from the reducer state. The
+  app hears of each incarnation through `OutpostMessage`: `Started` before
+  any of its messages, `Event(pid, outpost_id, message)` for each message,
+  and `Ended` with a reason (exited, killed, or retired).
+  - The lifecycle owner (`owner`) is one thread that makes every lifecycle
+    decision and owns the per-application records and the listener record.
+    Readers, the heartbeat and sweep timers (`crossbeam_channel::tick`
+    inside the owner's `select!`), launch helpers, and the app report to it
+    over one channel; there is no shared map lock. Launching blocks, so the
+    owner records the application as starting and hands the launch to a
+    helper thread, which starts the child's writer, sends `Started`, starts
+    its reader, and reports back; a second fact meanwhile is held, never a
+    second launch.
+  - Each child has a writer thread with a bounded queue (`writer`, capacity
+    64), so the owner never writes to a pipe while deciding and the reducer
+    thread never waits on one. When the queue is full a ping still gets
+    through, a routed fact replaces any waiting fact for the same object and
+    kind (or the oldest waiting fact makes room), and anything else, a query
+    above all, fails at once. Each child has a reader thread that stamps
+    every node id with the child's outpost id, forwards messages to the app,
+    and reports `Ready`, pongs, and the end of its pipe to the owner. Core's
+    thread count is two per child plus the owner.
+  - Facts that arrive while an outpost is starting are held in arrival
+    order, a newer fact for the same object and kind replacing the older one
+    and moving to the back (NVDA's limiter rule), and released in that order
+    on `Ready` (the pure `HeldFacts`).
+  - Crash: when an outpost's pipe closes, the owner ends it (`Ended`,
+    exited) after the reader has forwarded everything it wrote. It is
+    replaced at once only if its application holds attention; otherwise the
+    next fact for the application starts one. After three crashes within a
+    minute (`CRASH_LIMIT`, `CRASH_WINDOW`, the pure `CrashHistory`) it is
+    not replaced until the next foreground change to that application. An
+    application that has itself exited is left alone.
+  - Hang: every child is pinged every three seconds; nine seconds without a
+    pong ends it (`Ended`, killed). Eight abandoned workers end an outpost
+    too, except while its application's windows are reported hung
+    (`IsHungAppWindow`), when a replacement would hang the same way (the
+    pure `wedge_decision`). A kill is followed by the crash rules.
+  - Retirement: an outpost whose application has not held attention for two
+    minutes, which is not Core's own, and in which the reducer holds no
+    nodes, is ended (`Ended`, retired) by the sweep every 30 seconds (the
+    pure `retirement_decision`).
+  - Every ending closes the child's job handle, which kills it if it is
+    still running; there is no shutdown message. When the owner kills or
+    retires an outpost, `Ended` is sent at once and anything the child wrote
+    afterwards follows it, which the app drops.
+  - The focus listener is supervised the same way from its own record: its
+    facts go to the owner, which routes them; it is pinged and replaced when
+    it stops answering or its pipe closes, and a replacement's `Ready` asks
+    the attention application to report again, since facts were lost in the
+    gap.
+  - Process creation (`process`): each child is spawned suspended into a
+    kill-on-close job with a 200 MB memory cap and resumed, inheriting only
+    its own two pipe ends and its log handle through a
+    `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, so two launches running at once can
+    never keep each other's pipes open.
 
 Implementation notes:
 
@@ -401,5 +389,5 @@ Implementation notes:
   focused selection container, and notification display strings at the
   priority their processing hint implies ([verbatim-core](verbatim-core.md)).
 - `OutpostMessage::Event` boxes its `OutpostToSupervisor` payload: the M3
-  replies grew the message enum well past the bare-pid `Retired` variant,
-  and boxing keeps every channel send small.
+  replies grew the message enum well past the lifecycle notices, and boxing
+  keeps every channel send small.

@@ -14,7 +14,7 @@ mod latency;
 mod requests;
 mod single_instance;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -467,9 +467,7 @@ fn warm_own_outpost(
     own_pid: u32,
 ) {
     note_targeted_pid(outposts, Pid(own_pid));
-    if let Err(error) = supervisor.ensure_spawned(Pid(own_pid)) {
-        tracing::warn!(%error, "failed to pre-spawn Core's own outpost");
-    }
+    supervisor.ensure_spawned(Pid(own_pid));
 }
 
 /// Targets whatever is in the foreground right now, so the first outpost
@@ -490,9 +488,7 @@ fn target_current_foreground(
         return;
     }
     note_targeted_pid(outposts, Pid(pid));
-    if let Err(error) = supervisor.note_foreground(Pid(pid)) {
-        tracing::warn!(%error, pid, "failed to target the initial foreground application");
-    }
+    supervisor.announce(Pid(pid));
 }
 
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
@@ -525,42 +521,56 @@ struct ReducerThread<'a> {
     context: &'a ReducerContext,
     state: SrState,
     requests: RequestTable,
-    /// Outpost incarnations that have sent something and not yet ended, with
+    /// Outpost incarnations that have started and not yet ended, with
     /// the application each watches. A message from an outpost that has
     /// ended is dropped before the reducer sees it.
     live: HashMap<OutpostId, Pid>,
+    /// The views last sent to the supervisor.
+    views: (Option<Pid>, BTreeSet<OutpostId>),
 }
 
 impl ReducerThread<'_> {
     /// Handles one message from the supervisor.
     fn on_outpost_message(&mut self, message: OutpostMessage) {
         match message {
+            OutpostMessage::Started {
+                outpost,
+                target_pid,
+            } => {
+                self.live.insert(outpost, target_pid);
+                self.context.outposts.lock().expect("outposts lock").insert(
+                    target_pid,
+                    OutpostStatus {
+                        target_pid,
+                        outpost_pid: None,
+                        state: OutpostState::Starting,
+                    },
+                );
+            }
             OutpostMessage::Event(source, outpost, message) => {
-                self.live.entry(outpost).or_insert(source);
-                self.on_outpost_input(source, outpost, *message);
+                // An outpost the supervisor has ended can still have messages
+                // in flight; they are dropped here, before the reducer.
+                if self.live.contains_key(&outpost) {
+                    self.on_outpost_input(source, outpost, *message);
+                }
             }
             OutpostMessage::Ended {
                 outpost,
                 target_pid,
+                reason,
             } => {
-                tracing::info!(%outpost, %target_pid, "outpost ended");
-                self.live.remove(&outpost);
+                tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
+                if self.live.remove(&outpost).is_some() {
+                    self.context
+                        .outposts
+                        .lock()
+                        .expect("outposts lock")
+                        .remove(&target_pid);
+                }
                 self.apply(Input::OutpostEnded { outpost });
                 for input in self.requests.outpost_ended(outpost) {
                     self.apply(input);
                 }
-            }
-            OutpostMessage::Retired(pid) => {
-                self.context
-                    .outposts
-                    .lock()
-                    .expect("outposts lock")
-                    .remove(&pid);
-            }
-            OutpostMessage::ForegroundChanged(pid) => {
-                // The status mirror lists the targeted application at once;
-                // acceptance is the reducer's, from the foreground fact.
-                note_targeted_pid(&self.context.outposts, pid);
             }
         }
     }
@@ -662,6 +672,21 @@ impl ReducerThread<'_> {
         for effect in effects {
             self.execute(trace_id, effect);
         }
+        self.send_views();
+    }
+
+    /// Sends the supervisor the views derived from the reducer state, when
+    /// they change: the application holding attention, and the outposts in
+    /// which the state holds nodes.
+    fn send_views(&mut self) {
+        let views = (
+            self.state.attention(),
+            self.state.held_nodes().into_keys().collect::<BTreeSet<_>>(),
+        );
+        if views != self.views {
+            self.context.supervisor.note_views(views.0, views.1.clone());
+            self.views = views;
+        }
     }
 
     /// Executes one reducer effect.
@@ -692,7 +717,7 @@ impl ReducerThread<'_> {
                         ..query
                     },
                 };
-                self.send(outpost, id, &command);
+                self.send(outpost, id, command);
             }
             Effect::Activate { node_id } => {
                 let outpost = node_id.outpost();
@@ -702,7 +727,7 @@ impl ReducerThread<'_> {
                     request_id: id.0,
                     node_id,
                 };
-                self.send(outpost, id, &command);
+                self.send(outpost, id, command);
             }
             Effect::CopyToClipboard(text) => clipboard::copy(&self.context.manager, &text),
             _ => {}
@@ -711,7 +736,7 @@ impl ReducerThread<'_> {
 
     /// Sends request `id` to `outpost`, failing it at once when it cannot be
     /// sent, so it still gets its one outcome.
-    fn send(&mut self, outpost: OutpostId, id: RequestId, command: &SupervisorToOutpost) {
+    fn send(&mut self, outpost: OutpostId, id: RequestId, command: SupervisorToOutpost) {
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             tracing::warn!(%error, %outpost, "a query could not reach its outpost");
             self.finish(id, outpost, Outcome::Failed(error.to_string()));
@@ -741,7 +766,7 @@ impl ReducerThread<'_> {
             trace_id: TraceId::mint(),
             request_id: id.0,
         };
-        self.send(outpost, id, &command);
+        self.send(outpost, id, command);
     }
 }
 
@@ -759,6 +784,7 @@ fn reducer_loop(
         state: SrState::new(),
         requests: RequestTable::default(),
         live: HashMap::new(),
+        views: (None, BTreeSet::new()),
     };
     loop {
         crossbeam_channel::select! {

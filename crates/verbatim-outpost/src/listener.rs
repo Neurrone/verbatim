@@ -108,21 +108,15 @@ impl Listener {
     }
 
     /// Dispatches one supervisor command. The listener answers `Ping` with a
-    /// `Pong` (it never parks a thread, so its parked count is always zero),
-    /// exits on `Shutdown`, and ignores everything else — it has no target to
-    /// fetch from, arbitrate for, or announce to. Returns `false` on
-    /// `Shutdown`.
-    fn handle_command(&self, command: &SupervisorToOutpost) -> bool {
-        match command {
-            SupervisorToOutpost::Ping { seq } => {
-                let _ = self.outbound.send(OutpostToSupervisor::Pong {
-                    seq: *seq,
-                    parked_count: 0,
-                });
-                true
-            }
-            SupervisorToOutpost::Shutdown => false,
-            _ => true,
+    /// `Pong` (it never parks a thread, so its parked count is always zero)
+    /// and ignores everything else — it has no target to fetch from,
+    /// arbitrate for, or announce to.
+    fn handle_command(&self, command: &SupervisorToOutpost) {
+        if let SupervisorToOutpost::Ping { seq } = command {
+            let _ = self.outbound.send(OutpostToSupervisor::Pong {
+                seq: *seq,
+                parked_count: 0,
+            });
         }
     }
 }
@@ -234,8 +228,8 @@ fn window_pid(hwnd: isize) -> u32 {
 }
 
 /// Runs the focus listener driven by the Core pipes: reads commands from
-/// `pipe_in`, writes facts and replies to `pipe_out`, until `Shutdown` or end
-/// of stream (decision D13).
+/// `pipe_in`, writes facts and replies to `pipe_out`, until end of stream
+/// (decision D13). Core ends a listener by closing its job handle.
 ///
 /// # Errors
 ///
@@ -247,9 +241,7 @@ pub fn run_listener(
     let listener = Listener::new(pipe_out);
     let mut reader = BufReader::new(pipe_in);
     while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
-        if !listener.handle_command(&command) {
-            break;
-        }
+        listener.handle_command(&command);
     }
     Ok(())
 }

@@ -20,13 +20,12 @@ in order:
    the event's own payload (cached UIA properties, raw MSAA ids), stamps
    a trace id and an observation timestamp, and writes a `FocusFact` up
    its pipe (`run_listener`; [verbatim-outpost](crates/verbatim-outpost.md)).
-3. **The supervisor routes the fact.** In Core, the `Supervisor` maps
-   the fact to the target application's pid. A foreground fact first
-   emits `ForegroundChanged` so the reducer's stale-event gate is
-   current. If the app has no outpost yet, one is spawned
-   (`--target-pid`); facts arriving before its `Ready` are queued
-   newest-wins per category (foreground, MSAA focus, UIA focus, menu),
-   then flushed in that order (`route_fact`, `PendingFacts`).
+3. **The supervisor routes the fact.** In Core, the supervisor's
+   lifecycle owner maps the fact to the target application's pid. If the
+   app has no outpost yet, one is launched (`--target-pid`) on a helper
+   thread; facts arriving before its `Ready` are held in arrival order,
+   one per object and kind, then released in that order (`route_fact`,
+   `HeldFacts`). Facts reach the outpost through its writer thread.
 4. **The outpost announces on its lane.** The per-app outpost enqueues
    the fact onto its single announce lane (a FIFO thread), which is
    what guarantees window-before-control ordering. The lane job
@@ -34,15 +33,16 @@ in order:
    (`resolve_fact_verdict`: cached, else a server-side-provider probe
    on the deadline-guarded `QueryPool`), so exactly one backend's fact
    announces. It acquires the node, walks its ancestor chain, and
-   emits an `Event` (trace id, timestamp, backend, snapshot version,
-   normalized event) back up the pipe. Every cross-process call inside
+   emits an `Event` (trace id, timestamp, backend, window facts,
+   normalized event) back up the pipe; a foreground change arrives as a
+   focus on the window. Every cross-process call inside
    this runs under a `QueryPool` deadline; a hang parks the worker and
    spawns a replacement (recovery ladder rung 2).
 5. **The reducer decides what to say.** Core feeds the event into the
-   pure `reduce` in `verbatim-core`: last-observation-wins staleness
-   check, focus-ancestry diff (speak newly entered presentable
-   containers first), NVDA-ordered property announcement, duplicate
-   suppression. Out come `Speak` effects carrying structured
+   pure `reduce` in `verbatim-core`: acceptance against the attention
+   record (a foreground change moves it), NVDA's window rules,
+   focus-ancestry diff (speak newly entered presentable containers
+   first), NVDA-ordered property announcement, duplicate suppression. Out come `Speak` effects carrying structured
    utterances (D12) and the trace id.
 6. **Speech renders and plays.** `verbatim-speech`'s queue thread
    flattens the utterance through the theme, dispatches at Interrupt
@@ -53,9 +53,10 @@ in order:
 
 Failure paths to know: a hung app degrades to the provisional
 announce contract (MSAA proceeds, UIA drops) after one probe timeout;
-a wedged outpost is killed and respawned by the heartbeat
-(`wedge_decision`, rung 3); the listener crashing respawns instantly
-and the announce poll (`AnnounceFocus`) covers the gap.
+a wedged outpost is ended by the heartbeat (`wedge_decision`, rung 3)
+and replaced if its application holds attention; the listener crashing
+is replaced at once and the attention application is asked to report
+again (`AnnounceFocus`) to cover the gap.
 
 ## 2. The life of a command keystroke
 

@@ -292,8 +292,6 @@ pub enum SupervisorToOutpost {
         /// The node to activate.
         node_id: verbatim_model::NodeId,
     },
-    /// Asks the outpost to exit cleanly.
-    Shutdown,
 }
 
 /// A direction to navigate from a node, for [`SupervisorToOutpost::Navigate`]

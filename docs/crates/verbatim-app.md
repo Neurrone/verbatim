@@ -31,16 +31,22 @@ knowing for review:
   the supervisor's stream and on a `ShellCommand` channel (router inputs and
   control-plane tree dumps). Every outpost message arrives tagged with the
   outpost incarnation whose pipe carried it; an outpost joins the live set
-  with its first message and leaves it on `OutpostMessage::Ended`, which the
-  supervisor sends after forwarding everything that outpost wrote, so
-  nothing from an ended outpost reaches the reducer. On an end the reducer
+  on `OutpostMessage::Started`, which precedes all its messages, and leaves
+  it on `OutpostMessage::Ended`, and a message from an outpost not in the
+  set is dropped, so nothing from an ended outpost reaches the reducer, even
+  when the supervisor killed it with messages still in flight. The status
+  mirror follows the same notices. After each input the thread sends the
+  supervisor the derived views (`note_views`) when they change: the
+  application holding attention and the outposts in which the reducer holds
+  nodes. On an end the reducer
   gets `Input::OutpostEnded`, then a "gone" outcome for each of that
   outpost's outstanding queries. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the
   reducer, the latency ledger, and the control plane's event subscribers;
   replies go through the request table. The thread never waits on a
-  handoff to speech or the control plane; writes to an outpost's pipe are
-  still made here until the supervisor gives each outpost a writer thread.
+  handoff: speech and control-plane sends never block, and a command for an
+  outpost is queued on that outpost's writer, failing at once if the queue
+  is full.
 - `requests::RequestTable` — the single owner of "exactly one outcome per
   query" (outpost redesign, "The app shell"). Every query sent to an
   outpost (a navigation `Fetch`, an `Activate`, a tree dump) is recorded
@@ -93,9 +99,8 @@ knowing for review:
   config store, the supervisor with its focus listener (decision D13;
   targeting the current foreground once at startup by poll, since the
   listener thereafter reports foreground changes as facts — Core no longer
-  runs its own foreground hook; `OutpostMessage::ForegroundChanged` only
-  updates the status mirror, and a foreground change reaches the reducer as
-  a focus on the window, which moves its attention), the reducer thread
+  runs its own foreground hook; a foreground change reaches the reducer as a
+  focus on the window, which moves its attention), the reducer thread
   (`ReducerThread`, described below), the gesture router (bound gestures to
   imperative commands — `GuiCommand`s or direct speech — or, for review and
   object navigation, reducer commands), the control server with its

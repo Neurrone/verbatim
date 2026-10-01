@@ -1108,16 +1108,14 @@ impl Outpost {
             });
     }
 
-    /// Dispatches one supervisor command. Returns `false` on `Shutdown`.
-    pub fn handle_command(&mut self, command: &SupervisorToOutpost) -> bool {
+    /// Dispatches one supervisor command.
+    pub fn handle_command(&mut self, command: &SupervisorToOutpost) {
         match command {
             SupervisorToOutpost::SetBackendOverride { backend_override } => {
                 self.handle_set_backend_override(*backend_override);
-                true
             }
             SupervisorToOutpost::AnnounceFocus { trace_id } => {
                 self.handle_announce_focus(*trace_id);
-                true
             }
             SupervisorToOutpost::DeliverFact {
                 trace_id,
@@ -1125,7 +1123,6 @@ impl Outpost {
                 fact,
             } => {
                 self.handle_deliver_fact(*trace_id, *observed_at_ms, fact.clone());
-                true
             }
             SupervisorToOutpost::Fetch { trace_id, query } => {
                 let query = verbatim_model::Query {
@@ -1133,25 +1130,21 @@ impl Outpost {
                     ..*query
                 };
                 self.handle_fetch(*trace_id, query);
-                true
             }
             SupervisorToOutpost::Ping { seq } => {
                 let _ = self.shared.outbound.send(OutpostToSupervisor::Pong {
                     seq: *seq,
                     parked_count: self.shared.pool.parked_count(),
                 });
-                true
             }
             SupervisorToOutpost::DumpTree {
                 trace_id,
                 request_id,
             } => {
                 self.handle_dump_tree(*trace_id, *request_id);
-                true
             }
             SupervisorToOutpost::AncestorChain { trace_id, node_id } => {
                 self.handle_ancestor_chain(*trace_id, node_id.unstamped());
-                true
             }
             SupervisorToOutpost::Navigate {
                 trace_id,
@@ -1159,7 +1152,6 @@ impl Outpost {
                 direction,
             } => {
                 self.handle_navigate(*trace_id, node_id.unstamped(), *direction);
-                true
             }
             SupervisorToOutpost::Activate {
                 trace_id,
@@ -1167,9 +1159,7 @@ impl Outpost {
                 node_id,
             } => {
                 self.handle_activate(*trace_id, *request_id, node_id.unstamped());
-                true
             }
-            SupervisorToOutpost::Shutdown => false,
         }
     }
 }
@@ -2207,7 +2197,8 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
 /// whole life: reads commands from `pipe_in`, writes outbound messages to
-/// `pipe_out`, until `Shutdown` or end of stream.
+/// `pipe_out`, until end of stream. Core ends an outpost by closing its job
+/// handle.
 ///
 /// # Errors
 ///
@@ -2220,9 +2211,7 @@ pub fn run_pipe(
     let mut outpost = Outpost::new(pipe_out, target_pid);
     let mut reader = BufReader::new(pipe_in);
     while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
-        if !outpost.handle_command(&command) {
-            break;
-        }
+        outpost.handle_command(&command);
     }
     Ok(())
 }
