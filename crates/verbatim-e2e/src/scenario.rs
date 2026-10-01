@@ -84,22 +84,18 @@ fn is_remote() -> bool {
 /// selects the real `OneCore` synthesizer instead of the capture synth, and
 /// does not set `VERBATIM_TEST_AUDIO=null`, so Verbatim speaks through the
 /// real `WasapiSink` on real hardware instead of the silent, voice-free
-/// path every other run uses. `cargo xtask vm test --audible` sets it for a
-/// remote run; set it by hand for a runner-direct one.
+/// path a default runner-direct run uses. `cargo xtask vm test` always sets
+/// it, since every VM run is audible; set it by hand for an audible
+/// runner-direct run.
 ///
-/// Intended for human debugging only — for actually listening to a
-/// scenario play out. Every speech assertion in this suite, including the
-/// M1 exit regression's voice-combo section, is synth-agnostic: it captures
-/// whichever voice name the active synthesizer speaks first at runtime
-/// instead of asserting a literal, so those assertions pass under real
-/// `OneCore` voices exactly as they do under the capture synth (confirmed
-/// live). The M1 exit regression's own trailing latency check does not yet
-/// pass under audible mode, though — see that test's module doc — a
-/// separate, unresolved gap in the real audio path, not a speech-assertion
-/// problem. This is not the routine acceptance check only because it needs
-/// a listener and real audio hardware; a plain `cargo xtask vm test`
-/// remains that. In runner-direct mode, real speech also means Verbatim
-/// will speak over any other screen reader already running on the desktop.
+/// The speech assertions hold under either synthesizer, with one
+/// mode-dependent expectation: the M1 exit regression's voice-combo section
+/// asserts a fixed pair of voice names per mode (see `expected_voices` in
+/// that scenario). [`crate::latency::report`]'s "some speech reached audio"
+/// assertion applies only to non-audible runs, since a real voice is
+/// legitimately interrupted before playback at this suite's pace. In
+/// runner-direct mode, real speech also means Verbatim will speak over any
+/// other screen reader already running on the desktop.
 pub const AUDIBLE_ENV: &str = "VERBATIM_E2E_AUDIBLE";
 
 /// Whether this is an audible run; see [`AUDIBLE_ENV`].
@@ -227,8 +223,8 @@ impl Scenario {
     ///
     /// Under [`AUDIBLE_ENV`] both choices flip: the settings selects
     /// `OneCore` and `VERBATIM_TEST_AUDIO=null` is not passed, so Verbatim
-    /// speaks for real. See that constant's doc comment for why that is a
-    /// debugging aid, not an acceptance mode.
+    /// speaks for real. See that constant's doc comment for what changes
+    /// in the assertions.
     ///
     /// # Errors
     ///
@@ -256,9 +252,9 @@ impl Scenario {
 
         // In a remote run the path above names a location in the guest, so
         // neither staging nor the config write can happen here; `cargo
-        // xtask vm deploy` staged both inside the guest already (selecting
-        // the same synth, per `--audible`). In runner-direct mode, stage a
-        // private copy so this suite never reads or writes the developer's
+        // xtask vm deploy` staged both inside the guest already (always
+        // selecting OneCore, since every VM run is audible). In
+        // runner-direct mode, stage a private copy so this suite never reads or writes the developer's
         // own build output directory.
         let (launch_exe, launch_dir) = if remote {
             let exe_dir = verbatim_exe

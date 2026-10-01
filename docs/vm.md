@@ -33,11 +33,13 @@ arguments for the full verb list printed from the source of truth.
   runs, instead of a full `create`.
 - `deploy` builds `verbatim-app`, `verbatim-agent`, and `verbatim-outpost`
   (debug profile, matching the CI job), then compares a SHA-256 hash of
-  each of the four artifacts it would place in the guest (`verbatim.exe`
+  each of the six artifacts it would place in the guest (`verbatim.exe`
   and `verbatim-outpost.exe` in `C:\VerbatimLab\verbatim`, a staged
-  capture-synth `settings.toml` alongside them, and `verbatim-agent.exe` in
-  `C:\VerbatimLab\agent`) against the guest's existing copy, fetching all
-  four guest-side hashes in a single PowerShell Direct call. Only artifacts
+  `settings.toml` alongside them selecting the real `OneCore` synthesizer,
+  `verbatim-agent.exe` in `C:\VerbatimLab\agent`, and the vendored
+  `ffmpeg.exe` and `ffprobe.exe` in `C:\VerbatimLab\tools`) against the
+  guest's existing copy, fetching all six guest-side hashes in a single
+  PowerShell Direct call. Only artifacts
   whose hash differs are copied; each is reported as either "unchanged;
   skipping" or "changed; will copy". The guest's `VerbatimAgent` scheduled
   task and any running Verbatim are stopped first, but only when at least

@@ -114,7 +114,8 @@ complete event-to-audio timeline with nothing actually playing, and
 `--last N`/`report_latency` assertions still have something to check.
 
 Every scenario `crates/verbatim-e2e` launches sets this variable in
-runner-direct mode, which defaults to the capture synth for exactly the
+runner-direct mode unless `VERBATIM_E2E_AUDIBLE` is set (see below); that
+mode defaults to the capture synth for exactly the
 same reason (no installed voices required, cross-process setting-descriptor
 coverage is still exercised). `cargo xtask vm deploy` (and `vm test`, and
 `vm create`'s own bake-in of the golden checkpoint) is different: it always
@@ -247,8 +248,10 @@ Two more environment variables matter for less common cases:
   heard in full rather than cut off — for watching or recording a run, not
   for fast CI. It changes only timing, never what is asserted. `cargo xtask
   vm test --paced` sets it, and `--record` implies it; set it by hand for a
-  paced runner-direct run (only meaningful alongside `VERBATIM_E2E_AUDIBLE`,
-  since the capture synth produces no audio to wait on).
+  paced runner-direct run. It is only useful alongside
+  `VERBATIM_E2E_AUDIBLE`: under the capture synth the completion frames
+  still arrive, but almost at once, since `NullSink` discards samples
+  instead of playing them.
 
 The suite is a scenario registry (`crates/verbatim-e2e/src/registry.rs`,
 milestone M3 Track B): every scenario is a named, grouped setup/body/teardown
@@ -410,13 +413,13 @@ capture synth's two fixed names ("Capture A", "Capture B") for a
 non-audible runner-direct run, or the VM's golden image's always-installed
 `OneCore` voice order ("Microsoft David" default, "Microsoft Zira" listed
 next) for an audible run, confirmed live — see that test's own module doc
-and its `expected_voices` helper. `m1_exit_regression`'s own trailing
-latency check does not yet pass under an audible run, though: it requires
-at least one traced utterance to have actually reached audio, and every
-timeline in a live audible run is reported interrupted before audio
-regardless of a connected session or a generous settle pause — a gap
-somewhere in the real `OneCore`/`WasapiSink` audio path, unrelated to and
-unresolved independently of the speech assertions above.
+and its `expected_voices` helper. An audible runner-direct run therefore
+expects the same two `OneCore` voices to be installed on the local machine,
+in that order. `m1_exit_regression`'s trailing latency check asserts that
+at least one traced utterance reached audio only in a non-audible run;
+under a real voice it reports the timelines without asserting, since at
+this suite's pace a real voice is legitimately interrupted before most
+utterances start playing (`crate::latency::report`'s doc comment).
 
 **To record a run:** make sure no RDP session is connected to the guest,
 then `cargo xtask vm test --record` (combinable with `--restore`, in

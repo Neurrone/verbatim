@@ -35,7 +35,10 @@ module tree, not a library):
   default, independently, in `verbatim_e2e::scenario`. `deploy::build`
   probes for `libclang.dll` before its `cargo build` the same way
   `xtask`'s own `ci` command does (reusing `find_libclang`), since building
-  `verbatim-app` pulls in `verbatim-gui`'s wxDragon dependency.
+  `verbatim-app` pulls in `verbatim-gui`'s wxDragon dependency. When an
+  executable must be copied, `deploy` stops the guest's `VerbatimAgent`
+  task first and restarts it afterwards even if a copy fails
+  (`copy_then_restart`), so a failed deploy never leaves the agent down.
 - `test` (milestone M3 Track B: per-scenario selection and boundaries,
   replacing "the whole suite runs as one blob with one recording"). `xtask`
   now depends on `verbatim-e2e` directly, reading `registry::SCENARIOS` and
@@ -58,9 +61,12 @@ module tree, not a library):
   `verbatim-e2e` was the other option considered — see the module's doc
   comment for why a fresh, exactly-filtered subprocess per scenario was
   chosen instead: it gets a process-lifetime boundary for free, no new IPC).
-  After each subprocess exits, `run_one_scenario` reads back the
+  Before each subprocess starts, `run_one_scenario` clears that scenario's
+  artifacts directory; after it exits, it reads back the
   `verbatim_e2e::artifacts::ScenarioSummary` that scenario's own run wrote,
-  rather than parsing the subprocess's stdout; `print_run_summary` prints
+  rather than parsing the subprocess's stdout. Because of the clearing, a
+  subprocess that never reached the scenario runner leaves no summary and
+  is reported as a failure, never as the previous run's result; `print_run_summary` prints
   the final one-line-per-scenario pass/fail-plus-latency report. No retry of
   any kind exists at this level either: one scenario's failure is
   accumulated into the run's error list and the loop continues to the next
@@ -78,7 +84,12 @@ module tree, not a library):
   `logs` uses, since `Copy-VMFile` only copies host-to-guest).
   `pull_recording` now takes the scenario's name and names the file after
   it (`<scenario_name>-<unix-seconds>[-no-audio].mp4`), one recording per
-  scenario instead of one per run. Recording audio and a connected RDP
+  scenario instead of one per run. In the guest, each scenario records to
+  its own `recording-<scenario_name>.mp4`, which is removed before the
+  capture starts and after it is pulled, so a capture that produced nothing
+  can never be pulled as an older file; if the removal before starting
+  fails, the scenario runs unrecorded. The client's connect, reads, and
+  writes are bounded by timeouts. Recording audio and a connected RDP
   session are mutually exclusive (`docs/tooling.md` has the full constraint
   and why); `test`'s own `start_recording_with_fallback` treats a failure to
   pin the render device, or ffmpeg exiting immediately after an

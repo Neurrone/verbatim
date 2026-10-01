@@ -1,10 +1,12 @@
 //! Latency reporting for the M2 E2E harness.
 //!
-//! Every scenario runs Verbatim with `VERBATIM_TEST_AUDIO=null`
+//! A non-audible run launches Verbatim with `VERBATIM_TEST_AUDIO=null`
 //! ([`crate::scenario::Scenario`]), which swaps in [`verbatim_audio::NullSink`]
 //! — a device-free sink that still emits the `audio_started` tracing event
 //! on an utterance's first (discarded) PCM write, so a timeline completes
-//! with no sound card in the loop.
+//! with no sound card in the loop. An audible run
+//! ([`crate::scenario::AUDIBLE_ENV`]) uses the real sink instead; see
+//! [`report`] for what that changes.
 //!
 //! What that does *not* mean is that every timeline completes. Focus
 //! announcements are spoken at `Interrupt` priority, so each new focus

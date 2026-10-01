@@ -24,11 +24,17 @@ Public API:
   protocol's own `Hello` on the same socket and hands back a ready
   `verbatim_control::client::Client`.
 - `Scenario` — the lifecycle owner for one live, agent-driven Verbatim run:
-  a guard struct, not a manual-cleanup checklist. `Scenario::launch` writes
-  a `settings.toml` selecting the capture synthesizer next to
-  `verbatim.exe` (audio-free, no installed voices needed — deliberately
-  not `OneCore`, whose `new` fails outright with none installed), launches
-  Verbatim through the agent with `VERBATIM_TEST_AUDIO=null`, waits for its
+  a guard struct, not a manual-cleanup checklist. In runner-direct mode
+  `Scenario::launch` copies `verbatim.exe` and `verbatim-outpost.exe` into
+  `target/e2e-stage` and writes `Settings::for_e2e`'s fixed `settings.toml`
+  there; in remote mode `cargo xtask vm deploy` has already staged the
+  guest side. The synthesizer is the capture synthesizer by default
+  (audio-free, no installed voices needed — deliberately not `OneCore`,
+  whose `new` fails outright with none installed), with
+  `VERBATIM_TEST_AUDIO=null` set; an audible run (`AUDIBLE_ENV`, which
+  `cargo xtask vm test` always sets) selects `OneCore` and omits that
+  variable, so Verbatim speaks through the real `WasapiSink`. It then
+  launches Verbatim through the agent, waits for its
   control plane to answer over the agent's tunnel, opens a *second*,
   dedicated tunnel connection for speech collection, and pauses briefly
   (`GUI_SETTLE_DELAY`) for the GUI thread's gesture handle to exist before
