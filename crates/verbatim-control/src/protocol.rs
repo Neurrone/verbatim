@@ -234,6 +234,11 @@ pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io:
 /// Reads one JSON-line message; `Ok(None)` means the peer closed the
 /// connection.
 ///
+/// Only for readers whose reads never time out: a read that fails partway
+/// through a line discards the part already consumed, so a retry would
+/// start in the middle of a message. A reader with a timeout uses
+/// [`MessageReader`] instead, which keeps that part.
+///
 /// # Errors
 ///
 /// Returns an error for I/O failures and for lines that are not valid
@@ -246,6 +251,56 @@ pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Resu
     serde_json::from_str(line.trim_end())
         .map(Some)
         .map_err(io::Error::other)
+}
+
+/// Reads JSON-line messages from a connection whose reads may time out,
+/// keeping the bytes of a message that is only partly received when a read
+/// times out, so the next read continues it rather than starting in its
+/// middle. Each complete message is decoded exactly once.
+pub struct MessageReader<R> {
+    reader: R,
+    /// Bytes of the current message received so far, without its newline.
+    partial: Vec<u8>,
+}
+
+impl<R: BufRead> MessageReader<R> {
+    /// Wraps `reader`.
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            partial: Vec::new(),
+        }
+    }
+
+    /// Reads the next message; `Ok(None)` means the peer closed the
+    /// connection between messages.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for I/O failures, including a read timeout, after
+    /// which calling this again resumes the same message. Also returns an
+    /// error if the peer closed the connection partway through a message,
+    /// or a line is not a valid message.
+    pub fn read<T: DeserializeOwned>(&mut self) -> io::Result<Option<T>> {
+        // On an error, `read_until` has already appended every byte it
+        // consumed to `partial`, which is what preserves them.
+        self.reader.read_until(b'\n', &mut self.partial)?;
+        if self.partial.is_empty() {
+            return Ok(None);
+        }
+        if self.partial.last() != Some(&b'\n') {
+            self.partial.clear();
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the connection closed partway through a message",
+            ));
+        }
+        let line = std::mem::take(&mut self.partial);
+        let text = std::str::from_utf8(&line).map_err(io::Error::other)?;
+        serde_json::from_str(text.trim_end())
+            .map(Some)
+            .map_err(io::Error::other)
+    }
 }
 
 #[cfg(test)]
@@ -279,6 +334,73 @@ mod tests {
             .expect("not end of stream");
         assert_eq!(read_request, request);
         assert_eq!(read_frame, frame);
+    }
+
+    /// A reader that hands out scripted chunks, one per read, with a
+    /// timeout wherever the script says so, then end of stream.
+    struct ScriptedReader(std::collections::VecDeque<Option<Vec<u8>>>);
+
+    impl io::Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.0.pop_front() {
+                None => Ok(0),
+                Some(None) => Err(io::ErrorKind::TimedOut.into()),
+                Some(Some(chunk)) => {
+                    assert!(chunk.len() <= buf.len(), "test chunks fit one read");
+                    buf[..chunk.len()].copy_from_slice(&chunk);
+                    Ok(chunk.len())
+                }
+            }
+        }
+    }
+
+    fn frame_line(frame: &Frame) -> Vec<u8> {
+        let mut line = Vec::new();
+        write_message(&mut line, frame).expect("writes");
+        line
+    }
+
+    #[test]
+    fn a_timeout_partway_through_a_message_loses_nothing() {
+        let first = Frame::Reply {
+            to: 1,
+            payload: ReplyPayload::Ok,
+        };
+        let second = Frame::Error {
+            to: 2,
+            message: "second".to_owned(),
+        };
+        let first_line = frame_line(&first);
+        let (head, tail) = first_line.split_at(first_line.len() / 2);
+        let mut rest = tail.to_vec();
+        rest.extend(frame_line(&second));
+        let script = [Some(head.to_vec()), None, Some(rest)]
+            .into_iter()
+            .collect();
+        let mut reader = MessageReader::new(io::BufReader::new(ScriptedReader(script)));
+
+        let timed_out = reader.read::<Frame>().expect_err("the read times out");
+        assert_eq!(timed_out.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(reader.read::<Frame>().expect("reads"), Some(first));
+        assert_eq!(reader.read::<Frame>().expect("reads"), Some(second));
+        assert_eq!(reader.read::<Frame>().expect("reads"), None);
+    }
+
+    #[test]
+    fn a_close_partway_through_a_message_is_an_error_not_a_clean_end() {
+        let line = frame_line(&Frame::Reply {
+            to: 1,
+            payload: ReplyPayload::Ok,
+        });
+        let script = [Some(line[..line.len() - 3].to_vec())]
+            .into_iter()
+            .collect();
+        let mut reader = MessageReader::new(io::BufReader::new(ScriptedReader(script)));
+
+        let error = reader
+            .read::<Frame>()
+            .expect_err("a cut-off message is an error");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]

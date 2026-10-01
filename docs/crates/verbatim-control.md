@@ -9,9 +9,14 @@ Public API:
 - `protocol` — `Request` (`Hello`, `Status`, `SubscribeEvents`,
   `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `DumpTree`,
   `DumpRecorder`, `Quit`) in a `RequestEnvelope` with a correlation id;
-  `Frame` (`Reply`, `Error`, `Event`, `Speech`); `StatusInfo`,
+  `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechFinished`); `StatusInfo`,
   `OutpostStatus`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
-  same newline-JSON framing helpers. A speech frame carries the trace id,
+  same newline-JSON framing helpers. Of the two readers, `read_message` is
+  for connections whose reads never time out: a read that fails partway
+  through a line loses the part already read. `MessageReader` is for
+  connections with a read timeout, such as the end-to-end suite's tunnels:
+  it keeps a partly received message across a timeout, so the next read
+  continues it and each message is decoded exactly once. A speech frame carries the trace id,
   rendered text, the observation timestamp of the triggering event when
   there is one, the queue time, and the audio-start time once known.
   `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
@@ -27,7 +32,9 @@ Public API:
   remote session, or from inside a VM host); `request` completes the
   `Hello` handshake and matches replies by correlation id, discarding
   stream frames that arrive while a reply is pending; `next_frame` reads
-  any frame, for subscription loops. Single-threaded by design, which is
+  any frame, for subscription loops. Both read through a `MessageReader`,
+  so a read timeout set on a TCP transport never splits a frame.
+  Single-threaded by design, which is
   why its shared-handle `try_clone` is safe where the server needed
   overlapped I/O.
 - `ServerHandlers` — the app-injected callbacks answering status, gesture

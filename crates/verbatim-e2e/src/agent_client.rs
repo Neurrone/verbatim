@@ -20,7 +20,7 @@ use verbatim_agent::protocol::{
     RequestEnvelope, SessionInfo,
 };
 use verbatim_control::client::Client as ControlClient;
-use verbatim_control::protocol::{read_message, write_message};
+use verbatim_control::protocol::{MessageReader, write_message};
 
 /// Read timeout applied to the socket once it becomes a control-plane
 /// tunnel, so a Verbatim that stops answering fails the caller's next call
@@ -28,6 +28,14 @@ use verbatim_control::protocol::{read_message, write_message};
 /// that poll on top of it (readiness checks, [`crate::speech::SpeechCollector`]'s
 /// wait loop) wake up often enough to recheck their own, longer deadlines.
 pub const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Bounds every reply and write on the agent's own protocol, so an agent
+/// that stops answering fails the caller's request instead of hanging the
+/// suite. Every agent request is answered promptly (launching, killing, or
+/// polling a process, reading a small file), so this is a hang guard, not a
+/// latency expectation. A timed-out request leaves any partly received
+/// reply in the [`MessageReader`], and the next request skips it by id.
+const AGENT_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Per-attempt cap on establishing the TCP connection itself. Without one,
 /// an unanswered connect to a guest that is mid-restore or renewing its
@@ -39,7 +47,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// A connection to the M2 agent, past its `Hello` handshake.
 pub struct AgentClient {
     stream: TcpStream,
-    reader: BufReader<TcpStream>,
+    reader: MessageReader<BufReader<TcpStream>>,
     next_id: u64,
 }
 
@@ -56,7 +64,9 @@ impl AgentClient {
             .next()
             .ok_or_else(|| io::Error::other("the agent address resolved to no socket address"))?;
         let stream = TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT)?;
-        let reader = BufReader::new(stream.try_clone()?);
+        stream.set_read_timeout(Some(AGENT_REPLY_TIMEOUT))?;
+        stream.set_write_timeout(Some(AGENT_REPLY_TIMEOUT))?;
+        let reader = MessageReader::new(BufReader::new(stream.try_clone()?));
         let mut client = Self {
             stream,
             reader,
@@ -82,7 +92,7 @@ impl AgentClient {
         self.next_id += 1;
         write_message(&mut self.stream, &RequestEnvelope { id, request })?;
         loop {
-            let frame: Frame = read_message(&mut self.reader)?.ok_or_else(|| {
+            let frame: Frame = self.reader.read()?.ok_or_else(|| {
                 io::Error::new(io::ErrorKind::UnexpectedEof, "agent closed the connection")
             })?;
             match &frame {

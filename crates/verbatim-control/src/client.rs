@@ -13,7 +13,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 
 use crate::protocol::{
-    Frame, PIPE_NAME, PROTOCOL_VERSION, ReplyPayload, Request, RequestEnvelope, read_message,
+    Frame, MessageReader, PIPE_NAME, PROTOCOL_VERSION, ReplyPayload, Request, RequestEnvelope,
     write_message,
 };
 
@@ -63,7 +63,10 @@ impl Write for Transport {
 /// handshake.
 pub struct Client {
     writer: Transport,
-    reader: BufReader<Transport>,
+    /// A [`MessageReader`] because a TCP transport may carry a read timeout
+    /// (the end-to-end suite sets one): a timeout partway through a frame
+    /// must not lose the part already read.
+    reader: MessageReader<BufReader<Transport>>,
     next_id: u64,
 }
 
@@ -131,7 +134,7 @@ impl Client {
     }
 
     fn handshake(transport: Transport) -> io::Result<Self> {
-        let reader = BufReader::new(transport.try_clone()?);
+        let reader = MessageReader::new(BufReader::new(transport.try_clone()?));
         let mut client = Self {
             writer: transport,
             reader,
@@ -182,9 +185,11 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the connection closes or a message fails to
-    /// parse.
+    /// parse, or if a read timeout set on the transport expires; after a
+    /// timeout, calling this again continues the frame it was partway
+    /// through.
     pub fn next_frame(&mut self) -> io::Result<Frame> {
-        read_message(&mut self.reader)?.ok_or_else(|| {
+        self.reader.read()?.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "Verbatim closed the connection",
@@ -212,6 +217,7 @@ mod tests {
     use std::thread;
 
     use super::*;
+    use crate::protocol::read_message;
 
     /// A minimal fake server (`Hello` then always `Ok`) so this test
     /// exercises `Client`'s TCP transport and framing end to end without a
