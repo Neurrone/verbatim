@@ -60,11 +60,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Launching Notepad brings it to the foreground; a fresh outpost spawns
     // to watch it and reports the foreground change as a focus on the
     // top-level window ("Notepad") followed by the focused control, Notepad's
-    // text area: a UIA document named "Text editor", which NVDA's UIA role
-    // table, and so Verbatim's, speaks as "document".
-    scenario
-        .speech()
-        .expect_in_order(&["Notepad", "Text editor document"], STEP_TIMEOUT);
+    // text area (see `expect_notepad`).
+    expect_notepad(scenario);
 
     // Verbatim+V brings Verbatim's own hidden frame and popup menu to
     // foreground (the shared helper waits for the popup's announcement —
@@ -93,9 +90,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // idle-retirement threshold), so the existing outpost reports the
     // foreground change, not a respawn: the window and the focused control,
     // heard again as on the first launch.
-    scenario
-        .speech()
-        .expect_in_order(&["Notepad", "Text editor document"], STEP_TIMEOUT);
+    expect_notepad(scenario);
 }
 
 #[allow(
@@ -108,4 +103,18 @@ pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
             .kill_target(pid)
             .expect("kills notepad through the agent");
     }
+}
+
+/// Waits for Notepad's window and then its text area. The text area is a
+/// UIA document named "Text editor" in current Notepad, which NVDA's UIA
+/// role table, and so Verbatim's, speaks as "document", and a UIA edit
+/// named "Text Editor" in the older Notepad on GitHub's runners.
+fn expect_notepad(scenario: &mut Scenario) {
+    let text_area = scenario
+        .speech()
+        .expect_in_order_capturing(&["Notepad", "Text "], STEP_TIMEOUT);
+    assert!(
+        ["Text editor document", "Text Editor edit"].contains(&text_area.as_str()),
+        "Notepad's text area was announced as {text_area:?}"
+    );
 }
