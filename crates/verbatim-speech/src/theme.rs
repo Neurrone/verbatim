@@ -119,7 +119,7 @@ mod tests {
         ]);
         let request = PlainTheme.flatten(&utterance);
         assert_eq!(request.text, "Settings menu item");
-        assert!(request.marks.is_empty());
+        assert_eq!(request.marks, Vec::new());
     }
 
     #[test]

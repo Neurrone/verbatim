@@ -81,7 +81,7 @@ fn replays_the_committed_fixture_deterministically_and_matches_recorded_effect_c
     let contents = dump::read_dump(&mut reader).expect("fixture parses");
 
     assert!(!contents.truncated, "the committed fixture is complete");
-    assert!(!contents.inputs.is_empty());
+    assert_ne!(contents.inputs, [] as [verbatim_core::RecordedInput; 0]);
 
     let inputs: Vec<Input> = contents.inputs.iter().map(|r| r.input.clone()).collect();
 

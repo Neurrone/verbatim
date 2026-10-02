@@ -270,6 +270,6 @@ mod tests {
             .map(|fact| fact.observed_at_ms)
             .collect();
         assert_eq!(released, vec![1, 3, 4]);
-        assert!(facts.take().is_empty());
+        assert!(facts.take().is_empty(), "nothing is left held");
     }
 }

@@ -285,10 +285,9 @@ mod tests {
                 ..
             }]
         ));
-        assert!(
-            table
-                .finish(id, OutpostId(1), QueryOutcome::Gone)
-                .is_empty()
+        assert_eq!(
+            table.finish(id, OutpostId(1), QueryOutcome::Gone),
+            [] as [verbatim_model::Input; 0]
         );
     }
 
@@ -296,10 +295,9 @@ mod tests {
     fn an_outcome_from_another_outpost_is_dropped() {
         let mut table = RequestTable::default();
         let id = table.begin(OutpostId(1), navigation(7));
-        assert!(
-            table
-                .finish(id, OutpostId(2), QueryOutcome::Gone)
-                .is_empty()
+        assert_eq!(
+            table.finish(id, OutpostId(2), QueryOutcome::Gone),
+            [] as [verbatim_model::Input; 0]
         );
         assert_eq!(table.len(), 1, "the real answer can still arrive");
     }

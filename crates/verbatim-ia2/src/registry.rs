@@ -374,6 +374,6 @@ mod tests {
         let id = registry.id_for((1, 0, 0));
         let _ = registry.id_for((1, 0, 0));
         assert_eq!(registry.take_touched(), vec![id, id]);
-        assert!(registry.take_touched().is_empty());
+        assert_eq!(registry.take_touched(), [] as [verbatim_model::NodeId; 0]);
     }
 }

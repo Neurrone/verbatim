@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn bare_key_has_no_modifiers() {
         let combo = parse_combo("enter").expect("parses");
-        assert!(combo.modifiers.is_empty());
+        assert_eq!(combo.modifiers, [] as [verbatim_input::keys::KeyName; 0]);
         assert_eq!(combo.key, vk_from_name("enter").unwrap());
     }
 
@@ -196,7 +196,10 @@ mod tests {
         let keys = vec!["downarrow".to_owned(), "shift+tab".to_owned()];
         let combos = parse_all(&keys).expect("parses");
         assert_eq!(combos.len(), 2);
-        assert!(combos[0].modifiers.is_empty());
+        assert_eq!(
+            combos[0].modifiers,
+            [] as [verbatim_input::keys::KeyName; 0]
+        );
         assert_eq!(combos[1].modifiers.len(), 1);
     }
 }

@@ -179,7 +179,7 @@ impl Watch {
             drop(state);
             let _ = self
                 .abandoned
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
                     Some(count.saturating_sub(1))
                 });
             Err(())

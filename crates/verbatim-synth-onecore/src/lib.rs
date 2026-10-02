@@ -473,7 +473,6 @@ fn parse_wav(bytes: &[u8]) -> Result<(PcmFormat, Vec<i16>), SynthError> {
 }
 
 /// A [`SynthFactory`] that builds a fresh `OneCore` driver.
-#[must_use]
 pub fn factory() -> SynthFactory {
     Box::new(|| Ok(Box::new(OneCoreSynth::new()?) as Box<dyn SynthDriver>))
 }

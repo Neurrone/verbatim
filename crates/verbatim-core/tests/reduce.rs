@@ -414,7 +414,7 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
     };
     let (state, effects) = reduce(&state, &other_value_changed);
 
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert_eq!(
         state.focused().map(|(_, n)| n.value.clone()),
         Some(Some("a".to_string()))
@@ -593,7 +593,7 @@ fn states_changed_identical_set_is_silent() {
     let same = states_changed_input(TraceId::mint(), source, node_id, states);
     let (_, effects) = reduce(&state, &same);
 
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
 #[test]
@@ -614,7 +614,7 @@ fn states_changed_for_non_focused_node_is_ignored() {
     );
     let (state, effects) = reduce(&state, &other_changed);
 
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert_eq!(
         state.focused().map(|(_, n)| n.states),
         Some(StateSet::new())
@@ -631,7 +631,7 @@ fn fetch_completed_for_unknown_query_id_is_ignored() {
         result: FetchResult::Gone,
     };
     let (state, effects) = reduce(&state, &completed);
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert!(state.focused().is_none());
 }
 
@@ -1158,7 +1158,7 @@ fn the_focus_events_own_selected_item_is_not_reannounced_by_a_selection_event() 
     // Platforms often raise a selection event right after focus lands; the
     // focus announcement already spoke this item.
     let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, speech));
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
 #[test]
@@ -1823,12 +1823,12 @@ fn navigator_follows_focus_and_returns_to_focus() {
 fn commands_with_no_navigator_yet_do_nothing() {
     let state = SrState::new();
     let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
 // ---- Windows, menus, and name changes (outpost redesign step 1) ----
@@ -1999,7 +1999,7 @@ fn a_focus_from_a_window_outside_attention_is_dropped() {
 
     let (state, effects) = reduce(&state, &focus_in(Pid(2), window(20), button, vec![]));
 
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert_eq!(state.attention(), Some(Pid(1)));
     assert_eq!(state.focused().map(|(pid, _)| pid), Some(Pid(1)));
 }
@@ -2055,7 +2055,7 @@ fn a_foreground_change_is_always_accepted_and_moves_attention() {
     // The previous application is now in the background.
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
     let (_, effects) = reduce(&state, &focus_in(Pid(1), window(1000), button, vec![]));
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
 fn notification_in(source: Pid, activity_id: Option<&str>) -> Input {
@@ -2138,7 +2138,7 @@ fn an_ended_outposts_focus_is_dead_and_navigation_does_nothing() {
     let state = focused(source, button);
 
     let (state, effects) = reduce(&state, &ended(outpost_of(source)));
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert!(state.focused().is_none());
     assert!(state.held_nodes().is_empty());
 
@@ -2171,7 +2171,7 @@ fn a_pending_navigation_to_an_ended_outpost_is_dropped() {
         result: FetchResult::Node(node(6, Role::Group, Some("Buttons"), None, StateSet::new())),
     };
     let (_, effects) = reduce(&state, &completion);
-    assert!(effects.is_empty());
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
 #[test]

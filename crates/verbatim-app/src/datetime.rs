@@ -81,13 +81,13 @@ mod tests {
     #[test]
     fn the_time_formats_to_a_non_empty_string() {
         let time = local_time().expect("the OS formats the current time");
-        assert!(!time.trim().is_empty());
+        assert_ne!(time.trim(), "");
     }
 
     #[test]
     fn the_date_formats_to_a_non_empty_string() {
         let date = local_date().expect("the OS formats the current date");
-        assert!(!date.trim().is_empty());
+        assert_ne!(date.trim(), "");
     }
 
     #[test]
