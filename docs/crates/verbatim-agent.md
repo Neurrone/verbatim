@@ -26,8 +26,9 @@ Public API:
   a Control tap and `SetForegroundWindow`, then the call attached to the
   foreground thread's input queue, then one injected Alt+Tab when a cloaked
   window such as the Start search host holds the foreground; protocol
-  version 1), `ProcessStatus`, `SessionInfo`, `ReadFile`,
-  `OpenControlTunnel`. `KillOutcome` makes
+  version 1), `ProcessStatus`, `SessionInfo`, `ReadFile`, `ListFiles`
+  (the names of the files directly inside a directory, so a test can fetch
+  logs it cannot name in advance; protocol version 2), `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` inherits the launched child's stdio (uncaptured) by

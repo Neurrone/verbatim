@@ -18,8 +18,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The protocol version this vocabulary defines.
-pub const AGENT_PROTOCOL_VERSION: u32 = 1;
+/// The protocol version this vocabulary defines. Version 2 added
+/// [`Request::ListFiles`], so a test run against an agent built before it is
+/// refused at `Hello` instead of losing its connection mid-run.
+pub const AGENT_PROTOCOL_VERSION: u32 = 2;
 
 /// The default TCP port the agent listens on.
 ///
@@ -129,6 +131,13 @@ pub enum Request {
         /// Path to the file, agent-local.
         path: String,
     },
+    /// Lists the names of the files directly inside a directory, so a test
+    /// can fetch logs whose names it cannot know in advance. Answered by
+    /// [`ReplyPayload::FileNames`].
+    ListFiles {
+        /// Path to the directory, agent-local.
+        path: String,
+    },
     /// Asks the agent to stop speaking this protocol on this connection and
     /// instead relay raw bytes to and from Verbatim's control-plane named
     /// pipe. After the reply to this request, the connection is a raw
@@ -198,6 +207,12 @@ pub enum ReplyPayload {
         /// The file's contents, base64 encoded (standard alphabet, with
         /// padding).
         data_base64: String,
+    },
+    /// Answer to [`Request::ListFiles`]: the names of the files directly
+    /// inside the directory, sorted; subdirectories are left out.
+    FileNames {
+        /// The file names, without the directory.
+        names: Vec<String>,
     },
     /// Answer to [`Request::OpenControlTunnel`]: the agent successfully
     /// opened Verbatim's control-plane pipe and is ready to relay bytes.

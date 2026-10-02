@@ -51,8 +51,9 @@ Public API:
   earlier scenarios typed into); `latency_snapshot` is the non-asserting,
   non-printing fetch the registry's run summary uses (see `registry`
   below), and `collect_run_artifacts` (timeline, stderr, and the per-process
-  outpost and listener logs fetched from the guest's `logs` directory — Core's
-  own outpost, the listener, and each launched target's outpost by pid) plus
+  outpost and listener logs: every file in the launch's own log directory,
+  `logs\<Verbatim's pid>`, listed through the agent, so an application that
+  a launch handed off to, as Notepad does, is still collected) plus
   `collect_flight_recorder` (the reducer flight recorder, dumped before the
   clean quit) are what every run calls to save its diagnostics, pass or fail
   (see `artifacts` below). Its `Drop` impl kills every
@@ -118,7 +119,10 @@ Public API:
   `ScenarioSummary::write` at the end of every scenario run, pass or fail,
   as plain `key: value` lines, and read back by `ScenarioSummary::read` —
   `xtask vm test`'s own run summary is built from this file, never by
-  parsing a subprocess's stdout.
+  parsing a subprocess's stdout. `archive_run` copies each finished run's
+  directory into `history/<scenario>/<UTC time>-<pass or fail>` under the
+  root and keeps the newest 100 runs of each scenario, since the scenario's
+  own directory holds only the latest run.
 - `latency::fetch` — fetches the most recent `last_n` latency timelines with
   no printing and no assertion, the raw building block `report` (below) and
   `Scenario::latency_snapshot` both use.

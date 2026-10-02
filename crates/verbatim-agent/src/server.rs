@@ -239,6 +239,13 @@ fn dispatch(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::ListFiles { path } => match files::list(&path) {
+            Ok(names) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::FileNames { names },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }

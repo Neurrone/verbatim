@@ -163,6 +163,9 @@ impl Supervisor {
             .parent()
             .ok_or_else(|| io::Error::other("current exe has no parent directory"))?
             .join("verbatim-outpost.exe");
+        if let Some(exe_dir) = exe_path.parent() {
+            process::prepare_launch_logs(exe_dir);
+        }
         let writers: Writers = Arc::default();
         let (owner_tx, owner_rx) = unbounded();
         owner::start(owner::Setup {

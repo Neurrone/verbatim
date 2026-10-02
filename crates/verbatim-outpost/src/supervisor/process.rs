@@ -7,8 +7,8 @@ use std::ffi::c_void;
 use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
-use std::path::Path;
-use std::{io, ptr};
+use std::path::{Path, PathBuf};
+use std::{fs, io, ptr};
 
 use windows::Win32::Foundation::{
     HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, HWND, INVALID_HANDLE_VALUE, LPARAM, STILL_ACTIVE,
@@ -29,8 +29,9 @@ use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, InitializeProcThreadAttributeList,
     LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
-    STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+    PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    TerminateProcess, UpdateProcThreadAttribute,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowThreadProcessId, IsHungAppWindow, IsWindowVisible,
@@ -84,7 +85,10 @@ pub(super) fn launch(exe_path: &Path, role: Role) -> io::Result<(Launched, Child
                 "--pipe-in {} --pipe-out {} --target-pid {}",
                 pipes.child_in.0 as usize, pipes.child_out.0 as usize, pid.0
             ),
-            format!("outpost-{}", pid.0),
+            match image_stem(pid) {
+                Some(image) => format!("outpost-{image}-{}", pid.0),
+                None => format!("outpost-{}", pid.0),
+            },
         ),
         Role::Listener => (
             format!(
@@ -411,16 +415,94 @@ fn close_handle(handle: HANDLE) {
     }
 }
 
+/// How many Verbatim launches keep their log directories: this one and the
+/// newest earlier ones.
+const KEPT_LAUNCH_LOGS: usize = 10;
+
+/// The directory this Verbatim launch's outpost and listener logs go to:
+/// `logs\<Verbatim's pid>` next to the executables in `exe_dir`. One
+/// directory per launch, so the end-to-end harness collects exactly one
+/// launch's logs and a reused application pid never appends to an older
+/// application's log. A later Verbatim that reuses this pid finds no writer
+/// left in the directory, because the outposts and the listener sit in a
+/// kill-on-close job and die with the Verbatim that started them.
+#[must_use]
+pub(super) fn launch_log_dir(exe_dir: &Path) -> PathBuf {
+    exe_dir.join("logs").join(std::process::id().to_string())
+}
+
+/// Prepares this launch's log directory, best effort: empties it if an
+/// earlier process with the same pid left one, and removes all but the
+/// newest [`KEPT_LAUNCH_LOGS`] launch directories (by the time a file was
+/// last created in each), along with any log the earlier layout left
+/// directly in `logs`. Removal is partial for a launch that is still
+/// running: the log files its processes hold open stay, and a later launch
+/// removes them.
+pub(super) fn prepare_launch_logs(exe_dir: &Path) {
+    let own = launch_log_dir(exe_dir);
+    let _ = fs::remove_dir_all(&own);
+    if let Err(error) = fs::create_dir_all(&own) {
+        tracing::warn!(%error, "could not create this launch's log directory");
+        return;
+    }
+    let Ok(entries) = fs::read_dir(exe_dir.join("logs")) else {
+        return;
+    };
+    let mut launches = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path != own {
+                let modified = entry.metadata().and_then(|metadata| metadata.modified());
+                launches.push((modified.ok(), path));
+            }
+        } else if path.extension().is_some_and(|extension| extension == "log") {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    launches.sort_by_key(|launch| std::cmp::Reverse(launch.0));
+    for (_, path) in launches.into_iter().skip(KEPT_LAUNCH_LOGS - 1) {
+        let _ = fs::remove_dir_all(path);
+    }
+}
+
+/// `pid`'s executable name without its extension, lower-cased, to name its
+/// outpost's log: `notepad` for Notepad. `None` when it cannot be read.
+fn image_stem(pid: Pid) -> Option<String> {
+    let mut buffer = [0u16; 1024];
+    let mut length = u32::try_from(buffer.len()).ok()?;
+    // SAFETY: OpenProcess with a query-only right fails safely; the buffer
+    // outlives the call, which writes at most `length` units; the handle is
+    // closed before returning.
+    let read = unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0).ok()?;
+        let read = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &raw mut length,
+        );
+        let _ = windows::Win32::Foundation::CloseHandle(handle);
+        read
+    };
+    read.ok()?;
+    let path = String::from_utf16_lossy(&buffer[..usize::try_from(length).ok()?]);
+    Path::new(&path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::to_lowercase)
+}
+
 /// Opens (creating if needed) the per-role log file a spawned child's stderr is
 /// redirected into, returning an inheritable, append-mode handle — or `None` if
 /// the logs directory or file could not be created, since logging is
 /// diagnostics and must never fail a spawn. `file_stem` names the file
-/// (`outpost-<target pid>` or `listener`) inside a `logs` directory next to the
-/// executable, where `cargo xtask vm logs` and the end-to-end harness read it.
+/// (`outpost-<target image>-<target pid>` or `listener`) inside this launch's
+/// log directory ([`launch_log_dir`]), where the end-to-end harness reads it.
 /// Append mode so a crashed outpost's log and its replacement's both survive in
 /// one file.
 fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
-    let dir = exe_path.parent()?.join("logs");
+    let dir = launch_log_dir(exe_path.parent()?);
     if let Err(error) = std::fs::create_dir_all(&dir) {
         tracing::warn!(%error, "could not create the outpost logs directory");
         return None;

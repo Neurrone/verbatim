@@ -1,5 +1,6 @@
-//! [`crate::protocol::Request::ReadFile`]: pulling small files (logs,
-//! crash dumps) off the guest for a host-side test to inspect.
+//! [`crate::protocol::Request::ReadFile`] and
+//! [`crate::protocol::Request::ListFiles`]: pulling small files (logs, crash
+//! dumps) off the guest for a host-side test to inspect.
 
 use std::io;
 
@@ -26,6 +27,23 @@ pub fn read_base64(path: &str) -> io::Result<String> {
     }
     let bytes = std::fs::read(path)?;
     Ok(STANDARD.encode(bytes))
+}
+
+/// The names of the files directly inside `path`, sorted.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be read.
+pub fn list(path: &str) -> io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 #[cfg(test)]
@@ -58,6 +76,23 @@ mod tests {
         assert!(error.to_string().contains("ReadFile limit"));
 
         std::fs::remove_file(&file.0).ok();
+    }
+
+    #[test]
+    fn lists_the_files_in_a_directory_but_not_its_subdirectories() {
+        let dir = std::env::temp_dir().join(format!(
+            "verbatim-agent-list-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(dir.join("nested")).expect("creates the directories");
+        std::fs::write(dir.join("b.log"), b"b").expect("writes");
+        std::fs::write(dir.join("a.log"), b"a").expect("writes");
+
+        let names = list(dir.to_str().expect("utf8 path")).expect("lists");
+        assert_eq!(names, ["a.log", "b.log"]);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// A throwaway file path under the OS temp directory plus an open

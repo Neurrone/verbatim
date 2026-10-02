@@ -248,6 +248,24 @@ impl AgentClient {
         }
     }
 
+    /// Lists the names of the files directly inside a guest directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the directory cannot be
+    /// read.
+    pub fn list_files(&mut self, path: &str) -> io::Result<Vec<String>> {
+        match self.request(Request::ListFiles {
+            path: path.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::FileNames { names },
+                ..
+            } => Ok(names),
+            other => Err(unexpected("ListFiles", &other)),
+        }
+    }
+
     /// Asks the agent to stop speaking its own protocol on this connection
     /// and relay Verbatim's control-plane pipe instead, then completes the
     /// control protocol's own `Hello` on the same socket and returns a

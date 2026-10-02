@@ -620,83 +620,55 @@ impl Scenario {
         self.collect_outpost_logs(dir);
     }
 
-    /// Fetches the per-process outpost and listener log files the supervisor
-    /// redirected each spawned process's stderr into (Task: outpost
-    /// observability), from the `logs` directory next to Verbatim's executable
-    /// on the guest, into `dir`. Core's own outpost (`outpost-<verbatim pid>`)
-    /// and the listener are always attempted — those cover the menu scenarios,
-    /// where Core's own outpost is the one that goes silent — plus each launched
-    /// target application's outpost, by the pid this scenario launched it with.
-    ///
-    /// The agent reads one file by path (it has no directory listing), so only
-    /// deterministically-named files are fetched; a missing per-app outpost log
-    /// (a pid that never became an outpost's target, e.g. a `notepad.exe`
-    /// hand-off) is skipped silently, while a missing Core outpost or listener
-    /// log — which should exist — is noted.
+    /// Fetches every outpost and listener log this Verbatim launch wrote,
+    /// from its own directory under `logs` next to Verbatim's executable
+    /// (`logs\<Verbatim's pid>`, one per launch, so nothing from another run
+    /// is mixed in), into `dir` under the names the supervisor gave them:
+    /// `listener.log` and `outpost-<image>-<pid>.log` per application, Core's
+    /// own as `outpost-verbatim-<pid>.log`. Listing the directory finds the
+    /// application that actually held the window even when a launch handed
+    /// off to another process, as Windows 11 Notepad does.
     fn collect_outpost_logs(&mut self, dir: &Path) {
         let Some(logs_dir) = self.outpost_logs_dir() else {
             eprintln!("could not derive the outpost logs directory from the stderr log path");
             return;
         };
-        // Core's own outpost and the listener should exist: note a failure.
-        self.fetch_outpost_log(
-            &format!(r"{logs_dir}\outpost-{}.log", self.verbatim_pid),
-            dir,
-            "outpost-core.log",
-            true,
-        );
-        self.fetch_outpost_log(
-            &format!(r"{logs_dir}\listener.log"),
-            dir,
-            "listener.log",
-            true,
-        );
-        // Each launched target's outpost, by the launch pid; many never become
-        // an outpost's target, so a missing file here is expected and silent.
-        let launched: Vec<u32> = self.launched.iter().map(|(pid, _)| *pid).collect();
-        for pid in launched {
-            self.fetch_outpost_log(
-                &format!(r"{logs_dir}\outpost-{pid}.log"),
-                dir,
-                &format!("outpost-{pid}.log"),
-                false,
-            );
+        let names = match self.process_agent.list_files(&logs_dir) {
+            Ok(names) => names,
+            Err(error) => {
+                eprintln!("could not list {logs_dir} through the agent: {error}");
+                return;
+            }
+        };
+        if !names.iter().any(|name| name == "listener.log") {
+            eprintln!("{logs_dir} holds no listener.log; the focus listener never started");
+        }
+        for name in names {
+            let remote_path = format!(r"{logs_dir}\{name}");
+            match self.process_agent.read_file(&remote_path) {
+                Ok(bytes) => {
+                    if let Err(error) = fs::write(dir.join(&name), bytes) {
+                        eprintln!("could not write the fetched {name}: {error}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("could not read {remote_path} back through the agent: {error}");
+                }
+            }
         }
     }
 
-    /// The `logs` directory next to Verbatim's executable, derived from the
-    /// captured stderr log path's parent (both live in the same directory —
-    /// see [`verbatim_stderr_log_path`]).
+    /// This launch's log directory, `logs\<Verbatim's pid>` next to
+    /// Verbatim's executable, derived from the captured stderr log path's
+    /// parent (both live in the same directory — see
+    /// [`verbatim_stderr_log_path`]).
     fn outpost_logs_dir(&self) -> Option<String> {
         Path::new(&self.stderr_log_path)
             .parent()?
             .join("logs")
+            .join(self.verbatim_pid.to_string())
             .to_str()
             .map(str::to_owned)
-    }
-
-    /// Reads one outpost/listener log at `remote_path` back through the agent
-    /// and writes it into `dir` as `local_name`. `note_missing` controls whether
-    /// a read failure is reported (for logs expected to exist) or ignored (for
-    /// per-app logs that often do not).
-    fn fetch_outpost_log(
-        &mut self,
-        remote_path: &str,
-        dir: &Path,
-        local_name: &str,
-        note_missing: bool,
-    ) {
-        match self.process_agent.read_file(remote_path) {
-            Ok(bytes) => {
-                if let Err(error) = fs::write(dir.join(local_name), bytes) {
-                    eprintln!("could not write the fetched {local_name}: {error}");
-                }
-            }
-            Err(error) if note_missing => {
-                eprintln!("could not read {remote_path} back through the agent: {error}");
-            }
-            Err(_) => {}
-        }
     }
 
     /// Dumps the reducer flight recorder into `dir` (created if missing): a

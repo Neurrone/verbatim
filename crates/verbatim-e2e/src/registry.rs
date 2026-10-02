@@ -394,6 +394,7 @@ fn run(def: &ScenarioDef) {
             // the imminent quit for nothing.
             let latency = scenario.latency_snapshot(200).ok();
             write_summary(&dir, def.name, false, latency.as_deref());
+            archive(&dir, def.name, false);
             drop(scenario);
             panic!("scenario {:?}: setup failed: {error}", def.name);
         }
@@ -456,6 +457,7 @@ fn run(def: &ScenarioDef) {
     // already happened above, before the quit, for every run.
     scenario.collect_run_artifacts(&dir);
     write_summary(&dir, def.name, passed, latency.as_deref());
+    archive(&dir, def.name, passed);
     println!(
         "scenario {:?}: {}",
         def.name,
@@ -488,6 +490,14 @@ fn write_summary(
     let summary = ScenarioSummary::new(name, passed, latency);
     if let Err(error) = summary.write(dir) {
         eprintln!("scenario {name:?}: could not write its run summary: {error}");
+    }
+}
+
+/// Keeps this run's artifacts in the scenario's history, logging rather
+/// than failing the run if that fails.
+fn archive(dir: &std::path::Path, name: &str, passed: bool) {
+    if let Err(error) = artifacts::archive_run(&artifacts::artifacts_root(), name, dir, passed) {
+        eprintln!("scenario {name:?}: could not archive its artifacts: {error}");
     }
 }
 

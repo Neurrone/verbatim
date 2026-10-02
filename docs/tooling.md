@@ -325,15 +325,20 @@ the same directory the interleaved timeline
 (`timeline.txt` — the same account an `expect_*` panic already prints),
 Verbatim's captured stderr log (`stderr.log`), the per-process outpost and
 listener logs the supervisor redirected each spawned process's stderr into
-(`outpost-core.log`, `listener.log`, and one `outpost-<pid>.log` per launched
-target — fetched by name from the guest's `logs` directory, since the agent
-reads single files and cannot list a directory), and a reducer flight-recorder
+(`listener.log` and one `outpost-<image>-<pid>.log` per application,
+Core's own as `outpost-verbatim-<pid>.log` — every file in the launch's own
+log directory, `logs\<Verbatim's pid>` next to Verbatim's executable,
+listed and read through the agent), and a reducer flight-recorder
 dump (`flight-recorder.jsonl`, fetched via the control plane's `DumpRecorder`
 request and read back through the agent) — the timeline, stderr, and outpost
 logs by `Scenario::collect_run_artifacts` and the flight recorder by
 `Scenario::collect_flight_recorder` (taken before the clean quit, so a passing
 run captures it too), both from inside the scenario's own process, where the
-live control and agent connections they need still exist. A passing run leaves
+live control and agent connections they need still exist. The scenario's
+directory holds only its latest run; each run is also copied to
+`target/e2e-artifacts/history/<scenario name>/<UTC time>-<pass or fail>`,
+keeping the newest 100 runs of each scenario, so an intermittent failure
+survives the runs after it. A passing run leaves
 these behind so its announcement timings and reducer inputs can be read, not
 only a failing one. None of this is a retry mechanism: a failed scenario is
 reported failed exactly once, with these artifacts left for root-causing,
