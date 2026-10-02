@@ -45,11 +45,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()
-        .expect_in_order(&["Settings", "menu item"], STEP_TIMEOUT);
+        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
     scenario.send_keys(&["enter"]).expect("sends enter");
     scenario
         .speech()
-        .expect_in_order(&["Speech", "list item"], STEP_TIMEOUT);
+        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
 
     // Report the current navigator object: the navigator follows focus, so
     // this re-announces the focused list item.
@@ -74,9 +74,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .send_gesture("kb:verbatim+numpad2")
         .expect("sends move-to-first-child");
-    scenario
-        .speech()
-        .expect_in_order(&["Speech", "list item"], STEP_TIMEOUT);
+    // Object navigation speaks the item as NVDA speaks a focus: its name,
+    // without the "list item" role a report keeps.
+    scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
 
     // Wander to the parent again, then snap the navigator back to focus with
     // the to-focus command: the focused item.
@@ -89,9 +89,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .send_gesture("kb:verbatim+numpadminus")
         .expect("sends move-review-to-focus");
-    scenario
-        .speech()
-        .expect_in_order(&["Speech", "list item"], STEP_TIMEOUT);
+    scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
 }
 
 #[allow(

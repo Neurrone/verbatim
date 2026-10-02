@@ -137,7 +137,7 @@ fn speak_effects(effects: &[Effect]) -> Vec<&Utterance> {
 }
 
 #[test]
-fn focus_menu_item_with_popup_speaks_name_role_and_submenu() {
+fn focus_menu_item_with_popup_speaks_name_and_submenu() {
     let state = SrState::new();
     let source = Pid(100);
     let trace_id = TraceId::mint();
@@ -159,7 +159,6 @@ fn focus_menu_item_with_popup_speaks_name_role_and_submenu() {
         utterances[0].segments,
         vec![
             UtteranceSegment::label("Settings..."),
-            UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
             UtteranceSegment::new(SegmentContent::State(State::HasPopup)),
         ]
     );
@@ -364,7 +363,6 @@ fn focus_related_states_are_never_announced_but_unselected_is() {
         utterances[0].segments,
         vec![
             UtteranceSegment::label("Row"),
-            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
             // NVDA's rule: a selectable item that is not selected announces
             // exactly that; focused/focusable/offscreen stay silent.
             UtteranceSegment::new(SegmentContent::NegatedState(State::Selected)),
@@ -385,10 +383,7 @@ fn selected_items_do_not_announce_positive_selected_on_focus() {
     let utterances = speak_effects(&effects);
     assert_eq!(
         utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Row"),
-            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
-        ],
+        vec![UtteranceSegment::label("Row"),],
         "a focused item being selected is the expected default and stays silent"
     );
 }
@@ -892,7 +887,6 @@ fn a_named_list_ancestor_is_announced_as_entered_context() {
             UtteranceSegment::label("Categories"),
             UtteranceSegment::new(SegmentContent::Role(Role::List)),
             UtteranceSegment::label("Speech"),
-            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
         ]
     );
 }
@@ -917,7 +911,6 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
         vec![
             UtteranceSegment::new(SegmentContent::Role(Role::Tree)),
             UtteranceSegment::label("Home"),
-            UtteranceSegment::new(SegmentContent::Role(Role::TreeItem)),
         ]
     );
 }
@@ -1054,7 +1047,6 @@ fn details_speak_in_nvda_property_order() {
         utterances[0].segments,
         vec![
             UtteranceSegment::label("Report.txt"),
-            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
             UtteranceSegment::new(SegmentContent::Description("Text document".to_owned())),
             UtteranceSegment::new(SegmentContent::Shortcut("Alt+R".to_owned())),
             UtteranceSegment::new(SegmentContent::Position {
@@ -1118,7 +1110,6 @@ fn focusing_a_list_announces_its_selected_item() {
             UtteranceSegment::label("Categories"),
             UtteranceSegment::new(SegmentContent::Role(Role::List)),
             UtteranceSegment::label("Speech"),
-            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
         ]
     );
 }
@@ -1144,10 +1135,7 @@ fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
     let utterances = speak_effects(&effects);
     assert_eq!(
         utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Keyboard"),
-            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
-        ]
+        vec![UtteranceSegment::label("Keyboard"),]
     );
 
     // A duplicate selection event for the same item stays silent.
@@ -1407,6 +1395,73 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
     assert_eq!(
         utterances[0].segments[0],
         UtteranceSegment::label("Buttons")
+    );
+}
+
+#[test]
+fn a_named_item_leaves_its_role_unspoken_on_focus_but_an_unnamed_one_speaks_it() {
+    // NVDA's rule ("When the role is spoken" in docs/nvda/speech.md): on
+    // focus, a list item with a name says its name alone; with nothing else
+    // to hear, it still says "list item".
+    let named = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), Pid(1), named),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::label("alpha.txt")]
+    );
+
+    let unnamed = node(8, Role::ListItem, None, None, StateSet::new());
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), Pid(1), unnamed),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::new(SegmentContent::Role(Role::ListItem))]
+    );
+}
+
+#[test]
+fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
+    // Reporting the current object is a query and keeps the role; object
+    // navigation speaks the new object as NVDA speaks a focus.
+    let source = Pid(1);
+    let item = node(10, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
+    let state = focused(source, item);
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![
+            UtteranceSegment::label("alpha.txt"),
+            UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
+        ]
+    );
+
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::NextSibling, 0),
+    );
+    let query = match &effects[0] {
+        Effect::Fetch(query) => *query,
+        other => panic!("expected Fetch, got {other:?}"),
+    };
+    let next = node(11, Role::ListItem, Some("beta.txt"), None, StateSet::new());
+    let completion = Input::FetchCompleted {
+        trace_id: TraceId::mint(),
+        query_id: query.query_id,
+        kind: query.kind,
+        result: FetchResult::Node(next),
+    };
+    let (_, effects) = reduce(&state, &completion);
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::label("beta.txt")]
     );
 }
 
@@ -1931,10 +1986,7 @@ fn entering_menus_is_silent_and_only_the_item_is_announced() {
     assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
     assert_eq!(
         utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Open"),
-            UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
-        ]
+        vec![UtteranceSegment::label("Open"),]
     );
 }
 

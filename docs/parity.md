@@ -68,17 +68,19 @@ verified.
   2026-10-02 by running NVDA with its speech log through the same keys
   in Explorer, Settings, and Start:
   - NVDA speaks no role on focus for a set of roles, among them list
-    item, menu item, tree view item, pane, static text, and unknown;
-    Verbatim speaks them ("alpha.txt list item" where NVDA says
-    "alpha.txt", "vbtest - File Explorer unknown").
+    item, menu item, tree view item, pane, static text, and unknown,
+    when the object has a name or value; Verbatim spoke them ("alpha.txt
+    list item" where NVDA says "alpha.txt"). **Matched since
+    2026-10-02** ("When the role is spoken" in
+    [Speech](nvda/speech.md)), including object navigation, which NVDA
+    speaks with the focus reason, and reporting the current object,
+    which keeps the role.
   - An Explorer file is spoken by Verbatim with a second copy of its
     name ("alpha.txt list item alpha.txt"), which NVDA does not speak;
     not yet traced to the property it comes from.
   - NVDA speaks a tree item's level first ("level 1, System, 2 of
     12"); Verbatim speaks it last.
-  
-  The silent-role rule must be written up under `docs/nvda/` before the
-  reducer can follow it (NVDA provenance rule in `CLAUDE.md`).
+
 - Focus-ancestry context: announce newly entered presentable
   containers before the control. NVDA: `focusEntered` +
   `isPresentableFocusAncestor` ([Event handling](nvda/events.md),

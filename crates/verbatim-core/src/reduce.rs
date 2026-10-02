@@ -346,11 +346,11 @@ fn reduce_focus_changed(
     for container in entered_containers(state.focus.as_ref(), window, report.ancestors) {
         segments.extend(container_segments(container));
     }
-    segments.extend(node_segments(report.node));
+    segments.extend(node_segments(report.node, Reason::Focus));
     // A selection container introduces its selected item right after
     // itself — the roadmap's "announce a focused list's selected item".
     if let Some(selected) = report.selected_child {
-        segments.extend(node_segments(selected));
+        segments.extend(node_segments(selected, Reason::Focus));
     }
     let utterance = Utterance {
         trace_id,
@@ -448,6 +448,7 @@ fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
         trace_id,
         SpeechPriority::Queued,
         node,
+        Reason::Focus,
     ))]
 }
 
@@ -531,7 +532,7 @@ fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         return Vec::new();
     };
     let object = focus.snapshot.clone();
-    let utterance = announce_node(trace_id, SpeechPriority::Interrupt, &object);
+    let utterance = announce_node(trace_id, SpeechPriority::Interrupt, &object, Reason::Focus);
     state.navigator = Some(Navigator {
         object,
         review_offset: 0,
@@ -548,6 +549,7 @@ fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Ef
             trace_id,
             SpeechPriority::Interrupt,
             &navigator.object,
+            Reason::Query,
         ))],
         1 => {
             let text = review::text_of(&navigator.object);
@@ -755,7 +757,7 @@ fn reduce_selection_changed(
     vec![Effect::Speak(Utterance {
         trace_id,
         priority: SpeechPriority::Interrupt,
-        segments: node_segments(node),
+        segments: node_segments(node, Reason::Focus),
         source: Some(source_of(node)),
     })]
 }
@@ -915,7 +917,8 @@ fn reduce_navigate_completed(
     match result {
         FetchResult::Node(snapshot) => {
             state.latest_navigation = None;
-            let utterance = announce_node(trace_id, SpeechPriority::Interrupt, snapshot);
+            let utterance =
+                announce_node(trace_id, SpeechPriority::Interrupt, snapshot, Reason::Focus);
             state.navigator = Some(Navigator {
                 object: snapshot.clone(),
                 review_offset: 0,
@@ -1065,16 +1068,54 @@ fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     segments
 }
 
+/// Why a node is being spoken, which decides whether its role is
+/// ("When the role is spoken" in `docs/nvda/speech.md`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reason {
+    /// Focus moved to it, it was selected in a list the focus controls, it
+    /// is a toast, or object navigation moved the navigator to it.
+    Focus,
+    /// The user asked for it, as with reporting the current object.
+    Query,
+}
+
+/// Roles left unspoken on focus when the node has a name or a value: an
+/// item says its name, not "list item" after it. The rule and the role set
+/// are described under "When the role is spoken" in `docs/nvda/speech.md`.
+fn is_silent_on_focus(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Pane
+            | Role::Unknown
+            | Role::ListItem
+            | Role::MenuItem
+            | Role::TreeItem
+            | Role::StaticText
+    )
+}
+
+/// Whether a node announced for `reason` speaks its role: always, unless
+/// the reason is focus, the node has a name or a value to hear instead, and
+/// its role is one left silent on focus.
+fn speaks_role(node: &NodeSnapshot, reason: Reason) -> bool {
+    let something_else = node.name.as_deref().is_some_and(|name| !name.is_empty())
+        || node.value.as_deref().is_some_and(|value| !value.is_empty());
+    !(reason == Reason::Focus && something_else && is_silent_on_focus(node.role))
+}
+
 /// The full announcement for a node, in NVDA's property order: name, role,
 /// value, states, description, keyboard shortcut, position in set, level —
 /// each as its semantic span kind, never anonymous text (decision D12).
-/// Detail spans simply do not appear when the backend reported nothing.
-fn node_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
+/// Detail spans simply do not appear when the backend reported nothing; the
+/// role does not appear when `reason` leaves it silent ([`speaks_role`]).
+fn node_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
     if let Some(name) = &node.name {
         segments.push(UtteranceSegment::label(name.clone()));
     }
-    segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
+    if speaks_role(node, reason) {
+        segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
+    }
     if let Some(value) = &node.value {
         segments.push(UtteranceSegment::value(value.clone()));
     }
@@ -1102,12 +1143,17 @@ fn node_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
 }
 
 /// Builds a complete announcement utterance for a node (no entered-context
-/// prefix): navigation and report-object announcements.
-fn announce_node(trace_id: TraceId, priority: SpeechPriority, node: &NodeSnapshot) -> Utterance {
+/// prefix): navigation, toast, and report-object announcements.
+fn announce_node(
+    trace_id: TraceId,
+    priority: SpeechPriority,
+    node: &NodeSnapshot,
+    reason: Reason,
+) -> Utterance {
     Utterance {
         trace_id,
         priority,
-        segments: node_segments(node),
+        segments: node_segments(node, reason),
         source: Some(source_of(node)),
     }
 }

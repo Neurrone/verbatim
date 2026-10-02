@@ -32,6 +32,32 @@ from `getTextWithFields` — [TextInfo](text-infos.md)), `speakMessage`,
 `speakSpelling`, plus configurable verbosity (`speechModes`: off,
 beeps, talk, on-demand).
 
+### When the role is spoken
+
+Every announcement carries a reason: focus, caret movement, say-all,
+quick navigation, a query such as reporting the current object or the
+focus on request, a container entered as focus moves into it, and so
+on. Object navigation (to the parent, the next or previous object, the
+first child, or back to the focus) speaks the new navigator object with
+the focus reason. The object's role is spoken except when three things hold at once:
+
+- the reason is focus, caret movement, say-all, or quick navigation;
+- the object has a name, a value, or table cell coordinates, so there
+  is something else to hear; and
+- its role is one of the roles NVDA leaves silent on focus: pane, root
+  pane, frame, unknown, application, table cell, list item, menu item,
+  check menu item, tree view item, static text, and border.
+
+So focusing a named list item says "alpha.txt, 1 of 3", not "alpha.txt,
+list item, 1 of 3", and so does navigating to it as an object; an
+unnamed list item with no value still says "list item"; and reporting
+the current object or the focus on request, or entering a list as a
+container, keeps the role. A custom role text, where an
+object supplies one, is always spoken. Toast and alert objects are
+spoken with the focus reason, and so are items selected in a list the
+focus controls. (`getPropertiesSpeech` and `silentRolesOnFocus` in
+`controlTypes/role.py`.)
+
 ## The manager
 
 `SpeechManager` (all on the main thread, by design):

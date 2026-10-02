@@ -51,11 +51,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()
-        .expect_in_order(&["Settings", "menu item"], STEP_TIMEOUT);
+        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
     scenario.send_keys(&["enter"]).expect("sends enter");
     scenario
         .speech()
-        .expect_in_order(&["Speech", "list item"], STEP_TIMEOUT);
+        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
 
     // The burst: away and back again in one request.
     let burst: Vec<&str> = std::iter::repeat_n("tab", TABS)

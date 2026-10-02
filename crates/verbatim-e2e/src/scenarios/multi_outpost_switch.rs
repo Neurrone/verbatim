@@ -80,7 +80,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()
-        .expect_in_order(&["Settings", "menu item"], STEP_TIMEOUT);
+        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
 
     // Escape closes the menu without selecting anything; verbatim-gui's
     // postPopup hides the hidden frame again and the foreground falls back

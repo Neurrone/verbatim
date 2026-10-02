@@ -172,19 +172,17 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()
-        .expect_in_order(&["Settings", "menu item"], STEP_TIMEOUT);
+        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
 
     // Walk to the second (and last) item.
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario
-        .speech()
-        .expect_in_order(&["Exit", "menu item"], STEP_TIMEOUT);
+    scenario.speech().expect_in_order(&["Exit"], STEP_TIMEOUT);
 
     // Back to Settings, then open it.
     scenario.send_keys(&["uparrow"]).expect("sends uparrow");
     scenario
         .speech()
-        .expect_in_order(&["Settings", "menu item"], STEP_TIMEOUT);
+        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
     scenario.send_keys(&["enter"]).expect("sends enter");
 
     // The settings dialog opens with focus in the category list, announced
