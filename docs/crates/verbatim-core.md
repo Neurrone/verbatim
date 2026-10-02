@@ -50,9 +50,9 @@ Implementation notes, `reduce`:
   absent when the backend reported nothing. The role is left out, as NVDA
   leaves it out, when the node has a name or a value and its role is one
   of the roles silent on focus (list item, menu item, tree item, pane,
-  static text, unknown); this applies to focus changes, selections in the
-  focused list, toasts, and object navigation, while reporting the current
-  object keeps the role (`Reason` and `speaks_role` in `reduce.rs`; the
+  static text, unknown); this applies to focus changes, entered
+  containers, selections in the focused list, toasts, and object
+  navigation, while reporting the current object keeps the role (`Reason` and `speaks_role` in `reduce.rs`; the
   rule is under "When the role is spoken" in `docs/nvda/speech.md`). Per
   decision D12 the name
   travels as a `Label` span and the value as a `Value` span, never

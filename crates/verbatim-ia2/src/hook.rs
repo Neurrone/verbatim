@@ -23,6 +23,8 @@
 
 use std::cell::RefCell;
 
+use crate::com::CHILDID_SELF;
+
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -30,7 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
     EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_CLIENT, OBJID_WINDOW,
+    WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -223,6 +226,17 @@ unsafe extern "system" fn win_event_proc(
     let Some(kind) = kind_of(event) else {
         return;
     };
+    // An event on a window object stands for its client area, as NVDA's
+    // event hook treats it, so a window's foreground report and a focus on
+    // its client area name one object. A window's destruction keeps the
+    // window object, which is how its end is recognized.
+    let id_object =
+        if kind != WinEventKind::Destroy && id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF
+        {
+            OBJID_CLIENT.0
+        } else {
+            id_object
+        };
     CALLBACK.with(|slot| {
         if let Some(callback) = slot.borrow().as_ref() {
             callback(kind, hwnd.0 as isize, id_object, id_child);

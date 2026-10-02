@@ -229,6 +229,12 @@ impl Uia {
     /// should depend only on the result — the ordered ancestor list — never
     /// on how many round trips producing it took.
     ///
+    /// The walk stops at an ancestor that is the root element of a window
+    /// `read_by_other_api` claims, and returns that window's handle with the
+    /// chain below it, so the caller can continue through the other API, as
+    /// NVDA switches API when a walk crosses into a window read through it
+    /// (`correctAPIForRelation`).
+    ///
     /// # Errors
     ///
     /// Returns the COM error if the tree walker itself cannot be created;
@@ -243,7 +249,8 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
         max_hops: u32,
-    ) -> windows::core::Result<Vec<NodeSnapshot>> {
+        read_by_other_api: &dyn Fn(isize) -> bool,
+    ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>)> {
         // The raw view, the same parent chain NVDA's own object hierarchy
         // walks; what gets *reported* out of it is filtered below.
         // SAFETY: `self.client` is a live IUIAutomation instance.
@@ -257,6 +264,12 @@ impl Uia {
                 break;
             };
             // SAFETY: `parent` was just built with `cache`.
+            let hwnd = unsafe { crate::map::cached_native_window_handle(&parent) };
+            if hwnd != 0 && read_by_other_api(hwnd) {
+                chain.reverse();
+                return Ok((chain, Some(hwnd)));
+            }
+            // SAFETY: `parent` was just built with `cache`.
             let snapshot = unsafe { snapshot_from_cached_element(&parent, registry) };
             // Non-presentable ancestors are crossed but never reported —
             // NVDA's `isPresentableFocusAncestor`, which filters spoken
@@ -269,7 +282,7 @@ impl Uia {
             current = parent;
         }
         chain.reverse();
-        Ok(chain)
+        Ok((chain, None))
     }
 
     /// The first selected child of a selection container, via the

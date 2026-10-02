@@ -5,15 +5,15 @@
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomationCacheRequest, UIA_AcceleratorKeyPropertyId,
-    UIA_AccessKeyPropertyId, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
-    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId,
-    UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
-    UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
-    UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
-    UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    UIA_AccessKeyPropertyId, UIA_BoundingRectanglePropertyId, UIA_ClassNamePropertyId,
+    UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
+    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
+    UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId,
+    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
+    UIA_LevelPropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
+    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_SelectionItemIsSelectedPropertyId,
+    UIA_SizeOfSetPropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
 };
 
 /// The properties prefetched for every event and query. Kept in one place
@@ -36,6 +36,9 @@ use windows::Win32::UI::Accessibility::{
 /// reports a default value (an empty string, or zero) for a property an
 /// element does not support, so [`crate::map::snapshot_from_cached_element`]
 /// maps every default value to `None` rather than trusting it as real data.
+///
+/// `ClassName` lets the mapping apply rules NVDA keys on a UIA class name,
+/// such as the shell's `UIItem` file items reporting no value.
 pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
     UIA_NamePropertyId,
     UIA_ControlTypePropertyId,
@@ -60,6 +63,7 @@ pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PRO
     UIA_SizeOfSetPropertyId,
     UIA_LevelPropertyId,
     UIA_BoundingRectanglePropertyId,
+    UIA_ClassNamePropertyId,
 ];
 
 /// Builds the base cache request: every [`CACHED_PROPERTIES`] entry, prefetched

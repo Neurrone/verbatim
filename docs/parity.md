@@ -73,11 +73,18 @@ verified.
     list item" where NVDA says "alpha.txt"). **Matched since
     2026-10-02** ("When the role is spoken" in
     [Speech](nvda/speech.md)), including object navigation, which NVDA
-    speaks with the focus reason, and reporting the current object,
-    which keeps the role.
-  - An Explorer file is spoken by Verbatim with a second copy of its
-    name ("alpha.txt list item alpha.txt"), which NVDA does not speak;
-    not yet traced to the property it comes from.
+    speaks with the focus reason, entered containers, which it speaks
+    like a focus, and reporting the current object, which keeps the
+    role.
+  - Verbatim announced an MSAA window object above a control as an
+    entered container ("Categories: window", "vbtest - File Explorer
+    window vbtest - File Explorer"); NVDA never presents a window object
+    it reaches through a control's parents, and reads a foreground
+    window and window-level events through the window's client area.
+    **Matched since 2026-10-02.**
+  - Explorer's file items exposed their name again as their value, so
+    Verbatim spoke it twice; NVDA's `UIItem` class reports no value.
+    **Matched since 2026-10-02.**
   - NVDA speaks a tree item's level first ("level 1, System, 2 of
     12"); Verbatim speaks it last.
 
@@ -112,7 +119,11 @@ verified.
   **matched (unverified)**; the Start menu and window-switch scenarios
   verified the earlier, separate announcement.
 - Duplicate focus suppression (same control announced once when two
-  paths report it). NVDA: "already the focus" early return.
+  paths report it). NVDA: "already the focus" early return, comparing
+  the focus object by identity only. Since 2026-10-02 Verbatim compares
+  the node id too, not its states, name, or ancestors, which a second
+  report can read mid-change (Notepad's edit control settling, File
+  Explorer's title being filled in), and keeps the newer reading.
   Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md),
   M3 noise suppression). Unchanged by the outpost redesign: only Core
   sees focus across applications, so this stays in the reducer.

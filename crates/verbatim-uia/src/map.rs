@@ -11,8 +11,8 @@ use windows::Win32::UI::Accessibility::{
     NotificationProcessing_CurrentThenMostRecent, NotificationProcessing_ImportantMostRecent,
     NotificationProcessing_MostRecent, ToggleState_Indeterminate, ToggleState_On,
     UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId, UIA_ButtonControlTypeId,
-    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId,
-    UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+    UIA_CheckBoxControlTypeId, UIA_ClassNamePropertyId, UIA_ComboBoxControlTypeId,
+    UIA_ControlTypePropertyId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
     UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
     UIA_HyperlinkControlTypeId, UIA_IsEnabledPropertyId,
@@ -400,11 +400,21 @@ pub unsafe fn snapshot_parts_from_cached_element(element: &IUIAutomationElement)
             runtime_id,
             role,
             name: cached_string(element, UIA_NamePropertyId.0),
-            value: cached_string(element, UIA_ValueValuePropertyId.0),
+            value: cached_string(element, UIA_ValueValuePropertyId.0).filter(|_| {
+                !reports_no_value(cached_string(element, UIA_ClassNamePropertyId.0).as_deref())
+            }),
             states: states_from_cached(element, role),
             details: details_from_cached(element),
         }
     }
+}
+
+/// Whether an element of UIA class `class_name` reports no value. The
+/// Windows shell's file and folder items (UIA class `UIItem`, in File
+/// Explorer and the file dialogs) expose their name again as their value;
+/// NVDA's `UIItem` class reports none, so the name is spoken once.
+fn reports_no_value(class_name: Option<&str>) -> bool {
+    class_name == Some("UIItem")
 }
 
 /// Builds a [`NodeSnapshot`] from a cached UIA element, minting or reusing its

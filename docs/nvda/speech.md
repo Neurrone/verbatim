@@ -36,10 +36,11 @@ beeps, talk, on-demand).
 
 Every announcement carries a reason: focus, caret movement, say-all,
 quick navigation, a query such as reporting the current object or the
-focus on request, a container entered as focus moves into it, and so
-on. Object navigation (to the parent, the next or previous object, the
-first child, or back to the focus) speaks the new navigator object with
-the focus reason. The object's role is spoken except when three things hold at once:
+focus on request, and so on. Object navigation (to the parent, the next
+or previous object, the first child, or back to the focus) speaks the
+new navigator object with the focus reason, and so is a container
+entered as focus moves into it: apart from leaving out some properties,
+focus entered is spoken like focus. The object's role is spoken except when three things hold at once:
 
 - the reason is focus, caret movement, say-all, or quick navigation;
 - the object has a name, a value, or table cell coordinates, so there
@@ -50,9 +51,10 @@ the focus reason. The object's role is spoken except when three things hold at o
 
 So focusing a named list item says "alpha.txt, 1 of 3", not "alpha.txt,
 list item, 1 of 3", and so does navigating to it as an object; an
-unnamed list item with no value still says "list item"; and reporting
-the current object or the focus on request, or entering a list as a
-container, keeps the role. A custom role text, where an
+unnamed list item with no value still says "list item"; entering a list
+as a container still says "list", since a list is not one of these
+roles; and reporting the current object or the focus on request keeps
+the role. A custom role text, where an
 object supplies one, is always spoken. Toast and alert objects are
 spoken with the focus reason, and so are items selected in a list the
 focus controls. (`getPropertiesSpeech` and `silentRolesOnFocus` in

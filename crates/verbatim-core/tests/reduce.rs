@@ -1425,6 +1425,92 @@ fn a_named_item_leaves_its_role_unspoken_on_focus_but_an_unnamed_one_speaks_it()
 }
 
 #[test]
+fn the_same_focus_reported_again_after_its_window_was_renamed_is_silent() {
+    // File Explorer fills in its window title while the first file already
+    // has focus, and reports that focus twice.
+    let source = Pid(1);
+    let window = node(
+        30,
+        Role::Dialog,
+        Some("vbtest - File"),
+        None,
+        StateSet::new(),
+    );
+    let item = node(31, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), source, item.clone(), vec![window]),
+    );
+    let renamed = node(
+        30,
+        Role::Dialog,
+        Some("vbtest - File Explorer"),
+        None,
+        StateSet::new(),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![renamed]),
+    );
+    assert!(effects.is_empty(), "already the focus");
+}
+
+#[test]
+fn the_same_focus_reported_again_with_other_states_is_silent_and_kept() {
+    // Notepad reports its edit control twice as it settles, the second time
+    // without one state; NVDA compares the focus by identity.
+    let source = Pid(1);
+    let first = node(
+        40,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new().with(State::Focusable),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, first),
+    );
+    let again = node(
+        40,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), source, again));
+    assert!(effects.is_empty(), "already the focus");
+    assert_eq!(
+        state.focused().map(|(_, node)| node.states),
+        Some(StateSet::new()),
+        "the newer reading is kept"
+    );
+}
+
+#[test]
+fn an_entered_container_is_spoken_as_a_focus_is() {
+    // A named static text entered as context says its name alone; a list,
+    // which is not a silent role, still says "list".
+    let label = node(20, Role::StaticText, Some("Options"), None, StateSet::new());
+    let list = node(21, Role::List, Some("Files"), None, StateSet::new());
+    let item = node(22, Role::Button, Some("OK"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![label, list]),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![
+            UtteranceSegment::label("Options"),
+            UtteranceSegment::label("Files"),
+            UtteranceSegment::new(SegmentContent::Role(Role::List)),
+            UtteranceSegment::label("OK"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+}
+
+#[test]
 fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
     // Reporting the current object is a query and keeps the role; object
     // navigation speaks the new object as NVDA speaks a focus.

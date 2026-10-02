@@ -4,7 +4,7 @@
 //! application and so runs only on the worker, under its deadline.
 
 use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
-use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
+use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet};
@@ -140,11 +140,12 @@ fn window_snapshot(
         let node = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
         Some((Backend::Uia, node))
     } else {
-        // The window object itself, not its client area: the client reads
-        // as role "client", the window as role "window".
+        // The client area, as NVDA reads a foreground window: a focus event
+        // on the client area that follows is then the same node and is not
+        // announced again.
         let node = verbatim_ia2::acquire::snapshot_from_event(
             hwnd,
-            OBJID_WINDOW.0,
+            OBJID_CLIENT.0,
             CHILDID_SELF,
             &context.msaa_registry,
         )?;
@@ -153,12 +154,13 @@ fn window_snapshot(
 }
 
 /// A window snapshot from local window data only: role window, named by its
-/// window text, under the registry key the MSAA window object uses.
+/// window text, under the registry key the MSAA client area uses, which a
+/// foreground report reads when the window can be read.
 fn local_window_snapshot(context: &Context, hwnd: isize) -> NodeSnapshot {
     NodeSnapshot {
         id: context
             .msaa_registry
-            .id_for((hwnd, OBJID_WINDOW.0, CHILDID_SELF)),
+            .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF)),
         backend: Backend::Msaa,
         role: Role::Window,
         name: window_text(hwnd),
@@ -184,10 +186,7 @@ pub(super) fn uia_enrichment(
     element: &IUIAutomationElement,
     role: Role,
 ) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
-    // SAFETY: `element` was built with `cache` by the caller.
-    let ancestors =
-        unsafe { uia.ancestor_chain(element, cache, &context.uia_registry, MAX_ANCESTOR_HOPS) }
-            .unwrap_or_default();
+    let ancestors = uia_ancestors(context, uia, cache, element);
     let selected = if wants_selected_child(role) {
         // SAFETY: as above.
         unsafe { uia.selected_child(element, cache, &context.uia_registry) }.unwrap_or(None)
@@ -197,15 +196,72 @@ pub(super) fn uia_enrichment(
     (ancestors, selected)
 }
 
+/// A UIA element's ancestors, outermost first. Where the walk reaches the
+/// root of a window read through MSAA, it continues from that window's
+/// client area through MSAA, as NVDA switches API when its walk crosses into
+/// such a window: in File Explorer, the folder window above the UIA file
+/// list is then the client area a foreground report already named, not a
+/// second, UIA copy of it. The desktop window ends the walk either way.
+fn uia_ancestors(
+    context: &Context,
+    uia: &Uia,
+    cache: &IUIAutomationCacheRequest,
+    element: &IUIAutomationElement,
+) -> Vec<NodeSnapshot> {
+    // SAFETY: GetDesktopWindow has no preconditions.
+    let desktop = unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize;
+    let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+    // SAFETY: `element` was built with `cache` by the caller.
+    let Ok((uia_chain, crossed)) = (unsafe {
+        uia.ancestor_chain(
+            element,
+            cache,
+            &context.uia_registry,
+            MAX_ANCESTOR_HOPS,
+            &read_by_msaa,
+        )
+    }) else {
+        return Vec::new();
+    };
+    let Some(hwnd) = crossed else {
+        return uia_chain;
+    };
+    let Some(client) = verbatim_ia2::acquire::snapshot_from_event(
+        hwnd,
+        OBJID_CLIENT.0,
+        CHILDID_SELF,
+        &context.msaa_registry,
+    ) else {
+        return uia_chain;
+    };
+    let mut chain = msaa_ancestors(context, &client);
+    chain.push(client);
+    chain.extend(uia_chain);
+    chain
+}
+
+/// An MSAA node's ancestors, outermost first, without the window objects
+/// above controls (see [`msaa_enrichment`]).
+fn msaa_ancestors(context: &Context, node: &NodeSnapshot) -> Vec<NodeSnapshot> {
+    verbatim_ia2::acquire::ancestor_chain(node.id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|ancestor| ancestor.role != Role::Window)
+        .collect()
+}
+
 /// An MSAA node's ancestors and, for a selection container, its selected
 /// child. Failures degrade to an empty chain or `None`.
 pub(super) fn msaa_enrichment(
     context: &Context,
     node: &NodeSnapshot,
 ) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
-    let ancestors =
-        verbatim_ia2::acquire::ancestor_chain(node.id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
-            .unwrap_or_default();
+    // A window object above a control is layout, never announced as an
+    // entered container: NVDA gives a window object reached through its
+    // parents the `GenericWindow` class, which is not a presentable focus
+    // ancestor. A dialog is still announced, by its client area's dialog
+    // role.
+    let ancestors = msaa_ancestors(context, node);
     let selected = if wants_selected_child(node.role) {
         verbatim_ia2::acquire::selected_child(node.id, &context.msaa_registry)
     } else {
@@ -314,11 +370,7 @@ pub(super) fn ancestors(
 ) -> Result<Vec<NodeSnapshot>, ReadError> {
     if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, cache, element) = uia_node(context, client, node_id)?;
-        // SAFETY: `element` was built with `cache`.
-        return unsafe {
-            uia.ancestor_chain(&element, &cache, &context.uia_registry, MAX_ANCESTOR_HOPS)
-        }
-        .map_err(|error| ReadError::Failed(format!("UIA ancestor walk failed: {error}")));
+        return Ok(uia_ancestors(context, uia, &cache, &element));
     }
     verbatim_ia2::acquire::ancestor_chain(node_id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
         .map_err(ReadError::from)

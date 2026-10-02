@@ -303,12 +303,20 @@ fn reduce_focus_changed(
 
     if let Some(focus) = state.focus.as_ref() {
         if focus.alive {
-            // Already the focus: nothing changes, and a navigator the user
-            // moved away stays where it is.
-            if focus.snapshot == *report.node
-                && focus.ancestors == report.ancestors
+            // Already the focus: nothing is spoken, and a navigator the user
+            // moved away stays where it is. As in NVDA, the focus is compared
+            // by identity: not its states or name, which a second report can
+            // read mid-change, and not its ancestors, which can read
+            // differently from one report to the next (a window title still
+            // being filled in, or a parent object read afresh through MSAA).
+            // The newer reading is kept.
+            if focus.snapshot.id == report.node.id
                 && focus.last_selection == new_focus.last_selection
             {
+                let mut kept = focus.clone();
+                kept.snapshot = new_focus.snapshot;
+                kept.ancestors = new_focus.ancestors;
+                state.focus = Some(kept);
                 return Vec::new();
             }
         } else if reads_the_same(focus, report.node, report.ancestors) {
@@ -1059,7 +1067,10 @@ fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     if let Some(name) = &node.name {
         segments.push(UtteranceSegment::label(name.clone()));
     }
-    segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
+    // An entered container is spoken as a focus is.
+    if speaks_role(node, Reason::Focus) {
+        segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
+    }
     if let Some(description) = &node.details.description {
         segments.push(UtteranceSegment::new(SegmentContent::Description(
             description.clone(),
