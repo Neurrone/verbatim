@@ -60,13 +60,21 @@ jobs:
           }
       - name: Build verbatim-app and verbatim-agent (debug)
         run: cargo build -p verbatim-app -p verbatim-agent
-      - name: Start verbatim-agent on loopback
+      # The agent is started in the same step as the suite: GitHub's Windows
+      # runner ends the processes a step started when that step finishes, so
+      # an agent started in a step of its own was gone (connection refused)
+      # by the time the suite ran. NVDA's system tests start NVDA inside
+      # their test step for the same reason.
+      - name: Run the E2E suite against a local agent
+        env:
+          VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
         shell: pwsh
         run: |
-          Start-Process -FilePath "target\debug\verbatim-agent.exe" `
+          $agent = Start-Process -FilePath "target\debug\verbatim-agent.exe" `
             -ArgumentList "--bind-address 127.0.0.1 --port 44001" `
             -RedirectStandardOutput "verbatim-agent-stdout.log" `
-            -RedirectStandardError "verbatim-agent-stderr.log"
+            -RedirectStandardError "verbatim-agent-stderr.log" `
+            -PassThru
           $ready = $false
           for ($attempt = 0; $attempt -lt 40; $attempt++) {
             $probe = Test-NetConnection -ComputerName 127.0.0.1 -Port 44001 -WarningAction SilentlyContinue
@@ -80,13 +88,10 @@ jobs:
             Write-Error "verbatim-agent never started listening on 127.0.0.1:44001"
             exit 1
           }
-      - name: Run the E2E suite
-        env:
-          VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
-        shell: pwsh
-        run: |
           cargo test -p verbatim-e2e -- --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
-          exit $LASTEXITCODE
+          $status = $LASTEXITCODE
+          Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue
+          exit $status
       - name: Upload E2E output on failure
         if: failure()
         uses: actions/upload-artifact@v4
