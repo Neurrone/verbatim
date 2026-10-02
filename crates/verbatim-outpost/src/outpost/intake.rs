@@ -194,18 +194,24 @@ impl Intake {
     }
 
     /// The next entry to handle and the number of its batch, planning a new
-    /// batch from everything waiting when the current one is done. Blocks
-    /// while there is nothing to do; `None` once the queue is closed.
-    pub(super) fn next(&self) -> Option<(Planned, u64)> {
+    /// batch from everything waiting when the current one is done. With the
+    /// first entry of a batch that holds a foreground change comes that
+    /// change's window, for the worker to wait on before handling the batch
+    /// (see [`foreground_of`]). Blocks while there is nothing to do; `None`
+    /// once the queue is closed.
+    pub(super) fn next(&self) -> Option<(Planned, u64, Option<isize>)> {
         let mut state = self.lock();
+        let mut foreground = None;
         loop {
             if let Some(planned) = state.batch.pop_front() {
-                return Some((planned, state.batch_number));
+                return Some((planned, state.batch_number, foreground));
             }
             if !state.waiting.is_empty() {
                 let waiting: Vec<Waiting> = state.waiting.drain(..).collect();
                 let focused = state.focused.clone();
-                state.batch = plan(waiting, focused.as_ref(), super::window::window_is_hung).into();
+                let batch = plan(waiting, focused.as_ref(), super::window::window_is_hung);
+                foreground = foreground_of(&batch);
+                state.batch = batch.into();
                 state.batch_number += 1;
                 continue;
             }
@@ -406,6 +412,22 @@ fn plan(
     planned
 }
 
+/// The window of a batch's newest foreground change, if it has one. Windows
+/// can raise a window's foreground event a little before the window is the
+/// foreground window (NVDA issue 3831), and an application's focus event
+/// can come before its foreground event; NVDA holds back all event handling
+/// until the foreground window matches, so the batch's focus is judged
+/// against the real foreground.
+fn foreground_of(batch: &[Planned]) -> Option<isize> {
+    batch.iter().rev().find_map(|planned| match planned {
+        Planned::Run(Entry {
+            item: Item::Fact(DeliveredFact::Foreground { hwnd }),
+            ..
+        }) => Some(*hwnd),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,7 +598,7 @@ mod tests {
         push(1, 30);
         let mut order = Vec::new();
         for _ in 0..2 {
-            if let Some((Planned::Run(entry), _)) = intake.next() {
+            if let Some((Planned::Run(entry), _, _)) = intake.next() {
                 order.push(entry.observed_at_ms);
             }
         }
@@ -596,7 +618,7 @@ mod tests {
                 observed_at_ms: 0,
             });
         }
-        let Some((Planned::Run(entry), _)) = intake.next() else {
+        let Some((Planned::Run(entry), _, _)) = intake.next() else {
             panic!("the list is planned");
         };
         assert!(matches!(
@@ -608,6 +630,38 @@ mod tests {
         ));
         let (_, category, _) = classify(&entry.item);
         assert_eq!(category, Category::Exempt);
+    }
+
+    #[test]
+    fn a_batch_holding_a_foreground_change_names_its_window_with_its_first_entry() {
+        // msinfo32 raises its focus event just before its foreground event,
+        // and the worker must wait for the window before handling either.
+        let intake = Intake::default();
+        let push = |fact| {
+            intake.push(Entry {
+                item: Item::Fact(fact),
+                trace: TraceId::mint(),
+                observed_at_ms: 0,
+            });
+        };
+        push(DeliveredFact::MsaaFocus {
+            hwnd: 78,
+            id_object: -4,
+            id_child: 1,
+        });
+        push(DeliveredFact::Foreground { hwnd: 77 });
+        let first = intake.next().expect("an entry");
+        assert_eq!(first.2, Some(77));
+        let second = intake.next().expect("an entry");
+        assert_eq!(second.2, None, "only the batch's first entry carries it");
+        assert_eq!(first.1, second.1, "one batch");
+
+        push(DeliveredFact::MsaaFocus {
+            hwnd: 78,
+            id_object: -4,
+            id_child: 2,
+        });
+        assert_eq!(intake.next().expect("an entry").2, None);
     }
 
     #[test]

@@ -90,6 +90,7 @@ pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
         return verdict;
     }
     let is_uia = has_server_side_provider(hwnd);
+    tracing::debug!(hwnd, class, is_uia, "arbitration probed");
     context.arbitrator().record_probe(hwnd, is_uia);
     is_uia
 }

@@ -221,13 +221,21 @@ Implementation notes:
   Each child is spawned with `STARTF_USESTDHANDLES` and an inheritable,
   append-mode file handle as its standard error (and output), so the outpost's
   and listener's own `tracing` output — which otherwise had no subscriber and
-  went nowhere — lands in a per-role log file (`logs/outpost-<target pid>.log`,
-  `logs/listener.log`, next to the outpost executable). The outpost binary
+  went nowhere — lands in a per-role log file in this Verbatim launch's own
+  log directory (`logs\<Verbatim's pid>\outpost-<target image>-<target
+  pid>.log` and `listener.log`, next to the outpost executable). The
+  supervisor empties that directory at startup if an earlier process with
+  the same pid left it, and keeps only the newest ten launch directories. The outpost binary
   installs a stderr `tracing` subscriber at startup for exactly this; the E2E
   harness fetches these logs alongside the timeline and stderr, so a silent
   outpost is readable after the fact instead of theorized. Best-effort: a
   failed log open leaves the child unredirected, never unspawned.
-- Foreground changes (the worker): a foreground fact is reported at once,
+- Foreground changes (the worker): before the first entry of a batch that
+  holds a foreground fact, the worker waits up to 250 ms, checking every
+  10 ms with local calls, for that fact's window to become the system's
+  foreground window (`Intake::next` names the window), as NVDA holds back
+  event handling after a foreground event (issue 3831). Then a
+  foreground fact is reported at once,
   named or not, as a focus on the window, since the foreground change is what
   moves the reducer's attention; the reducer does not speak a nameless
   foreground window, and nothing announces it later. The window's own

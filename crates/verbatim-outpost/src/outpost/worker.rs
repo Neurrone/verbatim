@@ -50,6 +50,16 @@ use super::window::{
 /// a shorter deadline here dropped it for good.
 const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
 
+/// The longest the worker waits, before a batch holding a foreground change,
+/// for that change's window to become the foreground window. Measured live
+/// on 2026-10-02 over 245 such events (msinfo32, Notepad, and Verbatim's own
+/// windows): 5 to 100 ms, median 44 ms. A window that has not arrived by
+/// then was refused the foreground, and the batch is handled anyway.
+const FOREGROUND_WAIT: Duration = Duration::from_millis(250);
+
+/// How often the worker checks the foreground window while it waits.
+const FOREGROUND_POLL: Duration = Duration::from_millis(10);
+
 /// How long the watchdog waits on an entry before abandoning it because the
 /// user has moved on to a window of the same application on another UI
 /// thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`, after which NVDA cancels a slow
@@ -296,7 +306,10 @@ fn run(context: &Context, generation: u64) {
         tracing::warn!(%error, "the worker could not join the multithreaded apartment");
     }
     let mut client = Client::default();
-    while let Some((planned, batch)) = context.intake.next() {
+    while let Some((planned, batch, foreground)) = context.intake.next() {
+        if let Some(hwnd) = foreground {
+            wait_for_foreground(hwnd);
+        }
         let (deadline, running, window) = match &planned {
             Planned::Run(entry) | Planned::Menu(entry) => {
                 let (deadline, running) = budget(entry);
@@ -349,6 +362,24 @@ fn run(context: &Context, generation: u64) {
                 }
             }
         }
+    }
+}
+
+/// Waits, up to [`FOREGROUND_WAIT`], for `hwnd` to become the foreground
+/// window, as NVDA holds back event handling after a foreground event until
+/// the foreground window matches (`_shouldGetEvents`, issue 3831). Local
+/// calls only; the application is never asked.
+fn wait_for_foreground(hwnd: isize) {
+    let deadline = Instant::now() + FOREGROUND_WAIT;
+    while !window_is_foreground(hwnd) {
+        if Instant::now() >= deadline {
+            tracing::debug!(
+                hwnd,
+                "the foreground window did not become the event's window"
+            );
+            return;
+        }
+        thread::sleep(FOREGROUND_POLL);
     }
 }
 
