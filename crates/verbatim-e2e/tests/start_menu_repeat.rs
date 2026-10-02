@@ -9,7 +9,12 @@
 //! `registry::select` excludes it from the no-filter default run; this wrapper
 //! only makes it reachable by name, it does not put it back into the gate.
 
+// Ignored by a plain `cargo test`, which would otherwise run this
+// diagnostic with the gate; `cargo xtask vm test --scenario
+// start_menu_repeat` passes `--include-ignored`, and so can a runner-direct
+// `cargo test -p verbatim-e2e start_menu_repeat -- --include-ignored`.
 #[test]
+#[ignore = "a diagnostic, not part of the acceptance gate"]
 fn start_menu_repeat() {
     verbatim_e2e::registry::run_named("start_menu_repeat");
 }

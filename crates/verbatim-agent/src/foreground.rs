@@ -70,25 +70,30 @@ const HOLD_CHECK: Duration = Duration::from_millis(300);
 const SWITCH_SETTLE: Duration = Duration::from_secs(3);
 
 /// Waits up to `timeout` for a visible, titled, unowned top-level window
-/// belonging to a process whose image name is `image_name`, and brings it to
-/// the foreground. Returns whether such a window is the foreground window
-/// when this returns; `false` if none appeared in time or Windows refused.
+/// belonging to a process whose image name is `image_name` and, when
+/// `title_contains` is set, whose title contains it, and brings it to the
+/// foreground. Returns whether such a window is the foreground window when
+/// this returns; `false` if none appeared in time or Windows refused.
 ///
 /// # Errors
 ///
 /// Returns an error if the process list cannot be read.
-pub fn bring_to_foreground(image_name: &str, timeout: Duration) -> io::Result<bool> {
+pub fn bring_to_foreground(
+    image_name: &str,
+    title_contains: Option<&str>,
+    timeout: Duration,
+) -> io::Result<bool> {
     let deadline = Instant::now() + timeout;
     let mut switched = false;
     loop {
         let pids = matching_pids(image_name)?;
-        if let Some(window) = main_window_of(&pids) {
-            if foreground_is(&pids) {
+        if let Some(window) = main_window_of(&pids, title_contains) {
+            if foreground_is(window) {
                 eprintln!("verbatim-agent: {image_name} is already the foreground window");
                 return Ok(true);
             }
             force_foreground(window);
-            if holds_foreground(&pids) {
+            if holds_foreground(window) {
                 eprintln!(
                     "verbatim-agent: {image_name} brought to the foreground{}",
                     if switched { " after an Alt+Tab" } else { "" }
@@ -116,22 +121,21 @@ pub fn bring_to_foreground(image_name: &str, timeout: Duration) -> io::Result<bo
     }
 }
 
-/// Whether the foreground window belongs to one of `pids`, and still does a
-/// moment later: a shell switch still settling (an Alt+Tab) can take the
-/// foreground back just after it was given.
-fn holds_foreground(pids: &[u32]) -> bool {
-    if !foreground_is(pids) {
+/// Whether `window` is the foreground window, and still is a moment later:
+/// a shell switch still settling (an Alt+Tab) can take the foreground back
+/// just after it was given.
+fn holds_foreground(window: HWND) -> bool {
+    if !foreground_is(window) {
         return false;
     }
     thread::sleep(HOLD_CHECK);
-    foreground_is(pids)
+    foreground_is(window)
 }
 
-/// Whether the foreground window belongs to one of `pids`.
-fn foreground_is(pids: &[u32]) -> bool {
+/// Whether `window` is the foreground window.
+fn foreground_is(window: HWND) -> bool {
     // SAFETY: GetForegroundWindow has no preconditions.
-    let foreground = unsafe { GetForegroundWindow() };
-    !foreground.is_invalid() && pids.contains(&window_pid(foreground))
+    (unsafe { GetForegroundWindow() }) == window
 }
 
 fn window_pid(window: HWND) -> u32 {
@@ -143,10 +147,12 @@ fn window_pid(window: HWND) -> u32 {
     pid
 }
 
-/// The first visible, titled, unowned top-level window of one of `pids`.
-fn main_window_of(pids: &[u32]) -> Option<HWND> {
+/// The first visible, titled, unowned top-level window of one of `pids`
+/// whose title contains `title_contains`, when that is set.
+fn main_window_of(pids: &[u32], title_contains: Option<&str>) -> Option<HWND> {
     struct Search<'a> {
         pids: &'a [u32],
+        title_contains: Option<&'a str>,
         found: Option<HWND>,
     }
     unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
@@ -158,7 +164,12 @@ fn main_window_of(pids: &[u32]) -> Option<HWND> {
                 && GetWindow(window, GW_OWNER).is_err()
                 && GetWindowTextLengthW(window) > 0
         };
-        if candidate && search.pids.contains(&window_pid(window)) {
+        if candidate
+            && search.pids.contains(&window_pid(window))
+            && search
+                .title_contains
+                .is_none_or(|text| window_title(window).contains(text))
+        {
             search.found = Some(window);
             return BOOL(0);
         }
@@ -167,7 +178,11 @@ fn main_window_of(pids: &[u32]) -> Option<HWND> {
     if pids.is_empty() {
         return None;
     }
-    let mut search = Search { pids, found: None };
+    let mut search = Search {
+        pids,
+        title_contains,
+        found: None,
+    };
     // SAFETY: `visit` reads only the search state, which outlives the
     // synchronous EnumWindows call. EnumWindows reports an error when the
     // callback stops it early, which is how a match ends the walk.
@@ -178,6 +193,15 @@ fn main_window_of(pids: &[u32]) -> Option<HWND> {
         );
     }
     search.found
+}
+
+/// A window's title.
+fn window_title(window: HWND) -> String {
+    let mut buffer = [0u16; 512];
+    // SAFETY: writes at most the buffer's length.
+    let length =
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(window, &mut buffer) };
+    String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
 }
 
 /// Injects one Alt+Tab, leaving Alt held briefly so the shell completes the
@@ -259,6 +283,7 @@ mod tests {
     fn an_image_with_no_process_reports_not_taken() {
         let taken = bring_to_foreground(
             "verbatim-agent-test-nonexistent-image-name.exe",
+            None,
             Duration::from_millis(100),
         )
         .expect("an unmatched name is not an error");

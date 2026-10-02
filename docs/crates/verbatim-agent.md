@@ -28,7 +28,14 @@ Public API:
   window such as the Start search host holds the foreground; protocol
   version 1), `ProcessStatus`, `SessionInfo`, `ReadFile`, `ListFiles`
   (the names of the files directly inside a directory, so a test can fetch
-  logs it cannot name in advance; protocol version 2), `OpenControlTunnel`. `KillOutcome` makes
+  logs it cannot name in advance; protocol version 2), `ForegroundInfo`
+  (the foreground window and the visible top-level windows, each with its
+  title, class, program, and whether it is cloaked), `CloseWindows` (an
+  ordinary close request to every visible window whose title contains some
+  text, then a wait for them to go), `WriteFile` (a small file, such as the
+  document a test opens Notepad on), and `BringToForeground`'s optional
+  title filter (protocol version 3; all from the `desktop` and `files`
+  modules), `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` inherits the launched child's stdio (uncaptured) by

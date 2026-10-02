@@ -29,6 +29,25 @@ pub fn read_base64(path: &str) -> io::Result<String> {
     Ok(STANDARD.encode(bytes))
 }
 
+/// Writes `data_base64`, decoded, to `path`, creating or replacing it.
+///
+/// # Errors
+///
+/// Returns an error if the data is not valid base64, is larger than
+/// [`MAX_READ_FILE_BYTES`], or the file cannot be written.
+pub fn write_base64(path: &str, data_base64: &str) -> io::Result<()> {
+    let bytes = STANDARD
+        .decode(data_base64)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_READ_FILE_BYTES {
+        return Err(io::Error::other(format!(
+            "{} bytes is over the {MAX_READ_FILE_BYTES}-byte WriteFile limit",
+            bytes.len()
+        )));
+    }
+    std::fs::write(path, bytes)
+}
+
 /// The names of the files directly inside `path`, sorted.
 ///
 /// # Errors

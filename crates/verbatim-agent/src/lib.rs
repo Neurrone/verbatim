@@ -22,6 +22,7 @@
 //! suite) can drive an agent in-process, plus a thin `verbatim-agent.exe`
 //! binary for real guest deployment.
 
+pub mod desktop;
 mod files;
 mod foreground;
 mod process;

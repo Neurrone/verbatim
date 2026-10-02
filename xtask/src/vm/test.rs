@@ -536,6 +536,7 @@ fn run_scenario_subprocess(
             test_name,
             "--",
             "--exact",
+            "--include-ignored",
             "--test-threads=1",
         ])
         .env("VERBATIM_E2E_ENDPOINT", endpoint)

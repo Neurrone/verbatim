@@ -15,7 +15,7 @@ use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
 use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
-use crate::{files, foreground, process, session, tunnel};
+use crate::{desktop, files, foreground, process, session, tunnel};
 
 /// Accepts connections on `listener` until it errors, spawning a thread
 /// per connection. Each connection is pointed at `pipe_name` for
@@ -207,9 +207,11 @@ fn dispatch(id: u64, request: Request) -> Frame {
         },
         Request::BringToForeground {
             image_name,
+            title_contains,
             timeout_ms,
         } => match foreground::bring_to_foreground(
             &image_name,
+            title_contains.as_deref(),
             std::time::Duration::from_millis(timeout_ms),
         ) {
             Ok(taken) => Frame::Reply {
@@ -239,6 +241,9 @@ fn dispatch(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        request @ (Request::ForegroundInfo
+        | Request::CloseWindows { .. }
+        | Request::WriteFile { .. }) => desktop_request(id, request),
         Request::ListFiles { path } => match files::list(&path) {
             Ok(names) => Frame::Reply {
                 to: id,
@@ -249,6 +254,42 @@ fn dispatch(id: u64, request: Request) -> Frame {
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
+    }
+}
+
+/// Answers the requests that read or change the desktop and its files for a
+/// test: the foreground report, closing windows, and writing a file.
+fn desktop_request(id: u64, request: Request) -> Frame {
+    match request {
+        Request::ForegroundInfo => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::ForegroundInfo(desktop::foreground_info()),
+        },
+        Request::CloseWindows {
+            title_contains,
+            timeout_ms,
+        } => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::WindowsClosed {
+                remaining: desktop::close_windows(
+                    &title_contains,
+                    std::time::Duration::from_millis(timeout_ms),
+                ),
+            },
+        },
+        Request::WriteFile { path, data_base64 } => {
+            match files::write_base64(&path, &data_base64) {
+                Ok(()) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::FileWritten,
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        other => Frame::Error {
+            to: id,
+            message: format!("not a desktop request: {other:?}"),
+        },
     }
 }
 

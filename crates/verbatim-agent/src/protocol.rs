@@ -19,9 +19,11 @@
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this vocabulary defines. Version 2 added
-/// [`Request::ListFiles`], so a test run against an agent built before it is
+/// [`Request::ListFiles`]; version 3 added [`Request::ForegroundInfo`],
+/// [`Request::CloseWindows`], [`Request::WriteFile`], and
+/// `BringToForeground`'s title filter. A test run against an older agent is
 /// refused at `Hello` instead of losing its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 2;
+pub const AGENT_PROTOCOL_VERSION: u32 = 3;
 
 /// The default TCP port the agent listens on.
 ///
@@ -111,8 +113,36 @@ pub enum Request {
     BringToForeground {
         /// The image file name to match.
         image_name: String,
+        /// When set, only a window whose title contains this text matches,
+        /// so a test brings its own window forward, never another window of
+        /// the same program.
+        #[serde(default)]
+        title_contains: Option<String>,
         /// How long to wait for the window, in milliseconds.
         timeout_ms: u64,
+    },
+    /// Reports the foreground window and the visible top-level windows, so
+    /// a test can check the state it starts from and say what held the
+    /// foreground when an assertion fails. Answered by
+    /// [`ReplyPayload::ForegroundInfo`].
+    ForegroundInfo,
+    /// Sends a close request to every visible top-level window whose title
+    /// contains `title_contains`, and waits up to `timeout_ms` for them to
+    /// go. Answered by [`ReplyPayload::WindowsClosed`].
+    CloseWindows {
+        /// Text the windows' titles contain.
+        title_contains: String,
+        /// How long to wait for them to close, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Writes a small file, creating or replacing it: a test's own document
+    /// for an application to open, named so its window can be told apart.
+    /// Answered by [`ReplyPayload::FileWritten`].
+    WriteFile {
+        /// Path to the file, agent-local.
+        path: String,
+        /// The contents, base64 encoded.
+        data_base64: String,
     },
     /// Asks whether a process is still running.
     ProcessStatus {
@@ -208,6 +238,16 @@ pub enum ReplyPayload {
         /// padding).
         data_base64: String,
     },
+    /// Answer to [`Request::ForegroundInfo`].
+    ForegroundInfo(ForegroundInfo),
+    /// Answer to [`Request::CloseWindows`]: how many matching windows were
+    /// still open when the wait ended; zero means every one closed.
+    WindowsClosed {
+        /// Windows still open.
+        remaining: u32,
+    },
+    /// Answer to [`Request::WriteFile`].
+    FileWritten,
     /// Answer to [`Request::ListFiles`]: the names of the files directly
     /// inside the directory, sorted; subdirectories are left out.
     FileNames {
@@ -260,6 +300,29 @@ pub struct SessionInfo {
     /// succeeds. `None` when it cannot be opened, which itself is
     /// diagnostic: a non-interactive window station has no input desktop.
     pub input_desktop_name: Option<String>,
+}
+
+/// A top-level window, as [`ForegroundInfo`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInfo {
+    /// The window's title.
+    pub title: String,
+    /// The window's class name.
+    pub class: String,
+    /// The executable file name of the process that owns it.
+    pub image: String,
+    /// Whether the window is cloaked (DWM hides it although it may hold the
+    /// foreground, as the Start menu's search window can after it closes).
+    pub cloaked: bool,
+}
+
+/// The answer to [`Request::ForegroundInfo`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForegroundInfo {
+    /// The foreground window, `None` when there is none.
+    pub foreground: Option<WindowInfo>,
+    /// The visible, titled, unowned top-level windows, in Z order.
+    pub windows: Vec<WindowInfo>,
 }
 
 #[cfg(test)]

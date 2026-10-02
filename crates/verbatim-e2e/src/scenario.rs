@@ -26,7 +26,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use verbatim_agent::protocol::{KillOutcome, ProcessState};
+use verbatim_agent::protocol::{ForegroundInfo, KillOutcome, ProcessState, WindowInfo};
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
@@ -49,6 +49,26 @@ const STDERR_FILE_NAME: &str = "stderr.log";
 /// How long [`Scenario::launch_target`] waits for the launched application's
 /// window before bringing it to the foreground.
 const LAUNCH_FOREGROUND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Text in the title of every window the harness opens on purpose: the
+/// document [`Scenario::open_document`] writes is named with it, so its
+/// window can be told from the user's own windows of the same application,
+/// found by title, and closed by title, as NVDA's system tests name their
+/// Notepad documents.
+pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
+
+/// How long a window the harness asks to close is given to go.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// One application a scenario launched, for cleanup.
+struct Launched {
+    pid: u32,
+    image: String,
+    /// The title marker of the harness document it opened, when it opened
+    /// one: such an application is closed by that title, never swept by
+    /// image name, so the user's own windows of it are left alone.
+    marker: Option<String>,
+}
 const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
 /// Environment variable overriding the path to `verbatim.exe`. Defaults to
@@ -185,12 +205,10 @@ pub struct Scenario {
     /// clone of the same handle and writes utterances to it, so a failure
     /// can print both interleaved in time order. See [`crate::timeline`].
     timeline: Timeline,
-    /// Extra processes launched via [`Scenario::launch_target`]: pid paired
-    /// with the image (executable file) name recorded at launch time, since
-    /// pid alone is not reliable cleanup for every target application (see
-    /// that method's doc comment) — killed on drop unless already removed
-    /// by [`Scenario::kill_target`].
-    launched: Vec<(u32, String)>,
+    /// Extra processes launched via [`Scenario::launch_target`] or
+    /// [`Scenario::open_document`], cleaned up on drop unless already
+    /// removed by [`Scenario::kill_target`].
+    launched: Vec<Launched>,
     /// The path this launch's Verbatim has its stdout and stderr captured
     /// into (see [`verbatim_stderr_log_path`]), readable back through
     /// [`process_agent`](Self::process_agent)'s `read_file` — what
@@ -317,6 +335,11 @@ impl Scenario {
                 tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
             }
         }
+        // Harness documents a prior run left open are closed by title, so
+        // the user's own windows of the same application are left alone.
+        if let Err(error) = process_agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
+            tracing::warn!(%error, "failed to close leftover harness documents");
+        }
         let verbatim_pid = process_agent.launch_process(
             exe_str,
             &[],
@@ -408,75 +431,174 @@ impl Scenario {
         Ok(())
     }
 
-    /// Launches an extra target application (for example `notepad.exe`)
-    /// through the agent, tracking it (pid and image name) for cleanup on
-    /// drop unless [`Scenario::kill_target`] removes it first.
+    /// Launches an extra target application (for example `msinfo32.exe`)
+    /// through the agent and brings its window to the foreground, as a
+    /// user's launch would put it in front, tracking it for cleanup on drop
+    /// unless [`Scenario::kill_target`] removes it first. An application
+    /// whose window does not take the foreground fails the launch, naming
+    /// what held the foreground instead, so a scenario never goes on to
+    /// assert speech for a window that is not in front.
     ///
-    /// The image name matters as much as the pid: confirmed live against
-    /// the M2 guest, launching `notepad.exe` — even a single, solo launch
-    /// with no other instance already open — hands off to a differently
-    /// pid'd process and the launched pid itself exits within a few
-    /// seconds. A pid-only kill later can therefore be a silent no-op
-    /// against a process that is already gone, leaving the real window
-    /// behind as a stray; [`Scenario::kill_target`] and [`Drop`] both sweep
-    /// by this recorded name for exactly that reason.
+    /// The image name is recorded for cleanup as well as the pid: an
+    /// application can hand its window off to another process of the same
+    /// image. For an application the user may also have open, such as
+    /// Notepad, use [`Scenario::open_document`] instead, which never sweeps
+    /// by image name.
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails.
+    /// Returns an error if a request fails or the window does not take the
+    /// foreground.
     pub fn launch_target(&mut self, command: &str, args: &[&str]) -> io::Result<u32> {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
         let pid = self
             .process_agent
             .launch_process(command, &args, None, &[], None)?;
         let image = image_name(command);
-        self.launched.push((pid, image.clone()));
-        // A user's launch puts the application in front; Windows' foreground
-        // lock would otherwise keep it behind whatever had the foreground
-        // when earlier scenarios last injected keys.
-        match self
-            .process_agent
-            .bring_to_foreground(&image, LAUNCH_FOREGROUND_TIMEOUT)
-        {
-            Ok(true) => {}
-            Ok(false) => eprintln!("{image} did not take the foreground after launch"),
-            Err(error) => eprintln!("could not bring {image} to the foreground: {error}"),
-        }
+        self.launched.push(Launched {
+            pid,
+            image: image.clone(),
+            marker: None,
+        });
+        self.require_window_in_front(&image, None)?;
         Ok(pid)
     }
 
-    /// Terminates a process previously launched via
-    /// [`Scenario::launch_target`] and stops tracking it for drop-time
-    /// cleanup.
-    ///
-    /// Kills by pid first (`pid`'s own `KillOutcome` is this method's
-    /// return value), then sweeps by the image name recorded at launch —
-    /// see [`launch_target`](Self::launch_target)'s doc comment for why a
-    /// pid-only kill can miss the process actually holding the window. A
-    /// failure sweeping by name is logged and does not change this method's
-    /// own result, since the pid-kill above is the primary outcome being
-    /// reported.
+    /// Opens a harness document in `application` (for example
+    /// `notepad.exe`): writes an empty text file named with
+    /// [`DOCUMENT_MARKER`] next to Verbatim's executable, launches the
+    /// application on it, and brings the window whose title names it to the
+    /// foreground, as NVDA's system tests open Notepad on a uniquely named
+    /// file and wait for that window. The application is closed by that
+    /// title at cleanup, so the user's own windows of it are never touched.
     ///
     /// # Errors
     ///
-    /// Returns an error if the pid-kill request fails.
+    /// Returns an error if a request fails or the window does not take the
+    /// foreground.
+    pub fn open_document(&mut self, application: &str) -> io::Result<u32> {
+        let marker = format!("{DOCUMENT_MARKER}document");
+        let directory = Path::new(&self.stderr_log_path)
+            .parent()
+            .and_then(Path::to_str)
+            .ok_or_else(|| io::Error::other("no directory for the harness document"))?;
+        let path = format!("{directory}\\{marker}.txt");
+        self.process_agent.write_file(&path, b"")?;
+        let pid = self.process_agent.launch_process(
+            application,
+            std::slice::from_ref(&path),
+            None,
+            &[],
+            None,
+        )?;
+        let image = image_name(application);
+        self.launched.push(Launched {
+            pid,
+            image: image.clone(),
+            marker: Some(marker.clone()),
+        });
+        self.require_window_in_front(&image, Some(&marker))?;
+        Ok(pid)
+    }
+
+    /// Brings `image`'s window, titled with `title_contains` when given, to
+    /// the foreground, failing with the foreground report when it does not
+    /// get there.
+    fn require_window_in_front(
+        &mut self,
+        image: &str,
+        title_contains: Option<&str>,
+    ) -> io::Result<()> {
+        if self.process_agent.bring_to_foreground(
+            image,
+            title_contains,
+            LAUNCH_FOREGROUND_TIMEOUT,
+        )? {
+            return Ok(());
+        }
+        let window =
+            title_contains.map_or_else(String::new, |title| format!(" (window titled {title:?})"));
+        Err(io::Error::other(format!(
+            "{image}{window} did not take the foreground: {}",
+            self.foreground_report()
+        )))
+    }
+
+    /// One line describing the foreground window and the visible windows,
+    /// for failure messages and the run's artifacts.
+    pub fn foreground_report(&mut self) -> String {
+        match self.process_agent.foreground_info() {
+            Ok(info) => describe_foreground(&info),
+            Err(error) => format!("the foreground could not be read: {error}"),
+        }
+    }
+
+    /// Establishes the state every scenario starts from: a real, uncloaked
+    /// window in the foreground. The Start menu's search window can be left
+    /// holding the foreground, cloaked, after it closes; the desktop is then
+    /// brought to the foreground instead. Fails, with the foreground report,
+    /// when that state cannot be reached, as NVDA's system tests fail with
+    /// the foreground window's title.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the state cannot be reached.
+    pub fn establish_baseline(&mut self) -> io::Result<()> {
+        if usable_foreground(&self.process_agent.foreground_info()?) {
+            return Ok(());
+        }
+        let _ = self.process_agent.bring_to_foreground(
+            "explorer.exe",
+            Some("Program Manager"),
+            LAUNCH_FOREGROUND_TIMEOUT,
+        )?;
+        let info = self.process_agent.foreground_info()?;
+        if usable_foreground(&info) {
+            return Ok(());
+        }
+        Err(io::Error::other(format!(
+            "no usable foreground window to start from: {}",
+            describe_foreground(&info)
+        )))
+    }
+
+    /// Ends an application a scenario launched and stops tracking it: one
+    /// that opened a harness document is closed by its title, and
+    /// terminated by pid only if it does not close; any other is
+    /// terminated by pid and then swept by image name, since its window
+    /// may belong to a process it handed off to.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails.
     pub fn kill_target(&mut self, pid: u32) -> io::Result<KillOutcome> {
-        let name = self
+        let Some(index) = self
             .launched
             .iter()
-            .find(|(launched_pid, _)| *launched_pid == pid)
-            .map(|(_, name)| name.clone());
-        self.launched
-            .retain(|(launched_pid, _)| *launched_pid != pid);
-        let outcome = self.process_agent.kill_process(pid)?;
-        if let Some(name) = name
-            && let Err(error) = self.process_agent.kill_processes_by_name(&name)
-        {
+            .position(|launched| launched.pid == pid)
+        else {
+            return self.process_agent.kill_process(pid);
+        };
+        let launched = self.launched.remove(index);
+        self.end(&launched)
+    }
+
+    fn end(&mut self, launched: &Launched) -> io::Result<KillOutcome> {
+        if let Some(marker) = &launched.marker {
+            let remaining = self.process_agent.close_windows(marker, CLOSE_TIMEOUT)?;
+            if remaining == 0 {
+                return Ok(KillOutcome::AlreadyExited);
+            }
+            tracing::warn!(marker, remaining, "a harness document window did not close");
+            return self.process_agent.kill_process(launched.pid);
+        }
+        let outcome = self.process_agent.kill_process(launched.pid)?;
+        if let Err(error) = self.process_agent.kill_processes_by_name(&launched.image) {
             tracing::warn!(
-                pid,
-                name,
+                pid = launched.pid,
+                image = launched.image,
                 %error,
-                "failed to sweep by image name after kill_target"
+                "failed to sweep by image name"
             );
         }
         Ok(outcome)
@@ -726,26 +848,15 @@ impl Scenario {
 
 impl Drop for Scenario {
     fn drop(&mut self) {
-        // Kill by pid first, then sweep by the recorded image name — see
-        // launch_target's doc comment for why a pid-only kill can miss the
-        // process actually holding the window (confirmed live for
-        // notepad.exe). Both steps are best-effort: a failure in either is
-        // logged, not propagated, since this runs even when the test
-        // itself already failed or panicked.
-        for (pid, name) in self.launched.drain(..) {
-            if let Err(error) = self.process_agent.kill_process(pid) {
+        // End every launched application (see `kill_target`). Best-effort:
+        // a failure is logged, not propagated, since this runs even when
+        // the test itself already failed or panicked.
+        for launched in std::mem::take(&mut self.launched) {
+            if let Err(error) = self.end(&launched) {
                 tracing::warn!(
-                    pid,
+                    pid = launched.pid,
                     %error,
-                    "failed to kill a scenario-launched process during cleanup"
-                );
-            }
-            if let Err(error) = self.process_agent.kill_processes_by_name(&name) {
-                tracing::warn!(
-                    pid,
-                    name,
-                    %error,
-                    "failed to sweep a scenario-launched process's image name during cleanup"
+                    "failed to end a scenario-launched application during cleanup"
                 );
             }
         }
@@ -998,6 +1109,36 @@ fn image_name(command: &str) -> String {
 /// these pieces compose into, is only exercised live — by
 /// `.github/workflows/ci.yml`'s `e2e` job (runner-direct) and
 /// `cargo xtask vm test` (remote) — since it needs a running agent.
+/// Whether `info` names a real foreground window to start a scenario from:
+/// one exists and it is not cloaked.
+fn usable_foreground(info: &ForegroundInfo) -> bool {
+    info.foreground
+        .as_ref()
+        .is_some_and(|window| !window.cloaked)
+}
+
+/// `info` as one line: the foreground window, then the visible windows.
+fn describe_foreground(info: &ForegroundInfo) -> String {
+    let describe = |window: &WindowInfo| {
+        format!(
+            "{:?} ({}, class {}{})",
+            window.title,
+            window.image,
+            window.class,
+            if window.cloaked { ", cloaked" } else { "" }
+        )
+    };
+    let foreground = info
+        .foreground
+        .as_ref()
+        .map_or_else(|| "none".to_owned(), describe);
+    let windows: Vec<String> = info.windows.iter().map(describe).collect();
+    format!(
+        "foreground window {foreground}; visible windows: {}",
+        windows.join(", ")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

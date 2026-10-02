@@ -158,11 +158,13 @@ pub struct ScenarioDef {
     pub name: &'static str,
     /// The coarse group this scenario belongs to, for `--group` selection.
     pub group: Group,
-    /// Image (executable file) names this scenario's `setup` or `teardown`
-    /// may launch or kill — [`swept_target_image_names`] unions these across
-    /// the whole registry so [`Scenario::launch`]'s pre-launch sweep grows
-    /// automatically as scenarios are added, with nothing to remember to
-    /// update by hand.
+    /// Image (executable file) names this scenario's `setup` may launch with
+    /// [`Scenario::launch_target`] — [`swept_target_image_names`] unions
+    /// these across the whole registry so [`Scenario::launch`]'s pre-launch
+    /// sweep grows automatically as scenarios are added. An application
+    /// opened on a harness document ([`Scenario::open_document`]) is not
+    /// listed: the user may have it open too, so leftovers are closed by the
+    /// document's title instead.
     pub target_images: &'static [&'static str],
     /// Declares and creates whatever state `body` needs beyond
     /// `Scenario::launch` itself.
@@ -196,7 +198,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_focus",
         group: Group::Legacy,
-        target_images: &["notepad.exe"],
+        target_images: &[],
         setup: notepad_focus::setup,
         body: notepad_focus::body,
         teardown: notepad_focus::teardown,
@@ -204,7 +206,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "multi_outpost_switch",
         group: Group::Shell,
-        target_images: &["notepad.exe"],
+        target_images: &[],
         setup: multi_outpost_switch::setup,
         body: multi_outpost_switch::body,
         teardown: multi_outpost_switch::teardown,
@@ -383,8 +385,12 @@ fn run(def: &ScenarioDef) {
             def.name
         )
     });
+    let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
 
-    let mut state = match (def.setup)(&mut scenario) {
+    let setup = scenario
+        .establish_baseline()
+        .and_then(|()| (def.setup)(&mut scenario));
+    let mut state = match setup {
         Ok(state) => state,
         Err(error) => {
             scenario.collect_run_artifacts(&dir);
@@ -393,6 +399,11 @@ fn run(def: &ScenarioDef) {
             // snapshot here would be empty; record none rather than racing
             // the imminent quit for nothing.
             let latency = scenario.latency_snapshot(200).ok();
+            foreground.push(format!(
+                "after setup failed: {}",
+                scenario.foreground_report()
+            ));
+            write_foreground(&dir, &foreground);
             write_summary(&dir, def.name, false, latency.as_deref());
             archive(&dir, def.name, false);
             drop(scenario);
@@ -456,6 +467,8 @@ fn run(def: &ScenarioDef) {
     // passing diagnostic leaves its timings behind). The flight-recorder dump
     // already happened above, before the quit, for every run.
     scenario.collect_run_artifacts(&dir);
+    foreground.push(format!("after teardown: {}", scenario.foreground_report()));
+    write_foreground(&dir, &foreground);
     write_summary(&dir, def.name, passed, latency.as_deref());
     archive(&dir, def.name, passed);
     println!(
@@ -490,6 +503,17 @@ fn write_summary(
     let summary = ScenarioSummary::new(name, passed, latency);
     if let Err(error) = summary.write(dir) {
         eprintln!("scenario {name:?}: could not write its run summary: {error}");
+    }
+}
+
+/// Records what held the foreground before setup and after teardown, for
+/// reading a failure against the desktop state it started from, as NVDA's
+/// system tests log the foreground window's title around every test.
+fn write_foreground(dir: &std::path::Path, lines: &[String]) {
+    if let Err(error) = std::fs::create_dir_all(dir)
+        .and_then(|()| std::fs::write(dir.join("foreground.txt"), lines.join("\n") + "\n"))
+    {
+        eprintln!("could not write the foreground record: {error}");
     }
 }
 
@@ -592,7 +616,11 @@ mod tests {
             expected.dedup();
             expected
         });
-        assert!(names.contains(&"notepad.exe"));
+        assert!(names.contains(&"msinfo32.exe"));
+        assert!(
+            !names.contains(&"notepad.exe"),
+            "Notepad is closed by its harness document's title, never swept"
+        );
     }
 
     #[test]

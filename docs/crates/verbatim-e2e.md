@@ -44,8 +44,16 @@ Public API:
   returning — see `docs/tooling.md`'s troubleshooting section for what
   happens to a gesture sent before that pause. `control()` and `speech()`
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
-  `kill_target`, `process_status`, `quit_verbatim`, and `report_latency`
-  drive the running instance (`launch_target` also asks the agent to bring
+  `open_document`, `kill_target`, `process_status`, `quit_verbatim`, and
+  `report_latency` drive the running instance. `open_document` opens an
+  application such as Notepad on an empty file whose name holds
+  `DOCUMENT_MARKER`, brings the window with that title forward, and closes
+  it by title at cleanup, so the user's own Notepad windows are never
+  touched; `establish_baseline` makes sure an uncloaked window holds the
+  foreground before every scenario's setup, and `foreground_report`
+  describes the foreground for failure messages and the run's
+  `foreground.txt`. A launched window that does not take the foreground
+  fails setup with that report (`launch_target` also asks the agent to bring
   the launched application's window to the foreground, as a user's launch
   would, since Windows' foreground lock otherwise keeps it behind the window
   earlier scenarios typed into); `latency_snapshot` is the non-asserting,
@@ -76,8 +84,10 @@ Public API:
   `group` (a `Group`: `Speech`, `Shell`, `Legacy`, `Navigation`, or
   `Diagnostic`, a coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
-  `target_images` (image names its `setup`/`teardown` may launch or kill,
-  unioned by `swept_target_image_names`), and `setup`/`body`/`teardown`
+  `target_images` (image names its `setup` may launch with
+  `launch_target`, unioned by `swept_target_image_names`; an application
+  opened with `open_document` is closed by title instead and not listed),
+  and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
   registered scenario — today nine: `m1_exit_regression` and
   `focus_churn` (Speech),

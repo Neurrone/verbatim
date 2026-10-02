@@ -302,8 +302,9 @@ flat MSAA tree-view exposure), `start_menu` (pressing the Windows key
 opens the Start/Search surface and Verbatim announces its search box),
 and `start_menu_repeat` (a diagnostic, not a gate: opens the Start menu
 twice to measure the reported first-press gap; its `Diagnostic` group is
-excluded from the no-filter default run, so it runs only when named
-explicitly).
+excluded from the no-filter default run, and its test is marked ignored so
+a plain `cargo test` skips it too; it runs only when named explicitly,
+`xtask vm test` passing `--include-ignored` for it).
 A real Explorer folder-window scenario is deliberately not among them — see
 the "Explorer" note in `docs/roadmap.md`'s M3 section for why it is verified
 by hand for now, and the same section's toggle-controls and Start-menu notes
@@ -323,6 +324,8 @@ test`; `xtask vm test` reads this back to build its own run summary rather
 than parsing test output. Every scenario run, pass or fail, also writes into
 the same directory the interleaved timeline
 (`timeline.txt` — the same account an `expect_*` panic already prints),
+what held the foreground before setup and after teardown (`foreground.txt`,
+so a failure can be read against the desktop it started from),
 Verbatim's captured stderr log (`stderr.log`), the per-process outpost and
 listener logs the supervisor redirected each spawned process's stderr into
 (`listener.log` and one `outpost-<image>-<pid>.log` per application,
@@ -638,7 +641,10 @@ call, so the agent's last resort is one injected Alt+Tab.
 tries a clean `Quit` through the control plane, then unconditionally kills
 `verbatim.exe` (and anything launched via `launch_target`, such as
 Notepad) through the agent — this runs even if the test panicked partway
-through. It cannot run at all, though, if the test process itself is
+through. Notepad is opened on a harness document whose title holds
+`verbatim-e2e-`, as NVDA's system tests open it on a uniquely named file,
+and is closed by that title, never killed by program name, so a Notepad
+you have open yourself is left alone. It cannot run at all, though, if the test process itself is
 killed outright (Ctrl+C, a CI job cancellation, or the whole `cargo test`
 process being terminated). Runner-direct stray processes are usually
 self-healing on the *next* run regardless:
@@ -651,9 +657,13 @@ Notepad no longer strictly needs that: `launch_target`-launched processes
 are killed by pid and then swept by image name (Windows 11 Notepad hands
 launches off to a differently pid'd process, confirmed live even for a
 single, solo launch, so a pid-only kill can silently miss the real window),
-and `Scenario::launch` sweeps those same image names before doing anything
-else, so a scenario starts clean even after a prior run's cleanup was
-skipped entirely.
+and `Scenario::launch` sweeps those same image names, and closes any
+harness document left open, before doing anything else, so a scenario
+starts clean even after a prior run's cleanup was skipped entirely. Every
+scenario then checks that a real, uncloaked window holds the foreground
+before its setup, bringing the desktop forward if the Start menu's search
+window was left holding it, and fails with the foreground window's title
+and the visible windows when it cannot, as NVDA's system tests do.
 
 **A gesture sent immediately after launch can silently do nothing.** The
 control server starts (and so a tunnel connection succeeds) before

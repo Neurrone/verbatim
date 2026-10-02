@@ -83,7 +83,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     reason = "must match ScenarioDef::teardown's fn-pointer signature"
 )]
 pub(crate) fn teardown(scenario: &mut Scenario, _state: ScenarioState) {
-    // Close Start so it does not linger foreground; the golden restore cleans
-    // up regardless.
+    // Close Start, then make sure a real window holds the foreground: Start's
+    // search window can keep it, cloaked, after it closes.
     let _ = scenario.send_keys(&["escape"]);
+    if let Err(error) = scenario.establish_baseline() {
+        eprintln!("Start did not hand the foreground back: {error}");
+    }
 }

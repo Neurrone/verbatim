@@ -22,7 +22,7 @@ use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let pid = scenario.launch_target("notepad.exe", &[])?;
+    let pid = scenario.open_document("notepad.exe")?;
     Ok(ScenarioState::TargetPid(pid))
 }
 

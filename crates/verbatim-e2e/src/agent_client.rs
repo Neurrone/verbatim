@@ -16,8 +16,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
-    AGENT_PROTOCOL_VERSION, Frame, KillOutcome, ProcessState, ReplyPayload, Request,
-    RequestEnvelope, SessionInfo,
+    AGENT_PROTOCOL_VERSION, ForegroundInfo, Frame, KillOutcome, ProcessState, ReplyPayload,
+    Request, RequestEnvelope, SessionInfo,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -173,10 +173,11 @@ impl AgentClient {
         }
     }
 
-    /// Brings a visible top-level window of a process named `image_name` to
-    /// the foreground on the guest, waiting up to `timeout` for one to
-    /// appear (`verbatim_agent::protocol::Request::BringToForeground`).
-    /// Returns whether such a window is the foreground window afterwards.
+    /// Brings a visible top-level window of a process named `image_name`,
+    /// and when `title_contains` is set one whose title contains it, to the
+    /// foreground on the guest, waiting up to `timeout` for one to appear
+    /// (`verbatim_agent::protocol::Request::BringToForeground`). Returns
+    /// whether such a window is the foreground window afterwards.
     ///
     /// # Errors
     ///
@@ -184,10 +185,12 @@ impl AgentClient {
     pub fn bring_to_foreground(
         &mut self,
         image_name: &str,
+        title_contains: Option<&str>,
         timeout: std::time::Duration,
     ) -> io::Result<bool> {
         match self.request(Request::BringToForeground {
             image_name: image_name.to_owned(),
+            title_contains: title_contains.map(str::to_owned),
             timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
         })? {
             Frame::Reply {
@@ -195,6 +198,63 @@ impl AgentClient {
                 ..
             } => Ok(taken),
             other => Err(unexpected("BringToForeground", &other)),
+        }
+    }
+
+    /// The guest's foreground window and visible top-level windows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn foreground_info(&mut self) -> io::Result<ForegroundInfo> {
+        match self.request(Request::ForegroundInfo)? {
+            Frame::Reply {
+                payload: ReplyPayload::ForegroundInfo(info),
+                ..
+            } => Ok(info),
+            other => Err(unexpected("ForegroundInfo", &other)),
+        }
+    }
+
+    /// Asks every visible top-level window whose title contains
+    /// `title_contains` to close, waiting up to `timeout` for them to go.
+    /// Returns how many were still open.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn close_windows(
+        &mut self,
+        title_contains: &str,
+        timeout: std::time::Duration,
+    ) -> io::Result<u32> {
+        match self.request(Request::CloseWindows {
+            title_contains: title_contains.to_owned(),
+            timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::WindowsClosed { remaining },
+                ..
+            } => Ok(remaining),
+            other => Err(unexpected("CloseWindows", &other)),
+        }
+    }
+
+    /// Writes a small file on the guest, creating or replacing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn write_file(&mut self, path: &str, contents: &[u8]) -> io::Result<()> {
+        match self.request(Request::WriteFile {
+            path: path.to_owned(),
+            data_base64: STANDARD.encode(contents),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::FileWritten,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("WriteFile", &other)),
         }
     }
 
