@@ -37,11 +37,19 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
     let effects = match input {
         Input::Event {
             trace_id,
+            observed_at_ms,
             source,
             window,
             event,
             ..
-        } => reduce_event(&mut next, *trace_id, *source, *window, event),
+        } => reduce_event(
+            &mut next,
+            *trace_id,
+            *observed_at_ms,
+            *source,
+            *window,
+            event,
+        ),
         Input::FetchCompleted {
             trace_id,
             query_id,
@@ -126,6 +134,18 @@ fn classify(
     }
 }
 
+/// Whether a focus event from `outpost`, observed at `observed_at_ms`, was
+/// observed before the newest focus applied from another outpost. Events
+/// from one outpost arrive in order; across outposts they can arrive out of
+/// order, which NVDA's single event queue never does. A report with no
+/// observation time (an answer to a focus-now query) is never stale.
+fn is_stale_focus(state: &SrState, outpost: OutpostId, observed_at_ms: u64) -> bool {
+    observed_at_ms != 0
+        && state
+            .latest_focus
+            .is_some_and(|(latest, at)| latest != outpost && observed_at_ms < at)
+}
+
 /// Whether an event's window is one the attention record covers: the same
 /// top-level window, the same root owner, a topmost window, or a
 /// `Windows.UI.Core` window under the input thread's active window — NVDA's
@@ -148,14 +168,25 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
+    observed_at_ms: u64,
     source: Pid,
     window: Option<WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
+    if let NormalizedEvent::FocusChanged { node, .. } = event
+        && is_stale_focus(state, node.id.outpost(), observed_at_ms)
+    {
+        return Vec::new();
+    }
     match classify(state.attention.as_ref(), source, window, event) {
         Acceptance::Dropped => return Vec::new(),
         Acceptance::Background => return reduce_background(trace_id, event),
         Acceptance::Attended => {}
+    }
+    if let NormalizedEvent::FocusChanged { node, .. } = event
+        && observed_at_ms != 0
+    {
+        state.latest_focus = Some((node.id.outpost(), observed_at_ms));
     }
 
     match event {

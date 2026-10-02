@@ -1487,6 +1487,127 @@ fn the_same_focus_reported_again_with_other_states_is_silent_and_kept() {
     );
 }
 
+/// `input` with its observation time set to `ms`.
+fn observed_at(mut input: Input, ms: u64) -> Input {
+    if let Input::Event { observed_at_ms, .. } = &mut input {
+        *observed_at_ms = ms;
+    }
+    input
+}
+
+#[test]
+fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
+    // Notepad's outpost delivers a focus observed before Verbatim's menu
+    // opened only after the menu's focus: NVDA's single queue would have
+    // handled it first.
+    let menu_item = node(
+        1,
+        Role::MenuItem,
+        Some("Settings..."),
+        None,
+        StateSet::new(),
+    );
+    let (state, effects) = reduce_from(
+        &SrState::new(),
+        &observed_at(focus_event(TraceId::mint(), Pid(1), menu_item), 2_000),
+        OutpostId(1),
+    );
+    assert_eq!(effects.len(), 1);
+    let edit = node(
+        1,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let late = observed_at(focus_event(TraceId::mint(), Pid(2), edit), 1_990);
+    let (_, effects) = reduce_from(&state, &late, OutpostId(2));
+    assert!(effects.is_empty(), "observed before the menu's focus");
+
+    // The same outpost keeps its own order, and a focus-now answer has no
+    // observation time: neither is ever stale.
+    let other_item = node(2, Role::MenuItem, Some("Exit"), None, StateSet::new());
+    let (_, effects) = reduce_from(
+        &state,
+        &observed_at(focus_event(TraceId::mint(), Pid(1), other_item), 1_990),
+        OutpostId(1),
+    );
+    assert_eq!(effects.len(), 1);
+    let edit = node(
+        1,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (_, effects) = reduce_from(
+        &state,
+        &focus_event(TraceId::mint(), Pid(2), edit),
+        OutpostId(2),
+    );
+    assert_eq!(effects.len(), 1);
+}
+
+#[test]
+fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
+    // Escape closes Verbatim's menu: Notepad's foreground report, observed
+    // after the menu's last focus, arrives first; the menu's arrives later
+    // and is stale.
+    let source = Pid(2);
+    let facts = window(30);
+    let foreground = |ms| Input::Event {
+        observed_at_ms: ms,
+        trace_id: TraceId::mint(),
+        source,
+        backend: Backend::Msaa,
+        window: Some(facts),
+        event: NormalizedEvent::FocusChanged {
+            node: node(
+                2,
+                Role::Pane,
+                Some("Untitled - Notepad"),
+                None,
+                StateSet::new(),
+            ),
+            foreground: true,
+            ancestors: vec![],
+            selected_child: None,
+        },
+    };
+    let (state, _) = reduce_from(&SrState::new(), &foreground(900), OutpostId(2));
+    let edit = node(
+        1,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (state, effects) = reduce_from(
+        &state,
+        &observed_at(focus_in(source, facts, edit, vec![]), 1_000),
+        OutpostId(2),
+    );
+    assert_eq!(effects.len(), 1, "the edit is spoken");
+    let (state, effects) = reduce_from(&state, &foreground(3_000), OutpostId(2));
+    assert!(effects.is_empty(), "focus is already in that window");
+    let menu_item = node(
+        1,
+        Role::MenuItem,
+        Some("Settings..."),
+        None,
+        StateSet::new(),
+    );
+    let (_, effects) = reduce_from(
+        &state,
+        &observed_at(focus_event(TraceId::mint(), Pid(1), menu_item), 2_900),
+        OutpostId(1),
+    );
+    assert!(
+        effects.is_empty(),
+        "observed before Notepad's foreground report"
+    );
+}
+
 #[test]
 fn an_entered_container_is_spoken_as_a_focus_is() {
     // A named static text entered as context says its name alone; a list,

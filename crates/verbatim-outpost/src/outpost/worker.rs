@@ -886,8 +886,12 @@ impl Worker<'_> {
     }
 
     /// A UIA focus fact whose element is not the focused element, reported from
-    /// the fact's cached snapshot alone when its window is in the system's
-    /// foreground window.
+    /// the fact's cached snapshot alone: when it names its window, only if that
+    /// window is in the system's foreground window; when it does not, with no
+    /// window facts, for the reducer to judge by its application, as NVDA
+    /// accepts an event whose window it cannot tell. The window that has the
+    /// focus now is never borrowed for it: a late fact from a closed menu would
+    /// then pass as being in the foreground.
     fn uia_fact_focus(
         &mut self,
         fact_hwnd: isize,
@@ -895,29 +899,24 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
-        let hwnd = if fact_hwnd != 0 {
-            Some(fact_hwnd)
-        } else {
-            focus_window()
-        };
-        if hwnd.is_some_and(window_belongs_to_hidden_frame) {
-            return;
-        }
-        if let Some(hwnd) = hwnd
-            && !read::window_uses_uia(self.context, hwnd)
-        {
-            tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
-            return;
-        }
-        // NVDA trusts the sender but still requires its window to be in the
-        // foreground window when it handles the event; without the live
-        // element there is nothing else to tell a stale fact by.
-        if !hwnd.is_some_and(|hwnd| window_facts(hwnd).in_foreground) {
-            tracing::debug!(
-                ?hwnd,
-                "UIA focus dropped: not the focused element and not in the foreground window"
-            );
-            return;
+        let hwnd = (fact_hwnd != 0).then_some(fact_hwnd);
+        if let Some(hwnd) = hwnd {
+            if window_belongs_to_hidden_frame(hwnd) {
+                return;
+            }
+            if !read::window_uses_uia(self.context, hwnd) {
+                tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
+                return;
+            }
+            // NVDA trusts the sender but still requires its window to be in
+            // the foreground window when it handles the event.
+            if !window_facts(hwnd).in_foreground {
+                tracing::debug!(
+                    hwnd,
+                    "UIA focus dropped: not the focused element and not in the foreground window"
+                );
+                return;
+            }
         }
         let node = self.uia_node(fact, None);
         self.emit_focus(

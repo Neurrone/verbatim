@@ -91,6 +91,12 @@ pub struct SrState {
     /// intent superseding whatever navigation was pending; so does the end of
     /// the outpost it was sent to.
     pub(crate) latest_navigation: Option<PendingNavigation>,
+    /// The outpost and observation time of the newest focus event applied.
+    /// Each outpost keeps its own events in order, but two outposts can
+    /// deliver theirs out of the order they were observed in, where NVDA
+    /// handles every event in one queue; a focus event from another outpost
+    /// observed before this one is stale and dropped.
+    pub(crate) latest_focus: Option<(OutpostId, u64)>,
 }
 
 impl SrState {

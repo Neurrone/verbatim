@@ -129,13 +129,19 @@ verified.
   sees focus across applications, so this stays in the reducer.
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
-  ([Event handling](nvda/events.md), [Speech](nvda/speech.md)). Verbatim:
-  snapshot versions and observation-time arbitration are gone; order
-  comes from each outpost's single queue and worker, as in NVDA, and the
-  observation time stays on inputs for latency records only. A UIA focus
-  fact whose element is no longer the focused element when the worker
-  reads it is dropped, since the newer fact follows. **matched
-  (unverified)**; the `focus_churn` scenario covers it.
+  ([Event handling](nvda/events.md), [Speech](nvda/speech.md)), and its
+  one queue handles every application's events in the order observed.
+  Verbatim: snapshot versions are gone, and order within an application
+  comes from its outpost's single queue and worker, as in NVDA. Across
+  outposts, events can arrive out of the order they were observed in, so
+  since 2026-10-02 the reducer drops a focus event from one outpost
+  observed before the newest focus it applied from another (found live:
+  a late focus from Notepad, then from Verbatim's closed menu, broke
+  `multi_outpost_switch`). A UIA focus fact whose element is not the
+  focused element is reported from the fact when its window is in the
+  foreground, or with no window facts, judged by its application, when
+  it has no window of its own. **matched (unverified)**; the
+  `focus_churn` and `multi_outpost_switch` scenarios cover it.
 - Name change on the focus. NVDA: when the focused object's name
   changes, the new name alone is spoken, queued behind current
   speech; a name change on any other object, including an ancestor
