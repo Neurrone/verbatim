@@ -64,7 +64,21 @@ verified.
   NVDA: `speakObject` ordering ([Speech](nvda/speech.md)). Verbatim:
   **matched (verified)** for the M3 surface — E2E scenarios assert
   wording; per-property order transcribed in `verbatim-core`
-  ([verbatim-core](crates/verbatim-core.md)).
+  ([verbatim-core](crates/verbatim-core.md)). **Different**, found on
+  2026-10-02 by running NVDA with its speech log through the same keys
+  in Explorer, Settings, and Start:
+  - NVDA speaks no role on focus for a set of roles, among them list
+    item, menu item, tree view item, pane, static text, and unknown;
+    Verbatim speaks them ("alpha.txt list item" where NVDA says
+    "alpha.txt", "vbtest - File Explorer unknown").
+  - An Explorer file is spoken by Verbatim with a second copy of its
+    name ("alpha.txt list item alpha.txt"), which NVDA does not speak;
+    not yet traced to the property it comes from.
+  - NVDA speaks a tree item's level first ("level 1, System, 2 of
+    12"); Verbatim speaks it last.
+  
+  The silent-role rule must be written up under `docs/nvda/` before the
+  reducer can follow it (NVDA provenance rule in `CLAUDE.md`).
 - Focus-ancestry context: announce newly entered presentable
   containers before the control. NVDA: `focusEntered` +
   `isPresentableFocusAncestor` ([Event handling](nvda/events.md),
@@ -137,7 +151,15 @@ verified.
   foreground change, standing in for the system's foreground window
   NVDA compares against. A foreground fact is always accepted and
   moves attention; its outpost has already dropped it if the window
-  was no longer the system's foreground when the outpost handled it. Every other event, focus
+  was no longer the system's foreground when the outpost handled it.
+  Before handling a batch that holds a foreground fact, the outpost
+  waits up to 250 ms for that window to become the foreground window,
+  as NVDA holds back event handling after a foreground event (issue
+  3831); a starting application's focus event, which can come just
+  before its foreground event, is then judged against the real
+  foreground. The bound was measured live on 2026-10-02: over 245 such
+  events, the window arrived 5 to 100 ms after its event. Without the
+  wait, msinfo32 was sometimes never announced. Every other event, focus
   events included, is classified against the record from window
   facts its outpost attached: top-level window, root owner, topmost,
   for `Windows.UI.Core` windows whether the window is under the
@@ -234,6 +256,15 @@ verified.
 - Selection announcements (focused list's selected child; changes
   while focus stays on container; combo box exclusion). NVDA:
   selection events. Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md), M3).
+- Selection in a list the focus controls (search suggestions and
+  results). NVDA: when an item is selected inside an element the focus
+  names in its UIA ControllerFor relation, NVDA reports that item as it
+  reports a focus, without moving focus; this is how it reads the Start
+  menu's search results and the Settings app's search suggestions as
+  the user types and arrows. Verbatim: **not yet**; found on
+  2026-10-02, when Verbatim read neither while NVDA read both. Start's
+  results are also partly in a Chromium document NVDA reads through
+  IA2.
 - Value change on focused node speaks bare value (slider drag).
   Verbatim: **matched (unverified)**. Background progress bar
   reporting (NVDA option): **not yet**.
@@ -313,7 +344,15 @@ verified.
   ([The UIA client](nvda/uia.md)). Verbatim: **matched in architecture (D1)**;
   the arbitration probe exists, but the per-class scar-tissue lists
   are **not yet** transcribed — expect per-app fidelity differences
-  until each is triaged (tracked per app-family as they land).
+  until each is triaged (tracked per app-family as they land). A probe
+  that finds a UIA provider is kept for the window's lifetime, one that
+  finds none for 500 ms, NVDA's cache period. Checked live on
+  2026-10-02 across about 65 windows of Explorer, Settings, Start, and
+  the desktop: no window's answer changed from a provider to none
+  during its life, but a window can answer "none" just after it is
+  created and gain its provider within seconds (Explorer's file list,
+  Windows 11 Notepad's edit control). Until the re-probe, that first
+  focus is read through MSAA, as in NVDA.
 - UIA caching discipline (cache requests on events and walks). NVDA:
   `baseCacheRequest` pattern. Verbatim: **matched (unverified)** —
   cached elements + scoped search landed in 918e5b8/4563bff after a
