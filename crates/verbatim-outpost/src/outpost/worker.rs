@@ -26,7 +26,9 @@ use verbatim_model::{
 };
 use verbatim_uia::map::snapshot_from_cached_element;
 use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handle};
-use windows::Win32::UI::Accessibility::{UIA_NamePropertyId, UIA_ValueValuePropertyId};
+use windows::Win32::UI::Accessibility::{
+    UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
+};
 use windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW;
 
 use crate::protocol::{
@@ -615,7 +617,9 @@ impl Worker<'_> {
                     change: PropertyChange::Name(node.name),
                 }
             }
-            UiaKind::Property(id) if id == UIA_ValueValuePropertyId.0 => {
+            UiaKind::Property(id)
+                if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 =>
+            {
                 NormalizedEvent::ValueChanged {
                     node_id: node.id,
                     value: node.value,

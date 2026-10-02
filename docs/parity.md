@@ -88,6 +88,66 @@ verified.
   - NVDA speaks a tree item's level first ("level 1, System, 2 of
     12"); Verbatim speaks it last.
 
+  A parity audit of the UIA and MSAA handling on 2026-10-02, checked
+  against NVDA's source, found these differences in generic behavior.
+  **Matched since 2026-10-02**, with reducer, mapping, and mockapp
+  tests:
+  - States: spoken in NVDA's fixed order (unavailable before checked,
+    so "check box unavailable not checked"); "read only" only for edit
+    fields and check boxes outside a query; "default" never, as NVDA
+    has no such state; "submenu" dropped on a combo box and
+    expanded/collapsed on a submenu item; "not selected" only for a
+    focusable list item, tree view item, row, cell, header, or check
+    box, and only on focus or a change on the focus; "not checked" also
+    for any checkable item; positive "selected" kept on a tab and in a
+    query; "focused" and "off screen" spoken in a query. The rules are
+    "Which states are spoken, and in what order" in
+    [Speech](nvda/speech.md).
+  - Values and descriptions: an edit field or document no longer
+    speaks the whole field after every keystroke; an unchanged value is
+    not repeated; a check box, radio button, link, menu item, or
+    application never speaks its value; a description equal to the
+    name is dropped ("When values and descriptions are spoken" in
+    [Speech](nvda/speech.md)).
+  - UIA: a selected radio button is checked, not selected; a
+    toggleable list or menu item is checkable; password, required,
+    invalid entry, and read-only states are read (`ValueIsReadOnly`
+    and `IsDataValidForForm` ignoring their defaults, as NVDA reads
+    them); a control with only a `RangeValue` pattern has that value,
+    rounded, and its changes are followed; the access key and the
+    accelerator key are both spoken; dialogs are recognized by
+    `IsDialog` and NVDA's dialog class names; and an ancestor counts as
+    context only when UIA calls it both a control and content.
+  - MSAA: protected is read; whitespace-only names and values count as
+    absent; the edit field of a labelled combo box has no label of its
+    own; list view and tree view items report their position ("1 of
+    3").
+  - Roles: both backends now map every role NVDA's tables give a
+    counterpart for in Verbatim's vocabulary, including split button,
+    graphic, progress bar, scroll bar, table, row, cell, headers, data
+    grid, document, title bar, tool tip, and separator; a UIA document
+    is a "document", not an "edit" (Notepad's text area is "Text editor
+    document"). Progress bars and title bars are never focus context.
+
+  **Different**, still, from the same audit:
+  - On focus NVDA reads an edit field's selection or the line at the
+    caret through its text interface; Verbatim, with no text interface
+    yet, speaks the field's whole value.
+  - A multi-column list view item (a report view, such as msinfo32's
+    right pane) is named by NVDA from its column texts, with no value
+    or description; Verbatim keeps MSAA's name and description, since
+    reading column texts needs a cross-process read not yet written.
+  - UIA read-only state from a text pattern's document range, which
+    NVDA falls back to when `ValueIsReadOnly` is unsupported.
+  - Events NVDA handles that Verbatim does not subscribe to:
+    description changes (MSAA `EVENT_OBJECT_DESCRIPTIONCHANGE`, UIA
+    `HelpText`), UIA live region changes and system alerts, and UIA
+    elements added to or removed from a selection. NVDA also speaks
+    state changes on the focus's ancestors, where Verbatim speaks them
+    only on the focus.
+  - Dialog text, which NVDA reads on entering a dialog (see the
+    role-shaped behavior layer below).
+
 - Focus-ancestry context: announce newly entered presentable
   containers before the control. NVDA: `focusEntered` +
   `isPresentableFocusAncestor` ([Event handling](nvda/events.md),
@@ -267,11 +327,11 @@ verified.
   pattern on a Button; no separate Switch role). NVDA: UIA
   detection. Verbatim: **matched (verified)** (cross-process test;
   commit c72afd8).
-- Negated states: "not checked" for unchecked check box/radio, "not
-  pressed" for toggle, "not selected" for selectable-unselected;
-  positive "selected" never on node announcement. Verbatim:
-  **matched (unverified)** — transcribed rules in reducer; needs a
-  live NVDA comparison across roles.
+- Negated states: "not checked", "not pressed", and "not selected", by
+  the rules in "Which states are spoken, and in what order" in
+  [Speech](nvda/speech.md). Verbatim: **matched since 2026-10-02**
+  against NVDA's source (the audit above); needs a live NVDA
+  comparison across roles.
 - Selection announcements (focused list's selected child; changes
   while focus stays on container; combo box exclusion). NVDA:
   selection events. Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md), M3).
@@ -284,11 +344,14 @@ verified.
   2026-10-02, when Verbatim read neither while NVDA read both. Start's
   results are also partly in a Chromium document NVDA reads through
   IA2.
-- Value change on focused node speaks bare value (slider drag).
-  Verbatim: **matched (unverified)**. Background progress bar
+- Value change on focused node speaks bare value (slider drag), not
+  for an edit field or document, not when unchanged, and not for a role
+  that never speaks its value. Verbatim: **matched since 2026-10-02**
+  (source-checked). Background progress bar
   reporting (NVDA option): **not yet**.
-- State-change diff announcements (gained states; checked-loss
-  negation). Verbatim: **matched (unverified)**.
+- State-change diff announcements (gained states; lost states spoken
+  by their absence, including half checked becoming "not checked").
+  Verbatim: **matched since 2026-10-02** (source-checked).
 - UIA notification events (snap layout hints etc.), incl.
   interrupt-vs-queue by processing hint. NVDA:
   `event_UIA_notification` ([The UIA client](nvda/uia.md)). Verbatim:

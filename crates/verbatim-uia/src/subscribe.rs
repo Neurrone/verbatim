@@ -21,7 +21,8 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationNotificationEventHandler, IUIAutomationPropertyChangedEventHandler,
     NotificationKind, NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree,
     UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_IsEnabledPropertyId,
-    UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId,
+    UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -51,12 +52,14 @@ pub type NotificationCallback = Arc<
 >;
 
 /// The properties an outpost follows on the focus and its ancestors: name,
-/// value, and the state-bearing toggle, enabled, and expand/collapse
-/// properties, all in the base cache request, so the state set is rebuilt
-/// from the cache.
-pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 5] = [
+/// value (of the `Value` or the `RangeValue` pattern, as NVDA follows both),
+/// and the state-bearing toggle, enabled, and expand/collapse properties,
+/// all in the base cache request, so the state set is rebuilt from the
+/// cache.
+pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 6] = [
     UIA_NamePropertyId,
     UIA_ValueValuePropertyId,
+    UIA_RangeValueValuePropertyId,
     UIA_ToggleToggleStatePropertyId,
     UIA_IsEnabledPropertyId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId,

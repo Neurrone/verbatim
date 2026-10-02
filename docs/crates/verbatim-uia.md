@@ -55,8 +55,19 @@ Public API:
   handle, enabled, focus states, toggle, expand-collapse, and
   selection-item state with their three pattern-availability flags (see
   the implementation note below), and the `NodeDetails` properties —
-  `FullDescription` and `HelpText`, `AccessKey` and `AcceleratorKey`,
-  `PositionInSet`, `SizeOfSet`, `Level`, and `BoundingRectangle`.
+  `FullDescription` and `HelpText`, `AccessKey` and `AcceleratorKey`
+  (both spoken, joined by two spaces, as NVDA joins them),
+  `PositionInSet`, `SizeOfSet`, `Level`, and `BoundingRectangle`; plus
+  `ClassName` and `IsDialog` (a dialog by NVDA's rule), `IsPassword`,
+  `IsRequiredForForm`, `IsDataValidForForm`, and `ValueIsReadOnly` (the
+  protected, required, invalid entry, and read-only states; the last two
+  read with `GetCachedPropertyValueEx` ignoring their default of true),
+  `RangeValueValue` (the rounded value of a control with no `Value`
+  pattern, likewise ignoring its default), and `IsContentElement` and
+  `IsControlElement` (an ancestor is focus context only when both hold).
+  A selected radio button is checked rather than selected, and a
+  toggleable element other than a check box or toggle button is
+  checkable.
 - `FocusRegistration::new(callback)` — the self-contained, desktop-global
   UIA focus registration; drop unregisters and tears down its own thread.
   UIA's focus registration is desktop-global and unscopeable, so exactly one

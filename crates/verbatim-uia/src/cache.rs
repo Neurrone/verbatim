@@ -8,12 +8,15 @@ use windows::Win32::UI::Accessibility::{
     UIA_AccessKeyPropertyId, UIA_BoundingRectanglePropertyId, UIA_ClassNamePropertyId,
     UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
     UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
-    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
-    UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId,
+    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
+    UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
+    UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
     UIA_LevelPropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_SelectionItemIsSelectedPropertyId,
-    UIA_SizeOfSetPropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_RangeValueValuePropertyId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
+    UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
 };
 
 /// The properties prefetched for every event and query. Kept in one place
@@ -38,7 +41,13 @@ use windows::Win32::UI::Accessibility::{
 /// maps every default value to `None` rather than trusting it as real data.
 ///
 /// `ClassName` lets the mapping apply rules NVDA keys on a UIA class name,
-/// such as the shell's `UIItem` file items reporting no value.
+/// such as the shell's `UIItem` file items reporting no value, and with
+/// `IsDialog` decide which windows are dialogs. `IsPassword`,
+/// `IsRequiredForForm`, `IsDataValidForForm`, and `ValueIsReadOnly` feed the
+/// protected, required, invalid entry, and read-only states;
+/// `RangeValueValue` is the value of a control that has no `Value` pattern;
+/// `IsContentElement` and `IsControlElement` decide whether an ancestor is
+/// content, all as NVDA reads them.
 pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
     UIA_NamePropertyId,
     UIA_ControlTypePropertyId,
@@ -64,6 +73,14 @@ pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PRO
     UIA_LevelPropertyId,
     UIA_BoundingRectanglePropertyId,
     UIA_ClassNamePropertyId,
+    UIA_IsDialogPropertyId,
+    UIA_IsPasswordPropertyId,
+    UIA_IsRequiredForFormPropertyId,
+    UIA_IsDataValidForFormPropertyId,
+    UIA_ValueIsReadOnlyPropertyId,
+    UIA_RangeValueValuePropertyId,
+    UIA_IsContentElementPropertyId,
+    UIA_IsControlElementPropertyId,
 ];
 
 /// Builds the base cache request: every [`CACHED_PROPERTIES`] entry, prefetched

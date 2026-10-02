@@ -276,7 +276,12 @@ impl Uia {
             // focus context regardless of its review-mode setting (object
             // navigation, by contrast, sees the full tree; see
             // [`Uia::navigate`]).
-            if is_presentable_focus_ancestor(&snapshot) {
+            // A UIA element is content only when UIA counts it both a
+            // control and content, as NVDA requires.
+            // SAFETY: `parent` was just built with `cache`.
+            if is_presentable_focus_ancestor(&snapshot)
+                && unsafe { crate::map::cached_is_control_and_content(&parent) }
+            {
                 chain.push(snapshot);
             }
             current = parent;
@@ -539,7 +544,7 @@ fn is_layout(snapshot: &NodeSnapshot) -> bool {
         text.is_none_or(|text| text.trim().is_empty())
     }
     match snapshot.role {
-        Role::Unknown | Role::Pane => true,
+        Role::Unknown | Role::Pane | Role::TitleBar => true,
         Role::StaticText => blank(snapshot.name.as_deref()),
         Role::Window | Role::PropertyPage | Role::Group => {
             blank(snapshot.name.as_deref()) && blank(snapshot.details.description.as_deref())
@@ -551,9 +556,8 @@ fn is_layout(snapshot: &NodeSnapshot) -> bool {
 /// NVDA's `isPresentableFocusAncestor`: whether an ancestor is worth
 /// speaking as focus context. Layout elements are not; neither are roles
 /// that never meaningfully contain the focus for announcement purposes —
-/// list items, tree items, and editable text (NVDA also lists progress
-/// bars, a role this vocabulary does not have yet). NVDA applies this to
-/// focus ancestry regardless of its review-mode setting.
+/// list items, tree items, progress bars, and editable text. NVDA applies
+/// this to focus ancestry regardless of its review-mode setting.
 fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
     use verbatim_model::Role;
     if is_layout(snapshot) {
@@ -561,7 +565,7 @@ fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
     }
     !matches!(
         snapshot.role,
-        Role::ListItem | Role::TreeItem | Role::EditableText
+        Role::ListItem | Role::TreeItem | Role::ProgressBar | Role::EditableText
     )
 }
 

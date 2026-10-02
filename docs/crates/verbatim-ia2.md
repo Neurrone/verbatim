@@ -98,8 +98,14 @@ Public API:
   dialog work: MSAA's own answers there are the control's scroll-bar and
   client pieces, not the sibling controls.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
-  MSAA constants to the normalized vocabulary, pinned by unit tests against
-  raw state words captured from live controls.
+  MSAA constants to the normalized vocabulary, following NVDA's MSAA
+  role and state tables (so `STATE_SYSTEM_DEFAULT` is dropped and
+  `STATE_SYSTEM_PROTECTED` kept), pinned by unit tests against raw state
+  words captured from live controls. Reading a snapshot also treats a
+  whitespace-only name or value as absent, drops the name of the edit
+  field inside a labelled combo box, and gives a list view or tree view
+  item its position, from `LVM_GETITEMCOUNT` or by counting its siblings
+  with `TVM_GETNEXTITEM`, as NVDA does.
 - `NodeIdRegistry` — the nodes the outpost has issued, each with its
   address (window handle, object id, and child id), the role read when it
   was issued, and the accessible object it was read from, kept as an agile

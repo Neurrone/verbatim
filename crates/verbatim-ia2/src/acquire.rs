@@ -35,8 +35,8 @@ use windows::Win32::UI::Accessibility::{
     IAccessible, NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, WindowFromAccessibleObject,
 };
 use windows::Win32::UI::Controls::{
-    TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM,
-    TVM_MAPHTREEITEMTOACCID,
+    LVM_GETITEMCOUNT, TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS, TVM_GETNEXTITEM,
+    TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_PARENT, GUITHREADINFO, GW_HWNDNEXT, GW_HWNDPREV, GetAncestor, GetClassNameW,
@@ -47,7 +47,7 @@ use windows::core::{AgileReference, IUnknown, Interface};
 
 use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Rect, Role, TreeNode};
 
-use crate::com::{CHILDID_SELF, bstr_to_option, child_variant, variant_i32};
+use crate::com::{CHILDID_SELF, bstr_to_option, bstr_to_text, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
 use crate::registry::{Found, Held, MsaaKey, NodeIdRegistry};
 
@@ -1175,11 +1175,8 @@ unsafe fn read_snapshot(
     // SAFETY: forwarded to the caller's contract; each accessor tolerates an
     // unsupported property by returning an error, mapped to a neutral default.
     unsafe {
-        let name = acc.get_accName(child).ok().and_then(|b| bstr_to_option(&b));
-        let raw_value = acc
-            .get_accValue(child)
-            .ok()
-            .and_then(|b| bstr_to_option(&b));
+        let name = acc.get_accName(child).ok().and_then(|b| bstr_to_text(&b));
+        let raw_value = acc.get_accValue(child).ok().and_then(|b| bstr_to_text(&b));
         let role = acc
             .get_accRole(child)
             .ok()
@@ -1202,6 +1199,12 @@ unsafe fn read_snapshot(
         let rect = location_of(acc, child);
         // See this function's doc comment: a tree item's accValue is really
         // its 0-based level, not a value.
+        // The edit field of a combo box takes the combo box's label, so it
+        // has none of its own when the combo box is labelled, as in NVDA.
+        let name = name.filter(|_| {
+            role != Role::EditableText || !in_labelled_combo_box(acc, child_id_of(child))
+        });
+        let (position_in_set, set_size) = position_of(key.0, child_id_of(child), role);
         let (value, level) = if role == Role::TreeItem {
             let level = raw_value
                 .as_deref()
@@ -1234,12 +1237,103 @@ unsafe fn read_snapshot(
             details: NodeDetails {
                 description,
                 keyboard_shortcut,
-                position_in_set: None,
-                set_size: None,
+                position_in_set,
+                set_size,
                 level,
                 rect,
             },
         }
+    }
+}
+
+/// Whether the edit field `acc` (with child id `child_id`) sits in a combo
+/// box that has a name of its own: its parent, or the parent of a window
+/// object between them, is a named combo box.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible`.
+unsafe fn in_labelled_combo_box(acc: &IAccessible, child_id: i32) -> bool {
+    let parent_of = |acc: &IAccessible| -> Option<IAccessible> {
+        // SAFETY: `acc` is live; a failed call is "no parent".
+        unsafe { acc.accParent() }.ok()?.cast().ok()
+    };
+    let role_of = |acc: &IAccessible| -> Role {
+        // SAFETY: `acc` is live; a failed read is an unknown role.
+        unsafe { acc.get_accRole(&child_variant(CHILDID_SELF)) }
+            .ok()
+            .and_then(|role| unsafe { variant_i32(&role) })
+            .map_or(Role::Unknown, |role| role_from_msaa(role.cast_unsigned()))
+    };
+    // A child id's parent is the object that holds it.
+    let parent = if child_id == CHILDID_SELF {
+        parent_of(acc)
+    } else {
+        Some(acc.clone())
+    };
+    let Some(mut parent) = parent else {
+        return false;
+    };
+    if role_of(&parent) == Role::Window {
+        let Some(grandparent) = parent_of(&parent) else {
+            return false;
+        };
+        parent = grandparent;
+    }
+    role_of(&parent) == Role::ComboBox
+        // SAFETY: `parent` is live; a failed read is "no name".
+        && unsafe { parent.get_accName(&child_variant(CHILDID_SELF)) }
+            .ok()
+            .and_then(|name| bstr_to_text(&name))
+            .is_some()
+}
+
+/// An item's position in its set and the set's size, for an item of a
+/// comctl32 list view or tree view, which MSAA gives no way to ask for, as
+/// NVDA computes them: a list view item is at its child id among
+/// `LVM_GETITEMCOUNT` items; a tree view item is counted among its siblings
+/// through `TVM_GETNEXTITEM`. `(None, None)` for anything else.
+fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u32>) {
+    /// More siblings than any real tree view holds, so a broken control
+    /// cannot keep the walk going.
+    const MAX_SIBLINGS: u32 = 100_000;
+    if child_id == CHILDID_SELF || hwnd == 0 {
+        return (None, None);
+    }
+    let window = HWND(hwnd as *mut c_void);
+    match role {
+        Role::ListItem if window_class_name(hwnd).contains("SysListView32") => {
+            // SAFETY: LVM_GETITEMCOUNT takes no pointers; a bad handle
+            // fails safely, returning 0.
+            let count = unsafe { SendMessageW(window, LVM_GETITEMCOUNT, None, None) }.0;
+            let count = u32::try_from(count).ok().filter(|&count| count > 0);
+            (
+                u32::try_from(child_id).ok().filter(|_| count.is_some()),
+                count,
+            )
+        }
+        Role::TreeItem if is_systreeview32(hwnd) => {
+            let item = htreeitem_for_acc_id(window, child_id);
+            if item == 0 {
+                return (None, None);
+            }
+            let walk = |relation: u32| {
+                let mut count = 0u32;
+                let mut current = item;
+                while current != 0 && count < MAX_SIBLINGS {
+                    count += 1;
+                    // SAFETY: TVM_GETNEXTITEM takes plain integers.
+                    current =
+                        unsafe { send_tvm(window, TVM_GETNEXTITEM, relation as usize, current) };
+                }
+                count
+            };
+            // Counting the item itself both ways.
+            let index = walk(TVGN_PREVIOUS);
+            let after = walk(TVGN_NEXT);
+            (Some(index), Some(index + after - 1))
+        }
+        _ => (None, None),
     }
 }
 

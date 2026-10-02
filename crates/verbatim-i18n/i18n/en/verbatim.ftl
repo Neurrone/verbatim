@@ -80,6 +80,30 @@ role-tool-bar = tool bar
 role-status-bar = status bar
 role-tree = tree view
 role-tree-item = tree view item
+role-split-button = split button
+role-drop-down-button = drop down button
+role-menu-button = menu button
+role-graphic = graphic
+role-progress-bar = progress bar
+role-scroll-bar = scroll bar
+role-table = table
+role-row = row
+role-cell = cell
+role-column-header = column header
+role-row-header = row header
+role-header = header
+role-header-item = header item
+role-data-grid = data grid
+role-data-item = data item
+role-calendar = calendar
+role-tool-tip = tool tip
+role-title-bar = title bar
+role-separator = separator
+role-document = document
+role-application = application
+role-alert = alert
+role-hotkey-field = hot key field
+role-thumb = thumb control
 role-unknown = unknown
 
 ## Reader messages: fixed announcements that describe the reader's own
@@ -92,6 +116,8 @@ message-no-objects-inside = No objects inside
 
 ## Spoken state names.
 
+state-focused = focused
+state-offscreen = off screen
 state-selected = selected
 state-not-selected = not selected
 state-checked = checked
@@ -104,8 +130,10 @@ state-collapsed = collapsed
 state-pressed = pressed
 state-not-pressed = not pressed
 state-has-popup = submenu
-state-default = default
 state-busy = busy
+state-protected = protected
+state-required = required
+state-invalid-entry = invalid entry
 
 ## Spoken object details.
 

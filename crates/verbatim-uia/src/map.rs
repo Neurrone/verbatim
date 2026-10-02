@@ -10,58 +10,107 @@ use windows::Win32::UI::Accessibility::{
     NotificationKind_ItemRemoved, NotificationProcessing_All,
     NotificationProcessing_CurrentThenMostRecent, NotificationProcessing_ImportantMostRecent,
     NotificationProcessing_MostRecent, ToggleState_Indeterminate, ToggleState_On,
-    UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId, UIA_ButtonControlTypeId,
+    UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId, UIA_AppBarControlTypeId,
+    UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID, UIA_CalendarControlTypeId,
     UIA_CheckBoxControlTypeId, UIA_ClassNamePropertyId, UIA_ComboBoxControlTypeId,
-    UIA_ControlTypePropertyId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+    UIA_ControlTypePropertyId, UIA_CustomControlTypeId, UIA_DataGridControlTypeId,
+    UIA_DataItemControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
-    UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
-    UIA_HyperlinkControlTypeId, UIA_IsEnabledPropertyId,
+    UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_HeaderControlTypeId,
+    UIA_HeaderItemControlTypeId, UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId,
+    UIA_ImageControlTypeId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
+    UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
-    UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_ListControlTypeId,
-    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PaneControlTypeId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
-    UIA_RadioButtonControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
-    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
-    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
-    UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
-    UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_IsRequiredForFormPropertyId,
+    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
+    UIA_LevelPropertyId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId,
+    UIA_ProcessIdPropertyId, UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId,
+    UIA_RangeValueValuePropertyId, UIA_ScrollBarControlTypeId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId, UIA_SizeOfSetPropertyId,
+    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+    UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ThumbControlTypeId,
+    UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId,
+    UIA_ToolTipControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
+    UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
 };
 
 use crate::com::{variant_bool, variant_i32, variant_string};
 use crate::registry::NodeIdRegistry;
 
-/// Maps a UIA control-type id to a normalized [`Role`]. Unmapped types become
-/// [`Role::Unknown`] so new UIA controls degrade rather than mislead.
+/// Maps a UIA control-type id to a normalized [`Role`], as NVDA's UIA
+/// control type table does. Unmapped types become [`Role::Unknown`] so new
+/// UIA controls degrade rather than mislead.
 #[must_use]
 pub fn role_from_control_type(control_type: i32) -> Role {
-    match control_type {
-        t if t == UIA_ButtonControlTypeId.0 => Role::Button,
-        t if t == UIA_CheckBoxControlTypeId.0 => Role::CheckBox,
-        t if t == UIA_ComboBoxControlTypeId.0 => Role::ComboBox,
-        t if t == UIA_EditControlTypeId.0 || t == UIA_DocumentControlTypeId.0 => Role::EditableText,
-        t if t == UIA_SliderControlTypeId.0 => Role::Slider,
-        t if t == UIA_SpinnerControlTypeId.0 => Role::SpinButton,
-        t if t == UIA_ListControlTypeId.0 => Role::List,
-        t if t == UIA_ListItemControlTypeId.0 => Role::ListItem,
-        t if t == UIA_MenuControlTypeId.0 => Role::Menu,
-        t if t == UIA_MenuBarControlTypeId.0 => Role::MenuBar,
-        t if t == UIA_MenuItemControlTypeId.0 => Role::MenuItem,
-        t if t == UIA_WindowControlTypeId.0 => Role::Window,
-        t if t == UIA_TextControlTypeId.0 => Role::StaticText,
-        t if t == UIA_TabControlTypeId.0 => Role::TabControl,
-        t if t == UIA_TabItemControlTypeId.0 => Role::Tab,
-        t if t == UIA_HyperlinkControlTypeId.0 => Role::Link,
-        t if t == UIA_ToolBarControlTypeId.0 => Role::ToolBar,
-        t if t == UIA_StatusBarControlTypeId.0 => Role::StatusBar,
-        t if t == UIA_GroupControlTypeId.0 => Role::Group,
-        t if t == UIA_PaneControlTypeId.0 => Role::Pane,
-        t if t == UIA_RadioButtonControlTypeId.0 => Role::RadioButton,
-        t if t == UIA_TreeControlTypeId.0 => Role::Tree,
-        t if t == UIA_TreeItemControlTypeId.0 => Role::TreeItem,
-        _ => Role::Unknown,
-    }
+    const ROLES: [(UIA_CONTROLTYPE_ID, Role); 40] = [
+        (UIA_ButtonControlTypeId, Role::Button),
+        (UIA_CalendarControlTypeId, Role::Calendar),
+        (UIA_CheckBoxControlTypeId, Role::CheckBox),
+        (UIA_ComboBoxControlTypeId, Role::ComboBox),
+        (UIA_EditControlTypeId, Role::EditableText),
+        (UIA_HyperlinkControlTypeId, Role::Link),
+        (UIA_ImageControlTypeId, Role::Graphic),
+        (UIA_ListItemControlTypeId, Role::ListItem),
+        (UIA_ListControlTypeId, Role::List),
+        (UIA_MenuControlTypeId, Role::Menu),
+        (UIA_MenuBarControlTypeId, Role::MenuBar),
+        (UIA_MenuItemControlTypeId, Role::MenuItem),
+        (UIA_ProgressBarControlTypeId, Role::ProgressBar),
+        (UIA_RadioButtonControlTypeId, Role::RadioButton),
+        (UIA_ScrollBarControlTypeId, Role::ScrollBar),
+        (UIA_SliderControlTypeId, Role::Slider),
+        (UIA_SpinnerControlTypeId, Role::SpinButton),
+        (UIA_StatusBarControlTypeId, Role::StatusBar),
+        (UIA_TabControlTypeId, Role::TabControl),
+        (UIA_TabItemControlTypeId, Role::Tab),
+        (UIA_TextControlTypeId, Role::StaticText),
+        (UIA_ToolBarControlTypeId, Role::ToolBar),
+        (UIA_ToolTipControlTypeId, Role::ToolTip),
+        (UIA_TreeControlTypeId, Role::Tree),
+        (UIA_TreeItemControlTypeId, Role::TreeItem),
+        (UIA_CustomControlTypeId, Role::Unknown),
+        (UIA_GroupControlTypeId, Role::Group),
+        (UIA_ThumbControlTypeId, Role::Thumb),
+        (UIA_DataGridControlTypeId, Role::DataGrid),
+        (UIA_DataItemControlTypeId, Role::DataItem),
+        (UIA_DocumentControlTypeId, Role::Document),
+        (UIA_SplitButtonControlTypeId, Role::SplitButton),
+        (UIA_WindowControlTypeId, Role::Window),
+        (UIA_PaneControlTypeId, Role::Pane),
+        (UIA_HeaderControlTypeId, Role::Header),
+        (UIA_HeaderItemControlTypeId, Role::HeaderItem),
+        (UIA_TableControlTypeId, Role::Table),
+        (UIA_TitleBarControlTypeId, Role::TitleBar),
+        (UIA_SeparatorControlTypeId, Role::Separator),
+        (UIA_AppBarControlTypeId, Role::Unknown),
+    ];
+    ROLES
+        .iter()
+        .find(|(id, _)| id.0 == control_type)
+        .map_or(Role::Unknown, |(_, role)| *role)
+}
+
+/// The UIA class names of windows NVDA treats as dialogs even when the
+/// element does not say `IsDialog`.
+const DIALOG_CLASS_NAMES: [&str; 6] = [
+    "#32770",
+    "NUIDialog",
+    "Credential Dialog Xaml Host",
+    "Shell_Dialog",
+    "Shell_Flyout",
+    "Shell_SystemDialog",
+];
+
+/// Whether an element is a dialog, as NVDA decides: it says so through
+/// `IsDialog`, or it is a window element whose class is one of
+/// [`DIALOG_CLASS_NAMES`].
+fn is_dialog(is_dialog: bool, is_window_element: bool, class_name: Option<&str>) -> bool {
+    is_dialog
+        || (is_window_element
+            && class_name.is_some_and(|class| DIALOG_CLASS_NAMES.contains(&class)))
 }
 
 /// Refines a Button control type's role using `TogglePattern` availability;
@@ -113,6 +162,61 @@ unsafe fn cached_bool(element: &IUIAutomationElement, property: i32) -> bool {
     }
 }
 
+/// Reads a cached boolean property, `None` when the element does not support
+/// it or UIA only supplies the property's default (UIA's "not supported"
+/// sentinel is not a boolean), as NVDA reads `ValueIsReadOnly` and
+/// `IsDataValidForForm`, whose defaults are true.
+///
+/// # Safety
+///
+/// `element` must be a live element built with a cache request that included
+/// `property`.
+unsafe fn cached_optional_bool(element: &IUIAutomationElement, property: i32) -> Option<bool> {
+    use windows::Win32::UI::Accessibility::UIA_PROPERTY_ID;
+    // SAFETY: forwarded to the caller's contract.
+    unsafe {
+        let value = element
+            .GetCachedPropertyValueEx(UIA_PROPERTY_ID(property), true)
+            .ok()?;
+        crate::com::variant_optional_bool(&value)
+    }
+}
+
+/// Reads a cached floating-point property, `None` when unsupported or when
+/// UIA only supplies the property's default (as it does for an element
+/// without the property's pattern), as NVDA reads it.
+///
+/// # Safety
+///
+/// `element` must be a live element built with a cache request that included
+/// `property`.
+unsafe fn cached_f64(element: &IUIAutomationElement, property: i32) -> Option<f64> {
+    use windows::Win32::UI::Accessibility::UIA_PROPERTY_ID;
+    // SAFETY: forwarded to the caller's contract.
+    unsafe {
+        let value = element
+            .GetCachedPropertyValueEx(UIA_PROPERTY_ID(property), true)
+            .ok()?;
+        crate::com::variant_f64(&value)
+    }
+}
+
+/// Whether UIA considers an element both a control and content, which NVDA
+/// requires of a UIA element before it counts as content, and so as focus
+/// context.
+///
+/// # Safety
+///
+/// `element` must be a live element built with the base cache request.
+#[must_use]
+pub unsafe fn cached_is_control_and_content(element: &IUIAutomationElement) -> bool {
+    // SAFETY: both properties are in the base cache request.
+    unsafe {
+        cached_bool(element, UIA_IsContentElementPropertyId.0)
+            && cached_bool(element, UIA_IsControlElementPropertyId.0)
+    }
+}
+
 /// Reads a cached string property, `None` when empty or absent.
 ///
 /// # Safety
@@ -135,7 +239,7 @@ unsafe fn cached_string(element: &IUIAutomationElement, property: i32) -> Option
 /// several booleans are the whole point — each is one cached UIA flag — so the
 /// "too many bools" lint does not apply.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct RawUiaStates {
     has_focus: bool,
     focusable: bool,
@@ -154,6 +258,11 @@ struct RawUiaStates {
     /// `STATE_SYSTEM_SELECTABLE` bit reads.
     selection_available: bool,
     selected: bool,
+    password: bool,
+    required: bool,
+    /// `IsDataValidForForm`, `None` when unsupported, which counts as valid.
+    data_valid: Option<bool>,
+    value_read_only: bool,
 }
 
 /// Pure mapping from raw cached UIA state inputs to a normalized [`StateSet`].
@@ -164,7 +273,10 @@ struct RawUiaStates {
 /// `role` is the already-resolved (see [`refine_button_role`]) role of the
 /// node the states belong to: `ToggleState_On` becomes [`State::Pressed`]
 /// for a [`Role::ToggleButton`] and [`State::Checked`] for everything else,
-/// mirroring NVDA's toggle-state branch.
+/// mirroring NVDA's toggle-state branch. A toggleable element that is not a
+/// check box or toggle button (a list item or menu item with a check box)
+/// is [`State::Checkable`], and a radio button's selection is its checked
+/// state, as in NVDA.
 fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
     let mut states = StateSet::new();
     if raw.has_focus {
@@ -180,6 +292,9 @@ fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
         states.insert(State::Offscreen);
     }
     if raw.toggle_available {
+        if !matches!(role, Role::ToggleButton | Role::CheckBox) {
+            states.insert(State::Checkable);
+        }
         if raw.toggle_state == Some(ToggleState_On.0) {
             let on_state = if role == Role::ToggleButton {
                 State::Pressed
@@ -199,10 +314,27 @@ fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
         }
     }
     if raw.selection_available {
-        states.insert(State::Selectable);
+        let (can, is) = if role == Role::RadioButton {
+            (State::Checkable, State::Checked)
+        } else {
+            (State::Selectable, State::Selected)
+        };
+        states.insert(can);
         if raw.selected {
-            states.insert(State::Selected);
+            states.insert(is);
         }
+    }
+    if raw.password {
+        states.insert(State::Protected);
+    }
+    if raw.required {
+        states.insert(State::Required);
+    }
+    if raw.data_valid == Some(false) {
+        states.insert(State::InvalidEntry);
+    }
+    if raw.value_read_only {
+        states.insert(State::ReadOnly);
     }
     states
 }
@@ -236,6 +368,11 @@ unsafe fn states_from_cached(element: &IUIAutomationElement, role: Role) -> Stat
                 UIA_IsSelectionItemPatternAvailablePropertyId.0,
             ),
             selected: cached_bool(element, UIA_SelectionItemIsSelectedPropertyId.0),
+            password: cached_bool(element, UIA_IsPasswordPropertyId.0),
+            required: cached_bool(element, UIA_IsRequiredForFormPropertyId.0),
+            data_valid: cached_optional_bool(element, UIA_IsDataValidForFormPropertyId.0),
+            value_read_only: cached_optional_bool(element, UIA_ValueIsReadOnlyPropertyId.0)
+                == Some(true),
         }
     };
     states_from_uia(&raw, role)
@@ -292,7 +429,7 @@ unsafe fn cached_rect(element: &IUIAutomationElement) -> Option<Rect> {
 
 /// Builds a [`NodeDetails`] from an element's cached properties: description
 /// (`FullDescription`, falling back to `HelpText`), keyboard shortcut
-/// (`AccessKey`, falling back to `AcceleratorKey`), `PositionInSet`,
+/// (`AccessKey` and `AcceleratorKey`, joined as NVDA joins them), `PositionInSet`,
 /// `SizeOfSet`, `Level`, and `BoundingRectangle`. Every field maps UIA's
 /// "not supported" default (an empty string or zero) to `None`.
 ///
@@ -305,8 +442,10 @@ unsafe fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
     unsafe {
         let description = cached_string(element, UIA_FullDescriptionPropertyId.0)
             .or_else(|| cached_string(element, UIA_HelpTextPropertyId.0));
-        let keyboard_shortcut = cached_string(element, UIA_AccessKeyPropertyId.0)
-            .or_else(|| cached_string(element, UIA_AcceleratorKeyPropertyId.0));
+        let keyboard_shortcut = keyboard_shortcut(
+            cached_string(element, UIA_AccessKeyPropertyId.0),
+            cached_string(element, UIA_AcceleratorKeyPropertyId.0),
+        );
         NodeDetails {
             description,
             keyboard_shortcut,
@@ -316,6 +455,24 @@ unsafe fn details_from_cached(element: &IUIAutomationElement) -> NodeDetails {
             rect: cached_rect(element),
         }
     }
+}
+
+/// An element's keyboard shortcut: its access key and its accelerator key,
+/// each when present, joined by two spaces as NVDA joins them.
+fn keyboard_shortcut(
+    access_key: Option<String>,
+    accelerator_key: Option<String>,
+) -> Option<String> {
+    match (access_key, accelerator_key) {
+        (Some(access), Some(accelerator)) => Some(format!("{access}  {accelerator}")),
+        (access, accelerator) => access.or(accelerator),
+    }
+}
+
+/// An element's value: its `Value` pattern's value, or failing that its
+/// `RangeValue` pattern's value rounded to a whole number, as NVDA reads it.
+fn value_of(value: Option<String>, range_value: Option<f64>) -> Option<String> {
+    value.or_else(|| range_value.map(|range| format!("{}", range.round())))
 }
 
 /// Reads the cached process id, so callers can filter events by target pid
@@ -395,14 +552,24 @@ pub unsafe fn snapshot_parts_from_cached_element(element: &IUIAutomationElement)
             .unwrap_or_default();
         let control_type = cached_i32(element, UIA_ControlTypePropertyId.0).unwrap_or(0);
         let toggle_available = cached_bool(element, UIA_IsTogglePatternAvailablePropertyId.0);
-        let role = refine_button_role(role_from_control_type(control_type), toggle_available);
+        let class_name = cached_string(element, UIA_ClassNamePropertyId.0);
+        let mut role = refine_button_role(role_from_control_type(control_type), toggle_available);
+        if is_dialog(
+            cached_bool(element, UIA_IsDialogPropertyId.0),
+            cached_native_window_handle(element) != 0,
+            class_name.as_deref(),
+        ) {
+            role = Role::Dialog;
+        }
         CachedUiaParts {
             runtime_id,
             role,
             name: cached_string(element, UIA_NamePropertyId.0),
-            value: cached_string(element, UIA_ValueValuePropertyId.0).filter(|_| {
-                !reports_no_value(cached_string(element, UIA_ClassNamePropertyId.0).as_deref())
-            }),
+            value: value_of(
+                cached_string(element, UIA_ValueValuePropertyId.0),
+                cached_f64(element, UIA_RangeValueValuePropertyId.0),
+            )
+            .filter(|_| !reports_no_value(class_name.as_deref())),
             states: states_from_cached(element, role),
             details: details_from_cached(element),
         }
@@ -572,6 +739,7 @@ mod tests {
             expand_state: Some(3), // LeafNode default for non-expandable elements.
             selection_available: false,
             selected: false,
+            ..RawUiaStates::default()
         };
         let states = states_from_uia(&raw, Role::Pane);
         assert!(states.contains(State::Focused));
@@ -600,6 +768,7 @@ mod tests {
             expand_state: None,
             selection_available: false,
             selected: false,
+            ..RawUiaStates::default()
         };
         assert!(states_from_uia(&base, Role::CheckBox).contains(State::Checked));
 
@@ -633,6 +802,7 @@ mod tests {
             expand_state: None,
             selection_available: false,
             selected: false,
+            ..RawUiaStates::default()
         };
 
         let toggle_button_states = states_from_uia(&base, Role::ToggleButton);
@@ -653,6 +823,7 @@ mod tests {
             expand_state: Some(ExpandCollapseState_Expanded.0),
             selection_available: false,
             selected: false,
+            ..RawUiaStates::default()
         };
         assert!(states_from_uia(&expanded, Role::Pane).contains(State::Expanded));
         let collapsed = RawUiaStates {
@@ -675,6 +846,7 @@ mod tests {
             expand_state: None,
             selection_available: false,
             selected: false,
+            ..RawUiaStates::default()
         };
         let states = states_from_uia(&raw, Role::Pane);
         assert!(states.contains(State::Disabled));
@@ -699,6 +871,7 @@ mod tests {
             expand_state: None,
             selection_available: true,
             selected: true,
+            ..RawUiaStates::default()
         };
         let states = states_from_uia(&base, Role::Pane);
         assert!(states.contains(State::Selectable));
@@ -780,5 +953,114 @@ mod tests {
             notification_processing_from_uia(NotificationProcessing_CurrentThenMostRecent),
             verbatim_model::NotificationProcessing::CurrentThenMostRecent
         );
+    }
+
+    #[test]
+    fn roles_nvda_maps_are_not_unknown() {
+        assert_eq!(
+            role_from_control_type(UIA_SplitButtonControlTypeId.0),
+            Role::SplitButton
+        );
+        assert_eq!(
+            role_from_control_type(UIA_ImageControlTypeId.0),
+            Role::Graphic
+        );
+        assert_eq!(
+            role_from_control_type(UIA_DocumentControlTypeId.0),
+            Role::Document
+        );
+        assert_eq!(
+            role_from_control_type(UIA_HeaderItemControlTypeId.0),
+            Role::HeaderItem
+        );
+        assert_eq!(
+            role_from_control_type(UIA_ProgressBarControlTypeId.0),
+            Role::ProgressBar
+        );
+    }
+
+    #[test]
+    fn a_window_of_a_dialog_class_is_a_dialog() {
+        assert!(is_dialog(true, false, None));
+        assert!(is_dialog(false, true, Some("#32770")));
+        assert!(!is_dialog(false, false, Some("#32770")));
+        assert!(!is_dialog(false, true, Some("Notepad")));
+    }
+
+    #[test]
+    fn a_selected_radio_button_is_checked() {
+        let raw = RawUiaStates {
+            enabled: true,
+            selection_available: true,
+            selected: true,
+            ..RawUiaStates::default()
+        };
+        let states = states_from_uia(&raw, Role::RadioButton);
+        assert!(states.contains(State::Checked));
+        assert!(states.contains(State::Checkable));
+        assert!(!states.contains(State::Selected));
+        assert!(!states.contains(State::Selectable));
+    }
+
+    #[test]
+    fn a_toggleable_list_item_is_checkable() {
+        let raw = RawUiaStates {
+            enabled: true,
+            toggle_available: true,
+            toggle_state: Some(0),
+            ..RawUiaStates::default()
+        };
+        assert!(states_from_uia(&raw, Role::ListItem).contains(State::Checkable));
+        assert!(!states_from_uia(&raw, Role::CheckBox).contains(State::Checkable));
+    }
+
+    #[test]
+    fn form_states_map_and_unsupported_validity_is_valid() {
+        let raw = RawUiaStates {
+            enabled: true,
+            password: true,
+            required: true,
+            value_read_only: true,
+            data_valid: Some(false),
+            ..RawUiaStates::default()
+        };
+        let states = states_from_uia(&raw, Role::EditableText);
+        for state in [
+            State::Protected,
+            State::Required,
+            State::ReadOnly,
+            State::InvalidEntry,
+        ] {
+            assert!(states.contains(state), "{state:?}");
+        }
+        let unsupported = RawUiaStates {
+            enabled: true,
+            data_valid: None,
+            ..RawUiaStates::default()
+        };
+        assert!(!states_from_uia(&unsupported, Role::EditableText).contains(State::InvalidEntry));
+    }
+
+    #[test]
+    fn the_shortcut_joins_access_and_accelerator_keys() {
+        assert_eq!(
+            keyboard_shortcut(Some("Alt+F".into()), Some("Ctrl+O".into())).as_deref(),
+            Some("Alt+F  Ctrl+O")
+        );
+        assert_eq!(
+            keyboard_shortcut(None, Some("Ctrl+O".into())).as_deref(),
+            Some("Ctrl+O")
+        );
+        assert_eq!(keyboard_shortcut(None, None), None);
+    }
+
+    #[test]
+    fn a_range_value_stands_in_for_a_missing_value() {
+        assert_eq!(value_of(None, Some(42.6)).as_deref(), Some("43"));
+        assert_eq!(
+            value_of(Some("Medium".into()), Some(50.0)).as_deref(),
+            Some("Medium")
+        );
+        assert_eq!(value_of(None, None), None);
     }
 }

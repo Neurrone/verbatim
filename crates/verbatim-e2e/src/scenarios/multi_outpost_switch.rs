@@ -59,12 +59,12 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Launching Notepad brings it to the foreground; a fresh outpost spawns
     // to watch it and reports the foreground change as a focus on the
-    // top-level window ("Notepad") followed by the focused control (Notepad's edit area,
-    // role "edit" — see crates/verbatim-i18n/i18n/en/verbatim.ftl's
-    // role-editable-text).
+    // top-level window ("Notepad") followed by the focused control, Notepad's
+    // text area: a UIA document named "Text editor", which NVDA's UIA role
+    // table, and so Verbatim's, speaks as "document".
     scenario
         .speech()
-        .expect_in_order(&["Notepad", "edit"], STEP_TIMEOUT);
+        .expect_in_order(&["Notepad", "Text editor document"], STEP_TIMEOUT);
 
     // Verbatim+V brings Verbatim's own hidden frame and popup menu to
     // foreground (the shared helper waits for the popup's announcement —
@@ -95,7 +95,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // heard again as on the first launch.
     scenario
         .speech()
-        .expect_in_order(&["Notepad", "edit"], STEP_TIMEOUT);
+        .expect_in_order(&["Notepad", "Text editor document"], STEP_TIMEOUT);
 }
 
 #[allow(

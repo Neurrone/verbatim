@@ -29,7 +29,10 @@ Public API:
 - `Backend` — `Uia` or `Msaa`; which client stack sourced a node or event.
   Diagnostics only above the outpost.
 - `Role`, `State`, `StateSet` — the role vocabulary (window, dialog, menu
-  item, button, check box, slider, and so on) and a bitmask state set with
+  item, button, check box, slider, and so on, with a counterpart for
+  every role both backends' NVDA tables map that Verbatim speaks), the
+  states (including protected, required, invalid entry, and checkable,
+  but no "default", which NVDA does not have), and a bitmask state set with
   `contains`, `insert`, `remove`, `with`, and ordered `iter`. Both enums are
   non-exhaustive so later milestones can grow them without breaking
   matches.

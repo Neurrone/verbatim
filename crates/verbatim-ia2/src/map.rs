@@ -5,12 +5,17 @@
 
 use verbatim_model::{Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
-    ROLE_SYSTEM_CHECKBUTTON, ROLE_SYSTEM_CLIENT, ROLE_SYSTEM_COMBOBOX, ROLE_SYSTEM_DIALOG,
-    ROLE_SYSTEM_GROUPING, ROLE_SYSTEM_LINK, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM,
-    ROLE_SYSTEM_MENUITEM, ROLE_SYSTEM_MENUPOPUP, ROLE_SYSTEM_OUTLINE, ROLE_SYSTEM_OUTLINEITEM,
-    ROLE_SYSTEM_PAGETAB, ROLE_SYSTEM_PAGETABLIST, ROLE_SYSTEM_PROPERTYPAGE, ROLE_SYSTEM_PUSHBUTTON,
-    ROLE_SYSTEM_RADIOBUTTON, ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SPINBUTTON, ROLE_SYSTEM_STATICTEXT,
-    ROLE_SYSTEM_STATUSBAR, ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TOOLBAR, ROLE_SYSTEM_WINDOW,
+    ROLE_SYSTEM_ALERT, ROLE_SYSTEM_APPLICATION, ROLE_SYSTEM_BUTTONDROPDOWN, ROLE_SYSTEM_BUTTONMENU,
+    ROLE_SYSTEM_CELL, ROLE_SYSTEM_CHECKBUTTON, ROLE_SYSTEM_CLIENT, ROLE_SYSTEM_COLUMNHEADER,
+    ROLE_SYSTEM_COMBOBOX, ROLE_SYSTEM_DIALOG, ROLE_SYSTEM_DOCUMENT, ROLE_SYSTEM_GRAPHIC,
+    ROLE_SYSTEM_GROUPING, ROLE_SYSTEM_HOTKEYFIELD, ROLE_SYSTEM_LINK, ROLE_SYSTEM_LIST,
+    ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_MENUBAR, ROLE_SYSTEM_MENUITEM, ROLE_SYSTEM_MENUPOPUP,
+    ROLE_SYSTEM_OUTLINE, ROLE_SYSTEM_OUTLINEITEM, ROLE_SYSTEM_PAGETAB, ROLE_SYSTEM_PAGETABLIST,
+    ROLE_SYSTEM_PANE, ROLE_SYSTEM_PROGRESSBAR, ROLE_SYSTEM_PROPERTYPAGE, ROLE_SYSTEM_PUSHBUTTON,
+    ROLE_SYSTEM_RADIOBUTTON, ROLE_SYSTEM_ROW, ROLE_SYSTEM_ROWHEADER, ROLE_SYSTEM_SCROLLBAR,
+    ROLE_SYSTEM_SEPARATOR, ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SPINBUTTON, ROLE_SYSTEM_SPLITBUTTON,
+    ROLE_SYSTEM_STATICTEXT, ROLE_SYSTEM_STATUSBAR, ROLE_SYSTEM_TABLE, ROLE_SYSTEM_TEXT,
+    ROLE_SYSTEM_TITLEBAR, ROLE_SYSTEM_TOOLBAR, ROLE_SYSTEM_TOOLTIP, ROLE_SYSTEM_WINDOW,
 };
 // MSAA `STATE_SYSTEM_*` bit values (winuser.h). These are frozen ABI constants;
 // the `windows` crate splits them across three feature-gated modules and types
@@ -23,17 +28,17 @@ const STATE_SYSTEM_PRESSED: u32 = 0x0000_0008;
 const STATE_SYSTEM_CHECKED: u32 = 0x0000_0010;
 const STATE_SYSTEM_MIXED: u32 = 0x0000_0020;
 const STATE_SYSTEM_READONLY: u32 = 0x0000_0040;
-const STATE_SYSTEM_DEFAULT: u32 = 0x0000_0100;
 const STATE_SYSTEM_EXPANDED: u32 = 0x0000_0200;
 const STATE_SYSTEM_COLLAPSED: u32 = 0x0000_0400;
 const STATE_SYSTEM_BUSY: u32 = 0x0000_0800;
 const STATE_SYSTEM_OFFSCREEN: u32 = 0x0001_0000;
 const STATE_SYSTEM_FOCUSABLE: u32 = 0x0010_0000;
 const STATE_SYSTEM_SELECTABLE: u32 = 0x0020_0000;
+const STATE_SYSTEM_PROTECTED: u32 = 0x2000_0000;
 const STATE_SYSTEM_HASPOPUP: u32 = 0x4000_0000;
 
-/// Maps an MSAA `ROLE_SYSTEM_*` value to a normalized [`Role`]. Unmapped roles
-/// become [`Role::Unknown`].
+/// Maps an MSAA `ROLE_SYSTEM_*` value to a normalized [`Role`], as NVDA's
+/// MSAA role table does. Unmapped roles become [`Role::Unknown`].
 #[must_use]
 pub fn role_from_msaa(role: u32) -> Role {
     match role {
@@ -49,7 +54,7 @@ pub fn role_from_msaa(role: u32) -> Role {
         ROLE_SYSTEM_WINDOW => Role::Window,
         // A window's client area, as NVDA maps it: a pane, which says only
         // its name when focused.
-        ROLE_SYSTEM_CLIENT => Role::Pane,
+        ROLE_SYSTEM_CLIENT | ROLE_SYSTEM_PANE => Role::Pane,
         ROLE_SYSTEM_STATICTEXT => Role::StaticText,
         ROLE_SYSTEM_TEXT => Role::EditableText,
         ROLE_SYSTEM_PROPERTYPAGE => Role::PropertyPage,
@@ -63,11 +68,32 @@ pub fn role_from_msaa(role: u32) -> Role {
         ROLE_SYSTEM_PAGETAB => Role::Tab,
         ROLE_SYSTEM_OUTLINE => Role::Tree,
         ROLE_SYSTEM_OUTLINEITEM => Role::TreeItem,
+        ROLE_SYSTEM_MENUBAR => Role::MenuBar,
+        ROLE_SYSTEM_TITLEBAR => Role::TitleBar,
+        ROLE_SYSTEM_GRAPHIC => Role::Graphic,
+        ROLE_SYSTEM_TOOLTIP => Role::ToolTip,
+        ROLE_SYSTEM_PROGRESSBAR => Role::ProgressBar,
+        ROLE_SYSTEM_SCROLLBAR => Role::ScrollBar,
+        ROLE_SYSTEM_TABLE => Role::Table,
+        ROLE_SYSTEM_ROW => Role::Row,
+        ROLE_SYSTEM_CELL => Role::Cell,
+        ROLE_SYSTEM_COLUMNHEADER => Role::ColumnHeader,
+        ROLE_SYSTEM_ROWHEADER => Role::RowHeader,
+        ROLE_SYSTEM_SPLITBUTTON => Role::SplitButton,
+        ROLE_SYSTEM_BUTTONDROPDOWN => Role::DropDownButton,
+        ROLE_SYSTEM_BUTTONMENU => Role::MenuButton,
+        ROLE_SYSTEM_SEPARATOR => Role::Separator,
+        ROLE_SYSTEM_DOCUMENT => Role::Document,
+        ROLE_SYSTEM_APPLICATION => Role::Application,
+        ROLE_SYSTEM_ALERT => Role::Alert,
+        ROLE_SYSTEM_HOTKEYFIELD => Role::HotkeyField,
         _ => Role::Unknown,
     }
 }
 
-/// Maps an MSAA state bitmask (`accState`) to a normalized [`StateSet`].
+/// Maps an MSAA state bitmask (`accState`) to a normalized [`StateSet`], as
+/// NVDA's MSAA state table does: `STATE_SYSTEM_DEFAULT` has no counterpart
+/// there, so a dialog's default button is not announced as such.
 #[must_use]
 pub fn states_from_msaa(state: u32) -> StateSet {
     let mut states = StateSet::new();
@@ -88,7 +114,7 @@ pub fn states_from_msaa(state: u32) -> StateSet {
     set(STATE_SYSTEM_COLLAPSED, State::Collapsed);
     set(STATE_SYSTEM_PRESSED, State::Pressed);
     set(STATE_SYSTEM_HASPOPUP, State::HasPopup);
-    set(STATE_SYSTEM_DEFAULT, State::DefaultControl);
+    set(STATE_SYSTEM_PROTECTED, State::Protected);
     set(STATE_SYSTEM_OFFSCREEN, State::Offscreen);
     set(STATE_SYSTEM_BUSY, State::Busy);
     states
@@ -108,6 +134,27 @@ mod tests {
         assert_eq!(role_from_msaa(ROLE_SYSTEM_PAGETAB), Role::Tab);
         assert_eq!(role_from_msaa(ROLE_SYSTEM_OUTLINE), Role::Tree);
         assert_eq!(role_from_msaa(ROLE_SYSTEM_OUTLINEITEM), Role::TreeItem);
+    }
+
+    #[test]
+    fn roles_nvda_maps_are_not_unknown() {
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_SPLITBUTTON), Role::SplitButton);
+        assert_eq!(
+            role_from_msaa(ROLE_SYSTEM_BUTTONDROPDOWN),
+            Role::DropDownButton
+        );
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_GRAPHIC), Role::Graphic);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_PROGRESSBAR), Role::ProgressBar);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_MENUBAR), Role::MenuBar);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_PANE), Role::Pane);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_DOCUMENT), Role::Document);
+        assert_eq!(role_from_msaa(ROLE_SYSTEM_CELL), Role::Cell);
+    }
+
+    #[test]
+    fn default_is_dropped_and_protected_kept() {
+        let states = states_from_msaa(0x0000_0100 | STATE_SYSTEM_PROTECTED);
+        assert_eq!(states, StateSet::new().with(State::Protected));
     }
 
     #[test]

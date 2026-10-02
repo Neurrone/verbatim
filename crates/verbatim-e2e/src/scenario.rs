@@ -477,7 +477,7 @@ impl Scenario {
     /// Returns an error if a request fails or the window does not take the
     /// foreground.
     pub fn open_document(&mut self, application: &str) -> io::Result<u32> {
-        let marker = format!("{DOCUMENT_MARKER}document");
+        let marker = format!("{DOCUMENT_MARKER}notes");
         let directory = Path::new(&self.stderr_log_path)
             .parent()
             .and_then(Path::to_str)

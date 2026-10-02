@@ -47,3 +47,10 @@ pub fn bstr_to_option(text: &BSTR) -> Option<String> {
     let text = text.to_string();
     if text.is_empty() { None } else { Some(text) }
 }
+
+/// [`bstr_to_option`] for a name or value, which NVDA also treats as absent
+/// when it is only whitespace.
+#[must_use]
+pub fn bstr_to_text(text: &BSTR) -> Option<String> {
+    bstr_to_option(text).filter(|text| !text.trim().is_empty())
+}

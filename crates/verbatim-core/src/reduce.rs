@@ -802,7 +802,11 @@ fn reduce_selection_changed(
 }
 
 /// Shared handling for `ValueChanged` and `PropertyChanged(Value(..))`: both
-/// speak the bare new value, only when the changed node is the focused one.
+/// speak the bare new value, only when the changed node is the focused one,
+/// the value differs from the one last known, and the role speaks its
+/// value at all. An edit field or document never speaks its changes of
+/// value ("When values and descriptions are spoken" in
+/// `docs/nvda/speech.md`).
 fn reduce_value_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -815,8 +819,12 @@ fn reduce_value_changed(
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
     };
+    if focus.snapshot.value == value {
+        return Vec::new();
+    }
     focus.snapshot.value.clone_from(&value);
-    let Some(text) = value else {
+    let role = focus.snapshot.role;
+    let Some(text) = value.filter(|_| speaks_value(role) && !reports_text_itself(role)) else {
         return Vec::new();
     };
     vec![Effect::Speak(Utterance {
@@ -830,13 +838,10 @@ fn reduce_value_changed(
 /// Handles a complete state-set replacement on the focused node (MSAA
 /// `EVENT_OBJECT_STATECHANGE` and equivalent UIA property changes carry the
 /// whole new set, not a delta). Diffs against the stored snapshot and
-/// announces, Interrupt priority: every newly gained announceable state
-/// (using the same order and exclusions as [`announce_node`]), plus two
-/// "toggled off" cases that would otherwise be silent — losing `Checked`
-/// with no `Mixed` present on a check box or radio button announces
-/// `NegatedState(Checked)`; losing `Pressed` on a toggle button announces
-/// `NegatedState(Pressed)`. Ignored for any node other than the focused one;
-/// a no-op if the set did not actually change.
+/// announces, Interrupt priority, the gained states and the lost states
+/// spoken by their absence, by the rules and in the order of "Which states
+/// are spoken, and in what order" in `docs/nvda/speech.md`. Ignored for any
+/// node other than the focused one; a no-op if nothing speakable changed.
 fn reduce_states_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -857,51 +862,24 @@ fn reduce_states_changed(
     let utterance_source = source_of(&focus.snapshot);
     focus.snapshot.states = new_states;
 
-    let mut segments = Vec::new();
-
-    let gained_checked =
-        new_states.contains(State::Checked) && !old_states.contains(State::Checked);
-    let lost_checked_unchecked = matches!(role, Role::CheckBox | Role::RadioButton)
-        && old_states.contains(State::Checked)
-        && !new_states.contains(State::Checked)
-        && !new_states.contains(State::Mixed);
-    if gained_checked {
-        segments.push(UtteranceSegment::new(SegmentContent::State(State::Checked)));
-    } else if lost_checked_unchecked {
-        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Checked,
-        )));
+    let gained = StateSet::from_iter(
+        new_states
+            .iter()
+            .filter(|state| !old_states.contains(*state)),
+    );
+    let lost = StateSet::from_iter(
+        old_states
+            .iter()
+            .filter(|state| !new_states.contains(*state)),
+    );
+    let positive = intersect(spoken_states(role, new_states, StateReason::Change), gained);
+    let mut negative = intersect(negated_states(role, new_states, StateReason::Change), lost);
+    // Losing half checked without becoming checked is a change to "not
+    // checked".
+    if lost.contains(State::Mixed) && !new_states.contains(State::Checked) {
+        negative.insert(State::Checked);
     }
-
-    let gained_pressed =
-        new_states.contains(State::Pressed) && !old_states.contains(State::Pressed);
-    let lost_pressed = role == Role::ToggleButton
-        && old_states.contains(State::Pressed)
-        && !new_states.contains(State::Pressed);
-    if gained_pressed {
-        segments.push(UtteranceSegment::new(SegmentContent::State(State::Pressed)));
-    } else if lost_pressed {
-        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Pressed,
-        )));
-    }
-
-    for candidate in [
-        State::Mixed,
-        State::Selected,
-        State::Expanded,
-        State::Collapsed,
-        State::HasPopup,
-        State::DefaultControl,
-        State::ReadOnly,
-        State::Disabled,
-        State::Busy,
-    ] {
-        if new_states.contains(candidate) && !old_states.contains(candidate) {
-            segments.push(UtteranceSegment::new(SegmentContent::State(candidate)));
-        }
-    }
-
+    let segments = ordered_state_segments(positive, negative);
     if segments.is_empty() {
         return Vec::new();
     }
@@ -1077,6 +1055,8 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         Role::TreeItem
         | Role::ListItem
         | Role::EditableText
+        | Role::ProgressBar
+        | Role::TitleBar
         | Role::Unknown
         | Role::Pane
         | Role::MenuBar
@@ -1129,11 +1109,29 @@ fn is_silent_on_focus(role: Role) -> bool {
         role,
         Role::Pane
             | Role::Unknown
+            | Role::Application
+            | Role::Cell
             | Role::ListItem
             | Role::MenuItem
             | Role::TreeItem
             | Role::StaticText
     )
+}
+
+/// Whether a role speaks its value: a check box, radio button, link, menu
+/// item, or application does not ("When values and descriptions are
+/// spoken" in `docs/nvda/speech.md`).
+fn speaks_value(role: Role) -> bool {
+    !matches!(
+        role,
+        Role::CheckBox | Role::RadioButton | Role::Link | Role::MenuItem | Role::Application
+    )
+}
+
+/// Whether a role reports its own text as it changes, so a change of value
+/// is not spoken: an edit field or a document.
+fn reports_text_itself(role: Role) -> bool {
+    matches!(role, Role::EditableText | Role::Document)
 }
 
 /// Whether a node announced for `reason` speaks its role: always, unless
@@ -1158,11 +1156,17 @@ fn node_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSegment> {
     if speaks_role(node, reason) {
         segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
     }
-    if let Some(value) = &node.value {
+    if let Some(value) = node.value.as_ref().filter(|_| speaks_value(node.role)) {
         segments.push(UtteranceSegment::value(value.clone()));
     }
-    segments.extend(state_segments(node.role, node.states));
-    if let Some(description) = &node.details.description {
+    segments.extend(state_segments(node.role, node.states, reason));
+    // A description that only repeats the name is dropped.
+    if let Some(description) = node
+        .details
+        .description
+        .as_ref()
+        .filter(|description| node.name.as_ref() != Some(*description))
+    {
         segments.push(UtteranceSegment::new(SegmentContent::Description(
             description.clone(),
         )));
@@ -1200,56 +1204,148 @@ fn announce_node(
     }
 }
 
-/// Announcement order for states: checked (or its negation for check boxes
-/// and radio buttons that carry neither checked nor mixed), pressed (or its
-/// negation "not pressed" for a toggle button that does not carry it),
-/// mixed, expanded, collapsed, has-popup, default, read-only, disabled,
-/// busy, and finally "not selected" for a selectable node that is not
-/// selected. Focus-related states (focused, focusable, offscreen) are never
-/// announced — they describe capability, not content. Positive `Selected`
-/// is never announced on a node announcement either, matching NVDA: a
-/// focused item being selected is the expected default, so only its
-/// notable absence is spoken. Selection *changes* still announce "selected"
-/// through the state-change diff, which keeps its own list.
-fn state_segments(role: Role, states: StateSet) -> Vec<UtteranceSegment> {
-    let mut segments = Vec::new();
+/// Why states are being spoken, which decides which of them are ("Which
+/// states are spoken, and in what order" in `docs/nvda/speech.md`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StateReason {
+    /// Focus moved to the node, or the navigator did.
+    Focus,
+    /// The user asked for the node.
+    Query,
+    /// The focused node's states changed.
+    Change,
+}
 
-    if states.contains(State::Checked) {
-        segments.push(UtteranceSegment::new(SegmentContent::State(State::Checked)));
-    } else if matches!(role, Role::CheckBox | Role::RadioButton) && !states.contains(State::Mixed) {
-        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Checked,
-        )));
-    }
-
-    if states.contains(State::Pressed) {
-        segments.push(UtteranceSegment::new(SegmentContent::State(State::Pressed)));
-    } else if role == Role::ToggleButton {
-        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Pressed,
-        )));
-    }
-
-    for state in [
-        State::Mixed,
-        State::Expanded,
-        State::Collapsed,
-        State::HasPopup,
-        State::DefaultControl,
-        State::ReadOnly,
-        State::Disabled,
-        State::Busy,
-    ] {
-        if states.contains(state) {
-            segments.push(UtteranceSegment::new(SegmentContent::State(state)));
+impl From<Reason> for StateReason {
+    fn from(reason: Reason) -> Self {
+        match reason {
+            Reason::Focus => Self::Focus,
+            Reason::Query => Self::Query,
         }
     }
+}
 
-    if states.contains(State::Selectable) && !states.contains(State::Selected) {
-        segments.push(UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Selected,
-        )));
+/// The order states are spoken in, positive or negated alike.
+const STATE_ORDER: [State; 15] = [
+    State::Disabled,
+    State::Focused,
+    State::Selected,
+    State::Busy,
+    State::Pressed,
+    State::Checked,
+    State::Mixed,
+    State::ReadOnly,
+    State::Expanded,
+    State::Collapsed,
+    State::HasPopup,
+    State::Protected,
+    State::Required,
+    State::InvalidEntry,
+    State::Offscreen,
+];
+
+/// The states in `a` that are also in `b`.
+fn intersect(a: StateSet, b: StateSet) -> StateSet {
+    StateSet::from_iter(a.iter().filter(|state| b.contains(*state)))
+}
+
+/// Of a node's `states`, the ones spoken as present for `reason`.
+fn spoken_states(role: Role, states: StateSet, reason: StateReason) -> StateSet {
+    let mut spoken = states;
+    // Never worth hearing.
+    spoken.remove(State::Selectable);
+    spoken.remove(State::Focusable);
+    spoken.remove(State::Checkable);
+    // A combo box always has a popup.
+    if role == Role::ComboBox {
+        spoken.remove(State::HasPopup);
     }
+    if reason == StateReason::Query {
+        return spoken;
+    }
+    spoken.remove(State::Focused);
+    spoken.remove(State::Offscreen);
+    // Selection is the expected state of a focused item.
+    if reason != StateReason::Change
+        && matches!(
+            role,
+            Role::ListItem | Role::TreeItem | Role::MenuItem | Role::Row | Role::CheckBox
+        )
+        && states.contains(State::Selectable)
+    {
+        spoken.remove(State::Selected);
+    }
+    if !matches!(role, Role::EditableText | Role::CheckBox) {
+        spoken.remove(State::ReadOnly);
+    }
+    if role == Role::CheckBox {
+        spoken.remove(State::Pressed);
+    }
+    // Whether a submenu is open is not worth hearing.
+    if role == Role::MenuItem && spoken.contains(State::HasPopup) {
+        spoken.remove(State::Expanded);
+        spoken.remove(State::Collapsed);
+    }
+    spoken
+}
 
-    segments
+/// The states whose absence from a node is spoken for `reason`. A change
+/// is only ever spoken for the focus, so it counts as focused here.
+fn negated_states(role: Role, states: StateSet, reason: StateReason) -> StateSet {
+    let mut negated = StateSet::new();
+    if states.contains(State::Selectable)
+        && states.contains(State::Focusable)
+        && reason != StateReason::Query
+        && matches!(
+            role,
+            Role::ListItem
+                | Role::TreeItem
+                | Role::Row
+                | Role::Cell
+                | Role::ColumnHeader
+                | Role::RowHeader
+                | Role::CheckBox
+        )
+    {
+        negated.insert(State::Selected);
+    }
+    if (matches!(role, Role::CheckBox | Role::RadioButton) || states.contains(State::Checkable))
+        && !states.contains(State::Mixed)
+    {
+        negated.insert(State::Checked);
+    }
+    if role == Role::ToggleButton {
+        negated.insert(State::Pressed);
+    }
+    if reason == StateReason::Change {
+        return negated;
+    }
+    StateSet::from_iter(negated.iter().filter(|state| !states.contains(*state)))
+}
+
+/// `positive` and `negative` as segments, in [`STATE_ORDER`].
+fn ordered_state_segments(positive: StateSet, negative: StateSet) -> Vec<UtteranceSegment> {
+    STATE_ORDER
+        .into_iter()
+        .filter_map(|state| {
+            if positive.contains(state) {
+                Some(UtteranceSegment::new(SegmentContent::State(state)))
+            } else if negative.contains(state) {
+                Some(UtteranceSegment::new(SegmentContent::NegatedState(state)))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// The spoken states of a node announced for `reason`, by the rules and in
+/// the order of "Which states are spoken, and in what order" in
+/// `docs/nvda/speech.md`.
+fn state_segments(role: Role, states: StateSet, reason: Reason) -> Vec<UtteranceSegment> {
+    let reason = StateReason::from(reason);
+    ordered_state_segments(
+        spoken_states(role, states, reason),
+        negated_states(role, states, reason),
+    )
 }

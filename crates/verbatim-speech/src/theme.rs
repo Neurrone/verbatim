@@ -138,8 +138,8 @@ mod tests {
     fn drops_silent_states_and_keeps_announced_ones() {
         let utterance = utterance_of(vec![
             UtteranceSegment::text("Bold"),
-            // Focused is never announced and must contribute nothing.
-            UtteranceSegment::new(SegmentContent::State(State::Focused)),
+            // Focusable is never announced and must contribute nothing.
+            UtteranceSegment::new(SegmentContent::State(State::Focusable)),
             UtteranceSegment::new(SegmentContent::NegatedState(State::Checked)),
         ]);
         let request = PlainTheme.flatten(&utterance);

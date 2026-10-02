@@ -43,11 +43,15 @@ Implementation notes, `reduce`:
 
 - A focus change speaks, at Interrupt priority and in NVDA's property
   order: newly entered container context first (see below), then the
-  node's name, role, value, states in a fixed order (checked or its
-  negation first, then mixed, pressed, selected, expanded, collapsed,
-  has-popup, default, read-only, disabled, busy), then description,
-  keyboard shortcut, position in set, and level — each detail simply
-  absent when the backend reported nothing. The role is left out, as NVDA
+  node's name, role, value, states, then description, keyboard
+  shortcut, position in set, and level — each detail simply absent when
+  the backend reported nothing. Which states are spoken, which are
+  spoken by their absence ("not checked"), and their order follow "Which
+  states are spoken, and in what order" in `docs/nvda/speech.md`
+  (`spoken_states`, `negated_states`, and `STATE_ORDER`, with a
+  `StateReason` of focus, query, or change). The value is left out for a
+  check box, radio button, link, menu item, or application, and a
+  description equal to the name is dropped. The role is left out, as NVDA
   leaves it out, when the node has a name or a value and its role is one
   of the roles silent on focus (list item, menu item, tree item, pane,
   static text, unknown); this applies to focus changes, entered
@@ -162,19 +166,19 @@ Implementation notes, `reduce`:
   once, deduplicated against the focus event's own selected child and
   against repeats — and stays silent from other applications, on
   non-container focus, or for combo boxes (whose picks already arrive as
-  value changes). Selected-state wording matches NVDA: positive "selected"
-  is never spoken on a node announcement, and a selectable node that is
-  not selected says "not selected"; selection-state *changes* still say
-  "selected" through the state-change diff. The negated-checked rule: a `CheckBox` or `RadioButton`
-  carrying neither Checked nor Mixed announces "not checked". Focus-related
-  states are never announced.
+  value changes). Selected-state wording follows the state rules above:
+  a focused list or tree item does not say "selected", a focusable one
+  that is not selected says "not selected", and a change of selection
+  on the focus says "selected".
 - A value change on the currently focused node speaks just the bare value,
-  Interrupt — the slider-drag announcement. Value changes elsewhere are
-  ignored in M1.
+  Interrupt — the slider-drag announcement — unless the value is
+  unchanged, the node is an edit field or document (typing must not
+  speak the whole field), or its role never speaks a value. Value
+  changes elsewhere are ignored.
 - A states change on the focused node is diffed against the stored
-  snapshot: newly gained announceable states are spoken, and losing Checked
-  on a check box or radio button announces the negation — the
-  spacebar-toggle-off case, which has no newly gained state to catch it.
+  snapshot: the gained states are spoken, and of the lost ones those
+  spoken by their absence, so unchecking says "not checked" and leaving
+  half checked without becoming checked says it too.
 - Outpost replacement (`docs/parity.md`, "Recovery after an outpost is
   replaced"): node ids carry the outpost incarnation that issued them, so an
   id from a replaced outpost never names a node in its successor. On

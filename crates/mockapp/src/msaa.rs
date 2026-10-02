@@ -192,18 +192,19 @@ const STATE_SYSTEM_PRESSED: u32 = 0x0000_0008;
 const STATE_SYSTEM_CHECKED: u32 = 0x0000_0010;
 const STATE_SYSTEM_MIXED: u32 = 0x0000_0020;
 const STATE_SYSTEM_READONLY: u32 = 0x0000_0040;
-const STATE_SYSTEM_DEFAULT: u32 = 0x0000_0100;
 const STATE_SYSTEM_EXPANDED: u32 = 0x0000_0200;
 const STATE_SYSTEM_COLLAPSED: u32 = 0x0000_0400;
 const STATE_SYSTEM_BUSY: u32 = 0x0000_0800;
 const STATE_SYSTEM_OFFSCREEN: u32 = 0x0001_0000;
 const STATE_SYSTEM_FOCUSABLE: u32 = 0x0010_0000;
 const STATE_SYSTEM_SELECTABLE: u32 = 0x0020_0000;
+const STATE_SYSTEM_PROTECTED: u32 = 0x2000_0000;
 const STATE_SYSTEM_HASPOPUP: u32 = 0x4000_0000;
 
 /// The inverse of `verbatim_ia2::map::states_from_msaa`: every [`State`]
-/// that table maps has a bit here, so MSAA state fidelity round-trips
-/// completely (unlike roles, MSAA state bits cover the whole vocabulary).
+/// that table maps has a bit here, so MSAA state fidelity round-trips for
+/// every state MSAA can express (required, invalid entry, and checkable
+/// have no MSAA bit).
 fn states_to_msaa(states: StateSet) -> u32 {
     let mut bits = 0;
     let mut set = |state: State, bit: u32| {
@@ -223,7 +224,7 @@ fn states_to_msaa(states: StateSet) -> u32 {
     set(State::Collapsed, STATE_SYSTEM_COLLAPSED);
     set(State::Pressed, STATE_SYSTEM_PRESSED);
     set(State::HasPopup, STATE_SYSTEM_HASPOPUP);
-    set(State::DefaultControl, STATE_SYSTEM_DEFAULT);
+    set(State::Protected, STATE_SYSTEM_PROTECTED);
     set(State::Offscreen, STATE_SYSTEM_OFFSCREEN);
     set(State::Busy, STATE_SYSTEM_BUSY);
     bits

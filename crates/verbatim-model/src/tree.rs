@@ -76,6 +76,55 @@ pub enum Role {
     Tree,
     /// One item inside a tree view.
     TreeItem,
+    /// A button with a main action and a menu of others (UIA
+    /// `SplitButton`, MSAA `ROLE_SYSTEM_SPLITBUTTON`).
+    SplitButton,
+    /// A button that drops down a list (MSAA `ROLE_SYSTEM_BUTTONDROPDOWN`).
+    DropDownButton,
+    /// A button that opens a menu (MSAA `ROLE_SYSTEM_BUTTONMENU`).
+    MenuButton,
+    /// An image.
+    Graphic,
+    /// A progress bar.
+    ProgressBar,
+    /// A scroll bar.
+    ScrollBar,
+    /// A table.
+    Table,
+    /// One row of a table.
+    Row,
+    /// One cell of a table.
+    Cell,
+    /// A table's column header.
+    ColumnHeader,
+    /// A table's row header.
+    RowHeader,
+    /// A header, such as the column headings of a list view (UIA `Header`).
+    Header,
+    /// One item of a header (UIA `HeaderItem`).
+    HeaderItem,
+    /// A grid of data items (UIA `DataGrid`).
+    DataGrid,
+    /// One item of a data grid (UIA `DataItem`).
+    DataItem,
+    /// A calendar.
+    Calendar,
+    /// A tool tip.
+    ToolTip,
+    /// A window's title bar.
+    TitleBar,
+    /// A separator between items.
+    Separator,
+    /// A document.
+    Document,
+    /// An application.
+    Application,
+    /// An alert.
+    Alert,
+    /// A field that records a key combination.
+    HotkeyField,
+    /// The movable part of a slider or scroll bar (UIA `Thumb`).
+    Thumb,
     /// Anything not yet mapped into the vocabulary.
     Unknown,
 }
@@ -109,17 +158,24 @@ pub enum State {
     Pressed,
     /// Opens a submenu or popup.
     HasPopup,
-    /// The default control of its dialog.
-    DefaultControl,
     /// Scrolled or positioned out of view.
     Offscreen,
     /// Busy loading or updating.
     Busy,
+    /// Its contents are hidden, as a password field's are.
+    Protected,
+    /// Must be filled in before a form is submitted.
+    Required,
+    /// Its contents are not valid.
+    InvalidEntry,
+    /// Can be checked, though its role does not say so (a list item or
+    /// menu item with a check box).
+    Checkable,
 }
 
 impl State {
     /// Every state, in declaration order; the basis for [`StateSet::iter`].
-    pub const ALL: [State; 15] = [
+    pub const ALL: [State; 18] = [
         State::Focused,
         State::Focusable,
         State::Selected,
@@ -132,9 +188,12 @@ impl State {
         State::Collapsed,
         State::Pressed,
         State::HasPopup,
-        State::DefaultControl,
         State::Offscreen,
         State::Busy,
+        State::Protected,
+        State::Required,
+        State::InvalidEntry,
+        State::Checkable,
     ];
 
     const fn bit(self) -> u32 {

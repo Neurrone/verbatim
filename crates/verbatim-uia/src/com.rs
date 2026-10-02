@@ -8,7 +8,8 @@ use windows::Win32::System::Ole::{
     SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound,
 };
 use windows::Win32::System::Variant::{
-    VARIANT, VariantToBooleanWithDefault, VariantToInt32, VariantToStringAlloc,
+    VARIANT, VT_BOOL, VT_R8, VariantToBooleanWithDefault, VariantToDouble, VariantToInt32,
+    VariantToStringAlloc,
 };
 
 /// `RPC_E_CHANGED_MODE`: this thread already joined the other apartment kind.
@@ -63,6 +64,31 @@ pub unsafe fn variant_string(value: &VARIANT) -> Option<String> {
 pub unsafe fn variant_i32(value: &VARIANT) -> Option<i32> {
     // SAFETY: the caller guarantees `value` is a valid VARIANT.
     unsafe { VariantToInt32(value).ok() }
+}
+
+/// Reads a `VARIANT` boolean property, `None` when the value is not a
+/// boolean, as UIA's "not supported" sentinel is not.
+///
+/// # Safety
+///
+/// `value` must be a valid `VARIANT`.
+pub unsafe fn variant_optional_bool(value: &VARIANT) -> Option<bool> {
+    // SAFETY: the caller guarantees `value` is a valid VARIANT.
+    (unsafe { value.Anonymous.Anonymous.vt } == VT_BOOL)
+        .then(|| unsafe { VariantToBooleanWithDefault(value, false) }.as_bool())
+}
+
+/// Reads a `VARIANT` floating-point property, `None` when the value is not a
+/// number.
+///
+/// # Safety
+///
+/// `value` must be a valid `VARIANT`.
+pub unsafe fn variant_f64(value: &VARIANT) -> Option<f64> {
+    // SAFETY: the caller guarantees `value` is a valid VARIANT.
+    (unsafe { value.Anonymous.Anonymous.vt } == VT_R8)
+        .then(|| unsafe { VariantToDouble(value) }.ok())
+        .flatten()
 }
 
 /// Reads a `VARIANT` boolean property, defaulting to `false` when the value is

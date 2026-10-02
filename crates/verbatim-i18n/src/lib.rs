@@ -398,17 +398,43 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::StatusBar => i18n_embed_fl::fl!(loader, "role-status-bar"),
         Role::Tree => i18n_embed_fl::fl!(loader, "role-tree"),
         Role::TreeItem => i18n_embed_fl::fl!(loader, "role-tree-item"),
+        Role::SplitButton => i18n_embed_fl::fl!(loader, "role-split-button"),
+        Role::DropDownButton => i18n_embed_fl::fl!(loader, "role-drop-down-button"),
+        Role::MenuButton => i18n_embed_fl::fl!(loader, "role-menu-button"),
+        Role::Graphic => i18n_embed_fl::fl!(loader, "role-graphic"),
+        Role::ProgressBar => i18n_embed_fl::fl!(loader, "role-progress-bar"),
+        Role::ScrollBar => i18n_embed_fl::fl!(loader, "role-scroll-bar"),
+        Role::Table => i18n_embed_fl::fl!(loader, "role-table"),
+        Role::Row => i18n_embed_fl::fl!(loader, "role-row"),
+        Role::Cell => i18n_embed_fl::fl!(loader, "role-cell"),
+        Role::ColumnHeader => i18n_embed_fl::fl!(loader, "role-column-header"),
+        Role::RowHeader => i18n_embed_fl::fl!(loader, "role-row-header"),
+        Role::Header => i18n_embed_fl::fl!(loader, "role-header"),
+        Role::HeaderItem => i18n_embed_fl::fl!(loader, "role-header-item"),
+        Role::DataGrid => i18n_embed_fl::fl!(loader, "role-data-grid"),
+        Role::DataItem => i18n_embed_fl::fl!(loader, "role-data-item"),
+        Role::Calendar => i18n_embed_fl::fl!(loader, "role-calendar"),
+        Role::ToolTip => i18n_embed_fl::fl!(loader, "role-tool-tip"),
+        Role::TitleBar => i18n_embed_fl::fl!(loader, "role-title-bar"),
+        Role::Separator => i18n_embed_fl::fl!(loader, "role-separator"),
+        Role::Document => i18n_embed_fl::fl!(loader, "role-document"),
+        Role::Application => i18n_embed_fl::fl!(loader, "role-application"),
+        Role::Alert => i18n_embed_fl::fl!(loader, "role-alert"),
+        Role::HotkeyField => i18n_embed_fl::fl!(loader, "role-hotkey-field"),
+        Role::Thumb => i18n_embed_fl::fl!(loader, "role-thumb"),
         _ => i18n_embed_fl::fl!(loader, "role-unknown"),
     }
 }
 
 /// The localized spoken name of a state, or `None` for states that are
-/// never announced (focused, focusable, selectable, offscreen).
+/// never announced (focusable, selectable, checkable).
 #[must_use]
 pub fn state_name(state: verbatim_model::State) -> Option<String> {
     use verbatim_model::State;
     let loader = loader();
     Some(match state {
+        State::Focused => i18n_embed_fl::fl!(loader, "state-focused"),
+        State::Offscreen => i18n_embed_fl::fl!(loader, "state-offscreen"),
         State::Selected => i18n_embed_fl::fl!(loader, "state-selected"),
         State::Checked => i18n_embed_fl::fl!(loader, "state-checked"),
         State::Mixed => i18n_embed_fl::fl!(loader, "state-mixed"),
@@ -418,8 +444,10 @@ pub fn state_name(state: verbatim_model::State) -> Option<String> {
         State::Collapsed => i18n_embed_fl::fl!(loader, "state-collapsed"),
         State::Pressed => i18n_embed_fl::fl!(loader, "state-pressed"),
         State::HasPopup => i18n_embed_fl::fl!(loader, "state-has-popup"),
-        State::DefaultControl => i18n_embed_fl::fl!(loader, "state-default"),
         State::Busy => i18n_embed_fl::fl!(loader, "state-busy"),
+        State::Protected => i18n_embed_fl::fl!(loader, "state-protected"),
+        State::Required => i18n_embed_fl::fl!(loader, "state-required"),
+        State::InvalidEntry => i18n_embed_fl::fl!(loader, "state-invalid-entry"),
         _ => return None,
     })
 }
@@ -590,7 +618,11 @@ mod tests {
             negated_state_name(verbatim_model::State::Pressed).as_deref(),
             Some("not pressed")
         );
-        assert_eq!(state_name(verbatim_model::State::Focused), None);
+        assert_eq!(state_name(verbatim_model::State::Focusable), None);
+        assert_eq!(
+            state_name(verbatim_model::State::Focused).as_deref(),
+            Some("focused")
+        );
         assert_eq!(
             messages::settings_title_with_category("Speech"),
             "Verbatim Settings: Speech",

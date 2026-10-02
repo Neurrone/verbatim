@@ -60,6 +60,65 @@ spoken with the focus reason, and so are items selected in a list the
 focus controls. (`getPropertiesSpeech` and `silentRolesOnFocus` in
 `controlTypes/role.py`.)
 
+### Which states are spoken, and in what order
+
+States are spoken in one fixed order, whatever order the object
+reported them in: unavailable, focused, selected, busy, pressed, checked,
+half checked, read only, expanded, collapsed, submenu (has popup),
+protected, required, invalid entry, off screen. A negated state ("not selected", "not checked",
+"not pressed") takes the same place in that order as its positive form,
+so an unchecked, unavailable check box is "check box unavailable not
+checked".
+
+Some states are never worth hearing, whatever the reason: that an
+object is focusable, selectable, or checkable says nothing the role and
+the negated states do not. A combo box always has a popup, so its
+"submenu" is dropped, and so are expanded and collapsed on a menu item
+that opens a submenu.
+
+A query, such as reporting the current object, speaks every remaining
+state. Any other reason leaves out a few more:
+
+- focused and offscreen, which describe where the object is rather than
+  what it is;
+- selected, on a list item, tree view item, menu item, table row, or
+  check box that can be selected: selection is the expected state of a
+  focused item, so only its absence is worth hearing;
+- read only, on anything but an edit field or a check box, since most
+  roles cannot be changed anyway.
+
+Three states are spoken by their absence:
+
+- "not selected", for a list item, tree view item, table row, table
+  cell, row or column header, or check box that is both selectable and
+  focusable, when it gains the focus or changes state while focused;
+- "not checked", for a check box, a radio button, or anything else that
+  says it is checkable, unless it is half checked; a change of state
+  says it only on the focus;
+- "not pressed", for a toggle button.
+
+A change of state speaks only the states that changed: the ones gained,
+and of the ones lost, those that would be spoken by their absence.
+(`processAndLabelStates` in `controlTypes/processAndLabelStates.py`,
+with the order from `controlTypes/state.py`.)
+
+### When values and descriptions are spoken
+
+A check box, radio button, link, menu item, application, or busy
+indicator never speaks its value: its states, or its target in the case
+of a link, are what the user needs, and the value is often a URL or an
+internal string. A description identical to the name is dropped, since
+it would only say the name twice; a description that changed is still
+spoken, even when it now matches the name.
+
+A change of value is spoken only for the focus, and only when the value
+is different from the one last spoken for that object. An edit field
+never speaks its changes of value, since typing already echoes the
+characters and the caret reports the text; speaking the whole field
+after every keystroke would drown both. (`speakObjectProperties` and
+`silentValuesForRoles` in `controlTypes/role.py`; the edit field rule is
+`event_valueChange` on NVDA's editable text classes.)
+
 ## The manager
 
 `SpeechManager` (all on the main thread, by design):

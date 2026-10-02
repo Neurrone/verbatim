@@ -2655,3 +2655,311 @@ fn a_toast_is_spoken_from_anywhere_queued() {
         "a toast never moves attention"
     );
 }
+
+// ---- States, values, and descriptions as NVDA speaks them ----
+
+fn states(list: &[State]) -> StateSet {
+    list.iter().copied().collect()
+}
+
+fn state(state: State) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::State(state))
+}
+
+fn not(state: State) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::NegatedState(state))
+}
+
+fn role(role: Role) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Role(role))
+}
+
+/// The segments spoken when focus lands on `snapshot`.
+fn focus_segments(snapshot: NodeSnapshot) -> Vec<UtteranceSegment> {
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), Pid(1), snapshot),
+    );
+    speak_effects(&effects)[0].segments.clone()
+}
+
+fn value_changed(node_id: u64, value: &str) -> Input {
+    Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::ValueChanged {
+            node_id: NodeId::new(node_id),
+            value: Some(value.to_string()),
+        },
+    }
+}
+
+#[test]
+fn typing_in_an_edit_field_does_not_speak_the_whole_field() {
+    let edit = node(
+        30,
+        Role::EditableText,
+        Some("Name"),
+        Some("A"),
+        StateSet::new(),
+    );
+    let state = focused(Pid(1), edit);
+    let (state, effects) = reduce(&state, &value_changed(30, "An"));
+    assert!(effects.is_empty(), "spoke {effects:?}");
+    assert_eq!(
+        state.focused().map(|(_, n)| n.value.clone()),
+        Some(Some("An".to_string())),
+        "the value is still recorded"
+    );
+}
+
+#[test]
+fn an_unchanged_value_is_not_spoken_again() {
+    let slider = node(
+        31,
+        Role::Slider,
+        Some("Volume"),
+        Some("100"),
+        StateSet::new(),
+    );
+    let state = focused(Pid(1), slider);
+    let (_, effects) = reduce(&state, &value_changed(31, "100"));
+    assert!(effects.is_empty(), "spoke {effects:?}");
+}
+
+#[test]
+fn a_check_box_or_link_does_not_speak_its_value() {
+    let link = node(
+        32,
+        Role::Link,
+        Some("Help"),
+        Some("https://example.com/help"),
+        StateSet::new(),
+    );
+    assert_eq!(
+        focus_segments(link),
+        vec![UtteranceSegment::label("Help"), role(Role::Link)]
+    );
+}
+
+#[test]
+fn a_description_repeating_the_name_is_dropped() {
+    let mut back = node(33, Role::Button, Some("Back"), None, StateSet::new());
+    back.details.description = Some("Back".to_string());
+    assert_eq!(
+        focus_segments(back),
+        vec![UtteranceSegment::label("Back"), role(Role::Button)]
+    );
+}
+
+#[test]
+fn states_are_spoken_in_nvda_order() {
+    let check_box = node(
+        34,
+        Role::CheckBox,
+        Some("Wrap"),
+        None,
+        states(&[State::Disabled]),
+    );
+    assert_eq!(
+        focus_segments(check_box),
+        vec![
+            UtteranceSegment::label("Wrap"),
+            role(Role::CheckBox),
+            state(State::Disabled),
+            not(State::Checked),
+        ]
+    );
+}
+
+#[test]
+fn read_only_is_spoken_only_for_edit_fields_and_check_boxes() {
+    let text = node(
+        35,
+        Role::StaticText,
+        Some("Ready"),
+        None,
+        states(&[State::ReadOnly]),
+    );
+    assert_eq!(focus_segments(text), vec![UtteranceSegment::label("Ready")]);
+    let edit = node(
+        36,
+        Role::EditableText,
+        Some("Path"),
+        None,
+        states(&[State::ReadOnly]),
+    );
+    assert_eq!(
+        focus_segments(edit),
+        vec![
+            UtteranceSegment::label("Path"),
+            role(Role::EditableText),
+            state(State::ReadOnly),
+        ]
+    );
+}
+
+#[test]
+fn a_selected_tab_says_selected_and_an_unselected_one_says_nothing() {
+    let selectable = [State::Focusable, State::Selectable];
+    let selected = node(
+        37,
+        Role::Tab,
+        Some("General"),
+        None,
+        states(&[State::Focusable, State::Selectable, State::Selected]),
+    );
+    assert_eq!(
+        focus_segments(selected),
+        vec![
+            UtteranceSegment::label("General"),
+            role(Role::Tab),
+            state(State::Selected),
+        ]
+    );
+    let unselected = node(38, Role::Tab, Some("Sharing"), None, states(&selectable));
+    assert_eq!(
+        focus_segments(unselected),
+        vec![UtteranceSegment::label("Sharing"), role(Role::Tab)]
+    );
+}
+
+#[test]
+fn not_selected_needs_an_item_that_can_take_the_focus() {
+    let item = node(
+        39,
+        Role::ListItem,
+        Some("alpha.txt"),
+        None,
+        states(&[State::Selectable]),
+    );
+    assert_eq!(
+        focus_segments(item),
+        vec![UtteranceSegment::label("alpha.txt")]
+    );
+}
+
+#[test]
+fn a_checkable_list_item_says_not_checked() {
+    let item = node(
+        40,
+        Role::ListItem,
+        Some("Bold"),
+        None,
+        states(&[State::Checkable]),
+    );
+    assert_eq!(
+        focus_segments(item),
+        vec![UtteranceSegment::label("Bold"), not(State::Checked)]
+    );
+}
+
+#[test]
+fn a_combo_box_does_not_say_submenu_nor_a_submenu_item_expanded() {
+    let combo = node(
+        41,
+        Role::ComboBox,
+        Some("Font"),
+        None,
+        states(&[State::HasPopup, State::Collapsed]),
+    );
+    assert_eq!(
+        focus_segments(combo),
+        vec![
+            UtteranceSegment::label("Font"),
+            role(Role::ComboBox),
+            state(State::Collapsed),
+        ]
+    );
+    let submenu = node(
+        42,
+        Role::MenuItem,
+        Some("Recent"),
+        None,
+        states(&[State::HasPopup, State::Collapsed]),
+    );
+    assert_eq!(
+        focus_segments(submenu),
+        vec![UtteranceSegment::label("Recent"), state(State::HasPopup)]
+    );
+}
+
+#[test]
+fn reporting_the_object_speaks_selected_read_only_and_focused() {
+    let item = node(
+        43,
+        Role::ListItem,
+        Some("alpha.txt"),
+        None,
+        states(&[
+            State::Focused,
+            State::Focusable,
+            State::Selectable,
+            State::Selected,
+            State::ReadOnly,
+        ]),
+    );
+    let state_after_focus = focused(Pid(1), item);
+    let (_, effects) = reduce(
+        &state_after_focus,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![
+            UtteranceSegment::label("alpha.txt"),
+            role(Role::ListItem),
+            state(State::Focused),
+            state(State::Selected),
+            state(State::ReadOnly),
+        ]
+    );
+}
+
+#[test]
+fn a_selection_gained_by_the_focus_says_selected() {
+    let item = node(
+        44,
+        Role::ListItem,
+        Some("alpha.txt"),
+        None,
+        states(&[State::Focusable, State::Selectable]),
+    );
+    let state_after_focus = focused(Pid(1), item);
+    let (_, effects) = reduce(
+        &state_after_focus,
+        &states_changed_input(
+            TraceId::mint(),
+            Pid(1),
+            NodeId::new(44),
+            states(&[State::Focusable, State::Selectable, State::Selected]),
+        ),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![state(State::Selected)]
+    );
+}
+
+#[test]
+fn losing_half_checked_says_not_checked() {
+    let check_box = node(
+        45,
+        Role::CheckBox,
+        Some("All"),
+        None,
+        states(&[State::Mixed]),
+    );
+    let state_after_focus = focused(Pid(1), check_box);
+    let (_, effects) = reduce(
+        &state_after_focus,
+        &states_changed_input(TraceId::mint(), Pid(1), NodeId::new(45), StateSet::new()),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![not(State::Checked)]
+    );
+}
