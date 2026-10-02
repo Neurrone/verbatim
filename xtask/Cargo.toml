@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Workspace automation: cargo xtask ci, cargo xtask vm"
+description = "Workspace automation: cargo xtask ci, cargo xtask vm, cargo xtask park"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

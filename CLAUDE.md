@@ -41,6 +41,8 @@ We are using GitHub actions for CI.
 
 `cargo xtask vm <cmd>` drives the Hyper-V harness: `create` (Packer-built golden image, imported, deployed to, checkpointed), `start`, `stop`, `restart`, `restore`, `deploy`, `test` (the end-to-end suite against the VM), `logs`, and `delete`. Guest credentials come from a `.env` at the repo root, which is never committed. See `docs/tooling.md`.
 
+`cargo xtask park` moves this Remote Desktop session onto the console, unlocked, so a local end-to-end run works with no RDP client connected. It needs a one-time, elevated `vm\scripts\Register-VerbatimParkTask.ps1`, and disconnects any connected RDP client, so run it only when Dickson is away or has agreed.
+
 The end-to-end suite also runs without a VM, against this machine, by pointing it at a locally running `verbatim-agent`. It launches a real Verbatim and injects real keystrokes, so it takes over the desktop while it runs and does nothing useful on a locked one; `docs/tooling.md` has the details.
 
 The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual Studio and LLVM install paths for `libclang.dll` automatically; when invoking cargo directly on targets that build `verbatim-gui`, set `LIBCLANG_PATH` yourself if `libclang.dll` is not on `PATH`. On this machine, use:

@@ -214,6 +214,23 @@ under it (`single_instance::acquire_replacing`'s own algorithm). This is
 exactly what `.github/workflows/ci.yml`'s `e2e` job does, on a plain
 `windows-latest` runner, with the same two environment variables.
 
+On a development VM reached over Remote Desktop, a run needs the session
+unlocked with a real foreground window, and disconnecting the RDP client
+locks it (see Troubleshooting). `cargo xtask park` moves the session onto
+the machine's console instead, still signed in and unlocked, so a run
+keeps working with no client connected; reconnecting over RDP takes the
+session back. It runs `tscon <session> /dest:console` through a scheduled
+task that runs as SYSTEM, which needs no password and also brings back a
+session already disconnected and locked. Register the task once, from an
+elevated PowerShell, with `vm\scripts\Register-VerbatimParkTask.ps1`; after
+that `cargo xtask park` needs no elevation. It checks that the session
+reached the console, that no lock screen is showing, and that an uncloaked
+window holds the foreground, and fails saying which check did not pass.
+The console must not lock on its own either: turn off the screensaver,
+inactivity locking, and sleep, as `Initialize-VerbatimHarness.ps1` does
+for the Hyper-V guest. While parked, the session is unlocked for anyone
+who opens the VM's console.
+
 The suite always runs against a fixed, generated configuration, never
 whatever `settings.toml` a developer's own manual runs left behind.
 Concretely, in this runner-direct mode, `Scenario::launch` first runs

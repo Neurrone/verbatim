@@ -10,12 +10,17 @@
 //! section 14): building and importing the golden VM, deploying builds into
 //! it, and running `crates/verbatim-e2e`'s suite against it. See
 //! `xtask/src/vm/mod.rs` for the verb list.
+//!
+//! `park` moves this Remote Desktop session onto the machine's console, so a
+//! local end-to-end run keeps working with no RDP client connected. See
+//! `xtask/src/park.rs`.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::str;
 
+mod park;
 mod vm;
 
 const TARGET_X64: &str = "x86_64-pc-windows-msvc";
@@ -53,6 +58,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("vm") => vm::run(&args[1..]),
+        Some("park") => park::run(),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
@@ -60,6 +66,9 @@ fn main() -> ExitCode {
                 "  ci    platform-neutral dependency check, rustfmt + clippy + unit tests (x64), release build (ARM64)"
             );
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
+            eprintln!(
+                "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
+            );
             ExitCode::from(2)
         }
     }
