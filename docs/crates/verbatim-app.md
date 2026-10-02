@@ -67,7 +67,13 @@ knowing for review:
   foreground application), when the attention application's outpost was
   replaced after a crash or kill, and when the supervisor reports
   `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
-  if it is still starting.
+  if it is still starting. When the supervisor reports
+  `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
+  closed and no focus event followed within the listener's 50 ms grace),
+  the reducer thread asks the foreground application's ready outpost for
+  its focus as `Asker::FakeFocus`, whose answer re-enters the reducer as
+  the focus on the control alone, NVDA's fake focus; an application with
+  no ready outpost gets an ordinary focus-now query.
   Later outcomes for the same id, and outcomes from any other outpost, are
   dropped. Core makes the outcome itself when a query cannot be sent
   ("failed", which a navigation sees as `Gone`) and when the outpost ends

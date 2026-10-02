@@ -280,7 +280,12 @@ lives in the worker:
 - Menu closing: if no focus event for the application follows within 50
   milliseconds, the outpost reads the actual focus and reports it as a
   focus event. A timer adds a check-focus entry to the queue so the
-  worker never sleeps.
+  worker never sleeps. Superseded on 2026-10-02: focus usually returns
+  to another application than the one that owned the menu, which this
+  check could not see, so the focus listener now forwards every menu and
+  Alt+Tab switcher end to Core, and Core asks the foreground application
+  for its focus if its own focus has not changed 50 milliseconds later,
+  as NVDA's fake focus does.
 
 ### Held objects and "nodes I hold"
 

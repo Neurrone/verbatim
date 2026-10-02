@@ -62,10 +62,13 @@ Public API:
   `verdict(hwnd, class)` answers from the good class list, the bad class
   list, a forced override from `SetBackendOverride`, or a kept probe result,
   and `None` when only the `UiaHasServerSideProvider` probe can decide; the
-  worker then probes and calls `record_probe`. A probed verdict is kept for
-  the window's lifetime and dropped by `forget` when the window is destroyed,
-  as decision D15 specifies; NVDA's 500 ms cache throttles a check it makes on
-  every event and is not there because answers go stale. Both class lists are
+  worker then probes and calls `record_probe`. A probe that finds a UIA
+  provider is kept for the window's lifetime and dropped by `forget` when
+  the window is destroyed, as decision D15 specifies. A probe that finds
+  none is trusted for only `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's
+  cache period) and then repeated: a busy or starting application answers
+  the probe late or not at all, and the probe then reports no provider for
+  a window that has one. Both class lists are
   lifted from NVDA and pinned by unit tests naming their exact NVDA source
   locations, so a future NVDA sync is a diff of two lists: the bad list is
   `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and the
@@ -75,7 +78,7 @@ Public API:
 - `Outpost`, `run_pipe`, `run_attach` — the per-application outpost (the
   `outpost` module; outpost redesign, "Inside an outpost"). Its parts:
   - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
-    value, state, name, selection, menu end, and destroy, for the fixed pid),
+    value, state, name, selection, and destroy, for the fixed pid),
     the focus-following UIA property callback, and the reader's routed facts
     (focus, foreground, menus, and the listener's desktop-wide selections,
     notifications, and alerts) and queries only add an entry to the queue and
@@ -102,9 +105,11 @@ Public API:
     application, so events and replies leave in the order their entries
     joined the queue. It replaces the announce lane, the query pool, the
     announce poll, the probe threads, and the late window retry.
-  - The watchdog abandons a worker whose call passes its deadline (an event
-    400 ms, a focus 1.5 s, a navigation or activation 400 ms, a focus-now
-    query 2 s, an ancestor walk or tree dump 5 s), answers the stuck query
+  - The watchdog abandons a worker whose call passes its deadline (an
+    event, a focus, or a focus-now query 10 s, NVDA's normal watchdog
+    timeout, since an application that is starting up can take seconds to
+    answer a read that then succeeds; a navigation or activation 400 ms; an
+    ancestor walk or tree dump 5 s), answers the stuck query
     `Abandoned`, and starts a replacement that continues with the queue. An
     abandoned worker that returns publishes nothing, since publishing checks
     under the watchdog's lock that the worker is still in charge, lowers the
@@ -121,9 +126,9 @@ Public API:
   outpost redesign, "The focus listener"): sets up the writer, announces
   `Ready`, and installs the desktop-global `FocusRegistration`, the global
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
-  menu-popup, and alert), and desktop-wide UIA subscriptions for the events
-  NVDA registers globally on Windows 11: an element selected, a menu
-  opened, and notifications. Each event becomes a `FocusFact` (a
+  menu-popup, menu and switcher end, and alert), and desktop-wide UIA
+  subscriptions for the events NVDA registers globally on Windows 11: an
+  element selected, a menu opened, and notifications. Each event becomes a `FocusFact` (a
   `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
   cached and hang-safe local reads. A foreground event is forwarded without
   checking the foreground: a starting application's window raises it before
@@ -304,10 +309,12 @@ Implementation notes:
   focus in the batch already put focus on a menu or menu item, the menu
   opening is ignored; if its object is not a popup menu, it is ignored;
   otherwise it becomes a focus on the popup menu, so the reducer never
-  receives a separate menu event. When a menu closes (`EVENT_SYSTEM_MENUEND`
-  or `EVENT_SYSTEM_MENUPOPUPEND`) and no focus event follows within 50
-  milliseconds, the worker reads the real focus and reports it; a timer
-  thread queues that check, so the worker never sleeps.
+  receives a separate menu event. The end of a menu
+  (`EVENT_SYSTEM_MENUEND` or `EVENT_SYSTEM_MENUPOPUPEND`) or of the Alt+Tab
+  switcher (`EVENT_SYSTEM_SWITCHEND`) is not an outpost's concern: the
+  focus listener forwards it to Core as `MenuOrSwitchEnded`, and if Core's
+  focus has not changed 50 milliseconds later, Core asks the foreground
+  application's outpost for its focus (`Query::FocusNow`).
 - Window destruction: an `EVENT_OBJECT_DESTROY` for a window drops its kept
   arbitration verdict and its MSAA nodes, so a reused handle is probed
   afresh and never inherits them.

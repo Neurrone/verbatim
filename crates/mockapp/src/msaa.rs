@@ -78,7 +78,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
             // command (see crate::stdin::Command::Notify).
             eprintln!("mockapp: notify is not supported on the msaa backend");
         }
-        Command::Quit => {}
+        // Handled by the window thread before dispatch.
+        Command::Stall(_) | Command::Quit => {}
     }
 }
 

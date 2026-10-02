@@ -622,19 +622,57 @@ impl ReducerThread<'_> {
                     self.want_focus_now(pid);
                 }
             }
+            OutpostMessage::MenuOrSwitchEnded => self.fake_focus(),
         }
+    }
+
+    /// A menu or the Alt+Tab switcher closed and no focus event followed
+    /// (the listener waited for one): reads the focus of whichever
+    /// application is in front, usually not the one that owned the menu, as
+    /// NVDA's fake focus does. Only the control is reported, as NVDA queues
+    /// a focus on it and nothing for its window. An application with no
+    /// ready outpost is asked for its window too, since attention may be
+    /// moving to it.
+    fn fake_focus(&mut self) {
+        let Some(pid) = foreground_pid() else {
+            return;
+        };
+        let Some(outpost) = self.ready_outpost(pid) else {
+            self.want_focus_now(pid);
+            return;
+        };
+        let trace_id = TraceId::mint();
+        let id = self.requests.begin(
+            outpost,
+            Asker::FakeFocus {
+                source: pid,
+                trace_id,
+            },
+        );
+        self.send(
+            outpost,
+            id,
+            SupervisorToOutpost::Query {
+                trace_id,
+                request_id: id.0,
+                query: Query::FocusNow,
+            },
+        );
+    }
+
+    /// `pid`'s newest outpost incarnation, if it is ready.
+    fn ready_outpost(&self, pid: Pid) -> Option<OutpostId> {
+        self.live
+            .iter()
+            .filter(|(_, live)| live.target_pid == pid && live.ready)
+            .map(|(outpost, _)| *outpost)
+            .max()
     }
 
     /// Asks `pid`'s outpost for the current focus now if it is ready, or as
     /// soon as it is, starting one if there is none.
     fn want_focus_now(&mut self, pid: Pid) {
-        let ready = self
-            .live
-            .iter()
-            .filter(|(_, live)| live.target_pid == pid && live.ready)
-            .map(|(outpost, _)| *outpost)
-            .max();
-        if let Some(outpost) = ready {
+        if let Some(outpost) = self.ready_outpost(pid) {
             self.focus_now(outpost, pid);
         } else {
             self.focus_now_wanted.insert(pid);

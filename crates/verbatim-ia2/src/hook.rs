@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
     EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -62,9 +62,13 @@ pub enum WinEventKind {
     /// pause between opening a menu and hearing it.
     MenuPopupStart,
     /// `EVENT_SYSTEM_MENUPOPUPEND` or `EVENT_SYSTEM_MENUEND` — a popup menu
-    /// closed, or menu mode ended. If no focus event follows, the outpost
-    /// reads and reports the real focus, as NVDA does.
+    /// closed, or menu mode ended. The focus listener forwards it to Core,
+    /// which reads the real focus of the foreground application if no focus
+    /// change follows, as NVDA does.
     MenuEnd,
+    /// `EVENT_SYSTEM_SWITCHEND` — the Alt+Tab switcher closed. Handled like
+    /// [`WinEventKind::MenuEnd`], as NVDA handles it.
+    SwitchEnd,
     /// `EVENT_OBJECT_DESTROY` — an object, possibly a window, was destroyed.
     Destroy,
     /// `EVENT_SYSTEM_ALERT` — an alert was generated; toast notifications
@@ -77,7 +81,7 @@ pub enum WinEventKind {
 /// [`kind_of`] maps a delivered event id back to its kind against this whole
 /// table. `Selection` maps four raw ids to the one kind, so a caller that
 /// wants selection events gets all four hooks from naming it once.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 14] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 15] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -90,30 +94,34 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 14] = [
     (EVENT_SYSTEM_MENUPOPUPSTART, WinEventKind::MenuPopupStart),
     (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuEnd),
     (EVENT_SYSTEM_MENUEND, WinEventKind::MenuEnd),
+    (EVENT_SYSTEM_SWITCHEND, WinEventKind::SwitchEnd),
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
     (EVENT_SYSTEM_ALERT, WinEventKind::Alert),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
-/// process-scoped property, value, state, and selection events, the end of
-/// a menu, and object destruction (for windows going away). Focus and
-/// menu-popup are not here — the focus listener owns them globally and
-/// routes each back to the app outpost as a fact.
+/// process-scoped property, value, state, and selection events, and object
+/// destruction (for windows going away). Focus, menu-popup, and the end of a
+/// menu are not here — the focus listener owns them globally.
 pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ValueChange,
     WinEventKind::StateChange,
     WinEventKind::NameChange,
     WinEventKind::Selection,
-    WinEventKind::MenuEnd,
     WinEventKind::Destroy,
 ];
 
 /// The focus listener's subscription set (decisions D13 and D14): the
-/// events that are global by nature, installed with `idProcess` zero.
+/// events that are global by nature, installed with `idProcess` zero. The
+/// end of a menu or of the Alt+Tab switcher is global because focus returns
+/// to whichever application is then in front, usually not the one that
+/// owned the menu.
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
     WinEventKind::MenuPopupStart,
+    WinEventKind::MenuEnd,
+    WinEventKind::SwitchEnd,
     WinEventKind::Alert,
 ];
 

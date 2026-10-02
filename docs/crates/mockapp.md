@@ -38,7 +38,10 @@ the node selected, moving the state off any previous selection, and raises
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
 root provider with `text` as the display string, kind `Other`, processing
 `All`, and a fixed `mockapp-notify` activity id; reported as unsupported
-on the MSAA backend, which has no notification event), and `quit`.
+on the MSAA backend, which has no notification event), `stall <ms>`
+(blocks the window thread for that long, so every cross-process call into
+the window waits, as with an application that is starting up or busy),
+and `quit`.
 
 Public API is otherwise internal (`mockapp` is a binary, not a library);
 its crate-internal modules are the reviewable surface:
@@ -146,4 +149,11 @@ state) and by the WinEvent hook as `WinEventKind::Selection`, and that
 full payload — property, value, selection, and notification changes are
 used rather than focus, so the tests never depend on real keyboard focus
 or `SetForegroundWindow` succeeding, and pass headless on GitHub
-`windows-latest` runners.
+`windows-latest` runners. `slow_application.rs` runs a real
+`verbatim_outpost::Outpost` in the test process against an `msaa`-backend
+mockapp: it captures the address of mockapp's own scripted focus event,
+stalls mockapp's window thread with `stall`, delivers the focus as a
+listener fact, and asserts the outpost still reports it after the read
+has waited longer than the outpost's old 1.5 second deadline. The
+scripted focus event is raised with `NotifyWinEvent`, so this test too
+needs no real keyboard focus.

@@ -34,34 +34,39 @@ use crate::protocol::{
 };
 
 use super::Context;
-use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind};
+use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::window::{
-    focus_window, window_belongs_to_hidden_frame, window_facts, window_is_foreground,
-    window_is_hidden_frame,
+    focus_window, front_is_another_thread_of_its_application, window_belongs_to_hidden_frame,
+    window_facts, window_is_foreground,
 };
 
-/// The deadline for one event: an acquisition and a mapping.
-const EVENT_DEADLINE: Duration = Duration::from_millis(400);
+/// The deadline for handling an event, a focus, or a focus-now query: NVDA's
+/// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
+/// application that is slow to answer before cancelling the call. An
+/// application that is starting up, or the Start menu's search window as it
+/// opens, can take two or three seconds to answer a read that then succeeds
+/// (found live in the end-to-end suite); NVDA announces the focus late, and
+/// a shorter deadline here dropped it for good.
+const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
 
-/// The deadline for a focus, which also reads the ancestors and the selected
-/// child.
-const FOCUS_DEADLINE: Duration = Duration::from_millis(1500);
+/// How long the watchdog waits on an entry before abandoning it because the
+/// user has moved on to a window of the same application on another UI
+/// thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`, after which NVDA cancels a slow
+/// call once the foreground has changed. One application can own windows on
+/// several threads (Explorer's folder windows, taskbar, and Alt+Tab
+/// switcher), and those must not wait behind a slow window the user has
+/// left. Windows of other applications have their own outposts and never
+/// wait behind this one. The check is repeated at this interval until the
+/// deadline.
+const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 
 /// The deadline for one navigation step or an activation.
 const STEP_DEADLINE: Duration = Duration::from_millis(400);
 
-/// The deadline for a focus-now query: the window, the focus, and its
-/// ancestors.
-const FOCUS_NOW_DEADLINE: Duration = Duration::from_secs(2);
-
 /// The deadline for an ancestor walk or a tree dump, each up to 64 hops or
 /// 4096 nodes.
 const WALK_DEADLINE: Duration = Duration::from_secs(5);
-
-/// How long after a menu closes the worker waits for a focus event before
-/// reading the real focus itself.
-pub(super) const MENU_CLOSE_GRACE: Duration = Duration::from_millis(50);
 
 /// The worker incarnation in charge, its deadline, and the abandoned count.
 #[derive(Default)]
@@ -70,6 +75,9 @@ struct WatchState {
     deadline: Option<Instant>,
     /// The query the worker is running, so an abandonment can answer it.
     running: Option<(u64, TraceId)>,
+    /// When the worker started its entry, and the window the entry concerns
+    /// (0 for none), for abandoning it once the user has moved on.
+    started: Option<(Instant, isize)>,
     /// How many messages that carry node ids have been published: the
     /// position of the last one.
     position: u64,
@@ -85,6 +93,7 @@ impl WatchState {
     fn abandon(&mut self) -> Option<(u64, TraceId)> {
         self.generation += 1;
         self.deadline = None;
+        self.started = None;
         self.running.take()
     }
 
@@ -135,10 +144,13 @@ impl Watch {
         self.abandoned.load(Ordering::Relaxed)
     }
 
-    /// Starts the worker's deadline for one entry.
-    fn start(&self, deadline: Duration, running: Option<(u64, TraceId)>) {
+    /// Starts the worker's deadline for one entry concerning `window` (0 for
+    /// none).
+    fn start(&self, deadline: Duration, running: Option<(u64, TraceId)>, window: isize) {
         let mut state = self.lock();
-        state.deadline = Some(Instant::now() + deadline);
+        let now = Instant::now();
+        state.deadline = Some(now + deadline);
+        state.started = Some((now, window));
         state.running = running;
         drop(state);
         self.changed.notify_one();
@@ -151,6 +163,7 @@ impl Watch {
         let mut state = self.lock();
         if state.generation == generation {
             state.deadline = None;
+            state.started = None;
             Ok(state.running.take())
         } else {
             drop(state);
@@ -169,8 +182,6 @@ impl Watch {
 pub(super) struct Tracking {
     /// The role of the focus this outpost last reported.
     focus_role: Option<Role>,
-    /// Whether a menu closed and no focus has been reported since.
-    menu_closed: bool,
     /// The batch in which a focus was last reported.
     focus_batch: Option<u64>,
 }
@@ -191,6 +202,7 @@ fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> 
         return false;
     }
     state.deadline = None;
+    state.started = None;
     state.running = None;
     let touched = context
         .uia_registry
@@ -220,45 +232,60 @@ fn spawn_worker(context: Arc<Context>, generation: u64) {
 }
 
 /// The watchdog: waits for the worker's deadline and abandons a worker that
-/// passes it.
+/// passes it, or that has waited [`MOVED_ON_GRACE`] on a window the user has
+/// left for one of the same application on another UI thread.
 fn watchdog(context: &Arc<Context>) {
     let mut state = context.watch.lock();
     loop {
-        match state.deadline {
-            None => {
-                state = context
-                    .watch
-                    .changed
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner);
-            }
-            Some(deadline) if Instant::now() < deadline => {
-                let wait = deadline.saturating_duration_since(Instant::now());
-                state = context
-                    .watch
-                    .changed
-                    .wait_timeout(state, wait)
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .0;
-            }
-            Some(_) => {
-                let running = state.abandon();
-                let abandoned = context.watch.abandoned.fetch_add(1, Ordering::Relaxed) + 1;
-                let generation = state.generation;
-                tracing::warn!(
-                    abandoned,
-                    "a call passed its deadline; the worker is abandoned and replaced"
-                );
-                if let Some((request_id, trace_id)) = running {
-                    context.outbound.send(OutpostToSupervisor::Reply {
-                        trace_id,
-                        request_id,
-                        outcome: QueryOutcome::Abandoned,
-                    });
-                }
-                spawn_worker(Arc::clone(context), generation);
-            }
+        let Some(deadline) = state.deadline else {
+            state = context
+                .watch
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+            continue;
+        };
+        let now = Instant::now();
+        let (started, window) = state.started.unwrap_or((now, 0));
+        let reason = if now >= deadline {
+            Some("a call passed its deadline")
+        } else if window != 0
+            && now >= started + MOVED_ON_GRACE
+            && front_is_another_thread_of_its_application(window)
+        {
+            Some("the user moved on from a slow window")
+        } else {
+            None
+        };
+        let Some(reason) = reason else {
+            let check = if window == 0 {
+                deadline
+            } else if now < started + MOVED_ON_GRACE {
+                started + MOVED_ON_GRACE
+            } else {
+                now + MOVED_ON_GRACE
+            };
+            let wait = check.min(deadline).saturating_duration_since(now);
+            state = context
+                .watch
+                .changed
+                .wait_timeout(state, wait)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+            continue;
+        };
+        let running = state.abandon();
+        let abandoned = context.watch.abandoned.fetch_add(1, Ordering::Relaxed) + 1;
+        let generation = state.generation;
+        tracing::warn!(abandoned, reason, "the worker is abandoned and replaced");
+        if let Some((request_id, trace_id)) = running {
+            context.outbound.send(OutpostToSupervisor::Reply {
+                trace_id,
+                request_id,
+                outcome: QueryOutcome::Abandoned,
+            });
         }
+        spawn_worker(Arc::clone(context), generation);
     }
 }
 
@@ -270,10 +297,14 @@ fn run(context: &Context, generation: u64) {
     }
     let mut client = Client::default();
     while let Some((planned, batch)) = context.intake.next() {
-        let (deadline, running) = match &planned {
-            Planned::Run(entry) | Planned::Menu(entry) => budget(entry),
+        let (deadline, running, window) = match &planned {
+            Planned::Run(entry) | Planned::Menu(entry) => {
+                let (deadline, running) = budget(entry);
+                (deadline, running, window_of(&entry.item))
+            }
         };
-        context.watch.start(deadline, running);
+        context.watch.start(deadline, running, window);
+        let started = Instant::now();
         let handled = catch_unwind(AssertUnwindSafe(|| {
             let mut worker = Worker {
                 context,
@@ -286,8 +317,18 @@ fn run(context: &Context, generation: u64) {
                 Planned::Menu(entry) => worker.menu_opened(&entry),
             }
         }));
+        context
+            .arbitrator()
+            .renew_probes_since(started, Instant::now());
         match context.watch.finish(generation) {
-            Err(()) => return,
+            Err(()) => {
+                tracing::info!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    deadline_ms = deadline.as_millis(),
+                    "an abandoned worker returned; its result is discarded"
+                );
+                return;
+            }
             // A query whose handling panicked before replying still gets its
             // one reply.
             Ok(Some((request_id, trace_id))) => {
@@ -316,16 +357,15 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
-                Query::FocusNow => FOCUS_NOW_DEADLINE,
+                Query::FocusNow => HANDLING_DEADLINE,
                 Query::Ancestors { .. } | Query::DumpTree => WALK_DEADLINE,
                 _ => STEP_DEADLINE,
             };
             (deadline, Some((*request_id, entry.trace)))
         }
-        Item::Fact(_) | Item::CheckFocus => (FOCUS_DEADLINE, None),
+        Item::Fact(_) | Item::Msaa { .. } | Item::Uia(_) => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
-        Item::Msaa { .. } | Item::Uia(_) => (EVENT_DEADLINE, None),
     }
 }
 
@@ -354,7 +394,6 @@ impl Worker<'_> {
             } => self.msaa_event(kind, hwnd, id_object, id_child, trace, observed_at_ms),
             Item::Uia(event) => self.uia_event(event, trace, observed_at_ms),
             Item::Fact(fact) => self.fact(fact, trace, observed_at_ms),
-            Item::CheckFocus => self.check_focus(),
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             Item::NodesHeld {
                 nodes,
@@ -447,7 +486,6 @@ impl Worker<'_> {
             }
             let mut tracking = self.context.tracking();
             tracking.focus_role = Some(role);
-            tracking.menu_closed = false;
             tracking.focus_batch = Some(self.batch);
         }
     }
@@ -481,21 +519,13 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_ms: u64,
     ) {
-        match kind {
-            WinEventKind::Destroy => {
-                if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
-                    self.context.arbitrator().forget(hwnd);
-                    // A reused window handle must never inherit these nodes.
-                    self.context.msaa_registry.forget_window(hwnd);
-                }
-                return;
+        if kind == WinEventKind::Destroy {
+            if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
+                self.context.arbitrator().forget(hwnd);
+                // A reused window handle must never inherit these nodes.
+                self.context.msaa_registry.forget_window(hwnd);
             }
-            WinEventKind::MenuEnd => {
-                self.context.tracking().menu_closed = true;
-                self.context.arm_focus_check();
-                return;
-            }
-            _ => {}
+            return;
         }
         if read::window_uses_uia(self.context, hwnd) {
             return; // UIA owns this window.
@@ -957,42 +987,6 @@ impl Worker<'_> {
         );
     }
 
-    /// After a menu closed: if no focus has been reported since, read the
-    /// real focus and report it.
-    fn check_focus(&mut self) {
-        if !self.context.tracking().menu_closed {
-            return;
-        }
-        let Some(control) = read::focused_control(self.context, self.client) else {
-            self.context.tracking().menu_closed = false;
-            return;
-        };
-        let hwnd = focus_window().filter(|&hwnd| !window_is_hidden_frame(hwnd));
-        let backend = control.node.backend;
-        let object = self.object_of(&control.node);
-        self.emit_focus(
-            TraceId::mint(),
-            super::window::now_ms(),
-            backend,
-            hwnd,
-            control.node,
-            false,
-            object,
-            (control.ancestors, control.selected_child),
-        );
-    }
-
-    /// The accessible object a node this outpost issued stands for.
-    fn object_of(&self, node: &NodeSnapshot) -> Option<Object> {
-        if let Some(runtime_id) = self.context.uia_registry.runtime_id_of(node.id) {
-            return Some(Object::Uia(runtime_id));
-        }
-        self.context
-            .msaa_registry
-            .key_of(node.id)
-            .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child))
-    }
-
     /// A query from Core, answered with exactly one reply.
     fn query(&mut self, request_id: u64, query: &Query, trace: TraceId) {
         let context = self.context;
@@ -1035,7 +1029,7 @@ mod tests {
     fn a_returning_abandoned_worker_never_publishes_and_lowers_the_count() {
         let watch = Watch::default();
         let trace = TraceId::mint();
-        watch.start(STEP_DEADLINE, Some((7, trace)));
+        watch.start(STEP_DEADLINE, Some((7, trace)), 0);
         let running = watch.lock().abandon();
         watch.abandoned.fetch_add(1, Ordering::Relaxed);
         assert_eq!(running, Some((7, trace)), "the stuck query is answered");

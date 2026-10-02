@@ -50,6 +50,11 @@ pub(crate) enum Asker {
     /// listener was replaced: its answer re-enters the reducer as a
     /// foreground change and a focus, from application `source`.
     FocusNow { source: Pid, trace_id: TraceId },
+    /// The focus-now query sent when a menu or the Alt+Tab switcher closed
+    /// and no focus event followed: only the focused control re-enters the
+    /// reducer, as NVDA's fake focus queues a focus on it and nothing for
+    /// its window.
+    FakeFocus { source: Pid, trace_id: TraceId },
 }
 
 struct Entry {
@@ -177,6 +182,20 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             QueryOutcome::Done(QueryResult::Focus(focus)) => focus_inputs(source, trace_id, focus),
             other => {
                 tracing::warn!(reason = describe(&other), %source, "focus-now query failed");
+                Vec::new()
+            }
+        },
+        Asker::FakeFocus { source, trace_id } => match outcome {
+            QueryOutcome::Done(QueryResult::Focus(FocusNow { focus, .. })) => focus_inputs(
+                source,
+                trace_id,
+                FocusNow {
+                    window: None,
+                    focus,
+                },
+            ),
+            other => {
+                tracing::warn!(reason = describe(&other), %source, "fake-focus query failed");
                 Vec::new()
             }
         },

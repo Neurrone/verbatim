@@ -234,6 +234,34 @@ pub(super) fn focus_window() -> Option<isize> {
     }
 }
 
+/// Whether the window in front belongs to the same application as `handle`
+/// but another UI thread: the user has moved on from `handle` to a window
+/// that could answer reads a slow `handle` is holding up in this outpost.
+/// NVDA's watchdog asks whether the user has moved on from the window it is
+/// waiting on (`_shouldRecoverAfterMinTimeout`), because its one core thread
+/// serves every application; an outpost serves one, so only that
+/// application's other threads are held up. `false` when either window's
+/// owner cannot be told.
+pub(super) fn front_is_another_thread_of_its_application(handle: isize) -> bool {
+    let (thread, pid) = window_owner(handle);
+    if thread == 0 {
+        return false;
+    }
+    focus_window().is_some_and(|front| {
+        let (front_thread, front_pid) = window_owner(front);
+        front_pid == pid && front_thread != 0 && front_thread != thread
+    })
+}
+
+/// The thread and process that own `handle`, zeros for an invalid window.
+fn window_owner(handle: isize) -> (u32, u32) {
+    let mut pid = 0u32;
+    // SAFETY: GetWindowThreadProcessId tolerates any handle, returning 0 for
+    // an invalid one.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd(handle), Some(&raw mut pid)) };
+    (thread, pid)
+}
+
 /// The focus window of `target_pid`, or `None` if the keyboard focus is not
 /// in that process.
 pub(super) fn focus_window_of(target_pid: u32) -> Option<isize> {

@@ -8,19 +8,38 @@
 //! only on the outpost's worker, under its deadline
 //! ([`verbatim_uia::has_server_side_provider`]).
 //!
-//! A probed verdict is kept for the window's lifetime and forgotten when the
-//! window is destroyed ([`Arbitrator::forget`]), as decision D15 specifies.
-//! NVDA's 500 ms cache throttles a check it makes on every event; it is not
-//! there because answers go stale.
+//! A probe that finds a UIA provider is kept for the window's lifetime and
+//! forgotten when the window is destroyed ([`Arbitrator::forget`]), as
+//! decision D15 specifies: a server-side provider does not go away. A probe
+//! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
+//! cache period, and then probed again, because that answer can go stale:
+//! an application that is starting up or busy answers the probe late or not
+//! at all, and the probe then reports no provider for a window that has one
+//! (found live with Windows 11 Notepad's edit control, which was then read
+//! through MSAA for the rest of its life).
 //!
 //! The worker drops MSAA events whose window arbitrates to UIA and UIA events
 //! whose window does not, so the two backends never both announce the same
 //! change.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+
+/// How long a probe that found no UIA provider is trusted before the window
+/// is probed again: NVDA's `isUIAWindow` cache period.
+pub const NEGATIVE_VERDICT_LIFETIME: Duration = Duration::from_millis(500);
+
+/// A kept probe result.
+#[derive(Clone, Copy, Debug)]
+enum Probed {
+    /// The window has a UIA provider, for its whole lifetime.
+    Uia,
+    /// No provider was found at this time.
+    NotUia(Instant),
+}
 
 /// The classification a window's class name yields before any probe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,8 +56,9 @@ enum ClassVerdict {
 pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
-    /// Probed verdicts, kept until the window is destroyed.
-    cache: HashMap<isize, bool>,
+    /// Probe results: a UIA verdict until the window is destroyed, a non-UIA
+    /// verdict for [`NEGATIVE_VERDICT_LIFETIME`].
+    cache: HashMap<isize, Probed>,
     /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
     /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
@@ -76,10 +96,36 @@ impl Arbitrator {
         self.forced = forced;
     }
 
-    /// Records a probe result for `hwnd`, kept until the window is
-    /// destroyed.
+    /// Records a probe result for `hwnd`: a UIA verdict is kept until the
+    /// window is destroyed, a non-UIA verdict for
+    /// [`NEGATIVE_VERDICT_LIFETIME`].
     pub fn record_probe(&mut self, hwnd: isize, is_uia: bool) {
-        self.cache.insert(hwnd, is_uia);
+        self.record_probe_at(hwnd, is_uia, Instant::now());
+    }
+
+    fn record_probe_at(&mut self, hwnd: isize, is_uia: bool, now: Instant) {
+        let probed = if is_uia {
+            Probed::Uia
+        } else {
+            Probed::NotUia(now)
+        };
+        self.cache.insert(hwnd, probed);
+    }
+
+    /// Restarts, from `now`, the lifetime of every non-UIA verdict probed at
+    /// or after `since`: the worker calls this when it finishes an entry
+    /// that started at `since`. A slow read can outlast the lifetime of the
+    /// verdict it relied on, and the MSAA and UIA facts for one focus must
+    /// both see the same verdict, or a re-probe between them lets both
+    /// backends announce it.
+    pub fn renew_probes_since(&mut self, since: Instant, now: Instant) {
+        for probed in self.cache.values_mut() {
+            if let Probed::NotUia(at) = probed
+                && *at >= since
+            {
+                *at = now;
+            }
+        }
     }
 
     /// Forgets `hwnd`'s probed verdict: the window was destroyed, and its
@@ -100,16 +146,26 @@ impl Arbitrator {
 
     /// The verdict without probing: `Some(true)` for a UIA window,
     /// `Some(false)` for a non-UIA window, and `None` when only the blocking
-    /// probe can decide and the window has not been probed yet.
+    /// probe can decide: the window has not been probed yet, or its last
+    /// probe found no provider longer ago than [`NEGATIVE_VERDICT_LIFETIME`].
     #[must_use]
     pub fn verdict(&self, hwnd: isize, class_name: &str) -> Option<bool> {
+        self.verdict_at(hwnd, class_name, Instant::now())
+    }
+
+    fn verdict_at(&self, hwnd: isize, class_name: &str, now: Instant) -> Option<bool> {
         if self.forced.is_some() {
             return self.forced;
         }
         match self.classify(class_name) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
-            ClassVerdict::Unknown => self.cache.get(&hwnd).copied(),
+            ClassVerdict::Unknown => match self.cache.get(&hwnd)? {
+                Probed::Uia => Some(true),
+                Probed::NotUia(at) => (now.saturating_duration_since(*at)
+                    < NEGATIVE_VERDICT_LIFETIME)
+                    .then_some(false),
+            },
         }
     }
 }
@@ -211,6 +267,46 @@ mod tests {
     fn extra_good_class_overrides_to_uia() {
         let arb = Arbitrator::new(&["MyAppCanvas"]);
         assert_eq!(arb.verdict(1, "MyAppCanvas"), Some(true));
+    }
+
+    #[test]
+    fn a_verdict_of_no_provider_is_probed_again_after_its_lifetime() {
+        let mut arb = Arbitrator::new(&[]);
+        let probed = Instant::now();
+        arb.record_probe_at(42, false, probed);
+        assert_eq!(arb.verdict_at(42, "SomeUnknownClass", probed), Some(false));
+        assert_eq!(
+            arb.verdict_at(42, "SomeUnknownClass", probed + NEGATIVE_VERDICT_LIFETIME),
+            None,
+            "a probe that found no provider may have met a busy application"
+        );
+        arb.record_probe_at(42, true, probed + NEGATIVE_VERDICT_LIFETIME);
+        assert_eq!(
+            arb.verdict_at(42, "SomeUnknownClass", probed + Duration::from_secs(3600)),
+            Some(true),
+            "a provider, once found, is kept"
+        );
+    }
+
+    #[test]
+    fn a_verdict_of_no_provider_lasts_from_the_end_of_the_entry_that_probed_it() {
+        let mut arb = Arbitrator::new(&[]);
+        let earlier = Instant::now();
+        let started = earlier + Duration::from_millis(10);
+        arb.record_probe_at(7, false, started + Duration::from_millis(10));
+        arb.record_probe_at(8, false, earlier);
+        let finished = started + Duration::from_secs(2);
+        arb.renew_probes_since(started, finished);
+        assert_eq!(
+            arb.verdict_at(7, "SomeUnknownClass", finished + Duration::from_millis(100)),
+            Some(false),
+            "the slow entry's own probe still holds just after it finished"
+        );
+        assert_eq!(
+            arb.verdict_at(8, "SomeUnknownClass", finished),
+            None,
+            "a probe from before the entry is not renewed"
+        );
     }
 
     #[test]

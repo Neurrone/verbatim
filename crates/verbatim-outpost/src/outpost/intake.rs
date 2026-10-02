@@ -72,8 +72,6 @@ pub(super) enum Item {
     Uia(UiaEvent),
     /// A focus fact routed from the listener.
     Fact(DeliveredFact),
-    /// Read the real focus: a menu closed and no focus event may follow.
-    CheckFocus,
     /// A query from Core.
     Query { request_id: u64, query: Query },
     /// The nodes Core still holds, and the position of the last message it
@@ -99,7 +97,6 @@ pub(super) enum Key {
     UiaFocus(Vec<i32>),
     MenuPopup(isize, i32, i32),
     UiaMenuOpened(Vec<i32>),
-    CheckFocus,
     NodesHeld,
 }
 
@@ -114,7 +111,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(_) | Key::CheckFocus | Key::NodesHeld => None,
+            Key::Foreground(_) | Key::NodesHeld => None,
         }
     }
 }
@@ -247,6 +244,11 @@ impl Intake {
 }
 
 /// The key, category, and window of an item.
+/// The window an item concerns, 0 for none.
+pub(super) fn window_of(item: &Item) -> isize {
+    classify(item).2
+}
+
 fn classify(item: &Item) -> (Option<Key>, Category, isize) {
     match item {
         Item::Msaa {
@@ -255,7 +257,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             id_object,
             id_child,
         } => match kind {
-            WinEventKind::MenuEnd | WinEventKind::Destroy => (None, Category::Exempt, *hwnd),
+            WinEventKind::Destroy => (None, Category::Exempt, *hwnd),
             _ => (
                 Some(Key::Msaa(*kind as u8, *hwnd, *id_object, *id_child)),
                 Category::Other,
@@ -322,7 +324,6 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             };
             (Some(key), Category::Focus, hwnd)
         }
-        Item::CheckFocus => (Some(Key::CheckFocus), Category::Exempt, 0),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
         Item::Query { .. } => (None, Category::Exempt, 0),

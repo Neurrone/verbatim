@@ -70,7 +70,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
             }
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text),
-        Command::Quit => {}
+        // Handled by the window thread before dispatch.
+        Command::Stall(_) | Command::Quit => {}
     }
 }
 

@@ -121,6 +121,11 @@ pub enum OutpostMessage {
     /// were lost in the gap, so the app asks the foreground application for
     /// its current focus.
     ListenerReplaced,
+    /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
+    /// somewhere on the desktop, and no focus event followed within the
+    /// listener's grace: the app asks the foreground application for its
+    /// focused control (NVDA's fake focus).
+    MenuOrSwitchEnded,
     /// An outpost incarnation ended. Its node ids are dead from now on.
     Ended {
         /// The incarnation that ended.

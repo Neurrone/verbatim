@@ -794,7 +794,7 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
 }
 
 /// Reads the currently focused object of `target_pid`, for a focus-now query
-/// or the check after a menu closes. Uses `GetGUIThreadInfo` then `accFocus`,
+/// (including Core's after a menu closes). Uses `GetGUIThreadInfo` then `accFocus`,
 /// with a fallback to the focused window itself. Blocking; worker only.
 ///
 /// M1 keys the focused node by its window and child id; a focused child exposed

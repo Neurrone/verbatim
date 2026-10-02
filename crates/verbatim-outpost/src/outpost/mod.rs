@@ -36,9 +36,7 @@ use std::io::{self, BufReader, Write};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
 
-use crossbeam_channel::{Sender, unbounded};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
 
@@ -57,7 +55,7 @@ use crate::protocol::{
 
 use intake::{Entry, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
-use worker::{MENU_CLOSE_GRACE, Tracking, Watch};
+use worker::{Tracking, Watch};
 
 pub(crate) use window::now_ms;
 
@@ -71,8 +69,6 @@ pub(crate) struct Context {
     msaa_registry: MsaaRegistry,
     arbitrator: Mutex<Arbitrator>,
     tracking: Mutex<Tracking>,
-    /// Arms the menu-close timer.
-    timer: Sender<Instant>,
     /// The focus-following UIA property subscription, which the worker moves.
     focus_properties: OnceLock<Registration>,
 }
@@ -86,12 +82,6 @@ impl Context {
 
     fn tracking(&self) -> MutexGuard<'_, Tracking> {
         self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Asks the timer to queue a focus check once the menu-close grace has
-    /// passed, so the worker never sleeps.
-    fn arm_focus_check(&self) {
-        let _ = self.timer.send(Instant::now() + MENU_CLOSE_GRACE);
     }
 
     fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64) {
@@ -113,9 +103,9 @@ pub struct Outpost {
 
 impl Outpost {
     /// Creates an outpost watching `target_pid` for its whole life: starts
-    /// the writer, the worker, the watchdog, and the menu-close timer,
-    /// installs the MSAA hooks and the focus-following UIA property
-    /// subscription, and announces readiness.
+    /// the writer, the worker, and the watchdog, installs the MSAA hooks and
+    /// the focus-following UIA property subscription, and announces
+    /// readiness.
     ///
     /// # Panics
     ///
@@ -124,7 +114,6 @@ impl Outpost {
     #[must_use]
     pub fn new(pipe: Box<dyn Write + Send>, target_pid: u32) -> Self {
         let (outbound, writer) = Outbound::start(pipe);
-        let (timer, timer_rx) = unbounded::<Instant>();
         let id_counter = Arc::new(AtomicU64::new(1));
         let context = Arc::new(Context {
             target_pid,
@@ -135,29 +124,16 @@ impl Outpost {
             msaa_registry: MsaaRegistry::new(id_counter),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             tracking: Mutex::new(Tracking::default()),
-            timer,
             focus_properties: OnceLock::new(),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
         }
 
-        // The menu-close timer: one thread, so the worker never sleeps.
-        let timer_context = Arc::clone(&context);
-        thread::Builder::new()
-            .name("verbatim-menu-timer".to_owned())
-            .spawn(move || {
-                while let Ok(at) = timer_rx.recv() {
-                    thread::sleep(at.saturating_duration_since(Instant::now()));
-                    timer_context.push(Item::CheckFocus, TraceId::mint(), now_ms());
-                }
-            })
-            .expect("spawn the menu timer");
-
         worker::start(&context);
 
-        // The MSAA hooks: process-scoped value, state, name, selection, menu
-        // end, and destroy events (decision D13). A destroy is queued only for
+        // The MSAA hooks: process-scoped value, state, name, selection, and
+        // destroy events (decision D13). A destroy is queued only for
         // a window, the one kind of object whose end the outpost tracks.
         let hook_context = Arc::clone(&context);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {

@@ -211,6 +211,12 @@ screen reader in both rendered and source form.
   worker start, backend decided, read, ancestors read, and sent. The
   arbitration verdict is kept for the window's lifetime and dropped when
   the window is destroyed, and a UIA element is resolved once per event.
+  Amended 2026-10-02: only a verdict that the window has a UIA provider
+  is kept for its lifetime. A probe that finds none is trusted for 500 ms,
+  NVDA's cache period, and then repeated, because a busy or starting
+  application can fail the probe for a window that has a provider (found
+  live with Windows 11 Notepad, whose edit control was then read through
+  MSAA for the rest of its life).
   The ledger still records only observed, queued, and first audio; the
   per-stage timeline is not implemented yet.
 - **D16 — Recordings take their audio from Verbatim's own rendering.** A
@@ -379,7 +385,7 @@ that can block.
 
 Because both backends can report the same focus, the listener forwards
 both facts and takes no side: arbitration is not a race between the pair
-but a sticky per-window verdict the app outpost already keeps, which each
+but a per-window verdict the app outpost already keeps, which each
 fact consults independently whenever it arrives — so deduplication does
 not depend on the two facts arriving together, or at all. For a window
 with no verdict yet, the fact resolves the real verdict on the spot:
@@ -411,7 +417,9 @@ as in NVDA.
 The per-app outposts shed their focus-shaped subscriptions — the
 per-outpost UIA focus registration, the MSAA focus hook, and the
 menu-popup hook. They keep process-scoped MSAA hooks for value, state,
-name, selection, menu end, and window destruction, and one UIA property
+name, selection, and window destruction (the end of a menu or of the
+Alt+Tab switcher is global too, and goes from the listener to Core,
+amended 2026-10-02), and one UIA property
 subscription that follows the focus and its ancestors (NVDA's selective
 registration on Windows 11); selection and notifications come
 desktop-wide from the listener. One extra hop (listener to

@@ -445,6 +445,12 @@ pub enum OutpostToSupervisor {
         /// The captured fact, tagged with the pid Core routes it to.
         fact: ListenerFact,
     },
+    /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
+    /// anywhere on the desktop, and no focus or foreground event followed
+    /// within 50 milliseconds. Sent only by the listener; the supervisor
+    /// passes it to the app, which reads the foreground application's
+    /// focused control (NVDA's fake focus).
+    MenuOrSwitchEnded,
 }
 
 impl OutpostToSupervisor {

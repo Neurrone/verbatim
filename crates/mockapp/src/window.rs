@@ -283,6 +283,10 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             let _ = unsafe { DestroyWindow(hwnd) };
             return;
         }
+        if let Command::Stall(ms) = command {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            continue;
+        }
         match context.backend {
             Backend::Uia => uia::apply_command(&context.tree, hwnd, command),
             Backend::Msaa => msaa::apply_command(&context.tree, hwnd, command),

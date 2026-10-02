@@ -1,7 +1,8 @@
 //! Stdin command parsing and the reader thread.
 //!
 //! Commands are one per line: `focus <id>`, `set-name <id> <text>`,
-//! `set-value <id> <text>`, `select <id>`, `notify <text>`, and `quit`.
+//! `set-value <id> <text>`, `select <id>`, `notify <text>`, `stall <ms>`,
+//! and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -29,6 +30,10 @@ pub(crate) enum Command {
     /// MSAA backend reports it as unsupported, since MSAA has no
     /// notification event.
     Notify(String),
+    /// `stall <ms>`: blocks the window thread for that many milliseconds, so
+    /// every cross-process call into the window waits, as with an
+    /// application that is starting up or busy.
+    Stall(u64),
     /// `quit`.
     Quit,
 }
@@ -48,6 +53,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
+        "stall" => rest.parse().ok().map(Command::Stall),
         "set-name" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetName(id.to_owned(), text.trim().to_owned()))

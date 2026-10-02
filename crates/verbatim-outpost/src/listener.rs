@@ -5,7 +5,9 @@
 //! global by nature and forwards each captured fact to Core, which routes it
 //! to the target application's own outpost:
 //!
-//! - MSAA focus, foreground, menu-popup, and alert events for every process;
+//! - MSAA focus, foreground, menu-popup, and alert events for every process,
+//!   and the end of a menu or of the Alt+Tab switcher, which go to Core
+//!   rather than to an application's outpost;
 //! - the desktop-wide UIA focus subscription;
 //! - desktop-wide UIA subscriptions for the events NVDA registers globally on
 //!   Windows 11: an element selected, a menu opened, and notifications.
@@ -35,6 +37,7 @@ use std::ffi::c_void;
 use std::io::{self, BufReader, Write};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
@@ -58,6 +61,11 @@ use crate::protocol::{
     UiaSnapshotFact, read_message, write_message,
 };
 
+/// How long after a menu or the Alt+Tab switcher closes the listener waits
+/// for a focus event before telling Core that none came: NVDA's fake-focus
+/// delay (`processFakeFocusWinEvent`).
+const MENU_END_GRACE: Duration = Duration::from_millis(50);
+
 /// The listener's outgoing queue: urgent messages first, then facts,
 /// coalesced one per element and kind.
 #[derive(Default)]
@@ -70,6 +78,11 @@ struct Outgoing {
 struct OutgoingState {
     urgent: VecDeque<OutpostToSupervisor>,
     facts: VecDeque<(Option<(Pid, FactKey)>, OutpostToSupervisor)>,
+    /// When a menu or the Alt+Tab switcher last closed with no focus event
+    /// since. NVDA fakes a focus from such an end only when no focus or
+    /// foreground event came with it, so a focus fact clears this, and Core
+    /// hears of the end only if [`MENU_END_GRACE`] passes first.
+    menu_end_at: Option<Instant>,
 }
 
 impl Outgoing {
@@ -82,12 +95,23 @@ impl Outgoing {
     /// kind.
     fn fact(&self, pid: Pid, fact: DeliveredFact) {
         let key = fact.key().map(|key| (pid, key));
+        let moves_focus = matches!(
+            fact,
+            DeliveredFact::Foreground { .. }
+                | DeliveredFact::MsaaFocus { .. }
+                | DeliveredFact::UiaFocus { .. }
+                | DeliveredFact::MenuPopup { .. }
+                | DeliveredFact::UiaMenuOpened { .. }
+        );
         let message = OutpostToSupervisor::FocusFact {
             trace_id: TraceId::mint(),
             observed_at_ms: now_ms(),
             fact: ListenerFact { pid, fact },
         };
         let mut state = self.lock();
+        if moves_focus {
+            state.menu_end_at = None;
+        }
         if let Some(key) = &key {
             state
                 .facts
@@ -98,12 +122,19 @@ impl Outgoing {
         self.ready.notify_one();
     }
 
+    /// Notes that a menu or the Alt+Tab switcher closed.
+    fn menu_or_switch_ended(&self) {
+        self.lock().menu_end_at = Some(Instant::now());
+        self.ready.notify_one();
+    }
+
     fn fault(&self, detail: String) {
         self.urgent(OutpostToSupervisor::Fault { detail });
     }
 
-    /// The next message to write, urgent ones first. Blocks while there is
-    /// none.
+    /// The next message to write, urgent ones first, then facts, then a
+    /// menu or switcher end that no focus event followed. Blocks while there
+    /// is none.
     fn next(&self) -> OutpostToSupervisor {
         let mut state = self.lock();
         loop {
@@ -113,10 +144,24 @@ impl Outgoing {
             if let Some((_, message)) = state.facts.pop_front() {
                 return message;
             }
+            let Some(ended) = state.menu_end_at else {
+                state = self
+                    .ready
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+                continue;
+            };
+            let due = ended + MENU_END_GRACE;
+            let now = Instant::now();
+            if now >= due {
+                state.menu_end_at = None;
+                return OutpostToSupervisor::MenuOrSwitchEnded;
+            }
             state = self
                 .ready
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
+                .wait_timeout(state, due - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
     }
 
@@ -329,6 +374,13 @@ fn forward_msaa_event(
     id_object: i32,
     id_child: i32,
 ) {
+    if matches!(kind, WinEventKind::MenuEnd | WinEventKind::SwitchEnd) {
+        // Not routed to an outpost: if no focus event follows, Core reads
+        // the focus of whichever application is then in front. NVDA accepts
+        // these from any window, even an invalid one.
+        outgoing.menu_or_switch_ended();
+        return;
+    }
     if hwnd == 0 {
         return;
     }
@@ -392,4 +444,57 @@ pub fn run_listener(
         listener.handle_command(&command);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    /// Takes messages from `outgoing` on another thread, since `next`
+    /// blocks while there is nothing to send.
+    fn drain(outgoing: &Arc<Outgoing>) -> mpsc::Receiver<OutpostToSupervisor> {
+        let (tx, rx) = mpsc::channel();
+        let outgoing = Arc::clone(outgoing);
+        thread::spawn(move || while tx.send(outgoing.next()).is_ok() {});
+        rx
+    }
+
+    fn msaa_focus() -> DeliveredFact {
+        DeliveredFact::MsaaFocus {
+            hwnd: 1,
+            id_object: -4,
+            id_child: 0,
+        }
+    }
+
+    #[test]
+    fn a_menu_end_no_focus_follows_reaches_core_after_the_grace() {
+        let outgoing = Arc::new(Outgoing::default());
+        let messages = drain(&outgoing);
+        let ended = Instant::now();
+        outgoing.menu_or_switch_ended();
+        let message = messages
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the menu end is sent");
+        assert!(matches!(message, OutpostToSupervisor::MenuOrSwitchEnded));
+        assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
+    }
+
+    #[test]
+    fn a_menu_end_a_focus_follows_is_not_sent() {
+        let outgoing = Arc::new(Outgoing::default());
+        outgoing.menu_or_switch_ended();
+        outgoing.fact(Pid(5), msaa_focus());
+        let messages = drain(&outgoing);
+        let first = messages
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the focus fact is sent");
+        assert!(matches!(first, OutpostToSupervisor::FocusFact { .. }));
+        assert!(
+            messages.recv_timeout(MENU_END_GRACE * 4).is_err(),
+            "a focus came with the menu end, so Core never hears of it"
+        );
+    }
 }

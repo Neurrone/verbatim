@@ -213,10 +213,15 @@ verified.
   backend last; a menu opening is ignored if a focus in the batch
   already put focus on a menu or menu item, and otherwise becomes a
   focus on the popup menu, so the reducer receives only focus events
-  for menus. A menu closing with no focus event within 50 milliseconds
-  makes the outpost read and report the real focus. **matched
-  (unverified)**; the Start menu path was verified before the
-  redesign.
+  for menus. A menu closing, menu mode ending, or the Alt+Tab
+  switcher closing anywhere on the desktop is forwarded by the focus
+  listener to Core; if Core's focus has not changed 50 milliseconds
+  later, Core asks the application then in the foreground for its
+  real focus, as NVDA's fake focus reads the focus from the foreground
+  window. Focus usually returns to another application than the one
+  that owned the menu, which a check inside the menu's own outpost
+  could not see. **matched (unverified)**; the Start menu path was
+  verified before the redesign.
 - Toggle button role and "pressed"/"not pressed" wording (UIA Toggle
   pattern on a Button; no separate Switch role). NVDA: UIA
   detection. Verbatim: **matched (verified)** (cross-process test;
