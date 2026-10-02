@@ -2206,6 +2206,63 @@ fn the_same_node_number_from_another_outpost_never_reaches_the_focus() {
 }
 
 #[test]
+fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
+    // Additional finding 1: a replaced outpost started its counters again
+    // while Core remembered the old ones. Node ids name their incarnation,
+    // so a replacement's small numbers are accepted at once, and the same
+    // numbers stamped with the old incarnation are a different node. The
+    // app drops the old incarnation's messages before they reach the
+    // reducer (`LiveOutposts` in verbatim-app).
+    let source = Pid(1);
+    let mut state = SrState::new();
+    for number in 1..=10_000 {
+        let control = node(number, Role::Button, Some("Old"), None, StateSet::new());
+        state = reduce_from(
+            &state,
+            &focus_event(TraceId::mint(), source, control),
+            OutpostId(1),
+        )
+        .0;
+    }
+    let (state, _) = reduce(&state, &ended(OutpostId(1)));
+
+    let slider = node(1, Role::Slider, Some("Volume"), Some("50"), StateSet::new());
+    let (state, effects) = reduce_from(
+        &state,
+        &focus_event(TraceId::mint(), source, slider),
+        OutpostId(2),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments[0],
+        UtteranceSegment::label("Volume"),
+        "the replacement's first event is accepted"
+    );
+
+    let value = |number, value: &str| {
+        event_in(
+            source,
+            None,
+            NormalizedEvent::ValueChanged {
+                node_id: NodeId::new(number),
+                value: Some(value.to_owned()),
+            },
+        )
+    };
+    let (_, effects) = reduce_from(&state, &value(10_000, "90"), OutpostId(1));
+    assert!(
+        effects.is_empty(),
+        "a late message from the replaced outpost"
+    );
+    let (_, effects) = reduce_from(&state, &value(1, "60"), OutpostId(1));
+    assert!(
+        effects.is_empty(),
+        "the replaced outpost's own node 1 is not the focus"
+    );
+    let (_, effects) = reduce_from(&state, &value(1, "60"), OutpostId(2));
+    assert_eq!(effects.len(), 1, "the replacement's node 1 is the focus");
+}
+
+#[test]
 fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_fact() {
     // Windows raised the new window's foreground event while refusing it the
     // foreground, so that fact was dropped; when it got the foreground later

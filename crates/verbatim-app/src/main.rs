@@ -11,6 +11,7 @@ mod clipboard;
 mod datetime;
 mod flight_dump;
 mod latency;
+mod live;
 mod requests;
 mod single_instance;
 
@@ -47,6 +48,7 @@ use verbatim_speech::{
 use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
+use live::LiveOutposts;
 use requests::{Asker, DumpTreeResult, RequestId, RequestTable};
 
 /// The one binding not carried by the keyboard layout's own script table:
@@ -523,26 +525,15 @@ struct ReducerThread<'a> {
     context: &'a ReducerContext,
     state: SrState,
     requests: RequestTable,
-    /// Outpost incarnations that have started and not yet ended, with
-    /// the application each watches and whether it is ready. A message from
-    /// an outpost that has ended is dropped before the reducer sees it.
-    live: HashMap<OutpostId, Live>,
+    /// Outpost incarnations that have started and not yet ended. A message
+    /// from an outpost that has ended is dropped before the reducer sees it.
+    live: LiveOutposts,
     /// Applications to ask for their current focus as soon as their outpost
     /// is ready: the startup foreground application, and the attention
     /// application after its outpost or the listener was replaced.
     focus_now_wanted: HashSet<Pid>,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
-}
-
-/// A live outpost incarnation.
-struct Live {
-    target_pid: Pid,
-    ready: bool,
-    /// The position of the last of its messages handled here.
-    position: u64,
-    /// The held nodes last sent to it, and the position acknowledged then.
-    held_sent: (BTreeSet<u64>, u64),
 }
 
 /// How many messages from an outpost may be handled before the nodes held in
@@ -558,15 +549,7 @@ impl ReducerThread<'_> {
                 outpost,
                 target_pid,
             } => {
-                self.live.insert(
-                    outpost,
-                    Live {
-                        target_pid,
-                        ready: false,
-                        position: 0,
-                        held_sent: (BTreeSet::new(), 0),
-                    },
-                );
+                self.live.started(outpost, target_pid);
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -583,11 +566,10 @@ impl ReducerThread<'_> {
                 message,
             } => {
                 // An outpost the supervisor has ended can still have messages
-                // in flight; they are dropped here, before the reducer.
-                if let Some(live) = self.live.get_mut(&outpost) {
-                    // Handled from here on: anything the reducer keeps from
-                    // it is in the held nodes sent after this input.
-                    live.position = position;
+                // in flight; they are dropped here, before the reducer. An
+                // accepted one is handled from here on: anything the reducer
+                // keeps from it is in the held nodes sent after this input.
+                if self.live.accept(outpost, position) {
                     self.on_outpost_input(pid, outpost, *message);
                 }
             }
@@ -603,7 +585,7 @@ impl ReducerThread<'_> {
                 if reason != EndReason::Retired && self.state.attention() == Some(target_pid) {
                     self.focus_now_wanted.insert(target_pid);
                 }
-                if self.live.remove(&outpost).is_some() {
+                if self.live.ended(outpost) {
                     self.context
                         .outposts
                         .lock()
@@ -637,7 +619,7 @@ impl ReducerThread<'_> {
         let Some(pid) = foreground_pid() else {
             return;
         };
-        let Some(outpost) = self.ready_outpost(pid) else {
+        let Some(outpost) = self.live.ready(pid) else {
             self.want_focus_now(pid);
             return;
         };
@@ -660,19 +642,10 @@ impl ReducerThread<'_> {
         );
     }
 
-    /// `pid`'s newest outpost incarnation, if it is ready.
-    fn ready_outpost(&self, pid: Pid) -> Option<OutpostId> {
-        self.live
-            .iter()
-            .filter(|(_, live)| live.target_pid == pid && live.ready)
-            .map(|(outpost, _)| *outpost)
-            .max()
-    }
-
     /// Asks `pid`'s outpost for the current focus now if it is ready, or as
     /// soon as it is, starting one if there is none.
     fn want_focus_now(&mut self, pid: Pid) {
-        if let Some(outpost) = self.ready_outpost(pid) {
+        if let Some(outpost) = self.live.ready(pid) {
             self.focus_now(outpost, pid);
         } else {
             self.focus_now_wanted.insert(pid);
@@ -731,9 +704,7 @@ impl ReducerThread<'_> {
                 target_pid,
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
-                if let Some(live) = self.live.get_mut(&outpost) {
-                    live.ready = true;
-                }
+                self.live.mark_ready(outpost);
                 if self.focus_now_wanted.remove(&target_pid) {
                     self.focus_now(outpost, target_pid);
                 }
@@ -813,7 +784,7 @@ impl ReducerThread<'_> {
             self.context.supervisor.note_views(views.0, views.1.clone());
             self.views = views;
         }
-        for (outpost, live) in &mut self.live {
+        for (outpost, live) in self.live.iter_mut() {
             let nodes: BTreeSet<u64> = held
                 .get(outpost)
                 .map(|nodes| nodes.iter().map(|id| id.number()).collect())
@@ -891,13 +862,7 @@ impl ReducerThread<'_> {
             let _ = reply.try_send(Err("no application holds attention yet".to_owned()));
             return;
         };
-        let Some(outpost) = self
-            .live
-            .iter()
-            .filter(|(_, live)| live.target_pid == pid)
-            .map(|(outpost, _)| *outpost)
-            .max()
-        else {
+        let Some(outpost) = self.live.newest(pid) else {
             let _ = reply.try_send(Err(format!("no outpost is watching pid {pid}")));
             return;
         };
@@ -924,7 +889,7 @@ fn reducer_loop(
         context,
         state: SrState::new(),
         requests: RequestTable::default(),
-        live: HashMap::new(),
+        live: LiveOutposts::default(),
         focus_now_wanted: HashSet::new(),
         views: (None, BTreeSet::new()),
     };
