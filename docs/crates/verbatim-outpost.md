@@ -59,10 +59,19 @@ Public API:
   node id in a message. Framing is newline-delimited compact JSON via
   `write_message` and `read_message`.
 - `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
-  `verdict(hwnd, class)` answers from the good class list, the bad class
-  list, a forced override from `SetBackendOverride`, or a kept probe result,
-  and `None` when only the `UiaHasServerSideProvider` probe can decide; the
-  worker then probes and calls `record_probe`. A probe that finds a UIA
+  `verdict(hwnd, &WindowClasses)` answers from the good class list, the
+  Windows 11 shell rule (the root ancestor's class is a shell top-level
+  window, and the window is not the Start button), the bad class list, a
+  forced override from `SetBackendOverride`, or a kept probe result, and
+  `None` when only the `UiaHasServerSideProvider` probe can decide; the
+  worker then probes and calls `record_probe`. `WindowClasses::of(hwnd)`
+  reads the window's raw class, its class normalized as NVDA normalizes it
+  (`normalize_class_name`: NVDA's class map, and the Windows Forms and
+  `ATL:` wrappers removed), and its root ancestor's class. When the probe
+  finds a provider, `post_probe_check` names the check NVDA makes before
+  using it (a console's formatted text, a list view's Windows Forms
+  origin); a provider that fails it is recorded with `record_excluded` and
+  is MSAA for the window's lifetime. A probe that finds a UIA
   provider is kept for the window's lifetime and dropped by `forget` when
   the window is destroyed, as decision D15 specifies. A probe that finds
   none is trusted for only `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's

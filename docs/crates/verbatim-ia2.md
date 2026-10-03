@@ -54,8 +54,10 @@ Public API:
   when the node is no longer kept, its window no longer exists, or its
   object has disconnected, and `selected_child` answers `None`:
   `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
-  (stopping at a known ancestor or a deadline, and saying which as
-  `Walked`) (per-hop `accParent` walks, outermost first, with the simple-child
+  (stopping at a known ancestor, a deadline, or a parent in a different
+  window that `read_by_other_api` says is read through UIA, and saying
+  which as `Walked`, whose `Crossed(hwnd)` lets the outpost continue the
+  walk through UIA) (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent

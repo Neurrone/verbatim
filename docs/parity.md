@@ -409,6 +409,17 @@ verified.
   baseline (maintainer decision; commit 6b7a519). **matched
   (verified)** against that baseline; simple-review-on filtering is
   **not planned** (revisit only if the baseline changes).
+- The API at a window boundary. NVDA: an object reached by navigation, or
+  as a focus ancestor, in a different window is read through that
+  window's API (`correctAPIForRelation`): an MSAA object in a UIA window
+  becomes the window's UIA element, and a UIA element that is another
+  window's root, in an MSAA window, becomes that window's MSAA object.
+  Verbatim: **matched since 2026-10-03**, for object navigation and for
+  focus ancestry in both directions; the UIA-to-MSAA direction of focus
+  ancestry was already matched. Checked live in Notepad's Save As dialog:
+  the file name box's ancestry continues through the shell's UIA view,
+  and navigating to its parents switches to UIA there. Until 2026-10-03
+  an MSAA walk or navigation step stayed in MSAA across windows.
 - Navigator follows focus; review follows navigator. NVDA coupling
   rules ([Review modes](nvda/review-modes.md)). Verbatim: **matched
   (unverified)** for the follow-focus default; `followCaret` /
@@ -479,10 +490,28 @@ verified.
 
 - Dual-stack MSAA+UIA with per-window arbitration. NVDA: the
   `isUIAWindow` referee with good/bad class lists
-  ([The UIA client](nvda/uia.md)). Verbatim: **matched in architecture (D1)**;
-  the arbitration probe exists, but the per-class scar-tissue lists
-  are **not yet** transcribed — expect per-app fidelity differences
-  until each is triaged (tracked per app-family as they land). A probe
+  ([The UIA client](nvda/uia.md)). Verbatim: **matched since
+  2026-10-03**, in NVDA's order: the class name is normalized as NVDA
+  normalizes it (its class map, and the Windows Forms and `ATL:` wrappers
+  removed, so a Delphi `TEdit` or a Windows Forms edit counts as an
+  `Edit`); NVDA's good classes are UIA; so is a Windows 11 shell window,
+  recognized by its root ancestor's class, except the Start button; NVDA's
+  bad classes are MSAA; otherwise the window is probed. A window with a
+  provider is still read through MSAA when NVDA would not use the
+  provider: a console whose text does not report formatting (older
+  consoles; the Windows 11 console reports it and stays UIA, checked
+  live), and a list view outside Windows Forms (a Windows Forms list view
+  was recognized live). Until 2026-10-03 the class was not normalized and
+  the shell rule tested the window's own class. **Not yet (M6):** NVDA's
+  Word, Excel, and Chromium exceptions, which set UIA aside only when NVDA
+  has injected its in-process helper; without it NVDA uses UIA for them,
+  as Verbatim does, and they arrive with Verbatim's helper (decision D2).
+  **Not carried:** the Office 2013 and older ribbon rule (`NetUIHWND`),
+  for Office versions Microsoft no longer supports, and the rule against
+  NVDA's own process, which guards against a freeze of UIA inside the
+  screen reader's process that outposts cannot have. Application modules'
+  own good and bad windows wait for extensions, except the Explorer shell
+  rule above, which is core policy (roadmap M3). A probe
   that finds a UIA provider is kept for the window's lifetime, one that
   finds none for 500 ms, NVDA's cache period. Checked live on
   2026-10-02 across about 65 windows of Explorer, Settings, Start, and

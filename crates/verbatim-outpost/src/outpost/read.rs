@@ -4,14 +4,14 @@
 //! application and so runs only on the worker, under its deadline.
 
 use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
-use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
+use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet};
-use verbatim_uia::map::snapshot_from_cached_element;
+use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
 use verbatim_uia::{Uia, probe_server_side_provider};
 
-use crate::arbitration::window_class_name;
+use crate::arbitration::{PostProbeCheck, WindowClasses, post_probe_check, window_class_name};
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
@@ -108,15 +108,15 @@ impl Client {
 /// its probe is cancelled, and is probed again next time. Returns `true` for
 /// UIA.
 pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
-    let class = window_class_name(hwnd);
-    if let Some(verdict) = context.arbitrator().verdict(hwnd, &class) {
+    let classes = WindowClasses::of(hwnd);
+    if let Some(verdict) = context.arbitrator().verdict(hwnd, &classes) {
         return verdict;
     }
     let started = std::time::Instant::now();
     let answer = probe_server_side_provider(hwnd);
     tracing::debug!(
         hwnd,
-        class,
+        class = classes.raw,
         ?answer,
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"
@@ -124,6 +124,26 @@ pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
     let Some(is_uia) = answer else {
         return false;
     };
+    if is_uia && let Some(check) = post_probe_check(&classes) {
+        // NVDA uses some providers only after checking them.
+        let usable = match check {
+            PostProbeCheck::Console => verbatim_uia::console_reports_formatting(hwnd),
+            PostProbeCheck::WindowsFormsListView => verbatim_uia::is_windows_forms(hwnd),
+        };
+        tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
+        return match usable {
+            Some(true) => {
+                context.arbitrator().record_probe(hwnd, true);
+                true
+            }
+            Some(false) => {
+                context.arbitrator().record_excluded(hwnd);
+                false
+            }
+            // The application did not answer: asked again next time.
+            None => false,
+        };
+    }
     context.arbitrator().record_probe(hwnd, is_uia);
     is_uia
 }
@@ -293,38 +313,62 @@ fn uia_ancestors(
     if known(client.id) {
         return Some(splice(previous, below, client.id));
     }
-    let (above, walked) = msaa_ancestors(context, &client, previous, deadline);
-    let chain: Vec<NodeSnapshot> = above.into_iter().chain(below).collect();
-    match walked {
-        verbatim_ia2::acquire::Walked::OutOfTime => None,
-        verbatim_ia2::acquire::Walked::MetKnown(met) => Some(splice(previous, chain, met)),
-        verbatim_ia2::acquire::Walked::Complete => Some(chain),
-    }
+    let above = msaa_ancestors(context, Some((uia, cache)), &client, previous, deadline)?;
+    Some(above.into_iter().chain(below).collect())
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
 /// above controls (see [`msaa_enrichment`]), stopping at a container of
-/// `previous` and when `deadline` passes, and how the walk ended.
+/// `previous` and reusing the rest, or `None` when `deadline` passed. Where
+/// a parent lies in a window read through UIA, the walk continues from that
+/// window's UIA element, as NVDA switches API when a parent is in such a
+/// window (`correctAPIForRelation`): in a Save As dialog, the file name
+/// box's containers above the shell's UIA view are UIA's. Without `uia` the
+/// walk stays in MSAA.
 fn msaa_ancestors(
     context: &Context,
+    uia: Option<(&Uia, &IUIAutomationCacheRequest)>,
     node: &NodeSnapshot,
     previous: &[NodeSnapshot],
     deadline: Option<std::time::Instant>,
-) -> (Vec<NodeSnapshot>, verbatim_ia2::acquire::Walked) {
+) -> Option<Vec<NodeSnapshot>> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let read_by_uia = |hwnd: isize| uia.is_some() && window_uses_uia(context, hwnd);
     let limits = verbatim_ia2::acquire::AncestorLimits {
         max_hops: MAX_ANCESTOR_HOPS,
         known: &known,
+        read_by_other_api: &read_by_uia,
         deadline,
     };
     let (chain, walked) =
         verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
             .unwrap_or((Vec::new(), verbatim_ia2::acquire::Walked::Complete));
-    let chain = chain
+    let chain: Vec<NodeSnapshot> = chain
         .into_iter()
         .filter(|ancestor| ancestor.role != Role::Window)
         .collect();
-    (chain, walked)
+    match walked {
+        verbatim_ia2::acquire::Walked::OutOfTime => None,
+        verbatim_ia2::acquire::Walked::MetKnown(met) => Some(splice(previous, chain, met)),
+        verbatim_ia2::acquire::Walked::Complete => Some(chain),
+        verbatim_ia2::acquire::Walked::Crossed(hwnd) => {
+            let Some((uia, cache)) = uia else {
+                return Some(chain);
+            };
+            let Ok(element) = uia.element_from_handle(hwnd, cache) else {
+                return Some(chain);
+            };
+            // SAFETY: `element` was just built with `cache`.
+            let top = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
+            let top_id = top.id;
+            let below: Vec<NodeSnapshot> = std::iter::once(top).chain(chain).collect();
+            if known(top_id) {
+                return Some(splice(previous, below, top_id));
+            }
+            let above = uia_ancestors(context, uia, cache, &element, previous, deadline)?;
+            Some(above.into_iter().chain(below).collect())
+        }
+    }
 }
 
 /// An MSAA node's ancestors and, for a selection container, its selected
@@ -334,6 +378,7 @@ fn msaa_ancestors(
 /// child; running out of time to containers unknown.
 pub(super) fn msaa_enrichment(
     context: &Context,
+    client: &mut Client,
     node: &NodeSnapshot,
     previous: &[NodeSnapshot],
 ) -> Enrichment {
@@ -343,11 +388,14 @@ pub(super) fn msaa_enrichment(
     // ancestor. A dialog is still announced, by its client area's dialog
     // role.
     let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
-    let (chain, walked) = msaa_ancestors(context, node, previous, Some(deadline));
-    let ancestors = match walked {
-        verbatim_ia2::acquire::Walked::OutOfTime => None,
-        verbatim_ia2::acquire::Walked::MetKnown(met) => Some(splice(previous, chain, met)),
-        verbatim_ia2::acquire::Walked::Complete => Some(chain),
+    let ancestors = match client.uia_and_cache() {
+        // A UIA read in the walk waits no longer than the budget.
+        Ok((uia, cache)) => uia
+            .within(ENRICHMENT_BUDGET, |uia| {
+                msaa_ancestors(context, Some((uia, &cache)), node, previous, Some(deadline))
+            })
+            .unwrap_or(None),
+        Err(_) => msaa_ancestors(context, None, node, previous, Some(deadline)),
     };
     let selected = if wants_selected_child(node.role) {
         verbatim_ia2::acquire::selected_child(node.id, &context.msaa_registry)
@@ -382,7 +430,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     } else {
         let node =
             verbatim_ia2::acquire::focused_snapshot(context.target_pid, &context.msaa_registry)?;
-        let (ancestors, selected_child) = msaa_enrichment(context, &node, &[]);
+        let (ancestors, selected_child) = msaa_enrichment(context, client, &node, &[]);
         let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
             node,
@@ -476,13 +524,78 @@ pub(super) fn navigate(
     node_id: NodeId,
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
-    if context.uia_registry.runtime_id_of(node_id).is_some() {
+    let (neighbor, from_window) = if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, cache, element) = uia_node(context, client, node_id)?;
+        let from_window = verbatim_uia::nearest_window_handle(&element);
         // SAFETY: `element` was built with `cache`.
-        return unsafe { uia.navigate(&element, &cache, &context.uia_registry, kind) }
-            .map_err(|error| ReadError::Failed(format!("UIA navigation failed: {error}")));
+        let neighbor = unsafe { uia.navigate(&element, &cache, &context.uia_registry, kind) }
+            .map_err(|error| ReadError::Failed(format!("UIA navigation failed: {error}")))?;
+        (neighbor, from_window)
+    } else {
+        let from_window = context.msaa_registry.key_of(node_id).map(|key| key.0);
+        let neighbor = verbatim_ia2::acquire::navigate(node_id, &context.msaa_registry, kind)?;
+        (neighbor, from_window)
+    };
+    Ok(neighbor.map(|neighbor| corrected_backend(context, client, from_window, neighbor, kind)))
+}
+
+/// `neighbor` through the backend its window uses, as NVDA corrects the API
+/// of an object reached by navigation (`correctAPIForRelation`): an MSAA
+/// object in a different window from `from_window`, whose window is UIA,
+/// becomes that window's UIA element; a UIA element that is the root of a
+/// different window, whose window is MSAA, becomes that window's MSAA
+/// object (its client area when reached as a parent, its window object
+/// otherwise). Anything else, or a read that fails, is kept as it is.
+fn corrected_backend(
+    context: &Context,
+    client: &mut Client,
+    from_window: Option<isize>,
+    neighbor: NodeSnapshot,
+    kind: QueryKind,
+) -> NodeSnapshot {
+    let Some(from_window) = from_window.filter(|&hwnd| hwnd != 0) else {
+        return neighbor;
+    };
+    if context.uia_registry.runtime_id_of(neighbor.id).is_some() {
+        // SAFETY: the registry's element was built with the base cache
+        // request, which caches the native window handle.
+        let window = context
+            .uia_registry
+            .element_of(neighbor.id)
+            .and_then(|agile| agile.resolve().ok())
+            .map_or(0, |element| unsafe {
+                cached_native_window_handle(&element)
+            });
+        if window == 0 || window == from_window || window_uses_uia(context, window) {
+            return neighbor;
+        }
+        let object = if kind == QueryKind::Parent {
+            OBJID_CLIENT
+        } else {
+            OBJID_WINDOW
+        };
+        return verbatim_ia2::acquire::snapshot_from_event(
+            window,
+            object.0,
+            CHILDID_SELF,
+            &context.msaa_registry,
+        )
+        .unwrap_or(neighbor);
     }
-    verbatim_ia2::acquire::navigate(node_id, &context.msaa_registry, kind).map_err(ReadError::from)
+    let Some((window, _, _)) = context.msaa_registry.key_of(neighbor.id) else {
+        return neighbor;
+    };
+    if window == 0 || window == from_window || !window_uses_uia(context, window) {
+        return neighbor;
+    }
+    client
+        .uia_and_cache()
+        .ok()
+        .and_then(|(uia, cache)| uia.element_from_handle(window, &cache).ok())
+        // SAFETY: the element was just built with the base cache request.
+        .map_or(neighbor, |element| unsafe {
+            snapshot_from_cached_element(&element, &context.uia_registry)
+        })
 }
 
 /// Activates a node.

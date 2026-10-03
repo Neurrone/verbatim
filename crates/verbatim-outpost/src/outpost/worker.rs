@@ -962,7 +962,8 @@ impl Worker<'_> {
             tracing::debug!(hwnd, id_object, id_child, "MSAA focus dropped: unreadable");
             return;
         };
-        let enrichment = read::msaa_enrichment(self.context, &node, &self.focus_chain());
+        let previous = self.focus_chain();
+        let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
         // which weeds out stale and spurious focus events. Ancestors that
@@ -1234,6 +1235,7 @@ impl Worker<'_> {
     fn query(&mut self, request_id: u64, query: &Query, trace: TraceId) {
         let context = self.context;
         let client = &mut *self.client;
+        let started = std::time::Instant::now();
         let result = match query {
             Query::FocusNow => Ok(QueryResult::Focus(read::focus_now(context, client))),
             Query::Navigate { node_id, kind } => {
@@ -1252,6 +1254,12 @@ impl Worker<'_> {
             Err(ReadError::Gone) => QueryOutcome::Gone,
             Err(ReadError::Failed(reason)) => QueryOutcome::Failed(reason),
         };
+        tracing::debug!(
+            ?query,
+            ?outcome,
+            elapsed_ms = started.elapsed().as_millis(),
+            "query answered"
+        );
         publish(
             context,
             self.generation,

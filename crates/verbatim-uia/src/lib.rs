@@ -32,6 +32,7 @@
 //! - [`map`] — control-type and cached-property mapping into the model.
 
 mod cache;
+mod checks;
 mod client;
 mod com;
 mod focus;
@@ -42,6 +43,7 @@ mod registry;
 mod subscribe;
 
 pub use cache::base_cache_request;
+pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{AncestorStops, AncestorWalk, Uia};
 pub use com::init_mta;
 pub use focus::{FocusCallback, FocusRegistration};

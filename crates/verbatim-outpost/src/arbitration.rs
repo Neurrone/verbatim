@@ -1,12 +1,17 @@
 //! Per-window backend arbitration (architecture section 4).
 //!
-//! Mirrors NVDA's ladder, cheapest rung first: a config-overridable "good"
-//! class list forces UIA; a "bad" class list (seeded from NVDA's, where UIA
-//! implementations are known to interfere with MSAA) forces MSAA; otherwise the
-//! window is probed with `UiaHasServerSideProvider`. Class-list checks are fast
-//! local window calls; the probe blocks on the target's message pump and runs
-//! only on the outpost's worker, under its deadline
-//! ([`verbatim_uia::has_server_side_provider`]).
+//! Mirrors NVDA's ladder, cheapest rung first, on the window's class name
+//! normalized as NVDA normalizes it ([`normalize_class_name`]): a
+//! config-overridable "good" class list forces UIA, and so does a Windows 11
+//! shell window, recognized by its root ancestor's class; a "bad" class list
+//! (seeded from NVDA's, where UIA implementations are known to interfere with
+//! MSAA) forces MSAA; otherwise the window is probed with
+//! `UiaHasServerSideProvider`. A window with a provider is still set aside
+//! for MSAA when its provider is one NVDA does not use: an old console's,
+//! or a list view's outside Windows Forms ([`post_probe_check`]).
+//! Class-list checks are fast local window calls; the probe blocks on the
+//! target's message pump and runs only on the outpost's worker, under its
+//! deadline ([`verbatim_uia::has_server_side_provider`]).
 //!
 //! A probe that finds a UIA provider is kept for the window's lifetime and
 //! forgotten when the window is destroyed ([`Arbitrator::forget`]), as
@@ -24,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, GetClassNameW};
 
 /// How long a probe that found no UIA provider is trusted before the window
 /// is probed again: NVDA's `isUIAWindow` cache period.
@@ -37,6 +42,8 @@ enum Probed {
     Uia,
     /// No provider was found at this time.
     NotUia(Instant),
+    /// The window has a provider NVDA does not use, for its whole lifetime.
+    Excluded,
 }
 
 /// The classification a window's class name yields before any probe.
@@ -132,10 +139,16 @@ impl Arbitrator {
         self.cache.remove(&hwnd);
     }
 
-    fn classify(&self, class_name: &str) -> ClassVerdict {
-        if self.good_classes.contains(class_name) {
+    /// Records that `hwnd` has a UIA provider NVDA does not use
+    /// ([`post_probe_check`]): it is MSAA until the window is destroyed.
+    pub fn record_excluded(&mut self, hwnd: isize) {
+        self.cache.insert(hwnd, Probed::Excluded);
+    }
+
+    fn classify(&self, classes: &WindowClasses) -> ClassVerdict {
+        if self.good_classes.contains(&classes.normalized) || classes.is_shell() {
             ClassVerdict::Uia
-        } else if self.bad_classes.contains(class_name) {
+        } else if self.bad_classes.contains(&classes.normalized) {
             ClassVerdict::NonUia
         } else {
             ClassVerdict::Unknown
@@ -147,24 +160,133 @@ impl Arbitrator {
     /// probe can decide: the window has not been probed yet, or its last
     /// probe found no provider longer ago than [`NEGATIVE_VERDICT_LIFETIME`].
     #[must_use]
-    pub fn verdict(&self, hwnd: isize, class_name: &str) -> Option<bool> {
-        self.verdict_at(hwnd, class_name, Instant::now())
+    pub fn verdict(&self, hwnd: isize, classes: &WindowClasses) -> Option<bool> {
+        self.verdict_at(hwnd, classes, Instant::now())
     }
 
-    fn verdict_at(&self, hwnd: isize, class_name: &str, now: Instant) -> Option<bool> {
+    fn verdict_at(&self, hwnd: isize, classes: &WindowClasses, now: Instant) -> Option<bool> {
         if self.forced.is_some() {
             return self.forced;
         }
-        match self.classify(class_name) {
+        match self.classify(classes) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
             ClassVerdict::Unknown => match self.cache.get(&hwnd)? {
                 Probed::Uia => Some(true),
+                Probed::Excluded => Some(false),
                 Probed::NotUia(at) => (now.saturating_duration_since(*at)
                     < NEGATIVE_VERDICT_LIFETIME)
                     .then_some(false),
             },
         }
+    }
+}
+
+/// The class names arbitration decides on, read with inexpensive local
+/// calls safe on any thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowClasses {
+    /// The window's own class, as Windows reports it.
+    pub raw: String,
+    /// The window's class normalized as NVDA normalizes it
+    /// ([`normalize_class_name`]).
+    pub normalized: String,
+    /// The class of the window's root ancestor (itself, for a top-level
+    /// window).
+    pub root: String,
+}
+
+impl WindowClasses {
+    /// Reads `hwnd`'s classes.
+    #[must_use]
+    pub fn of(hwnd: isize) -> Self {
+        // SAFETY: GetAncestor takes any handle and returns null for an
+        // invalid one, whose class then reads as empty.
+        let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
+        Self::new(
+            &window_class_name(hwnd),
+            &window_class_name(root.0 as isize),
+        )
+    }
+
+    /// The classes of a window of class `raw` whose root ancestor is of
+    /// class `root`.
+    #[must_use]
+    pub fn new(raw: &str, root: &str) -> Self {
+        Self {
+            raw: raw.to_owned(),
+            normalized: normalize_class_name(raw),
+            root: root.to_owned(),
+        }
+    }
+
+    /// Whether this is a Windows 11 shell window NVDA reads through UIA: its
+    /// root ancestor is one of the shell's top-level windows, and it is not
+    /// the Start button, which reports itself through MSAA on some systems.
+    fn is_shell(&self) -> bool {
+        SHELL_ROOT_CLASSES.contains(&self.root.as_str()) && self.raw != "Start"
+    }
+}
+
+/// A window class name with the parts NVDA disregards removed, mapped to the
+/// well-known class it is compatible with: a Windows Forms class name is cut
+/// down to the control class it wraps, an `ATL:` prefix is dropped, and the
+/// result, or failing that the name itself, is looked up in NVDA's class
+/// map, so a Delphi `TEdit` or a Windows Forms edit is arbitrated as an
+/// `Edit`.
+#[must_use]
+pub fn normalize_class_name(raw: &str) -> String {
+    if let Some(mapped) = mapped_class(raw) {
+        return mapped.to_owned();
+    }
+    let unwrapped = windows_forms_class(raw).or_else(|| raw.strip_prefix("ATL:"));
+    match unwrapped {
+        Some(inner) => mapped_class(inner).unwrap_or(inner).to_owned(),
+        None => raw.to_owned(),
+    }
+}
+
+/// The control class inside a Windows Forms class name: `EDIT` in
+/// `WindowsForms10.EDIT.app.0.141b42a_r9_ad1`. NVDA's pattern is
+/// `WindowsForms`, digits, a dot, then the class up to the last `.app.`.
+fn windows_forms_class(raw: &str) -> Option<&str> {
+    let rest = raw.strip_prefix("WindowsForms")?;
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+    let rest = rest.strip_prefix('.')?;
+    let end = rest.rfind(".app.")?;
+    Some(&rest[..end])
+}
+
+fn mapped_class(class: &str) -> Option<&'static str> {
+    CLASS_MAP
+        .iter()
+        .find(|(from, _)| *from == class)
+        .map(|(_, to)| *to)
+}
+
+/// A check NVDA makes on a window that has a UIA provider before using it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PostProbeCheck {
+    /// A console: its provider is used only when its text reports
+    /// formatting, which the consoles of current Windows do and older
+    /// consoles, with incomplete providers, do not.
+    Console,
+    /// A list view: its provider is used only when it comes from Windows
+    /// Forms, whose list views have no MSAA implementation; elsewhere the
+    /// MSAA implementation is the more complete one.
+    WindowsFormsListView,
+}
+
+/// The check NVDA makes on a window of these classes after its probe finds a
+/// provider, if it makes one. NVDA's Word, Excel, and Chromium exceptions
+/// apply only when it has injected its in-process helper, so they wait for
+/// Verbatim's (decision D2, M6).
+#[must_use]
+pub fn post_probe_check(classes: &WindowClasses) -> Option<PostProbeCheck> {
+    match classes.normalized.as_str() {
+        "ConsoleWindowClass" => Some(PostProbeCheck::Console),
+        "SysListView32" => Some(PostProbeCheck::WindowsFormsListView),
+        _ => None,
     }
 }
 
@@ -181,35 +303,28 @@ pub fn window_class_name(hwnd: isize) -> String {
     String::from_utf16_lossy(&buffer[..len])
 }
 
-/// Classes that are always treated as UIA, before any probe runs. Two
-/// NVDA-lifted lists concatenated, each pinned by its own unit test so a
-/// future NVDA sync is a diff of two lists:
-///
-/// - NVDA's `goodUIAWindowClassNames` tuple
-///   (`nvda/source/UIAHandler/__init__.py`): classes whose windows are
-///   always native UIA even when the probe would miss them.
-/// - The Windows 11 shell set from NVDA's Explorer app module's
-///   `isGoodUIAWindow` (`nvda/source/appModules/explorer.py`): the shell
-///   root and top-level shell feature windows — taskbar, systray overflow,
-///   Task View and snap layouts, and the input switcher — that NVDA
-///   reclassifies as UIA on Windows 11 (roadmap M3's shell-support bullet:
-///   window-classification rules as generic core policy, not per-app
-///   patches). NVDA checks these against the event window's *root ancestor*
-///   class; Verbatim's per-window arbitration checks the window's own class,
-///   which covers the same windows because each named class is itself the
-///   top-level window of its shell surface. NVDA's `ApplicationFrameWindow`
-///   entry (the emoji-panel workaround) and its `Start`-class exclusion are
-///   deliberately not carried: the former predates the probe handling those
-///   windows correctly, and the latter only matters under NVDA's
-///   IAccessible-first event handling.
+/// Classes that are always treated as UIA, before any probe runs: NVDA's
+/// `goodUIAWindowClassNames` tuple (`nvda/source/UIAHandler/__init__.py`),
+/// classes whose windows are always native UIA even when the probe would
+/// miss them.
 const GOOD_UIA_CLASSES: &[&str] = &[
-    // NVDA goodUIAWindowClassNames: Windows Defender Application Guard
-    // windows are always native UIA.
+    // Windows Defender Application Guard windows are always native UIA.
     "RAIL_WINDOW",
-    // NVDA goodUIAWindowClassNames: WinUI 3 top-level pane.
+    // WinUI 3 top-level pane.
     "Microsoft.UI.Content.DesktopChildSiteBridge",
-    // NVDA explorer.py isGoodUIAWindow: Windows 11 shell UI root — Start,
-    // Search, Widgets, and the taskbar's own elements.
+];
+
+/// The Windows 11 shell's top-level windows, from NVDA's Explorer app
+/// module's `isGoodUIAWindow` (`nvda/source/appModules/explorer.py`): a
+/// window under one of these (its root ancestor's class), other than the
+/// Start button, is UIA, as NVDA reclassifies it on Windows 11 (roadmap M3's
+/// shell-support bullet: window-classification rules as generic core
+/// policy, not per-app patches). NVDA's `ApplicationFrameWindow` entry (the
+/// emoji-panel workaround) is deliberately not carried: it predates the
+/// probe handling those windows correctly.
+const SHELL_ROOT_CLASSES: &[&str] = &[
+    // The shell UI root: Start, Search, Widgets, and the taskbar's own
+    // elements.
     "Shell_TrayWnd",
     // NVDA explorer.py isGoodUIAWindow: the language/input switcher.
     "Shell_InputSwitchTopLevelWindow",
@@ -218,6 +333,56 @@ const GOOD_UIA_CLASSES: &[&str] = &[
     // NVDA explorer.py isGoodUIAWindow: the redesigned systray overflow
     // (Windows 11 22H2 and later).
     "TopLevelWindowForOverflowXamlIsland",
+];
+
+/// NVDA's `windowClassMap` (`nvda/source/NVDAObjects/window/__init__.py`):
+/// class names mapped to the well-known class they are compatible with.
+const CLASS_MAP: &[(&str, &str)] = &[
+    ("EDIT", "Edit"),
+    ("TTntEdit.UnicodeClass", "Edit"),
+    ("TMaskEdit", "Edit"),
+    ("TTntMemo.UnicodeClass", "Edit"),
+    ("TRichEdit", "RichEdit20"),
+    ("TRichViewEdit", "Edit"),
+    ("TInEdit.UnicodeClass", "Edit"),
+    ("TInEdit", "Edit"),
+    ("TEdit", "Edit"),
+    ("TFilenameEdit", "Edit"),
+    ("TSpinEdit", "Edit"),
+    ("ThunderRT6TextBox", "Edit"),
+    ("TMemo", "Edit"),
+    ("RICHEDIT", "RichEdit"),
+    ("TPasswordEdit", "Edit"),
+    ("THppEdit.UnicodeClass", "Edit"),
+    ("TUnicodeTextEdit.UnicodeClass", "Edit"),
+    ("TTextEdit", "Edit"),
+    ("TPropInspEdit", "Edit"),
+    ("TFilterbarEdit.UnicodeClass", "Edit"),
+    ("EditControl", "Edit"),
+    ("TNavigableTntMemo.UnicodeClass", "Edit"),
+    ("TNavigableTntEdit.UnicodeClass", "Edit"),
+    ("TAltEdit.UnicodeClass", "Edit"),
+    ("TAltEdit", "Edit"),
+    ("TDefEdit", "Edit"),
+    ("TRichEditViewer", "RichEdit"),
+    ("WFMAINRE", "RichEdit20"),
+    ("RichEdit20A", "RichEdit20"),
+    ("RichEdit20W", "RichEdit20"),
+    ("TChatRichEdit", "RichEdit20"),
+    ("TAccessibleEdit", "Edit"),
+    ("TskRichEdit.UnicodeClass", "RichEdit20"),
+    ("RichEdit20WPT", "RichEdit20"),
+    ("RICHEDIT60W", "RICHEDIT50W"),
+    ("TChatRichEdit.UnicodeClass", "RichEdit20"),
+    ("TMyRichEdit", "RichEdit20"),
+    ("TExRichEdit", "RichEdit20"),
+    ("RichTextWndClass", "RichEdit20"),
+    ("TSRichEdit", "RichEdit20"),
+    ("TRxRichEdit", "RichEdit20"),
+    ("ScintillaWindowImpl", "Scintilla"),
+    ("RICHEDIT60W_WLXPRIVATE", "RICHEDIT50W"),
+    ("TNumEdit", "Edit"),
+    ("TAccessibleRichEdit", "RichEdit20"),
 ];
 
 /// Classes whose UIA implementations interfere with MSAA and are forced to
@@ -248,23 +413,28 @@ const BAD_UIA_CLASSES: &[&str] = &[
 mod tests {
     use super::*;
 
+    /// The classes of a top-level window of class `class`.
+    fn top(class: &str) -> WindowClasses {
+        WindowClasses::new(class, class)
+    }
+
     #[test]
     fn good_class_is_uia_without_probing() {
         let arb = Arbitrator::new(&[]);
-        assert_eq!(arb.verdict(1, "RAIL_WINDOW"), Some(true));
+        assert_eq!(arb.verdict(1, &top("RAIL_WINDOW")), Some(true));
     }
 
     #[test]
     fn bad_class_is_non_uia_without_probing() {
         let arb = Arbitrator::new(&[]);
-        assert_eq!(arb.verdict(1, "Edit"), Some(false));
-        assert_eq!(arb.verdict(1, "RichEdit20"), Some(false));
+        assert_eq!(arb.verdict(1, &top("Edit")), Some(false));
+        assert_eq!(arb.verdict(1, &top("RichEdit20")), Some(false));
     }
 
     #[test]
     fn extra_good_class_overrides_to_uia() {
         let arb = Arbitrator::new(&["MyAppCanvas"]);
-        assert_eq!(arb.verdict(1, "MyAppCanvas"), Some(true));
+        assert_eq!(arb.verdict(1, &top("MyAppCanvas")), Some(true));
     }
 
     #[test]
@@ -272,15 +442,26 @@ mod tests {
         let mut arb = Arbitrator::new(&[]);
         let probed = Instant::now();
         arb.record_probe_at(42, false, probed);
-        assert_eq!(arb.verdict_at(42, "SomeUnknownClass", probed), Some(false));
         assert_eq!(
-            arb.verdict_at(42, "SomeUnknownClass", probed + NEGATIVE_VERDICT_LIFETIME),
+            arb.verdict_at(42, &top("SomeUnknownClass"), probed),
+            Some(false)
+        );
+        assert_eq!(
+            arb.verdict_at(
+                42,
+                &top("SomeUnknownClass"),
+                probed + NEGATIVE_VERDICT_LIFETIME
+            ),
             None,
             "a probe that found no provider may have met a busy application"
         );
         arb.record_probe_at(42, true, probed + NEGATIVE_VERDICT_LIFETIME);
         assert_eq!(
-            arb.verdict_at(42, "SomeUnknownClass", probed + Duration::from_secs(3600)),
+            arb.verdict_at(
+                42,
+                &top("SomeUnknownClass"),
+                probed + Duration::from_secs(3600)
+            ),
             Some(true),
             "a provider, once found, is kept"
         );
@@ -296,12 +477,16 @@ mod tests {
         let finished = started + Duration::from_secs(2);
         arb.renew_probes_since(started, finished);
         assert_eq!(
-            arb.verdict_at(7, "SomeUnknownClass", finished + Duration::from_millis(100)),
+            arb.verdict_at(
+                7,
+                &top("SomeUnknownClass"),
+                finished + Duration::from_millis(100)
+            ),
             Some(false),
             "the slow entry's own probe still holds just after it finished"
         );
         assert_eq!(
-            arb.verdict_at(8, "SomeUnknownClass", finished),
+            arb.verdict_at(8, &top("SomeUnknownClass"), finished),
             None,
             "a probe from before the entry is not renewed"
         );
@@ -310,12 +495,12 @@ mod tests {
     #[test]
     fn a_probed_verdict_lasts_until_the_window_is_destroyed() {
         let mut arb = Arbitrator::new(&[]);
-        assert_eq!(arb.verdict(42, "SomeUnknownClass"), None);
+        assert_eq!(arb.verdict(42, &top("SomeUnknownClass")), None);
         arb.record_probe(42, true);
-        assert_eq!(arb.verdict(42, "SomeUnknownClass"), Some(true));
+        assert_eq!(arb.verdict(42, &top("SomeUnknownClass")), Some(true));
         arb.forget(42);
         assert_eq!(
-            arb.verdict(42, "SomeUnknownClass"),
+            arb.verdict(42, &top("SomeUnknownClass")),
             None,
             "a reused handle is probed afresh"
         );
@@ -329,17 +514,21 @@ mod tests {
     #[test]
     fn good_class_list_matches_its_nvda_sources() {
         // nvda/source/UIAHandler/__init__.py, goodUIAWindowClassNames.
-        let uia_handler_good = ["RAIL_WINDOW", "Microsoft.UI.Content.DesktopChildSiteBridge"];
+        assert_eq!(
+            GOOD_UIA_CLASSES,
+            ["RAIL_WINDOW", "Microsoft.UI.Content.DesktopChildSiteBridge"]
+        );
         // nvda/source/appModules/explorer.py, isGoodUIAWindow's Windows 11
-        // shell tuple (checked there against the root ancestor's class).
-        let explorer_shell = [
-            "Shell_TrayWnd",
-            "Shell_InputSwitchTopLevelWindow",
-            "XamlExplorerHostIslandWindow",
-            "TopLevelWindowForOverflowXamlIsland",
-        ];
-        let expected: Vec<&str> = uia_handler_good.into_iter().chain(explorer_shell).collect();
-        assert_eq!(GOOD_UIA_CLASSES, expected.as_slice());
+        // shell tuple.
+        assert_eq!(
+            SHELL_ROOT_CLASSES,
+            [
+                "Shell_TrayWnd",
+                "Shell_InputSwitchTopLevelWindow",
+                "XamlExplorerHostIslandWindow",
+                "TopLevelWindowForOverflowXamlIsland",
+            ]
+        );
     }
 
     /// Pins the bad-class list to NVDA's `badUIAWindowClassNames` in
@@ -381,10 +570,88 @@ mod tests {
             "TopLevelWindowForOverflowXamlIsland",
         ] {
             assert_eq!(
-                arb.verdict(1, class),
+                arb.verdict(1, &top(class)),
                 Some(true),
                 "{class} must arbitrate to UIA"
             );
         }
+    }
+
+    #[test]
+    fn a_window_under_a_shell_window_is_uia_except_the_start_button() {
+        let arb = Arbitrator::new(&[]);
+        assert_eq!(
+            arb.verdict(
+                1,
+                &WindowClasses::new("Windows.UI.Input.InputSite.WindowClass", "Shell_TrayWnd")
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            arb.verdict(1, &WindowClasses::new("Edit", "Shell_TrayWnd")),
+            Some(true),
+            "the shell rule comes before the bad list, as in NVDA"
+        );
+        assert_eq!(
+            arb.verdict(1, &WindowClasses::new("Start", "Shell_TrayWnd")),
+            None
+        );
+    }
+
+    #[test]
+    fn class_names_are_normalized_as_nvda_normalizes_them() {
+        assert_eq!(normalize_class_name("TEdit"), "Edit");
+        assert_eq!(normalize_class_name("RichEdit20W"), "RichEdit20");
+        assert_eq!(
+            normalize_class_name("WindowsForms10.EDIT.app.0.141b42a_r9_ad1"),
+            "Edit"
+        );
+        assert_eq!(
+            normalize_class_name("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1"),
+            "SysListView32"
+        );
+        assert_eq!(normalize_class_name("ATL:SysListView32"), "SysListView32");
+        assert_eq!(normalize_class_name("ATL:RichEdit20W"), "RichEdit20");
+        assert_eq!(normalize_class_name("Notepad"), "Notepad");
+        assert_eq!(
+            normalize_class_name("WindowsForms10.Window"),
+            "WindowsForms10.Window"
+        );
+    }
+
+    #[test]
+    fn a_normalized_bad_class_is_msaa_without_probing() {
+        let arb = Arbitrator::new(&[]);
+        assert_eq!(
+            arb.verdict(1, &top("WindowsForms10.EDIT.app.0.141b42a_r9_ad1")),
+            Some(false)
+        );
+        assert_eq!(arb.verdict(1, &top("TRichEdit")), Some(false));
+    }
+
+    #[test]
+    fn consoles_and_list_views_are_checked_after_the_probe() {
+        assert_eq!(
+            post_probe_check(&top("ConsoleWindowClass")),
+            Some(PostProbeCheck::Console)
+        );
+        assert_eq!(
+            post_probe_check(&top("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1")),
+            Some(PostProbeCheck::WindowsFormsListView)
+        );
+        assert_eq!(post_probe_check(&top("Notepad")), None);
+    }
+
+    #[test]
+    fn an_excluded_provider_is_msaa_until_the_window_is_destroyed() {
+        let mut arb = Arbitrator::new(&[]);
+        let classes = top("ConsoleWindowClass");
+        arb.record_excluded(5);
+        assert_eq!(
+            arb.verdict_at(5, &classes, Instant::now() + Duration::from_secs(3600)),
+            Some(false)
+        );
+        arb.forget(5);
+        assert_eq!(arb.verdict(5, &classes), None);
     }
 }

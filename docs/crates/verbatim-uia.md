@@ -112,6 +112,13 @@ Public API:
   answers `None` for a window that never answered, which the outpost
   reads through MSAA for the event at hand without keeping that as the
   window's answer, as NVDA treats a cancelled probe.
+- `console_reports_formatting(hwnd)` and `is_windows_forms(hwnd)` — the
+  checks NVDA makes on a window with a provider before using it: whether a
+  console's text area reports one visible range with its font (the
+  complete console provider of current Windows), and whether a window's
+  UIA framework is `WinForm`. Each answers `None` when the application did
+  not answer in time, so the outpost asks again rather than keep the
+  verdict.
 - `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:
   resolves the native window handle of `element` itself, or of its nearest
   ancestor that has one, in one cross-process round trip

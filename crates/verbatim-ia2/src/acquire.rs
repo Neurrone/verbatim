@@ -305,6 +305,7 @@ pub fn ancestor_chain(
     let limits = AncestorLimits {
         max_hops,
         known: &|_| false,
+        read_by_other_api: &|_| false,
         deadline: None,
     };
     ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
@@ -318,6 +319,10 @@ pub struct AncestorLimits<'a> {
     /// chain: the walk stops there, as NVDA's focus ancestry stops where it
     /// meets the previous focus's ancestors and reuses them.
     pub known: &'a dyn Fn(NodeId) -> bool,
+    /// Whether a window is read through the other API: the walk stops
+    /// before a parent in a different window for which this holds, as NVDA
+    /// switches API where a parent lies in such a window.
+    pub read_by_other_api: &'a dyn Fn(isize) -> bool,
     /// When to give up.
     pub deadline: Option<std::time::Instant>,
 }
@@ -331,6 +336,9 @@ pub enum Walked {
     MetKnown(NodeId),
     /// It ran out of time, so the chain is incomplete.
     OutOfTime,
+    /// The next parent is in this window, which is read through the other
+    /// API; the chain ends below it.
+    Crossed(isize),
 }
 
 /// [`ancestor_chain`] within `limits`: the chain, outermost first, and how
@@ -400,6 +408,7 @@ pub fn ancestor_chain_until(
     }
 
     let mut current = acc;
+    let mut current_hwnd = hwnd;
     let mut at_self = !is_simple_child;
     while walked == Walked::Complete && hops_used < max_hops {
         if out_of_time() {
@@ -426,6 +435,7 @@ pub fn ancestor_chain_until(
             };
             let id = snapshot.id;
             chain.push(snapshot);
+            current_hwnd = self_hwnd;
             at_self = true;
             hops_used += 1;
             if (limits.known)(id) {
@@ -448,6 +458,10 @@ pub fn ancestor_chain_until(
         if parent_hwnd == unsafe { GetDesktopWindow() }.0 as isize {
             break;
         }
+        if parent_hwnd != current_hwnd && (limits.read_by_other_api)(parent_hwnd) {
+            walked = Walked::Crossed(parent_hwnd);
+            break;
+        }
         let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
         // SAFETY: `parent_acc` is live; CHILDID_SELF addresses it directly.
         let snapshot = unsafe {
@@ -463,6 +477,7 @@ pub fn ancestor_chain_until(
         chain.push(snapshot);
         hops_used += 1;
         current = parent_acc;
+        current_hwnd = parent_hwnd;
         if (limits.known)(id) {
             walked = Walked::MetKnown(id);
         }
