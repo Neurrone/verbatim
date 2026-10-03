@@ -275,6 +275,17 @@ resulting abort ends the process, and the supervisor respawns it. The synth host
 carries the same kill-on-close flag; control-plane clients such as
 `verbatim-inspect` are deliberately not children and not in any job.
 
+Outposts and the listener end by being killed with their job (the
+supervisor closes the pipe and the job handle together), never by
+returning from `main`. Keep it that way unless the following is solved: a
+process that has used UIA as a client sometimes hangs at full CPU or
+crashes as it exits normally, inside `UIAutomationCore.dll`'s own shutdown
+code, which walks a corrupt list in its telemetry of provider connections.
+Releasing every UIA object first does not prevent it. A killed process
+never runs that code. The evidence and what is still unknown are recorded
+in the handoff of 2026-09-02 ("Open: a process that has used UIA as a
+client").
+
 Core and each outpost (and the synth host) communicate over private
 parent-child channels created at spawn via handle inheritance — no named
 endpoint exists, so there is nothing to discover or secure. The control
