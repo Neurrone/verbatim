@@ -102,9 +102,13 @@ fn classify(
         return Acceptance::Attended;
     };
     match event {
+        // A foreground change is always attended. A controlled selection is
+        // spoken only while its controller is the focus, which is attended
+        // wherever the controlled list's window is.
         NormalizedEvent::FocusChanged {
             foreground: true, ..
-        } => Acceptance::Attended,
+        }
+        | NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
         // UIA notifications are filtered by application, not window, as
         // NVDA filters them.
         // A toast is spoken from anywhere.
@@ -209,6 +213,9 @@ fn reduce_event(
         ),
         NormalizedEvent::SelectionChanged { node } => {
             reduce_selection_changed(state, trace_id, node)
+        }
+        NormalizedEvent::ControlledSelection { controller, node } => {
+            reduce_controlled_selection(state, trace_id, *controller, node)
         }
         NormalizedEvent::Notification {
             node_id: _,
@@ -799,6 +806,35 @@ fn reduce_selection_changed(
         segments: node_segments(node, Reason::Focus),
         source: Some(source_of(node)),
     })]
+}
+
+/// A node selected inside an element the focus controls ("Selection in a
+/// list the focus controls" in `docs/nvda/events.md`): spoken as a focus,
+/// interrupting, with the navigator moved to it, while `controller` is
+/// still the live focus. The focus itself does not move.
+fn reduce_controlled_selection(
+    state: &mut SrState,
+    trace_id: TraceId,
+    controller: NodeId,
+    node: &NodeSnapshot,
+) -> Vec<Effect> {
+    if !state
+        .focus
+        .as_ref()
+        .is_some_and(|focus| focus.alive && focus.snapshot.id == controller)
+    {
+        return Vec::new();
+    }
+    state.navigator = Some(Navigator {
+        object: node.clone(),
+        review_offset: 0,
+    });
+    vec![Effect::Speak(announce_node(
+        trace_id,
+        SpeechPriority::Interrupt,
+        node,
+        Reason::Focus,
+    ))]
 }
 
 /// Shared handling for `ValueChanged` and `PropertyChanged(Value(..))`: both

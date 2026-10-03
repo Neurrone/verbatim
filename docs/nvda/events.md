@@ -195,6 +195,23 @@ and `event_foreground` cancels speech before the new window is
 announced (both in `source/NVDAObjects/__init__.py`) — a large part of
 why window switches and menu openings cut stale speech off crisply.
 
+### Selection in a list the focus controls
+
+A search box often keeps the keyboard focus while the user arrows
+through suggestions or results in a separate list: the Start menu's
+search, and the Settings app's search box. UI Automation links the two
+through the focus's ControllerFor relation, which names the elements
+the focused control drives. When an element is selected (UIA's
+`ElementSelected` event), NVDA looks at the current focus's
+ControllerFor elements; if the selected element is inside one of them,
+NVDA cancels speech, moves the navigator object to the selected
+element, and speaks it exactly as it speaks a focus: name, role (left
+out for the roles silent on focus), states, and position, with no
+ancestors. The focus itself stays where it was, in the search box, so
+typing goes on there. A selection that is not inside a controlled
+element is handled as any other selection. (`event_selection` on the
+base `NVDAObject`, with the ControllerFor read in the UIA object.)
+
 ## Object presentation settings
 
 A cluster of config options (the Object Presentation panel; config

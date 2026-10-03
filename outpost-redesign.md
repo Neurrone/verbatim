@@ -11,9 +11,8 @@ handoff's hot-path notes, and decisions D13 to D15.
 It replaces the contents of the handoff's old phase 4 (review and
 simplify Core-outpost coordination) and pulls the D14 attention model
 forward from M4. All seven steps are implemented on the branch
-`phase3-outposts` (2026-10-01). Live verification is not finished; where
-it stopped, and the root causes still open, are in the handoff's "Current
-state". Deviations from the text below, decided while implementing,
+`phase3-outposts` (2026-10-01) and verified live; phase 3 closed on
+2026-10-03, with the record in the handoff's "Current state". Deviations from the text below, decided while implementing,
 are recorded in the commits and the crate guides: toasts are the only
 alerts reported; range-value and live-region subscriptions are not added;
 held nodes are also re-sent every 256 messages; an MSAA object reached

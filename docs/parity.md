@@ -340,10 +340,14 @@ verified.
   names in its UIA ControllerFor relation, NVDA reports that item as it
   reports a focus, without moving focus; this is how it reads the Start
   menu's search results and the Settings app's search suggestions as
-  the user types and arrows. Verbatim: **not yet**; found on
-  2026-10-02, when Verbatim read neither while NVDA read both. Start's
-  results are also partly in a Chromium document NVDA reads through
-  IA2.
+  the user types and arrows ("Selection in a list the focus controls"
+  in [Event handling](nvda/events.md)). Verbatim: **matched since
+  2026-10-03** for UIA, verified live on the Settings app's search
+  suggestions ("Display settings 1 of 25" and so on as the user arrows,
+  with the focus staying in the search box), with reducer tests. Found
+  on 2026-10-02, when Verbatim read neither while NVDA read both. Start's
+  results are partly in a Chromium document NVDA reads through IA2,
+  which belongs to the phase that implements IA2 (browsers).
 - Value change on focused node speaks bare value (slider drag), not
   for an edit field or document, not when unchanged, and not for a role
   that never speaks its value. Verbatim: **matched since 2026-10-02**

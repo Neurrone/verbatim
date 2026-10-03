@@ -140,6 +140,16 @@ pub enum NormalizedEvent {
         /// Snapshot of the selected node.
         node: NodeSnapshot,
     },
+    /// A node was selected inside an element the focus controls (its UIA
+    /// `ControllerFor` relation), such as a search result while the focus
+    /// stays in the search box. The reducer speaks it as a focus and moves
+    /// the navigator to it, while `controller` is still the focus.
+    ControlledSelection {
+        /// The focus that controls the list the node is in.
+        controller: NodeId,
+        /// Snapshot of the selected node.
+        node: NodeSnapshot,
+    },
     /// A UIA `AutomationNotification` event: an app-initiated announcement
     /// (for example Windows 11's snap-layout hints) carried through
     /// verbatim. The reducer speaks its display string, if any, interrupting
@@ -181,6 +191,10 @@ impl NormalizedEvent {
                 }
             }
             NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+                node.assign_outpost(outpost);
+            }
+            NormalizedEvent::ControlledSelection { controller, node } => {
+                *controller = controller.with_outpost(outpost);
                 node.assign_outpost(outpost);
             }
             NormalizedEvent::PropertyChanged { node_id, .. }

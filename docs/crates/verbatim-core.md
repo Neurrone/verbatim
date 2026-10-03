@@ -159,6 +159,11 @@ Implementation notes, `reduce`:
   foreground re-announcement both report one control; it never suppresses a
   genuine return to a window after visiting another, since that focuses a
   different control in between.
+- A `ControlledSelection` (a search suggestion or result selected while
+  the focus stays in the search box that controls the list) is spoken as
+  a focus, interrupting, and moves the navigator to the item, but only
+  while its controller is still the live focus; the focus does not move
+  ("Selection in a list the focus controls" in `docs/nvda/events.md`).
 - Selection announcements (M3): a focus event on a selection container (a
   list, a tab control) also carries the container's selected child, which
   is spoken right after the container; a `SelectionChanged` event is

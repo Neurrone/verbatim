@@ -243,14 +243,15 @@ pub(super) fn focus_window() -> Option<isize> {
 /// application's other threads are held up. `false` when either window's
 /// owner cannot be told.
 pub(super) fn front_is_another_thread_of_its_application(handle: isize) -> bool {
+    focus_window().is_some_and(|front| is_another_thread_of_its_application(handle, front))
+}
+
+/// Whether `other` belongs to the same application as `handle` but another
+/// UI thread. `false` when either window's owner cannot be told.
+fn is_another_thread_of_its_application(handle: isize, other: isize) -> bool {
     let (thread, pid) = window_owner(handle);
-    if thread == 0 {
-        return false;
-    }
-    focus_window().is_some_and(|front| {
-        let (front_thread, front_pid) = window_owner(front);
-        front_pid == pid && front_thread != 0 && front_thread != thread
-    })
+    let (other_thread, other_pid) = window_owner(other);
+    thread != 0 && other_thread != 0 && other_pid == pid && other_thread != thread
 }
 
 /// The thread and process that own `handle`, zeros for an invalid window.
@@ -303,4 +304,74 @@ pub(super) fn top_level_windows(target_pid: u32) -> Vec<isize> {
         let _ = EnumWindows(Some(visit), LPARAM((&raw mut search) as isize));
     }
     search.windows
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::thread;
+
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_OVERLAPPED,
+    };
+    use windows::core::w;
+
+    use super::*;
+
+    /// A hidden window owned by the calling thread.
+    fn create_window() -> isize {
+        // SAFETY: a predefined class, no parent, menu, or creation data; the
+        // window is destroyed by the thread that created it.
+        let window = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!("verbatim-outpost test window"),
+                WS_OVERLAPPED,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("create a window");
+        window.0 as isize
+    }
+
+    fn destroy_window(handle: isize) {
+        // SAFETY: called on the thread that created `handle`.
+        unsafe { DestroyWindow(hwnd(handle)) }.expect("destroy a window");
+    }
+
+    #[test]
+    fn only_a_window_on_another_thread_of_the_application_counts_as_moved_on() {
+        let slow = create_window();
+        let same_thread = create_window();
+        let (created, receive) = mpsc::channel();
+        let (finish, finished) = mpsc::channel::<()>();
+        let other_thread = thread::spawn(move || {
+            let window = create_window();
+            created.send(window).expect("hand over the window");
+            finished.recv().expect("wait for the checks");
+            destroy_window(window);
+        });
+        let other = receive.recv().expect("the window of the other thread");
+
+        assert!(is_another_thread_of_its_application(slow, other));
+        assert!(!is_another_thread_of_its_application(slow, same_thread));
+        assert!(!is_another_thread_of_its_application(slow, slow));
+        assert!(
+            !is_another_thread_of_its_application(slow, 0),
+            "a window whose owner cannot be told never counts"
+        );
+
+        finish.send(()).expect("release the other thread");
+        other_thread.join().expect("the other thread ends");
+        destroy_window(same_thread);
+        destroy_window(slow);
+    }
 }

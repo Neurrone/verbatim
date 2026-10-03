@@ -109,7 +109,10 @@ Public API:
     event, a focus, or a focus-now query 10 s, NVDA's normal watchdog
     timeout, since an application that is starting up can take seconds to
     answer a read that then succeeds; a navigation or activation 400 ms; an
-    ancestor walk or tree dump 5 s), answers the stuck query
+    ancestor walk or tree dump 5 s), or, after half a second, once the user
+    has moved to a window of the same application on another UI thread
+    (the decision is `abandon_reason` and `next_check`, the window test
+    `is_another_thread_of_its_application`, each unit-tested), answers the stuck query
     `Abandoned`, and starts a replacement that continues with the queue. An
     abandoned worker that returns publishes nothing, since publishing checks
     under the watchdog's lock that the worker is still in charge, lowers the
@@ -359,7 +362,11 @@ Implementation notes:
   no longer be reached, answers `Gone`.
 - Selection and notification events: both backends' selection events emit
   `NormalizedEvent::SelectionChanged` (the selected node's full snapshot)
-  and UIA notifications emit `NormalizedEvent::Notification`. The reducer
+  and UIA notifications emit `NormalizedEvent::Notification`. A UIA
+  selection inside an element the focused element names in its
+  ControllerFor relation emits `NormalizedEvent::ControlledSelection`
+  instead, carrying the focus's id, as NVDA reports a search suggestion
+  (`Uia::controlled_descendant`). The reducer
   announces both ([verbatim-core](verbatim-core.md)).
 - `OutpostMessage::Event` carries the target pid, the outpost id, the
   message's position, and the boxed `OutpostToSupervisor` payload: the

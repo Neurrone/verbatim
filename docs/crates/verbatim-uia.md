@@ -8,8 +8,10 @@ Public API:
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
   instance; nothing COM crosses threads): `focused_element`,
   `element_from_handle`, `element_by_runtime_id`, `base_cache_request`,
-  plus the M3 node-relative operations `ancestor_chain`, `navigate`, and
-  `activate` described below. The coclass is `CUIAutomation8`, not the
+  `controlled_descendant` (the selected element, when it is inside an
+  element the focus names in its ControllerFor relation), plus the M3
+  node-relative operations `ancestor_chain`, `navigate`, and `activate`
+  described below. The coclass is `CUIAutomation8`, not the
   older `CUIAutomation`: only the former's objects implement the newer
   client interfaces, and querying `IUIAutomation5` (the notification-event
   registration) on a plain `CUIAutomation` object fails with

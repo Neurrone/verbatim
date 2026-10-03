@@ -243,6 +243,41 @@ fn spawn_worker(context: Arc<Context>, generation: u64) {
         .expect("spawn a worker");
 }
 
+/// Why the watchdog abandons a worker at `now`, if it does: the entry it
+/// started at `started`, concerning `window` (0 for none), has passed its
+/// `deadline`, or has waited [`MOVED_ON_GRACE`] and `moved_on` says the user
+/// has left `window` for another thread of its application.
+fn abandon_reason(
+    now: Instant,
+    deadline: Instant,
+    started: Instant,
+    window: isize,
+    moved_on: impl FnOnce(isize) -> bool,
+) -> Option<&'static str> {
+    if now >= deadline {
+        Some("a call passed its deadline")
+    } else if window != 0 && now >= started + MOVED_ON_GRACE && moved_on(window) {
+        Some("the user moved on from a slow window")
+    } else {
+        None
+    }
+}
+
+/// When the watchdog next checks a worker it did not abandon at `now`: at
+/// the deadline for an entry concerning no window, else at the end of the
+/// grace and every [`MOVED_ON_GRACE`] after it, never later than the
+/// deadline.
+fn next_check(now: Instant, deadline: Instant, started: Instant, window: isize) -> Instant {
+    let check = if window == 0 {
+        deadline
+    } else if now < started + MOVED_ON_GRACE {
+        started + MOVED_ON_GRACE
+    } else {
+        now + MOVED_ON_GRACE
+    };
+    check.min(deadline)
+}
+
 /// The watchdog: waits for the worker's deadline and abandons a worker that
 /// passes it, or that has waited [`MOVED_ON_GRACE`] on a window the user has
 /// left for one of the same application on another UI thread.
@@ -259,25 +294,15 @@ fn watchdog(context: &Arc<Context>) {
         };
         let now = Instant::now();
         let (started, window) = state.started.unwrap_or((now, 0));
-        let reason = if now >= deadline {
-            Some("a call passed its deadline")
-        } else if window != 0
-            && now >= started + MOVED_ON_GRACE
-            && front_is_another_thread_of_its_application(window)
-        {
-            Some("the user moved on from a slow window")
-        } else {
-            None
-        };
+        let reason = abandon_reason(
+            now,
+            deadline,
+            started,
+            window,
+            front_is_another_thread_of_its_application,
+        );
         let Some(reason) = reason else {
-            let check = if window == 0 {
-                deadline
-            } else if now < started + MOVED_ON_GRACE {
-                started + MOVED_ON_GRACE
-            } else {
-                now + MOVED_ON_GRACE
-            };
-            let wait = check.min(deadline).saturating_duration_since(now);
+            let wait = next_check(now, deadline, started, window).saturating_duration_since(now);
             state = context
                 .watch
                 .changed
@@ -609,6 +634,12 @@ impl Worker<'_> {
         {
             return; // MSAA owns this window.
         }
+        if matches!(event.kind, UiaKind::Selection)
+            && let Some(selection) = self.controlled_selection(&event.parts.runtime_id)
+        {
+            self.emit(trace, observed_at_ms, Backend::Uia, hwnd, selection);
+            return;
+        }
         let node = self.uia_node(&event.parts, element.as_ref());
         let normalized = match event.kind {
             UiaKind::Property(id) if id == UIA_NamePropertyId.0 => {
@@ -636,6 +667,29 @@ impl Worker<'_> {
             },
         };
         self.emit(trace, observed_at_ms, Backend::Uia, hwnd, normalized);
+    }
+
+    /// The selection of the element `runtime_id` names as a selection in a
+    /// list the focus controls, when it is one: the focused element names,
+    /// in its `ControllerFor` relation, an element the selected one is inside
+    /// ("Selection in a list the focus controls" in `docs/nvda/events.md`).
+    fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
+        let uia = self.client.uia()?;
+        let cache = uia.base_cache_request().ok()?;
+        let focused = uia.focused_element(&cache).ok()?;
+        // SAFETY: `focused` is live, just read.
+        let selected = unsafe { uia.controlled_descendant(&focused, runtime_id, &cache) }
+            .ok()
+            .flatten()?;
+        let registry = &self.context.uia_registry;
+        // SAFETY: both elements were built with the base cache request.
+        unsafe {
+            let controller = snapshot_parts_from_cached_element(&focused).runtime_id;
+            Some(NormalizedEvent::ControlledSelection {
+                controller: registry.id_for_element(&controller, &focused),
+                node: snapshot_from_cached_element(&selected, registry),
+            })
+        }
     }
 
     /// A snapshot from a UIA element's cached parts, its id minted by the
@@ -1071,6 +1125,65 @@ mod tests {
         assert_eq!(watch.finish(0), Err(()), "the old worker must exit");
         assert_eq!(watch.abandoned(), 0, "and is no longer counted");
         assert_eq!(watch.finish(1), Ok(None), "its replacement is in charge");
+    }
+
+    #[test]
+    fn a_worker_is_abandoned_once_the_user_moves_on_after_the_grace() {
+        const WINDOW: isize = 0x1234;
+        let started = Instant::now();
+        let deadline = started + HANDLING_DEADLINE;
+        let in_grace = started + MOVED_ON_GRACE / 2;
+        let after_grace = started + MOVED_ON_GRACE;
+
+        assert_eq!(
+            abandon_reason(in_grace, deadline, started, WINDOW, |_| true),
+            None,
+            "within the grace the worker is left alone even when the user moved on"
+        );
+        assert_eq!(
+            next_check(in_grace, deadline, started, WINDOW),
+            after_grace,
+            "and is checked again when the grace ends"
+        );
+        assert_eq!(
+            abandon_reason(after_grace, deadline, started, WINDOW, |window| {
+                window == WINDOW
+            }),
+            Some("the user moved on from a slow window")
+        );
+        assert_eq!(
+            abandon_reason(after_grace, deadline, started, WINDOW, |_| false),
+            None,
+            "a user still on the slow window waits for the deadline"
+        );
+        assert_eq!(
+            next_check(after_grace, deadline, started, WINDOW),
+            after_grace + MOVED_ON_GRACE,
+            "and is checked again every grace period"
+        );
+    }
+
+    #[test]
+    fn an_entry_with_no_window_waits_for_its_deadline() {
+        let started = Instant::now();
+        let deadline = started + HANDLING_DEADLINE;
+        let later = started + MOVED_ON_GRACE * 4;
+        assert_eq!(abandon_reason(later, deadline, started, 0, |_| true), None);
+        assert_eq!(next_check(later, deadline, started, 0), deadline);
+        assert_eq!(
+            abandon_reason(deadline, deadline, started, 0, |_| false),
+            Some("a call passed its deadline")
+        );
+        assert_eq!(
+            next_check(
+                started + Duration::from_millis(9_900),
+                deadline,
+                started,
+                0x1234
+            ),
+            deadline,
+            "a check never falls after the deadline"
+        );
     }
 
     #[test]

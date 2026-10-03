@@ -24,6 +24,17 @@ mod park;
 mod vm;
 
 const TARGET_X64: &str = "x86_64-pc-windows-msvc";
+
+/// The arguments that make a cargo command build for x64. Nothing on an x64
+/// host, where x64 is the default: naming the target explicitly would make
+/// cargo build into `target/x86_64-pc-windows-msvc`, a second full copy of
+/// everything the end-to-end suite and plain `cargo test` build into
+/// `target/debug`. On any other host, the explicit target.
+const X64_TARGET_ARGS: &[&str] = if cfg!(target_arch = "x86_64") {
+    &[]
+} else {
+    &["--target", TARGET_X64]
+};
 const TARGET_ARM64: &str = "aarch64-pc-windows-msvc";
 
 /// The ARM64 build uses the release profile until upstream wxDragon fixes
@@ -89,25 +100,14 @@ fn ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let steps: &[(&str, &[&str])] = &[
-        ("rustfmt", &["fmt", "--all", "--check"]),
+    let steps: &[(&str, &[&str], &[&str])] = &[
+        ("rustfmt", &["fmt", "--all", "--check"], &[]),
         (
             "clippy (x64)",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--target",
-                TARGET_X64,
-                "--",
-                "-D",
-                "warnings",
-            ],
+            &["clippy", "--workspace", "--all-targets"],
+            &["--", "-D", "warnings"],
         ),
-        (
-            "unit tests (x64)",
-            &["test", "--workspace", "--target", TARGET_X64],
-        ),
+        ("unit tests (x64)", &["test", "--workspace"], &[]),
         (
             "build (ARM64, release)",
             &[
@@ -117,13 +117,18 @@ fn ci() -> ExitCode {
                 "--target",
                 TARGET_ARM64,
             ],
+            &[],
         ),
     ];
 
-    for (name, cargo_args) in steps {
+    for (name, cargo_args, trailing_args) in steps {
         println!("xtask ci: {name}");
         let mut command = Command::new(env!("CARGO"));
         command.args(*cargo_args);
+        if name.ends_with("(x64)") {
+            command.args(X64_TARGET_ARGS);
+        }
+        command.args(*trailing_args);
         if let Some(dir) = &libclang {
             command.env("LIBCLANG_PATH", dir);
         }

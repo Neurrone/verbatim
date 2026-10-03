@@ -57,7 +57,10 @@ Public API:
   so enrichment never blocks or loses a focus announcement),
   `PropertyChanged` (name, value, or the complete new `States` set),
   `ValueChanged`, `SelectionChanged` (a node was selected within its
-  container, carrying its snapshot), and `Notification` (UIA's
+  container, carrying its snapshot), `ControlledSelection` (a node was
+  selected inside an element the focus controls through UIA's
+  ControllerFor relation, carrying the controlling focus's id and the
+  node's snapshot), and `Notification` (UIA's
   app-initiated announcement channel, carrying a `Notification` payload of
   `NotificationKind`, `NotificationProcessing`, and optional display string
   and activity id). The last two are announced by the reducer since M3:

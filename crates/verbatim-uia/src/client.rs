@@ -173,6 +173,50 @@ impl Uia {
         }
     }
 
+    /// The element `runtime_id` names, rebuilt with `cache`, when it is a
+    /// descendant of one of the elements `focused` names in its UIA
+    /// `ControllerFor` relation: NVDA's test for a selection in a list the
+    /// focus controls, such as a search result while the focus stays in
+    /// the search box. `Ok(None)` when `focused` controls nothing or the
+    /// element is in none of what it controls. Cross-process; the outpost's
+    /// worker only, guarded by the caller's deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the relation cannot be read or a search
+    /// fails for a reason other than the element being absent.
+    ///
+    /// # Safety
+    ///
+    /// `focused` must be a live element.
+    pub unsafe fn controlled_descendant(
+        &self,
+        focused: &IUIAutomationElement,
+        runtime_id: &[i32],
+        cache: &IUIAutomationCacheRequest,
+    ) -> windows::core::Result<Option<IUIAutomationElement>> {
+        // SAFETY: `focused` is live per the caller's contract.
+        let controlled = unsafe { focused.CurrentControllerFor() }?;
+        // SAFETY: `controlled` is a live element array.
+        let count = unsafe { controlled.Length() }?;
+        for index in 0..count {
+            // SAFETY: `index` is within the array's length.
+            let root = unsafe { controlled.GetElement(index) }?;
+            // A descendant, not the controlled element itself.
+            // SAFETY: `root` is live; a failed read is no runtime id.
+            let root_id = unsafe { root.GetRuntimeId() }
+                .map(|array| unsafe { crate::com::take_i32_safearray(array) })
+                .unwrap_or_default();
+            if root_id == runtime_id {
+                continue;
+            }
+            if let Some(found) = self.element_by_runtime_id(&root, runtime_id, cache)? {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
+    }
+
     /// Walks the raw-view subtree rooted at `element` (already built with
     /// `cache`), bounded by `max_depth` (the root is depth 0) and
     /// `max_nodes` (the total number of nodes across the whole walk,

@@ -2963,3 +2963,80 @@ fn losing_half_checked_says_not_checked() {
         vec![not(State::Checked)]
     );
 }
+
+// ---- Selection in a list the focus controls ----
+
+fn controlled_selection(controller: u64, selected: NodeSnapshot) -> Input {
+    Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::ControlledSelection {
+            controller: NodeId::new(controller),
+            node: selected,
+        },
+    }
+}
+
+fn search_result() -> NodeSnapshot {
+    let mut result = node(
+        51,
+        Role::ListItem,
+        Some("Notepad, App"),
+        None,
+        states(&[State::Selectable, State::Selected]),
+    );
+    result.details.position_in_set = Some(1);
+    result.details.set_size = Some(4);
+    result
+}
+
+#[test]
+fn a_result_selected_in_the_list_the_focus_controls_is_spoken_as_a_focus() {
+    let search_box = node(
+        50,
+        Role::EditableText,
+        Some("Search box"),
+        None,
+        StateSet::new(),
+    );
+    let state = focused(Pid(1), search_box);
+
+    let (state, effects) = reduce(&state, &controlled_selection(50, search_result()));
+    let utterance = speak_effects(&effects)[0];
+    assert_eq!(utterance.priority, SpeechPriority::Interrupt);
+    assert_eq!(
+        utterance.segments,
+        vec![
+            UtteranceSegment::label("Notepad, App"),
+            UtteranceSegment::new(SegmentContent::Position {
+                position: 1,
+                set_size: Some(4),
+            }),
+        ]
+    );
+    assert_eq!(
+        state.focused().map(|(_, focus)| focus.name.clone()),
+        Some(Some("Search box".to_string())),
+        "the focus stays in the search box"
+    );
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments[0],
+        UtteranceSegment::label("Notepad, App"),
+        "the navigator moved to the result"
+    );
+}
+
+#[test]
+fn a_controlled_selection_is_silent_once_the_controller_is_not_the_focus() {
+    let other = node(60, Role::Button, Some("Close"), None, StateSet::new());
+    let state = focused(Pid(1), other);
+    let (_, effects) = reduce(&state, &controlled_selection(50, search_result()));
+    assert!(effects.is_empty(), "spoke {effects:?}");
+}
