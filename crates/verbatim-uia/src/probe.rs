@@ -37,6 +37,9 @@ const PROBE_BUDGET: Duration = Duration::from_secs(8);
 /// thread.
 #[must_use]
 pub fn probe_server_side_provider(hwnd: isize) -> Option<bool> {
+    // The probe is a way into UIA's first-time setup too; a failed setup
+    // leaves the probe to try anyway.
+    let _ = crate::client::ensure_ready();
     let window = HWND(hwnd as *mut _);
     let started = Instant::now();
     let ask = || {

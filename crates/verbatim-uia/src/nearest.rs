@@ -15,15 +15,12 @@
 
 use std::cell::RefCell;
 
-use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationTreeWalker, UIA_NativeWindowHandlePropertyId,
+    IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationTreeWalker,
+    UIA_NativeWindowHandlePropertyId,
 };
-use windows::core::Interface;
 
-use crate::com::init_mta;
 use crate::map::cached_native_window_handle;
 
 /// The walker and cache request bound to one thread's own `IUIAutomation`
@@ -38,24 +35,15 @@ struct Context {
 
 impl Context {
     fn build() -> windows::core::Result<Self> {
-        init_mta()?;
-        // SAFETY: CUIAutomation8 is a registered in-process COM server; the
-        // requested interface matches the class. Every call below is a
-        // local, same-thread COM call against the instance just created:
+        let client = crate::client::create_client()?;
+        // SAFETY: every call below is a local, same-thread COM call against
+        // the client just created:
         // build the "has no native window handle" condition, negate it, hand
         // the negation to a fresh tree walker, and build a cache request
         // that prefetches just the one property `NormalizeElementBuildCache`
         // needs to answer — exactly NVDA's `windowTreeWalker` and
         // `windowCacheRequest`.
         unsafe {
-            let client: IUIAutomation =
-                CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
-            // The same wait for a busy application as every other read
-            // ([`crate::client::CONNECTION_TIMEOUT_MS`]), not UIA's two
-            // seconds.
-            client
-                .cast::<windows::Win32::UI::Accessibility::IUIAutomation2>()?
-                .SetConnectionTimeout(crate::client::CONNECTION_TIMEOUT_MS)?;
             let zero = VARIANT::from(0i32);
             let has_no_handle =
                 client.CreatePropertyCondition(UIA_NativeWindowHandlePropertyId, &zero)?;

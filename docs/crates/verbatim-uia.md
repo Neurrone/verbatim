@@ -19,6 +19,12 @@ Public API:
   client interfaces, and querying `IUIAutomation5` (the notification-event
   registration) on a plain `CUIAutomation` object fails with
   `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
+  Every client in the crate is created by one function, which creates the
+  process's first client and builds a cache request from it under a lock:
+  while UIA's first-time setup is still running on one thread, a cache
+  request built on another fails with `E_FAIL`, which made a mockapp test
+  fail about one run in five (`tests/first_use.rs` races six threads in a
+  fresh process).
 - `Uia::ancestor_chain` — the chain of ancestors of an element, outermost
   first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
   over the raw view (one cross-process round trip per ancestor, the walk

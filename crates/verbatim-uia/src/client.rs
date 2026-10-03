@@ -80,24 +80,9 @@ impl Uia {
     /// Returns the COM error if apartment initialization or client creation
     /// fails.
     pub fn new() -> windows::core::Result<Self> {
-        init_mta()?;
-        // SAFETY: CUIAutomation8 is a registered in-process COM server; the
-        // requested interface matches the class. CUIAutomation8 rather than
-        // the older CUIAutomation coclass because only the former's objects
-        // implement the newer client interfaces — IUIAutomation5's
-        // notification-event registration in particular, where querying a
-        // plain CUIAutomation object fails with E_NOINTERFACE (observed
-        // live; NVDA likewise creates CUIAutomation8).
-        let client: IUIAutomation =
-            unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
-        // SAFETY: CUIAutomation8 objects implement IUIAutomation2; setting
-        // the timeout takes a plain integer.
-        unsafe {
-            client
-                .cast::<IUIAutomation2>()?
-                .SetConnectionTimeout(CONNECTION_TIMEOUT_MS)?;
-        }
-        Ok(Self { client })
+        Ok(Self {
+            client: create_client()?,
+        })
     }
 
     /// Borrows the underlying client for registration modules that need it.
@@ -593,6 +578,72 @@ impl Uia {
             "element exposes no Invoke, Toggle, or SelectionItem pattern",
         ))
     }
+}
+
+/// Whether this process has finished UIA's first-time setup; see
+/// [`ensure_ready`].
+static UIA_READY: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+
+/// Finishes UIA's first-time setup in this process before this thread uses
+/// UIA, doing it here if no thread has: a client is created and a cache
+/// request built from it while holding [`UIA_READY`], so no other thread
+/// uses UIA until the setup has finished. Every use of UIA in the crate
+/// calls this first, the provider probe included. Without it, while one
+/// thread is still setting UIA up, another thread's `CreateCacheRequest`
+/// fails with `E_FAIL` (found on 2026-10-03: with six threads creating
+/// clients at once in a fresh process, five failed nearly every time; one
+/// call 50 ms later succeeded, and no call failed once a first client had
+/// built a cache request). A probe running at the same moment is another
+/// way into the setup and made the same call fail. An outpost starts
+/// several UIA threads at once.
+///
+/// # Errors
+///
+/// Returns the COM error if the apartment, the first client, or its cache
+/// request cannot be set up; the next call tries again.
+pub(crate) fn ensure_ready() -> windows::core::Result<()> {
+    init_mta()?;
+    let mut ready = UIA_READY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !*ready {
+        // SAFETY: as in `create_client`; then a local call on that client.
+        unsafe {
+            let client: IUIAutomation =
+                CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
+            client.CreateCacheRequest()?;
+        }
+        *ready = true;
+    }
+    Ok(())
+}
+
+/// Creates a UIA client on this thread, in the multithreaded apartment,
+/// waiting at most [`CONNECTION_TIMEOUT_MS`] for an application's provider,
+/// once UIA's first-time setup has finished ([`ensure_ready`]).
+///
+/// # Errors
+///
+/// Returns the COM error if the setup, the client, or its timeout fails.
+pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
+    ensure_ready()?;
+    // SAFETY: CUIAutomation8 is a registered in-process COM server; the
+    // requested interface matches the class. CUIAutomation8 rather than
+    // the older CUIAutomation coclass because only the former's objects
+    // implement the newer client interfaces — IUIAutomation5's
+    // notification-event registration in particular, where querying a
+    // plain CUIAutomation object fails with E_NOINTERFACE (observed
+    // live; NVDA likewise creates CUIAutomation8).
+    let client: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
+    // SAFETY: CUIAutomation8 objects implement IUIAutomation2; setting the
+    // timeout takes a plain integer.
+    unsafe {
+        client
+            .cast::<IUIAutomation2>()?
+            .SetConnectionTimeout(CONNECTION_TIMEOUT_MS)?;
+    }
+    Ok(client)
 }
 
 /// The per-walk parameters threaded through every level of
