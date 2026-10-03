@@ -61,7 +61,7 @@ screen reader in both rendered and source form.
   (`wxAccessible` subclassing for accessible descriptions, accelerator
   tables) where the wxDragon binding used before 2026-09-02 did not.
   Keeping `main` and the build in cargo preserves the single-command
-  build, the ARM64 cross-build, deploy, and the end-to-end suite unchanged;
+  build, deploy, and the end-to-end suite unchanged;
   the static wxWidgets build recipe for both architectures is adapted from
   the wxdragon-sys build script rather than written fresh. The C++ layer
   is widget glue only: typed page models are pulled from Rust, and a

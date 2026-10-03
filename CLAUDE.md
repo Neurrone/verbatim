@@ -29,7 +29,7 @@ The Windows-specific crates are GPL like NVDA and may port NVDA code freely. Por
 
 We use Rust 2024 edition.
 
-Arm64 is a first-class target, but since this machine is not an Arm machine, just verify that arm builds work without running them.
+Arm64 is a first-class target. Builds and tests always use the host's own architecture (no command names a target), so ARM64 is built and tested on an ARM64 machine; this machine is x64.
 
 Use Clippy with the pedantic lint group from the start. Public Rust APIs should have doc comments so the workspace can be browsed with Rustdoc.
 
@@ -37,7 +37,7 @@ We are using GitHub actions for CI.
 
 ## Commands
 
-`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: the platform-neutral dependency check (the crates listed under NVDA provenance must not pull in the Windows bindings), rustfmt, clippy (pedantic via workspace lints, warnings denied) and unit tests on x64, then a release-profile ARM64 cross-build. ARM64 artifacts are build-verified only, never run on this x64 machine.
+`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: the platform-neutral dependency check (the crates listed under NVDA provenance must not pull in the Windows bindings), rustfmt, clippy (pedantic via workspace lints, warnings denied), and unit tests, all for the host's architecture and into `target/debug`, the same output the end-to-end suite uses.
 
 `cargo xtask vm <cmd>` drives the Hyper-V harness: `create` (Packer-built golden image, imported, deployed to, checkpointed), `start`, `stop`, `restart`, `restore`, `deploy`, `test` (the end-to-end suite against the VM), `logs`, and `delete`. Guest credentials come from a `.env` at the repo root, which is never committed. See `docs/tooling.md`.
 
@@ -49,4 +49,4 @@ The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual S
 
 `$env:LIBCLANG_PATH='C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin'`
 
-Use release profile for the ARM64 workspace build until upstream wxDragon fixes debug-profile ARM64 MSVC builds: https://github.com/AllenDang/wxDragon/issues/162 (`cargo xtask ci` already does this).
+On an ARM64 host, the debug-profile build of wxDragon fails until upstream fixes https://github.com/AllenDang/wxDragon/issues/162; `cargo xtask ci` no longer works around it.

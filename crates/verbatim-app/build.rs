@@ -6,7 +6,7 @@
 //! DPI awareness and the unelevated execution level.
 //!
 //! Done through the MSVC linker rather than a resource-compiler crate so the
-//! workspace gains no build dependency and the ARM64 cross-build works the
+//! workspace gains no build dependency and the ARM64 build works the
 //! same way.
 
 use std::path::Path;

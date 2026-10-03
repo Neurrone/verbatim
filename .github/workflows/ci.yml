@@ -19,8 +19,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      # rust-toolchain.toml pins the toolchain and installs both MSVC targets
-      # on the first cargo invocation.
+      # rust-toolchain.toml pins the toolchain, installed on the first cargo
+      # invocation; everything builds for the runner's own architecture.
       - uses: Swatinem/rust-cache@v2
       - name: Run CI checks
         run: cargo xtask ci

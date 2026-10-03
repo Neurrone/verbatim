@@ -2,9 +2,8 @@
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
 //! the two cannot drift: the platform-neutral dependency check, rustfmt,
-//! clippy (warnings denied) and unit tests for x64, then a release-profile
-//! ARM64 cross-build. ARM64 artifacts are build-verified only; they are
-//! never executed on x64 machines.
+//! clippy (warnings denied), and unit tests, all for the host's own
+//! architecture.
 //!
 //! `vm` drives the milestone M2 Hyper-V E2E harness (`docs/architecture.md`
 //! section 14): building and importing the golden VM, deploying builds into
@@ -22,25 +21,6 @@ use std::str;
 
 mod park;
 mod vm;
-
-const TARGET_X64: &str = "x86_64-pc-windows-msvc";
-
-/// The arguments that make a cargo command build for x64. Nothing on an x64
-/// host, where x64 is the default: naming the target explicitly would make
-/// cargo build into `target/x86_64-pc-windows-msvc`, a second full copy of
-/// everything the end-to-end suite and plain `cargo test` build into
-/// `target/debug`. On any other host, the explicit target.
-const X64_TARGET_ARGS: &[&str] = if cfg!(target_arch = "x86_64") {
-    &[]
-} else {
-    &["--target", TARGET_X64]
-};
-const TARGET_ARM64: &str = "aarch64-pc-windows-msvc";
-
-/// The ARM64 build uses the release profile until upstream wxDragon fixes
-/// debug-profile ARM64 MSVC builds:
-/// <https://github.com/AllenDang/wxDragon/issues/162>
-const ARM64_PROFILE_FLAG: &str = "--release";
 
 /// The crates `CLAUDE.md`'s "NVDA provenance" section lists as
 /// platform-neutral. None of them may depend, directly or through another
@@ -74,7 +54,7 @@ fn main() -> ExitCode {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
             eprintln!(
-                "  ci    platform-neutral dependency check, rustfmt + clippy + unit tests (x64), release build (ARM64)"
+                "  ci    platform-neutral dependency check, rustfmt, clippy, and unit tests, for the host's architecture"
             );
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
             eprintln!(
@@ -100,35 +80,30 @@ fn ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let steps: &[(&str, &[&str], &[&str])] = &[
-        ("rustfmt", &["fmt", "--all", "--check"], &[]),
+    // No step names a target: everything builds for the host's own
+    // architecture, x64 on an x64 machine and ARM64 on an ARM64 one, into
+    // `target/debug`, the same output the end-to-end suite and plain
+    // `cargo test` use.
+    let steps: &[(&str, &[&str])] = &[
+        ("rustfmt", &["fmt", "--all", "--check"]),
         (
-            "clippy (x64)",
-            &["clippy", "--workspace", "--all-targets"],
-            &["--", "-D", "warnings"],
-        ),
-        ("unit tests (x64)", &["test", "--workspace"], &[]),
-        (
-            "build (ARM64, release)",
+            "clippy",
             &[
-                "build",
+                "clippy",
                 "--workspace",
-                ARM64_PROFILE_FLAG,
-                "--target",
-                TARGET_ARM64,
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
             ],
-            &[],
         ),
+        ("unit tests", &["test", "--workspace"]),
     ];
 
-    for (name, cargo_args, trailing_args) in steps {
+    for (name, cargo_args) in steps {
         println!("xtask ci: {name}");
         let mut command = Command::new(env!("CARGO"));
         command.args(*cargo_args);
-        if name.ends_with("(x64)") {
-            command.args(X64_TARGET_ARGS);
-        }
-        command.args(*trailing_args);
         if let Some(dir) = &libclang {
             command.env("LIBCLANG_PATH", dir);
         }
@@ -151,16 +126,13 @@ fn ci() -> ExitCode {
 
 /// Fails if any of [`PLATFORM_NEUTRAL_CRATES`] has one of
 /// [`WINDOWS_BINDINGS`] anywhere in its normal (non-dev, non-build)
-/// dependency tree for the x64 target. The error names every offending
+/// dependency tree for the host's target. The error names every offending
 /// crate and binding so one run reports the whole problem.
 fn check_platform_neutral_deps() -> Result<(), String> {
     let mut offences = Vec::new();
     for crate_name in PLATFORM_NEUTRAL_CRATES {
         let output = Command::new(env!("CARGO"))
-            .args([
-                "tree", "-p", crate_name, "-e", "normal", "--prefix", "none", "--target",
-                TARGET_X64,
-            ])
+            .args(["tree", "-p", crate_name, "-e", "normal", "--prefix", "none"])
             .output()
             .map_err(|error| format!("could not run cargo tree for {crate_name}: {error}"))?;
         if !output.status.success() {
