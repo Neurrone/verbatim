@@ -585,9 +585,15 @@ impl Uia {
 static UIA_READY: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
 /// Finishes UIA's first-time setup in this process before this thread uses
-/// UIA, doing it here if no thread has: a client is created and a cache
-/// request built from it while holding [`UIA_READY`], so no other thread
-/// uses UIA until the setup has finished. Every use of UIA in the crate
+/// UIA, doing it if no thread has: a client is created and a cache request
+/// built from it while holding [`UIA_READY`], so no other thread uses UIA
+/// until the setup has finished. The setup runs on a thread of its own,
+/// which leaves COM when it is done, so a thread that only probes never
+/// joins COM's multithreaded apartment: one that did, once the probe called
+/// for the setup, made the test process crash on exit on GitHub's runner.
+/// The setup lasts only as long as the apartment, so the apartment is kept
+/// for the life of the process (`CoIncrementMTAUsage`) rather than by
+/// whichever thread happens to be in it. Every use of UIA in the crate
 /// calls this first, the provider probe included. Without it, while one
 /// thread is still setting UIA up, another thread's `CreateCacheRequest`
 /// fails with `E_FAIL` (found on 2026-10-03: with six threads creating
@@ -602,17 +608,35 @@ static UIA_READY: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 /// Returns the COM error if the apartment, the first client, or its cache
 /// request cannot be set up; the next call tries again.
 pub(crate) fn ensure_ready() -> windows::core::Result<()> {
-    init_mta()?;
     let mut ready = UIA_READY
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !*ready {
-        // SAFETY: as in `create_client`; then a local call on that client.
-        unsafe {
-            let client: IUIAutomation =
-                CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
-            client.CreateCacheRequest()?;
-        }
+        let setup = std::thread::Builder::new()
+            .name("verbatim-uia-setup".to_owned())
+            .spawn(|| -> windows::core::Result<()> {
+                // SAFETY: keeps the apartment alive; the cookie is never
+                // released, for the life of the process.
+                unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() }?;
+                init_mta()?;
+                // SAFETY: as in `create_client`; then a local call on that
+                // client, released before the thread leaves COM.
+                let result = unsafe {
+                    CoCreateInstance::<_, IUIAutomation>(
+                        &CUIAutomation8,
+                        None,
+                        CLSCTX_INPROC_SERVER,
+                    )
+                    .and_then(|client| client.CreateCacheRequest().map(drop))
+                };
+                // SAFETY: balances this thread's `init_mta`.
+                unsafe { windows::Win32::System::Com::CoUninitialize() };
+                result
+            })
+            .map_err(|_| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?;
+        setup
+            .join()
+            .map_err(|_| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))??;
         *ready = true;
     }
     Ok(())
@@ -627,6 +651,7 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
 /// Returns the COM error if the setup, the client, or its timeout fails.
 pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
     ensure_ready()?;
+    init_mta()?;
     // SAFETY: CUIAutomation8 is a registered in-process COM server; the
     // requested interface matches the class. CUIAutomation8 rather than
     // the older CUIAutomation coclass because only the former's objects

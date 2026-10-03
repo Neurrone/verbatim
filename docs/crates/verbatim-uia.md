@@ -19,8 +19,11 @@ Public API:
   client interfaces, and querying `IUIAutomation5` (the notification-event
   registration) on a plain `CUIAutomation` object fails with
   `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
-  Every client in the crate is created by one function, which creates the
-  process's first client and builds a cache request from it under a lock:
+  Every client in the crate, and the provider probe, first wait for UIA's
+  first-time setup, which creates a client and builds a cache request
+  from it once, under a lock, on a thread of its own (so a thread that only
+  probes never joins COM), with the multithreaded apartment kept for the
+  life of the process so the setup is not undone:
   while UIA's first-time setup is still running on one thread, a cache
   request built on another fails with `E_FAIL`, which made a mockapp test
   fail about one run in five (`tests/first_use.rs` races six threads in a
