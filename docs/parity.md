@@ -200,7 +200,10 @@ verified.
   the focus object by identity only. Since 2026-10-02 Verbatim compares
   the node id too, not its states, name, or ancestors, which a second
   report can read mid-change (Notepad's edit control settling, File
-  Explorer's title being filled in), and keeps the newer reading.
+  Explorer's title being filled in), and keeps the newer reading. Since
+  2026-10-03 the selected item inside a list is not compared either (it
+  had made a repeated focus with another selected item announce the whole
+  focus again); a new selected item is announced by its selection event.
   Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md),
   M3 noise suppression). Unchanged by the outpost redesign: only Core
   sees focus across applications, so this stays in the reducer.
@@ -217,7 +220,15 @@ verified.
   `multi_outpost_switch`). A UIA focus fact whose element is not the
   focused element is reported from the fact when its window is in the
   foreground, or with no window facts, judged by its application, when
-  it has no window of its own. **matched (unverified)**; the
+  it has no window of its own. Since 2026-10-03 a focus read on request
+  (at startup, after an outpost is replaced, or after a menu closes)
+  carries the time its read began, so it is ordered with the events as
+  NVDA's queue orders the focus it reads; it had carried no time, so it
+  was never judged stale and did not count as the newest focus. A focus
+  with no window facts is taken to be in the attended window, since only
+  that let it be accepted, so a later foreground report for that window
+  does not replace the control as the focus (NVDA always knows the
+  focus's window). **matched (unverified)**; the
   `focus_churn` and `multi_outpost_switch` scenarios cover it.
 - Name change on the focus. NVDA: when the focused object's name
   changes, the new name alone is spoken, queued behind current
@@ -272,8 +283,12 @@ verified.
   popup menu that takes focus without becoming the foreground leaves
   attention where it was, and focus returning from it is still
   attended. Accepted from anywhere as background: toast
-  alerts and the shell's window-snap results; other UIA notifications
-  only from the attention application. Accepted background events
+  alerts and the shell's window-snap results, which are always queued,
+  as NVDA's Explorer module queues them; other UIA notifications only
+  from the focus's application, as NVDA drops notifications from any
+  other (since 2026-10-03; Verbatim had judged them by the attended
+  application, which differs in Settings, where ApplicationFrameHost
+  holds attention and the focus is in SystemSettings). Accepted background events
   never move focus or the navigator and are spoken queued.
   **matched (unverified)** for these; the tooltip and notification-bar
   windows, background progress bars, and a per-source cap on

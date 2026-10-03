@@ -51,7 +51,8 @@ Public API:
   the supervisor watches), `Fault`, and `FocusFact` (sent only by the
   listener). A `FocusNow` answer carries the application's foreground
   window and its facts, when it holds the system foreground, and its focused
-  control with ancestors, selected child, and window facts. A
+  control with ancestors, selected child, and window facts, and the time
+  the outpost began reading it, which orders it among the focus events. A
   `ListenerFact` strips to a pid-less `DeliveredFact` once the supervisor
   has routed it. Node ids arrive from Core stamped with this outpost's id;
   the outpost looks them up with the stamp cleared (`NodeId::unstamped`).

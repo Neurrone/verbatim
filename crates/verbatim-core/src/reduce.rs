@@ -96,9 +96,12 @@ enum Acceptance {
 /// Classifies one event against the attention record. A foreground change is
 /// always attended: its intake has already confirmed the window is the
 /// system's foreground window. With no attention yet, everything is
-/// attended, since there is nothing to compare against.
+/// attended, since there is nothing to compare against. `focus_source` is
+/// the application the focus belongs to, which UIA notifications are judged
+/// by.
 fn classify(
     attention: Option<&Attention>,
+    focus_source: Option<Pid>,
     source: Pid,
     window: Option<WindowFacts>,
     event: &NormalizedEvent,
@@ -114,8 +117,6 @@ fn classify(
             foreground: true, ..
         }
         | NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
-        // UIA notifications are filtered by application, not window, as
-        // NVDA filters them.
         // A toast is spoken from anywhere.
         NormalizedEvent::Alert { .. } => {
             if window_is_attended(attention, source, window) {
@@ -124,11 +125,19 @@ fn classify(
                 Acceptance::Background
             }
         }
+        // A UIA notification is spoken only from the focus's application,
+        // as NVDA drops notifications from any other ("background apps"),
+        // which is not always the attended one: in Settings the focus is in
+        // SystemSettings while ApplicationFrameHost holds attention. With no
+        // focus yet, the attended application stands in. The shell's
+        // window-snap results are spoken from anywhere and always queued,
+        // as NVDA's Explorer module speaks them, even when Explorer holds
+        // the focus.
         NormalizedEvent::Notification { notification, .. } => {
-            if source == attention.source {
-                Acceptance::Attended
-            } else if notification.activity_id.as_deref() == Some(SNAP_RESULTS_ACTIVITY) {
+            if notification.activity_id.as_deref() == Some(SNAP_RESULTS_ACTIVITY) {
                 Acceptance::Background
+            } else if source == focus_source.unwrap_or(attention.source) {
+                Acceptance::Attended
             } else {
                 Acceptance::Dropped
             }
@@ -146,8 +155,10 @@ fn classify(
 /// Whether a focus event from `outpost`, observed at `observed_at_ms`, was
 /// observed before the newest focus applied from another outpost. Events
 /// from one outpost arrive in order; across outposts they can arrive out of
-/// order, which NVDA's single event queue never does. A report with no
-/// observation time (an answer to a focus-now query) is never stale.
+/// order, which NVDA's single event queue never does. An answer to a
+/// focus-now query carries the time the outpost began reading it, so it is
+/// ordered with the events by that; a report with no observation time
+/// (0) is never stale.
 fn is_stale_focus(state: &SrState, outpost: OutpostId, observed_at_ms: u64) -> bool {
     observed_at_ms != 0
         && state
@@ -212,7 +223,13 @@ fn reduce_event(
     {
         return Vec::new();
     }
-    match classify(state.attention.as_ref(), source, window, event) {
+    match classify(
+        state.attention.as_ref(),
+        state.focus_source(),
+        source,
+        window,
+        event,
+    ) {
         Acceptance::Dropped => return Vec::new(),
         Acceptance::Background => return reduce_background(trace_id, event),
         Acceptance::Attended => {}
@@ -397,9 +414,26 @@ fn reduce_focus_changed(
     } else {
         report.ancestors.to_vec()
     };
+    // A focus that arrives with no window facts was accepted only because
+    // it came from the attended application (`window_is_attended` has
+    // nothing else to compare), so it is in the attended window, and that
+    // window is recorded as its own. It happens when an outpost builds a
+    // UIA focus from its event while the application is too busy for the
+    // focused element, and so its window, to be read in time. Without a
+    // window, the check above cannot tell that a later foreground report for
+    // that same window is the window already holding the focus, and the
+    // window would replace the control as the focus and be announced over
+    // it. NVDA never meets this: it always has the focused element, and
+    // from it the nearest window handle.
+    let focus_window = window.or_else(|| {
+        state
+            .attention
+            .filter(|attention| attention.source == source)
+            .and_then(|attention| attention.window)
+    });
     let new_focus = FocusContext {
         source,
-        window,
+        window: focus_window,
         snapshot: report.node.clone(),
         ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
@@ -413,11 +447,12 @@ fn reduce_focus_changed(
             // by identity: not its states or name, which a second report can
             // read mid-change, and not its ancestors, which can read
             // differently from one report to the next (a window title still
-            // being filled in, or a parent object read afresh through MSAA).
-            // The newer reading is kept.
-            if focus.snapshot.id == report.node.id
-                && focus.last_selection == new_focus.last_selection
-            {
+            // being filled in, or a parent object read afresh through MSAA),
+            // and not the selected item inside a list, which a selection
+            // event announces. The newer reading is kept, except the
+            // selected item already announced, so a selection event for a
+            // new one is still spoken.
+            if focus.snapshot.id == report.node.id {
                 let mut kept = focus.clone();
                 kept.snapshot = new_focus.snapshot;
                 kept.ancestors = new_focus.ancestors;
@@ -571,7 +606,7 @@ fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
 }
 
 /// Handles a UIA `AutomationNotification` event (NVDA's
-/// `event_UIA_notification`) from the attention application: announce the
+/// `event_UIA_notification`) from the focus's application: announce the
 /// application-supplied display string, if any, and nothing when there is
 /// none — a notification with no text has nothing to say. The processing
 /// hint sets the priority: `MostRecent` and `ImportantMostRecent` supersede

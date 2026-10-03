@@ -120,6 +120,67 @@ fn foreground_in(source: Pid, facts: WindowFacts, snapshot: NodeSnapshot) -> Inp
     )
 }
 
+/// A focus read on request is ordered by the time its read began: a late
+/// event from another outpost observed before that read is stale and
+/// dropped, as NVDA's queue would have handled it first.
+#[test]
+fn a_focus_read_on_request_is_ordered_by_its_read_time() {
+    let edit = node(
+        7001,
+        Role::EditableText,
+        Some("Name"),
+        None,
+        StateSet::new(),
+    );
+    let mut read = focus_event(TraceId::mint(), Pid(7), edit);
+    if let Input::Event { observed_at_ms, .. } = &mut read {
+        *observed_at_ms = 2_000;
+    }
+    let (state, _) = reduce_from(&SrState::new(), &read, OutpostId(7));
+
+    let button = node(8001, Role::Button, Some("OK"), None, StateSet::new());
+    let mut late = focus_event(TraceId::mint(), Pid(8), button);
+    if let Input::Event { observed_at_ms, .. } = &mut late {
+        *observed_at_ms = 1_500;
+    }
+    let (state, effects) = reduce_from(&state, &late, OutpostId(8));
+    assert!(effects.is_empty(), "observed before the read, so stale");
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id.number()),
+        Some(7001)
+    );
+}
+
+/// A focus whose window was not known (its application too busy for the
+/// outpost to read it) is taken to be in the attended window, so a later
+/// foreground report for that window does not replace the control.
+#[test]
+fn a_foreground_report_does_not_replace_a_focus_that_came_without_a_window() {
+    let app = Pid(7);
+    let state = switch_to(&SrState::new(), app);
+    let edit = node(
+        7001,
+        Role::EditableText,
+        Some("Name"),
+        None,
+        StateSet::new(),
+    );
+    let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), app, edit));
+    assert_eq!(speak_effects(&effects).len(), 1, "the control is announced");
+
+    let window_node = node(7000, Role::Window, Some("App"), None, StateSet::new());
+    let (state, effects) = reduce(&state, &foreground_in(app, window(7000), window_node));
+    assert!(
+        speak_effects(&effects).is_empty(),
+        "the window is not announced over it"
+    );
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id.number()),
+        Some(7001),
+        "the control stays the focus"
+    );
+}
+
 /// Switches to application `source`: a foreground change to a window of its
 /// own, so attention moves there as it does when the user switches
 /// applications.
@@ -1084,6 +1145,35 @@ fn focus_event_with_selection(
             selected_child,
         },
     }
+}
+
+/// A repeated focus on the same list is silent even when its selected item
+/// differs, as NVDA compares a focus by identity alone; the new item is then
+/// announced by its selection event.
+#[test]
+fn a_repeated_focus_with_another_selected_item_is_silent_until_the_selection_event() {
+    let app = Pid(1);
+    let list = node(10, Role::List, Some("Files"), None, StateSet::new());
+    let first = node(11, Role::ListItem, Some("a.txt"), None, StateSet::new());
+    let second = node(12, Role::ListItem, Some("b.txt"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_selection(TraceId::mint(), app, list.clone(), Some(first)),
+    );
+    assert_eq!(speak_effects(&effects).len(), 1);
+
+    let (state, effects) = reduce(
+        &state,
+        &focus_event_with_selection(TraceId::mint(), app, list, Some(second.clone())),
+    );
+    assert!(effects.is_empty(), "the same focus is not announced again");
+
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), app, second));
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "the new item is announced by its selection event"
+    );
 }
 
 fn selection_event(trace_id: TraceId, source: Pid, node: NodeSnapshot) -> Input {
@@ -2306,7 +2396,25 @@ fn notification_in(source: Pid, activity_id: Option<&str>) -> Input {
 }
 
 #[test]
-fn notifications_are_spoken_only_from_the_attention_application() {
+fn notifications_are_spoken_only_from_the_focus_application() {
+    // As in Settings: the frame's application holds attention, and the
+    // focus is in another application's content inside that window.
+    let state = switch_to(&SrState::new(), Pid(1));
+    let toggle = node(2001, Role::Button, Some("Wi-Fi"), None, StateSet::new());
+    let (state, _) = reduce(&state, &focus_in(Pid(2), window(1000), toggle, vec![]));
+
+    let (_, effects) = reduce(&state, &notification_in(Pid(2), None));
+    assert_eq!(speak_effects(&effects).len(), 1, "the focus's application");
+
+    let (_, effects) = reduce(&state, &notification_in(Pid(1), None));
+    assert!(
+        effects.is_empty(),
+        "the attended application without the focus"
+    );
+}
+
+#[test]
+fn with_no_focus_notifications_are_spoken_from_the_attention_application() {
     let state = switch_to(&SrState::new(), Pid(1));
 
     let (_, effects) = reduce(&state, &notification_in(Pid(2), None));
@@ -2345,6 +2453,17 @@ fn the_snap_results_notification_is_spoken_from_anywhere_queued() {
         Some(Pid(1)),
         "background never moves attention"
     );
+
+    // Queued even from the attended application, which asks for the
+    // notification to supersede earlier speech.
+    let (_, effects) = reduce(
+        &state,
+        &notification_in(
+            Pid(1),
+            Some("Windows.Shell.SnapComponent.SnapHotKeyResults"),
+        ),
+    );
+    assert_eq!(speak_effects(&effects)[0].priority, SpeechPriority::Queued);
 }
 
 // ---- Outpost replacement ----

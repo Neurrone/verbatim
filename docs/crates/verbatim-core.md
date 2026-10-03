@@ -99,9 +99,10 @@ Implementation notes, `reduce`:
   owner, are topmost, report a `Windows.UI.Core` window under the input
   thread's active window, or say the window is in the system's foreground
   window; when either side has no window facts, the
-  application decides. UIA notifications are filtered by application
-  instead, as NVDA filters them, except the shell's window-snap results,
-  which are spoken from anywhere. A foreground change moves attention, and
+  application decides. UIA notifications are filtered by the focus's
+  application instead (the attended one before any focus), as NVDA
+  filters them, except the shell's window-snap results, which are spoken
+  from anywhere, always queued. A foreground change moves attention, and
   so does a focus in the system's foreground window that is unrelated to
   the attention window (Windows can raise no foreground event for a window
   given the foreground after its launch); a topmost popup menu taking focus
@@ -162,7 +163,7 @@ Implementation notes, `reduce`:
   `Notification` event speaks its display string when it carries one,
   interrupting for `MostRecent`/`ImportantMostRecent` processing and
   queuing otherwise (NVDA's `event_UIA_notification`; snap-layout hints are
-  the motivating case), from the attention application only. A
+  the motivating case), from the focus's application only. A
   focus event identical to the one already announced from the same
   application, back to back, is dropped — NVDA's already-the-focus early
   return, which removes the double-fire when the UIA callback and a

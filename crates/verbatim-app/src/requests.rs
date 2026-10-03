@@ -196,12 +196,17 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             }
         },
         Asker::FakeFocus { source, trace_id } => match outcome {
-            QueryOutcome::Done(QueryResult::Focus(FocusNow { focus, .. })) => focus_inputs(
+            QueryOutcome::Done(QueryResult::Focus(FocusNow {
+                focus,
+                observed_at_ms,
+                ..
+            })) => focus_inputs(
                 source,
                 trace_id,
                 FocusNow {
                     window: None,
                     focus,
+                    observed_at_ms,
                 },
             ),
             other => {
@@ -221,7 +226,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
         |node: NodeSnapshot, window: Option<WindowFacts>, foreground, ancestors, selected_child| {
             Input::Event {
                 trace_id,
-                observed_at_ms: 0,
+                observed_at_ms: focus.observed_at_ms,
                 source,
                 backend: node.backend,
                 window,
@@ -429,6 +434,7 @@ mod tests {
                 selected_child: None,
                 window: None,
             }),
+            observed_at_ms: 1234,
         };
         let inputs = table.finish(
             id,
@@ -439,6 +445,7 @@ mod tests {
             inputs.as_slice(),
             [Input::Event {
                 source: Pid(5),
+                observed_at_ms: 1234,
                 event: NormalizedEvent::FocusChanged {
                     foreground: false,
                     ..

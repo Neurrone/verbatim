@@ -18,7 +18,7 @@ use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
 use super::window::{
-    focus_window_of, foreground_window_of, main_window_of, top_level_windows,
+    focus_window_of, foreground_window_of, main_window_of, now_ms, top_level_windows,
     window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame, window_text,
 };
 
@@ -446,6 +446,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
 /// The answer to a focus-now query: the application's foreground window, if
 /// it holds the system foreground, and its focused control.
 pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
+    let observed_at_ms = now_ms();
     let window = foreground_window_of(context.target_pid)
         .filter(|&hwnd| !window_is_hidden_frame(hwnd))
         .map(|hwnd| {
@@ -457,6 +458,7 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
     FocusNow {
         window,
         focus: focused_control(context, client),
+        observed_at_ms,
     }
 }
 

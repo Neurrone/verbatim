@@ -363,6 +363,12 @@ pub struct FocusNow {
     pub window: Option<(NodeSnapshot, WindowFacts)>,
     /// The focused control and its facts, when the application has one.
     pub focus: Option<FocusedControl>,
+    /// When the outpost began reading the answer, in milliseconds since the
+    /// Unix epoch: the answer's place among the focus events, which carry
+    /// the time they were observed. A focus event observed before it is
+    /// older than the answer, and one observed after it newer, as NVDA
+    /// queues a focus it reads in order with the events around it.
+    pub observed_at_ms: u64,
 }
 
 /// The focused control in a [`FocusNow`] answer.
@@ -836,6 +842,7 @@ mod tests {
                     selected_child: None,
                     window: None,
                 }),
+                observed_at_ms: 42,
             })),
             QueryOutcome::Done(QueryResult::Navigated(None)),
             QueryOutcome::Done(QueryResult::Tree(DumpedTree {
