@@ -310,21 +310,24 @@ mod tests {
         ));
         let path_str = path.to_str().expect("utf8 temp path").to_owned();
 
+        // cmd starts in milliseconds; PowerShell's cold start took more
+        // than two seconds on GitHub's ARM64 runner.
         let pid = launch(
-            "powershell",
+            "cmd",
             &[
-                "-NoProfile".to_owned(),
-                "-Command".to_owned(),
-                "[Console]::Error.WriteLine('agent stderr capture test')".to_owned(),
+                "/c".to_owned(),
+                "echo agent stderr capture test 1>&2".to_owned(),
             ],
             None,
             &[],
             Some(&path_str),
         )
-        .expect("spawns powershell with a stderr capture path");
+        .expect("spawns cmd with a stderr capture path");
 
+        // Waits for the exit, however long the machine takes to start the
+        // child; the test is about the capture, not the start-up time.
         let mut final_state = ProcessState::Running;
-        for _ in 0..100 {
+        for _ in 0..1500 {
             final_state = status(pid).expect("queries status");
             if final_state != ProcessState::Running {
                 break;
