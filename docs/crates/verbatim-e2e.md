@@ -81,24 +81,23 @@ Public API:
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
   and its recording file name prefix — one identifier, everywhere),
-  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, `Navigation`, or
-  `Diagnostic`, a coarse `--group` selector, not a strict taxonomy — see
+  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, or `Navigation`, a
+  coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
   `target_images` (image names its `setup` may launch with
   `launch_target`, unioned by `swept_target_image_names`; an application
   opened with `open_document` is closed by title instead and not listed),
   and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario — today nine: `m1_exit_regression` and
+  registered scenario — today eight: `m1_exit_regression` and
   `focus_churn` (Speech),
   `notepad_focus` and `msinfo32` (Legacy), `multi_outpost_switch` and
-  `start_menu` (Shell), `object_navigation` and `tree_navigation`
-  (Navigation), and `start_menu_repeat` (Diagnostic), each implemented in
+  `start_menu` (Shell), and `object_navigation` and `tree_navigation`
+  (Navigation), each implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
-  scenario *except* the `Diagnostic` group, whose members — measurement
-  tools, not gates — run only when named explicitly) into a list, erroring
+  scenario) into a list, erroring
   on any unrecognized name; `run_named` is the thin entry point
   every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
   `run_named`'s internal `run` launches, runs `setup` then `body` then

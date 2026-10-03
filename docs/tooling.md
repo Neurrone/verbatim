@@ -298,13 +298,8 @@ object-navigation and review commands against Verbatim's own settings
 dialog), `msinfo32` (an MSAA-only legacy application reaches Verbatim
 through the MSAA stack), and `tree_navigation` (logical object navigation
 through msinfo32's real Win32 tree view — the regression scenario for the
-flat MSAA tree-view exposure), `start_menu` (pressing the Windows key
-opens the Start/Search surface and Verbatim announces its search box),
-and `start_menu_repeat` (a diagnostic, not a gate: opens the Start menu
-twice to measure the reported first-press gap; its `Diagnostic` group is
-excluded from the no-filter default run, and its test is marked ignored so
-a plain `cargo test` skips it too; it runs only when named explicitly,
-`xtask vm test` passing `--include-ignored` for it).
+flat MSAA tree-view exposure), and `start_menu` (pressing the Windows key
+opens the Start/Search surface and Verbatim announces its search box).
 A real Explorer folder-window scenario is deliberately not among them — see
 the "Explorer" note in `docs/roadmap.md`'s M3 section for why it is verified
 by hand for now, and the same section's toggle-controls and Start-menu notes

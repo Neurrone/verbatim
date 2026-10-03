@@ -31,6 +31,8 @@ pub(crate) struct NodeData {
     pub(crate) set_size: Option<u32>,
     /// One-based nesting level (UIA `Level`).
     pub(crate) level: Option<u32>,
+    /// The node this one controls (UIA `ControllerFor`).
+    pub(crate) controller_for: Option<usize>,
     pub(crate) parent: Option<usize>,
     pub(crate) children: Vec<usize>,
 }
@@ -61,7 +63,13 @@ impl Tree {
     pub(crate) fn build(root: FixtureNode) -> Self {
         let mut nodes = Vec::new();
         let mut by_fixture_id = HashMap::new();
-        insert(&mut nodes, &mut by_fixture_id, root, None);
+        let mut controllers = Vec::new();
+        insert(&mut nodes, &mut by_fixture_id, &mut controllers, root, None);
+        // Resolved once every id has its index; the fixture loader has
+        // already checked that each names a node.
+        for (index, controlled) in controllers {
+            nodes[index].controller_for = by_fixture_id.get(&controlled).copied();
+        }
         Self {
             nodes,
             by_fixture_id,
@@ -91,6 +99,7 @@ impl Tree {
 fn insert(
     nodes: &mut Vec<NodeData>,
     by_fixture_id: &mut HashMap<String, usize>,
+    controllers: &mut Vec<(usize, String)>,
     node: FixtureNode,
     parent: Option<usize>,
 ) -> usize {
@@ -105,13 +114,23 @@ fn insert(
         position_in_set: node.position_in_set,
         set_size: node.set_size,
         level: node.level,
+        controller_for: None,
         parent,
         children: Vec::new(),
     });
     by_fixture_id.insert(node.id, index);
+    if let Some(controlled) = node.controller_for {
+        controllers.push((index, controlled));
+    }
     let mut child_indices = Vec::with_capacity(node.children.len());
     for child in node.children {
-        child_indices.push(insert(nodes, by_fixture_id, child, Some(index)));
+        child_indices.push(insert(
+            nodes,
+            by_fixture_id,
+            controllers,
+            child,
+            Some(index),
+        ));
     }
     nodes[index].children = child_indices;
     index
@@ -133,6 +152,7 @@ mod tests {
             position_in_set: None,
             set_size: None,
             level: None,
+            controller_for: None,
             children,
         }
     }

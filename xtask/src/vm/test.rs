@@ -9,8 +9,7 @@
 //!
 //! - `--scenario <name>` (repeatable) and `--group <name>` (repeatable)
 //!   choose which of `verbatim_e2e::registry::SCENARIOS` to run; with
-//!   neither given, every registered scenario runs except the `Diagnostic`
-//!   group, whose members run only when named explicitly.
+//!   neither given, every registered scenario runs.
 //!   `--list` prints the registry (name and group, one per line) and exits
 //!   without touching the VM at all — no build, no restore, no deploy.
 //! - `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is not a
@@ -47,7 +46,7 @@
 //!   silently green-lighting that would defeat the point of running it. The
 //!   artifacts directory holds the interleaved timeline, Verbatim's captured
 //!   stderr log, and a reducer flight-recorder dump — all for every run, pass
-//!   or fail (so a passing diagnostic leaves its timings and reducer inputs
+//!   or fail (so a passing run leaves its timings and reducer inputs
 //!   behind) — all collected by `verbatim_e2e::registry::run` itself, inside
 //!   the subprocess, since that is where the live control and agent
 //!   connections needed to fetch them still exist.
@@ -536,7 +535,6 @@ fn run_scenario_subprocess(
             test_name,
             "--",
             "--exact",
-            "--include-ignored",
             "--test-threads=1",
         ])
         .env("VERBATIM_E2E_ENDPOINT", endpoint)

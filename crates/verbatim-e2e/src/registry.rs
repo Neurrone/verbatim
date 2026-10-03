@@ -63,11 +63,6 @@
 //!   Verbatim's own settings dialog, and
 //!   [`tree_navigation`](crate::scenarios::tree_navigation) against
 //!   msinfo32's real Win32 tree view over MSAA.
-//! - [`Group::Diagnostic`]: measurement tools, not gates —
-//!   [`start_menu_repeat`](crate::scenarios::start_menu_repeat), which opens
-//!   the Start menu twice to measure a reported first-press gap. Unlike the
-//!   other groups, [`select`] excludes this one from the no-filter default
-//!   run, so it is only ever run when named explicitly (see [`select`]).
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -78,7 +73,7 @@ use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     focus_churn, m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus,
-    object_navigation, start_menu, start_menu_repeat, tree_navigation,
+    object_navigation, start_menu, tree_navigation,
 };
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
@@ -94,13 +89,6 @@ pub enum Group {
     Legacy,
     /// Object navigation and review-cursor commands.
     Navigation,
-    /// A measurement tool, not an acceptance gate. Scenarios in this group are
-    /// deliberately excluded from [`select`]'s no-filter default run, so an
-    /// ordinary `cargo xtask vm test` never runs them; they are selected
-    /// explicitly with `--scenario <name>` or `--group diagnostic`. Reserved
-    /// for scenarios whose value is the artifacts they leave behind (timings,
-    /// stderr) rather than a pass/fail verdict a suite should gate on.
-    Diagnostic,
 }
 
 impl Group {
@@ -114,7 +102,6 @@ impl Group {
             Self::Shell => "shell",
             Self::Legacy => "legacy",
             Self::Navigation => "navigation",
-            Self::Diagnostic => "diagnostic",
         }
     }
 
@@ -127,7 +114,6 @@ impl Group {
             "shell" => Some(Self::Shell),
             "legacy" => Some(Self::Legacy),
             "navigation" => Some(Self::Navigation),
-            "diagnostic" => Some(Self::Diagnostic),
             _ => None,
         }
     }
@@ -251,16 +237,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         body: tree_navigation::body,
         teardown: tree_navigation::teardown,
     },
-    ScenarioDef {
-        name: "start_menu_repeat",
-        // A diagnostic, not a gate: excluded from the no-filter default run
-        // (see `select`), selected explicitly to measure the first-press gap.
-        group: Group::Diagnostic,
-        target_images: &[],
-        setup: start_menu_repeat::setup,
-        body: start_menu_repeat::body,
-        teardown: start_menu_repeat::teardown,
-    },
 ];
 
 /// Looks up a scenario by [`ScenarioDef::name`].
@@ -288,11 +264,8 @@ pub fn swept_target_image_names() -> Vec<&'static str> {
 /// Resolves `--scenario` and `--group` selections against `scenarios`
 /// (always [`SCENARIOS`] outside tests) into an ordered, deduplicated list
 /// of matching definitions, preserving registry order. Empty `names` and
-/// `groups` selects every scenario *except* the [`Group::Diagnostic`] ones —
-/// the default, no-flags behavior of `cargo xtask vm test`, which runs the
-/// acceptance gate but not the measurement-only diagnostics. A diagnostic is
-/// still reachable by naming it (`--scenario`) or its group (`--group
-/// diagnostic`), both of which honor an explicit request.
+/// `groups` selects every scenario — the default, no-flags behavior of
+/// `cargo xtask vm test`.
 ///
 /// # Errors
 ///
@@ -305,10 +278,7 @@ pub fn select<'a>(
     groups: &[String],
 ) -> Result<Vec<&'a ScenarioDef>, String> {
     if names.is_empty() && groups.is_empty() {
-        return Ok(scenarios
-            .iter()
-            .filter(|def| def.group != Group::Diagnostic)
-            .collect());
+        return Ok(scenarios.iter().collect());
     }
 
     let mut parsed_groups = Vec::with_capacity(groups.len());
@@ -464,7 +434,7 @@ fn run(def: &ScenarioDef) {
 
     let passed = body_outcome.is_ok() && teardown_outcome.is_ok() && quit_outcome.is_ok();
     // The timeline and stderr log are written for every run, pass or fail (so a
-    // passing diagnostic leaves its timings behind). The flight-recorder dump
+    // passing run leaves its timings behind). The flight-recorder dump
     // already happened above, before the quit, for every run.
     scenario.collect_run_artifacts(&dir);
     foreground.push(format!("after teardown: {}", scenario.foreground_report()));
@@ -569,14 +539,6 @@ mod tests {
                 body: no_body,
                 teardown: no_teardown,
             },
-            ScenarioDef {
-                name: "delta",
-                group: Group::Diagnostic,
-                target_images: &[],
-                setup: no_setup,
-                body: no_body,
-                teardown: no_teardown,
-            },
         ]
     }
 
@@ -587,7 +549,6 @@ mod tests {
             Group::Shell,
             Group::Legacy,
             Group::Navigation,
-            Group::Diagnostic,
         ] {
             assert_eq!(Group::parse(group.name()), Some(group));
         }
@@ -624,41 +585,11 @@ mod tests {
     }
 
     #[test]
-    fn select_with_no_filters_returns_every_non_diagnostic_scenario_in_order() {
+    fn select_with_no_filters_returns_every_scenario_in_order() {
         let scenarios = fixture();
         let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
         let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(
-            names,
-            vec!["alpha", "beta", "gamma"],
-            "the no-filter default excludes the diagnostic scenario (delta)"
-        );
-    }
-
-    #[test]
-    fn select_by_name_reaches_a_diagnostic_scenario() {
-        let scenarios = fixture();
-        let selected = select(&scenarios, &["delta".to_owned()], &[])
-            .expect("delta is a real diagnostic scenario");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(
-            names,
-            vec!["delta"],
-            "naming a diagnostic explicitly still selects it"
-        );
-    }
-
-    #[test]
-    fn select_by_diagnostic_group_reaches_it() {
-        let scenarios = fixture();
-        let selected = select(&scenarios, &[], &["diagnostic".to_owned()])
-            .expect("diagnostic is a real group");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(
-            names,
-            vec!["delta"],
-            "asking for the diagnostic group runs the diagnostics"
-        );
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
     }
 
     #[test]

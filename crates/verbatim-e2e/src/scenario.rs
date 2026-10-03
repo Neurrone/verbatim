@@ -39,7 +39,7 @@ use crate::{ENDPOINT_ENV, endpoint};
 /// File names the artifact collectors write under, inside the directory
 /// [`crate::artifacts::scenario_dir`] names. The timeline and stderr log are
 /// written for every run by [`Scenario::collect_run_artifacts`] (so a passing
-/// diagnostic run leaves its announcement timings and outpost-ready timestamps
+/// run leaves its announcement timings and outpost-ready timestamps
 /// behind, not only a failing one); the flight-recorder dump is written for
 /// every run too by [`Scenario::collect_flight_recorder`], taken before the
 /// clean quit since it needs Verbatim still up to answer `DumpRecorder`.
@@ -701,7 +701,7 @@ impl Scenario {
     /// printed on an `expect_*` panic — this additionally writes it to a file)
     /// and Verbatim's captured stderr log (`stderr.log`, via the agent's
     /// `read_file` from the path this launch already told the agent to capture
-    /// into). Written for every run, pass or fail, so a passing diagnostic run
+    /// into). Written for every run, pass or fail, so a passing run
     /// still leaves enough to read announcement timings (the timeline's
     /// millisecond offsets) and outpost-ready timestamps (Verbatim's stderr).
     ///

@@ -244,7 +244,8 @@ mod props {
     use windows::Win32::System::Ole::SafeArrayCreateVector;
     use windows::Win32::System::Ole::SafeArrayPutElement;
     use windows::Win32::System::Variant::{
-        VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_BOOL, VT_BSTR, VT_I4,
+        VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_BOOL, VT_BSTR, VT_I4,
+        VT_UNKNOWN,
     };
     use windows::Win32::UI::Accessibility::{
         ExpandCollapseState, ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded,
@@ -252,8 +253,9 @@ mod props {
         NavigateDirection_FirstChild, NavigateDirection_LastChild, NavigateDirection_NextSibling,
         NavigateDirection_Parent, NavigateDirection_PreviousSibling, ToggleState,
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
-        UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-        UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
+        UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
+        UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
+        UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
         UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
         UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
@@ -262,7 +264,7 @@ mod props {
         UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId, UiaAppendRuntimeId,
         UiaHostProviderFromHwnd,
     };
-    use windows::core::{BSTR, Result as WinResult};
+    use windows::core::{BSTR, Interface, Result as WinResult};
     use windows_core::Error;
 
     use super::{ChildProvider, RootProvider, role_to_control_type};
@@ -313,6 +315,35 @@ mod props {
                     },
                 }),
             },
+        }
+    }
+
+    /// A one-element array of `element`, as UIA reads an element-array
+    /// property such as `ControllerFor`.
+    fn element_array_variant(element: &IRawElementProviderSimple) -> VARIANT {
+        // SAFETY: a one-element `VT_UNKNOWN` vector, filled at index 0;
+        // `SafeArrayPutElement` takes its own reference to the provider, and
+        // the returned VARIANT owns the array.
+        unsafe {
+            let array = SafeArrayCreateVector(VT_UNKNOWN, 0, 1);
+            if array.is_null() {
+                return empty_variant();
+            }
+            let index = 0i32;
+            if SafeArrayPutElement(array, &raw const index, element.as_raw()).is_err() {
+                return empty_variant();
+            }
+            VARIANT {
+                Anonymous: VARIANT_0 {
+                    Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                        vt: VARENUM(VT_ARRAY.0 | VT_UNKNOWN.0),
+                        wReserved1: 0,
+                        wReserved2: 0,
+                        wReserved3: 0,
+                        Anonymous: VARIANT_0_0_0 { parray: array },
+                    }),
+                },
+            }
         }
     }
 
@@ -422,6 +453,14 @@ mod props {
             one_based_variant(node.set_size)
         } else if id == UIA_LevelPropertyId.0 {
             one_based_variant(node.level)
+        } else if id == UIA_ControllerForPropertyId.0 {
+            node.controller_for
+                .and_then(|controlled| {
+                    provider_for(std::sync::Arc::clone(tree), hwnd, controlled)
+                        .cast::<IRawElementProviderSimple>()
+                        .ok()
+                })
+                .map_or_else(empty_variant, |element| element_array_variant(&element))
         } else {
             empty_variant()
         }

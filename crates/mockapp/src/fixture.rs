@@ -7,8 +7,10 @@
 //! `keyboard_shortcut` strings, and one-based `position_in_set`,
 //! `set_size`, and `level` integers (the M3
 //! [`NodeDetails`](verbatim_model::NodeDetails) vocabulary; each backend
-//! serves the subset its API can express) — and `children` (an array of
-//! nested nodes). The root node conceptually corresponds to the host
+//! serves the subset its API can express), an optional `controller_for`
+//! (the `id` of the node this one controls, served as UIA's
+//! `ControllerFor` relation, as a search box names its suggestion list) —
+//! and `children` (an array of nested nodes). The root node conceptually corresponds to the host
 //! window itself.
 
 use std::fmt;
@@ -31,6 +33,8 @@ pub(crate) enum FixtureError {
     UnknownState { id: String, state: String },
     /// Two nodes in the fixture declared the same `id`.
     DuplicateId(String),
+    /// A `controller_for` named an `id` no node declares.
+    UnknownControlled { id: String, controlled: String },
 }
 
 impl fmt::Display for FixtureError {
@@ -45,6 +49,9 @@ impl fmt::Display for FixtureError {
                 write!(f, "node {id:?} has unknown state {state:?}")
             }
             Self::DuplicateId(id) => write!(f, "duplicate node id {id:?}"),
+            Self::UnknownControlled { id, controlled } => {
+                write!(f, "node {id:?} controls unknown node {controlled:?}")
+            }
         }
     }
 }
@@ -74,6 +81,8 @@ struct RawNode {
     #[serde(default)]
     level: Option<u32>,
     #[serde(default)]
+    controller_for: Option<String>,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -91,6 +100,8 @@ pub(crate) struct FixtureNode {
     pub(crate) position_in_set: Option<u32>,
     pub(crate) set_size: Option<u32>,
     pub(crate) level: Option<u32>,
+    /// The `id` of the node this one controls (UIA `ControllerFor`).
+    pub(crate) controller_for: Option<String>,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -105,7 +116,25 @@ pub(crate) fn load(path: &Path) -> Result<FixtureNode, FixtureError> {
     let text = std::fs::read_to_string(path).map_err(FixtureError::Io)?;
     let raw: RawNode = serde_json::from_str(&text).map_err(FixtureError::Json)?;
     let mut seen_ids = std::collections::HashSet::new();
-    convert(raw, &mut seen_ids)
+    let root = convert(raw, &mut seen_ids)?;
+    check_controlled(&root, &seen_ids)?;
+    Ok(root)
+}
+
+/// Checks that every `controller_for` names a node the fixture declares.
+fn check_controlled(
+    node: &FixtureNode,
+    ids: &std::collections::HashSet<String>,
+) -> Result<(), FixtureError> {
+    if let Some(controlled) = node.controller_for.as_ref().filter(|id| !ids.contains(*id)) {
+        return Err(FixtureError::UnknownControlled {
+            id: node.id.clone(),
+            controlled: controlled.clone(),
+        });
+    }
+    node.children
+        .iter()
+        .try_for_each(|child| check_controlled(child, ids))
 }
 
 fn convert(
@@ -143,6 +172,7 @@ fn convert(
         position_in_set: raw.position_in_set,
         set_size: raw.set_size,
         level: raw.level,
+        controller_for: raw.controller_for,
         children,
     })
 }

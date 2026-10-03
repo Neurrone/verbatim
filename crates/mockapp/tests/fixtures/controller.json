@@ -1,0 +1,47 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Controller Fixture",
+  "children": [
+    {
+      "id": "search",
+      "role": "editable_text",
+      "name": "Search box",
+      "states": ["focusable"],
+      "controller_for": "results"
+    },
+    { "id": "other", "role": "editable_text", "name": "Other box", "states": ["focusable"] },
+    {
+      "id": "results",
+      "role": "list",
+      "name": "Suggestions",
+      "children": [
+        {
+          "id": "result1",
+          "role": "list_item",
+          "name": "Display settings",
+          "states": ["focusable", "selectable"]
+        },
+        {
+          "id": "result2",
+          "role": "list_item",
+          "name": "Sound settings",
+          "states": ["focusable", "selectable"]
+        }
+      ]
+    },
+    {
+      "id": "recent",
+      "role": "list",
+      "name": "Recent",
+      "children": [
+        {
+          "id": "recent1",
+          "role": "list_item",
+          "name": "Elsewhere",
+          "states": ["focusable", "selectable"]
+        }
+      ]
+    }
+  ]
+}

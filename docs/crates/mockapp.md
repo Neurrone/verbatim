@@ -23,7 +23,10 @@ strings, `states` (an array of `State` names in snake case, e.g.
 `read_only`), optional detail properties (`description` and
 `keyboard_shortcut` strings, one-based `position_in_set`, `set_size`, and
 `level` integers — the M3 `NodeDetails` vocabulary; each backend serves
-the subset its API can express), and `children` (nested nodes). The root
+the subset its API can express), an optional `controller_for` (the `id`
+of a node this one controls, served on the UIA backend as the
+`ControllerFor` relation, as a search box names its suggestion list), and
+`children` (nested nodes). The root
 node conceptually corresponds to the window itself.
 `fixture::role_from_fixture_str` and `state_from_fixture_str` hold the
 complete name tables.
@@ -149,7 +152,11 @@ state) and by the WinEvent hook as `WinEventKind::Selection`, and that
 full payload — property, value, selection, and notification changes are
 used rather than focus, so the tests never depend on real keyboard focus
 or `SetForegroundWindow` succeeding, and pass headless on GitHub
-`windows-latest` runners. `slow_application.rs` runs a real
+`windows-latest` runners. `controller_for.rs` selects items with `select`
+and asserts that `verbatim_uia::Uia::controlled_descendant` finds a
+result inside the list the search box's `ControllerFor` names, and
+nothing for an item elsewhere, for the list itself, or from a box that
+controls nothing. `slow_application.rs` runs a real
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,
 stalls mockapp's window thread with `stall`, delivers the focus as a

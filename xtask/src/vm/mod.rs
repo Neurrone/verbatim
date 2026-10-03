@@ -211,7 +211,7 @@ fn print_usage() {
     eprintln!(
         "                   select which scenarios run; with neither given, every registered"
     );
-    eprintln!("                   scenario except the diagnostic group runs; --list prints the");
+    eprintln!("                   scenario runs; --list prints the");
     eprintln!("                   scenario registry (name and group) and exits without touching");
     eprintln!("                   the VM; all flags may be given, in any order");
     eprintln!("  logs [dir]       pull flight-recorder dumps and the agent log out of the guest");

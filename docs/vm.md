@@ -72,10 +72,8 @@ arguments for the full verb list printed from the source of truth.
   compile failure is then caught with zero VM state changes. This is the
   one-command loop `docs/roadmap.md`'s M2 exit criteria describes.
   - `--scenario <name>` (repeatable) and `--group <name>` (repeatable, one
-    of `speech`, `shell`, `legacy`, `navigation`, `diagnostic`) select
-    which scenarios run; with neither given, every registered scenario
-    runs except the `diagnostic` group, whose members run only when named
-    explicitly. An unrecognized name is reported and the run aborts before
+    of `speech`, `shell`, `legacy`, `navigation`) select which scenarios
+    run; with neither given, every registered scenario runs. An unrecognized name is reported and the run aborts before
     anything touches the VM.
   - `--list` prints the scenario registry (name and group, one per line)
     and exits immediately — no build, no restore, no deploy, nothing
