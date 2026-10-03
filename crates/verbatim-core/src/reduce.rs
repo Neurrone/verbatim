@@ -12,7 +12,7 @@
 //! `docs/nvda/events.md`.
 
 use verbatim_model::{
-    Effect, FetchResult, Input, NodeId, NodeSnapshot, NormalizedEvent, Notification,
+    Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent, Notification,
     NotificationProcessing, OutpostId, Pid, PropertyChange, Query, QueryId, QueryKind,
     ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance,
     UtteranceSegment, UtteranceSource, WindowFacts,
@@ -65,6 +65,10 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
             command,
             repeat,
         } => reduce_command(&mut next, *trace_id, *command, *repeat),
+        Input::ActivationCompleted {
+            trace_id,
+            activated,
+        } => reduce_activation_completed(*trace_id, *activated),
         // `Tick` is reserved vocabulary with no policy yet; `Input` is also
         // `#[non_exhaustive]`, so this arm doubles as the catch-all for
         // variants added by later milestones, until each grows a real
@@ -167,6 +171,22 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
         }
         _ => source == attention.source,
     }
+}
+
+/// Speaks an activation's outcome, as NVDA's review activate does: the
+/// action ("Activate") when something was activated, else "No action".
+fn reduce_activation_completed(trace_id: TraceId, activated: bool) -> Vec<Effect> {
+    let message = if activated {
+        Message::Activate
+    } else {
+        Message::NoAction
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Interrupt,
+        segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
+        source: None,
+    })]
 }
 
 fn reduce_event(
@@ -587,10 +607,25 @@ fn reduce_command(
     // "To focus" is meaningful even with the navigator already on focus;
     // handle it before the navigator-present guard so it can seed one.
     if command == ReviewCommand::ToFocus {
-        return navigator_to_focus(state, trace_id);
+        // NVDA says "Move to focus" before the object.
+        let mut effects = navigator_to_focus(state, trace_id);
+        if let Some(Effect::Speak(utterance)) = effects.first_mut() {
+            utterance.segments.insert(
+                0,
+                UtteranceSegment::new(SegmentContent::Message(Message::MoveToFocus)),
+            );
+        }
+        return effects;
     }
     let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
+        return vec![Effect::Speak(Utterance {
+            trace_id,
+            priority: SpeechPriority::Interrupt,
+            segments: vec![UtteranceSegment::new(SegmentContent::Message(
+                Message::NoNavigatorObject,
+            ))],
+            source: None,
+        })];
     };
 
     match command {
@@ -603,7 +638,7 @@ fn reduce_command(
         ReviewCommand::NextSibling => navigate(state, trace_id, QueryKind::NextSibling),
         ReviewCommand::PreviousSibling => navigate(state, trace_id, QueryKind::PreviousSibling),
         ReviewCommand::FirstChild => navigate(state, trace_id, QueryKind::FirstChild),
-        _ => review_text_command(state, trace_id, command),
+        _ => review_text_command(state, trace_id, command, repeat),
     }
 }
 
@@ -640,11 +675,8 @@ fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Ef
             Reason::Query,
         ))],
         1 => {
-            let text = review::text_of(&navigator.object);
-            let segments = text
-                .chars()
-                .map(|ch| UtteranceSegment::text(ch.to_string()))
-                .collect::<Vec<_>>();
+            // NVDA spells the name and value joined by a space.
+            let segments = spelled(&clipboard_text(&navigator.object));
             if segments.is_empty() {
                 return Vec::new();
             }
@@ -706,102 +738,134 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
     })]
 }
 
+/// `text` spelled character by character, a space spoken as "space".
+fn spelled(text: &str) -> Vec<UtteranceSegment> {
+    text.chars()
+        .map(|ch| {
+            if ch == ' ' {
+                UtteranceSegment::new(SegmentContent::Message(Message::Space))
+            } else {
+                UtteranceSegment::text(ch.to_string())
+            }
+        })
+        .collect()
+}
+
 /// Runs a review-cursor text command over the navigator object's review
-/// text (see [`review`]). Moves the cursor and announces the line, word, or
-/// character it lands on. At a text boundary the motion stays put and
-/// re-reads the current unit, matching how a screen reader reports the edge.
+/// text (see [`review`]), as NVDA's review commands do: moves the cursor and
+/// speaks the line, word, or character it lands on. A motion that cannot
+/// move says "Top", "Bottom", "Left", or "Right" and reads the current unit;
+/// character motions stop at the ends of the line; an empty unit is
+/// "blank". Pressed twice, the current line or word is spelled; the
+/// current character, pressed three times, is given as its code in
+/// decimal and hexadecimal.
 fn review_text_command(
     state: &mut SrState,
     trace_id: TraceId,
     command: ReviewCommand,
+    repeat: u8,
 ) -> Vec<Effect> {
     let Some(navigator) = state.navigator.as_mut() else {
         return Vec::new();
     };
     let text = review::text_of(&navigator.object);
     let offset = navigator.review_offset.min(text.len());
+    let line = review::line_span(&text, offset);
+    let char_at = |at: usize| review::char_span(&text, at).unwrap_or((at, at));
 
-    let (new_offset, spoken) = match command {
-        ReviewCommand::ReviewTop => (0, review::line_span(&text, 0)),
+    let (new_offset, spoken, edge) = match command {
+        ReviewCommand::ReviewTop => (0, review::line_span(&text, 0), None),
         ReviewCommand::ReviewBottom => {
             let start = review::line_span(&text, text.len()).0;
-            (start, review::line_span(&text, start))
+            (start, review::line_span(&text, start), None)
         }
-        ReviewCommand::ReviewPreviousLine => {
-            let (start, _) = review::line_span(&text, offset);
-            let target = review::previous_char(&text, start).unwrap_or(start);
-            let span = review::line_span(&text, target);
-            (span.0, span)
-        }
+        ReviewCommand::ReviewPreviousLine => match review::previous_char(&text, line.0) {
+            Some(target) => {
+                let span = review::line_span(&text, target);
+                (span.0, span, None)
+            }
+            None => (line.0, line, Some(Message::Top)),
+        },
         ReviewCommand::ReviewNextLine => {
-            let (_, end) = review::line_span(&text, offset);
-            if end >= text.len() {
-                (
-                    review::line_span(&text, offset).0,
-                    review::line_span(&text, offset),
-                )
+            if line.1 >= text.len() {
+                (line.0, line, Some(Message::Bottom))
             } else {
-                let span = review::line_span(&text, end + 1);
-                (span.0, span)
+                let span = review::line_span(&text, line.1 + 1);
+                (span.0, span, None)
             }
         }
         // Current-line and start-of-line both land the cursor at the line
         // start and read the whole line; the only difference a text model
         // (M4) will draw between them is the reported position, not the
         // spoken text.
-        ReviewCommand::ReviewCurrentLine | ReviewCommand::ReviewStartOfLine => {
-            let span = review::line_span(&text, offset);
-            (span.0, span)
-        }
-        ReviewCommand::ReviewEndOfLine => {
-            let span = review::line_span(&text, offset);
-            (span.1, span)
-        }
-        ReviewCommand::ReviewPreviousWord => {
-            let target = review::previous_word_start(&text, offset).unwrap_or(offset);
-            (target, review::word_span(&text, target))
-        }
+        ReviewCommand::ReviewCurrentLine | ReviewCommand::ReviewStartOfLine => (line.0, line, None),
+        ReviewCommand::ReviewEndOfLine => (line.1, line, None),
+        ReviewCommand::ReviewPreviousWord => match review::previous_word_start(&text, offset) {
+            Some(target) => (target, review::word_span(&text, target), None),
+            None => (offset, review::word_span(&text, offset), Some(Message::Top)),
+        },
         ReviewCommand::ReviewNextWord => match review::next_word_start(&text, offset) {
-            Some(target) => (target, review::word_span(&text, target)),
-            None => (offset, review::word_span(&text, offset)),
+            Some(target) => (target, review::word_span(&text, target), None),
+            None => (
+                offset,
+                review::word_span(&text, offset),
+                Some(Message::Bottom),
+            ),
         },
         ReviewCommand::ReviewCurrentWord => {
             let span = review::word_span(&text, offset);
-            (span.0, span)
+            (span.0, span, None)
         }
-        ReviewCommand::ReviewPreviousCharacter => {
-            let target = review::previous_char(&text, offset).unwrap_or(offset);
-            (
-                target,
-                review::char_span(&text, target).unwrap_or((target, target)),
-            )
-        }
-        ReviewCommand::ReviewNextCharacter => match review::char_span(&text, offset) {
-            Some((_, next)) if next < text.len() => {
-                (next, review::char_span(&text, next).unwrap_or((next, next)))
-            }
-            _ => (
-                offset,
-                review::char_span(&text, offset).unwrap_or((offset, offset)),
-            ),
+        ReviewCommand::ReviewPreviousCharacter => match review::previous_char(&text, offset) {
+            Some(target) if target >= line.0 => (target, char_at(target), None),
+            _ => (offset, char_at(offset), Some(Message::Left)),
         },
-        ReviewCommand::ReviewCurrentCharacter => {
-            let span = review::char_span(&text, offset).unwrap_or((offset, offset));
-            (offset, span)
-        }
+        ReviewCommand::ReviewNextCharacter => match review::char_span(&text, offset) {
+            Some((_, next)) if next < line.1 => (next, char_at(next), None),
+            _ => (offset, char_at(offset), Some(Message::Right)),
+        },
+        ReviewCommand::ReviewCurrentCharacter => (offset, char_at(offset), None),
         _ => return Vec::new(),
     };
 
     navigator.review_offset = new_offset;
     let (start, end) = spoken;
     let slice = text.get(start..end).unwrap_or("");
-    if slice.is_empty() {
-        return Vec::new();
+    let mut segments: Vec<UtteranceSegment> = edge
+        .map(|edge| UtteranceSegment::new(SegmentContent::Message(edge)))
+        .into_iter()
+        .collect();
+    let repeated_current = matches!(
+        command,
+        ReviewCommand::ReviewCurrentLine
+            | ReviewCommand::ReviewCurrentWord
+            | ReviewCommand::ReviewCurrentCharacter
+    ) && repeat > 0;
+    // A unit with nothing to read is "blank"; spelled, a space is "space".
+    let blank = slice.is_empty() || (!repeated_current && slice.trim().is_empty());
+    if blank {
+        segments.push(UtteranceSegment::new(SegmentContent::Message(
+            Message::Blank,
+        )));
+    } else if repeated_current && command == ReviewCommand::ReviewCurrentCharacter && repeat > 1 {
+        // The character's code, in decimal and then spelled in hexadecimal.
+        for ch in slice.chars() {
+            let code = u32::from(ch);
+            segments.push(UtteranceSegment::text(format!("{code},")));
+            segments.extend(spelled(&format!("{code:#x}")));
+        }
+    } else if repeated_current {
+        // Spelled; NVDA's phonetic reading of a character and its spelling
+        // with character descriptions wait for the character descriptions
+        // table (M4).
+        segments.extend(spelled(slice));
+    } else {
+        segments.push(UtteranceSegment::text(slice.to_owned()));
     }
     vec![Effect::Speak(Utterance {
         trace_id,
         priority: SpeechPriority::Interrupt,
-        segments: vec![UtteranceSegment::text(slice.to_owned())],
+        segments,
         source: None,
     })]
 }

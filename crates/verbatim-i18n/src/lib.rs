@@ -222,10 +222,35 @@ pub mod messages {
         fl!(loader(), "menu-exit")
     }
 
-    /// Spoken confirmation that text was copied to the clipboard.
+    /// Spoken confirmation that `text` was copied to the clipboard, as NVDA
+    /// words it: the text itself, or its length when it is 1024 characters
+    /// or more, which a synthesizer may take too long to speak.
     #[must_use]
-    pub fn clipboard_copied() -> String {
-        fl!(loader(), "clipboard-copied")
+    pub fn clipboard_copied(text: &str) -> String {
+        let count = text.chars().count();
+        let spoken = if count < 1024 {
+            text.to_owned()
+        } else {
+            fl!(loader(), "clipboard-characters", count = count)
+        };
+        fl!(loader(), "clipboard-copied", text = spoken)
+    }
+
+    /// A lock key's new state ("caps lock on"): `key` is
+    /// `"toggle-caps-lock"`, `"toggle-num-lock"`, or `"toggle-scroll-lock"`.
+    #[must_use]
+    pub fn toggle_key_state(key: &str, on: bool) -> String {
+        let loader = loader();
+        let key = match key {
+            "toggle-num-lock" => fl!(loader, "toggle-num-lock"),
+            "toggle-scroll-lock" => fl!(loader, "toggle-scroll-lock"),
+            _ => fl!(loader, "toggle-caps-lock"),
+        };
+        if on {
+            fl!(loader, "toggle-state-on", key = key)
+        } else {
+            fl!(loader, "toggle-state-off", key = key)
+        }
     }
 
     /// Spoken notice that a clipboard copy failed.
@@ -359,6 +384,16 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::NoPreviousObject => i18n_embed_fl::fl!(loader, "message-no-previous-object"),
         Message::NoContainingObject => i18n_embed_fl::fl!(loader, "message-no-containing-object"),
         Message::NoObjectsInside => i18n_embed_fl::fl!(loader, "message-no-objects-inside"),
+        Message::Top => i18n_embed_fl::fl!(loader, "message-top"),
+        Message::Bottom => i18n_embed_fl::fl!(loader, "message-bottom"),
+        Message::Left => i18n_embed_fl::fl!(loader, "message-left"),
+        Message::Right => i18n_embed_fl::fl!(loader, "message-right"),
+        Message::Blank => i18n_embed_fl::fl!(loader, "message-blank"),
+        Message::MoveToFocus => i18n_embed_fl::fl!(loader, "message-move-to-focus"),
+        Message::NoNavigatorObject => i18n_embed_fl::fl!(loader, "message-no-navigator-object"),
+        Message::Activate => i18n_embed_fl::fl!(loader, "message-activate"),
+        Message::NoAction => i18n_embed_fl::fl!(loader, "message-no-action"),
+        Message::Space => i18n_embed_fl::fl!(loader, "message-space"),
         // `Message` is non_exhaustive; an unmapped future message speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -591,6 +626,31 @@ mod tests {
                 "message {id} did not resolve through the pseudo-locale: {resolved:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_lock_keys_state_is_worded_as_nvda_words_it() {
+        assert_eq!(
+            messages::toggle_key_state("toggle-caps-lock", true),
+            "caps lock on"
+        );
+        assert_eq!(
+            messages::toggle_key_state("toggle-num-lock", false),
+            "num lock off"
+        );
+    }
+
+    #[test]
+    fn the_clipboard_confirmation_is_nvdas() {
+        assert_eq!(
+            messages::clipboard_copied("Name Ann"),
+            "Copied to clipboard: Name Ann"
+        );
+        assert_eq!(
+            messages::clipboard_copied(&"x".repeat(1500)),
+            "Copied to clipboard: 1500 characters"
+        );
+        assert_eq!(messages::clipboard_copy_failed(), "Unable to copy");
     }
 
     #[test]

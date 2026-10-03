@@ -55,7 +55,20 @@ verified.
   (E2E scenarios assert the wording; the gesture tables live in
   [verbatim-input](crates/verbatim-input.md)). Only the English catalogue
   is shared vocabulary; Verbatim's other-language resources are written
-  fresh, never taken from NVDA's translations.
+  fresh, never taken from NVDA's translations. **Different, deliberately**
+  (Dickson, 2026-10-03): Caps Lock is a Verbatim key by default, with the
+  two Insert keys, where NVDA's default modifiers are the Insert keys
+  alone; and Verbatim's menu is on Verbatim+V, not NVDA+N. The laptop
+  layout has the numpad bindings too, as NVDA binds them for every layout
+  (since 2026-10-03; they had been desktop only).
+- NVDA's global commands Verbatim has not built: **not yet**. Among them
+  are the settings ring (NVDA+Control+arrows), speech modes, report focus
+  (NVDA+Tab), the title (NVDA+T), the status bar (NVDA+End), read window
+  (NVDA+B), sleep mode, quit (NVDA+Q), pass the next key through
+  (NVDA+F2), and the desktop layout's current line (NVDA+UpArrow). As in
+  NVDA, a Verbatim key combination with no command reaches the
+  application as the bare key, so until each is built, pressing it types
+  its letter or performs the key's own action.
 
 ## Focus and announcements
 
@@ -408,6 +421,26 @@ verified.
   as it is now (it had read the copy taken when focus landed, saying "not
   checked" for a box just checked). The spelled text and the copy wording
   are covered under the messages entries below.
+- Review and navigator messages and repeated presses (the list in
+  [Review modes](nvda/review-modes.md), "Reading commands built on
+  review"). Verbatim: **matched since 2026-10-03**: the edge messages
+  ("Top", "Bottom", "Left", "Right") with the unit read again, character
+  motions kept within the line, "blank", the current line or word spelled
+  on a second press, the current character's code on a third, "space" in
+  spelling, report current object spelling the name and value, "Move to
+  focus", "No navigator object", and activation saying "Activate" or "No
+  action" after walking up the parents. A copy says "Copied to clipboard:"
+  with the text (its length from 1024 characters on) after reading the
+  clipboard back, or "Unable to copy". **Not yet:** the current character's
+  description on a second press and spelling with descriptions on a third,
+  which wait for the character descriptions table (M4), and raised pitch
+  for capitals in spelling, which needs a pitch change mid-utterance from
+  the speech pipeline (phase 4).
+- Toggle key announcements ("caps lock on", "num lock off", "scroll lock
+  on") when a lock key reaches the operating system, including Caps Lock
+  passed through by a double tap of the Verbatim key. NVDA:
+  `KeyboardInputGesture.reportExtra`. Verbatim: **matched since
+  2026-10-03**, verified live with Num Lock.
 - Parent/next/previous/first-child moves with edge reporting ("no
   parent" etc. spoken, not silence). Verbatim: **matched (verified)**
   (commits 9bd6bec, 0fe39f0); NVDA wording comparison still

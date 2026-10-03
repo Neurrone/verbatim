@@ -1346,7 +1346,8 @@ fn report_object_announces_spells_then_copies() {
     let utterances = speak_effects(&effects);
     assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Name"));
 
-    // Second press: spell the review text (the value "Ann").
+    // Second press: spell the name and value, as NVDA does, the space
+    // spoken as "space".
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 1),
@@ -1355,6 +1356,11 @@ fn report_object_announces_spells_then_copies() {
     assert_eq!(
         utterances[0].segments,
         vec![
+            UtteranceSegment::text("N"),
+            UtteranceSegment::text("a"),
+            UtteranceSegment::text("m"),
+            UtteranceSegment::text("e"),
+            UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Space)),
             UtteranceSegment::text("A"),
             UtteranceSegment::text("n"),
             UtteranceSegment::text("n"),
@@ -1938,14 +1944,17 @@ fn review_cursor_walks_lines_words_and_characters() {
         vec![UtteranceSegment::text("second line")]
     );
 
-    // Next line at the bottom: stays put, re-reads.
+    // Next line at the bottom: says "Bottom", stays put, re-reads.
     let (state, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
     );
     assert_eq!(
         speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::text("second line")]
+        vec![
+            UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Bottom)),
+            UtteranceSegment::text("second line"),
+        ]
     );
 
     // Top, then first word, then next word.
@@ -2027,22 +2036,30 @@ fn navigator_follows_focus_and_returns_to_focus() {
     let (state, _) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
     let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
     assert_eq!(
-        speak_effects(&effects)[0].segments[0],
-        UtteranceSegment::label("Field"),
-        "to-focus snaps the navigator back regardless of where it wandered"
+        speak_effects(&effects)[0].segments[..2],
+        [
+            UtteranceSegment::new(SegmentContent::Message(
+                verbatim_model::Message::MoveToFocus
+            )),
+            UtteranceSegment::label("Field"),
+        ],
+        "to-focus says \"Move to focus\" and snaps the navigator back"
     );
 }
 
 #[test]
-fn commands_with_no_navigator_yet_do_nothing() {
+fn commands_with_no_navigator_yet_say_so() {
     let state = SrState::new();
+    let no_navigator = vec![UtteranceSegment::new(SegmentContent::Message(
+        verbatim_model::Message::NoNavigatorObject,
+    ))];
     let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+    assert_eq!(speak_effects(&effects)[0].segments, no_navigator);
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
-    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+    assert_eq!(speak_effects(&effects)[0].segments, no_navigator);
 }
 
 // ---- Windows, menus, and name changes (outpost redesign step 1) ----
@@ -2356,15 +2373,24 @@ fn an_ended_outposts_focus_is_dead_and_navigation_does_nothing() {
     assert!(state.focused().is_none());
     assert!(state.held_nodes().is_empty());
 
+    // The navigator was cleared with the outpost, so navigator commands
+    // say so, as NVDA does; returning to a dead focus does nothing.
     for cmd in [
         ReviewCommand::Parent,
-        ReviewCommand::ToFocus,
         ReviewCommand::ReportObject,
         ReviewCommand::Activate,
     ] {
         let (_, effects) = reduce(&state, &command(TraceId::mint(), cmd, 0));
-        assert!(effects.is_empty(), "{cmd:?} after the outpost ended");
+        assert_eq!(
+            speak_effects(&effects)[0].segments,
+            vec![UtteranceSegment::new(SegmentContent::Message(
+                verbatim_model::Message::NoNavigatorObject
+            ))],
+            "{cmd:?} after the outpost ended"
+        );
     }
+    let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    assert!(effects.is_empty(), "to focus after the outpost ended");
 }
 
 #[test]
@@ -3221,4 +3247,100 @@ fn an_entered_container_speaks_its_states_and_position_but_not_its_value() {
         ],
         "no value, no shortcut, and no description repeating the name"
     );
+}
+
+// ---- Review messages and repeated presses, as NVDA's review commands ----
+
+fn review(state: &SrState, cmd: ReviewCommand, repeat: u8) -> (SrState, Vec<UtteranceSegment>) {
+    let (state, effects) = reduce(state, &command(TraceId::mint(), cmd, repeat));
+    let segments = speak_effects(&effects)[0].segments.clone();
+    (state, segments)
+}
+
+fn message(message: verbatim_model::Message) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Message(message))
+}
+
+fn reviewing(value: &str) -> SrState {
+    let edit = node(
+        140,
+        Role::EditableText,
+        Some("Body"),
+        Some(value),
+        StateSet::new(),
+    );
+    focused(Pid(1), edit)
+}
+
+#[test]
+fn review_edges_are_named_and_the_unit_is_read_again() {
+    use verbatim_model::Message;
+    let state = reviewing("ab\ncd");
+    let (state, segments) = review(&state, ReviewCommand::ReviewPreviousLine, 0);
+    assert_eq!(
+        segments,
+        vec![message(Message::Top), UtteranceSegment::text("ab")]
+    );
+    let (state, segments) = review(&state, ReviewCommand::ReviewPreviousCharacter, 0);
+    assert_eq!(
+        segments,
+        vec![message(Message::Left), UtteranceSegment::text("a")]
+    );
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    // Character moves stop at the end of the line.
+    let (_, segments) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    assert_eq!(
+        segments,
+        vec![message(Message::Right), UtteranceSegment::text("b")]
+    );
+}
+
+#[test]
+fn an_empty_unit_is_blank() {
+    let state = reviewing("ab\n\ncd");
+    let (state, _) = review(&state, ReviewCommand::ReviewNextLine, 0);
+    let (_, segments) = review(&state, ReviewCommand::ReviewCurrentLine, 0);
+    assert_eq!(segments, vec![message(verbatim_model::Message::Blank)]);
+}
+
+#[test]
+fn the_current_line_pressed_twice_is_spelled_and_a_character_thrice_gives_its_code() {
+    let state = reviewing("a b");
+    let (state, segments) = review(&state, ReviewCommand::ReviewCurrentLine, 1);
+    assert_eq!(
+        segments,
+        vec![
+            UtteranceSegment::text("a"),
+            message(verbatim_model::Message::Space),
+            UtteranceSegment::text("b"),
+        ]
+    );
+    let (_, segments) = review(&state, ReviewCommand::ReviewCurrentCharacter, 2);
+    assert_eq!(
+        segments,
+        vec![
+            UtteranceSegment::text("97,"),
+            UtteranceSegment::text("0"),
+            UtteranceSegment::text("x"),
+            UtteranceSegment::text("6"),
+            UtteranceSegment::text("1"),
+        ]
+    );
+}
+
+#[test]
+fn an_activation_says_activate_or_no_action() {
+    for (activated, expected) in [
+        (true, verbatim_model::Message::Activate),
+        (false, verbatim_model::Message::NoAction),
+    ] {
+        let (_, effects) = reduce(
+            &SrState::new(),
+            &Input::ActivationCompleted {
+                trace_id: TraceId::mint(),
+                activated,
+            },
+        );
+        assert_eq!(speak_effects(&effects)[0].segments, vec![message(expected)]);
+    }
 }

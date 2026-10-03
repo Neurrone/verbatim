@@ -32,8 +32,10 @@ and nothing else, except the follow-focus coupling.
 ## Object navigation commands
 
 `source/globalCommands.py`, the `script_navigatorObject_*` family:
-current (report; repeated presses spell and copy), parent, next,
-previous, firstChild, toFocus (navigator snaps to focus),
+current (report; repeated presses spell and copy the name and the value
+joined by a space), parent, next,
+previous, firstChild, toFocus (navigator snaps to focus, after saying
+"Move to focus"),
 moveFocus (focus snaps to navigator; second press moves the caret to
 the review position), and dimension/location reports. Each movement
 announces the landed-on object via

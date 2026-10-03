@@ -382,6 +382,15 @@ pub enum Input {
         /// ignore it.
         repeat: u8,
     },
+    /// An activation the reducer asked for finished: `activated` is whether
+    /// the navigator object, or one of its ancestors, was activated. The
+    /// reducer speaks NVDA's "Activate" or "No action".
+    ActivationCompleted {
+        /// Trace ID of the command that asked for the activation.
+        trace_id: TraceId,
+        /// Whether anything was activated.
+        activated: bool,
+    },
     /// Periodic timer tick, for time-based policies. Unused by M1 logic but
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.

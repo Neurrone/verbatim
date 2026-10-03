@@ -39,9 +39,12 @@ pub(crate) enum Asker {
         /// The trace the query belongs to.
         trace_id: TraceId,
     },
-    /// An activation: the reducer does not wait for it, but it still gets
-    /// exactly one outcome, which is logged.
-    Activation,
+    /// An activation: the reducer does not wait for it, but it gets exactly
+    /// one outcome, which it speaks.
+    Activation {
+        /// The command's trace.
+        trace_id: TraceId,
+    },
     /// A control-plane tree dump, answered on this channel. The channel is
     /// bounded with room for the one answer, so sending never blocks; a
     /// requester that already gave up has dropped its receiver.
@@ -160,11 +163,15 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
                 result,
             }]
         }
-        Asker::Activation => {
-            if !matches!(outcome, QueryOutcome::Done(QueryResult::Activated)) {
+        Asker::Activation { trace_id } => {
+            let activated = matches!(outcome, QueryOutcome::Done(QueryResult::Activated));
+            if !activated {
                 tracing::warn!(reason = describe(&outcome), "activation did not complete");
             }
-            Vec::new()
+            vec![Input::ActivationCompleted {
+                trace_id,
+                activated,
+            }]
         }
         Asker::DumpTree(reply) => {
             let answer = match outcome {
@@ -330,6 +337,26 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn an_activation_outcome_reaches_the_reducer() {
+        for (outcome, expected) in [
+            (QueryOutcome::Done(QueryResult::Activated), true),
+            (QueryOutcome::Failed("no action".to_owned()), false),
+        ] {
+            let mut table = RequestTable::default();
+            let id = table.begin(
+                OutpostId(1),
+                Asker::Activation {
+                    trace_id: TraceId::mint(),
+                },
+            );
+            assert!(matches!(
+                table.finish(id, OutpostId(1), outcome).as_slice(),
+                [Input::ActivationCompleted { activated, .. }] if *activated == expected
+            ));
+        }
     }
 
     #[test]

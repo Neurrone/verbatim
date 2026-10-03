@@ -97,8 +97,10 @@ pub enum ScriptAction {
 /// below read as plain data.
 type RawBinding = (&'static str, ScriptAction);
 
-/// The desktop layout's M3 bindings, in `docs/roadmap.md` order: object
+/// The M3 bindings of every layout, in `docs/roadmap.md` order: object
 /// navigation, then review-cursor text reading, then time and tray list.
+/// NVDA binds each of these for all layouts (`kb:` rather than
+/// `kb(desktop):`), so a laptop-layout user with a numpad keeps them.
 const DESKTOP_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+numpad5", ScriptAction::ReportCurrentObject),
     ("kb:verbatim+numpad8", ScriptAction::MoveToParent),
@@ -130,8 +132,8 @@ const DESKTOP_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+f11", ScriptAction::ShowTrayList),
 ];
 
-/// The laptop layout's M3 bindings, in the same order as
-/// [`DESKTOP_BINDINGS`].
+/// The laptop layout's own M3 bindings, in the same order as
+/// [`DESKTOP_BINDINGS`], which the laptop layout has as well.
 const LAPTOP_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+shift+o", ScriptAction::ReportCurrentObject),
     ("kb:verbatim+shift+uparrow", ScriptAction::MoveToParent),
@@ -177,8 +179,6 @@ const LAPTOP_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+rightarrow", ScriptAction::ReviewNextCharacter),
     ("kb:verbatim+end", ScriptAction::ReviewEndOfLine),
     ("kb:verbatim+control+end", ScriptAction::ReviewBottom),
-    ("kb:verbatim+f12", ScriptAction::SpeakTime),
-    ("kb:verbatim+f11", ScriptAction::ShowTrayList),
 ];
 
 /// The complete M3 gesture table for the chosen layout, as bound in
@@ -191,11 +191,12 @@ const LAPTOP_BINDINGS: &[RawBinding] = &[
 /// tests, not user input.
 #[must_use]
 pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
-    let raw = match layout {
-        KeyboardLayout::Desktop => DESKTOP_BINDINGS,
+    let own: &[RawBinding] = match layout {
+        KeyboardLayout::Desktop => &[],
         KeyboardLayout::Laptop => LAPTOP_BINDINGS,
     };
-    raw.iter()
+    own.iter()
+        .chain(DESKTOP_BINDINGS)
         .map(|&(identifier, action)| {
             (
                 GestureId::parse(identifier).expect("M3 binding table entries are well-formed"),
@@ -239,7 +240,9 @@ mod tests {
 
     #[test]
     fn laptop_table_has_the_documented_count() {
-        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 22);
+        // Its own 20 (7 object-navigation, 13 review-cursor) and the 22 of
+        // every layout.
+        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 42);
     }
 
     #[test]
@@ -284,6 +287,18 @@ mod tests {
         };
         identical(ScriptAction::SpeakTime, "kb:f12+verbatim");
         identical(ScriptAction::ShowTrayList, "kb:f11+verbatim");
+    }
+
+    #[test]
+    fn the_laptop_layout_keeps_the_numpad_bindings() {
+        let laptop = bindings_for(KeyboardLayout::Laptop);
+        for (gesture, action) in bindings_for(KeyboardLayout::Desktop) {
+            assert!(
+                laptop.contains(&(gesture.clone(), action)),
+                "{} is bound on every layout",
+                gesture.as_str()
+            );
+        }
     }
 
     #[test]

@@ -131,11 +131,17 @@ Implementation notes, `reduce`:
 - Object navigation and the review cursor (M3): `SrState` carries a
   navigator object and a review cursor that follow focus by default (every
   focus change snaps them to the new focus). A `Command` input runs against
-  them: report-object announces on the first press, spells its review text
-  on the second, and copies name-and-value on the third; parent, sibling,
+  them: report-object announces on the first press, spells its name and
+  value on the second, and copies them on the third; parent, sibling,
   and first-child moves emit a navigation `Fetch` whose completion moves the
-  navigator and announces it; activate emits `Activate`; to-focus snaps the
-  navigator back. Completions are matched by `SrState`'s latest-navigation
+  navigator and announces it; activate emits `Activate`, whose outcome
+  returns as `Input::ActivationCompleted` and is spoken as "Activate" or "No
+  action"; to-focus says "Move to focus" and snaps the navigator back; any
+  command with no navigator says "No navigator object". An `Unanswered`
+  completion (the application did not answer) leaves the navigator put and
+  says nothing. The review commands' messages ("Top", "Bottom", "Left",
+  "Right", "blank") and repeated presses follow "Reading commands built on
+  review" in `docs/nvda/review-modes.md`. Completions are matched by `SrState`'s latest-navigation
   query id, not by navigator identity: an app-initiated focus event landing
   between the command and its completion still snaps the navigator (review
   follows focus) but never discards the user's in-flight navigation, while

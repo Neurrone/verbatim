@@ -848,7 +848,7 @@ impl ReducerThread<'_> {
             }
             Effect::Activate { node_id } => {
                 let outpost = node_id.outpost();
-                let id = self.requests.begin(outpost, Asker::Activation);
+                let id = self.requests.begin(outpost, Asker::Activation { trace_id });
                 let command = SupervisorToOutpost::Query {
                     trace_id,
                     request_id: id.0,
@@ -950,6 +950,10 @@ fn router_loop(
             send_gui_command(gui_handle, GuiCommand::ShowMenu);
             continue;
         }
+        if let Some(key) = verbatim_input::ToggleKey::of_gesture(&emitted.gesture) {
+            report_toggle_key(manager, key);
+            continue;
+        }
         let Some(action) = scripts.get(&emitted.gesture) else {
             continue;
         };
@@ -1045,6 +1049,34 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
 /// count) at Interrupt priority, as a plain text span with no source node.
 /// `repeat` is the number of extra quick presses — the multi-press seam
 /// described on [`router_loop`]; today it always arrives as 0.
+/// Announces a lock key's new state ("caps lock on") 30 milliseconds after
+/// it reached the operating system, as NVDA does: Windows has changed the
+/// state by then.
+fn report_toggle_key(manager: &Arc<SpeechManager>, key: verbatim_input::ToggleKey) {
+    let manager = Arc::clone(manager);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        // SAFETY: GetKeyState takes a virtual-key code and reads key state.
+        let on = unsafe {
+            windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(key.vk()))
+        } & 1
+            != 0;
+        let id = match key {
+            verbatim_input::ToggleKey::CapsLock => "toggle-caps-lock",
+            verbatim_input::ToggleKey::NumLock => "toggle-num-lock",
+            verbatim_input::ToggleKey::ScrollLock => "toggle-scroll-lock",
+        };
+        manager.speak(Utterance {
+            trace_id: TraceId::mint(),
+            priority: SpeechPriority::Interrupt,
+            segments: vec![UtteranceSegment::text(
+                verbatim_i18n::messages::toggle_key_state(id, on),
+            )],
+            source: None,
+        });
+    });
+}
+
 fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
     let formatted = if repeat == 0 {
         datetime::local_time()

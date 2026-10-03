@@ -12,7 +12,7 @@ use verbatim_model::{SpeechPriority, TraceId, Utterance, UtteranceSegment};
 use verbatim_speech::SpeechManager;
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
@@ -22,12 +22,45 @@ use windows::Win32::System::Ole::CF_UNICODETEXT;
 /// as such rather than silently swallowed, so a user who pressed copy
 /// always hears whether it worked.
 pub fn copy(manager: &Arc<SpeechManager>, text: &str) {
-    match set_clipboard_text(text) {
-        Ok(()) => speak(manager, verbatim_i18n::messages::clipboard_copied()),
+    // As NVDA does, the copy is confirmed by reading the clipboard back.
+    let copied = set_clipboard_text(text).and_then(|()| match clipboard_text() {
+        Some(read) if read == text => Ok(()),
+        _ => Err("the clipboard does not hold the copied text".to_owned()),
+    });
+    match copied {
+        Ok(()) => speak(manager, verbatim_i18n::messages::clipboard_copied(text)),
         Err(error) => {
             tracing::warn!(%error, "failed to copy to the clipboard");
             speak(manager, verbatim_i18n::messages::clipboard_copy_failed());
         }
+    }
+}
+
+/// The clipboard's text (`CF_UNICODETEXT`), `None` when it holds none or
+/// cannot be opened.
+fn clipboard_text() -> Option<String> {
+    // SAFETY: the clipboard is opened for this thread and always closed;
+    // the global handle is locked only while its null-terminated UTF-16
+    // contents are copied out, and never freed, since the clipboard owns it.
+    unsafe {
+        OpenClipboard(Some(HWND::default())).ok()?;
+        let read = (|| {
+            let handle = GetClipboardData(u32::from(CF_UNICODETEXT.0)).ok()?;
+            let memory = HGLOBAL(handle.0);
+            let pointer = GlobalLock(memory).cast::<u16>();
+            if pointer.is_null() {
+                return None;
+            }
+            let mut length = 0usize;
+            while *pointer.add(length) != 0 {
+                length += 1;
+            }
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(pointer, length));
+            let _ = GlobalUnlock(memory);
+            Some(text)
+        })();
+        let _ = CloseClipboard();
+        read
     }
 }
 

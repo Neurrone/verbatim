@@ -113,6 +113,24 @@ message-no-next-object = No next
 message-no-previous-object = No previous
 message-no-containing-object = No containing object
 message-no-objects-inside = No objects inside
+message-top = Top
+message-bottom = Bottom
+message-left = Left
+message-right = Right
+message-blank = blank
+message-move-to-focus = Move to focus
+message-no-navigator-object = No navigator object
+message-activate = Activate
+message-no-action = No action
+message-space = space
+
+## A lock key's new state, as NVDA announces it: the key, then on or off.
+
+toggle-caps-lock = caps lock
+toggle-num-lock = num lock
+toggle-scroll-lock = scroll lock
+toggle-state-on = { $key } on
+toggle-state-off = { $key } off
 
 ## Spoken state names.
 
@@ -142,5 +160,7 @@ object-level = level { $level }
 
 ## Clipboard.
 
-clipboard-copied = copied to clipboard
-clipboard-copy-failed = copy failed
+clipboard-copied = Copied to clipboard: { $text }
+clipboard-copy-failed = Unable to copy
+# Used only for 1024 characters or more, so always plural.
+clipboard-characters = { $count } characters

@@ -67,3 +67,26 @@ times character-description or copies), top/bottom of the surface,
 move, speak with `speech.speakTextInfo`), which is what makes them
 uniform across the three surfaces. Braille tethering to review
 ([Braille](braille.md)) reuses the same position.
+
+What the reading commands say, precisely:
+
+- A motion that cannot move says so and then reads the current unit:
+  "Top" for previous line or word at the start, "Bottom" for next line or
+  word at the end, "Left" and "Right" for previous and next character at
+  the ends of the line. Character motions do not leave the line.
+- A unit with nothing to read is spoken as "blank".
+- The current line or word pressed twice is spelled; three times,
+  spelled with character descriptions ("alpha" for a). The current
+  character pressed twice gives its description; three times, its code
+  in decimal, then in hexadecimal, spelled ("97," and "0 x 6 1").
+- Spelling names a space as "space", and marks capitals by raising the
+  pitch (by default).
+- Every review and navigator command with no navigator object says "No
+  navigator object".
+- Activate performs the review position's or the navigator object's
+  action, walking up its parents until one has an action, and says the
+  action's name ("Activate" by default); with nothing to activate it says
+  "No action".
+- A copy confirms "Copied to clipboard:" with the text, or the number of
+  characters from 1024 on, after reading the clipboard back; a failure is
+  "Unable to copy".

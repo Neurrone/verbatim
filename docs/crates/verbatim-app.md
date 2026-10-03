@@ -2,9 +2,12 @@
 
 The composition root: `verbatim.exe`. Its `clipboard` module is the one
 shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
-Win32 clipboard interaction and the localized spoken confirmation, and every
-copying gesture routes through it — the report-object triple-press is the
-first caller. The reducer thread selects on both the outpost stream and a
+Win32 clipboard interaction and the localized spoken confirmation (NVDA's
+"Copied to clipboard:" with the text, after reading the clipboard back, or
+"Unable to copy"), and every copying gesture routes through it — the
+report-object triple-press is the first caller. The gesture router also
+announces a lock key's new state ("caps lock on") 30 ms after the keyboard
+hook reports it reached the operating system. The reducer thread selects on both the outpost stream and a
 command channel the gesture router feeds, so a review or object-navigation
 gesture is reduced and its effects executed by the same path as an
 accessibility event; `Effect::Activate` and `Effect::CopyToClipboard` are

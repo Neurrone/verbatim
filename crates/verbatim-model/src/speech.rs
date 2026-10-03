@@ -81,6 +81,26 @@ pub enum Message {
     NoContainingObject,
     /// Object navigation found no children — NVDA's "No objects inside".
     NoObjectsInside,
+    /// The review cursor is on the first line or word — NVDA's "Top".
+    Top,
+    /// The review cursor is on the last line or word — NVDA's "Bottom".
+    Bottom,
+    /// The review cursor is on the first character of the line — "Left".
+    Left,
+    /// The review cursor is on the last character of the line — "Right".
+    Right,
+    /// The unit under the review cursor is empty — NVDA's "blank".
+    Blank,
+    /// The navigator returns to the focus — NVDA's "Move to focus".
+    MoveToFocus,
+    /// A navigator command with no navigator — "No navigator object".
+    NoNavigatorObject,
+    /// The navigator object was activated — NVDA's "Activate".
+    Activate,
+    /// Nothing could be activated — NVDA's "No action".
+    NoAction,
+    /// A space, spelled — NVDA's symbol name "space".
+    Space,
 }
 
 /// One segment of an utterance, with an optional language override.

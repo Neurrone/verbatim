@@ -486,11 +486,38 @@ pub(super) fn navigate(
 }
 
 /// Activates a node.
+/// How many ancestors activation tries when the node itself has no action.
+const ACTIVATION_PARENT_HOPS: u32 = 8;
+
+/// Activates `node_id`, or failing that its nearest ancestor that can be
+/// activated, as NVDA's review activate walks up the navigator object's
+/// parents until one performs an action.
 pub(super) fn activate(
     context: &Context,
     client: &mut Client,
     node_id: NodeId,
 ) -> Result<(), ReadError> {
+    let mut current = node_id;
+    let mut first_error = None;
+    for _ in 0..=ACTIVATION_PARENT_HOPS {
+        match activate_one(context, client, current) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        match navigate(context, client, current, QueryKind::Parent) {
+            Ok(Some(parent)) => current = parent.id,
+            _ => break,
+        }
+    }
+    Err(first_error.unwrap_or_else(|| ReadError::Failed("nothing to activate".to_owned())))
+}
+
+/// Activates exactly `node_id`.
+fn activate_one(context: &Context, client: &mut Client, node_id: NodeId) -> Result<(), ReadError> {
     if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, _cache, element) = uia_node(context, client, node_id)?;
         // SAFETY: `element` is live.

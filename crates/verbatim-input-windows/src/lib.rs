@@ -238,6 +238,18 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 // Never block: drop the gesture if the consumer is backed up.
                 let _ = state.events.try_send(emitted);
             }
+            // A lock key reaching the operating system is reported, for its
+            // new state to be announced, as NVDA announces it.
+            if event.pressed
+                && decision.decision == KeyDecision::Pass
+                && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
+            {
+                let _ = state.events.try_send(verbatim_input::EmittedGesture {
+                    trace_id: verbatim_model::TraceId::mint(),
+                    gesture: key.gesture(),
+                    repeat: 0,
+                });
+            }
             decision.decision
         });
 

@@ -34,7 +34,11 @@ Public API:
   (every M3 command: object navigation, review-cursor text reading, speak
   time, show tray list) plus `bindings_for(layout) -> Vec<(GestureId,
   ScriptAction)>`, the complete gesture table for a layout, transcribed from
-  `docs/roadmap.md`'s M3 object-navigation bullet. `GestureMap` is a plain
+  `docs/roadmap.md`'s M3 object-navigation bullet; the laptop layout has the
+  numpad bindings as well, which NVDA binds for every layout. `toggle` —
+  `ToggleKey` (Caps Lock, Num Lock, Scroll Lock) and the unbound gesture a
+  lock key reaching the operating system is reported as, for its new state
+  to be announced. `GestureMap` is a plain
   membership set, not generic over the bound action, so `bindings_for`
   returns gesture-and-action pairs the application adapts itself: build the
   hook's `GestureMap` from the gestures with `gesture_map_for(bindings)`,
