@@ -67,7 +67,9 @@ Implementation notes, `reduce`:
   emitting. The reducer announces the presentable containers that were not
   in the previous focus's chain or the previous focus itself, before the
   control itself, so entering a dialog speaks the dialog and tabbing within
-  it stays quiet about it. Node ids compare only within one outpost, and
+  it stays quiet about it. When the event says its ancestors are unknown
+  (the outpost could not read them in time), no container is announced and
+  the previous chain is kept for the next focus. Node ids compare only within one outpost, and
   one top-level window can hold elements of two processes (a Settings
   page's frame belongs to `ApplicationFrameHost.exe`), so when the new focus
   is in the same top-level window as the previous one, a previous node with

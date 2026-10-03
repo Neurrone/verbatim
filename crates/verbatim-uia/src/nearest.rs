@@ -18,9 +18,10 @@ use std::cell::RefCell;
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
+    CUIAutomation8, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationTreeWalker, UIA_NativeWindowHandlePropertyId,
 };
+use windows::core::Interface;
 
 use crate::com::init_mta;
 use crate::map::cached_native_window_handle;
@@ -38,7 +39,7 @@ struct Context {
 impl Context {
     fn build() -> windows::core::Result<Self> {
         init_mta()?;
-        // SAFETY: CUIAutomation is a registered in-process COM server; the
+        // SAFETY: CUIAutomation8 is a registered in-process COM server; the
         // requested interface matches the class. Every call below is a
         // local, same-thread COM call against the instance just created:
         // build the "has no native window handle" condition, negate it, hand
@@ -48,7 +49,13 @@ impl Context {
         // `windowCacheRequest`.
         unsafe {
             let client: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+                CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
+            // The same wait for a busy application as every other read
+            // ([`crate::client::CONNECTION_TIMEOUT_MS`]), not UIA's two
+            // seconds.
+            client
+                .cast::<windows::Win32::UI::Accessibility::IUIAutomation2>()?
+                .SetConnectionTimeout(crate::client::CONNECTION_TIMEOUT_MS)?;
             let zero = VARIANT::from(0i32);
             let has_no_handle =
                 client.CreatePropertyCondition(UIA_NativeWindowHandlePropertyId, &zero)?;

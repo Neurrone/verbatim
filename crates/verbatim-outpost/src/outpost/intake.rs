@@ -77,6 +77,9 @@ pub(super) enum Item {
     /// The nodes Core still holds, and the position of the last message it
     /// has handled: release the rest.
     NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
+    /// A follow-up finding the live element of a focus reported from its
+    /// event alone, for the focus-following property subscription.
+    ResolveFocus { runtime_id: Vec<i32>, attempt: u32 },
 }
 
 /// An item with its trace and observation time.
@@ -150,7 +153,25 @@ pub(super) enum Planned {
     Run(Entry),
     /// Handle a menu opening, after the batch's focus events.
     Menu(Entry),
+    /// Focus events from one backend, newest first: the worker handles each
+    /// in turn until one is reported, as NVDA falls back to an older focus
+    /// event when the newest cannot be processed.
+    Focus(Vec<Entry>),
 }
+
+impl Planned {
+    /// The entries, in the order the worker may handle them.
+    pub(super) fn entries(&self) -> Vec<&Entry> {
+        match self {
+            Planned::Run(entry) | Planned::Menu(entry) => vec![entry],
+            Planned::Focus(entries) => entries.iter().collect(),
+        }
+    }
+}
+
+/// How many of a batch's focus events from one backend are kept to fall
+/// back on.
+const FOCUS_CANDIDATES: usize = 3;
 
 #[derive(Default)]
 struct State {
@@ -232,9 +253,9 @@ impl Intake {
         let mut state = self.lock();
         let before = state.waiting.len() + state.batch.len();
         state.waiting.retain(|waiting| !is_it(&waiting.entry));
-        state.batch.retain(|planned| match planned {
-            Planned::Run(entry) | Planned::Menu(entry) => !is_it(entry),
-        });
+        state
+            .batch
+            .retain(|planned| !planned.entries().into_iter().any(is_it));
         before != state.waiting.len() + state.batch.len()
     }
 
@@ -242,6 +263,11 @@ impl Intake {
     /// are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
         self.lock().focused = object;
+    }
+
+    /// The object the worker last reported as the focus.
+    pub(super) fn focused(&self) -> Option<Object> {
+        self.lock().focused.clone()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -332,7 +358,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         }
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
-        Item::Query { .. } => (None, Category::Exempt, 0),
+        Item::Query { .. } | Item::ResolveFocus { .. } => (None, Category::Exempt, 0),
     }
 }
 
@@ -387,16 +413,53 @@ fn plan(
     let foreground = newest(|key| matches!(key, Key::Foreground(_)));
     let msaa_focus = newest(|key| matches!(key, Key::MsaaFocus(..)));
     let uia_focus = newest(|key| matches!(key, Key::UiaFocus(_)));
+    // The newest few focus events from each backend, to fall back on.
+    let candidates = |wanted: fn(&Key) -> bool| -> Vec<usize> {
+        kept.iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, item)| item.key.as_ref().is_some_and(wanted))
+            .map(|(index, _)| index)
+            .take(FOCUS_CANDIDATES)
+            .collect()
+    };
+    let msaa_candidates = candidates(|key| matches!(key, Key::MsaaFocus(..)));
+    let uia_candidates = candidates(|key| matches!(key, Key::UiaFocus(_)));
     let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
     let uia_menu = newest(|key| matches!(key, Key::UiaMenuOpened(_)));
 
     let mut planned = Vec::with_capacity(kept.len());
     let mut deferred = Vec::new();
+    // Focus candidates are gathered newest first and placed where the
+    // newest was.
+    let mut slots: Vec<Option<Entry>> = kept.iter().map(|_| None).collect();
+    let mut rest = Vec::with_capacity(kept.len());
     for (index, item) in kept.into_iter().enumerate() {
+        if msaa_candidates.contains(&index) || uia_candidates.contains(&index) {
+            slots[index] = Some(item.entry);
+        } else {
+            rest.push((index, item));
+        }
+    }
+    let mut take_group = |indices: &[usize]| -> Vec<Entry> {
+        indices
+            .iter()
+            .filter_map(|&index| slots[index].take())
+            .collect()
+    };
+    let msaa_group = take_group(&msaa_candidates);
+    let uia_group = take_group(&uia_candidates);
+    let mut groups = vec![(msaa_focus, msaa_group), (uia_focus, uia_group)];
+    for (index, item) in rest {
+        for (newest, group) in &mut groups {
+            if newest.is_some_and(|newest| newest < index) && !group.is_empty() {
+                planned.push(Planned::Focus(std::mem::take(group)));
+            }
+        }
         match &item.key {
             Some(Key::Foreground(_)) if Some(index) != foreground => {}
-            Some(Key::MsaaFocus(..)) if Some(index) != msaa_focus => {}
-            Some(Key::UiaFocus(_)) if Some(index) != uia_focus => {}
+            // Older than the candidates kept to fall back on.
+            Some(Key::MsaaFocus(..) | Key::UiaFocus(_)) => {}
             Some(Key::MenuPopup(..) | Key::UiaMenuOpened(_)) => {
                 // The newest from each backend, as for focus: the worker's
                 // arbitration drops the one whose backend does not own the
@@ -406,6 +469,11 @@ fn plan(
                 }
             }
             _ => planned.push(Planned::Run(item.entry)),
+        }
+    }
+    for (_, group) in groups {
+        if !group.is_empty() {
+            planned.push(Planned::Focus(group));
         }
     }
     planned.extend(deferred.into_iter().map(Planned::Menu));
@@ -491,8 +559,12 @@ mod tests {
     fn observed(planned: &[Planned]) -> Vec<u64> {
         planned
             .iter()
-            .map(|planned| match planned {
-                Planned::Run(entry) | Planned::Menu(entry) => entry.observed_at_ms,
+            .flat_map(|planned| {
+                planned
+                    .entries()
+                    .into_iter()
+                    .map(|entry| entry.observed_at_ms)
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
@@ -677,5 +749,47 @@ mod tests {
         });
         assert!(intake.cancel(5));
         assert!(!intake.cancel(5), "already withdrawn");
+    }
+
+    #[test]
+    fn the_newest_focus_events_are_kept_newest_first_to_fall_back_on() {
+        let focus = |child: i32, at: u64| {
+            fact(
+                DeliveredFact::MsaaFocus {
+                    hwnd: 9,
+                    id_object: -4,
+                    id_child: child,
+                },
+                at,
+            )
+        };
+        let waiting = vec![
+            focus(1, 1),
+            focus(2, 2),
+            msaa(WinEventKind::NameChange, 3, 30),
+            focus(3, 4),
+            focus(4, 5),
+            msaa(WinEventKind::NameChange, 3, 60),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        let focus_groups: Vec<Vec<u64>> = planned
+            .iter()
+            .filter_map(|planned| match planned {
+                Planned::Focus(entries) => {
+                    Some(entries.iter().map(|entry| entry.observed_at_ms).collect())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            focus_groups,
+            vec![vec![5, 4, 2]],
+            "the three newest, newest first; the oldest is dropped"
+        );
+        assert_eq!(
+            observed(&planned),
+            vec![30, 5, 4, 2, 60],
+            "the group takes the newest focus's place"
+        );
     }
 }

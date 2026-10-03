@@ -446,11 +446,15 @@ pub enum OutpostToSupervisor {
         fact: ListenerFact,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
-    /// anywhere on the desktop, and no focus or foreground event followed
-    /// within 50 milliseconds. Sent only by the listener; the supervisor
-    /// passes it to the app, which reads the foreground application's
-    /// focused control (NVDA's fake focus).
-    MenuOrSwitchEnded,
+    /// anywhere on the desktop, 50 milliseconds ago. Sent only by the
+    /// listener; the supervisor passes it to the app, which reads the
+    /// foreground application's focused control (NVDA's fake focus) unless a
+    /// focus observed since the end has already been applied.
+    MenuOrSwitchEnded {
+        /// When the menu or switcher ended, in milliseconds since the Unix
+        /// epoch.
+        ended_at_ms: u64,
+    },
 }
 
 impl OutpostToSupervisor {
@@ -565,6 +569,7 @@ mod tests {
             event: NormalizedEvent::FocusChanged {
                 foreground: false,
                 ancestors: Vec::new(),
+                ancestors_unknown: false,
                 selected_child: None,
                 node: NodeSnapshot {
                     id: NodeId::new(1),
@@ -619,6 +624,7 @@ mod tests {
                 node: snapshot(1),
                 foreground: false,
                 ancestors: vec![snapshot(2)],
+                ancestors_unknown: false,
                 selected_child: Some(snapshot(3)),
             },
         };
@@ -635,6 +641,7 @@ mod tests {
                 NormalizedEvent::FocusChanged {
                     node,
                     ancestors,
+                    ancestors_unknown: false,
                     selected_child,
                     ..
                 },

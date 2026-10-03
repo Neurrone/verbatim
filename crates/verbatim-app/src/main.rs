@@ -604,18 +604,26 @@ impl ReducerThread<'_> {
                     self.want_focus_now(pid);
                 }
             }
-            OutpostMessage::MenuOrSwitchEnded => self.fake_focus(),
+            OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => self.fake_focus(ended_at_ms),
         }
     }
 
-    /// A menu or the Alt+Tab switcher closed and no focus event followed
-    /// (the listener waited for one): reads the focus of whichever
-    /// application is in front, usually not the one that owned the menu, as
-    /// NVDA's fake focus does. Only the control is reported, as NVDA queues
+    /// A menu or the Alt+Tab switcher closed at `ended_at_ms`: unless a
+    /// focus observed since then has been applied, reads the focus of
+    /// whichever application is in front, usually not the one that owned the
+    /// menu, as NVDA's fake focus does when no focus event was validly
+    /// processed with the end. Only the control is reported, as NVDA queues
     /// a focus on it and nothing for its window. An application with no
     /// ready outpost is asked for its window too, since attention may be
     /// moving to it.
-    fn fake_focus(&mut self) {
+    fn fake_focus(&mut self, ended_at_ms: u64) {
+        if self
+            .state
+            .latest_focus_observed_at()
+            .is_some_and(|observed| observed >= ended_at_ms)
+        {
+            return;
+        }
         let Some(pid) = foreground_pid() else {
             return;
         };

@@ -12,11 +12,9 @@
 //! forgotten when the window is destroyed ([`Arbitrator::forget`]), as
 //! decision D15 specifies: a server-side provider does not go away. A probe
 //! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
-//! cache period, and then probed again, because that answer can go stale:
-//! an application that is starting up or busy answers the probe late or not
-//! at all, and the probe then reports no provider for a window that has one
-//! (found live with Windows 11 Notepad's edit control, which was then read
-//! through MSAA for the rest of its life).
+//! cache period, and then probed again. The probe itself counts only the
+//! window's own answer, so a busy window that has a provider is not
+//! reported as having none ([`verbatim_uia::has_server_side_provider`]).
 //!
 //! The worker drops MSAA events whose window arbitrates to UIA and UIA events
 //! whose window does not, so the two backends never both announce the same

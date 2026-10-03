@@ -219,6 +219,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
                     node,
                     foreground,
                     ancestors,
+                    ancestors_unknown: false,
                     selected_child,
                 },
             }

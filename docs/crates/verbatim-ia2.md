@@ -53,8 +53,9 @@ Public API:
   `navigate`, `activate`, and `ancestor_chain` answer `AcquireError::Gone`
   when the node is no longer kept, its window no longer exists, or its
   object has disconnected, and `selected_child` answers `None`:
-  `ancestor_chain`
-  (per-hop `accParent` walks, outermost first, with the simple-child
+  `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
+  (stopping at a known ancestor or a deadline, and saying which as
+  `Walked`) (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent

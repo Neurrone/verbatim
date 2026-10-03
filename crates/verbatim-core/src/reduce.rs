@@ -198,6 +198,7 @@ fn reduce_event(
             node,
             foreground,
             ancestors,
+            ancestors_unknown,
             selected_child,
         } => reduce_focus_changed(
             state,
@@ -208,6 +209,7 @@ fn reduce_event(
                 node,
                 foreground: *foreground,
                 ancestors,
+                ancestors_unknown: *ancestors_unknown,
                 selected_child: selected_child.as_ref(),
             },
         ),
@@ -273,6 +275,8 @@ struct FocusReport<'a> {
     node: &'a NodeSnapshot,
     foreground: bool,
     ancestors: &'a [NodeSnapshot],
+    /// The outpost could not read the ancestors in time.
+    ancestors_unknown: bool,
     selected_child: Option<&'a NodeSnapshot>,
 }
 
@@ -295,7 +299,10 @@ struct FocusReport<'a> {
 ///   delivered fact can both report one control.
 /// - Otherwise the newly entered containers, the node, and a selection
 ///   container's selected item are spoken, interrupting current speech, and
-///   the navigator follows focus.
+///   the navigator follows focus. When the outpost could not read the
+///   ancestors in time, no container is announced and the previous focus's
+///   chain is kept for the next comparison, so the next focus does not
+///   announce every container again.
 fn reduce_focus_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -330,11 +337,20 @@ fn reduce_focus_changed(
         });
     }
 
+    let ancestors = if report.ancestors_unknown {
+        state
+            .focus
+            .as_ref()
+            .map(|focus| focus.ancestors.clone())
+            .unwrap_or_default()
+    } else {
+        report.ancestors.to_vec()
+    };
     let new_focus = FocusContext {
         source,
         window,
         snapshot: report.node.clone(),
-        ancestors: report.ancestors.to_vec(),
+        ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
     };
@@ -389,7 +405,12 @@ fn reduce_focus_changed(
     }
 
     let mut segments = Vec::new();
-    for container in entered_containers(state.focus.as_ref(), window, report.ancestors) {
+    let entered = if report.ancestors_unknown {
+        Vec::new()
+    } else {
+        entered_containers(state.focus.as_ref(), window, report.ancestors)
+    };
+    for container in entered {
         segments.extend(container_segments(container));
     }
     segments.extend(node_segments(report.node, Reason::Focus));

@@ -51,6 +51,7 @@ Public API:
 - `NormalizedEvent` — `FocusChanged` (carrying a full snapshot, a
   `foreground` flag set when the focus is a window that just became the
   system's foreground window, the node's ancestor chain, outermost first,
+  with `ancestors_unknown` set when the outpost could not read it in time,
   and — for selection containers —
   the container's selected child, both gathered by the outpost on a query
   worker before emitting: deadline-guarded, degrading to empty on failure,

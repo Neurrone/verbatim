@@ -54,6 +54,7 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             foreground: false,
             node: snapshot,
             ancestors: Vec::new(),
+            ancestors_unknown: false,
             selected_child: None,
         },
     }
@@ -97,6 +98,7 @@ fn focus_in(
             node: snapshot,
             foreground: false,
             ancestors,
+            ancestors_unknown: false,
             selected_child: None,
         },
     )
@@ -112,6 +114,7 @@ fn foreground_in(source: Pid, facts: WindowFacts, snapshot: NodeSnapshot) -> Inp
             node: snapshot,
             foreground: true,
             ancestors: Vec::new(),
+            ancestors_unknown: false,
             selected_child: None,
         },
     )
@@ -655,6 +658,7 @@ fn sample_script() -> Vec<Input> {
                 foreground: false,
                 node: checkbox,
                 ancestors: Vec::new(),
+                ancestors_unknown: false,
                 selected_child: None,
             },
         },
@@ -724,6 +728,7 @@ fn focus_event_with_ancestors(
             foreground: false,
             node: snapshot,
             ancestors,
+            ancestors_unknown: false,
             selected_child: None,
         },
     }
@@ -1075,6 +1080,7 @@ fn focus_event_with_selection(
             foreground: false,
             node: snapshot,
             ancestors: Vec::new(),
+            ancestors_unknown: false,
             selected_child,
         },
     }
@@ -1571,6 +1577,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
             ),
             foreground: true,
             ancestors: vec![],
+            ancestors_unknown: false,
             selected_child: None,
         },
     };
@@ -2603,6 +2610,7 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
             node: list,
             foreground: false,
             ancestors: vec![pane],
+            ancestors_unknown: false,
             selected_child: Some(item),
         },
     );
@@ -3039,4 +3047,60 @@ fn a_controlled_selection_is_silent_once_the_controller_is_not_the_focus() {
     let state = focused(Pid(1), other);
     let (_, effects) = reduce(&state, &controlled_selection(50, search_result()));
     assert!(effects.is_empty(), "spoke {effects:?}");
+}
+
+// ---- Ancestors an outpost could not read in time ----
+
+fn focus_event_with_unknown_ancestors(source: Pid, snapshot: NodeSnapshot) -> Input {
+    Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source,
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::FocusChanged {
+            foreground: false,
+            node: snapshot,
+            ancestors: Vec::new(),
+            ancestors_unknown: true,
+            selected_child: None,
+        },
+    }
+}
+
+#[test]
+fn a_focus_with_unknown_ancestors_announces_no_containers_and_keeps_the_chain() {
+    let source = Pid(1);
+    let dialog = node(110, Role::Dialog, Some("Options"), None, StateSet::new());
+    let first = node(111, Role::Button, Some("Apply"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), source, first, vec![dialog.clone()]),
+    );
+
+    // A slow read: the outpost reports the focus without its ancestors.
+    let second = node(112, Role::Button, Some("Cancel"), None, StateSet::new());
+    let (state, effects) = reduce(&state, &focus_event_with_unknown_ancestors(source, second));
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![
+            UtteranceSegment::label("Cancel"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+
+    // The next fully read focus in the same dialog does not announce the
+    // dialog again: the chain was kept, not emptied.
+    let third = node(113, Role::Button, Some("OK"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), source, third, vec![dialog]),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![
+            UtteranceSegment::label("OK"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
 }

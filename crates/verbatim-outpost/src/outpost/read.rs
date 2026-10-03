@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet};
 use verbatim_uia::map::snapshot_from_cached_element;
-use verbatim_uia::{Uia, has_server_side_provider};
+use verbatim_uia::{Uia, probe_server_side_provider};
 
 use crate::arbitration::window_class_name;
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
@@ -28,6 +28,26 @@ const MAX_DUMP_NODES: usize = 4096;
 
 /// Cap on the ancestors read for a node.
 pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
+
+/// How long reading a focus's containers may take before the focus is
+/// reported with them unknown: a focus is spoken late at worst, never lost
+/// because its containers took too long to read.
+const ENRICHMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A focus's ancestors, outermost first, or `None` when they could not be
+/// read in time; and its selected child, for a selection container.
+pub(super) type Enrichment = (Option<Vec<NodeSnapshot>>, Option<NodeSnapshot>);
+
+/// `chain`, outermost first, whose outermost entry is `met`, extended
+/// outward with the part of `previous` above `met`: NVDA reuses the
+/// previous focus's ancestors from where the new focus's ancestry meets
+/// them, rather than reading them again.
+fn splice(previous: &[NodeSnapshot], chain: Vec<NodeSnapshot>, met: NodeId) -> Vec<NodeSnapshot> {
+    let Some(index) = previous.iter().position(|node| node.id == met) else {
+        return chain;
+    };
+    previous[..index].iter().cloned().chain(chain).collect()
+}
 
 /// Why a read failed.
 #[derive(Debug)]
@@ -82,15 +102,28 @@ impl Client {
 }
 
 /// Decides a window's backend: the class lists and kept verdicts first, then
-/// the `UiaHasServerSideProvider` probe, whose answer is kept for the
-/// window's lifetime. Returns `true` for UIA.
+/// the provider probe, whose answer the arbitrator keeps (a provider for the
+/// window's lifetime, none for a short while). A window that did not answer
+/// the probe is read through MSAA for the event at hand, as NVDA does when
+/// its probe is cancelled, and is probed again next time. Returns `true` for
+/// UIA.
 pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
     let class = window_class_name(hwnd);
     if let Some(verdict) = context.arbitrator().verdict(hwnd, &class) {
         return verdict;
     }
-    let is_uia = has_server_side_provider(hwnd);
-    tracing::debug!(hwnd, class, is_uia, "arbitration probed");
+    let started = std::time::Instant::now();
+    let answer = probe_server_side_provider(hwnd);
+    tracing::debug!(
+        hwnd,
+        class,
+        ?answer,
+        elapsed_ms = started.elapsed().as_millis(),
+        "arbitration probed"
+    );
+    let Some(is_uia) = answer else {
+        return false;
+    };
     context.arbitrator().record_probe(hwnd, is_uia);
     is_uia
 }
@@ -177,54 +210,76 @@ fn wants_selected_child(role: Role) -> bool {
 }
 
 /// A focused UIA element's ancestors and, for a selection container, its
-/// selected child, read from the element already in hand. Failures degrade
-/// to an empty chain or `None`: enrichment never turns a focus into an error.
+/// selected child, read from the element already in hand. The walk stops
+/// at a container of `previous` (the last focus's ancestors and the focus
+/// itself) and reuses the rest; within [`ENRICHMENT_BUDGET`], each call to
+/// the application waiting no longer than that. Failures degrade to no
+/// containers or no selected child; running out of time to containers
+/// unknown. Enrichment never turns a focus into an error.
 pub(super) fn uia_enrichment(
     context: &Context,
     uia: &Uia,
     cache: &IUIAutomationCacheRequest,
     element: &IUIAutomationElement,
     role: Role,
-) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
-    let ancestors = uia_ancestors(context, uia, cache, element);
-    let selected = if wants_selected_child(role) {
-        // SAFETY: as above.
-        unsafe { uia.selected_child(element, cache, &context.uia_registry) }.unwrap_or(None)
-    } else {
-        None
-    };
-    (ancestors, selected)
+    previous: &[NodeSnapshot],
+) -> Enrichment {
+    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    uia.within(ENRICHMENT_BUDGET, |uia| {
+        let ancestors = uia_ancestors(context, uia, cache, element, previous, Some(deadline));
+        let selected = if wants_selected_child(role) {
+            // SAFETY: `element` was built with `cache` by the caller.
+            unsafe { uia.selected_child(element, cache, &context.uia_registry) }.unwrap_or(None)
+        } else {
+            None
+        };
+        (ancestors, selected)
+    })
+    .unwrap_or((None, None))
 }
 
-/// A UIA element's ancestors, outermost first. Where the walk reaches the
-/// root of a window read through MSAA, it continues from that window's
-/// client area through MSAA, as NVDA switches API when its walk crosses into
-/// such a window: in File Explorer, the folder window above the UIA file
-/// list is then the client area a foreground report already named, not a
-/// second, UIA copy of it. The desktop window ends the walk either way.
+/// A UIA element's ancestors, outermost first, or `None` when the walk ran
+/// out of time. Where the walk reaches the root of a window read through
+/// MSAA, it continues from that window's client area through MSAA, as NVDA
+/// switches API when its walk crosses into such a window: in File
+/// Explorer, the folder window above the UIA file list is then the client
+/// area a foreground report already named, not a second, UIA copy of it.
+/// The desktop window ends the walk either way.
 fn uia_ancestors(
     context: &Context,
     uia: &Uia,
     cache: &IUIAutomationCacheRequest,
     element: &IUIAutomationElement,
-) -> Vec<NodeSnapshot> {
+    previous: &[NodeSnapshot],
+    deadline: Option<std::time::Instant>,
+) -> Option<Vec<NodeSnapshot>> {
     // SAFETY: GetDesktopWindow has no preconditions.
     let desktop = unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize;
     let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     // SAFETY: `element` was built with `cache` by the caller.
-    let Ok((uia_chain, crossed)) = (unsafe {
+    let Ok((uia_chain, crossed, walked)) = (unsafe {
         uia.ancestor_chain(
             element,
             cache,
             &context.uia_registry,
             MAX_ANCESTOR_HOPS,
-            &read_by_msaa,
+            &verbatim_uia::AncestorStops {
+                read_by_other_api: &read_by_msaa,
+                known: &known,
+                deadline,
+            },
         )
     }) else {
-        return Vec::new();
+        return Some(Vec::new());
     };
+    match walked {
+        verbatim_uia::AncestorWalk::OutOfTime => return None,
+        verbatim_uia::AncestorWalk::MetKnown(met) => return Some(splice(previous, uia_chain, met)),
+        verbatim_uia::AncestorWalk::Complete => {}
+    }
     let Some(hwnd) = crossed else {
-        return uia_chain;
+        return Some(uia_chain);
     };
     let Some(client) = verbatim_ia2::acquire::snapshot_from_event(
         hwnd,
@@ -232,36 +287,68 @@ fn uia_ancestors(
         CHILDID_SELF,
         &context.msaa_registry,
     ) else {
-        return uia_chain;
+        return Some(uia_chain);
     };
-    let mut chain = msaa_ancestors(context, &client);
-    chain.push(client);
-    chain.extend(uia_chain);
-    chain
+    let below: Vec<NodeSnapshot> = std::iter::once(client.clone()).chain(uia_chain).collect();
+    if known(client.id) {
+        return Some(splice(previous, below, client.id));
+    }
+    let (above, walked) = msaa_ancestors(context, &client, previous, deadline);
+    let chain: Vec<NodeSnapshot> = above.into_iter().chain(below).collect();
+    match walked {
+        verbatim_ia2::acquire::Walked::OutOfTime => None,
+        verbatim_ia2::acquire::Walked::MetKnown(met) => Some(splice(previous, chain, met)),
+        verbatim_ia2::acquire::Walked::Complete => Some(chain),
+    }
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
-/// above controls (see [`msaa_enrichment`]).
-fn msaa_ancestors(context: &Context, node: &NodeSnapshot) -> Vec<NodeSnapshot> {
-    verbatim_ia2::acquire::ancestor_chain(node.id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
-        .unwrap_or_default()
+/// above controls (see [`msaa_enrichment`]), stopping at a container of
+/// `previous` and when `deadline` passes, and how the walk ended.
+fn msaa_ancestors(
+    context: &Context,
+    node: &NodeSnapshot,
+    previous: &[NodeSnapshot],
+    deadline: Option<std::time::Instant>,
+) -> (Vec<NodeSnapshot>, verbatim_ia2::acquire::Walked) {
+    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let limits = verbatim_ia2::acquire::AncestorLimits {
+        max_hops: MAX_ANCESTOR_HOPS,
+        known: &known,
+        deadline,
+    };
+    let (chain, walked) =
+        verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
+            .unwrap_or((Vec::new(), verbatim_ia2::acquire::Walked::Complete));
+    let chain = chain
         .into_iter()
         .filter(|ancestor| ancestor.role != Role::Window)
-        .collect()
+        .collect();
+    (chain, walked)
 }
 
 /// An MSAA node's ancestors and, for a selection container, its selected
-/// child. Failures degrade to an empty chain or `None`.
+/// child, stopping at a container of `previous` and reusing the rest, within
+/// [`ENRICHMENT_BUDGET`] (checked between calls; an MSAA call cannot be
+/// given a shorter wait). Failures degrade to no containers or no selected
+/// child; running out of time to containers unknown.
 pub(super) fn msaa_enrichment(
     context: &Context,
     node: &NodeSnapshot,
-) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
+    previous: &[NodeSnapshot],
+) -> Enrichment {
     // A window object above a control is layout, never announced as an
     // entered container: NVDA gives a window object reached through its
     // parents the `GenericWindow` class, which is not a presentable focus
     // ancestor. A dialog is still announced, by its client area's dialog
     // role.
-    let ancestors = msaa_ancestors(context, node);
+    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    let (chain, walked) = msaa_ancestors(context, node, previous, Some(deadline));
+    let ancestors = match walked {
+        verbatim_ia2::acquire::Walked::OutOfTime => None,
+        verbatim_ia2::acquire::Walked::MetKnown(met) => Some(splice(previous, chain, met)),
+        verbatim_ia2::acquire::Walked::Complete => Some(chain),
+    };
     let selected = if wants_selected_child(node.role) {
         verbatim_ia2::acquire::selected_child(node.id, &context.msaa_registry)
     } else {
@@ -283,7 +370,9 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         let element = uia.focused_element(&cache).ok()?;
         // SAFETY: `element` was built with the base cache request.
         let node = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
-        let (ancestors, selected_child) = uia_enrichment(context, uia, &cache, &element, node.role);
+        let (ancestors, selected_child) =
+            uia_enrichment(context, uia, &cache, &element, node.role, &[]);
+        let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
             node,
             ancestors,
@@ -293,7 +382,8 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     } else {
         let node =
             verbatim_ia2::acquire::focused_snapshot(context.target_pid, &context.msaa_registry)?;
-        let (ancestors, selected_child) = msaa_enrichment(context, &node);
+        let (ancestors, selected_child) = msaa_enrichment(context, &node, &[]);
+        let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
             node,
             ancestors,
@@ -370,7 +460,9 @@ pub(super) fn ancestors(
 ) -> Result<Vec<NodeSnapshot>, ReadError> {
     if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, cache, element) = uia_node(context, client, node_id)?;
-        return Ok(uia_ancestors(context, uia, &cache, &element));
+        // The full chain: object navigation reuses nothing and waits for
+        // the application as long as the query's own deadline allows.
+        return Ok(uia_ancestors(context, uia, &cache, &element, &[], None).unwrap_or_default());
     }
     verbatim_ia2::acquire::ancestor_chain(node_id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
         .map_err(ReadError::from)
@@ -443,5 +535,42 @@ pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<Dumped
             ReadError::Failed("could not acquire the top-level MSAA object".to_owned())
         })?;
         Ok(DumpedTree { root, truncated })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
+
+    use super::splice;
+
+    fn node(id: u64) -> NodeSnapshot {
+        NodeSnapshot {
+            id: NodeId::new(id),
+            backend: Backend::Uia,
+            role: Role::Group,
+            name: None,
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        }
+    }
+
+    fn ids(chain: &[NodeSnapshot]) -> Vec<NodeId> {
+        chain.iter().map(|node| node.id).collect()
+    }
+
+    #[test]
+    fn a_walk_meeting_the_previous_chain_reuses_what_lies_above() {
+        let previous = vec![node(1), node(2), node(3)];
+        // The new walk read 4 and then met 2, its outermost entry.
+        let spliced = splice(&previous, vec![node(2), node(4)], NodeId::new(2));
+        assert_eq!(ids(&spliced), ids(&[node(1), node(2), node(4)]));
+    }
+
+    #[test]
+    fn a_walk_meeting_nothing_known_is_kept_whole() {
+        let spliced = splice(&[node(1)], vec![node(5), node(6)], NodeId::new(9));
+        assert_eq!(ids(&spliced), ids(&[node(5), node(6)]));
     }
 }

@@ -123,6 +123,13 @@ impl SrState {
         self.attention.map(|attention| attention.source)
     }
 
+    /// When the newest focus the reducer applied was observed, in
+    /// milliseconds since the Unix epoch; `None` before any.
+    #[must_use]
+    pub fn latest_focus_observed_at(&self) -> Option<u64> {
+        self.latest_focus.map(|(_, observed_at_ms)| observed_at_ms)
+    }
+
     /// Every node the state refers to, grouped by the outpost that issued
     /// it: the focus, its ancestors, its last announced selection, the
     /// navigator, and the node the latest navigation starts from. The shell

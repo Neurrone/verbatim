@@ -6,7 +6,10 @@ threads, and the arbitration probe.
 Public API:
 
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
-  instance; nothing COM crosses threads): `focused_element`,
+  instance; nothing COM crosses threads), whose connection timeout is ten
+  seconds rather than UIA's default two, so a busy application's read
+  waits for its own answer instead of failing or returning UIA's stand-in
+  for the window: `focused_element`,
   `element_from_handle`, `element_by_runtime_id`, `base_cache_request`,
   `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation), plus the M3
@@ -19,7 +22,11 @@ Public API:
 - `Uia::ancestor_chain` — the chain of ancestors of an element, outermost
   first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
   over the raw view (one cross-process round trip per ancestor, the walk
-  NVDA shipped for years), capped by the caller. Ancestors that are not
+  NVDA shipped for years), capped by the caller, and stopped by
+  `AncestorStops`: at a window read through the other API, at an ancestor
+  the caller already knows (reporting `AncestorWalk::MetKnown`), or at a
+  deadline (`AncestorWalk::OutOfTime`). `Uia::within(wait, read)` runs a
+  read with a shorter connection timeout, for reads that are only extras. Ancestors that are not
   presentable focus context — NVDA's `isPresentableFocusAncestor`,
   ported: layout elements (unknown and pane roles, textless static text,
   nameless windows, property pages, and groupings) plus list items, tree
@@ -97,7 +104,14 @@ Public API:
   outpost holds one focus-following property subscription.
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
-  as callable only from deadline-guarded query threads.
+  as callable only from deadline-guarded query threads. Only the window's
+  own answer counts: `UiaHasServerSideProvider` reports no provider when
+  a busy window does not answer in time, so a "no" slower than a second
+  is followed by waiting for the window to process a `WM_NULL` and asking
+  once more, all within eight seconds. `probe_server_side_provider`
+  answers `None` for a window that never answered, which the outpost
+  reads through MSAA for the event at hand without keeping that as the
+  window's answer, as NVDA treats a cancelled probe.
 - `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:
   resolves the native window handle of `element` itself, or of its nearest
   ancestor that has one, in one cross-process round trip

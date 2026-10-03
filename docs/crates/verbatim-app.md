@@ -69,8 +69,9 @@ knowing for review:
   `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
   if it is still starting. When the supervisor reports
   `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
-  closed and no focus event followed within the listener's 50 ms grace),
-  the reducer thread asks the foreground application's ready outpost for
+  closed, told 50 ms later with the time it ended), the reducer thread,
+  unless the reducer has applied a focus observed since that time
+  (`SrState::latest_focus_observed_at`), asks the foreground application's ready outpost for
   its focus as `Asker::FakeFocus`, whose answer re-enters the reducer as
   the focus on the control alone, NVDA's fake focus; an application with
   no ready outpost gets an ordinary focus-now query.

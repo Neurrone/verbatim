@@ -107,6 +107,12 @@ pub enum NormalizedEvent {
         /// field existed deserializing unchanged.
         #[serde(default)]
         ancestors: Vec<NodeSnapshot>,
+        /// The outpost could not read the ancestors in time (a busy
+        /// application), so `ancestors` is empty for want of an answer, not
+        /// because the node has none: the reducer keeps the previous focus's
+        /// chain rather than treating every container as newly entered.
+        #[serde(default)]
+        ancestors_unknown: bool,
         /// The selected child of a newly focused selection container (a
         /// list's selected item, a tab control's active tab), fetched by
         /// the outpost alongside the ancestors — only for container roles,

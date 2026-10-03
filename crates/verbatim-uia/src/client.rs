@@ -14,12 +14,14 @@ use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
+    CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern,
     IUIAutomationSelectionPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
     TreeScope_Subtree, UIA_InvokePatternId, UIA_LegacyIAccessiblePatternId,
     UIA_RuntimeIdPropertyId, UIA_SelectionPatternId, UIA_TogglePatternId,
 };
+
+use windows::core::Interface;
 
 use verbatim_model::{NodeSnapshot, QueryKind, TreeNode};
 
@@ -33,9 +35,45 @@ pub struct Uia {
     client: IUIAutomation,
 }
 
+/// Where an ancestor walk ([`Uia::ancestor_chain`]) stops short of the root.
+#[derive(Clone, Copy)]
+pub struct AncestorStops<'a> {
+    /// Whether a window is read through the other API: the walk stops at
+    /// its root element and returns its handle.
+    pub read_by_other_api: &'a dyn Fn(isize) -> bool,
+    /// Whether a reported ancestor is already known: the walk stops there.
+    pub known: &'a dyn Fn(verbatim_model::NodeId) -> bool,
+    /// When to give up, reporting the chain as incomplete.
+    pub deadline: Option<std::time::Instant>,
+}
+
+/// How an ancestor walk ended ([`Uia::ancestor_chain`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AncestorWalk {
+    /// It reached the root, a window read through the other API, or a hop
+    /// that found no parent.
+    Complete,
+    /// It reached this known ancestor, the outermost one in the chain.
+    MetKnown(verbatim_model::NodeId),
+    /// It ran out of time, so the chain is incomplete.
+    OutOfTime,
+}
+
+/// How long a call waits for an application's UIA provider to answer
+/// before UIA gives up on it, in milliseconds: the deadline the outpost's
+/// watchdog already holds each read to (NVDA's `NORMAL_CORE_ALIVE_TIMEOUT`).
+/// UIA's default of two seconds made a busy application's read fail, or,
+/// for the focused element, come back as UIA's own stand-in for the window
+/// (Windows 11 Notepad's text area read as a nameless edit instead of its
+/// "Text editor" document while Notepad was starting); with this, the read
+/// waits for the application's answer, and the watchdog decides when it
+/// has waited too long.
+pub(crate) const CONNECTION_TIMEOUT_MS: u32 = 10_000;
+
 impl Uia {
     /// Joins the multithreaded apartment and creates a UIA client on the
-    /// current thread.
+    /// current thread, waiting up to [`CONNECTION_TIMEOUT_MS`] for an
+    /// application's provider to answer.
     ///
     /// # Errors
     ///
@@ -50,7 +88,15 @@ impl Uia {
         // notification-event registration in particular, where querying a
         // plain CUIAutomation object fails with E_NOINTERFACE (observed
         // live; NVDA likewise creates CUIAutomation8).
-        let client = unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
+        let client: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
+        // SAFETY: CUIAutomation8 objects implement IUIAutomation2; setting
+        // the timeout takes a plain integer.
+        unsafe {
+            client
+                .cast::<IUIAutomation2>()?
+                .SetConnectionTimeout(CONNECTION_TIMEOUT_MS)?;
+        }
         Ok(Self { client })
     }
 
@@ -83,6 +129,30 @@ impl Uia {
         // SAFETY: `cache` is a live cache request from this client; the call is
         // a normal cross-process fetch.
         unsafe { self.client.GetFocusedElementBuildCache(cache) }
+    }
+
+    /// Runs `read` with this client waiting at most `wait` for an
+    /// application's provider to answer, then restores the usual
+    /// [`CONNECTION_TIMEOUT_MS`]: for a read whose answer is only an extra,
+    /// worth a short wait but not a long one.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the timeout cannot be set; `read`'s own
+    /// result is returned inside `Ok`.
+    pub fn within<T>(
+        &self,
+        wait: std::time::Duration,
+        read: impl FnOnce(&Self) -> T,
+    ) -> windows::core::Result<T> {
+        let client = self.client.cast::<IUIAutomation2>()?;
+        let wait = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: setting a timeout takes a plain integer.
+        unsafe { client.SetConnectionTimeout(wait) }?;
+        let result = read(self);
+        // SAFETY: as above.
+        unsafe { client.SetConnectionTimeout(CONNECTION_TIMEOUT_MS) }?;
+        Ok(result)
     }
 
     /// Fetches the element for a top-level window handle with properties
@@ -277,7 +347,11 @@ impl Uia {
     /// `read_by_other_api` claims, and returns that window's handle with the
     /// chain below it, so the caller can continue through the other API, as
     /// NVDA switches API when a walk crosses into a window read through it
-    /// (`correctAPIForRelation`).
+    /// (`correctAPIForRelation`). It also stops at the first reported
+    /// ancestor `known` recognizes, from the previous focus's chain, with that
+    /// ancestor outermost, as NVDA's focus ancestry stops where it meets the
+    /// previous focus's ancestors; and when `deadline` passes, reporting the
+    /// chain as incomplete.
     ///
     /// # Errors
     ///
@@ -293,25 +367,43 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
         max_hops: u32,
-        read_by_other_api: &dyn Fn(isize) -> bool,
-    ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>)> {
+        stops: &AncestorStops<'_>,
+    ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>, AncestorWalk)> {
+        let AncestorStops {
+            read_by_other_api,
+            known,
+            deadline,
+        } = *stops;
         // The raw view, the same parent chain NVDA's own object hierarchy
         // walks; what gets *reported* out of it is filtered below.
         // SAFETY: `self.client` is a live IUIAutomation instance.
         let walker = unsafe { self.client.RawViewWalker() }?;
         let mut chain = Vec::new();
         let mut current = element.clone();
+        let out_of_time = || deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
         for _ in 0..max_hops {
+            if out_of_time() {
+                chain.reverse();
+                return Ok((chain, None, AncestorWalk::OutOfTime));
+            }
             // SAFETY: `current` is either the caller's `element` (per its
             // contract) or a parent built with `cache` by the previous hop.
             let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) }) else {
-                break;
+                // A hop that fails because the deadline passed while it
+                // waited is an incomplete chain, not the root.
+                let ending = if out_of_time() {
+                    AncestorWalk::OutOfTime
+                } else {
+                    AncestorWalk::Complete
+                };
+                chain.reverse();
+                return Ok((chain, None, ending));
             };
             // SAFETY: `parent` was just built with `cache`.
             let hwnd = unsafe { crate::map::cached_native_window_handle(&parent) };
             if hwnd != 0 && read_by_other_api(hwnd) {
                 chain.reverse();
-                return Ok((chain, Some(hwnd)));
+                return Ok((chain, Some(hwnd), AncestorWalk::Complete));
             }
             // SAFETY: `parent` was just built with `cache`.
             let snapshot = unsafe { snapshot_from_cached_element(&parent, registry) };
@@ -326,12 +418,17 @@ impl Uia {
             if is_presentable_focus_ancestor(&snapshot)
                 && unsafe { crate::map::cached_is_control_and_content(&parent) }
             {
+                let id = snapshot.id;
                 chain.push(snapshot);
+                if known(id) {
+                    chain.reverse();
+                    return Ok((chain, None, AncestorWalk::MetKnown(id)));
+                }
             }
             current = parent;
         }
         chain.reverse();
-        Ok((chain, None))
+        Ok((chain, None, AncestorWalk::Complete))
     }
 
     /// The first selected child of a selection container, via the

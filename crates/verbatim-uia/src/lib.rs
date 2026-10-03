@@ -42,11 +42,11 @@ mod registry;
 mod subscribe;
 
 pub use cache::base_cache_request;
-pub use client::Uia;
+pub use client::{AncestorStops, AncestorWalk, Uia};
 pub use com::init_mta;
 pub use focus::{FocusCallback, FocusRegistration};
 pub use nearest::nearest_window_handle;
-pub use probe::has_server_side_provider;
+pub use probe::{has_server_side_provider, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
     ElementCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback, Registration, Scope,

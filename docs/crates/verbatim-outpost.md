@@ -309,12 +309,31 @@ Implementation notes:
   windows whether `GetGUIThreadInfo`'s active window is it or contains it,
   and whether it is in `GetForegroundWindow`'s window by NVDA's test), all
   local calls.
-- A UIA focus fact is resolved with one `focused_element` call compared
-  against the fact's runtime id. A mismatch means focus has already moved
-  and the newer fact will arrive, so the stale one is dropped; there is no
-  runtime-id search. The element in hand serves the window, the ancestors,
-  and the selected child. An MSAA focus fact is read with NVDA's
-  child-0-on-a-list redirect (`snapshot_from_focus_event`).
+- A UIA focus fact is reported from the fact itself, as NVDA builds the
+  focus from the event's sender: its properties are the focus's, and it is
+  accepted only when they say the element has the keyboard focus. The
+  outpost reads the focused element (`live_focus_element`, waiting at most
+  `FOCUS_READ_WAIT`, one second) only to get its own live copy of the
+  element, for the ancestors, the selected child, the element's window,
+  and navigation. Without it the focus is emitted with
+  `ancestors_unknown`, and a queued `Item::ResolveFocus` follow-up (up to
+  three attempts, while the focus is unchanged) finds the element and
+  moves the focus-following subscription to it. A fact that names no
+  window is arbitrated against this application's own focus window but
+  reported without window facts. An MSAA focus fact is read with NVDA's
+  child-0-on-a-list redirect (`snapshot_from_focus_event`) and accepted
+  only when the object or an ancestor has the focused state.
+- Ancestors (`read::uia_enrichment`, `read::msaa_enrichment`): the walk
+  stops at the first ancestor in the previous focus's chain (the tracking
+  state's `chain`) and splices the rest of that chain in, as NVDA does;
+  the remainder is read within `ENRICHMENT_BUDGET`, two seconds (UIA calls
+  inside it wait no longer than that), after which the ancestors are
+  reported unknown. Object navigation's ancestor query reads the whole
+  chain.
+- Focus candidates: the intake keeps the three newest focus facts from
+  each backend (`Planned::Focus`), and the worker handles them newest
+  first, each under its own deadline, until one is reported, as NVDA's
+  event pump falls back to an older focus event.
 - Menus (the worker), following NVDA's MSAA handler: within a batch, focus
   and foreground events are handled first and the menu opening last. If a
   focus in the batch already put focus on a menu or menu item, the menu
@@ -323,9 +342,10 @@ Implementation notes:
   receives a separate menu event. The end of a menu
   (`EVENT_SYSTEM_MENUEND` or `EVENT_SYSTEM_MENUPOPUPEND`) or of the Alt+Tab
   switcher (`EVENT_SYSTEM_SWITCHEND`) is not an outpost's concern: the
-  focus listener forwards it to Core as `MenuOrSwitchEnded`, and if Core's
-  focus has not changed 50 milliseconds later, Core asks the foreground
-  application's outpost for its focus (`Query::FocusNow`).
+  focus listener forwards every such end to Core 50 milliseconds later as
+  `MenuOrSwitchEnded`, with the time it ended, and unless Core has applied
+  a focus observed since then, Core asks the foreground application's
+  outpost for its focus (`Query::FocusNow`).
 - Window destruction: an `EVENT_OBJECT_DESTROY` for a window drops its kept
   arbitration verdict and its MSAA nodes, so a reused handle is probed
   afresh and never inherits them.

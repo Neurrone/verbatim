@@ -435,10 +435,67 @@ verified.
   finds none for 500 ms, NVDA's cache period. Checked live on
   2026-10-02 across about 65 windows of Explorer, Settings, Start, and
   the desktop: no window's answer changed from a provider to none
-  during its life, but a window can answer "none" just after it is
-  created and gain its provider within seconds (Explorer's file list,
-  Windows 11 Notepad's edit control). Until the re-probe, that first
-  focus is read through MSAA, as in NVDA.
+  during its life. **Different from NVDA, since 2026-10-03:**
+  `UiaHasServerSideProvider` reports no provider when the window does
+  not answer in time (three seconds for Windows 11 Notepad's text control
+  while Notepad was starting, five for a stalled mockapp window), and
+  NVDA takes that as the answer, reading the focus through MSAA ("edit")
+  until it moves. Verbatim counts only the window's own answer: a "no"
+  slower than a second (real answers took 0 to 89 ms) makes the probe
+  wait for the window to process messages and ask again. Found as the
+  cause of `multi_outpost_switch` failing about one run in five; the
+  dropped UIA focus had come from Notepad's own provider, and a check 18
+  ms after the slow "no" answered "yes". The same failure had a second
+  form: UIA itself gives up on a provider after two seconds by default
+  (neither NVDA nor Verbatim had changed it), and reading Notepad's
+  focused element then returned UIA's stand-in for the window, a
+  nameless edit, instead of the "Text editor" document. Verbatim's UIA
+  client waits ten seconds, the deadline its watchdog already holds each
+  read to.
+- How an outpost turns events into focus reports, from the audit of
+  2026-10-03 (all **matched since 2026-10-03** unless marked otherwise):
+  - A UIA focus is built from the event: its name, role, value, and
+    states come from the properties the event delivered, as NVDA builds
+    the focus object from the event's sender, and it is accepted only
+    when those say the element has the keyboard focus
+    (`shouldAllowUIAFocusEvent`). Until 2026-10-03 the outpost read the
+    focused element live, took the focus from that read, and dropped the
+    focus when the read failed; under a busy application the read blocked
+    for more than ten seconds or returned UIA's stand-in for the window,
+    so the focus was announced wrongly or not at all.
+  - **Different, because of the outposts:** the event's element is in the
+    listener's process and cannot cross to the outpost, which reads its
+    own copy of it for the focus's ancestors and for navigation. That read
+    waits at most a second; without it the focus is still reported, with
+    its ancestors unknown (the reducer then announces no containers and
+    keeps the previous chain), and a follow-up finds the element later so
+    the focus's property changes are still followed. NVDA has the element
+    from the event and never waits for it.
+  - A focus's ancestors are read only until they meet the previous
+    focus's chain, whose rest is reused, as NVDA's focus ancestry does.
+    **Different:** reading the rest is limited to two seconds, after which
+    the ancestors are reported unknown rather than the focus being held
+    back; NVDA waits.
+  - An MSAA focus is accepted only when the object or one of its
+    ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`).
+  - When the newest focus event of a batch cannot be reported (unreadable,
+    destroyed, refused), the next older one is tried, up to three, as
+    NVDA's event pump falls back.
+  - The fake focus after a menu or the Alt+Tab switcher closes is skipped
+    only when a focus observed after the close was actually applied; any
+    focus fact used to cancel it, even one later dropped or unreadable.
+  - NVDA's early `WinEvent` filters: object ids at or below `OBJID_ALERT`,
+    a focus on a menu bar object itself, foreground events for Program
+    Manager and the taskbar, and menu events from the IME candidate
+    window are ignored. Selection add, remove, and within events are
+    changes of state, not new selections, so a deselected item is no
+    longer announced as selected.
+  - Events are judged by their own application's window, never the
+    system's focus window, which can belong to another application; UIA
+    notifications are not arbitrated, as NVDA does not arbitrate them.
+  - A provider probe stays within the outpost's deadline; a window that
+    does not answer is read through MSAA for the event at hand and probed
+    again next time, as NVDA treats a cancelled probe.
 - UIA caching discipline (cache requests on events and walks). NVDA:
   `baseCacheRequest` pattern. Verbatim: **matched (unverified)** —
   cached elements + scoped search landed in 918e5b8/4563bff after a

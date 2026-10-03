@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
     EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_CLIENT, OBJID_WINDOW,
-    WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GetClassNameW, OBJID_ALERT, OBJID_CLIENT,
+    OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -91,9 +91,12 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 15] = [
     (EVENT_OBJECT_STATECHANGE, WinEventKind::StateChange),
     (EVENT_OBJECT_NAMECHANGE, WinEventKind::NameChange),
     (EVENT_OBJECT_SELECTION, WinEventKind::Selection),
-    (EVENT_OBJECT_SELECTIONADD, WinEventKind::Selection),
-    (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::Selection),
-    (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::Selection),
+    // Only a plain selection announces a newly selected item; NVDA handles
+    // an item added to or removed from a selection, or a selection within a
+    // container, as a change of state.
+    (EVENT_OBJECT_SELECTIONADD, WinEventKind::StateChange),
+    (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::StateChange),
+    (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::StateChange),
     (EVENT_SYSTEM_MENUPOPUPSTART, WinEventKind::MenuPopupStart),
     (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuEnd),
     (EVENT_SYSTEM_MENUEND, WinEventKind::MenuEnd),
@@ -214,6 +217,37 @@ fn kind_of(event: u32) -> Option<WinEventKind> {
         .find_map(|&(id, kind)| (id == event).then_some(kind))
 }
 
+/// NVDA's early filters for `WinEvent`s, all local checks: object ids at or
+/// below `OBJID_ALERT` are not accessible objects; a focus on a menu bar
+/// object itself is not a real focus; Program Manager and the taskbar never
+/// report a foreground change; and the IME candidate window's menu events
+/// are not menus (NVDA's `winEventCallback` and its event limiter).
+fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
+    if id_object <= OBJID_ALERT.0 {
+        return false;
+    }
+    if kind == WinEventKind::Focus
+        && (id_object == OBJID_MENU.0 || id_object == OBJID_SYSMENU.0)
+        && id_child == CHILDID_SELF
+    {
+        return false;
+    }
+    let class = || {
+        let mut buffer = [0u16; 64];
+        // SAFETY: a local call that writes at most the buffer's length and
+        // tolerates any handle.
+        let length = unsafe { GetClassNameW(hwnd, &mut buffer) };
+        String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
+    };
+    match kind {
+        WinEventKind::Foreground => !matches!(class().as_str(), "Progman" | "Shell_TrayWnd"),
+        WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
+            class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
+        }
+        _ => true,
+    }
+}
+
 unsafe extern "system" fn win_event_proc(
     _hook: HWINEVENTHOOK,
     event: u32,
@@ -226,6 +260,9 @@ unsafe extern "system" fn win_event_proc(
     let Some(kind) = kind_of(event) else {
         return;
     };
+    if !is_wanted(kind, hwnd, id_object, id_child) {
+        return;
+    }
     // An event on a window object stands for its client area, as NVDA's
     // event hook treats it, so a window's foreground report and a focus on
     // its client area name one object. A window's destruction keeps the
@@ -242,4 +279,52 @@ unsafe extern "system" fn win_event_proc(
             callback(kind, hwnd.0 as isize, id_object, id_child);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_plain_selection_announces_a_newly_selected_item() {
+        assert_eq!(
+            kind_of(EVENT_OBJECT_SELECTION),
+            Some(WinEventKind::Selection)
+        );
+        for removed_or_added in [
+            EVENT_OBJECT_SELECTIONADD,
+            EVENT_OBJECT_SELECTIONREMOVE,
+            EVENT_OBJECT_SELECTIONWITHIN,
+        ] {
+            assert_eq!(kind_of(removed_or_added), Some(WinEventKind::StateChange));
+        }
+    }
+
+    #[test]
+    fn events_nvda_ignores_are_filtered_out() {
+        let any = HWND::default();
+        assert!(!is_wanted(WinEventKind::NameChange, any, OBJID_ALERT.0, 0));
+        assert!(!is_wanted(
+            WinEventKind::Focus,
+            any,
+            OBJID_MENU.0,
+            CHILDID_SELF
+        ));
+        assert!(!is_wanted(
+            WinEventKind::Focus,
+            any,
+            OBJID_SYSMENU.0,
+            CHILDID_SELF
+        ));
+        assert!(
+            is_wanted(WinEventKind::Focus, any, OBJID_MENU.0, 3),
+            "a menu item"
+        );
+        assert!(is_wanted(
+            WinEventKind::Focus,
+            any,
+            OBJID_CLIENT.0,
+            CHILDID_SELF
+        ));
+    }
 }

@@ -46,7 +46,7 @@ pub(super) enum OwnerEvent {
         fact: ListenerFact,
     },
     /// From the listener's reader: a menu or the Alt+Tab switcher closed.
-    MenuOrSwitchEnded,
+    MenuOrSwitchEnded { ended_at_ms: u64 },
     /// From a reader: the child sent `Ready`.
     Ready(OutpostId),
     /// From a reader: the child answered a ping.
@@ -191,8 +191,10 @@ impl Owner {
                 observed_at_ms,
                 fact,
             } => self.route_fact(trace_id, observed_at_ms, fact),
-            OwnerEvent::MenuOrSwitchEnded => {
-                let _ = self.events_tx.send(OutpostMessage::MenuOrSwitchEnded);
+            OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
+                let _ = self
+                    .events_tx
+                    .send(OutpostMessage::MenuOrSwitchEnded { ended_at_ms });
             }
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
             OwnerEvent::Pong { outpost, abandoned } => {
@@ -722,7 +724,9 @@ fn read_listener(outpost: OutpostId, from_child: File, own_tx: &Sender<OwnerEven
                 outpost,
                 abandoned: 0,
             },
-            OutpostToSupervisor::MenuOrSwitchEnded => OwnerEvent::MenuOrSwitchEnded,
+            OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms } => {
+                OwnerEvent::MenuOrSwitchEnded { ended_at_ms }
+            }
             OutpostToSupervisor::Ready { .. } => OwnerEvent::Ready(outpost),
             OutpostToSupervisor::Fault { detail } => {
                 tracing::warn!(detail, "focus listener fault");

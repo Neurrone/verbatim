@@ -248,6 +248,7 @@ mod tests {
                     event: NormalizedEvent::FocusChanged {
                         foreground: false,
                         ancestors: Vec::new(),
+                        ancestors_unknown: false,
                         selected_child: None,
                         node: NodeSnapshot {
                             id: NodeId::new(1),

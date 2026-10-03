@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, TraceId,
+    Backend, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, TraceId,
 };
 use verbatim_uia::map::snapshot_from_cached_element;
 use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handle};
@@ -39,9 +39,10 @@ use super::Context;
 use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::window::{
-    focus_window, front_is_another_thread_of_its_application, window_belongs_to_hidden_frame,
+    focus_window_of, front_is_another_thread_of_its_application, window_belongs_to_hidden_frame,
     window_facts, window_is_foreground,
 };
+use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -61,6 +62,15 @@ const FOREGROUND_WAIT: Duration = Duration::from_millis(250);
 
 /// How often the worker checks the foreground window while it waits.
 const FOREGROUND_POLL: Duration = Duration::from_millis(10);
+
+/// How long a UIA focus waits to find its element live, for ancestors and
+/// navigation, before it is reported from the event alone. Such a read
+/// normally answers in 10 to 100 ms.
+const FOCUS_READ_WAIT: Duration = Duration::from_secs(1);
+
+/// How many times a follow-up looks for the live element of a focus reported
+/// from its event alone.
+const FOCUS_RESOLVE_ATTEMPTS: u32 = 3;
 
 /// How long the watchdog waits on an entry before abandoning it because the
 /// user has moved on to a window of the same application on another UI
@@ -193,9 +203,19 @@ impl Watch {
 #[derive(Default)]
 pub(super) struct Tracking {
     /// The role of the focus this outpost last reported.
-    focus_role: Option<Role>,
+    role: Option<Role>,
     /// The batch in which a focus was last reported.
-    focus_batch: Option<u64>,
+    batch: Option<u64>,
+    /// The last focus this outpost reported and its ancestors, outermost
+    /// first: where the next focus's ancestor walk can stop and reuse the
+    /// rest, as NVDA's does.
+    chain: Vec<NodeSnapshot>,
+    /// The window of the last focus this outpost reported, for events on
+    /// that focus, which then need no call to find their window.
+    window: Option<isize>,
+    /// How many focuses (not foreground changes) this outpost has reported,
+    /// so the worker can tell when a focus candidate was reported.
+    reported: u64,
 }
 
 /// Publishes `message`, an entry's one result, if `generation` is still the
@@ -337,59 +357,90 @@ fn run(context: &Context, generation: u64) {
         if let Some(hwnd) = foreground {
             wait_for_foreground(hwnd);
         }
-        let (deadline, running, window) = match &planned {
-            Planned::Run(entry) | Planned::Menu(entry) => {
-                let (deadline, running) = budget(entry);
-                (deadline, running, window_of(&entry.item))
+        let mut run = |entry: Entry, menu: bool| {
+            run_entry(context, &mut client, generation, batch, entry, menu)
+        };
+        let outcome = match planned {
+            Planned::Run(entry) => run(entry, false),
+            Planned::Menu(entry) => run(entry, true),
+            Planned::Focus(entries) => {
+                // Newest first, until one is reported.
+                let mut outcome = Ok(());
+                for entry in entries {
+                    let reported = context.tracking().reported;
+                    outcome = run(entry, false);
+                    if outcome.is_err() || context.tracking().reported != reported {
+                        break;
+                    }
+                }
+                outcome
             }
         };
-        context.watch.start(deadline, running, window);
-        let started = Instant::now();
-        let handled = catch_unwind(AssertUnwindSafe(|| {
-            let mut worker = Worker {
-                context,
-                client: &mut client,
-                generation,
-                batch,
-            };
-            match planned {
-                Planned::Run(entry) => worker.handle(entry),
-                Planned::Menu(entry) => worker.menu_opened(&entry),
+        if outcome.is_err() {
+            return;
+        }
+    }
+}
+
+/// Handles one entry under its deadline. `Err` when this worker was
+/// abandoned meanwhile and must exit.
+fn run_entry(
+    context: &Context,
+    client: &mut Client,
+    generation: u64,
+    batch: u64,
+    entry: Entry,
+    menu: bool,
+) -> Result<(), ()> {
+    let (deadline, running) = budget(&entry);
+    context
+        .watch
+        .start(deadline, running, window_of(&entry.item));
+    let started = Instant::now();
+    let handled = catch_unwind(AssertUnwindSafe(|| {
+        let mut worker = Worker {
+            context,
+            client,
+            generation,
+            batch,
+        };
+        if menu {
+            worker.menu_opened(&entry);
+        } else {
+            worker.handle(entry);
+        }
+    }));
+    context
+        .arbitrator()
+        .renew_probes_since(started, Instant::now());
+    match context.watch.finish(generation) {
+        Err(()) => {
+            tracing::info!(
+                elapsed_ms = started.elapsed().as_millis(),
+                deadline_ms = deadline.as_millis(),
+                "an abandoned worker returned; its result is discarded"
+            );
+            return Err(());
+        }
+        // A query whose handling panicked before replying still gets its
+        // one reply.
+        Ok(Some((request_id, trace_id))) => {
+            if handled.is_err() {
+                tracing::error!(request_id, "the worker failed handling a query");
             }
-        }));
-        context
-            .arbitrator()
-            .renew_probes_since(started, Instant::now());
-        match context.watch.finish(generation) {
-            Err(()) => {
-                tracing::info!(
-                    elapsed_ms = started.elapsed().as_millis(),
-                    deadline_ms = deadline.as_millis(),
-                    "an abandoned worker returned; its result is discarded"
-                );
-                return;
-            }
-            // A query whose handling panicked before replying still gets its
-            // one reply.
-            Ok(Some((request_id, trace_id))) => {
-                if handled.is_err() {
-                    tracing::error!(request_id, "the worker failed handling a query");
-                }
-                context.outbound.send(OutpostToSupervisor::Reply {
-                    trace_id,
-                    request_id,
-                    outcome: QueryOutcome::Failed(
-                        "the outpost failed handling the query".to_owned(),
-                    ),
-                });
-            }
-            Ok(None) => {
-                if handled.is_err() {
-                    tracing::error!("the worker failed handling an event");
-                }
+            context.outbound.send(OutpostToSupervisor::Reply {
+                trace_id,
+                request_id,
+                outcome: QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
+            });
+        }
+        Ok(None) => {
+            if handled.is_err() {
+                tracing::error!("the worker failed handling an event");
             }
         }
     }
+    Ok(())
 }
 
 /// Waits, up to [`FOREGROUND_WAIT`], for `hwnd` to become the foreground
@@ -421,7 +472,9 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
             };
             (deadline, Some((*request_id, entry.trace)))
         }
-        Item::Fact(_) | Item::Msaa { .. } | Item::Uia(_) => (HANDLING_DEADLINE, None),
+        Item::Fact(_) | Item::Msaa { .. } | Item::Uia(_) | Item::ResolveFocus { .. } => {
+            (HANDLING_DEADLINE, None)
+        }
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -457,6 +510,10 @@ impl Worker<'_> {
                 nodes,
                 acknowledged,
             } => self.release(&nodes, acknowledged),
+            Item::ResolveFocus {
+                runtime_id,
+                attempt,
+            } => self.resolve_focus(&runtime_id, trace, attempt),
         }
     }
 
@@ -521,14 +578,29 @@ impl Worker<'_> {
         node: NodeSnapshot,
         foreground: bool,
         object: Option<Object>,
-        (ancestors, selected_child): (Vec<NodeSnapshot>, Option<NodeSnapshot>),
+        (ancestors, selected_child): read::Enrichment,
     ) {
         let role = node.role;
-        tracing::debug!(?role, name = ?node.name, foreground, ?backend, "focus reported");
+        tracing::debug!(
+            ?role,
+            name = ?node.name,
+            foreground,
+            ?backend,
+            ancestors_unknown = ancestors.is_none(),
+            "focus reported"
+        );
+        let chain = ancestors.as_ref().map(|ancestors| {
+            ancestors
+                .iter()
+                .cloned()
+                .chain(std::iter::once(node.clone()))
+                .collect::<Vec<_>>()
+        });
         let event = NormalizedEvent::FocusChanged {
             node,
             foreground,
-            ancestors,
+            ancestors_unknown: ancestors.is_none(),
+            ancestors: ancestors.unwrap_or_default(),
             selected_child,
         };
         let followed = self.uia_elements(&event);
@@ -543,9 +615,23 @@ impl Worker<'_> {
                 }
             }
             let mut tracking = self.context.tracking();
-            tracking.focus_role = Some(role);
-            tracking.focus_batch = Some(self.batch);
+            tracking.role = Some(role);
+            tracking.batch = Some(self.batch);
+            if !foreground {
+                tracking.reported += 1;
+                tracking.window = window;
+                // Unknown ancestors leave the previous chain, as the reducer
+                // keeps it.
+                if let Some(chain) = chain {
+                    tracking.chain = chain;
+                }
+            }
         }
+    }
+
+    /// The last focus this outpost reported, with its ancestors.
+    fn focus_chain(&self) -> Vec<NodeSnapshot> {
+        self.context.tracking().chain.clone()
     }
 
     /// The live UIA elements behind a focus event's node and ancestors, for
@@ -621,15 +707,22 @@ impl Worker<'_> {
             .element
             .as_ref()
             .and_then(|agile| agile.resolve().ok());
+        // The event's window: its own, else the recorded window of the focus
+        // it concerns, else its element's. Never the system's focus window,
+        // which can belong to another application.
+        let of_focus =
+            self.context.intake.focused() == Some(Object::Uia(event.parts.runtime_id.clone()));
         let hwnd = if event.hwnd != 0 {
             Some(event.hwnd)
+        } else if of_focus {
+            self.context.tracking().window
         } else {
-            element
-                .as_ref()
-                .and_then(nearest_window_handle)
-                .or_else(focus_window)
+            element.as_ref().and_then(nearest_window_handle)
         };
-        if let Some(hwnd) = hwnd
+        // NVDA does not arbitrate notifications; every other event is
+        // dropped when MSAA owns its window.
+        if !matches!(event.kind, UiaKind::Notification(_))
+            && let Some(hwnd) = hwnd
             && !read::window_uses_uia(self.context, hwnd)
         {
             return; // MSAA owns this window.
@@ -640,7 +733,7 @@ impl Worker<'_> {
             self.emit(trace, observed_at_ms, Backend::Uia, hwnd, selection);
             return;
         }
-        let node = self.uia_node(&event.parts, element.as_ref());
+        let node = Self::uia_node(self.context, &event.parts, element.as_ref());
         let normalized = match event.kind {
             UiaKind::Property(id) if id == UIA_NamePropertyId.0 => {
                 NormalizedEvent::PropertyChanged {
@@ -674,9 +767,22 @@ impl Worker<'_> {
     /// in its `ControllerFor` relation, an element the selected one is inside
     /// ("Selection in a list the focus controls" in `docs/nvda/events.md`).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
+        // The focus this outpost last reported, as NVDA uses its focus
+        // object; read live, briefly, only when its element is not known.
+        let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
+            return None;
+        };
+        let known = self
+            .context
+            .uia_registry
+            .element_of(self.context.uia_registry.id_for(&focus_id))
+            .and_then(|agile| agile.resolve().ok());
+        let focused = match known {
+            Some(element) => element,
+            None => self.live_focus_element(&focus_id)?,
+        };
         let uia = self.client.uia()?;
         let cache = uia.base_cache_request().ok()?;
-        let focused = uia.focused_element(&cache).ok()?;
         // SAFETY: `focused` is live, just read.
         let selected = unsafe { uia.controlled_descendant(&focused, runtime_id, &cache) }
             .ok()
@@ -695,11 +801,11 @@ impl Worker<'_> {
     /// A snapshot from a UIA element's cached parts, its id minted by the
     /// registry, which keeps the element when there is one.
     fn uia_node(
-        &self,
+        context: &Context,
         parts: &UiaSnapshotFact,
         element: Option<&windows::Win32::UI::Accessibility::IUIAutomationElement>,
     ) -> NodeSnapshot {
-        let registry = &self.context.uia_registry;
+        let registry = &context.uia_registry;
         let id = match element {
             Some(element) => registry.id_for_element(&parts.runtime_id, element),
             None => registry.id_for(&parts.runtime_id),
@@ -826,7 +932,7 @@ impl Worker<'_> {
             node,
             true,
             None,
-            (Vec::new(), None),
+            (Some(Vec::new()), None),
         );
     }
 
@@ -856,7 +962,24 @@ impl Worker<'_> {
             tracing::debug!(hwnd, id_object, id_child, "MSAA focus dropped: unreadable");
             return;
         };
-        let enrichment = read::msaa_enrichment(self.context, &node);
+        let enrichment = read::msaa_enrichment(self.context, &node, &self.focus_chain());
+        // NVDA accepts an MSAA focus only when the object or one of its
+        // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
+        // which weeds out stale and spurious focus events. Ancestors that
+        // could not be read in time leave the event accepted.
+        if let (false, Some(ancestors)) = (node.states.contains(State::Focused), &enrichment.0)
+            && !ancestors
+                .iter()
+                .any(|ancestor| ancestor.states.contains(State::Focused))
+        {
+            tracing::debug!(
+                hwnd,
+                id_object,
+                id_child,
+                "MSAA focus dropped: nothing has the focused state"
+            );
+            return;
+        }
         let object = self
             .context
             .msaa_registry
@@ -874,11 +997,18 @@ impl Worker<'_> {
         );
     }
 
-    /// A UIA focus fact, resolved with one `focused_element` call compared
-    /// against the fact's runtime id. A mismatch means focus has already
-    /// moved and a newer fact will arrive, so this one is dropped. The
-    /// element in hand serves the window, the ancestors, and the selected
-    /// child.
+    /// A UIA focus fact. What the focus is comes from the event, as NVDA
+    /// builds the focus from the event's sender and its cached properties,
+    /// and only when the event says the element has the keyboard focus
+    /// (NVDA's `shouldAllowUIAFocusEvent`). The element itself is in the
+    /// listener's process and cannot cross to this one, so the outpost finds
+    /// its own copy, for the ancestors and for navigation, by reading the
+    /// focused element, with a short wait: an application busy starting up
+    /// can leave that read unanswered for more than ten seconds, or answer
+    /// with UIA's stand-in for its window (Windows 11 Notepad's text area as
+    /// a nameless edit). Without it the focus is still reported, with its
+    /// ancestors unknown, and a follow-up finds the element later for the
+    /// focus-following property subscription.
     fn uia_focus(
         &mut self,
         fact_hwnd: isize,
@@ -887,106 +1017,131 @@ impl Worker<'_> {
         observed_at_ms: u64,
     ) {
         let context = self.context;
-        let Some(uia) = self.client.uia() else {
-            return;
-        };
-        let Ok(cache) = uia.base_cache_request() else {
-            return;
-        };
-        let Ok(element) = uia.focused_element(&cache) else {
-            tracing::debug!("UIA focus dropped: no focused element");
-            return;
-        };
-        // SAFETY: `element` was built with the base cache request.
-        let parts = unsafe { snapshot_parts_from_cached_element(&element) };
-        if parts.runtime_id != fact.runtime_id {
-            // Not the focused element, which is no proof that focus moved on:
-            // the Start menu's search results raise focus events while the
-            // keyboard focus stays in the search box. NVDA trusts the event's
-            // sender, so the fact's own snapshot is reported; there is no
-            // live element, so no ancestors.
-            tracing::debug!(
-                fact = ?fact.runtime_id,
-                focused = ?parts.runtime_id,
-                "UIA focus reported from the fact: not the focused element"
-            );
-            self.uia_fact_focus(fact_hwnd, fact, trace, observed_at_ms);
+        if !fact.states.contains(State::Focused) {
+            tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
             return;
         }
-        let hwnd = if fact_hwnd != 0 {
+        let element = self.live_focus_element(&fact.runtime_id);
+        // The event's own window; else the element's; else, for deciding
+        // the backend only, this application's focus window. Another
+        // application's window is never used, and a window the event did not
+        // name is not reported with it, so a late event from a closed menu
+        // cannot pass as being in the current window.
+        let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            nearest_window_handle(&element).or_else(focus_window)
+            element.as_ref().and_then(nearest_window_handle)
         };
-        if hwnd.is_some_and(window_belongs_to_hidden_frame) {
+        let judged = reported.or_else(|| focus_window_of(context.target_pid));
+        if judged.is_some_and(window_belongs_to_hidden_frame) {
             return;
         }
-        if let Some(hwnd) = hwnd
+        if let Some(hwnd) = judged
             && !read::window_uses_uia(context, hwnd)
         {
             // MSAA owns this window; its MSAA fact reports the focus.
             tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
             return;
         }
-        // SAFETY: `element` was built with the base cache request.
-        let node = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
-        let enrichment = read::uia_enrichment(context, uia, &cache, &element, node.role);
+        let object = Some(Object::Uia(fact.runtime_id.clone()));
+        let Some(element) = element else {
+            tracing::debug!("UIA focus reported from the event: its element was not found in time");
+            let node = Self::uia_node(context, fact, None);
+            self.emit_focus(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                reported,
+                node,
+                false,
+                object,
+                (None, None),
+            );
+            self.resolve_focus_later(&fact.runtime_id, trace, 1);
+            return;
+        };
+        let node = Self::uia_node(context, fact, Some(&element));
+        let previous = self.focus_chain();
+        let enrichment = match self.client.uia() {
+            Some(uia) => match uia.base_cache_request() {
+                Ok(cache) => {
+                    read::uia_enrichment(context, uia, &cache, &element, node.role, &previous)
+                }
+                Err(_) => (None, None),
+            },
+            None => (None, None),
+        };
         self.emit_focus(
             trace,
             observed_at_ms,
             Backend::Uia,
-            hwnd,
+            reported,
             node,
             false,
-            Some(Object::Uia(parts.runtime_id)),
+            object,
             enrichment,
         );
     }
 
-    /// A UIA focus fact whose element is not the focused element, reported from
-    /// the fact's cached snapshot alone: when it names its window, only if that
-    /// window is in the system's foreground window; when it does not, with no
-    /// window facts, for the reducer to judge by its application, as NVDA
-    /// accepts an event whose window it cannot tell. The window that has the
-    /// focus now is never borrowed for it: a late fact from a closed menu would
-    /// then pass as being in the foreground.
-    fn uia_fact_focus(
-        &mut self,
-        fact_hwnd: isize,
-        fact: &UiaSnapshotFact,
-        trace: TraceId,
-        observed_at_ms: u64,
-    ) {
-        let hwnd = (fact_hwnd != 0).then_some(fact_hwnd);
-        if let Some(hwnd) = hwnd {
-            if window_belongs_to_hidden_frame(hwnd) {
-                return;
-            }
-            if !read::window_uses_uia(self.context, hwnd) {
-                tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
-                return;
-            }
-            // NVDA trusts the sender but still requires its window to be in
-            // the foreground window when it handles the event.
-            if !window_facts(hwnd).in_foreground {
-                tracing::debug!(
-                    hwnd,
-                    "UIA focus dropped: not the focused element and not in the foreground window"
-                );
-                return;
-            }
+    /// The live element for the focus `runtime_id` names, read as the
+    /// focused element within [`FOCUS_READ_WAIT`]; `None` when the read did
+    /// not answer in time, failed, or found another element.
+    fn live_focus_element(&mut self, runtime_id: &[i32]) -> Option<IUIAutomationElement> {
+        let uia = self.client.uia()?;
+        let cache = uia.base_cache_request().ok()?;
+        let element = uia
+            .within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache))
+            .ok()?
+            .ok()?;
+        // SAFETY: `element` was built with the base cache request.
+        let found = unsafe { snapshot_parts_from_cached_element(&element) }.runtime_id;
+        (found == runtime_id).then_some(element)
+    }
+
+    /// Queues a follow-up that finds the live element of the focus
+    /// `runtime_id` names, reported from its event alone, for the
+    /// focus-following property subscription.
+    fn resolve_focus_later(&self, runtime_id: &[i32], trace: TraceId, attempt: u32) {
+        if attempt > FOCUS_RESOLVE_ATTEMPTS {
+            tracing::debug!("the focus's element was not found; its changes are not followed");
+            return;
         }
-        let node = self.uia_node(fact, None);
-        self.emit_focus(
+        self.context.intake.push(Entry {
+            item: Item::ResolveFocus {
+                runtime_id: runtime_id.to_vec(),
+                attempt,
+            },
             trace,
-            observed_at_ms,
-            Backend::Uia,
-            hwnd,
-            node,
-            false,
-            Some(Object::Uia(fact.runtime_id.clone())),
-            (Vec::new(), None),
-        );
+            observed_at_ms: 0,
+        });
+    }
+
+    /// The follow-up [`resolve_focus_later`](Self::resolve_focus_later)
+    /// queued: while the focus is still the one it names, reads the focused
+    /// element with the full wait and, when it is that focus, keeps it for
+    /// navigation and follows its changes; otherwise tries again later.
+    fn resolve_focus(&mut self, runtime_id: &[i32], trace: TraceId, attempt: u32) {
+        let context = self.context;
+        if context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
+            return; // Focus has moved on.
+        }
+        let element = self.client.uia().and_then(|uia| {
+            let cache = uia.base_cache_request().ok()?;
+            uia.focused_element(&cache).ok()
+        });
+        let Some(element) = element.filter(|element| {
+            // SAFETY: built with the base cache request.
+            unsafe { snapshot_parts_from_cached_element(element) }.runtime_id == runtime_id
+        }) else {
+            self.resolve_focus_later(runtime_id, trace, attempt + 1);
+            return;
+        };
+        let id = context.uia_registry.id_for_element(runtime_id, &element);
+        let followed: Vec<_> = context.uia_registry.element_of(id).into_iter().collect();
+        if let Some(subscription) = context.focus_properties.get() {
+            subscription.retarget(verbatim_uia::Scope::Elements(followed));
+        }
+        tracing::debug!("the focus's element was found; its changes are followed");
     }
 
     /// A menu opening, handled after the batch's focus events, as NVDA's
@@ -1010,8 +1165,8 @@ impl Worker<'_> {
         };
         {
             let tracking = self.context.tracking();
-            if tracking.focus_batch == Some(self.batch)
-                && matches!(tracking.focus_role, Some(Role::Menu | Role::MenuItem))
+            if tracking.batch == Some(self.batch)
+                && matches!(tracking.role, Some(Role::Menu | Role::MenuItem))
             {
                 return;
             }
@@ -1038,7 +1193,7 @@ impl Worker<'_> {
             node,
             false,
             Some(Object::Msaa(hwnd, id_object, id_child)),
-            (Vec::new(), None),
+            (Some(Vec::new()), None),
         );
     }
 
@@ -1046,13 +1201,13 @@ impl Worker<'_> {
     /// focus is already pending: ignored when a focus was reported in the same
     /// batch, or when the window does not belong to UIA.
     fn uia_menu_opened(&mut self, fact_hwnd: isize, parts: &UiaSnapshotFact, entry: &Entry) {
-        if self.context.tracking().focus_batch == Some(self.batch) {
+        if self.context.tracking().batch == Some(self.batch) {
             return;
         }
         let hwnd = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            focus_window()
+            focus_window_of(self.context.target_pid)
         };
         if hwnd.is_some_and(window_belongs_to_hidden_frame) {
             return;
@@ -1062,7 +1217,7 @@ impl Worker<'_> {
         {
             return;
         }
-        let node = self.uia_node(parts, None);
+        let node = Self::uia_node(self.context, parts, None);
         self.emit_focus(
             entry.trace,
             entry.observed_at_ms,
@@ -1071,7 +1226,7 @@ impl Worker<'_> {
             node,
             false,
             Some(Object::Uia(parts.runtime_id.clone())),
-            (Vec::new(), None),
+            (Some(Vec::new()), None),
         );
     }
 

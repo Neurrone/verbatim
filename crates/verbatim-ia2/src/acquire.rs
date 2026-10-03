@@ -302,6 +302,60 @@ pub fn ancestor_chain(
     registry: &NodeIdRegistry,
     max_hops: u32,
 ) -> Result<Vec<NodeSnapshot>, AcquireError> {
+    let limits = AncestorLimits {
+        max_hops,
+        known: &|_| false,
+        deadline: None,
+    };
+    ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
+}
+
+/// What bounds an ancestor walk besides reaching the root.
+pub struct AncestorLimits<'a> {
+    /// The most ancestors to read.
+    pub max_hops: u32,
+    /// Whether an ancestor is already known, from the previous focus's
+    /// chain: the walk stops there, as NVDA's focus ancestry stops where it
+    /// meets the previous focus's ancestors and reuses them.
+    pub known: &'a dyn Fn(NodeId) -> bool,
+    /// When to give up.
+    pub deadline: Option<std::time::Instant>,
+}
+
+/// How an ancestor walk ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Walked {
+    /// It reached the root, or a hop found no parent.
+    Complete,
+    /// It reached this known ancestor, the outermost one in the chain.
+    MetKnown(NodeId),
+    /// It ran out of time, so the chain is incomplete.
+    OutOfTime,
+}
+
+/// [`ancestor_chain`] within `limits`: the chain, outermost first, and how
+/// the walk ended. A walk that meets a known ancestor ends with it as the
+/// chain's outermost entry.
+///
+/// # Errors
+///
+/// [`AcquireError::Gone`] when `node` is no longer reachable.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk in two stages that share its budget and limits"
+)]
+pub fn ancestor_chain_until(
+    node: NodeId,
+    registry: &NodeIdRegistry,
+    limits: &AncestorLimits<'_>,
+) -> Result<(Vec<NodeSnapshot>, Walked), AcquireError> {
+    let max_hops = limits.max_hops;
+    let out_of_time = || {
+        limits
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    };
+    let mut walked = Walked::Complete;
     let (acc, child, (hwnd, id_object, _), at) = locate(node, registry)?;
     let mut chain = Vec::new();
     // SAFETY: `child` is valid for `acc`, just acquired together above.
@@ -330,15 +384,28 @@ pub fn ancestor_chain(
                     registry,
                 )
             };
+            let id = snapshot.id;
             chain.push(snapshot);
             hops_used += 1;
             current_acc_id = parent_acc_id;
+            if (limits.known)(id) {
+                walked = Walked::MetKnown(id);
+                break;
+            }
+            if out_of_time() {
+                walked = Walked::OutOfTime;
+                break;
+            }
         }
     }
 
     let mut current = acc;
     let mut at_self = !is_simple_child;
-    while hops_used < max_hops {
+    while walked == Walked::Complete && hops_used < max_hops {
+        if out_of_time() {
+            walked = Walked::OutOfTime;
+            break;
+        }
         if !at_self {
             // SAFETY: `current` is a live IAccessible from a prior successful
             // acquisition.
@@ -357,9 +424,13 @@ pub fn ancestor_chain(
                     registry,
                 )
             };
+            let id = snapshot.id;
             chain.push(snapshot);
             at_self = true;
             hops_used += 1;
+            if (limits.known)(id) {
+                walked = Walked::MetKnown(id);
+            }
             continue;
         }
         // SAFETY: `current` is a live IAccessible.
@@ -388,12 +459,16 @@ pub fn ancestor_chain(
                 registry,
             )
         };
+        let id = snapshot.id;
         chain.push(snapshot);
         hops_used += 1;
         current = parent_acc;
+        if (limits.known)(id) {
+            walked = Walked::MetKnown(id);
+        }
     }
     chain.reverse();
-    Ok(chain)
+    Ok((chain, walked))
 }
 
 /// Reads a window's class name via `GetClassNameW` — a local, non-blocking
