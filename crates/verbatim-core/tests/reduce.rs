@@ -3104,3 +3104,121 @@ fn a_focus_with_unknown_ancestors_announces_no_containers_and_keeps_the_chain() 
         ]
     );
 }
+
+// ---- The navigator stays current, and slow answers leave it put ----
+
+#[test]
+fn reporting_the_object_after_a_change_reads_the_object_as_it_is_now() {
+    let source = Pid(1);
+    let check_box = node(120, Role::CheckBox, Some("Wrap"), None, StateSet::new());
+    let state = focused(source, check_box);
+    let (state, _) = reduce(
+        &state,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(120),
+            StateSet::new().with(State::Checked),
+        ),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert!(
+        speak_effects(&effects)[0]
+            .segments
+            .contains(&UtteranceSegment::new(SegmentContent::State(
+                State::Checked
+            ))),
+        "report object says checked after the box was checked"
+    );
+}
+
+#[test]
+fn a_navigation_the_application_did_not_answer_leaves_the_navigator_put() {
+    let source = Pid(1);
+    let button = node(121, Role::Button, Some("OK"), None, StateSet::new());
+    let state = focused(source, button);
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let Effect::Fetch(query) = &effects[0] else {
+        panic!("expected Fetch, got {effects:?}");
+    };
+    let (state, effects) = reduce(
+        &state,
+        &Input::FetchCompleted {
+            trace_id: TraceId::mint(),
+            query_id: query.query_id,
+            kind: query.kind,
+            result: FetchResult::Unanswered,
+        },
+    );
+    assert!(effects.is_empty(), "nothing is spoken: {effects:?}");
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments[0],
+        UtteranceSegment::label("OK"),
+        "the navigator did not jump"
+    );
+}
+
+#[test]
+fn selecting_the_focused_item_itself_says_selected() {
+    let source = Pid(1);
+    let item = node(
+        122,
+        Role::ListItem,
+        Some("alpha.txt"),
+        None,
+        states(&[State::Focusable, State::Selectable]),
+    );
+    let state = focused(source, item.clone());
+    let mut selected = item;
+    selected.states.insert(State::Selected);
+    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, selected));
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![state_segment_selected()]
+    );
+}
+
+fn state_segment_selected() -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::State(State::Selected))
+}
+
+#[test]
+fn an_entered_container_speaks_its_states_and_position_but_not_its_value() {
+    let source = Pid(1);
+    let mut tab = node(
+        130,
+        Role::Tab,
+        Some("General"),
+        Some("tab value"),
+        states(&[State::Selected, State::Selectable]),
+    );
+    tab.details.position_in_set = Some(1);
+    tab.details.set_size = Some(3);
+    tab.details.keyboard_shortcut = Some("Alt+G".to_string());
+    tab.details.description = Some("General".to_string());
+    let field = node(131, Role::EditableText, Some("Name"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), source, field, vec![tab]),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments[..4],
+        [
+            UtteranceSegment::label("General"),
+            role(Role::Tab),
+            state(State::Selected),
+            UtteranceSegment::new(SegmentContent::Position {
+                position: 1,
+                set_size: Some(3),
+            }),
+        ],
+        "no value, no shortcut, and no description repeating the name"
+    );
+}

@@ -123,6 +123,12 @@ impl SrState {
         self.attention.map(|attention| attention.source)
     }
 
+    /// The application the focus belongs to; `None` before any focus.
+    #[must_use]
+    pub fn focus_source(&self) -> Option<Pid> {
+        self.focus.as_ref().map(|focus| focus.source)
+    }
+
     /// When the newest focus the reducer applied was observed, in
     /// milliseconds since the Unix epoch; `None` before any.
     #[must_use]

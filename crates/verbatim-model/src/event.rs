@@ -276,6 +276,11 @@ pub enum FetchResult {
     /// A first-class outcome, distinct from `Gone` (the starting node is
     /// fine, the neighbor simply does not exist).
     NoNeighbor,
+    /// The application did not answer in time, or the read failed for
+    /// another reason: nothing is known about the node or its neighbor, so
+    /// the navigator stays where it is, as NVDA's stays when a call to a
+    /// busy application is cancelled.
+    Unanswered,
 }
 
 impl FetchResult {

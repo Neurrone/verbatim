@@ -39,8 +39,10 @@ quick navigation, a query such as reporting the current object or the
 focus on request, and so on. Object navigation (to the parent, the next
 or previous object, the first child, or back to the focus) speaks the
 new navigator object with the focus reason, and so is a container
-entered as focus moves into it: apart from leaving out some properties,
-focus entered is spoken like focus. The object's role is spoken except when three things hold at once:
+entered as focus moves into it: focus entered is spoken like focus,
+states and position included, apart from leaving out the value, the
+level, and the keyboard shortcut (kept for a list, the one container whose
+shortcut is known to work). The object's role is spoken except when three things hold at once:
 
 - the reason is focus, caret movement, say-all, or quick navigation;
 - the object has a name, a value, or table cell coordinates, so there

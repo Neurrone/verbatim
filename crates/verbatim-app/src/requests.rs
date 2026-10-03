@@ -147,11 +147,10 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             let result = match outcome {
                 QueryOutcome::Done(QueryResult::Navigated(Some(node))) => FetchResult::Node(node),
                 QueryOutcome::Done(QueryResult::Navigated(None)) => FetchResult::NoNeighbor,
+                QueryOutcome::Gone => FetchResult::Gone,
                 other => {
-                    if !matches!(other, QueryOutcome::Gone) {
-                        tracing::warn!(reason = describe(&other), "a navigation query failed");
-                    }
-                    FetchResult::Gone
+                    tracing::warn!(reason = describe(&other), "a navigation query failed");
+                    FetchResult::Unanswered
                 }
             };
             vec![Input::FetchCompleted {
@@ -304,18 +303,33 @@ mod tests {
     }
 
     #[test]
-    fn an_abandoned_or_unstarted_navigation_reads_as_gone() {
-        for outcome in [QueryOutcome::Abandoned, QueryOutcome::NotStarted] {
+    fn an_unanswered_navigation_reads_as_unanswered_and_only_a_gone_node_as_gone() {
+        for outcome in [
+            QueryOutcome::Abandoned,
+            QueryOutcome::NotStarted,
+            QueryOutcome::Failed("the read failed".to_owned()),
+        ] {
             let mut table = RequestTable::default();
             let id = table.begin(OutpostId(1), navigation(7));
             assert!(matches!(
                 table.finish(id, OutpostId(1), outcome).as_slice(),
                 [Input::FetchCompleted {
-                    result: FetchResult::Gone,
+                    result: FetchResult::Unanswered,
                     ..
                 }]
             ));
         }
+        let mut table = RequestTable::default();
+        let id = table.begin(OutpostId(1), navigation(7));
+        assert!(matches!(
+            table
+                .finish(id, OutpostId(1), QueryOutcome::Gone)
+                .as_slice(),
+            [Input::FetchCompleted {
+                result: FetchResult::Gone,
+                ..
+            }]
+        ));
     }
 
     #[test]

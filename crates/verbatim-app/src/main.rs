@@ -584,6 +584,14 @@ impl ReducerThread<'_> {
                 // which is taken silently if the user already heard it.
                 if reason != EndReason::Retired && self.state.attention() == Some(target_pid) {
                     self.focus_now_wanted.insert(target_pid);
+                } else if reason != EndReason::Retired
+                    && self.state.focus_source() == Some(target_pid)
+                {
+                    // The focus's application is not the attention one (a
+                    // Settings page's content, inside ApplicationFrameHost's
+                    // window): its outpost is replaced only when asked.
+                    self.focus_now_wanted.insert(target_pid);
+                    self.context.supervisor.ensure_spawned(target_pid);
                 }
                 if self.live.ended(outpost) {
                     self.context

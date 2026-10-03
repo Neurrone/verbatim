@@ -193,7 +193,7 @@ fn reduce_event(
         state.latest_focus = Some((node.id.outpost(), observed_at_ms));
     }
 
-    match event {
+    let effects = match event {
         NormalizedEvent::FocusChanged {
             node,
             foreground,
@@ -242,6 +242,27 @@ fn reduce_event(
         },
         // `NormalizedEvent` is `#[non_exhaustive]`.
         _ => Vec::new(),
+    };
+    sync_navigator_with_focus(state);
+    effects
+}
+
+/// Keeps the navigator's copy of the focus current: a name, value, or state
+/// change, or a fresher report of the same focus, applies to the navigator
+/// too while it rests on the focus, so reporting the current object or
+/// reviewing it reads what the object is now, as NVDA reads it live. The
+/// review position is kept where it is still inside the text.
+fn sync_navigator_with_focus(state: &mut SrState) {
+    let (Some(focus), Some(navigator)) = (state.focus.as_ref(), state.navigator.as_mut()) else {
+        return;
+    };
+    if navigator.object.id != focus.snapshot.id || navigator.object == focus.snapshot {
+        return;
+    }
+    navigator.object = focus.snapshot.clone();
+    let text = review::text_of(&navigator.object);
+    if !text.is_char_boundary(navigator.review_offset) {
+        navigator.review_offset = 0;
     }
 }
 
@@ -813,9 +834,14 @@ fn reduce_selection_changed(
     let Some(focus) = state.focus.as_mut().filter(|focus| focus.alive) else {
         return Vec::new();
     };
+    // Selecting the focused item itself is a change of its state, as NVDA
+    // handles a selection on the focus: "selected" is spoken.
+    if node.id == focus.snapshot.id {
+        let states = node.states;
+        return reduce_states_changed(state, trace_id, node.id, states);
+    }
     if focus.snapshot.id.outpost() != node.id.outpost()
         || !is_selection_container(focus.snapshot.role)
-        || node.id == focus.snapshot.id
         || focus.last_selection == Some(node.id)
     {
         return Vec::new();
@@ -1000,6 +1026,12 @@ fn reduce_navigate_completed(
             vec![Effect::Speak(utterance)]
         }
         FetchResult::Gone => navigator_to_focus(state, trace_id),
+        // The application did not answer: the navigator stays where it is,
+        // and nothing is known to speak.
+        FetchResult::Unanswered => {
+            state.latest_navigation = None;
+            Vec::new()
+        }
         // A genuine tree edge: the navigator stays put and the edge is
         // spoken (NVDA's wording, chosen per direction). Any future
         // `FetchResult` variant added under `#[non_exhaustive]` stays
@@ -1128,23 +1160,19 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
     }
 }
 
-/// The spoken introduction for one entered container: label, role, and
-/// description when present.
+/// The spoken introduction for one entered container: spoken as a focus
+/// is, without its value, its level, or (except for a list) its keyboard
+/// shortcut, which NVDA leaves out for an entered container ("When the role
+/// is spoken" and "When values and descriptions are spoken" in
+/// `docs/nvda/speech.md`).
 fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
-    let mut segments = Vec::new();
-    if let Some(name) = &node.name {
-        segments.push(UtteranceSegment::label(name.clone()));
+    let mut entered = node.clone();
+    entered.value = None;
+    entered.details.level = None;
+    if entered.role != Role::List {
+        entered.details.keyboard_shortcut = None;
     }
-    // An entered container is spoken as a focus is.
-    if speaks_role(node, Reason::Focus) {
-        segments.push(UtteranceSegment::new(SegmentContent::Role(node.role)));
-    }
-    if let Some(description) = &node.details.description {
-        segments.push(UtteranceSegment::new(SegmentContent::Description(
-            description.clone(),
-        )));
-    }
-    segments
+    node_segments(&entered, Reason::Focus)
 }
 
 /// Why a node is being spoken, which decides whether its role is

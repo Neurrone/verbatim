@@ -153,7 +153,11 @@ verified.
   `isPresentableFocusAncestor` ([Event handling](nvda/events.md),
   [Object model](nvda/object-model.md)). Verbatim: **matched (unverified)** —
   filter claimed at parity with `_get_isPresentableFocusAncestor`
-  (exclusion-based, same role exclusions), except:
+  (exclusion-based, same role exclusions). Since 2026-10-03 an entered
+  container is spoken as NVDA speaks focus entered: as a focus, states and
+  position included, without its value, level, or (except a list) keyboard
+  shortcut; it had been spoken with only its name, role, and description.
+  Except:
 - Top-level windows in the ancestry. NVDA presents an entered window
   like any other container when it has a name or a description, and
   treats an unnamed window as layout ([Event handling](nvda/events.md),
@@ -334,7 +338,14 @@ verified.
   comparison across roles.
 - Selection announcements (focused list's selected child; changes
   while focus stays on container; combo box exclusion). NVDA:
-  selection events. Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md), M3).
+  selection events. Verbatim: **different, deliberately** (the roadmap's
+  M3 "announce a focused list's selected item"): NVDA has no rule that
+  speaks a newly selected item while focus rests on a list or tab
+  control; its base `event_selection` speaks only a selection inside an
+  element the focus controls, and every other selection is a change of
+  state, spoken only for the focus or its ancestors. Selecting the focused
+  item itself is such a change of state, and since 2026-10-03 Verbatim
+  speaks it ("selected"), as NVDA does ([verbatim-core](crates/verbatim-core.md)).
 - Selection in a list the focus controls (search suggestions and
   results). NVDA: when an item is selected inside an element the focus
   names in its UIA ControllerFor relation, NVDA reports that item as it
@@ -390,9 +401,13 @@ verified.
   (unverified)** for the follow-focus default; `followCaret` /
   `followMouse` equivalents **not yet (M4+)**.
 - Report current object: report / spell / copy on 1st/2nd/3rd press.
-  NVDA: script repeat counting ([Keyboard input](nvda/input.md)). Verbatim:
-  **matched (verified)** (multi-press machinery in verbatim-input;
-  copy via the shared clipboard helper).
+  NVDA: script repeat counting ([Keyboard input](nvda/input.md)), reading
+  the object live. Verbatim: the multi-press machinery matches; since
+  2026-10-03 a name, value, or state change on the focus also updates the
+  navigator's copy while it rests there, so the report reads the object
+  as it is now (it had read the copy taken when focus landed, saying "not
+  checked" for a box just checked). The spelled text and the copy wording
+  are covered under the messages entries below.
 - Parent/next/previous/first-child moves with edge reporting ("no
   parent" etc. spoken, not silence). Verbatim: **matched (verified)**
   (commits 9bd6bec, 0fe39f0); NVDA wording comparison still
@@ -411,6 +426,10 @@ verified.
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side
   behavior in [Focus and the navigator](nvda/focus-and-navigator.md).
+  A navigation the application did not answer (too slow, or the read
+  failed) is not `Gone`: since 2026-10-03 the navigator stays where it is,
+  as NVDA's stays when a call to a busy application is cancelled; it had
+  jumped to the focus and announced it.
 - Review cursor line/word/character over object text. NVDA: object
   review over TextInfo ([Review modes](nvda/review-modes.md)). Verbatim:
   **matched (unverified)** at M3 fidelity (flat value/name text;
