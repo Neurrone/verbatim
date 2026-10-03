@@ -66,7 +66,7 @@ Public API:
   `Err(AcquireError::Gone)` when the source node itself is no longer
   reachable, so the outpost can report `Gone` rather than a fake edge),
   `selected_child`, and `activate` (`accDoDefaultAction`, MSAA's only
-  activation primitive). Every snapshot is minted through `node_for`,
+  activation primitive, answering the `accDefaultAction` name read first). Every snapshot is minted through `node_for`,
   which matches a new sighting against the kept nodes in NVDA's
   comparison order (`docs/parity.md`, "Held objects"): the same COM
   object (by its canonical `IUnknown`, confirmed against the kept object)

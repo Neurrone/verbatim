@@ -99,6 +99,8 @@ pub enum Message {
     Activate,
     /// Nothing could be activated — NVDA's "No action".
     NoAction,
+    /// UIA's Invoke pattern was performed — NVDA's "invoke".
+    Invoke,
     /// A space, spelled — NVDA's symbol name "space".
     Space,
 }

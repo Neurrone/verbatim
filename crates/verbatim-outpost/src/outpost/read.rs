@@ -7,7 +7,9 @@ use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomation
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use verbatim_ia2::CHILDID_SELF;
-use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet};
+use verbatim_model::{
+    ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet,
+};
 use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
 use verbatim_uia::{Uia, probe_server_side_provider};
 
@@ -604,17 +606,17 @@ const ACTIVATION_PARENT_HOPS: u32 = 8;
 
 /// Activates `node_id`, or failing that its nearest ancestor that can be
 /// activated, as NVDA's review activate walks up the navigator object's
-/// parents until one performs an action.
+/// parents until one performs an action, and answers the action's name.
 pub(super) fn activate(
     context: &Context,
     client: &mut Client,
     node_id: NodeId,
-) -> Result<(), ReadError> {
+) -> Result<Option<ActionName>, ReadError> {
     let mut current = node_id;
     let mut first_error = None;
     for _ in 0..=ACTIVATION_PARENT_HOPS {
         match activate_one(context, client, current) {
-            Ok(()) => return Ok(()),
+            Ok(action) => return Ok(action),
             Err(error) => {
                 if first_error.is_none() {
                     first_error = Some(error);
@@ -629,8 +631,12 @@ pub(super) fn activate(
     Err(first_error.unwrap_or_else(|| ReadError::Failed("nothing to activate".to_owned())))
 }
 
-/// Activates exactly `node_id`.
-fn activate_one(context: &Context, client: &mut Client, node_id: NodeId) -> Result<(), ReadError> {
+/// Activates exactly `node_id`, answering the action's name.
+fn activate_one(
+    context: &Context,
+    client: &mut Client,
+    node_id: NodeId,
+) -> Result<Option<ActionName>, ReadError> {
     if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, _cache, element) = uia_node(context, client, node_id)?;
         // SAFETY: `element` is live.

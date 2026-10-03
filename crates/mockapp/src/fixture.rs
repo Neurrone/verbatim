@@ -7,7 +7,9 @@
 //! `keyboard_shortcut` strings, and one-based `position_in_set`,
 //! `set_size`, and `level` integers (the M3
 //! [`NodeDetails`](verbatim_model::NodeDetails) vocabulary; each backend
-//! serves the subset its API can express), an optional `controller_for`
+//! serves the subset its API can express), an optional `default_action`
+//! string (MSAA's `accDefaultAction`, which `accDoDefaultAction` then
+//! performs), an optional `controller_for`
 //! (the `id` of the node this one controls, served as UIA's
 //! `ControllerFor` relation, as a search box names its suggestion list) —
 //! and `children` (an array of nested nodes). The root node conceptually corresponds to the host
@@ -75,6 +77,8 @@ struct RawNode {
     #[serde(default)]
     keyboard_shortcut: Option<String>,
     #[serde(default)]
+    default_action: Option<String>,
+    #[serde(default)]
     position_in_set: Option<u32>,
     #[serde(default)]
     set_size: Option<u32>,
@@ -97,6 +101,7 @@ pub(crate) struct FixtureNode {
     pub(crate) states: StateSet,
     pub(crate) description: Option<String>,
     pub(crate) keyboard_shortcut: Option<String>,
+    pub(crate) default_action: Option<String>,
     pub(crate) position_in_set: Option<u32>,
     pub(crate) set_size: Option<u32>,
     pub(crate) level: Option<u32>,
@@ -169,6 +174,7 @@ fn convert(
         states,
         description: raw.description,
         keyboard_shortcut: raw.keyboard_shortcut,
+        default_action: raw.default_action,
         position_in_set: raw.position_in_set,
         set_size: raw.set_size,
         level: raw.level,

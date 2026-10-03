@@ -331,10 +331,10 @@ pub enum Input {
         /// Trace ID minted when the OS event was first observed.
         trace_id: TraceId,
         /// Milliseconds since the Unix epoch when the OS event was first
-        /// observed — the same stamp the outpost put on the wire. Kept for
-        /// the latency record only; the reducer never reads it, since order
-        /// comes from the outpost's queue (`docs/parity.md`, "Stale focus
-        /// events").
+        /// observed — the same stamp the outpost put on the wire. The
+        /// latency record reads it, and so does the reducer, to drop a focus
+        /// observed before the focus it already applied
+        /// (`docs/parity.md`, "Stale focus events").
         #[serde(default)]
         observed_at_ms: u64,
         /// The application the event came from: information about its
@@ -383,18 +383,34 @@ pub enum Input {
         repeat: u8,
     },
     /// An activation the reducer asked for finished: `activated` is whether
-    /// the navigator object, or one of its ancestors, was activated. The
-    /// reducer speaks NVDA's "Activate" or "No action".
+    /// the navigator object, or one of its ancestors, was activated, and
+    /// `action` the name of the action performed, if it has one. The
+    /// reducer speaks the action's name, NVDA's "Activate" for an action
+    /// with none, or "No action".
     ActivationCompleted {
         /// Trace ID of the command that asked for the activation.
         trace_id: TraceId,
         /// Whether anything was activated.
         activated: bool,
+        /// The name of the action performed; `None` for an unnamed one.
+        action: Option<ActionName>,
     },
     /// Periodic timer tick, for time-based policies. Unused by M1 logic but
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.
     Tick,
+}
+
+/// The name of an action an activation performed, which NVDA speaks after
+/// performing it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ActionName {
+    /// UIA's Invoke pattern, which NVDA names "invoke".
+    Invoke,
+    /// The application's own name for an object's default action (MSAA's
+    /// default action, such as "Press"), spoken as it is.
+    Named(String),
 }
 
 /// A review-cursor or object-navigation command (roadmap M3), the

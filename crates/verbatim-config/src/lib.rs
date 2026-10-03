@@ -26,7 +26,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Which keys act as the Verbatim modifier (NVDA's `NVDAModifierKeys`).
+/// Which keys act as the Verbatim modifier (NVDA's `NVDAModifierKeys`). The
+/// default adds Caps Lock to NVDA's two Insert keys, a deliberate
+/// difference (`docs/parity.md`, "NVDA-modifier semantics").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 #[expect(

@@ -926,13 +926,9 @@ fn reducer_loop(
 /// The router thread body: bound gestures become imperative commands —
 /// GUI commands or direct speech — never reducer inputs.
 ///
-/// Multi-press seam: the M3 double-press variants (Verbatim+F12 twice
-/// quickly speaks the date, Verbatim+F11 twice quickly lists the taskbar)
-/// depend on the multi-press gesture counting under construction in
-/// `verbatim-input` (M3 Track D). Until that lands, this router calls
-/// [`speak_time_or_date`] and [`shell_list_kind`] with `repeat` 0; passing
-/// the real press count into those two calls is the only integration
-/// needed here.
+/// Multi-press: the double-press variants (Verbatim+F12 twice quickly
+/// speaks the date, Verbatim+F11 twice quickly lists the taskbar) take the
+/// press count `verbatim-input` puts on each emitted gesture.
 fn router_loop(
     gesture_rx: &Receiver<EmittedGesture>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,

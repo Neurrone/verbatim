@@ -88,11 +88,12 @@ rules):
   (report, spell, copy), Verbatim+F12 (time, date), Verbatim+F11 (tray
   list, taskbar list). Auto-repeat — holding the gesture's key, which
   re-fires key-downs with no intervening key-up — does not advance the
-  count; NVDA does not treat auto-repeat as a multi-press for
-  script-repeat purposes, and every auto-repeated emission carries the
-  same count as the genuine press that started the hold. The machine
-  detects auto-repeat as a key-down of a key it swallowed and has not yet
-  seen released.
+  count, and every auto-repeated emission carries the same count as the
+  genuine press that started the hold; NVDA counts auto-repeat as presses,
+  so this is a deliberate difference. The machine detects auto-repeat as a
+  key-down of a key it swallowed and has not yet seen released. Any key
+  other than a modifier that completes no bound gesture ends the streak,
+  as NVDA forgets its last script when an unbound gesture comes between.
   Control-plane gesture injection (which builds an `EmittedGesture`
   directly in `verbatim-app`, bypassing the machine) always injects
   `repeat: 0`, a single first press.

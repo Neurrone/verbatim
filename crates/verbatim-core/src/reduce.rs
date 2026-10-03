@@ -12,10 +12,10 @@
 //! `docs/nvda/events.md`.
 
 use verbatim_model::{
-    Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    NotificationProcessing, OutpostId, Pid, PropertyChange, Query, QueryId, QueryKind,
-    ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance,
-    UtteranceSegment, UtteranceSource, WindowFacts,
+    ActionName, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
+    Notification, NotificationProcessing, OutpostId, Pid, PropertyChange, Query, QueryId,
+    QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
+    Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 
 use crate::review;
@@ -68,7 +68,8 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
         Input::ActivationCompleted {
             trace_id,
             activated,
-        } => reduce_activation_completed(*trace_id, *activated),
+            action,
+        } => reduce_activation_completed(*trace_id, *activated, action.as_ref()),
         // `Tick` is reserved vocabulary with no policy yet; `Input` is also
         // `#[non_exhaustive]`, so this arm doubles as the catch-all for
         // variants added by later milestones, until each grows a real
@@ -175,16 +176,25 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
 
 /// Speaks an activation's outcome, as NVDA's review activate does: the
 /// action ("Activate") when something was activated, else "No action".
-fn reduce_activation_completed(trace_id: TraceId, activated: bool) -> Vec<Effect> {
-    let message = if activated {
-        Message::Activate
-    } else {
-        Message::NoAction
+fn reduce_activation_completed(
+    trace_id: TraceId,
+    activated: bool,
+    action: Option<&ActionName>,
+) -> Vec<Effect> {
+    let segment = match (activated, action) {
+        (false, _) => UtteranceSegment::new(SegmentContent::Message(Message::NoAction)),
+        (true, Some(ActionName::Named(name))) if !name.trim().is_empty() => {
+            UtteranceSegment::text(name.clone())
+        }
+        (true, Some(ActionName::Invoke)) => {
+            UtteranceSegment::new(SegmentContent::Message(Message::Invoke))
+        }
+        (true, _) => UtteranceSegment::new(SegmentContent::Message(Message::Activate)),
     };
     vec![Effect::Speak(Utterance {
         trace_id,
         priority: SpeechPriority::Interrupt,
-        segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
+        segments: vec![segment],
         source: None,
     })]
 }

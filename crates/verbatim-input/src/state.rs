@@ -98,9 +98,12 @@ pub struct EmittedGesture {
     /// date), and show tray list (tray, then taskbar). Auto-repeat (holding
     /// the gesture's key down, which re-fires the gesture on every OS
     /// auto-repeat tick with no intervening key-up) does not advance this
-    /// count: for parity with NVDA, a held key is one press for repeat
-    /// purposes, so every auto-repeated emission carries the same count as
-    /// the genuine press that started the hold.
+    /// count: a held key is one press for repeat purposes, so every
+    /// auto-repeated emission carries the same count as the genuine press
+    /// that started the hold. NVDA counts auto-repeat as presses; this is a
+    /// deliberate difference (`docs/parity.md`, "Script repeat counting").
+    /// Any key other than a modifier that completes no bound gesture ends
+    /// the streak, as in NVDA.
     pub repeat: u8,
 }
 
@@ -276,8 +279,9 @@ impl LoneModifier {
 ///   saturating); a different gesture or the window elapsing resets it to 0.
 ///   Holding a gesture's key down auto-repeats its key-down with no
 ///   intervening key-up, and every such emission carries the count of the
-///   press that started the hold: for parity with NVDA, auto-repeat is not a
-///   multi-press.
+///   press that started the hold: auto-repeat is not a multi-press, a
+///   deliberate difference from NVDA, which counts it. A key other than a
+///   modifier that completes no bound gesture ends the streak, as in NVDA.
 ///
 /// `docs/parity.md` (the input section) records which of these match other
 /// screen readers and how far that has been verified.
@@ -366,7 +370,10 @@ impl DecisionMachine {
         let main_name = match role {
             KeyRole::Modifier => keys::VERBATIM_MODIFIER_NAME,
             KeyRole::Named(name) => name,
-            KeyRole::Unnamed => return Decision::pass(),
+            KeyRole::Unnamed => {
+                self.last_gesture = None;
+                return Decision::pass();
+            }
         };
         if role == KeyRole::Modifier || is_normal_modifier(event.vk) {
             self.held_modifiers.insert(key);
@@ -384,7 +391,14 @@ impl DecisionMachine {
             });
         }
 
-        // Nothing bound. A companion key that completes no gesture reaches
+        // Nothing bound. A key other than a modifier ends the multi-press
+        // streak, as NVDA forgets its last script when an unbound gesture
+        // comes between two presses of a bound one.
+        if role != KeyRole::Modifier && !is_normal_modifier(event.vk) {
+            self.last_gesture = None;
+        }
+
+        // A companion key that completes no gesture reaches
         // the application as a bare keypress, so pressing the modifier and
         // page-up still pages the application instead of doing nothing at
         // all. The modifier key itself is still swallowed, since caps lock
@@ -435,9 +449,9 @@ impl DecisionMachine {
     ///
     /// A key-down for a key Verbatim swallowed and has not yet seen released
     /// is the operating system auto-repeating a held key, not a fresh press:
-    /// it re-reports the streak's current count and leaves the streak alone,
-    /// for parity with NVDA, which does not count auto-repeat as a
-    /// multi-press.
+    /// it re-reports the streak's current count and leaves the streak alone.
+    /// NVDA counts auto-repeat as presses; not counting it is a deliberate
+    /// difference, so holding a key never turns into a double press.
     fn count_press(&mut self, gesture: &GestureId, key: KeyCode, now: Instant) -> u8 {
         if self.swallowed_downs.contains(&key) {
             return self.repeat_count;
@@ -940,11 +954,37 @@ mod tests {
     }
 
     #[test]
+    fn an_unbound_key_between_presses_resets_the_streak_but_a_modifier_does_not() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        assert_eq!(press_v_verbatim(&mut m, t), 0);
+        let t2 = t + Duration::from_millis(50);
+        assert_eq!(
+            m.on_key(down(CONTROL, false), t2).decision,
+            KeyDecision::Pass
+        );
+        m.on_key(up(CONTROL, false), t2);
+        assert_eq!(
+            press_v_verbatim(&mut m, t2 + Duration::from_millis(50)),
+            1,
+            "a lone modifier does not end the streak"
+        );
+        let t3 = t2 + Duration::from_millis(100);
+        assert_eq!(m.on_key(down(A, false), t3).decision, KeyDecision::Pass);
+        m.on_key(up(A, false), t3);
+        assert_eq!(
+            press_v_verbatim(&mut m, t3 + Duration::from_millis(50)),
+            0,
+            "an unbound key ends it, as in NVDA"
+        );
+    }
+
+    #[test]
     fn auto_repeat_does_not_advance_the_repeat_count() {
         // Holding the gesture's own key down auto-repeats its key-down with
         // no intervening key-up (unlike press_v_verbatim's up/down pairs,
         // which are genuine separate presses). NVDA does not treat
-        // auto-repeat as a multi-press for script-repeat purposes, so every
+        // auto-repeat as a multi-press (deliberately unlike NVDA), so every
         // auto-repeated emission must carry the same count as the press
         // that started the hold.
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);

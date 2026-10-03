@@ -85,6 +85,9 @@ Public API:
   node), and `CopyToClipboard` (routed through the shell's shared clipboard
   helper, so the reducer never touches the clipboard); menu and quit
   concerns never appear here.
+- `ActionName` — the name of the action an activation performed, carried
+  in `Input::ActivationCompleted`: `Invoke` (UIA, spoken "invoke") or
+  `Named` (an application's own name for a default action, spoken as is).
 - `ReviewCommand` — the model-level review and object-navigation vocabulary
   (report object, parent, siblings, first child, to-focus, activate, and
   the review-cursor line/word/character motions) the keyboard layer's

@@ -122,6 +122,7 @@ message-move-to-focus = Move to focus
 message-no-navigator-object = No navigator object
 message-activate = Activate
 message-no-action = No action
+message-invoke = invoke
 message-space = space
 
 ## A lock key's new state, as NVDA announces it: the key, then on or off.

@@ -320,10 +320,17 @@ verified.
   list controls remain a known limitation that NVDA shares.
   **different (unverified)**: NVDA releases an object when nothing
   refers to it, Verbatim when Core reports it no longer holds the node.
-- Cancellation of expired focus speech (focus left before speaking).
-  NVDA: `_CancellableSpeechCommand`. Verbatim: **not yet** — no
-  equivalent validity check in the speech queue; Interrupt priority
-  masks most cases. Candidate gap for fast-typing scenarios.
+- When speech is cut off, and cancellation of expired focus speech
+  (focus left before speaking). NVDA: focus speech is queued, and speech
+  is cancelled on a key press, a foreground change, a menu, and for a
+  focus no longer current (`FocusLossCancellableSpeechCommand`, which
+  keeps speech for the focus, its ancestors, and the foreground object).
+  Verbatim: **different, not yet (phase 4)**: every focus, value, state,
+  selection, and navigation announcement interrupts, so a window or dialog
+  title is cut off by its control's announcement a moment later, and a
+  queued toast or name change is discarded by the next focus; and no key
+  press cancels speech. Recorded in the handoff's phase 4, which designs
+  cancellation as a whole.
 - Menu popup announcements. NVDA: menu events with fake-focus
   fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim:
   NVDA's menu rules run in the outpost's worker. Within a batch, focus
@@ -333,10 +340,12 @@ verified.
   focus on the popup menu, so the reducer receives only focus events
   for menus. A menu closing, menu mode ending, or the Alt+Tab
   switcher closing anywhere on the desktop is forwarded by the focus
-  listener to Core; if Core's focus has not changed 50 milliseconds
-  later, Core asks the application then in the foreground for its
-  real focus, as NVDA's fake focus reads the focus from the foreground
-  window. Focus usually returns to another application than the one
+  listener to Core 50 milliseconds later, with the time it closed; unless
+  a focus observed after the close has been applied by then, Core asks
+  the application in the foreground for its real focus, as NVDA's fake
+  focus reads the focus from the foreground window when no focus followed
+  the close (since 2026-10-03; the listener had checked only its own
+  focus events). Focus usually returns to another application than the one
   that owned the menu, which a check inside the menu's own outpost
   could not see. **matched (unverified)**; the Start menu path was
   verified before the redesign.
@@ -397,7 +406,8 @@ verified.
 - Other alerts. NVDA speaks an alert at once when the object's role is
   alert, it has a name, description, or children, and it is not already
   among the focus's ancestors (`event_alert` on IAccessible objects).
-  Verbatim: **not yet**; it has no alert role, and reports no other alerts.
+  Verbatim: **not yet**: it has the alert role (UIA and MSAA map to it),
+  but no alert events, so it reports no other alerts.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
 
@@ -426,7 +436,7 @@ verified.
   `followMouse` equivalents **not yet (M4+)**.
 - Report current object: report / spell / copy on 1st/2nd/3rd press.
   NVDA: script repeat counting ([Keyboard input](nvda/input.md)), reading
-  the object live. Verbatim: the multi-press machinery matches; since
+  the object live. Verbatim: **matched since 2026-10-03**; since
   2026-10-03 a name, value, or state change on the focus also updates the
   navigator's copy while it rests there, so the report reads the object
   as it is now (it had read the copy taken when focus landed, saying "not
@@ -476,13 +486,21 @@ verified.
   jumped to the focus and announced it.
 - Review cursor line/word/character over object text. NVDA: object
   review over TextInfo ([Review modes](nvda/review-modes.md)). Verbatim:
-  **matched (unverified)** at M3 fidelity (flat value/name text;
-  grapheme/word segmentation deferred to M4 — a known divergence
-  until then).
+  **partial**: the motions, messages, and repeated presses match (the
+  messages entry above); the text is the object's flat value or name
+  rather than a text model, and the review position starts at offset 0
+  rather than at the caret, until M4.
 - Document review and screen review modes. Verbatim: **not yet
   (M6)**; screen review will be tree-projection **different (D11)**.
-- Object activation (do default action). Verbatim: **matched
-  (unverified)**.
+- Object activation (do default action). NVDA: the review position's
+  or navigator's action, walking up the parents until one has an action,
+  then its name spoken, or "No action". Verbatim: **matched since
+  2026-10-03**: an MSAA object's default action is spoken by its own name
+  ("Press"), a UIA element's Invoke as "invoke", and an action with no
+  name as "Activate"; a UIA element is activated by Invoke, then Toggle,
+  then selecting it, NVDA's order (Verbatim had tried MSAA's default
+  action through UIA in place of selecting). NVDA first tries the review
+  position's own activation, which the M4 text model brings.
 - Move focus to navigator / caret routing. Verbatim: **not yet
   (M4)**.
 
@@ -627,7 +645,15 @@ verified.
   by a theme at the last stage.
 - Speech settings model (driver settings, immediate application).
   NVDA: `SynthDriver.supportedSettings`. Verbatim: **matched
-  (unverified)** — same descriptor-driven model.
+  (unverified)** — same descriptor-driven model. **Different:** an
+  invalid saved setting stops startup, and switching synthesizer starts
+  the new one at its defaults, where NVDA falls back and loads the saved
+  settings (phase 4). The default voice is the synthesizer's own default,
+  where NVDA picks one matching its or Windows' language. The settings
+  dialog's sliders use wx's default steps rather than each setting's
+  minimum and large steps, which gives the same steps for settings from 0
+  to 100. Segments are joined with one space where NVDA joins chunks with
+  two, which is not audible.
 - Instant cancel (stop + reset, audible immediately). NVDA:
   `WavePlayer.stop`. Verbatim: **matched (verified)** — WASAPI
   stop+reset; latency measured in the E2E ledger.
@@ -663,8 +689,19 @@ verified.
   **matched (verified by unit tests)** — semantics transcribed
   ([verbatim-input](crates/verbatim-input.md)); live side-by-side with NVDA still
   worth one session (sticky/locked modifier states **not yet**).
-- Script repeat counting incl. auto-repeat exclusion. Verbatim:
-  **matched (verified)**.
+  **Different, deliberately:** Caps Lock is a Verbatim key by default (see
+  "Spoken vocabulary and key layouts"). **Not yet:** NVDA treats Num Lock
+  as a modifier of the numpad operator keys, so a binding of plain
+  numpad plus does not take the plus sign from a user with Num Lock on;
+  Verbatim ignores Num Lock, which matters once such a binding exists
+  (say all, M4).
+- Script repeat counting. NVDA: `scriptHandler` counts each run of the
+  same script within the multi-press timeout, and forgets the last script
+  when an unbound gesture comes between. Verbatim: **matched since
+  2026-10-03** for the reset on an unbound key (it had carried the count
+  across). **Different, deliberately:** auto-repeat of a held key is not
+  counted as presses, so holding a key never turns into a double press;
+  NVDA counts it.
 - Gesture map / rebindable input, input help mode. Verbatim: map
   exists; user rebinding UI and input help **not yet (M8/M9)**.
 - Typed-character echo. NVDA: in-process reports; UIA textEdit

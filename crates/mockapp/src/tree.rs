@@ -24,6 +24,8 @@ pub(crate) struct NodeData {
     /// Advertised keyboard shortcut (UIA `AccessKey`, MSAA
     /// `accKeyboardShortcut`).
     pub(crate) keyboard_shortcut: Option<String>,
+    /// The default action's name (MSAA `accDefaultAction`).
+    pub(crate) default_action: Option<String>,
     /// One-based position within the containing set (UIA `PositionInSet`;
     /// plain MSAA cannot express it).
     pub(crate) position_in_set: Option<u32>,
@@ -111,6 +113,7 @@ fn insert(
         states: node.states,
         description: node.description,
         keyboard_shortcut: node.keyboard_shortcut,
+        default_action: node.default_action,
         position_in_set: node.position_in_set,
         set_size: node.set_size,
         level: node.level,
@@ -149,6 +152,7 @@ mod tests {
             states: StateSet::new(),
             description: None,
             keyboard_shortcut: None,
+            default_action: None,
             position_in_set: None,
             set_size: None,
             level: None,

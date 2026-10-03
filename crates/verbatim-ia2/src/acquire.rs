@@ -807,7 +807,9 @@ pub fn navigate(
 
 /// Activates `node` through its kept object: `IAccessible::accDoDefaultAction`,
 /// the only activation MSAA offers (UIA's richer `Invoke`/`Toggle` ladder has
-/// no MSAA equivalent). Blocking; worker only.
+/// no MSAA equivalent). Answers the default action's name
+/// (`accDefaultAction`, such as "Press"), read first as NVDA reads it, or
+/// `None` when it has none. Blocking; worker only.
 ///
 /// # Errors
 ///
@@ -815,16 +817,25 @@ pub fn navigate(
 /// [`AcquireError::Failed`] with a human-readable reason if the call fails
 /// (including "not implemented", MSAA's answer for a node with no default
 /// action).
-pub fn activate(node: NodeId, registry: &NodeIdRegistry) -> Result<(), AcquireError> {
+pub fn activate(
+    node: NodeId,
+    registry: &NodeIdRegistry,
+) -> Result<Option<verbatim_model::ActionName>, AcquireError> {
     let (acc, child, _, _) = locate(node, registry)?;
     // SAFETY: `acc` is live; `child` is valid for it.
+    let name = unsafe { acc.get_accDefaultAction(&child) }
+        .ok()
+        .map(|name| name.to_string())
+        .filter(|name| !name.trim().is_empty());
+    // SAFETY: as above.
     unsafe { acc.accDoDefaultAction(&child) }.map_err(|error| {
         if disconnected(&error) {
             AcquireError::Gone
         } else {
             AcquireError::Failed(format!("accDoDefaultAction failed: {error}"))
         }
-    })
+    })?;
+    Ok(name.map(verbatim_model::ActionName::Named))
 }
 
 /// Re-reads a node previously seen at `key`. Returns `None` if it can no longer

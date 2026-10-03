@@ -117,9 +117,11 @@ Implementation notes, `reduce`:
   between outposts. A foreground change to a nameless window becomes the
   focus and moves attention without speaking. A window nameless when focus
   enters it is not announced later: a name change speaks only on the focused node, where the new name
-  alone is spoken, queued. There is no ordering check of any kind:
-  `observed_at_ms` is carried for the latency record only, and order comes
-  from each outpost's queue. The negated-state rules match NVDA's: negated checked for
+  alone is spoken, queued. Order within an outpost comes from its queue;
+  across outposts, a focus observed before the focus already applied is
+  dropped as stale (`observed_at_ms`, `docs/parity.md` "Stale focus
+  events"), and `latest_focus_observed_at` lets the shell skip a fake
+  focus after a menu closes when a later focus has been applied. The negated-state rules match NVDA's: negated checked for
   check boxes and radio buttons, and negated pressed ("not pressed") for a
   toggle button — a `Button` control that exposes the UIA Toggle pattern,
   which `verbatim-uia` reclassifies to `Role::ToggleButton` with the
@@ -135,8 +137,8 @@ Implementation notes, `reduce`:
   value on the second, and copies them on the third; parent, sibling,
   and first-child moves emit a navigation `Fetch` whose completion moves the
   navigator and announces it; activate emits `Activate`, whose outcome
-  returns as `Input::ActivationCompleted` and is spoken as "Activate" or "No
-  action"; to-focus says "Move to focus" and snaps the navigator back; any
+  returns as `Input::ActivationCompleted` and is spoken as the action's
+  name, "Activate" for an action without one, or "No action"; to-focus says "Move to focus" and snaps the navigator back; any
   command with no navigator says "No navigator object". An `Unanswered`
   completion (the application did not answer) leaves the navigator put and
   says nothing. The review commands' messages ("Top", "Bottom", "Left",

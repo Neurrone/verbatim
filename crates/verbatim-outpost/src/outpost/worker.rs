@@ -1242,7 +1242,7 @@ impl Worker<'_> {
                 read::navigate(context, client, *node_id, *kind).map(QueryResult::Navigated)
             }
             Query::Activate { node_id } => {
-                read::activate(context, client, *node_id).map(|()| QueryResult::Activated)
+                read::activate(context, client, *node_id).map(QueryResult::Activated)
             }
             Query::Ancestors { node_id } => {
                 read::ancestors(context, client, *node_id).map(QueryResult::Ancestors)

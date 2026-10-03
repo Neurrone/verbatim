@@ -164,13 +164,17 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             }]
         }
         Asker::Activation { trace_id } => {
-            let activated = matches!(outcome, QueryOutcome::Done(QueryResult::Activated));
-            if !activated {
-                tracing::warn!(reason = describe(&outcome), "activation did not complete");
-            }
+            let (activated, action) = match outcome {
+                QueryOutcome::Done(QueryResult::Activated(action)) => (true, action),
+                other => {
+                    tracing::warn!(reason = describe(&other), "activation did not complete");
+                    (false, None)
+                }
+            };
             vec![Input::ActivationCompleted {
                 trace_id,
                 activated,
+                action,
             }]
         }
         Asker::DumpTree(reply) => {
@@ -342,7 +346,7 @@ mod tests {
     #[test]
     fn an_activation_outcome_reaches_the_reducer() {
         for (outcome, expected) in [
-            (QueryOutcome::Done(QueryResult::Activated), true),
+            (QueryOutcome::Done(QueryResult::Activated(None)), true),
             (QueryOutcome::Failed("no action".to_owned()), false),
         ] {
             let mut table = RequestTable::default();

@@ -15,10 +15,10 @@ use windows::Win32::System::Variant::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern,
-    IUIAutomationSelectionPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope_Subtree, UIA_InvokePatternId, UIA_LegacyIAccessiblePatternId,
-    UIA_RuntimeIdPropertyId, UIA_SelectionPatternId, UIA_TogglePatternId,
+    IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern,
+    IUIAutomationTogglePattern, IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId,
+    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+    UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -545,10 +545,10 @@ impl Uia {
         }
     }
 
-    /// Activates `element`: tries `Invoke`, then `Toggle`, then the legacy
-    /// `DoDefaultAction` pattern, in that order — the same fallback ladder
-    /// NVDA uses for "press the current object" against arbitrary UIA
-    /// controls. Each pattern is fetched live (`GetCurrentPatternAs`, not a
+    /// Activates `element`: tries `Invoke`, then `Toggle`, then selecting it
+    /// (`SelectionItem`), in that order, NVDA's default action for a UIA
+    /// element. Answers the action's name as NVDA names it: "invoke" for
+    /// `Invoke`, none for the others. Each pattern is fetched live (`GetCurrentPatternAs`, not a
     /// cached read), since activation is an infrequent, user-triggered
     /// action rather than something the base cache request prefetches.
     /// Cross-process; the outpost's worker only, guarded by the caller's
@@ -563,31 +563,34 @@ impl Uia {
     /// # Safety
     ///
     /// `element` must be a live element.
-    pub unsafe fn activate(&self, element: &IUIAutomationElement) -> windows::core::Result<()> {
+    pub unsafe fn activate(
+        &self,
+        element: &IUIAutomationElement,
+    ) -> windows::core::Result<Option<verbatim_model::ActionName>> {
         // SAFETY: `element` is live per the caller's contract; each pattern
         // fetch fails safely (an error) when the pattern is unsupported.
         unsafe {
             if let Ok(invoke) =
                 element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
             {
-                return invoke.Invoke();
+                return invoke
+                    .Invoke()
+                    .map(|()| Some(verbatim_model::ActionName::Invoke));
             }
             if let Ok(toggle) =
                 element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
             {
-                return toggle.Toggle();
+                return toggle.Toggle().map(|()| None);
             }
-            if let Ok(legacy) = element
-                .GetCurrentPatternAs::<IUIAutomationLegacyIAccessiblePattern>(
-                    UIA_LegacyIAccessiblePatternId,
-                )
-            {
-                return legacy.DoDefaultAction();
+            if let Ok(item) = element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
+                UIA_SelectionItemPatternId,
+            ) {
+                return item.Select().map(|()| None);
             }
         }
         Err(windows::core::Error::new(
             windows::Win32::Foundation::E_NOTIMPL,
-            "element exposes no Invoke, Toggle, or legacy DoDefaultAction pattern",
+            "element exposes no Invoke, Toggle, or SelectionItem pattern",
         ))
     }
 }

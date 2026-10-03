@@ -393,6 +393,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::NoNavigatorObject => i18n_embed_fl::fl!(loader, "message-no-navigator-object"),
         Message::Activate => i18n_embed_fl::fl!(loader, "message-activate"),
         Message::NoAction => i18n_embed_fl::fl!(loader, "message-no-action"),
+        Message::Invoke => i18n_embed_fl::fl!(loader, "message-invoke"),
         Message::Space => i18n_embed_fl::fl!(loader, "message-space"),
         // `Message` is non_exhaustive; an unmapped future message speaks
         // nothing rather than crashing the pipeline.

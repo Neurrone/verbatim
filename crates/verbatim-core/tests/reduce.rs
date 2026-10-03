@@ -3329,18 +3329,35 @@ fn the_current_line_pressed_twice_is_spelled_and_a_character_thrice_gives_its_co
 }
 
 #[test]
-fn an_activation_says_activate_or_no_action() {
-    for (activated, expected) in [
-        (true, verbatim_model::Message::Activate),
-        (false, verbatim_model::Message::NoAction),
-    ] {
+fn an_activation_says_its_action_activate_or_no_action() {
+    let outcome = |activated, action| {
         let (_, effects) = reduce(
             &SrState::new(),
             &Input::ActivationCompleted {
                 trace_id: TraceId::mint(),
                 activated,
+                action,
             },
         );
-        assert_eq!(speak_effects(&effects)[0].segments, vec![message(expected)]);
-    }
+        speak_effects(&effects)[0].segments.clone()
+    };
+    assert_eq!(
+        outcome(true, None),
+        vec![message(verbatim_model::Message::Activate)]
+    );
+    assert_eq!(
+        outcome(true, Some(verbatim_model::ActionName::Invoke)),
+        vec![message(verbatim_model::Message::Invoke)]
+    );
+    assert_eq!(
+        outcome(
+            true,
+            Some(verbatim_model::ActionName::Named("Press".to_owned()))
+        ),
+        vec![UtteranceSegment::text("Press")]
+    );
+    assert_eq!(
+        outcome(false, None),
+        vec![message(verbatim_model::Message::NoAction)]
+    );
 }

@@ -538,8 +538,18 @@ mod handler {
             Ok(dispatch_variant(accessible.into()))
         }
 
-        fn get_accDefaultAction(&self, _varchild: &VARIANT) -> WinResult<BSTR> {
-            Err(Error::from_hresult(S_FALSE))
+        fn get_accDefaultAction(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            let target = resolve_child(&self.tree, self.index, varchild)
+                .ok_or_else(|| Error::from_hresult(S_FALSE))?;
+            let guard = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.nodes[target].default_action.as_deref() {
+                Some(action) => Ok(action.into()),
+                // S_FALSE is MSAA's "this object has no default action".
+                None => Err(Error::from_hresult(S_FALSE)),
+            }
         }
 
         fn accSelect(&self, _flagsselect: i32, _varchild: &VARIANT) -> WinResult<()> {
@@ -609,8 +619,18 @@ mod handler {
             Err(Error::from_hresult(S_FALSE))
         }
 
-        fn accDoDefaultAction(&self, _varchild: &VARIANT) -> WinResult<()> {
-            Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+        fn accDoDefaultAction(&self, varchild: &VARIANT) -> WinResult<()> {
+            let target = resolve_child(&self.tree, self.index, varchild)
+                .ok_or_else(|| Error::from_hresult(S_FALSE))?;
+            let guard = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.nodes[target].default_action.is_some() {
+                Ok(())
+            } else {
+                Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+            }
         }
 
         fn put_accName(&self, _varchild: &VARIANT, _szname: &BSTR) -> WinResult<()> {

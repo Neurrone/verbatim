@@ -14,9 +14,9 @@ mod speech;
 mod tree;
 
 pub use event::{
-    Earcon, Effect, FetchResult, Input, NormalizedEvent, Notification, NotificationKind,
-    NotificationProcessing, Pid, PropertyChange, Query, QueryId, QueryKind, ReviewCommand,
-    WindowFacts, WindowHandle,
+    ActionName, Earcon, Effect, FetchResult, Input, NormalizedEvent, Notification,
+    NotificationKind, NotificationProcessing, Pid, PropertyChange, Query, QueryId, QueryKind,
+    ReviewCommand, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use speech::{

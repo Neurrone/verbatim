@@ -14,7 +14,8 @@
           "name": "OK",
           "states": ["focusable"],
           "description": "Applies the changes and closes the dialog",
-          "keyboard_shortcut": "Alt+O"
+          "keyboard_shortcut": "Alt+O",
+          "default_action": "Press"
         },
         {
           "id": "btn_cancel",

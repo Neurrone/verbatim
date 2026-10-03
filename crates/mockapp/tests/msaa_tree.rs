@@ -464,6 +464,30 @@ fn find(node: &verbatim_model::TreeNode, name: &str) -> Option<verbatim_model::N
     node.children.iter().find_map(|child| find(child, name))
 }
 
+/// Activation through `verbatim-ia2` answers the default action's name, which
+/// the reducer speaks as NVDA does ("Press"), and fails for a node with no
+/// default action, so the outpost tries its parents.
+#[test]
+fn msaa_activation_answers_the_default_actions_name() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-activate");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
+        std::sync::atomic::AtomicU64::new(1),
+    ));
+    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096)
+        .expect("walk the tree");
+    let ok = find(&root, "OK").expect("the OK button is in the tree");
+    assert_eq!(
+        verbatim_ia2::acquire::activate(ok, &registry).expect("OK activates"),
+        Some(verbatim_model::ActionName::Named("Press".to_owned()))
+    );
+    let cancel = find(&root, "Cancel").expect("the Cancel button is in the tree");
+    assert!(verbatim_ia2::acquire::activate(cancel, &registry).is_err());
+    app.send("quit");
+}
+
 /// The selected child of a list, read through `verbatim-ia2`'s own
 /// `selected_child` from the list object kept when the tree was walked, after
 /// a scripted selection (audit item 21: `accSelection` used to be stubbed).

@@ -346,8 +346,9 @@ pub enum QueryResult {
     /// The answer to [`Query::Navigate`]: the neighbor, or `None` for a
     /// genuine tree edge (not an error).
     Navigated(Option<NodeSnapshot>),
-    /// The answer to [`Query::Activate`].
-    Activated,
+    /// The answer to [`Query::Activate`]: the name of the action performed,
+    /// if it has one.
+    Activated(Option<verbatim_model::ActionName>),
     /// The answer to [`Query::Ancestors`], outermost first.
     Ancestors(Vec<NodeSnapshot>),
     /// The answer to [`Query::DumpTree`].
