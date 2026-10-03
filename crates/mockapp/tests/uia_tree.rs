@@ -9,6 +9,8 @@
 //! real, with no actual application.
 
 mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
 use std::collections::HashMap;
 
@@ -421,7 +423,6 @@ fn walk(
     }
 }
 
-#[test]
 fn uia_client_reads_the_scripted_tree() {
     let title = common::unique_title("mockapp-uia-tree");
     let mut app = common::spawn("tree.json", "uia", &title);
@@ -455,4 +456,13 @@ fn uia_client_reads_the_scripted_tree() {
     );
 
     app.send("quit");
+}
+
+/// Runs this file's tests through the UIA test runner, which explains why
+/// these binaries do not exit normally (`common/harness.rs`).
+fn main() {
+    harness::run(&[(
+        "uia_client_reads_the_scripted_tree",
+        uia_client_reads_the_scripted_tree,
+    )]);
 }

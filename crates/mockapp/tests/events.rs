@@ -10,8 +10,10 @@
 //! `SetForegroundWindow` succeeding.
 
 mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEventHook, WinEventKind};
@@ -25,26 +27,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
 
-/// Serializes UIA registration setup (`Registration`) across this
-/// binary's tests. `cargo test` runs `#[test]` functions concurrently on a
-/// thread pool by default, and empirically, two registration calls racing
-/// from different threads in the same process can make UI Automation's
-/// internal event-registration state return a spurious `E_FAIL`
-/// ("Unspecified error"). Real outposts never register UIA handlers
-/// concurrently from two threads for the same reason `verbatim-uia`
-/// gives each registration its own dedicated thread rather than sharing one;
-/// this lock reproduces that single-registration-at-a-time discipline for
-/// the tests.
-fn uia_registration_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-#[test]
 fn uia_set_name_raises_a_property_changed_event() {
-    let _guard = uia_registration_lock()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let title = common::unique_title("mockapp-events-uia-name");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -116,11 +99,7 @@ fn uia_set_name_raises_a_property_changed_event() {
     app.send("quit");
 }
 
-#[test]
 fn uia_set_value_raises_a_property_changed_event() {
-    let _guard = uia_registration_lock()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let title = common::unique_title("mockapp-events-uia-value");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -152,11 +131,7 @@ fn uia_set_value_raises_a_property_changed_event() {
     app.send("quit");
 }
 
-#[test]
 fn uia_select_raises_a_selection_event() {
-    let _guard = uia_registration_lock()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let title = common::unique_title("mockapp-events-uia-select");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -209,11 +184,7 @@ type SeenNotification = (
     Option<String>,
 );
 
-#[test]
 fn uia_notify_raises_a_notification_event() {
-    let _guard = uia_registration_lock()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let title = common::unique_title("mockapp-events-uia-notify");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -282,7 +253,6 @@ fn pump_wait_until(message: &str, mut condition: impl FnMut() -> bool) {
     }
 }
 
-#[test]
 fn msaa_set_name_raises_a_name_change_win_event() {
     let title = common::unique_title("mockapp-events-msaa-name");
     let mut app = common::spawn("small.json", "msaa", &title);
@@ -314,7 +284,6 @@ fn msaa_set_name_raises_a_name_change_win_event() {
     app.send("quit");
 }
 
-#[test]
 fn msaa_set_value_raises_a_value_change_win_event() {
     let title = common::unique_title("mockapp-events-msaa-value");
     let mut app = common::spawn("small.json", "msaa", &title);
@@ -346,7 +315,6 @@ fn msaa_set_value_raises_a_value_change_win_event() {
     app.send("quit");
 }
 
-#[test]
 fn msaa_select_raises_a_selection_win_event() {
     let title = common::unique_title("mockapp-events-msaa-select");
     let mut app = common::spawn("small.json", "msaa", &title);
@@ -376,4 +344,39 @@ fn msaa_select_raises_a_selection_win_event() {
     });
 
     app.send("quit");
+}
+
+/// Runs this file's tests through the UIA test runner, which explains why
+/// these binaries do not exit normally (`common/harness.rs`).
+fn main() {
+    harness::run(&[
+        (
+            "uia_set_name_raises_a_property_changed_event",
+            uia_set_name_raises_a_property_changed_event,
+        ),
+        (
+            "uia_set_value_raises_a_property_changed_event",
+            uia_set_value_raises_a_property_changed_event,
+        ),
+        (
+            "uia_select_raises_a_selection_event",
+            uia_select_raises_a_selection_event,
+        ),
+        (
+            "uia_notify_raises_a_notification_event",
+            uia_notify_raises_a_notification_event,
+        ),
+        (
+            "msaa_set_name_raises_a_name_change_win_event",
+            msaa_set_name_raises_a_name_change_win_event,
+        ),
+        (
+            "msaa_set_value_raises_a_value_change_win_event",
+            msaa_set_value_raises_a_value_change_win_event,
+        ),
+        (
+            "msaa_select_raises_a_selection_win_event",
+            msaa_select_raises_a_selection_win_event,
+        ),
+    ]);
 }

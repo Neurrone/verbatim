@@ -5,11 +5,12 @@
 //! backend.
 
 mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
 use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
 use verbatim_uia::has_server_side_provider;
 
-#[test]
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let title = common::unique_title("mockapp-arb-uia");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -41,7 +42,6 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     app.send("quit");
 }
 
-#[test]
 fn a_busy_uia_window_still_has_a_server_side_provider() {
     let title = common::unique_title("mockapp-arb-busy");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -61,7 +61,6 @@ fn a_busy_uia_window_still_has_a_server_side_provider() {
     app.send("quit");
 }
 
-#[test]
 fn a_busy_uia_window_is_read_once_it_answers() {
     let title = common::unique_title("mockapp-read-busy");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -93,7 +92,6 @@ fn a_busy_uia_window_is_read_once_it_answers() {
     app.send("quit");
 }
 
-#[test]
 fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
     let title = common::unique_title("mockapp-arb-msaa");
     let mut app = common::spawn("small.json", "msaa", &title);
@@ -122,7 +120,6 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
     app.send("quit");
 }
 
-#[test]
 fn a_window_that_never_answers_gets_no_verdict_within_the_budget() {
     let title = common::unique_title("mockapp-arb-silent");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -143,4 +140,31 @@ fn a_window_that_never_answers_gets_no_verdict_within_the_budget() {
     );
 
     app.send("quit");
+}
+
+/// Runs this file's tests through the UIA test runner, which explains why
+/// these binaries do not exit normally (`common/harness.rs`).
+fn main() {
+    harness::run(&[
+        (
+            "uia_backend_has_a_server_side_provider_and_arbitrates_to_uia",
+            uia_backend_has_a_server_side_provider_and_arbitrates_to_uia,
+        ),
+        (
+            "a_busy_uia_window_still_has_a_server_side_provider",
+            a_busy_uia_window_still_has_a_server_side_provider,
+        ),
+        (
+            "a_busy_uia_window_is_read_once_it_answers",
+            a_busy_uia_window_is_read_once_it_answers,
+        ),
+        (
+            "msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa",
+            msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa,
+        ),
+        (
+            "a_window_that_never_answers_gets_no_verdict_within_the_budget",
+            a_window_that_never_answers_gets_no_verdict_within_the_budget,
+        ),
+    ]);
 }

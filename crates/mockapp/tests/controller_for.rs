@@ -12,6 +12,8 @@
 //! so the test runs headless.
 
 mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
 use std::sync::{Arc, Mutex};
 
@@ -51,7 +53,6 @@ fn name_of(element: &IUIAutomationElement) -> Option<String> {
     unsafe { verbatim_uia::map::snapshot_parts_from_cached_element(element) }.name
 }
 
-#[test]
 fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     let title = common::unique_title("mockapp-controller-for");
     let mut app = common::spawn("controller.json", "uia", &title);
@@ -132,4 +133,13 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     );
 
     app.send("quit");
+}
+
+/// Runs this file's tests through the UIA test runner, which explains why
+/// these binaries do not exit normally (`common/harness.rs`).
+fn main() {
+    harness::run(&[(
+        "a_selected_result_is_found_only_inside_the_list_the_search_box_controls",
+        a_selected_result_is_found_only_inside_the_list_the_search_box_controls,
+    )]);
 }

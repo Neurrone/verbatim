@@ -18,5 +18,24 @@ verbatim-ia2.workspace = true
 verbatim-outpost.workspace = true
 verbatim-uia.workspace = true
 
+# The test binaries that use UIA as a client run through their own runner,
+# which ends the process without running DLL detach code; the reason is in
+# tests/common/harness.rs.
+[[test]]
+name = "arbitration"
+harness = false
+
+[[test]]
+name = "controller_for"
+harness = false
+
+[[test]]
+name = "events"
+harness = false
+
+[[test]]
+name = "uia_tree"
+harness = false
+
 [lints]
 workspace = true

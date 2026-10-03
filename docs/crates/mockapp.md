@@ -130,7 +130,13 @@ The cross-process integration tests in `tests/` spawn the compiled binary
 via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
-`wait_until` with a generous timeout). `uia_tree.rs` and `msaa_tree.rs` walk
+`wait_until` with a generous timeout). The test files that use UIA as a
+client (`arbitration.rs`, `controller_for.rs`, `events.rs`, `uia_tree.rs`)
+run through `tests/common/harness.rs` instead of libtest (`harness =
+false`): it runs and reports the tests as libtest does, then ends the
+process without running DLL detach code, because `UIAutomationCore.dll`'s
+own detach code sometimes hangs or crashes in a process that has connected
+to providers; the file's comment gives the evidence. `uia_tree.rs` and `msaa_tree.rs` walk
 a rich scripted tree through each real client stack and assert normalized
 roles, names, values, states, and detail properties match the fixture —
 every node's details must read back exactly what was scripted, and
