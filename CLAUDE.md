@@ -29,7 +29,7 @@ The Windows-specific crates are GPL like NVDA and may port NVDA code freely. Por
 
 We use Rust 2024 edition.
 
-Arm64 is a first-class target. Builds and tests always use the host's own architecture (no command names a target), so ARM64 is built and tested on an ARM64 machine; this machine is x64.
+Arm64 is a first-class target. Builds and tests always use the host's own architecture (no command names a target), so ARM64 is built and tested on an ARM64 machine, which GitHub Actions provides (the `ci-arm64` job); this machine is x64.
 
 Use Clippy with the pedantic lint group from the start. Public Rust APIs should have doc comments so the workspace can be browsed with Rustdoc.
 
@@ -48,5 +48,3 @@ The end-to-end suite also runs without a VM, against this machine, by pointing i
 The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual Studio and LLVM install paths for `libclang.dll` automatically; when invoking cargo directly on targets that build `verbatim-gui`, set `LIBCLANG_PATH` yourself if `libclang.dll` is not on `PATH`. On this machine, use:
 
 `$env:LIBCLANG_PATH='C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin'`
-
-On an ARM64 host, the debug-profile build of wxDragon fails until upstream fixes https://github.com/AllenDang/wxDragon/issues/162; `cargo xtask ci` no longer works around it.

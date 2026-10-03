@@ -15,7 +15,7 @@
 //! `xtask/src/park.rs`.
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::str;
 
@@ -177,20 +177,31 @@ fn check_platform_neutral_deps() -> Result<(), String> {
 /// `ci` path is the only other place in this binary that needs it, so one
 /// shared probe stays in lockstep rather than two copies drifting apart.
 pub(crate) fn find_libclang() -> Option<PathBuf> {
-    const CANDIDATES: &[&str] = &[
-        r"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin",
-        r"C:\Program Files\LLVM\bin",
+    /// The Visual Studio installations to look in, newest first.
+    const VISUAL_STUDIO: &[&str] = &[
+        r"18\Community",
+        r"2022\Community",
+        r"2022\Professional",
+        r"2022\Enterprise",
     ];
+    /// Visual Studio's LLVM folder for the host's architecture: bindgen
+    /// loads `libclang.dll` into the build script, which runs on the host.
+    const LLVM_ARCH: &str = if cfg!(target_arch = "aarch64") {
+        "ARM64"
+    } else {
+        "x64"
+    };
 
     if let Some(dir) = env::var_os("LIBCLANG_PATH") {
         return Some(PathBuf::from(dir));
     }
-    CANDIDATES
+    VISUAL_STUDIO
         .iter()
-        .map(Path::new)
+        .map(|edition| {
+            PathBuf::from(format!(
+                r"C:\Program Files\Microsoft Visual Studio\{edition}\VC\Tools\Llvm\{LLVM_ARCH}\bin"
+            ))
+        })
+        .chain(std::iter::once(PathBuf::from(r"C:\Program Files\LLVM\bin")))
         .find(|dir| dir.join("libclang.dll").exists())
-        .map(Path::to_path_buf)
 }

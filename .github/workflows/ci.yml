@@ -25,6 +25,24 @@ jobs:
       - name: Run CI checks
         run: cargo xtask ci
 
+  # The same checks on an ARM64 runner: nothing names a target, so this
+  # job builds and tests ARM64, as `ci` does x64.
+  ci-arm64:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rustup if the image lacks it
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain none --profile minimal
+            Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
+          }
+      - uses: Swatinem/rust-cache@v2
+      - name: Run CI checks
+        run: cargo xtask ci
+
   # Milestone M2's runner-direct E2E suite (docs/roadmap.md): builds the
   # debug binaries the suite drives, starts verbatim-agent.exe bound to
   # loopback, points crates/verbatim-e2e at it, and runs the suite serially

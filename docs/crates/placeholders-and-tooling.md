@@ -10,8 +10,10 @@
   crate that pulls in the `windows` or `windows-core` bindings), rustfmt,
   pedantic clippy with warnings denied, and unit tests, all for the
   host's own architecture into `target/debug` (no step names a target, so
-  an ARM64 machine checks ARM64). It probes known Visual Studio and LLVM locations for
-  `libclang.dll` so wxDragon's bindgen works without manual environment
+  an ARM64 machine checks ARM64; GitHub Actions runs it on both, in the
+  `ci` and `ci-arm64` jobs). It probes known Visual Studio and LLVM
+  locations for `libclang.dll`, in the LLVM folder for the host's
+  architecture, so wxDragon's bindgen works without manual environment
   setup. `cargo xtask
   vm` is the milestone M2 Hyper-V harness (build, deploy, and E2E-test a
   real VM) — see this document's "xtask VM harness" section above and
