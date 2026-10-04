@@ -38,6 +38,11 @@ pub enum SpeechItem {
     Text(String),
     /// A point to report when playback reaches it.
     Mark(IndexMark),
+    /// Speak what follows with the pitch setting raised (or lowered) by
+    /// this much from its configured value; `0` returns to it. Drivers
+    /// never receive these: the manager splits the sequence at them and
+    /// changes the driver's `pitch` setting between the pieces.
+    Pitch(i32),
 }
 
 /// What a synthesizer is asked to speak: the flattened form of one
@@ -64,7 +69,7 @@ impl SpeechSequence {
             .iter()
             .filter_map(|item| match item {
                 SpeechItem::Text(text) => Some(text.as_str()),
-                SpeechItem::Mark(_) => None,
+                SpeechItem::Mark(_) | SpeechItem::Pitch(_) => None,
             })
             .collect()
     }
@@ -77,17 +82,51 @@ impl SpeechSequence {
             .any(|item| matches!(item, SpeechItem::Mark(_)))
     }
 
+    /// Whether the sequence holds any pitch change.
+    #[must_use]
+    pub fn has_pitch_changes(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, SpeechItem::Pitch(_)))
+    }
+
     /// Splits the sequence at its marks, for a driver that cannot place
     /// marks in its audio: each piece is followed by the mark that ended
     /// it, and the last piece by none.
     #[must_use]
     pub fn split_at_marks(&self) -> Vec<(Self, Option<IndexMark>)> {
+        self.split(true)
+            .into_iter()
+            .map(|(piece, after)| {
+                let mark = match after {
+                    Some(SpeechItem::Mark(mark)) => Some(mark),
+                    _ => None,
+                };
+                (piece, mark)
+            })
+            .collect()
+    }
+
+    /// Splits the sequence at its pitch changes, and at its marks too when
+    /// `at_marks`: each piece is followed by the item that ended it, and
+    /// the last piece by none. Marks not split at stay in their pieces.
+    #[must_use]
+    pub fn split(&self, at_marks: bool) -> Vec<(Self, Option<SpeechItem>)> {
         let mut pieces = Vec::new();
         let mut items = Vec::new();
         for item in &self.items {
             match item {
-                SpeechItem::Mark(mark) => {
-                    pieces.push((self.with_items(std::mem::take(&mut items)), Some(*mark)));
+                SpeechItem::Mark(_) if at_marks => {
+                    pieces.push((
+                        self.with_items(std::mem::take(&mut items)),
+                        Some(item.clone()),
+                    ));
+                }
+                SpeechItem::Pitch(_) => {
+                    pieces.push((
+                        self.with_items(std::mem::take(&mut items)),
+                        Some(item.clone()),
+                    ));
                 }
                 other => items.push(other.clone()),
             }

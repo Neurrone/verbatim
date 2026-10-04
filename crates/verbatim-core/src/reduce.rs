@@ -870,6 +870,8 @@ fn spelled(text: &str) -> Vec<UtteranceSegment> {
         .map(|ch| {
             if ch == ' ' {
                 UtteranceSegment::new(SegmentContent::Message(Message::Space))
+            } else if ch.is_uppercase() {
+                UtteranceSegment::new(SegmentContent::SpelledCapital(ch.to_string()))
             } else {
                 UtteranceSegment::text(ch.to_string())
             }
@@ -984,6 +986,15 @@ fn review_text_command(
         // Spelled; NVDA's phonetic reading of a character and its spelling
         // with character descriptions wait for the character descriptions
         // table (M4).
+        segments.extend(spelled(slice));
+    } else if matches!(
+        command,
+        ReviewCommand::ReviewPreviousCharacter
+            | ReviewCommand::ReviewNextCharacter
+            | ReviewCommand::ReviewCurrentCharacter
+    ) {
+        // A single character is spoken as NVDA spells it, so a capital is
+        // raised in pitch.
         segments.extend(spelled(slice));
     } else {
         segments.push(UtteranceSegment::text(slice.to_owned()));

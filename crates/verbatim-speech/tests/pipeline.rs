@@ -756,3 +756,107 @@ fn switching_synth_starts_it_with_its_saved_settings() {
         Some(SettingValue::Choice("default".to_owned()))
     );
 }
+
+/// A silent synth with a pitch setting that records the pitch it held for
+/// each piece of text it spoke.
+struct PitchSynth {
+    pitch: i32,
+    spoken: Arc<Mutex<Vec<(String, i32)>>>,
+}
+
+impl SynthDriver for PitchSynth {
+    fn id(&self) -> SynthId {
+        SynthId::new("pitch")
+    }
+
+    fn display_name(&self) -> String {
+        "Pitch synth".to_owned()
+    }
+
+    fn supported_settings(&self) -> Vec<verbatim_speech::SettingDescriptor> {
+        vec![verbatim_speech::SettingDescriptor::standard_numeric(
+            "pitch",
+            "setting-pitch",
+        )]
+    }
+
+    fn setting(&self, id: &SettingId) -> Option<SettingValue> {
+        (id.0.as_str() == "pitch").then_some(SettingValue::Number(self.pitch))
+    }
+
+    fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
+        match (id.0.as_str(), value) {
+            ("pitch", SettingValue::Number(pitch)) => {
+                self.pitch = pitch;
+                Ok(())
+            }
+            _ => Err(SynthError::Setting(format!("no setting {id}"))),
+        }
+    }
+
+    fn places_marks(&self) -> bool {
+        true
+    }
+
+    fn speak(
+        &mut self,
+        sequence: &SpeechSequence,
+        sink: &mut dyn SynthSink,
+    ) -> Result<(), SynthError> {
+        self.spoken
+            .lock()
+            .unwrap()
+            .push((sequence.text(), self.pitch));
+        let _ = sink.push_pcm(FORMAT, &[1_000i16; 64]);
+        Ok(())
+    }
+}
+
+/// NVDA's raised pitch for capitals when spelling: the capital is spoken
+/// with the pitch setting 30 higher, and the setting is put back after.
+#[test]
+fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
+    let spoken = Arc::new(Mutex::new(Vec::new()));
+    let for_factory = Arc::clone(&spoken);
+    let mut registry = SynthRegistry::new();
+    registry.register(
+        SynthId::new("pitch"),
+        "Pitch synth",
+        Box::new(move || {
+            Ok(Box::new(PitchSynth {
+                pitch: 50,
+                spoken: Arc::clone(&for_factory),
+            }) as Box<dyn SynthDriver>)
+        }),
+    );
+    let recorder = Arc::new(Recorder::default());
+    let manager = SpeechManager::new(SpeechManagerConfig {
+        registry,
+        initial_synth: SynthId::new("pitch"),
+        saved_settings: Box::new(|_| Vec::new()),
+        mixer: mixer(),
+        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        theme: None,
+    })
+    .expect("pipeline starts");
+
+    manager.speak(Utterance {
+        segments: vec![
+            UtteranceSegment::text("a"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("B".to_owned())),
+            UtteranceSegment::text("c"),
+        ],
+        ..queued("unused")
+    });
+    manager.speak(queued("after"));
+    recorder.endings(2);
+    assert_eq!(
+        *spoken.lock().unwrap(),
+        vec![
+            ("a".to_owned(), 50),
+            ("B".to_owned(), 80),
+            ("c".to_owned(), 50),
+            ("after".to_owned(), 50),
+        ]
+    );
+}

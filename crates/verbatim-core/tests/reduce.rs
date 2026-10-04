@@ -1445,7 +1445,7 @@ fn report_object_announces_spells_then_copies() {
     assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Name"));
 
     // Second press: spell the name and value, as NVDA does, the space
-    // spoken as "space".
+    // spoken as "space" and the capitals marked for a raised pitch.
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 1),
@@ -1454,12 +1454,12 @@ fn report_object_announces_spells_then_copies() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("N"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("N".to_owned())),
             UtteranceSegment::text("a"),
             UtteranceSegment::text("m"),
             UtteranceSegment::text("e"),
             UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Space)),
-            UtteranceSegment::text("A"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("A".to_owned())),
             UtteranceSegment::text("n"),
             UtteranceSegment::text("n"),
         ]
@@ -3595,5 +3595,22 @@ fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
     assert!(
         never_focused.holds(&now),
         "a dialog announced on entering it"
+    );
+}
+
+/// Spelling marks each capital so the theme raises its pitch, as NVDA
+/// does; other characters stay plain text.
+#[test]
+fn spelling_marks_capitals_for_a_raised_pitch() {
+    let state = reviewing("Hi");
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(
+        spoken_segments(&effects),
+        vec![UtteranceSegment::new(SegmentContent::SpelledCapital(
+            "H".to_owned()
+        ))]
     );
 }

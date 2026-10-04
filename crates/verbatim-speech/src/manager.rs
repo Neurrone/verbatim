@@ -51,7 +51,7 @@ use verbatim_model::{
     FocusNow, FocusValidity, SpeechPriority, Utterance, UtteranceEnding, UtteranceId,
 };
 
-use crate::driver::{IndexMark, SpeechSequence, SynthDriver, SynthError, SynthSink};
+use crate::driver::{IndexMark, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink};
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
 use crate::settings::{SettingId, SettingValue, SynthChoice, SynthId};
@@ -744,10 +744,17 @@ fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
         // Cancelled before it started; the mixer has already ended it.
         return;
     }
-    let pieces = if driver.places_marks() || !sequence.has_marks() {
-        vec![(sequence.clone(), None)]
+    let split_marks = !driver.places_marks() && sequence.has_marks();
+    let pieces = if split_marks || sequence.has_pitch_changes() {
+        sequence.split(split_marks)
     } else {
-        sequence.split_at_marks()
+        vec![(sequence.clone(), None)]
+    };
+    // A pitch change is the driver's own pitch setting, changed between
+    // pieces from the value it had when the job began, and always put back.
+    let base_pitch = match driver.setting(&PITCH) {
+        Some(SettingValue::Number(pitch)) if sequence.has_pitch_changes() => Some(pitch),
+        _ => None,
     };
     let mut sink = PipelineSink {
         source,
@@ -764,9 +771,18 @@ fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
                 break;
             }
         }
-        if let Some(mark) = mark {
-            sink.index_reached(mark);
+        match mark {
+            Some(SpeechItem::Mark(mark)) => sink.index_reached(mark),
+            Some(SpeechItem::Pitch(offset)) => {
+                if let Some(base) = base_pitch {
+                    set_pitch(driver, base.saturating_add(offset));
+                }
+            }
+            _ => {}
         }
+    }
+    if let Some(base) = base_pitch {
+        set_pitch(driver, base);
     }
     match result {
         Ok(()) => {
@@ -778,6 +794,17 @@ fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
             warn!(target: "verbatim::speech", %utterance, %error, "synthesis failed");
             source.fail(utterance, error.to_string());
         }
+    }
+}
+
+/// The setting a [`SpeechItem::Pitch`] changes.
+static PITCH: std::sync::LazyLock<SettingId> = std::sync::LazyLock::new(|| SettingId::new("pitch"));
+
+/// Sets the driver's pitch, within the 0 to 100 every numeric setting
+/// uses.
+fn set_pitch(driver: &mut dyn SynthDriver, pitch: i32) {
+    if let Err(error) = driver.set_setting(&PITCH, SettingValue::Number(pitch.clamp(0, 100))) {
+        warn!(target: "verbatim::speech", %error, "changing pitch for a capital failed");
     }
 }
 

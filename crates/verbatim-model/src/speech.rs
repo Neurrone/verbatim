@@ -95,6 +95,10 @@ pub enum SegmentContent {
     /// property of any node (a navigation edge, for instance) without
     /// pre-flattening text.
     Message(Message),
+    /// An uppercase character spoken while spelling, or while reading a
+    /// single character: a theme speaks it at a raised pitch, as NVDA does
+    /// (`docs/nvda/speech.md`, "Capitals when spelling").
+    SpelledCapital(String),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.

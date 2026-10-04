@@ -39,38 +39,57 @@ pub trait Theme: Send {
 /// absences not worth announcing) contribute nothing; a position within a
 /// set becomes the localized "2 of 5" (and contributes nothing without a
 /// set size — a bare position has no useful spoken form); a level becomes
-/// the localized "level 3". The groups are joined with single spaces.
+/// the localized "level 3". The groups are joined with single spaces. A
+/// capital spelled out is spoken with the pitch raised by
+/// [`CAPITAL_PITCH_OFFSET`], as NVDA raises it by default.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlainTheme;
 
+/// How far the pitch setting is raised for a capital letter spelled out:
+/// NVDA's default `capPitchChange`, which is not yet configurable here.
+pub const CAPITAL_PITCH_OFFSET: i32 = 30;
+
 impl Theme for PlainTheme {
-    /// The sequence is one text item, or none when nothing is spoken; it
-    /// carries no index marks, since no current utterance embeds them. The
-    /// language tag is taken from the first segment that overrides it, if
-    /// any.
+    /// The sequence is text items, or none when nothing is spoken; a
+    /// spelled capital is a text item between two pitch changes, the
+    /// second back to the configured pitch. It carries no index marks,
+    /// since no current utterance embeds them. The language tag is taken
+    /// from the first segment that overrides it, if any.
     fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
-        let parts: Vec<String> = utterance
-            .segments
-            .iter()
-            .filter_map(|segment| spoken_form(&segment.content))
-            .collect();
+        let mut items = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
+        for segment in &utterance.segments {
+            if let SegmentContent::SpelledCapital(text) = &segment.content {
+                flush(&mut parts, &mut items);
+                items.push(SpeechItem::Pitch(CAPITAL_PITCH_OFFSET));
+                items.push(SpeechItem::Text(text.clone()));
+                items.push(SpeechItem::Pitch(0));
+            } else if let Some(part) = spoken_form(&segment.content) {
+                parts.push(part);
+            }
+        }
+        flush(&mut parts, &mut items);
 
         let language = utterance
             .segments
             .iter()
             .find_map(|segment| segment.language.clone());
 
-        let text = parts.join(" ");
         SpeechSequence {
             utterance: id,
             trace_id: utterance.trace_id,
             language,
-            items: if text.is_empty() {
-                Vec::new()
-            } else {
-                vec![SpeechItem::Text(text)]
-            },
+            items,
         }
+    }
+}
+
+/// Ends a run of spoken groups as one text item.
+fn flush(parts: &mut Vec<String>, items: &mut Vec<SpeechItem>) {
+    let text = parts.join(" ");
+    parts.clear();
+    if !text.is_empty() {
+        items.push(SpeechItem::Text(text));
     }
 }
 
@@ -115,6 +134,27 @@ mod tests {
             source: None,
             validity: None,
         }
+    }
+
+    #[test]
+    fn a_spelled_capital_is_raised_in_pitch_and_the_pitch_restored() {
+        let utterance = utterance_of(vec![
+            UtteranceSegment::text("a"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("B".to_owned())),
+            UtteranceSegment::text("c"),
+        ]);
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(
+            sequence.items,
+            vec![
+                SpeechItem::Text("a".to_owned()),
+                SpeechItem::Pitch(CAPITAL_PITCH_OFFSET),
+                SpeechItem::Text("B".to_owned()),
+                SpeechItem::Pitch(0),
+                SpeechItem::Text("c".to_owned()),
+            ]
+        );
+        assert_eq!(sequence.text(), "aBc");
     }
 
     #[test]
