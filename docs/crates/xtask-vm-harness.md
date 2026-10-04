@@ -35,7 +35,9 @@ module tree, not a library):
   next to the built `verbatim-synth-host.exe` into the guest's Verbatim
   folder, one artifact per file so each hash-skips on its own; the data
   files count as executables for stopping the guest, since a running
-  synthesizer host may hold them open. There is no `--audible` flag on
+  synthesizer host may hold them open. It also copies the vendored
+  `ffmpeg.exe` to `FFMPEG_GUEST_PATH`, after checking it is the real
+  binary and not a Git LFS pointer. There is no `--audible` flag on
   the VM path, since `test` is audible by default. `deploy::build`
   probes for `libclang.dll` before its `cargo build` the same way
   `xtask`'s own `ci` command does (reusing `find_libclang`), since building
@@ -54,14 +56,14 @@ module tree, not a library):
   restoring `golden` first when `--restore` is given), deploys,
   then runs `session_info`'s own test as a precondition — once, unrecorded,
   regardless of selection — before entering `run_one_scenario`'s per-scenario
-  loop: `--record` (when set) brackets exactly that scenario's own `cargo
-  test -p verbatim-e2e <name> -- --exact` subprocess with
-  `recording::start_recording_with_fallback`/`stop_recording`/
-  `pull_recording`, so the recording's boundary is exactly one scenario's
-  `Scenario::launch`, setup, body, and teardown — all of which run inside
-  that one subprocess — never spilling into a neighboring scenario's
-  recording; this is the module's own answer to "how does `xtask` control
-  scenario boundaries" (a dedicated multi-scenario runner mode inside
+  loop: each scenario runs as its own `cargo test -p verbatim-e2e <name> --
+  --exact` subprocess (`run_scenario_subprocess`), with
+  `VERBATIM_E2E_FFMPEG` set to `FFMPEG_GUEST_PATH`, so the scenario's
+  `Scenario::launch`, setup, body, teardown, and its recording (started
+  by `Scenario::launch` and finished by `verbatim_e2e::registry::run`;
+  see the [verbatim-e2e guide](verbatim-e2e.md)) all happen inside that
+  one subprocess; this is the module's own answer to "how does `xtask`
+  control scenario boundaries" (a dedicated multi-scenario runner mode inside
   `verbatim-e2e` was the other option considered — see the module's doc
   comment for why a fresh, exactly-filtered subprocess per scenario was
   chosen instead: it gets a process-lifetime boundary for free, no new IPC).
@@ -75,34 +77,6 @@ module tree, not a library):
   any kind exists at this level either: one scenario's failure is
   accumulated into the run's error list and the loop continues to the next
   scenario, never re-running the one that failed.
-- `recording` — `test`'s `--record` flag, now started and stopped around
-  one scenario at a time (see `test` above) rather than once for the whole
-  run: a small client speaking `verbatim_agent::protocol` directly (`Hello`,
-  `LaunchProcess`, `ProcessStatus`, `KillProcess`; not `Host`, and not
-  `verbatim-e2e`'s own fuller `AgentClient` — see the module's doc comment
-  for why) to pin VB-CABLE as the guest's default render device, launch
-  ffmpeg inside the guest's interactive session, confirm it is still running
-  a moment later, terminate it once that scenario's subprocess finishes, and
-  pull the fragmented-MP4 result back to `artifacts/vm-recordings` on the
-  host via `Host::read_guest_file` (the same PowerShell Direct mechanism
-  `logs` uses, since `Copy-VMFile` only copies host-to-guest).
-  `pull_recording` now takes the scenario's name and names the file after
-  it (`<scenario_name>-<unix-seconds>[-no-audio].mp4`), one recording per
-  scenario instead of one per run. In the guest, each scenario records to
-  its own `recording-<scenario_name>.mp4`, which is removed before the
-  capture starts and after it is pulled, so a capture that produced nothing
-  can never be pulled as an older file; if the removal before starting
-  fails, the scenario runs unrecorded. The client's connect, reads, and
-  writes are bounded by timeouts. Recording audio and a connected RDP
-  session are mutually exclusive (`docs/tooling.md` has the full constraint
-  and why); `test`'s own `start_recording_with_fallback` treats a failure to
-  pin the render device, or ffmpeg exiting immediately after an
-  audio-capturing launch, as the expected fallout of a connected session —
-  not fatal — and retries `recording::start_recording` with
-  `with_audio: false` instead, so the scenario still runs and a video-only
-  recording is still pulled. `recording::pull_recording`'s own
-  ffprobe-based check, not which launch path was taken, is what decides the
-  pulled file's `-no-audio` filename tag.
 - `dotenv` — a minimal hand-rolled `.env` reader (`KEY=VALUE` lines,
   comments, quoting) for `VERBATIM_VM_USERNAME`/`VERBATIM_VM_PASSWORD` from
   the repository-root `.env`, deliberately not a crate dependency for a
@@ -118,4 +92,6 @@ from `verbatim_agent::protocol::DEFAULT_PORT` rather than depending on that
 crate for one constant; `VERBATIM_DIR` (`C:\VerbatimLab\verbatim`) and
 `AGENT_DIR` (`C:\VerbatimLab\agent`) are the guest install paths `deploy`
 writes into and `logs` reads out of, matching
-`vm/scripts/Initialize-VerbatimHarness.ps1`'s own paths.
+`vm/scripts/Initialize-VerbatimHarness.ps1`'s own paths; and
+`FFMPEG_GUEST_PATH` (`C:\VerbatimLab\tools\ffmpeg.exe`) is where `deploy`
+puts ffmpeg and what `test` names in `VERBATIM_E2E_FFMPEG`.

@@ -232,9 +232,10 @@ screen reader in both rendered and source form.
   tones included, is rendered as PCM through that audio output and
   mixed there, never through a separate path. Ratified 2026-09-02.
   Amended 2026-10-04: the tee copies the mixer's output (D17), so every
-  stream Verbatim mixes is recorded together, to a temporary WAV file;
-  the recording step encodes it as the video's AAC audio track and
-  deletes it. The screen grab is ffmpeg's desktop capture, launched
+  stream Verbatim mixes is recorded together, to a WAV file beside the
+  screen grab on the agent's machine, silence-filled by the clock so it
+  runs in step with real time; the recording step encodes it as the
+  video's AAC audio track. The screen grab is ffmpeg's desktop capture, launched
   through the agent for every scenario on every path (runner-direct,
   hosted CI, and the Hyper-V harness alike), and VB-CABLE is retired.
 - **D17 — Every utterance has one truthful ending, measured at playback.**
@@ -828,8 +829,8 @@ unattended install, then the VM is imported and snapshotted as a golden
 image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
 (artifacts copied in over SSH and the agent restarted), `test` (deploy,
 then run the E2E suite through the agent, audible by default with real
-eSpeak NG speech and the real WASAPI device, with `--record` to also capture
-the run as an mp4), `logs`, `connect`, `delete`. A restore is only ever
+eSpeak NG speech and the real WASAPI device, every scenario recorded as an
+mp4 as in every other mode), `logs`, `connect`, `delete`. A restore is only ever
 explicit, through `restore` or an opt-in flag on `test`; nothing is
 installed into the guest by a run, so an ordinary run has nothing to undo.
 
@@ -841,7 +842,7 @@ audio: the desktop stops rendering in a disconnected session, so screen
 capture needs the session attached, or a headless run. The pre-2026-09-02
 design captured loopback audio from a VB-CABLE device, which made
 recording and listening mutually exclusive; its dead ends are recorded in
-`docs/tooling.md` for history.
+`docs/roadmap-done.md` for history.
 
 Interactive-session rule: Verbatim, the agent, and screen capture only
 work in a session with a visible window station. SSH, WinRM, PowerShell

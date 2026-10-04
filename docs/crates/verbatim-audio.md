@@ -1,8 +1,9 @@
 # verbatim-audio
 
-Audio output (architecture section 6, decisions D5 and D17): the mixer
-that everything audible goes through, the `AudioDevice` seam it writes
-to, and `SilentDevice`. The WASAPI device is
+Audio output (architecture section 6, decisions D5, D16 and D17): the
+mixer that everything audible goes through, the `AudioDevice` seam it
+writes to, `SilentDevice`, and `WavRecorder`, which records what the mixer
+plays. The WASAPI device is
 [verbatim-audio-wasapi](verbatim-audio-wasapi.md); this crate has no
 Windows dependency.
 
@@ -24,6 +25,8 @@ Public API:
   after the system's default device changed; defaults to `false`).
 - `Mixer` — `start(device)` spawns the `verbatim-audio` thread and opens
   the device on it, returning the open error if there is one;
+  `start_with_tap(device, tap)` does the same and also gives `tap` every
+  frame once it has played;
   `add_source(listener)` adds a `Source`; `format` reports the current
   device format; `underruns` counts the times the device ran dry in the
   middle of an utterance. Dropping the mixer stops the thread and ends
@@ -44,7 +47,15 @@ Public API:
 - `PlaybackListener` — the callback a source's events go to. It runs on
   the audio thread, so it must be quick and must not call back into the
   mixer.
+- `AudioTap` — receives the mixer's output as it plays: `played(samples,
+  format)` is called on the audio thread with the interleaved frames that
+  have just played, each call following the frames of the previous one,
+  so it must be quick.
 - `SilentDevice` — a device that plays at real-time speed into silence.
+- `WavRecorder` — an `AudioTap` that writes what played to a WAV file in
+  step with real time. `create(path)` creates the file and, beside it,
+  `<path>.start`, holding the recorder's creation time as Unix time in
+  milliseconds, and starts the recording's clock.
 
 Implementation notes, the audio thread: each pass reads how many frames
 the device still has queued, works out how many have played, reports
@@ -103,6 +114,26 @@ trimmed trailing silence is held back is not one. Measured live on
 2026-10-04 with OneCore and the 40 ms WASAPI buffer, two full audible
 suite runs had no underruns.
 
+The tap. The mixer keeps a copy of every frame it writes to the device
+and gives the tap the frames that have played since the last pass, so
+the tap hears exactly what the listener heard, in order. Frames written
+to the device and then discarded (a cancel, a fail, a device error or a
+reopen) are dropped from that copy and never reach the tap.
+
+`WavRecorder` (`wav.rs`) writes the tapped frames as 16-bit PCM in the
+format of the first audio it receives. Between utterances the mixer
+plays nothing, so the recorder fills the gaps with silence from the
+clock: a block that has just finished playing is placed so that it ends
+at the moment it was received, with 20 ms of slack so ordinary
+scheduling jitter does not insert clicks of silence. The file therefore
+runs in step with real time from the moment it was created, and the
+`.start` file lets another program's screen capture be lined up with it.
+The header is rewritten after every write, so the file stays valid when
+Verbatim is ended without warning, as the end-to-end harness ends it. If
+the device reopens in a different format, or a write fails, the recorder
+logs a warning and stops recording; playback is unaffected. `verbatim-app`
+creates one when `VERBATIM_RECORD_AUDIO` names a file.
+
 The converter (`convert.rs`): each source has a converter from its
 `PcmFormat` to the device format, rebuilt when either changes. Samples
 are scaled from 16-bit integers to float, and channels are mapped: mono
@@ -128,4 +159,7 @@ runners have none), by `verbatim-audio-wasapi` as its fallback, and by
 Tests: `tests/mixer.rs` drives the mixer against a scripted device and
 covers completion only after the last frame plays, marks, utterances
 without audio, cancellation sparing later utterances, failure, write
-backpressure, and replaying unplayed audio after a reopen.
+backpressure, replaying unplayed audio after a reopen, and the tap getting
+exactly what played and never what was cut off. A unit test in `wav.rs`
+checks that the recorder writes a valid WAV with silence where nothing
+played.

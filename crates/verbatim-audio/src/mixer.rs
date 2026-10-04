@@ -85,6 +85,14 @@ pub enum PlaybackEvent {
     },
 }
 
+/// Receives the mixer's output as it plays (see [`Mixer::start_with_tap`]).
+/// Called on the audio thread, so it must be quick.
+pub trait AudioTap: Send {
+    /// Interleaved frames in `format` that have just played, following the
+    /// frames of the previous call.
+    fn played(&mut self, samples: &[f32], format: DeviceFormat);
+}
+
 /// Receives a source's [`PlaybackEvent`]s. Called on the audio thread, so
 /// it must be quick and must not call back into the mixer.
 pub type PlaybackListener = Arc<dyn Fn(PlaybackEvent) + Send + Sync>;
@@ -206,7 +214,29 @@ impl Mixer {
     ///
     /// Returns the device's error when it cannot be opened, or
     /// [`AudioError::Device`] when the thread cannot start.
-    pub fn start(mut device: Box<dyn AudioDevice>) -> Result<Self, AudioError> {
+    pub fn start(device: Box<dyn AudioDevice>) -> Result<Self, AudioError> {
+        Self::start_inner(device, None)
+    }
+
+    /// Like [`Mixer::start`], with `tap` given every frame once it has
+    /// played (decision D16): a copy of exactly what was heard, in order,
+    /// for recording. Frames written to the device and then discarded (an
+    /// interrupt, a reopen) never reach it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Mixer::start`].
+    pub fn start_with_tap(
+        device: Box<dyn AudioDevice>,
+        tap: Box<dyn AudioTap>,
+    ) -> Result<Self, AudioError> {
+        Self::start_inner(device, Some(tap))
+    }
+
+    fn start_inner(
+        mut device: Box<dyn AudioDevice>,
+        tap: Option<Box<dyn AudioTap>>,
+    ) -> Result<Self, AudioError> {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 // Replaced by the opened device's format before anything
@@ -237,7 +267,7 @@ impl Mixer {
                     Ok(format) => {
                         shared.lock().format = format;
                         let _ = opened_tx.send(Ok(()));
-                        run(&shared, device.as_mut());
+                        run(&shared, device.as_mut(), tap);
                     }
                     Err(error) => {
                         let _ = opened_tx.send(Err(error));
@@ -669,9 +699,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// The audio thread.
-fn run(shared: &Shared, device: &mut dyn AudioDevice) {
+fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn AudioTap>>) {
     let mut written: u64 = 0;
     let mut played: u64 = 0;
+    // For the tap: mixed frames written to the device and not yet played,
+    // from mix position `tapped` on.
+    let mut tap_pending: VecDeque<f32> = VecDeque::new();
+    let mut tapped: u64 = 0;
     let mut running = false;
     let mut mix: Vec<f32> = Vec::new();
     // The device ran dry while an utterance was part-way through. It is an
@@ -702,11 +736,21 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice) {
                 drop(state);
                 recover(shared, device, played, &error);
                 written = played;
+                tap_pending.clear();
                 running = false;
                 continue;
             }
         };
         played = written - queued;
+        if let Some(tap) = tap.as_mut() {
+            feed_tap(
+                tap.as_mut(),
+                &mut tap_pending,
+                &mut tapped,
+                played,
+                state.format,
+            );
+        }
         if running && queued == 0 && state.sources.values().any(SourceState::mid_utterance) {
             ran_dry = true;
         }
@@ -719,6 +763,7 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice) {
                 running = false;
             }
             written = played;
+            tap_pending.clear();
             queued = 0;
             carry_out_requests(&mut state, played, &mut notes);
         }
@@ -727,22 +772,8 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice) {
             source.fire(played, &mut notes);
         }
 
-        // Mix as much as the device has room for and some source has.
-        let room = u64::from(state.format.buffer_frames).saturating_sub(queued);
-        let available = state
-            .sources
-            .values()
-            .map(SourceState::unmixed)
-            .max()
-            .unwrap_or(0);
-        let frames = room.min(available);
-        let start_frames = u64::from(state.format.sample_rate * START_MS / 1_000);
-        let still_writing = state.sources.values().any(|source| {
-            source.unmixed() > 0 && source.tracked.iter().any(|tracked| tracked.writing)
-        });
-        if !running && frames < start_frames && still_writing {
-            // Wait for more before starting; each write wakes this thread.
-        } else if frames > 0 {
+        let frames = frames_to_mix(&state, queued, running);
+        if frames > 0 {
             if ran_dry && state.sources.values().any(SourceState::mid_utterance) {
                 state.underruns += 1;
                 warn!(
@@ -761,8 +792,12 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice) {
                 deliver(notes);
                 recover(shared, device, played, &error);
                 written = played;
+                tap_pending.clear();
                 running = false;
                 continue;
+            }
+            if tap.is_some() {
+                tap_pending.extend(&mix);
             }
             written += frames;
             running = true;
@@ -774,6 +809,48 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice) {
         shared.changed.notify_all();
         deliver(notes);
         device.wait(if running { PLAYING_WAIT } else { IDLE_WAIT });
+    }
+}
+
+/// How many frames to mix now: as many as the device has room for and some
+/// source has, except that a stopped device waits for [`START_MS`] of audio
+/// unless what it has is complete (zero then means wait; each write wakes
+/// the audio thread).
+fn frames_to_mix(state: &State, queued: u64, running: bool) -> u64 {
+    let room = u64::from(state.format.buffer_frames).saturating_sub(queued);
+    let available = state
+        .sources
+        .values()
+        .map(SourceState::unmixed)
+        .max()
+        .unwrap_or(0);
+    let frames = room.min(available);
+    let start_frames = u64::from(state.format.sample_rate * START_MS / 1_000);
+    let still_writing = state
+        .sources
+        .values()
+        .any(|source| source.unmixed() > 0 && source.tracked.iter().any(|tracked| tracked.writing));
+    if !running && frames < start_frames && still_writing {
+        0
+    } else {
+        frames
+    }
+}
+
+/// Gives the tap the frames that have played since it was last fed.
+fn feed_tap(
+    tap: &mut dyn AudioTap,
+    pending: &mut VecDeque<f32>,
+    tapped: &mut u64,
+    played: u64,
+    format: DeviceFormat,
+) {
+    if played > *tapped {
+        let count =
+            usize::try_from(played - *tapped).unwrap_or(usize::MAX) * usize::from(format.channels);
+        let frames: Vec<f32> = pending.drain(..count.min(pending.len())).collect();
+        tap.played(&frames, format);
+        *tapped = played;
     }
 }
 

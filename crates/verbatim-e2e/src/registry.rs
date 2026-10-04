@@ -7,8 +7,8 @@
 //! `cargo test -p verbatim-e2e <name> -- --exact` selects exactly one
 //! scenario), `cargo xtask vm test --scenario <name>`'s selector, the
 //! per-scenario artifacts directory ([`crate::artifacts::scenario_dir`]),
-//! and the per-scenario recording filename `xtask` writes under
-//! `artifacts/vm-recordings`. Keeping every one of those in lockstep off a
+//! and the name of the scenario's video in that directory
+//! ([`crate::recording`]). Keeping every one of those in lockstep off a
 //! single `&'static str` is deliberate: a scenario renamed in one place is a
 //! compile error (or an unmistakable "unknown scenario" message) everywhere
 //! else, rather than a silently stale mapping maintained by hand.
@@ -368,6 +368,7 @@ fn run(def: &ScenarioDef) {
         Ok(state) => state,
         Err(error) => {
             scenario.collect_run_artifacts(&dir);
+            scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)));
             scenario.collect_flight_recorder(&dir);
             // Setup failed before any input was driven, so a latency
             // snapshot here would be empty; record none rather than racing
@@ -448,6 +449,7 @@ fn run(def: &ScenarioDef) {
     // passing run leaves its timings behind). The flight-recorder dump
     // already happened above, before the quit, for every run.
     scenario.collect_run_artifacts(&dir);
+    scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)));
     foreground.push(format!("after teardown: {}", scenario.foreground_report()));
     write_foreground(&dir, &foreground);
     write_summary(&dir, def.name, passed, latency.as_deref());

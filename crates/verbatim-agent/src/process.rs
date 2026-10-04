@@ -6,22 +6,42 @@
 //! a process a non-interactive window station that can never host a
 //! screen reader test.
 //!
-//! Lookups and termination operate on raw OS pids rather than any handle
-//! kept from [`launch`], so a caller can query or kill a process this
-//! agent did not itself spawn.
+//! Lookups and termination operate on raw OS pids, so a caller can query
+//! or kill a process this agent did not itself spawn. The agent also keeps
+//! the handle of every child it launched until [`status`] reports that
+//! child's exit: without a handle, an exited process's object, and with it
+//! the exit code, is gone the moment it exits.
+//!
+//! Each child [`launch`] starts runs in a job object of its own, created
+//! suspended and assigned before its first instruction, so everything it
+//! starts is in the job too, and [`kill`] ends all of it. A launcher that
+//! starts the real program as its own child, such as a Chocolatey shim, is
+//! otherwise killed while the program it started keeps running.
 
+use std::collections::BTreeMap;
 use std::io;
-use std::process::Command;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::process::CommandExt;
+use std::process::{Child, Command};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use tracing::warn;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, STILL_ACTIVE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+    TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_TERMINATE, TerminateProcess,
+    CREATE_SUSPENDED, GetExitCodeProcess, OpenProcess, OpenThread, PROCESS_ACCESS_RIGHTS,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
+    TerminateProcess,
 };
+use windows::core::PCWSTR;
 
 use crate::protocol::{KillOutcome, ProcessState};
 
@@ -63,14 +83,136 @@ pub fn launch(
         cmd.stderr(capture_file);
         cmd.stdout(stdout_handle);
     }
-    // The child keeps running independently of this handle; dropping it
-    // only releases our reference, it does not terminate the process.
-    let child = cmd.spawn()?;
-    Ok(child.id())
+    cmd.creation_flags(CREATE_SUSPENDED.0);
+    let job = create_job()?;
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    if let Err(error) = assign_to_job(&job, &child).and_then(|()| resume(pid)) {
+        let _ = child.kill();
+        return Err(error);
+    }
+    let mut launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+    // An entry is no longer needed some time after its child has exited
+    // and nothing it started is still running: kept, it would hold handles
+    // for the life of the agent. The time is for its exit code to be asked
+    // for.
+    let now = Instant::now();
+    launched.retain(|_, entry| {
+        let finished = !job_has_processes(&entry.job)
+            && entry
+                .child
+                .as_ref()
+                .is_none_or(|child| already_exited(HANDLE(child.as_raw_handle())));
+        if !finished {
+            return true;
+        }
+        let since = *entry.finished_at.get_or_insert(now);
+        now.duration_since(since) < FINISHED_KEPT
+    });
+    launched.insert(
+        pid,
+        Launched {
+            child: Some(child),
+            job,
+            finished_at: None,
+        },
+    );
+    Ok(pid)
+}
+
+/// A child [`launch`] started.
+struct Launched {
+    /// Its handle, until [`status`] has reported its exit.
+    child: Option<Child>,
+    /// The job holding it and everything it started.
+    job: OwnedHandle,
+    /// When a later launch first found the child exited and its job empty.
+    finished_at: Option<Instant>,
+}
+
+/// How long an entry is kept after its child has exited and its job has
+/// emptied, for its exit code to be asked for.
+const FINISHED_KEPT: Duration = Duration::from_mins(5);
+
+/// The children [`launch`] started, by pid.
+static LAUNCHED: Mutex<BTreeMap<u32, Launched>> = Mutex::new(BTreeMap::new());
+
+fn create_job() -> io::Result<OwnedHandle> {
+    // SAFETY: no name and default security; the handle is owned below.
+    let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }.map_err(io::Error::other)?;
+    // SAFETY: `job` is a fresh handle nothing else owns.
+    Ok(unsafe { OwnedHandle::from_raw_handle(job.0) })
+}
+
+fn assign_to_job(job: &OwnedHandle, child: &Child) -> io::Result<()> {
+    // SAFETY: both handles are open for the duration of the call.
+    unsafe { AssignProcessToJobObject(HANDLE(job.as_raw_handle()), HANDLE(child.as_raw_handle())) }
+        .map_err(io::Error::other)
+}
+
+/// Resumes the only thread of a process created suspended.
+fn resume(pid: u32) -> io::Result<()> {
+    // SAFETY: CreateToolhelp32Snapshot has no preconditions.
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }.map_err(io::Error::other)?;
+    let mut entry = THREADENTRY32 {
+        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).unwrap_or(u32::MAX),
+        ..THREADENTRY32::default()
+    };
+    // SAFETY: `snapshot` is open and `entry` has its size set.
+    let mut has_entry = unsafe { Thread32First(snapshot, &raw mut entry) }.is_ok();
+    let mut result = Err(io::Error::other(format!(
+        "the suspended process {pid} has no thread to resume"
+    )));
+    while has_entry {
+        if entry.th32OwnerProcessID == pid {
+            // SAFETY: OpenThread tolerates any thread id.
+            result = match unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) } {
+                Ok(thread) => {
+                    // SAFETY: `thread` was just opened with resume access.
+                    let resumed = unsafe { ResumeThread(thread) };
+                    close(thread);
+                    if resumed == u32::MAX {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                }
+                Err(error) => Err(io::Error::other(error)),
+            };
+            break;
+        }
+        // SAFETY: as for Thread32First.
+        has_entry = unsafe { Thread32Next(snapshot, &raw mut entry) }.is_ok();
+    }
+    close(snapshot);
+    result
+}
+
+/// Whether any process is still running in `job`.
+fn job_has_processes(job: &OwnedHandle) -> bool {
+    let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+    // SAFETY: `info` is the structure this information class fills, and its
+    // size is passed with it.
+    unsafe {
+        QueryInformationJobObject(
+            Some(HANDLE(job.as_raw_handle())),
+            JobObjectBasicAccountingInformation,
+            (&raw mut info).cast(),
+            u32::try_from(std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>())
+                .unwrap_or(u32::MAX),
+            None,
+        )
+    }
+    .is_ok_and(|()| info.ActiveProcesses > 0)
 }
 
 /// Reports whether `pid` is running, and its exit code when it is not and
 /// the code can be read.
+///
+/// A child [`launch`] started is answered from its kept handle, so its exit
+/// code is reported however long ago it exited; the first report of its
+/// exit releases the handle.
 ///
 /// A pid that cannot be opened at all — already exited and its process
 /// object gone, or one that never named a live process — is reported as
@@ -83,6 +225,20 @@ pub fn launch(
 /// Returns an error if the process can be opened but its exit code cannot
 /// be read.
 pub fn status(pid: u32) -> io::Result<ProcessState> {
+    {
+        let mut launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = launched.get_mut(&pid)
+            && let Some(child) = &entry.child
+        {
+            // The same reading as for any other process: `TerminateProcess`
+            // sets the exit code before the process is signalled.
+            let state = read_exit_code(HANDLE(child.as_raw_handle()))?;
+            if state != ProcessState::Running {
+                entry.child = None;
+            }
+            return Ok(state);
+        }
+    }
     let Some(handle) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
         return Ok(ProcessState::Exited { exit_code: None });
     };
@@ -91,7 +247,10 @@ pub fn status(pid: u32) -> io::Result<ProcessState> {
     result
 }
 
-/// Terminates `pid`. Two distinct "already gone" cases are both reported
+/// Terminates `pid`. For a child [`launch`] started, everything in its job
+/// ends with it, including what it started, whatever their names; it is
+/// reported [`KillOutcome::AlreadyExited`] when the child itself had already
+/// exited, even if something it started was still running. Two distinct "already gone" cases are both reported
 /// as [`KillOutcome::AlreadyExited`] rather than an error — the tolerance
 /// the M2 harness needs when a test's own cleanup races the target's
 /// normal exit: a pid that cannot be opened at all, and a pid that opens
@@ -106,6 +265,26 @@ pub fn status(pid: u32) -> io::Result<ProcessState> {
 /// `TerminateProcess` itself fails for a reason other than the exit race
 /// above.
 pub fn kill(pid: u32) -> io::Result<KillOutcome> {
+    {
+        let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        // Only while the child's handle is held: it keeps the pid from being
+        // reused, so the entry is certainly this process's.
+        if let Some(entry) = launched.get(&pid)
+            && let Some(child) = &entry.child
+            && job_has_processes(&entry.job)
+        {
+            // A child this agent launched: end it and everything it started.
+            let running = !already_exited(HANDLE(child.as_raw_handle()));
+            // SAFETY: the job handle stays open while the lock is held.
+            unsafe { TerminateJobObject(HANDLE(entry.job.as_raw_handle()), 1) }
+                .map_err(io::Error::other)?;
+            return Ok(if running {
+                KillOutcome::Terminated
+            } else {
+                KillOutcome::AlreadyExited
+            });
+        }
+    }
     let Some(handle) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION)
     else {
         return Ok(KillOutcome::AlreadyExited);
@@ -347,6 +526,86 @@ mod tests {
         );
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn reports_the_exit_code_of_a_launched_child_after_it_exited() {
+        let pid = launch(
+            "cmd",
+            &["/C".to_owned(), "exit 3".to_owned()],
+            None,
+            &[],
+            None,
+        )
+        .expect("spawns cmd");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let mut state = ProcessState::Running;
+        for _ in 0..100 {
+            state = status(pid).expect("queries status");
+            if state != ProcessState::Running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(state, ProcessState::Exited { exit_code: Some(3) });
+    }
+
+    #[test]
+    fn killing_a_launched_child_ends_what_it_started() {
+        let pid = launch(
+            "cmd",
+            &["/C".to_owned(), "ping -n 60 127.0.0.1 >nul".to_owned()],
+            None,
+            &[],
+            None,
+        )
+        .expect("spawns cmd");
+        let mut grandchild = None;
+        for _ in 0..100 {
+            grandchild = children_of(pid).into_iter().next();
+            if grandchild.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let grandchild = grandchild.expect("cmd starts ping");
+
+        assert_eq!(kill(pid).expect("kills"), KillOutcome::Terminated);
+        let mut state = ProcessState::Running;
+        for _ in 0..100 {
+            state = status(grandchild).expect("queries ping");
+            if state != ProcessState::Running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            matches!(state, ProcessState::Exited { .. }),
+            "ping, started by the killed cmd, still runs"
+        );
+    }
+
+    /// The processes whose parent is `pid`.
+    fn children_of(pid: u32) -> Vec<u32> {
+        // SAFETY: CreateToolhelp32Snapshot has no preconditions.
+        let snapshot =
+            unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.expect("snapshot");
+        let mut entry = PROCESSENTRY32W {
+            dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap(),
+            ..PROCESSENTRY32W::default()
+        };
+        let mut children = Vec::new();
+        // SAFETY: `snapshot` is open and `entry` has its size set.
+        let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+        while has_entry {
+            if entry.th32ParentProcessID == pid {
+                children.push(entry.th32ProcessID);
+            }
+            // SAFETY: as above.
+            has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+        }
+        close(snapshot);
+        children
     }
 
     #[test]

@@ -763,8 +763,8 @@ fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>, conn_id: C
 /// Accepts connections until `shutdown` is set, spawning a reader and
 /// writer thread pair for each.
 fn accept_loop(
-    pipe_name: &str,
-    security: &SecurityDescriptor,
+    mut first: Option<RawPipe>,
+    create: &dyn Fn() -> io::Result<RawPipe>,
     shutdown: &AtomicBool,
     registry: &Registry,
     connections: &Connections,
@@ -775,7 +775,8 @@ fn accept_loop(
         if shutdown.load(Ordering::Acquire) {
             break;
         }
-        let raw = match create_pipe_instance(pipe_name, security) {
+        let created = first.take().map_or_else(create, Ok);
+        let raw = match created {
             Ok(raw) => raw,
             Err(error) => {
                 warn!(%error, "failed to create a control-plane pipe instance; accept loop stopping");
@@ -833,7 +834,8 @@ impl ControlServer {
     /// # Errors
     ///
     /// Returns an error if the owner-only security descriptor cannot be
-    /// built or the accept thread cannot be spawned.
+    /// built, the pipe cannot be created, or the accept thread cannot be
+    /// spawned. Once this returns, the pipe exists and clients can connect.
     pub fn start(handlers: ServerHandlers) -> io::Result<Self> {
         Self::start_on(PIPE_NAME, handlers)
     }
@@ -844,7 +846,8 @@ impl ControlServer {
     /// # Errors
     ///
     /// Returns an error if the owner-only security descriptor cannot be
-    /// built or the accept thread cannot be spawned.
+    /// built, the pipe cannot be created, or the accept thread cannot be
+    /// spawned. Once this returns, the pipe exists and clients can connect.
     pub fn start_on(pipe_name: &str, handlers: ServerHandlers) -> io::Result<Self> {
         let security = build_owner_only_security_descriptor()?;
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -853,6 +856,10 @@ impl ControlServer {
         let handlers = Arc::new(handlers);
         let next_conn_id = Arc::new(AtomicU64::new(0));
         let pipe_name_owned = pipe_name.to_owned();
+        // The first instance is created here rather than on the accept
+        // thread, so the pipe exists once this returns: a client that
+        // connects straight after starting the server finds it.
+        let first = create_pipe_instance(pipe_name, &security)?;
 
         let accept_thread = {
             let shutdown = Arc::clone(&shutdown);
@@ -863,8 +870,8 @@ impl ControlServer {
                 .name("verbatim-control-accept".to_owned())
                 .spawn(move || {
                     accept_loop(
-                        &pipe_name,
-                        &security,
+                        Some(first),
+                        &|| create_pipe_instance(&pipe_name, &security),
                         &shutdown,
                         &registry,
                         &connections,

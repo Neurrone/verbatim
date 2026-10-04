@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use verbatim_audio::{
-    AudioDevice, AudioError, DeviceFormat, Mixer, PcmFormat, PlaybackEvent, Source, Waker,
+    AudioDevice, AudioError, AudioTap, DeviceFormat, Mixer, PcmFormat, PlaybackEvent, Source, Waker,
 };
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
@@ -355,4 +355,49 @@ fn a_reopened_device_is_given_again_what_had_not_played() {
     harness.play(6);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
     assert_eq!(harness.device.written()[10..], [1_000.0 / 32_768.0; 6]);
+}
+
+/// Collects what the tap is given.
+struct Collected(Arc<Mutex<Vec<f32>>>);
+
+impl AudioTap for Collected {
+    fn played(&mut self, samples: &[f32], _format: DeviceFormat) {
+        self.0.lock().unwrap().extend_from_slice(samples);
+    }
+}
+
+#[test]
+fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
+    let device = ManualDevice::default();
+    let tapped = Arc::new(Mutex::new(Vec::new()));
+    let mixer = Mixer::start_with_tap(
+        Box::new(device.clone()),
+        Box::new(Collected(Arc::clone(&tapped))),
+    )
+    .expect("the manual device opens");
+    let (sender, events) = mpsc::channel();
+    let sender = Mutex::new(sender);
+    let source = mixer.add_source(Arc::new(move |event| {
+        let _ = sender.lock().unwrap().send(event);
+    }));
+    let harness = Harness {
+        device,
+        source,
+        events,
+        _mixer: mixer,
+    };
+    let trace = harness.speak(1, 20);
+    harness.play(5);
+    assert_eq!(harness.next(), started(1, trace));
+    harness.source.cancel_all();
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
+
+    // Ten frames had been written to the device; only the five played are
+    // recorded.
+    let deadline = std::time::Instant::now() + WAIT;
+    while tapped.lock().unwrap().len() < 5 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(tapped.lock().unwrap().len(), 5);
 }

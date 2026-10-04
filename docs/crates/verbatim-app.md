@@ -128,7 +128,11 @@ knowing for review:
   from `verbatim-synth-capture` alongside the real synthesizers and
   builds the mixer over `SilentDevice` instead, logging a warning, so E2E and CI runs work
   with no sound card while every utterance still takes its real
-  duration), the settings host with a persist callback writing through the
+  duration; `VERBATIM_RECORD_AUDIO=<path>` at startup starts the mixer
+  with a `verbatim_audio::WavRecorder` tap writing everything Verbatim
+  plays to that WAV file, for the end-to-end harness's videos, decision
+  D16, and a file that cannot be created is logged as a warning and
+  ignored), the settings host with a persist callback writing through the
   config store, the supervisor with its focus listener (decision D13;
   targeting the current foreground once at startup by poll, since the
   listener thereafter reports foreground changes as facts — Core no longer

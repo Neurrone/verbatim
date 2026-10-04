@@ -24,7 +24,7 @@ use verbatim_config::{ConfigStore, Settings};
 
 use super::dotenv::GuestCredentials;
 use super::host::{self, Host};
-use super::{AGENT_DIR, TOOLS_DIR, VERBATIM_DIR, VM_NAME, VmResult};
+use super::{AGENT_DIR, FFMPEG_GUEST_PATH, VERBATIM_DIR, VM_NAME, VmResult};
 
 /// One artifact `deploy` may need to copy into the guest.
 struct Artifact {
@@ -80,23 +80,18 @@ pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
     })
 }
 
-/// Stages a `settings.toml` selecting the real `OneCore` synthesizer,
-/// hashes it, `built`'s four binaries, and the vendored `ffmpeg.exe` and
-/// `ffprobe.exe` against the guest's copies, and copies only the ones that
-/// differ. Stops the guest's `VerbatimAgent`
+/// Stages a `settings.toml` selecting eSpeak NG, hashes it, `built`'s four
+/// binaries, and the vendored `ffmpeg.exe` against the guest's copies, and
+/// copies only the ones that differ. Stops the guest's `VerbatimAgent`
 /// scheduled task and any running Verbatim first, but only when at least
 /// one executable actually needs copying (a live process can hold an
 /// executable open for `Copy-VMFile`, but never `settings.toml`); restarts
 /// the task afterward if it was stopped, or if `verbatim-agent.exe` itself
 /// was among the copied artifacts.
 ///
-/// Always `OneCore`, unconditionally — see [`write_synth_settings`]. The VM
-/// path deploys the real synthesizer only now: `cargo xtask vm test` is
-/// audible by default (no more `--audible` flag choosing between two
-/// staged configurations), so there is nothing left for this function to
-/// branch on. The capture synth remains available, independently, only for
-/// runner-direct mode (`verbatim_e2e::scenario::Scenario::launch`) and unit
-/// tests.
+/// Always eSpeak NG, unconditionally — see [`write_synth_settings`]: `cargo
+/// xtask vm test` is always audible, so there is nothing for this function
+/// to branch on.
 ///
 /// # Errors
 ///
@@ -149,25 +144,18 @@ pub(crate) fn stage_and_copy(
             is_executable: true,
             after_copy: None,
         },
-        // The LFS-vendored ffmpeg/ffprobe (vm/vendor/ffmpeg) that
-        // `--record` launches and probes with, staged the same fast
-        // PowerShell Direct way as everything else rather than baked into the
-        // golden image (see vm/vendor/ffmpeg/README.md). They hash-skip after
-        // the first deploy, so the ~200 MB copy is paid once, into golden.
-        // Not marked executable: neither is ever held open at deploy time
-        // (ffmpeg runs only during an active `--record` capture, which never
-        // overlaps a deploy), so a lone version bump need not stop the guest.
+        // The LFS-vendored ffmpeg (vm/vendor/ffmpeg) that each scenario's
+        // recording runs in the guest (`verbatim_e2e::recording`), staged the
+        // same fast PowerShell Direct way as everything else rather than
+        // baked into the golden image (see vm/vendor/ffmpeg/README.md). It
+        // hash-skips after the first deploy, so the copy is paid once, into
+        // golden. Not marked executable: it is never held open at deploy time
+        // (ffmpeg runs only inside a scenario, which never overlaps a
+        // deploy), so a lone version bump need not stop the guest.
         Artifact {
             label: "ffmpeg.exe".to_owned(),
             local_path: ffmpeg_dir.join("ffmpeg.exe"),
-            remote_path: format!(r"{TOOLS_DIR}\ffmpeg.exe"),
-            is_executable: false,
-            after_copy: None,
-        },
-        Artifact {
-            label: "ffprobe.exe".to_owned(),
-            local_path: ffmpeg_dir.join("ffprobe.exe"),
-            remote_path: format!(r"{TOOLS_DIR}\ffprobe.exe"),
+            remote_path: FFMPEG_GUEST_PATH.to_owned(),
             is_executable: false,
             after_copy: None,
         },
@@ -473,31 +461,29 @@ fn build_binaries(repo_root: &Path) -> VmResult<()> {
     Ok(())
 }
 
-/// Confirms the vendored `ffmpeg.exe` and `ffprobe.exe` are the real
-/// binaries and not Git LFS pointer stubs (which are only a couple of
-/// hundred bytes). A clone made without `git lfs` leaves those stubs in
-/// place; copying one into the guest would let `--record` fail later with a
-/// cryptic in-guest ffmpeg launch error instead of the clear, actionable
-/// message here. The real static builds are ~100 MB each, so a 1 MB floor
-/// distinguishes them from a pointer with no risk of a false alarm.
+/// Confirms the vendored `ffmpeg.exe` is the real binary and not a Git LFS
+/// pointer stub (which is only a couple of hundred bytes). A clone made
+/// without `git lfs` leaves that stub in place; copying it into the guest
+/// would make every scenario's recording fail later with a cryptic in-guest
+/// ffmpeg launch warning instead of the clear, actionable message here. The
+/// real static build is about 100 MB, so a 1 MB floor distinguishes it from
+/// a pointer with no risk of a false alarm.
 fn ensure_vendored_ffmpeg(ffmpeg_dir: &Path) -> VmResult<()> {
     const LFS_POINTER_CEILING: u64 = 1_000_000;
-    for name in ["ffmpeg.exe", "ffprobe.exe"] {
-        let path = ffmpeg_dir.join(name);
-        let metadata = fs::metadata(&path).map_err(|error| {
-            format!(
-                "vendored {name} missing at {}: {error} (run `git lfs pull`)",
-                path.display()
-            )
-        })?;
-        if metadata.len() < LFS_POINTER_CEILING {
-            return Err(format!(
-                "vendored {name} at {} is only {} bytes — this looks like a Git LFS \
-                 pointer, not the real binary; run `git lfs pull` to fetch it",
-                path.display(),
-                metadata.len()
-            ));
-        }
+    let path = ffmpeg_dir.join("ffmpeg.exe");
+    let metadata = fs::metadata(&path).map_err(|error| {
+        format!(
+            "vendored ffmpeg.exe missing at {}: {error} (run `git lfs pull`)",
+            path.display()
+        )
+    })?;
+    if metadata.len() < LFS_POINTER_CEILING {
+        return Err(format!(
+            "vendored ffmpeg.exe at {} is only {} bytes — this looks like a Git LFS \
+             pointer, not the real binary; run `git lfs pull` to fetch it",
+            path.display(),
+            metadata.len()
+        ));
     }
     Ok(())
 }
@@ -513,7 +499,7 @@ fn require_artifact(target_dir: &Path, file_name: &str) -> VmResult<PathBuf> {
     Ok(path)
 }
 
-/// Writes a `settings.toml` selecting the real `OneCore` synthesizer into a
+/// Writes a `settings.toml` selecting eSpeak NG into a
 /// staging directory on the host, mirroring `verbatim_e2e::scenario`'s
 /// runner-direct staging step — just staged here rather than written
 /// straight into a guest path, because in VM mode that directory only
@@ -528,10 +514,8 @@ fn require_artifact(target_dir: &Path, file_name: &str) -> VmResult<PathBuf> {
 /// doc comment for why this same guarantee also lives in `verbatim-e2e`'s
 /// `Scenario::launch`, independently, in lockstep.
 ///
-/// Always `"onecore"`: unlike runner-direct mode, which defaults to the
-/// audio-free capture synth and opts into `OneCore` only by hand, the VM
-/// path deploys the real synthesizer unconditionally now — see
-/// [`stage_and_copy`]'s own doc comment.
+/// Always `"espeak"`: the VM path deploys a real synthesizer
+/// unconditionally — see [`stage_and_copy`]'s own doc comment.
 fn write_synth_settings(repo_root: &Path) -> VmResult<PathBuf> {
     let staging_dir = repo_root.join("target").join("xtask-vm-staging");
     fs::create_dir_all(&staging_dir)

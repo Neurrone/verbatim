@@ -23,17 +23,11 @@
 //!   for controlling scenario boundaries from here (`docs/roadmap.md`'s M3
 //!   Track B item asks for one or the other): reusing the existing
 //!   `#[test]`-per-scenario libtest binaries this way needs no new runner
-//!   mode inside `verbatim-e2e` itself, and it is what makes `--record`'s
-//!   per-scenario recording trivial — start ffmpeg, spawn the subprocess,
-//!   stop ffmpeg, exactly bracketing that scenario's `Scenario::launch`,
-//!   setup, body, and teardown (all of which happen inside that one
-//!   subprocess), never spilling into a neighboring scenario's recording.
-//!   The alternative (a dedicated runner mode inside `verbatim-e2e` driving
-//!   several scenarios in one process) would still need `xtask` to signal
-//!   scenario boundaries across a process it does not own line-by-line;
-//!   spawning a fresh, exactly-filtered subprocess per scenario gives that
-//!   boundary for free, from process start to process exit, with no new
-//!   IPC.
+//!   mode inside `verbatim-e2e` itself, and it gives each scenario a
+//!   boundary from process start to process exit, with no new IPC. The
+//!   scenario's recording lives inside that boundary too: its
+//!   `Scenario::launch` starts the capture and `verbatim_e2e::registry::run`
+//!   finishes it, so one scenario's video never spills into the next.
 //! - After every selected scenario's subprocess exits, this reads back the
 //!   [`verbatim_e2e::artifacts::ScenarioSummary`] that scenario's own run
 //!   wrote to its artifacts directory (`verbatim_e2e::artifacts`) — rather
@@ -78,62 +72,29 @@
 //! most of a run's wall-clock cost. An acceptance run, which must start
 //! from a known-clean guest, asks for one with `--restore`.
 //!
-//! `test` is audible by default now, unconditionally: [`deploy::stage_and_copy`]
-//! always stages a `settings.toml` selecting the real `OneCore` synthesizer
-//! (there is no more capture-synth choice on the VM path — see that
-//! function's own doc comment), and `VERBATIM_E2E_AUDIBLE=1` is always set
-//! on the suite process, so `verbatim_e2e::scenario::Scenario::launch`
-//! (reading that variable itself, per-launch, through the agent) omits
-//! `VERBATIM_TEST_AUDIO=null` for the guest-side Verbatim it launches. There
-//! is no more `--audible` flag: a silent, unrecorded headless VM run
-//! produces nothing observable and has no purpose, so the old
-//! capture-synth-by-default behavior is gone. Whether a human actually
-//! *hears* anything depends only on whether a session is listening: over a
-//! connected `cargo xtask vm connect` session, Verbatim's real speech plays
-//! to that session's own audio; headless, it plays to VB-CABLE with nobody
-//! capturing it unless `--record` is also given.
+//! `test` is always audible: [`deploy::stage_and_copy`] stages a
+//! `settings.toml` selecting eSpeak NG, and `VERBATIM_E2E_AUDIBLE=1` is set
+//! on the suite process, so `verbatim_e2e::scenario::Scenario::launch` omits
+//! `VERBATIM_TEST_AUDIO=null` for the Verbatim it launches in the guest, and
+//! Verbatim speaks through real WASAPI. Over a connected
+//! `cargo xtask vm connect` session that speech plays to the session's own
+//! audio, so a human hears the run live.
 //!
-//! `--record` (`record` here) captures the run as a video with audio: before
-//! the suite, [`recording::pin_default_render_device`] re-asserts VB-CABLE
-//! as the guest's default render device (undoing any stale pin a prior,
-//! now-disconnected `cargo xtask vm connect` session left behind), then
-//! [`recording::start_recording`] launches ffmpeg inside the guest's
-//! interactive session through the agent (see that module's own doc comment
-//! for why it must go through the agent and not PowerShell Direct); after
-//! the suite, [`recording::stop_recording`] terminates it and
-//! [`recording::pull_recording`] copies the result to
-//! `artifacts/vm-recordings` on the host.
+//! Every scenario is also recorded, by the suite itself rather than by this
+//! module (see `verbatim_e2e::recording`): ffmpeg captures the guest's
+//! desktop through the agent, Verbatim writes everything it plays to a WAV
+//! file, and at the end of the scenario the two are muxed in the guest and
+//! copied to `target/e2e-artifacts/<scenario>/<scenario>.mp4` on the host.
+//! This module only names the guest's copy of ffmpeg in
+//! `VERBATIM_E2E_FFMPEG` ([`FFMPEG_GUEST_PATH`]). Because the audio comes
+//! from Verbatim's own mixer and not from a capture device, recording does
+//! not depend on the guest's audio endpoints, so watching live and recording
+//! work together. Setting `VERBATIM_E2E_RECORD=0` turns recording off.
 //!
 //! Every speech assertion waits for the matched utterance to be heard in
 //! full before the next input is injected (decision D17), so a human
 //! watching over `cargo xtask vm connect`, or a recording, hears each
 //! utterance whole.
-//!
-//! **Recording audio and a connected RDP session are mutually exclusive.**
-//! The moment an RDP session (`cargo xtask vm connect`, plain `mstsc.exe`,
-//! or `vmconnect.exe`'s Enhanced Session) is connected to the guest, Windows
-//! replaces that session's audio with a "Remote Audio" endpoint and the
-//! VB-CABLE capture device becomes invisible within it — proven live with
-//! both ffmpeg and, independently, `SoX` failing identically to open it. This
-//! is ordinary Windows/RDP session-audio behavior, not a bug this harness
-//! can work around from inside the guest: two dead ends were tried and
-//! abandoned — configuring "Listen to this device" on the capture endpoint
-//! via the registry (the property-store keys are protected even from
-//! SYSTEM, and re-enumeration wipes them anyway) and a `SoX`-based forwarder
-//! from the cable to Remote Audio (`SoX` cannot open the cable in the RDP
-//! session for the exact same reason ffmpeg cannot). So this module does not
-//! try: [`recording::pin_default_render_device`] failing, or ffmpeg exiting
-//! immediately after launch with audio, is treated as expected fallout of a
-//! connected RDP session, not aborted on — see [`test`]'s own code below.
-//! The practical rule: to *hear* a run live, connect first and run without
-//! `--record`; to *record* a run, make sure nothing is connected first.
-//!
-//! Recording setup and teardown are attempted even when the suite itself
-//! fails, so a failing run's video is still pulled for diagnosis — see this
-//! module's own error accumulation below. A failure specifically opening
-//! the audio input degrades to a video-only recording (tagged `-no-audio`)
-//! with a warning printed, rather than aborting the whole run: the suite
-//! still runs and its video is still pulled either way.
 
 use std::io;
 use std::path::Path;
@@ -143,8 +104,9 @@ use verbatim_e2e::artifacts::{self, ScenarioSummary};
 use verbatim_e2e::registry;
 
 use super::host::{Host, renew_guest_dhcp, wait_for_agent};
-use super::recording;
-use super::{AGENT_PORT, CHECKPOINT_NAME, VERBATIM_DIR, VM_NAME, VmResult, deploy, dotenv};
+use super::{
+    AGENT_PORT, CHECKPOINT_NAME, FFMPEG_GUEST_PATH, VERBATIM_DIR, VM_NAME, VmResult, deploy, dotenv,
+};
 
 /// `session_info`'s own test function name
 /// (`crates/verbatim-e2e/tests/session_info.rs`) — not a registered
@@ -182,19 +144,13 @@ fn prepare_guest(
 }
 
 /// The flags `cargo xtask vm test` accepts, all defaulting to off or empty:
-/// `--restore` restores the golden checkpoint first, `--record` captures a
-/// video per scenario, `--list` prints the scenario registry and exits, and
-/// `--scenario`/`--group` (each repeatable) select which scenarios run. See
-/// this module's own doc comment for the details, and `parse_test_flags` in
-/// `super` for the parsing.
+/// `--restore` restores the golden checkpoint first, `--list` prints the
+/// scenario registry and exits, and `--scenario`/`--group` (each repeatable)
+/// select which scenarios run. See this module's own doc comment for the
+/// details, and `parse_test_flags` in `super` for the parsing.
 #[derive(Clone, Default)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "each bool is an independent, orthogonal command-line flag parsed straight off argv; a state machine or enum would not make any combination of them clearer"
-)]
 pub(crate) struct TestFlags {
     pub restore: bool,
-    pub record: bool,
     pub list: bool,
     pub scenarios: Vec<String>,
     pub groups: Vec<String>,
@@ -204,16 +160,12 @@ pub(crate) struct TestFlags {
 ///
 /// Returns an error if `--scenario`/`--group` name something unregistered,
 /// readying the guest (including the checkpoint restore when `--restore` is
-/// given), the deploy, IP discovery, the `session_info` precondition, or any selected scenario itself fails. A
-/// recording failure never aborts the run — see this module's own doc
-/// comment — so `record` contributes no new error case of its own;
-/// recording problems are printed as warnings and, if a video was at least
-/// pulled, folded into the accumulated error message alongside any scenario
-/// failures, never in place of running the scenarios.
+/// given), the deploy, IP discovery, the `session_info` precondition, or any
+/// selected scenario itself fails. A recording that cannot start or finish
+/// is only a warning, printed by the scenario's own subprocess.
 pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmResult<()> {
     let TestFlags {
         restore,
-        record,
         list,
         scenarios,
         groups,
@@ -244,18 +196,10 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     prepare_guest(host, restore, &credentials)?;
 
     println!(
-        "xtask vm test: audible by default — deploying and running with the real OneCore \
-         synthesizer; connect first with `cargo xtask vm connect` to hear a run live, or add \
-         --record to capture it (the two are mutually exclusive per run — see this module's \
-         own doc comment)"
+        "xtask vm test: speaking through eSpeak NG; connect with `cargo xtask vm connect` to hear \
+         a run live; each scenario's video, with Verbatim's audio, is saved to \
+         target/e2e-artifacts/<scenario>/<scenario>.mp4 (set VERBATIM_E2E_RECORD=0 to skip it)"
     );
-    if record {
-        println!(
-            "xtask vm test: --record set — capturing desktop video and VB-CABLE audio per \
-             scenario to artifacts/vm-recordings; this requires no RDP session to be connected \
-             right now"
-        );
-    }
 
     println!("xtask vm test: staging and copying the build onto the guest");
     deploy::stage_and_copy(host, repo_root, &credentials, built)?;
@@ -286,25 +230,12 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     // Every failure from here on is accumulated rather than returned
     // immediately: one scenario's failure must not skip the rest — with
     // several scenarios and occasional environment flakes, a run should
-    // always report the complete picture, with no retry of anything. This
-    // also holds recording failures, exactly as before the restructuring: a
-    // failing scenario's video is exactly what a human wants to look at, so
-    // stopping and pulling the recording is never skipped over an already
-    // failed scenario.
+    // always report the complete picture, with no retry of anything.
     let mut errors = Vec::new();
     let mut summaries: Vec<(String, Option<ScenarioSummary>)> = Vec::new();
 
     for def in &selected {
-        let summary = run_one_scenario(
-            host,
-            &credentials,
-            repo_root,
-            &endpoint,
-            &guest_exe,
-            record,
-            def.name,
-            &mut errors,
-        );
+        let summary = run_one_scenario(repo_root, &endpoint, &guest_exe, def.name, &mut errors);
         summaries.push((def.name.to_owned(), summary));
     }
 
@@ -317,24 +248,14 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     }
 }
 
-/// Runs one scenario's subprocess ([`run_scenario_subprocess`]), with a
-/// `--record` recording bracketing it when `record` is set, and reads back
-/// whatever [`ScenarioSummary`] its own run wrote. Every failure along the
-/// way (the subprocess itself, stopping the recording, pulling the
-/// recording) is pushed onto `errors` rather than returned, so one
-/// scenario's trouble never skips the ones after it — see [`test`]'s own
-/// doc comment.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one call site, threading the same run-wide context (host, credentials, endpoint, ...) through per scenario; a struct would only rename these same fields"
-)]
+/// Runs one scenario's subprocess ([`run_scenario_subprocess`]) and reads
+/// back whatever [`ScenarioSummary`] its own run wrote. Every failure along
+/// the way is pushed onto `errors` rather than returned, so one scenario's
+/// trouble never skips the ones after it — see [`test`]'s own doc comment.
 fn run_one_scenario(
-    host: &dyn Host,
-    credentials: &dotenv::GuestCredentials,
     repo_root: &Path,
     endpoint: &str,
     guest_exe: &str,
-    record: bool,
     scenario_name: &str,
     errors: &mut Vec<String>,
 ) -> Option<ScenarioSummary> {
@@ -355,12 +276,6 @@ fn run_one_scenario(
         return None;
     }
 
-    let recording_pid = if record {
-        start_recording_with_fallback(host, credentials, endpoint, scenario_name)
-    } else {
-        None
-    };
-
     let scenario_process = run_scenario_subprocess(repo_root, endpoint, guest_exe, scenario_name);
     let process_ok = match scenario_process {
         Ok(status) if status.success() => true,
@@ -375,24 +290,6 @@ fn run_one_scenario(
             false
         }
     };
-
-    if let Some(pid) = recording_pid {
-        println!("xtask vm test: stopping the recording for '{scenario_name}'");
-        if let Err(error) = recording::stop_recording(endpoint, pid) {
-            errors.push(format!(
-                "scenario '{scenario_name}': could not stop the recording cleanly: {error}"
-            ));
-        }
-        match recording::pull_recording(host, credentials, repo_root, scenario_name) {
-            Ok(path) => println!(
-                "xtask vm test: recording for '{scenario_name}' saved to {}",
-                path.display()
-            ),
-            Err(error) => errors.push(format!(
-                "scenario '{scenario_name}': could not pull the recording: {error}"
-            )),
-        }
-    }
 
     // Read back what the scenario's own subprocess wrote, rather than parsing
     // its stdout — see this module's own doc comment. The directory was
@@ -490,8 +387,8 @@ fn format_optional_u64(value: Option<u64>) -> String {
 /// Runs one scenario (or, for [`SESSION_INFO_TEST_NAME`], the `session_info`
 /// precondition) as its own `cargo test -p verbatim-e2e <test_name> --
 /// --exact --test-threads=1` subprocess against the guest, with the
-/// environment `verbatim_e2e::Scenario::launch` needs for a remote, audible
-/// run. See this module's own doc comment for why one subprocess per
+/// environment `verbatim_e2e::Scenario::launch` needs for a remote, audible,
+/// recorded run. See this module's own doc comment for why one subprocess per
 /// scenario is the scenario-boundary design this harness uses.
 ///
 /// # Errors
@@ -520,96 +417,9 @@ fn run_scenario_subprocess(
         .env("VERBATIM_E2E_VERBATIM_EXE", guest_exe)
         .env("VERBATIM_E2E_REMOTE", "1")
         .env("VERBATIM_E2E_AUDIBLE", "1")
+        .env("VERBATIM_E2E_FFMPEG", FFMPEG_GUEST_PATH)
         .current_dir(repo_root);
     command.status()
-}
-
-/// Starts the `--record` capture, tolerating exactly the failure mode this
-/// module's own doc comment documents: a connected RDP session hiding the
-/// VB-CABLE capture device. Tries pinning VB-CABLE as the default render
-/// device and launching ffmpeg with audio; if either step fails, warns and
-/// falls back to a video-only launch instead of propagating the error.
-/// Returns the guest-side ffmpeg pid on any successful launch (with or
-/// without audio), or `None` if even the video-only fallback could not be
-/// started — in which case the suite still runs, just unrecorded. Before
-/// any of that, removes `scenario_name`'s previous guest-side recording; if
-/// that fails, the scenario runs unrecorded rather than risk pulling an
-/// older file under its name.
-///
-/// [`recording::pull_recording`]'s own ffprobe-based check is what actually
-/// decides the `-no-audio` filename tag later; this function does not need
-/// to thread that decision through itself.
-fn start_recording_with_fallback(
-    host: &dyn Host,
-    credentials: &dotenv::GuestCredentials,
-    endpoint: &str,
-    scenario_name: &str,
-) -> Option<u32> {
-    if let Err(error) = recording::remove_guest_recording(host, credentials, scenario_name) {
-        println!(
-            "xtask vm test: WARNING — could not remove the guest's previous recording for \
-             '{scenario_name}' ({error}); continuing the scenario without a recording so an \
-             older file cannot be pulled under its name"
-        );
-        return None;
-    }
-
-    println!(
-        "xtask vm test: pinning the guest's default audio render device to VB-CABLE (a \
-         connected cargo xtask vm connect session can otherwise have switched it to Remote \
-         Audio since the last restore)"
-    );
-    let with_audio = match recording::pin_default_render_device(host, credentials) {
-        Ok(()) => true,
-        Err(error) => {
-            println!(
-                "xtask vm test: WARNING — could not pin VB-CABLE as the default render device \
-                 ({error}); this is expected if an RDP session is currently connected (RDP \
-                 hides the VB-CABLE capture device — see this module's own doc comment); \
-                 falling back to a video-only recording"
-            );
-            false
-        }
-    };
-
-    println!("xtask vm test: starting the ffmpeg recording in the guest's interactive session");
-    let attempt = recording::start_recording(endpoint, scenario_name, with_audio)
-        .and_then(|pid| recording::confirm_recording_alive(endpoint, pid).map(|()| pid));
-    match attempt {
-        Ok(pid) => {
-            println!("xtask vm test: recording started (guest pid {pid}, audio: {with_audio})");
-            return Some(pid);
-        }
-        Err(error) if with_audio => {
-            println!(
-                "xtask vm test: WARNING — ffmpeg failed to start with audio ({error}); this is \
-                 expected if an RDP session is currently connected; retrying video-only"
-            );
-        }
-        Err(error) => {
-            println!(
-                "xtask vm test: WARNING — ffmpeg failed to start even video-only ({error}); \
-                 continuing the suite without a recording"
-            );
-            return None;
-        }
-    }
-
-    let fallback = recording::start_recording(endpoint, scenario_name, false)
-        .and_then(|pid| recording::confirm_recording_alive(endpoint, pid).map(|()| pid));
-    match fallback {
-        Ok(pid) => {
-            println!("xtask vm test: video-only recording started (guest pid {pid})");
-            Some(pid)
-        }
-        Err(error) => {
-            println!(
-                "xtask vm test: WARNING — video-only ffmpeg launch also failed ({error}); \
-                 continuing the suite without a recording"
-            );
-            None
-        }
-    }
 }
 
 #[cfg(test)]

@@ -241,6 +241,13 @@ fn dispatch(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::ReadFileChunk { path, offset } => match files::read_chunk_base64(&path, offset) {
+            Ok(data_base64) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::FileContents { data_base64 },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
         | Request::WriteFile { .. }) => desktop_request(id, request),

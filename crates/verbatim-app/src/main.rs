@@ -23,7 +23,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use verbatim_audio::{AudioDevice, Mixer, SilentDevice};
+use verbatim_audio::{AudioDevice, Mixer, SilentDevice, WavRecorder};
 use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::{ConfigStore, ConfigValue};
 use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
@@ -272,6 +272,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Names a WAV file to record everything Verbatim plays into.
+const RECORD_AUDIO_ENV: &str = "VERBATIM_RECORD_AUDIO";
+
 /// The synthesizer host executable, next to this one.
 const SYNTH_HOST_EXE: &str = "verbatim-synth-host.exe";
 
@@ -379,8 +382,18 @@ fn build_speech_manager(
                 .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?,
         )
     };
-    let mixer = Mixer::start(device)
-        .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
+    // `VERBATIM_RECORD_AUDIO=<file.wav>` records everything Verbatim plays,
+    // as heard, for the end-to-end harness's videos (decision D16).
+    let recorder = std::env::var_os(RECORD_AUDIO_ENV).and_then(|path| {
+        WavRecorder::create(std::path::Path::new(&path))
+            .inspect_err(|error| tracing::warn!(%error, "cannot record audio"))
+            .ok()
+    });
+    let mixer = match recorder {
+        Some(recorder) => Mixer::start_with_tap(device, Box::new(recorder)),
+        None => Mixer::start(device),
+    }
+    .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
     Ok(Arc::new(SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth,

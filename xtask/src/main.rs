@@ -10,6 +10,9 @@
 //! it, and running `crates/verbatim-e2e`'s suite against it. See
 //! `xtask/src/vm/mod.rs` for the verb list.
 //!
+//! `demo` records one end-to-end scenario on this machine as a video for
+//! the repository's `videos` folder. See `xtask/src/demo.rs`.
+//!
 //! `park` moves this Remote Desktop session onto the machine's console, so a
 //! local end-to-end run keeps working with no RDP client connected. See
 //! `xtask/src/park.rs`.
@@ -19,6 +22,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::str;
 
+mod demo;
 mod park;
 mod vm;
 
@@ -50,6 +54,7 @@ fn main() -> ExitCode {
         Some("ci") => ci(),
         Some("vm") => vm::run(&args[1..]),
         Some("park") => park::run(),
+        Some("demo") => demo::run(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
@@ -57,6 +62,9 @@ fn main() -> ExitCode {
                 "  ci    platform-neutral dependency check, rustfmt, clippy, and unit tests, for the host's architecture"
             );
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
+            eprintln!(
+                "  demo  record one scenario on this machine as a video in videos/ (cargo xtask demo <scenario> [--name <name>])"
+            );
             eprintln!(
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
             );

@@ -32,6 +32,7 @@ use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 
 use crate::agent_client::AgentClient;
+use crate::recording::Recording;
 use crate::speech::SpeechCollector;
 use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
@@ -191,6 +192,9 @@ pub struct Scenario {
     /// [`process_agent`](Self::process_agent)'s `read_file` — what
     /// [`Scenario::collect_run_artifacts`] pulls on every run.
     stderr_log_path: String,
+    /// The video of this run, while it is being captured (see
+    /// [`crate::recording`]).
+    recording: Option<Recording>,
 }
 
 impl Scenario {
@@ -259,8 +263,8 @@ impl Scenario {
 
         // In a remote run the path above names a location in the guest, so
         // neither staging nor the config write can happen here; `cargo
-        // xtask vm deploy` staged both inside the guest already (always
-        // selecting OneCore, since every VM run is audible). In
+        // xtask vm deploy` staged both inside the guest already (selecting
+        // eSpeak NG, as here). In
         // runner-direct mode, stage a private copy so this suite never
         // reads or writes the developer's own build output directory.
         let (launch_exe, launch_dir) = if remote {
@@ -292,10 +296,10 @@ impl Scenario {
         // Audible mode omits VERBATIM_TEST_AUDIO=null entirely, so
         // verbatim-app plays through the real device rather than the silent
         // one; see AUDIBLE_ENV.
-        let launch_env: &[(String, String)] = if audible {
-            &[]
+        let mut launch_env: Vec<(String, String)> = if audible {
+            Vec::new()
         } else {
-            &[("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
+            vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
         };
 
         let mut process_agent = AgentClient::connect(&agent_addr)?;
@@ -315,39 +319,35 @@ impl Scenario {
         if let Err(error) = process_agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
             tracing::warn!(%error, "failed to close leftover harness documents");
         }
-        let verbatim_pid = process_agent.launch_process(
-            exe_str,
-            &[],
-            Some(exe_dir_str),
-            launch_env,
-            Some(&stderr_path),
-        )?;
-
-        let deadline = Instant::now() + LAUNCH_TIMEOUT;
-        let control = match wait_for_control_tunnel(&agent_addr, deadline) {
-            Ok(client) => client,
+        // The capture starts before Verbatim, so the video shows it start.
+        let mut recording = start_recording(&mut process_agent, exe_dir_str);
+        if let Some(recording) = &recording {
+            launch_env.push(recording.audio_env());
+        }
+        let started = process_agent
+            .launch_process(
+                exe_str,
+                &[],
+                Some(exe_dir_str),
+                &launch_env,
+                Some(&stderr_path),
+            )
+            .and_then(|pid| {
+                connect(&agent_addr)
+                    .map(|connected| (pid, connected))
+                    .inspect_err(|_| {
+                        let _ = process_agent.kill_process(pid);
+                    })
+            });
+        let (verbatim_pid, (control, speech, timeline)) = match started {
+            Ok(started) => started,
             Err(error) => {
-                let _ = process_agent.kill_process(verbatim_pid);
-                return Err(io::Error::other(format!(
-                    "Verbatim's control plane never came up: {error}"
-                )));
+                if let Some(recording) = &mut recording {
+                    recording.stop(&mut process_agent);
+                }
+                return Err(error);
             }
         };
-        let speech_tunnel = match wait_for_control_tunnel(&agent_addr, deadline) {
-            Ok(client) => client,
-            Err(error) => {
-                let _ = process_agent.kill_process(verbatim_pid);
-                return Err(io::Error::other(format!(
-                    "could not open a second control-plane tunnel for speech: {error}"
-                )));
-            }
-        };
-        let timeline = Timeline::new();
-        let speech =
-            SpeechCollector::subscribe(speech_tunnel, timeline.clone()).map_err(|error| {
-                let _ = process_agent.kill_process(verbatim_pid);
-                io::Error::other(format!("could not subscribe to speech: {error}"))
-            })?;
 
         // See GUI_SETTLE_DELAY's doc comment: the control plane answering
         // does not yet mean the GUI thread has installed its gesture
@@ -363,7 +363,21 @@ impl Scenario {
             timeline,
             launched: Vec::new(),
             stderr_log_path: stderr_path,
+            recording,
         })
+    }
+
+    /// Ends this run's video and saves it, with Verbatim's audio, to `to`.
+    /// Best-effort: a failure is printed as a warning, never failing the
+    /// scenario. Does nothing when this run is not recording.
+    pub fn finish_recording(&mut self, to: &Path) {
+        let Some(mut recording) = self.recording.take() else {
+            return;
+        };
+        match recording.finish(&mut self.process_agent, to) {
+            Ok(()) => println!("recording saved to {}", to.display()),
+            Err(error) => eprintln!("WARNING: could not save the recording: {error}"),
+        }
     }
 
     /// The primary control-plane connection: status, gestures, keys,
@@ -858,7 +872,40 @@ impl Drop for Scenario {
                 "failed to kill Verbatim during scenario cleanup"
             );
         }
+        if let Some(recording) = &mut self.recording {
+            recording.stop(&mut self.process_agent);
+        }
     }
+}
+
+/// Starts this run's video, when recording (see [`crate::recording`]).
+fn start_recording(agent: &mut AgentClient, dir: &str) -> Option<Recording> {
+    if !crate::recording::enabled() {
+        return None;
+    }
+    Recording::start(agent, dir)
+        .inspect_err(|error| {
+            eprintln!("not recording a video: ffmpeg could not be started: {error}");
+        })
+        .ok()
+}
+
+/// Connects to a just-launched Verbatim: the command connection, then a
+/// second one subscribed to its speech.
+fn connect(agent_addr: &str) -> io::Result<(ControlClient, SpeechCollector, Timeline)> {
+    let deadline = Instant::now() + LAUNCH_TIMEOUT;
+    let control = wait_for_control_tunnel(agent_addr, deadline).map_err(|error| {
+        io::Error::other(format!("Verbatim's control plane never came up: {error}"))
+    })?;
+    let speech_tunnel = wait_for_control_tunnel(agent_addr, deadline).map_err(|error| {
+        io::Error::other(format!(
+            "could not open a second control-plane tunnel for speech: {error}"
+        ))
+    })?;
+    let timeline = Timeline::new();
+    let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone())
+        .map_err(|error| io::Error::other(format!("could not subscribe to speech: {error}")))?;
+    Ok((control, speech, timeline))
 }
 
 /// Repeatedly connects a fresh [`AgentClient`] and attempts

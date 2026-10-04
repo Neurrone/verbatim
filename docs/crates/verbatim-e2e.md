@@ -17,7 +17,9 @@ Public API:
 - `AgentClient` — a typed host-side client for `verbatim_agent::protocol`:
   connects over TCP, completes the agent's `Hello` handshake, and exposes
   `launch_process`, `kill_process`, `process_status`, `session_info`,
-  `read_file`, and `open_control_tunnel` as plain methods.
+  `read_file`, `copy_file` (a file of any size on the agent's machine,
+  read in chunks with the agent's `ReadFileChunk` request and written to a
+  path on this machine), and `open_control_tunnel` as plain methods.
   `open_control_tunnel` is the seam into Verbatim's own control plane: it
   asks the agent to stop speaking its own protocol on the connection and
   relay Verbatim's control-plane pipe instead, then completes the control
@@ -41,7 +43,13 @@ Public API:
   `cargo xtask vm test` always sets) omits that variable, so Verbatim
   speaks through the real `WasapiDevice`. The two differ only in the
   device: the same synthesizer speaks the same audio, and every utterance
-  takes its real duration either way. `kill_processes_by_name` ends every
+  takes its real duration either way. Before launching Verbatim it starts
+  the scenario's recording (see `recording` below) when recording is
+  enabled, and passes the recording's `VERBATIM_RECORD_AUDIO` to
+  Verbatim's launch; ffmpeg failing to start is a warning, and the
+  scenario runs unrecorded. `finish_recording(to)` ends and saves that
+  recording (a warning, never a failure, when it cannot); the `Drop` impl
+  stops a capture still running. `kill_processes_by_name` ends every
   process with a given image name through the agent, which is how a
   scenario kills the synthesizer host. It then
   launches Verbatim through the agent, waits for its
@@ -105,7 +113,7 @@ Public API:
 - `registry` — the scenario registry itself. `ScenarioDef` is one named,
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
-  and its recording file name prefix — one identifier, everywhere),
+  and its video's file name, `<name>.mp4` — one identifier, everywhere),
   `group` (a `Group`: `Speech`, `Shell`, or `Navigation`, a
   coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
@@ -139,7 +147,8 @@ Public API:
   so nothing more is proved by also demanding a graceful quit), collects
   the run artifacts (timeline, stderr, and the reducer flight recorder — the
   last dumped before the quit while Verbatim is still up) for every run pass
-  or fail, always writes a `ScenarioSummary`, then re-raises whatever panic
+  or fail, finishes the recording into `<name>.mp4` in the scenario's
+  artifacts directory with `Scenario::finish_recording`, always writes a `ScenarioSummary`, then re-raises whatever panic
   occurred so `cargo test` still reports the original failure. None of this weakens `Scenario`'s own guard-struct
   discipline; `setup`/`body`/`teardown` are structure on top of it for
   scenario-specific state `Scenario` itself does not track, not a
@@ -160,7 +169,29 @@ Public API:
   parsing a subprocess's stdout. `archive_run` copies each finished run's
   directory into `history/<scenario>/<UTC time>-<pass or fail>` under the
   root and keeps the newest 100 runs of each scenario, since the scenario's
-  own directory holds only the latest run.
+  own directory holds only the latest run. It leaves out `.mp4` files, so
+  there is at most one video per scenario on disk.
+- `recording` — a video of each scenario with Verbatim's speech (decision
+  D16). `enabled()` is true unless `RECORD_ENV` (`VERBATIM_E2E_RECORD`) is
+  `0` or `false`; `FFMPEG_ENV` (`VERBATIM_E2E_FFMPEG`) names ffmpeg on the
+  agent's machine, `ffmpeg` on its `PATH` by default. `Recording::start`
+  launches ffmpeg through the agent, since only a process in the
+  interactive session can capture the desktop, recording it with
+  `gdigrab` into fragmented MP4 in Verbatim's launch directory on the
+  agent's machine, a fragment starting at each keyframe, one a
+  second, with zero-latency encoding, so the file stays playable however
+  ffmpeg is ended and loses at most the last second, after the scenario
+  has ended. `audio_env` is the
+  `VERBATIM_RECORD_AUDIO` variable naming the WAV file, in the same
+  directory, that Verbatim's own `WavRecorder` writes everything it plays
+  into, with its start time beside it (see the
+  [verbatim-audio guide](verbatim-audio.md)). `finish` ends the capture
+  with `TerminateProcess`, reads the wall-clock time of the first video
+  frame from ffmpeg's log and the audio's start time, muxes the two on the
+  agent's machine into one MP4 with AAC audio, the audio delayed or
+  trimmed to line up with the video (video alone when the audio's start
+  time is missing), and copies the result to this machine with
+  `AgentClient::copy_file`. `stop` only ends the capture.
 - `latency::fetch` — fetches the most recent `last_n` latency timelines with
   no printing and no assertion, the raw building block `report` (below) and
   `Scenario::latency_snapshot` both use.

@@ -221,7 +221,12 @@ pub fn archive_run(root: &Path, scenario_name: &str, dir: &Path, passed: bool) -
     fs::create_dir_all(&target)?;
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        if entry.file_type()?.is_file() {
+        // Videos are kept only for the latest run: at most one per scenario.
+        let video = entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "mp4");
+        if entry.file_type()?.is_file() && !video {
             fs::copy(entry.path(), target.join(entry.file_name()))?;
         }
     }

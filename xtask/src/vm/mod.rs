@@ -16,7 +16,6 @@ mod host;
 mod lifecycle;
 mod logs;
 mod packer_build;
-mod recording;
 mod test;
 
 use std::path::{Path, PathBuf};
@@ -47,11 +46,13 @@ pub(crate) const VERBATIM_DIR: &str = r"C:\VerbatimLab\verbatim";
 /// task and firewall rule.
 pub(crate) const AGENT_DIR: &str = r"C:\VerbatimLab\agent";
 
-/// The in-guest tools directory where `xtask vm deploy` stages the vendored
-/// `ffmpeg.exe` and `ffprobe.exe`, and where `--record` launches and probes
-/// them from (`recording.rs`'s `FFMPEG_GUEST_PATH`). Created by the base
+/// The guest's copy of ffmpeg, which `xtask vm deploy` stages from the
+/// vendored `vm/vendor/ffmpeg`. Its tools directory is created by the base
 /// image provisioner and, failing that, by `Copy-VMFile -CreateFullPath`.
-pub(crate) const TOOLS_DIR: &str = r"C:\VerbatimLab\tools";
+/// `xtask vm test` names it in `VERBATIM_E2E_FFMPEG`, so the suite's
+/// per-scenario recording (`verbatim_e2e::recording`) runs it through the
+/// agent rather than looking for ffmpeg on the guest's `PATH`.
+pub(crate) const FFMPEG_GUEST_PATH: &str = r"C:\VerbatimLab\tools\ffmpeg.exe";
 
 /// Entry point for `cargo xtask vm <verb> [args...]`; `args` excludes the
 /// leading `vm` token itself.
@@ -112,7 +113,7 @@ fn unknown_arg(verb: &str, arg: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Parses `test`'s flags — `--restore`, `--record`, `--list`,
+/// Parses `test`'s flags — `--restore`, `--list`,
 /// and the repeatable `--scenario <name>` and `--group <name>` — accepted in
 /// any order and independently. Returns a [`test::TestFlags`], or the first
 /// unrecognized argument (or a `--scenario`/`--group` missing its value) as
@@ -124,7 +125,6 @@ fn parse_test_flags(args: &[String]) -> Result<test::TestFlags, String> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--restore" => flags.restore = true,
-            "--record" => flags.record = true,
             "--list" => flags.list = true,
             "--scenario" => {
                 let value = iter
@@ -189,26 +189,17 @@ fn print_usage() {
     );
     eprintln!("                   them (plus settings.toml) into the guest");
     eprintln!("  test             deploy onto the running guest (starting it if needed), then run");
-    eprintln!("                   the E2E suite against it, audible by default (real OneCore");
-    eprintln!("                   synthesizer, real WASAPI): heard live over a connected");
-    eprintln!("                   `cargo xtask vm connect` session, or played to VB-CABLE unheard");
-    eprintln!("                   when headless; --restore first restores 'golden' for a clean");
-    eprintln!(
-        "                   guest, as an acceptance run needs; --record additionally captures"
-    );
-    eprintln!("                   desktop video and VB-CABLE audio to an mp4 under");
-    eprintln!("                   artifacts/vm-recordings — recording audio and a connected RDP");
-    eprintln!("                   session are mutually exclusive (RDP hides the VB-CABLE capture");
-    eprintln!("                   device), so --record against a connected guest degrades to");
-    eprintln!("                   video-only, tagged -no-audio, with a warning, rather than");
-    eprintln!("                   aborting; recording, when on, is per scenario, not per whole");
-    eprintln!("                   run); --scenario <name> and --group <name> (each repeatable)");
-    eprintln!(
-        "                   select which scenarios run; with neither given, every registered"
-    );
-    eprintln!("                   scenario runs; --list prints the");
-    eprintln!("                   scenario registry (name and group) and exits without touching");
-    eprintln!("                   the VM; all flags may be given, in any order");
+    eprintln!("                   the E2E suite against it, audible (eSpeak NG through real");
+    eprintln!("                   WASAPI), heard live over a connected `cargo xtask vm connect`");
+    eprintln!("                   session; every scenario is recorded, video with Verbatim's own");
+    eprintln!("                   audio, to target/e2e-artifacts/<scenario>/<scenario>.mp4");
+    eprintln!("                   (VERBATIM_E2E_RECORD=0 turns that off), whether or not a");
+    eprintln!("                   session is connected; --restore first restores 'golden' for a");
+    eprintln!("                   clean guest, as an acceptance run needs; --scenario <name> and");
+    eprintln!("                   --group <name> (each repeatable) select which scenarios run;");
+    eprintln!("                   with neither given, every registered scenario runs; --list");
+    eprintln!("                   prints the scenario registry (name and group) and exits");
+    eprintln!("                   without touching the VM; all flags may be given, in any order");
     eprintln!("  logs [dir]       pull flight-recorder dumps and the agent log out of the guest");
     eprintln!("                   (default dir: artifacts/vm-logs)");
     eprintln!(
@@ -243,9 +234,8 @@ mod tests {
 
     #[test]
     fn restore_flag_opts_in() {
-        let flags = parse_test_flags(&args(&["--record", "--restore"])).expect("flags parse");
+        let flags = parse_test_flags(&args(&["--restore"])).expect("flags parse");
         assert!(flags.restore);
-        assert!(flags.record);
     }
 
     #[test]

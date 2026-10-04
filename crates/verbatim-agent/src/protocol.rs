@@ -21,9 +21,10 @@ use serde::{Deserialize, Serialize};
 /// The protocol version this vocabulary defines. Version 2 added
 /// [`Request::ListFiles`]; version 3 added [`Request::ForegroundInfo`],
 /// [`Request::CloseWindows`], [`Request::WriteFile`], and
-/// `BringToForeground`'s title filter. A test run against an older agent is
+/// `BringToForeground`'s title filter; version 4 added
+/// [`Request::ReadFileChunk`]. A test run against an older agent is
 /// refused at `Hello` instead of losing its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 3;
+pub const AGENT_PROTOCOL_VERSION: u32 = 4;
 
 /// The default TCP port the agent listens on.
 ///
@@ -160,6 +161,16 @@ pub enum Request {
     ReadFile {
         /// Path to the file, agent-local.
         path: String,
+    },
+    /// Reads part of a file of any size, base64-encoded: at most
+    /// `MAX_READ_FILE_BYTES` (see the agent's `files` module) from `offset`,
+    /// answered by [`ReplyPayload::FileContents`], empty past the end. For
+    /// files too large for [`Request::ReadFile`], such as recordings.
+    ReadFileChunk {
+        /// Path to the file, agent-local.
+        path: String,
+        /// Where in the file to start reading.
+        offset: u64,
     },
     /// Lists the names of the files directly inside a directory, so a test
     /// can fetch logs whose names it cannot know in advance. Answered by

@@ -25,11 +25,9 @@ if (-not $SkipAutomationPrep) {
 }
 
 New-Item -ItemType Directory -Force -Path $LabRoot | Out-Null
-# Created here, not by Initialize-VerbatimHarness.ps1 or Install-Ffmpeg,
-# because the Packer template's "file" provisioners for
-# Set-DefaultAudioRenderDevice.ps1 and Set-RdpAudioMirror.ps1 run between
-# this script and Initialize-VerbatimHarness.ps1 and need the destination
-# directory to already exist.
+# The tools directory cargo xtask vm deploy copies the vendored ffmpeg into
+# (see vm/vendor/ffmpeg/README.md); Copy-VMFile -CreateFullPath would also
+# create it, but making it part of the image keeps the layout explicit.
 New-Item -ItemType Directory -Force -Path (Join-Path $LabRoot "tools") | Out-Null
 
 $os = $null

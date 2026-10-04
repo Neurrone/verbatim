@@ -29,6 +29,21 @@ pub fn read_base64(path: &str) -> io::Result<String> {
     Ok(STANDARD.encode(bytes))
 }
 
+/// Reads at most [`MAX_READ_FILE_BYTES`] of `path` from `offset`, base64
+/// encoded; empty at or past the end.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be opened or read.
+pub fn read_chunk_base64(path: &str, offset: u64) -> io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_READ_FILE_BYTES).read_to_end(&mut bytes)?;
+    Ok(STANDARD.encode(bytes))
+}
+
 /// Writes `data_base64`, decoded, to `path`, creating or replacing it.
 ///
 /// # Errors
@@ -80,6 +95,28 @@ mod tests {
         let encoded = read_base64(file.0.to_str().expect("utf8 path")).expect("reads");
         let decoded = STANDARD.decode(encoded).expect("valid base64");
         assert_eq!(decoded, b"hello, agent");
+
+        std::fs::remove_file(&file.0).ok();
+    }
+
+    #[test]
+    fn reads_a_file_over_the_size_limit_in_chunks() {
+        let file = tempfile();
+        let size = usize::try_from(MAX_READ_FILE_BYTES).unwrap() + 3;
+        std::fs::write(&file.0, vec![7u8; size]).expect("writes a large file");
+        let path = file.0.to_str().expect("utf8 path");
+
+        let chunk = |offset| {
+            STANDARD
+                .decode(read_chunk_base64(path, offset).expect("reads"))
+                .expect("base64")
+        };
+        assert_eq!(chunk(0).len(), size - 3);
+        assert_eq!(chunk(MAX_READ_FILE_BYTES), vec![7u8; 3]);
+        assert!(
+            chunk(MAX_READ_FILE_BYTES + 3).is_empty(),
+            "empty at the end"
+        );
 
         std::fs::remove_file(&file.0).ok();
     }
