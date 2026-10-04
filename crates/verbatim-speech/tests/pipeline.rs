@@ -860,3 +860,38 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         ]
     );
 }
+
+/// Waiting focus speech is judged when its turn comes, as NVDA judges it:
+/// valid speech queued ahead of expired speech is still spoken.
+#[test]
+fn waiting_focus_speech_is_judged_when_its_turn_comes() {
+    let harness = control_manager();
+    let message = harness.manager.speak(queued("a message"));
+    assert_eq!(recv_started(&harness.started), "a message");
+    let current = harness.manager.speak(about("the new focus", 3, true));
+    let left = harness
+        .manager
+        .speak(about("a control left behind", 2, true));
+    harness.manager.control().drop_expired(FocusNow {
+        focus: NodeId::new(3),
+        ancestors: Vec::new(),
+        foreground: None,
+    });
+
+    harness.finish.send(()).unwrap();
+    assert_eq!(recv_started(&harness.started), "the new focus");
+    harness.finish.send(()).unwrap();
+    harness.recorder.endings(3);
+    assert_eq!(
+        harness.recorder.ending_of(message),
+        Some(UtteranceEnding::Completed)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(current),
+        Some(UtteranceEnding::Completed)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(left),
+        Some(UtteranceEnding::Cancelled)
+    );
+}

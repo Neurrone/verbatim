@@ -628,8 +628,10 @@ A low-level keyboard hook (`WH_KEYBOARD_LL`) lives on a dedicated,
 never-blocking thread in Core. Constraint: Windows silently removes hooks that
 exceed the `LowLevelHooksTimeout`, so the swallow/pass decision must be made in
 microseconds against a read-only, lock-free snapshot of the gesture map
-(rebuilt atomically when bindings change). The hook only decides and enqueues;
-gesture semantics run on the reducer thread. Gesture maps are user-remappable
+(rebuilt atomically when bindings change). The hook only decides and enqueues,
+plus one non-blocking send to the speech manager: every key-down but a few
+cancels speech, and Shift pauses and resumes it, as in NVDA, before the key's
+gesture is enqueued; gesture semantics run on the reducer thread. Gesture maps are user-remappable
 and per-app-module overridable, NVDA-style. Touch and mouse tracking come
 later but route through the same `Input` type.
 
@@ -643,7 +645,10 @@ speech), language tagging, synth driver, PCM, the mixer (D17), and the
 
 - **Speech manager**: priority lanes (interrupt/next/queued), index marks with
   callbacks (say-all, braille sync, latency probes), rate/pitch/volume state,
-  per-language voice switching. Multilingual from the start: utterances carry
+  per-language voice switching. As in NVDA, announcements queue rather than
+  interrupt; speech is cut off by a cancel (a key press, a new foreground
+  window, entering a menu) and, on each focus change, by dropping focus
+  speech whose focus validity no longer holds. Multilingual from the start: utterances carry
   language tags end-to-end.
 - **Synth drivers** implement one trait — streaming PCM plus index-mark
   events — regardless of origin, and only ever produce PCM (D17):

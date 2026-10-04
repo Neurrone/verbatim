@@ -21,11 +21,13 @@ Public API:
   (OneCore) stop early.
 - `SpeechSequence` — what a synthesizer is asked to speak: the utterance
   id, the trace id, an optional BCP 47 language, and `items`, a list of
-  `SpeechItem::Text` and `SpeechItem::Mark`. Plain serializable data, so
-  it can cross a process or Wasm boundary unchanged. `text` joins the text
-  items, `has_marks` reports whether any mark is present, and
-  `split_at_marks` cuts the sequence into pieces each followed by the mark
-  that ended it.
+  `SpeechItem::Text`, `SpeechItem::Mark`, and `SpeechItem::Pitch` (an
+  offset from the configured pitch, `0` to return to it). Plain
+  serializable data, so it can cross a process or Wasm boundary unchanged.
+  `text` joins the text items, `has_marks` and `has_pitch_changes` report
+  whether any mark or pitch change is present, `split_at_marks` cuts the
+  sequence into pieces each followed by the mark that ended it, and
+  `split(at_marks)` cuts at pitch changes, and at marks too when asked.
 - `SpeechItem`, `IndexMark`, `SynthError`.
 - `SettingDescriptor` (`Numeric` with range and steps, `Choice` with option
   pairs, `Toggle`), `SettingId`, `SettingValue`, `SynthId`, `SynthChoice` —
@@ -39,7 +41,14 @@ Public API:
   registry, the initial synth, a `SavedSettingsFn` that reads any
   synthesizer's persisted setting values, the `Arc<Mixer>` speech plays
   through (the manager adds its own source to it), an optional observer,
-  and an optional theme.
+  and an optional theme. `control()` returns a `SpeechControl`.
+- `SpeechControl` — a cheap, cloneable handle for cutting speech off from
+  any thread without blocking, which the keyboard hook and the reducer's
+  effects use: `cancel()` cancels current and queued speech and ends a
+  pause; `toggle_pause()` pauses speech where it is, or resumes it when
+  paused; `drop_expired(now)` drops focus speech whose `FocusValidity` no
+  longer holds for the `FocusNow` given (see "When speech is cut off"
+  below).
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
   GUI's live handle: list synthesizers, switch the active one, read
   descriptors and values, `set_setting` applying immediately (slider drags
@@ -123,13 +132,39 @@ calls in a listener the manager installs on its source.
 
 Cancellation is per utterance. Each job carries its own cancellation flag,
 which the pipeline's sink checks on every `push_pcm`. Cancelling
-everything (an `Interrupt`, a synth switch, or shutdown) sets the
+everything (an `Interrupt`, `SpeechControl::cancel`, speech arriving
+while paused, a synth switch, or shutdown) sets the
 in-flight job's flag, reports every lane entry cancelled, and calls
 `Source::cancel_all`, which ends every utterance the mixer holds as
 cancelled and discards its unplayed audio at once. The mixer refuses
 further audio for an utterance it has ended, so a driver still running
 gets `Break` on its next push even if its flag was not yet seen. Utterances
 registered after the cancellation are unaffected.
+
+When speech is cut off (`docs/parity.md`, "When speech is cut off, and
+cancellation of expired focus speech"). Besides an `Interrupt` utterance,
+three things end speech early, all carried to the queue thread as events:
+
+- `SpeechControl::cancel`, which every key press calls, cancels everything
+  as above.
+- `SpeechControl::drop_expired`, which every focus change calls, drops
+  expired focus speech, judged as NVDA judges it. The queue thread
+  remembers the validity of every utterance it has handed on whose ending
+  the mixer has not reported yet. When any of those no longer holds,
+  everything handed on is stopped (the in-flight job's flag and
+  `Source::cancel_all`): audio cannot be taken out of the middle of the
+  mixer's buffer, so speech handed on after the expired utterance is
+  stopped too, which NVDA keeps. Waiting speech is not judged then: the
+  queue thread keeps the latest `FocusNow`, and `pump` checks each waiting
+  utterance against it when its turn comes, reporting one that no longer
+  holds cancelled and moving on, so valid speech queued ahead of expired
+  speech is still heard. Utterances without a validity never expire.
+- Pausing. `SpeechControl::toggle_pause`, which Shift calls, pauses the
+  manager's mixer source (`Source::pause`), which holds its audio and
+  playback events where they are; calling it again resumes. Any cancel ends
+  the pause, and an utterance arriving while paused cancels what was paused
+  first, as NVDA does, since the key press that would otherwise come first
+  would have cancelled it.
 
 Silence trimming (`trim.rs`). Every driver's PCM passes through a trimmer
 before reaching the mixer. Quiet frames (every sample within 64 of zero,
@@ -146,6 +181,16 @@ sequence has marks, the synth thread splits it with `split_at_marks` and
 speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
 synthesis boundary at each mark.
+
+Pitch changes. Drivers never receive a `SpeechItem::Pitch`. A sequence
+holding one is split at it (and at marks too, when the driver cannot
+place them), and between pieces the synth thread sets the driver's own
+`pitch` setting to the value it had when the job began plus the offset,
+limited to 0 to 100; after the job, however it ended, the pitch is put
+back. So every synthesizer with a `pitch` setting speaks a capital raised,
+which is how `PlainTheme` renders a `SegmentContent::SpelledCapital`: a
+pitch change of `CAPITAL_PITCH_OFFSET` (30, NVDA's default), the letter,
+and a return to the configured pitch.
 
 Host framing (`hosting.rs`). Every message is one frame: a kind byte, a
 little-endian `u32` body length, and the body, written in a single write

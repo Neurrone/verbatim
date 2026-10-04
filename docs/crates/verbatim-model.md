@@ -74,7 +74,10 @@ Public API:
   completions (echoing their `QueryKind`), `OutpostEnded` (an outpost
   incarnation ended, so its node ids are dead), timer ticks, and `Command`
   (a review or object-navigation gesture carrying a `ReviewCommand` and a
-  press-repeat count, roadmap M3). Effects are `Speak`, `StopSpeech`,
+  press-repeat count, roadmap M3). Effects are `Speak`, `StopSpeech`
+  (cancel current and queued speech), `DropExpiredSpeech` (the focus has
+  changed: carrying a `FocusNow`, it asks the speech pipeline to drop
+  focus speech whose `FocusValidity` no longer holds, see below),
   `Fetch` (a `Query` naming the node, whose outpost is the one asked, and
   a `QueryKind`: the navigation directions parent, next/previous sibling,
   first child, with a `NoNeighbor` `FetchResult` for a genuine tree edge and
@@ -96,14 +99,25 @@ Public API:
   `SpeechPriority` — structured speech per decision D12. Segments are
   semantic spans: literal text, `Label`, `Value`, `Description`, role and
   state tokens (including `NegatedState` for announcements like "not
-  checked"), `Position` (a "2 of 5" pair), `Level`, and `Message` (a fixed
+  checked"), `SpelledCapital` (an uppercase letter spelled out, which a
+  theme speaks at a raised pitch), `Position` (a "2 of 5" pair), `Level`,
+  and `Message` (a fixed
   reader message the reducer names — a navigation edge, for instance —
   rather than a property of any node, so it can say something without
   pre-flattening text). The pure reducer never touches localization; spans
   become words at the speech pipeline's presentation stage. An utterance optionally carries an
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
-  position without a pipeline change.
+  position without a pipeline change. Focus speech also carries a
+  `validity`, which is `None` on every other utterance.
+- `FocusValidity` and `FocusNow` — what focus speech is about, for
+  dropping it once the focus has moved on (`docs/nvda/speech.md`,
+  "Cancellation"). A `FocusValidity` names the node the speech announces
+  and whether that node was the focus when the speech was made
+  (`had_focus`); a `FocusNow` names the focus, its ancestors, and the
+  foreground window's node when known. `FocusValidity::holds(now)` is true
+  when the node never had the focus (an entered container), or is the
+  focus, an ancestor of the focus, or the foreground window.
 - `UtteranceId` and `UtteranceEnding` (decision D17). An `UtteranceId`
   names one utterance from the moment the speech pipeline accepts it until
   its single ending and is never reused within a process, unlike a

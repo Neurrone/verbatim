@@ -41,7 +41,25 @@ Public API:
 
 Implementation notes, `reduce`:
 
-- A focus change speaks, at Interrupt priority and in NVDA's property
+- When speech is cut off (`docs/parity.md`, "When speech is cut off, and
+  cancellation of expired focus speech"): focus, value, state, selection,
+  object navigation, review, report-object, and activation speech is
+  `Queued`, as NVDA queues it,
+  rather than interrupting; only a selection in a list the focus controls
+  and a notification whose processing hint asks for it interrupt. A key
+  press cancels speech outside the reducer (the hook does it, see
+  [verbatim-input](verbatim-input.md)). On every focus change the reducer
+  first emits `Effect::DropExpiredSpeech` with a `FocusNow` built from the
+  new focus, its ancestors, and `SrState`'s foreground node (the node of
+  the window most recently reported as the foreground, which a foreground
+  report updates), so the speech manager drops speech for a focus the user
+  has left. It then emits `Effect::StopSpeech` when the focus brings a new
+  foreground window, which is a foreground report or a focus whose
+  top-level window differs from the previous focus's (NVDA's foreground
+  event, run when the top of the focus ancestry changes), named or not,
+  and when an entered ancestor is a menu bar, menu, or menu item. Speech
+  for the new focus follows these effects, so they never cut it off.
+- A focus change speaks, queued and in NVDA's property
   order: newly entered container context first (see below), then the
   node's name, role, value, states, then description, keyboard
   shortcut, position in set, and level — each detail simply absent when
@@ -61,7 +79,12 @@ Implementation notes, `reduce`:
   decision D12 the name
   travels as a `Label` span and the value as a `Value` span, never
   anonymous text, and every utterance carries its source node's role and
-  rectangle (`UtteranceSource`) for presentation themes.
+  rectangle (`UtteranceSource`) for presentation themes. Each entered
+  container is its own utterance, carrying a `FocusValidity` with
+  `had_focus` false, so it stays valid while the focus is inside it; the
+  focus's own utterance (with a selection container's selected child)
+  carries `had_focus` true, so it is dropped once the focus moves to
+  something that is not it or below it.
 - Focus-ancestry context (M3): a `FocusChanged` event carries the focused
   node's ancestor chain, outermost first, walked by the outpost before
   emitting. The reducer announces the presentable containers that were not
@@ -80,7 +103,7 @@ Implementation notes, `reduce`:
   `ListItem`, `EditableText`) are never presented; the always-layout
   structural roles (`Unknown`, `Pane`) never; menu bars, menus, and menu
   items never (NVDA cancels speech and stays silent on entering them, and
-  the focus announcement that follows interrupts anyway); `Window`, `Group`,
+  so does the reducer, through `Effect::StopSpeech`); `Window`, `Group`,
   and `PropertyPage` only when they carry a name or description, so a named
   window is announced on entry as NVDA does; `StaticText` only when it has
   real text; and every other role — dialogs, toolbars, an unnamed tree
@@ -116,7 +139,8 @@ Implementation notes, `reduce`:
   both a window that is already the focus and focus already inside it.
   Window handles are compared rather than node ids because node ids differ
   between outposts. A foreground change to a nameless window becomes the
-  focus and moves attention without speaking. A window nameless when focus
+  focus and moves attention without speaking, though it still cancels
+  speech. A window nameless when focus
   enters it is not announced later: a name change speaks only on the focused node, where the new name
   alone is spoken, queued. Order within an outpost comes from its queue;
   across outposts, a focus observed before the focus already applied is
@@ -187,7 +211,7 @@ Implementation notes, `reduce`:
   that is not selected says "not selected", and a change of selection
   on the focus says "selected".
 - A value change on the currently focused node speaks just the bare value,
-  Interrupt — the slider-drag announcement — unless the value is
+  queued — the slider-drag announcement — unless the value is
   unchanged, the node is an edit field or document (typing must not
   speak the whole field), or its role never speaks a value. Value
   changes elsewhere are ignored.

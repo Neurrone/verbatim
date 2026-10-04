@@ -25,7 +25,11 @@ Public API:
   keys.
 - `DecisionConfig`, `DecisionMachine`, `Decision`, `EmittedGesture` — the
   pure state machine. `on_key(event, now)` takes a caller-supplied clock,
-  so tests script entire key streams with fake time.
+  so tests script entire key streams with fake time. A `Decision` carries
+  the swallow-or-pass verdict, the gesture raised if any, and `speech`, the
+  transition's effect on speech, if any.
+- `KeySpeechEffect` — what a key press does to speech: `Cancel` (current
+  and queued speech) or `TogglePause` (Shift on its own).
 - `GestureMap`, `SharedGestureMap` — the bound-gesture set behind an
   arc-swap snapshot the hook reads lock-free; rebinding is one atomic store.
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
@@ -74,8 +78,22 @@ rules):
   (held alone, released with the window running, being handed over) are one
   `LoneModifier` enum inside the machine, so no combination of them can go
   out of step.
+- What a key press does to speech (`docs/nvda/input.md`, "What a key press
+  does to speech"): every key-down sets `Decision::speech`, whether it is
+  bound, swallowed, or passed on, modifiers, the Verbatim modifier, and
+  typed characters included, to `Cancel`, with these exceptions. The
+  volume keys (extended `VK_VOLUME_MUTE` through `VK_VOLUME_UP`) and the
+  unknown key `0xFF` leave speech alone. Shift (generic, left, or right)
+  is `TogglePause`, except while that Shift is already held, where Windows
+  repeats its key-down, so holding Shift does not toggle again. Key-ups
+  never touch speech. The effect is worked out before the press is recorded
+  as held, and the hook carries it out before the gesture is sent, so a
+  key never cancels the speech its own gesture causes. NVDA's settings to
+  turn off cancelling for typed characters and for Enter are not offered;
+  the machine always behaves as their defaults (both on) do.
 - Injected keys are processed identically to physical ones, which is what
-  lets the control plane drive gestures with synthetic input.
+  lets the control plane drive gestures with synthetic input; they cancel
+  speech too.
 - Chords normalize modifiers to generic names (left and right control both
   become `control`), and gesture assembly relies on `GestureId::parse` for
   ordering, so press order never matters.

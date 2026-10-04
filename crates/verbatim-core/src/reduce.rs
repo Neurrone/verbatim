@@ -1125,7 +1125,7 @@ fn reduce_value_changed(
 /// Handles a complete state-set replacement on the focused node (MSAA
 /// `EVENT_OBJECT_STATECHANGE` and equivalent UIA property changes carry the
 /// whole new set, not a delta). Diffs against the stored snapshot and
-/// announces, Interrupt priority, the gained states and the lost states
+/// announces, queued, the gained states and the lost states
 /// spoken by their absence, by the rules and in the order of "Which states
 /// are spoken, and in what order" in `docs/nvda/speech.md`. Ignored for any
 /// node other than the focused one; a no-op if nothing speakable changed.

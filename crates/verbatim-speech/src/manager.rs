@@ -27,13 +27,13 @@
 //! an `Interrupt` utterance, three things end speech early:
 //! [`SpeechControl::cancel`], which a key press calls; speaking while
 //! paused, which cancels first, as a key press would have; and
-//! [`SpeechControl::drop_expired`], which a focus change calls. That last
-//! one finds the newest utterance, queued or already handed on, whose
-//! [`FocusValidity`] no longer holds, and ends it with everything that
-//! came before it; speech queued after it is kept. One already handed on
-//! is stopped together with whatever was synthesized after it, since audio
-//! cannot be taken out of the middle of the mixer's buffer; NVDA keeps the
-//! speech after it. [`SpeechControl::toggle_pause`], which Shift calls,
+//! [`SpeechControl::drop_expired`], which a focus change calls. As in
+//! NVDA, that judges only speech already handed to the synthesizer and the
+//! mixer: if any of it no longer holds ([`FocusValidity`]), everything
+//! handed on is stopped, since audio cannot be taken out of the middle of
+//! the mixer's buffer (NVDA stops at the newest expired utterance). Waiting
+//! speech is judged when its turn comes, against where the focus is then,
+//! and dropped on its own if it no longer holds. [`SpeechControl::toggle_pause`], which Shift calls,
 //! holds the speech where it is until it is called again or speech is
 //! cancelled.
 
@@ -165,9 +165,9 @@ impl SpeechControl {
         let _ = self.queue_tx.send(QueueEvent::TogglePause);
     }
 
-    /// Drops queued and playing focus speech that no longer holds now
-    /// that the focus is where `now` says, with everything before the
-    /// newest such utterance.
+    /// Tells the manager where the focus now is: speech being spoken whose
+    /// focus has moved on is stopped, and waiting focus speech is judged
+    /// against this when its turn comes.
     pub fn drop_expired(&self, now: FocusNow) {
         let _ = self.queue_tx.send(QueueEvent::DropExpired(now));
     }
@@ -305,6 +305,7 @@ impl SpeechManager {
                     in_flight: None,
                     handed_on: VecDeque::new(),
                     paused: false,
+                    focus_now: None,
                 }
                 .run(&queue_rx);
             })
@@ -430,6 +431,9 @@ struct QueueThread {
     handed_on: VecDeque<(UtteranceId, Option<FocusValidity>)>,
     /// Speech is paused.
     paused: bool,
+    /// Where the focus was last reported, for judging waiting focus speech
+    /// when its turn comes.
+    focus_now: Option<FocusNow>,
 }
 
 impl QueueThread {
@@ -459,7 +463,7 @@ impl QueueThread {
                     self.paused = !self.paused;
                     self.source.pause(self.paused);
                 }
-                QueueEvent::DropExpired(now) => self.drop_expired(&now),
+                QueueEvent::DropExpired(now) => self.drop_expired(now),
                 QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
                 QueueEvent::Shutdown => {
                     self.cancel_everything();
@@ -502,31 +506,19 @@ impl QueueThread {
         self.pump();
     }
 
-    /// Drops the newest utterance whose focus validity no longer holds,
-    /// and everything that came before it. Lanes are served next first,
-    /// so "before" is: everything handed on, then the next lane, then the
-    /// queued lane.
-    fn drop_expired(&mut self, now: &FocusNow) {
-        let expired = |validity: &Option<FocusValidity>| {
-            validity.is_some_and(|validity| !validity.holds(now))
-        };
-        let in_lane =
-            |lane: &VecDeque<Waiting>| lane.iter().rposition(|waiting| expired(&waiting.validity));
-        if let Some(last) = in_lane(&self.queued_lane) {
+    /// The focus moved. As NVDA does, only speech already handed on is
+    /// judged now: when any of it no longer holds, everything handed on is
+    /// stopped. Waiting speech is judged when its turn comes (`pump`),
+    /// against where the focus is then.
+    fn drop_expired(&mut self, now: FocusNow) {
+        let expired = self
+            .handed_on
+            .iter()
+            .any(|(_, validity)| validity.is_some_and(|validity| !validity.holds(&now)));
+        self.focus_now = Some(now);
+        if expired {
             self.stop_handed_on();
-            let next = self.next_lane.drain(..).collect::<Vec<_>>();
-            let queued = self.queued_lane.drain(..=last).collect::<Vec<_>>();
-            self.end_waiting(next.into_iter().chain(queued));
-        } else if let Some(last) = in_lane(&self.next_lane) {
-            self.stop_handed_on();
-            let next = self.next_lane.drain(..=last).collect::<Vec<_>>();
-            self.end_waiting(next);
-        } else if self.handed_on.iter().any(|(_, validity)| expired(validity)) {
-            self.stop_handed_on();
-        } else {
-            return;
         }
-        self.pump();
     }
 
     /// Stops everything handed to the synth thread and the mixer.
@@ -567,12 +559,24 @@ impl QueueThread {
         if self.in_flight.is_some() {
             return;
         }
-        let Some(Waiting { sequence, validity }) = self
-            .next_lane
-            .pop_front()
-            .or_else(|| self.queued_lane.pop_front())
-        else {
-            return;
+        let Waiting { sequence, validity } = loop {
+            let Some(waiting) = self
+                .next_lane
+                .pop_front()
+                .or_else(|| self.queued_lane.pop_front())
+            else {
+                return;
+            };
+            // Focus speech whose focus has moved on is dropped when its turn
+            // comes, as NVDA checks it before speaking it.
+            let expired = waiting
+                .validity
+                .zip(self.focus_now.as_ref())
+                .is_some_and(|(validity, now)| !validity.holds(now));
+            if !expired {
+                break waiting;
+            }
+            self.end_waiting([waiting]);
         };
         self.handed_on.push_back((sequence.utterance, validity));
         self.source.register(sequence.utterance, sequence.trace_id);

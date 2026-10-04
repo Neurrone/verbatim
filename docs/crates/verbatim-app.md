@@ -11,7 +11,9 @@ hook reports it reached the operating system. The reducer thread selects on both
 command channel the gesture router feeds, so a review or object-navigation
 gesture is reduced and its effects executed by the same path as an
 accessibility event; `Effect::Activate` and `Effect::CopyToClipboard` are
-executed there alongside `Speak` and `Fetch`. The router builds its gesture
+executed there alongside `Speak` and `Fetch`, and so are
+`Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
+manager's `SpeechControl` (`cancel` and `drop_expired`). The router builds its gesture
 map and its gesture-to-script table from `verbatim_input::bindings_for` for
 the configured keyboard layout, so the active review and navigation bindings
 follow `settings.toml`'s `keyboard.layout`.
@@ -144,8 +146,11 @@ knowing for review:
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
   one-answer reply channel to the reducer thread and waits five seconds for
   the answer; `dump_recorder` calls `flight_dump::dump_now` directly, no
-  outpost round trip needed),
-  the keyboard hook last among input paths, the startup announcement, and
+  outpost round trip needed; an injected gesture cancels speech before it
+  is sent, as a key press does, since its keys never pass the hook),
+  the keyboard hook last among input paths (given a callback that maps
+  each `KeySpeechEffect` to the speech manager's `SpeechControl`: `Cancel`
+  to `cancel`, `TogglePause` to `toggle_pause`), the startup announcement, and
   finally the GUI loop on the main thread. The gesture router binds three
   gestures in M3: Verbatim+V pops the menu, Verbatim+F12 speaks the time
   (an Interrupt-priority text-span utterance with no source node), and

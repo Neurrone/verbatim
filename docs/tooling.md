@@ -87,12 +87,14 @@ The subcommands:
 - `send-gesture <identifier>` routes a gesture identifier through the same
   gesture router real key presses use, for example `verbatim-inspect
   send-gesture kb:verbatim+v` to open the Verbatim menu without touching a
-  keyboard.
+  keyboard. Like a key press, it cancels current speech first.
 - `send-keys <combo...>` synthesizes real OS keyboard input via `SendInput`,
   reaching whatever currently has focus — for example `verbatim-inspect
   send-keys downarrow enter "shift+tab"`. Because this is real synthetic
   input, not a gesture-router shortcut, it needs an unlocked, focused
-  interactive desktop to land anywhere (see Troubleshooting below).
+  interactive desktop to land anywhere (see Troubleshooting below). It
+  passes through Verbatim's keyboard hook like typed keys, so each key-down
+  cancels speech, and a lone `shift` pauses or resumes it.
 - `latency --last N` prints the N most recent end-to-end latency timelines
   (default 10), newest first: event-observed time, and the millisecond
   deltas to speech-queued and audio-started when each is known.
@@ -320,7 +322,9 @@ More environment variables matter for less common cases:
 Every speech assertion waits for the matched utterance to end (its
 `SpeechEnded` frame) before the scenario injects its next input, and fails
 unless the utterance completed, so each utterance is heard in full in
-every run, audible or not. After each scenario's body, the registry also
+every run, audible or not. The wait matters because every injected key,
+like every real one, cancels speech: input sent while an utterance plays
+cuts it off. After each scenario's body, the registry also
 waits until speech is quiet before teardown. There is no separate paced
 mode.
 
@@ -423,7 +427,9 @@ matched utterance's ending. The rendered timeline records all three, the
 start as an `audio` line and the ending as a `completed`, `cancelled`, or
 `failed` line (with the reason), so a failure readout shows real audio
 timing and how each utterance ended. An assertion that fails because its
-utterance was cancelled usually means some other speech interrupted it;
+utterance was cancelled usually means something cut it off: a key press
+(injected keys included), a new foreground window, entering a menu, a
+focus change that left the focus it announced, or interrupting speech;
 the lines just above the `cancelled` line show what.
 
 ### Hearing and recording a run

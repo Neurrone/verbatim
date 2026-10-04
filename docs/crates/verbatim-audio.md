@@ -39,8 +39,9 @@ Public API:
   index mark at the current end of the utterance's audio; `finish` ends
   the utterance's audio; `fail(utterance, reason)` ends it as failed;
   `cancel_all` ends every utterance of the source not yet ended as
-  cancelled. `fail` and `cancel_all` return only after the audio thread
-  has carried them out. Clones are handles to the same source.
+  cancelled; `pause(paused)` holds the source's audio where it is, or lets
+  it go on, with its playback events waiting with the audio. `fail` and
+  `cancel_all` return only after the audio thread has carried them out. Clones are handles to the same source.
 - `PlaybackEvent` — `Started` (the utterance's first frame has played),
   `Mark` (playback reached an index mark), and `Ended` with an
   `UtteranceEnding`. Each carries the utterance id and trace id.
@@ -78,8 +79,8 @@ when the audio before it has played.
 
 Retention. A source keeps its frames until they have played, not merely
 until they were written to the device. When the device's queue must be
-discarded (a cancel or fail request, a device error, or a request to
-reopen), the mixer stops the device, rewinds every source to what had
+discarded (a cancel, fail, or pause request, a device error, or a request
+to reopen), the mixer stops the device, rewinds every source to what had
 actually played, and mixes from there again, so the other sources lose
 nothing they had queued. Frames are released once played.
 
@@ -96,6 +97,13 @@ count (frames already converted for the old format cannot be played).
 Cancel and fail discard the affected audio at once, and the mixer then
 refuses further writes for those utterances. Utterances registered after
 `cancel_all` returns are unaffected.
+
+Pausing. A paused source contributes no frames to the mix, and because a
+pause request, like any request, takes back what the device had queued and
+rewinds to what had played, the pause is heard at once rather than after
+the device's buffer drains; resuming mixes from the same place. The
+device running dry while a source is paused, or before a resumed source
+is mixed from again, is not counted as an underrun.
 
 Device recovery. On any device error, or when `needs_reopen` is set, the
 mixer rewinds as above and calls `open` again, with the shared state
