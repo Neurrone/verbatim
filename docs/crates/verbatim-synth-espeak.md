@@ -77,6 +77,13 @@ eSpeak NG reports when it starts, 22050 Hz. A cancelled utterance
 returns success, as with any driver; an error code from `espeak_Synth`
 is `SynthError::Synthesis`.
 
+Pitch changes. `changes_pitch` is `true`: a sequence with a pitch change
+is given to eSpeak NG as SSML (`espeakSSML`), its text escaped and each
+change a `prosody` element whose pitch is the new value as a percentage
+of the configured one, as NVDA's driver writes it (50 raised by 30 is
+160%), so a capital is raised within one synthesis. Other sequences go
+as plain text.
+
 Index marks and input. `places_marks` is `false`, and the speech manager
 splits each sequence at its marks before it reaches the driver, which
 keeps every mark exact (decision D17). The driver does not place marks

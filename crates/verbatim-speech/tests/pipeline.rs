@@ -398,7 +398,7 @@ fn settings_host_get_set_commit_revert() {
 
     let (manager, _log, _recorder) = capture_manager(None);
 
-    let host = manager.settings_host(Box::new(move |id, values| {
+    let host = manager.settings_host(Box::new(move |id, _chosen, values| {
         persisted_for_cb
             .lock()
             .unwrap()
@@ -678,7 +678,7 @@ fn a_refused_saved_setting_keeps_the_synths_value_and_the_others_apply() {
         let mut registry = SynthRegistry::new();
         registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
         let manager = settings_manager(registry, "one", &saved).expect("startup survives");
-        let host = manager.settings_host(Box::new(|_, _| Ok(())));
+        let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
         assert_eq!(
             host.setting(&voice),
             Some(SettingValue::Choice("default".to_owned()))
@@ -708,7 +708,7 @@ fn startup_falls_back_in_registration_order_when_the_configured_synth_cannot_sta
     registry.register(SynthId::new("configured"), "Configured", broken_factory());
 
     let manager = settings_manager(registry, "configured", &saved).expect("a fallback starts");
-    let host = manager.settings_host(Box::new(|_, _| Ok(())));
+    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
     // The configured synth failed, then the first registered one; the next
     // one starts, with its own saved settings.
     assert_eq!(host.active_synthesizer().id, SynthId::new("working"));
@@ -737,7 +737,7 @@ fn switching_synth_starts_it_with_its_saved_settings() {
     registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
     registry.register(SynthId::new("two"), "Two", SettingsSynth::factory("two"));
     let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
-    let host = manager.settings_host(Box::new(|_, _| Ok(())));
+    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
 
     // Saved after startup, as a commit would, with a voice that is gone.
     saved
@@ -924,5 +924,44 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
     assert_eq!(
         harness.recorder.ending_of(dialog),
         Some(UtteranceEnding::Completed)
+    );
+}
+
+/// A synthesizer started in place of the configured one is not saved as
+/// the user's choice, so the configured one is tried again at the next
+/// start, as NVDA does; one chosen in the dialog is.
+#[test]
+fn a_fallback_synth_is_not_saved_as_the_users_choice() {
+    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("configured"), "Configured", broken_factory());
+    registry.register(
+        SynthId::new("working"),
+        "Working",
+        SettingsSynth::factory("working"),
+    );
+    registry.register(
+        SynthId::new("spare"),
+        "Spare",
+        SettingsSynth::factory("spare"),
+    );
+    let manager = settings_manager(registry, "configured", &saved).expect("a fallback starts");
+    let commits = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&commits);
+    let host = manager.settings_host(Box::new(move |id, chosen, _| {
+        recorded.lock().unwrap().push((id.clone(), chosen));
+        Ok(())
+    }));
+
+    host.commit().expect("commits");
+    host.set_active_synthesizer(&SynthId::new("spare"))
+        .expect("switches");
+    host.commit().expect("commits");
+    assert_eq!(
+        *commits.lock().unwrap(),
+        vec![
+            (SynthId::new("working"), false),
+            (SynthId::new("spare"), true)
+        ]
     );
 }

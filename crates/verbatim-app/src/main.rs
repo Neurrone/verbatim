@@ -463,14 +463,18 @@ fn saved_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, Sett
 }
 
 /// The persist callback the settings host commits through: write the active
-/// synth and its values into the base profile and save it.
+/// synth's values into the base profile, and the synth itself as the
+/// configured one when it is the user's choice rather than a fallback, and
+/// save it.
 fn persist_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::PersistFn {
-    Box::new(move |synth_id, values| {
+    Box::new(move |synth_id, chosen, values| {
         let mut store = store
             .lock()
             .map_err(|_| "config store poisoned".to_owned())?;
         let speech = &mut store.settings_mut().speech;
-        speech.synthesizer = Some(synth_id.0.clone());
+        if chosen {
+            speech.synthesizer = Some(synth_id.0.clone());
+        }
         let settings = speech.synth_settings.entry(synth_id.0.clone()).or_default();
         for (id, value) in values {
             let config_value = match value {

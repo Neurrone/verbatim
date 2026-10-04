@@ -48,6 +48,10 @@ pub struct HostDescription {
     /// Whether it places index marks itself
     /// ([`SynthDriver::places_marks`](crate::SynthDriver::places_marks)).
     pub places_marks: bool,
+    /// Whether it speaks pitch changes itself
+    /// ([`SynthDriver::changes_pitch`](crate::SynthDriver::changes_pitch)).
+    #[serde(default)]
+    pub changes_pitch: bool,
     /// Its settings, in display order.
     pub settings: Vec<SettingDescriptor>,
     /// Their current values.
@@ -279,6 +283,7 @@ mod tests {
             FromHost::Ready(HostDescription {
                 display_name: "Test".to_owned(),
                 places_marks: true,
+                changes_pitch: false,
                 settings: vec![SettingDescriptor::standard_numeric("rate", "setting-rate")],
                 values: vec![(SettingId::new("rate"), SettingValue::Number(50))],
             }),

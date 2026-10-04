@@ -20,7 +20,8 @@ Public API:
 - `HostedSynth::process_id()` — the running host's process id, or `None`
   after a host ended and before the next request starts another.
 - The `SynthDriver` implementation. `id`, `display_name`,
-  `supported_settings`, `setting`, and `places_marks` answer from the
+  `supported_settings`, `setting`, `places_marks`, and `changes_pitch`
+  answer from the
   description the first host sent, with no round trip; `set_setting` and
   `speak` go to the host.
 - `factory(exe, synth)` — a `SynthFactory` that calls `start`, which is

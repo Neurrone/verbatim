@@ -218,6 +218,9 @@ pub struct SpeechManager {
     /// Kept so the mixer outlives the threads writing to it.
     _mixer: Arc<Mixer>,
     initial_state: DriverState,
+    /// The synthesizer the configuration asked for, which a fallback at
+    /// startup may not be.
+    configured: SynthId,
     choices: Vec<SynthChoice>,
     queue_handle: Option<JoinHandle<()>>,
     synth_handle: Option<JoinHandle<()>>,
@@ -251,6 +254,7 @@ impl SpeechManager {
         let (synth_tx, synth_rx) = unbounded::<SynthCommand>();
         let (startup_tx, startup_rx) = bounded::<Result<StartupInfo, SynthError>>(1);
 
+        let configured = initial_synth.clone();
         let synth_handle = {
             let source = source.clone();
             let queue_tx = queue_tx.clone();
@@ -317,6 +321,7 @@ impl SpeechManager {
             queue_tx,
             _mixer: mixer,
             initial_state,
+            configured,
             choices,
             queue_handle: Some(queue_handle),
             synth_handle: Some(synth_handle),
@@ -355,6 +360,7 @@ impl SpeechManager {
             self.queue_tx.clone(),
             &self.initial_state,
             self.choices.clone(),
+            self.initial_state.choice.id == self.configured,
             persist,
         )
     }
@@ -753,18 +759,28 @@ fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
         // Cancelled before it started; the mixer has already ended it.
         return;
     }
-    // A pitch change is the driver's own pitch setting, changed between
-    // pieces from the value it had when the job began, and always put back.
-    // A driver with no pitch setting is not split for pitch at all.
+    // A driver that changes pitch itself is given the pitch changes. For
+    // any other, a pitch change is its own pitch setting, changed between
+    // pieces from the value it had when the job began, and always put back;
+    // a driver with no pitch setting is not split for pitch at all.
+    let inline_pitch = driver.changes_pitch();
     let base_pitch = match driver.setting(&PITCH) {
-        Some(SettingValue::Number(pitch)) if sequence.has_pitch_changes() => Some(pitch),
+        Some(SettingValue::Number(pitch)) if !inline_pitch && sequence.has_pitch_changes() => {
+            Some(pitch)
+        }
         _ => None,
     };
     let split_marks = !driver.places_marks() && sequence.has_marks();
-    let pieces = if split_marks || base_pitch.is_some() {
-        sequence.split(split_marks)
+    let split_pitch = base_pitch.is_some();
+    let sequence = if inline_pitch || split_pitch {
+        sequence.clone()
     } else {
-        vec![(sequence.without_pitch_changes(), None)]
+        sequence.without_pitch_changes()
+    };
+    let pieces = if split_marks || split_pitch {
+        sequence.split(split_marks, split_pitch)
+    } else {
+        vec![(sequence.clone(), None)]
     };
     let mut sink = PipelineSink {
         source,

@@ -325,6 +325,10 @@ impl SynthDriver for OneCoreSynth {
         }
     }
 
+    fn changes_pitch(&self) -> bool {
+        true
+    }
+
     fn places_marks(&self) -> bool {
         true
     }
@@ -342,7 +346,7 @@ impl SynthDriver for OneCoreSynth {
             .iter()
             .find(|voice| voice.id == self.current_voice_id)
             .map_or("en-US", |voice| voice.language.as_str());
-        let ssml = HSTRING::from(ssml(sequence, language));
+        let ssml = HSTRING::from(ssml(sequence, language, self.pitch));
         let operation = self
             .synth
             .SynthesizeSsmlToStreamAsync(&ssml)
@@ -409,20 +413,40 @@ fn push_frames(sink: &mut dyn SynthSink, format: PcmFormat, samples: &[i16]) -> 
 }
 
 /// Builds the SSML for a sequence: its text, escaped, with each index mark
-/// as a `<mark>` named by the mark's number.
-fn ssml(sequence: &SpeechSequence, language: &str) -> String {
+/// as a `<mark>` named by the mark's number and each pitch change a
+/// `prosody` element. As NVDA's `OneCore` driver writes it, the pitch is
+/// relative to `OneCore`'s default of 50: the configured `pitch` (0 to 100)
+/// raised by the change, as a multiple of `pitch`, taken from 50, so 50
+/// raised by 30 is "30%".
+fn ssml(sequence: &SpeechSequence, language: &str, pitch: i32) -> String {
     let mut ssml = format!(
         "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"{}\">",
         escape(language)
     );
+    let mut open = false;
     for item in &sequence.items {
         match item {
             SpeechItem::Text(text) => ssml.push_str(&escape(text)),
             SpeechItem::Mark(mark) => {
                 let _ = write!(ssml, "<mark name=\"{}\"/>", mark.0);
             }
+            SpeechItem::Pitch(offset) => {
+                if open {
+                    ssml.push_str("</prosody>");
+                    open = false;
+                }
+                if *offset != 0 {
+                    let raised = (pitch + offset).clamp(0, 100);
+                    let relative = 50 * raised / pitch.max(1) - 50;
+                    let _ = write!(ssml, "<prosody pitch=\"{relative}%\">");
+                    open = true;
+                }
+            }
             _ => {}
         }
+    }
+    if open {
+        ssml.push_str("</prosody>");
     }
     ssml.push_str("</speak>");
     ssml
@@ -636,6 +660,24 @@ mod tests {
     }
 
     #[test]
+    fn ssml_speaks_a_pitch_change_as_prosody_relative_to_the_default() {
+        let sequence = SpeechSequence {
+            utterance: verbatim_model::UtteranceId(1),
+            trace_id: verbatim_model::TraceId::mint(),
+            language: None,
+            items: vec![
+                SpeechItem::Pitch(30),
+                SpeechItem::Text("B".to_owned()),
+                SpeechItem::Pitch(0),
+            ],
+        };
+        assert_eq!(
+            ssml(&sequence, "en-US", 50),
+            "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\"><prosody pitch=\"30%\">B</prosody></speak>"
+        );
+    }
+
+    #[test]
     fn ssml_escapes_text_and_names_marks_by_number() {
         let sequence = SpeechSequence {
             utterance: verbatim_model::UtteranceId(1),
@@ -647,7 +689,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            ssml(&sequence, "en-US"),
+            ssml(&sequence, "en-US", 50),
             "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\">Tom &amp; Jerry &lt;3 <mark name=\"7\"/></speak>"
         );
     }

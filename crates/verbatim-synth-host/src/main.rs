@@ -49,6 +49,7 @@ fn main() -> ExitCode {
     let description = HostDescription {
         display_name: driver.display_name(),
         places_marks: driver.places_marks(),
+        changes_pitch: driver.changes_pitch(),
         settings: driver.supported_settings(),
         values: driver
             .supported_settings()

@@ -129,4 +129,40 @@ fn speaks_english_stops_when_asked_and_takes_its_settings() {
             )
             .is_err()
     );
+
+    speaks_a_raised_capital_within_one_synthesis(&mut synth);
+}
+
+/// A capital spoken at a raised pitch within one synthesis: the markup is
+/// obeyed, not read aloud, so it takes about as long as the letter.
+fn speaks_a_raised_capital_within_one_synthesis(synth: &mut EspeakSynth) {
+    assert!(synth.changes_pitch());
+    let count = |synth: &mut EspeakSynth, items: Vec<SpeechItem>| {
+        let mut count = Count {
+            pushes: 0,
+            samples: 0,
+            format: None,
+            stop_after: usize::MAX,
+        };
+        let sequence = SpeechSequence {
+            items,
+            ..sequence("")
+        };
+        synth.speak(&sequence, &mut count).expect("speaks");
+        count.samples
+    };
+    let plain = count(synth, vec![SpeechItem::Text("B".to_owned())]);
+    let raised = count(
+        synth,
+        vec![
+            SpeechItem::Pitch(30),
+            SpeechItem::Text("B".to_owned()),
+            SpeechItem::Pitch(0),
+        ],
+    );
+    assert!(plain > 0);
+    assert!(
+        raised < plain * 3 / 2 && raised > plain / 2,
+        "the pitch markup is not spoken: {raised} samples against {plain}"
+    );
 }

@@ -273,6 +273,10 @@ impl SynthDriver for HostedSynth {
         self.description.places_marks
     }
 
+    fn changes_pitch(&self) -> bool {
+        self.description.changes_pitch
+    }
+
     fn speak(
         &mut self,
         sequence: &SpeechSequence,

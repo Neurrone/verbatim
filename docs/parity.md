@@ -520,11 +520,11 @@ verified.
   setting raised by 30 and then restored, for every synthesizer, as NVDA
   does by default ([Speech](nvda/speech.md), "Capitals when spelling");
   the offset is not yet configurable, and saying "cap" or beeping for
-  capitals is not offered. **Different:** NVDA sends the pitch change
-  inside the speech it gives the synthesizer; Verbatim splits the speech
-  at it and changes the pitch setting between separate synthesis calls,
-  so each capital can bring a short pause the synthesizer leaves at the
-  end of a piece. A synthesizer with no pitch setting is not split.
+  capitals is not offered. eSpeak NG and OneCore speak the pitch change
+  within one synthesis, as SSML prosody written as NVDA's drivers write
+  it, so a capital brings no pause; a synthesizer that cannot is given
+  the change as a pitch setting between separate synthesis calls, which
+  can leave a short pause.
 - Toggle key announcements ("caps lock on", "num lock off", "scroll lock
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:
@@ -733,8 +733,9 @@ verified.
   and does not start when no synthesizer can. NVDA writes a corrected
   voice back to the config at once, where Verbatim saves it with the
   next commit of the settings dialog. A synthesizer used as a fallback
-  is saved as the configured one by the next commit, where NVDA keeps
-  the user's choice to try again at the next start. The default voice is
+  has its settings saved but is not saved as the configured one, so the
+  user's choice is tried again at the next start, as in NVDA; choosing a
+  synthesizer in the dialog makes it the choice. The default voice is
   the synthesizer's own default, where NVDA picks one matching its or
   Windows' language. The settings
   dialog's sliders use wx's default steps rather than each setting's

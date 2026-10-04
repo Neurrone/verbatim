@@ -13,6 +13,9 @@ Public API:
   never plays it (decision D17). `places_marks` says whether the driver
   reports each index mark at its exact place in its audio; a driver that
   says `false` never sees a mark (see the mark fallback below).
+  `changes_pitch` (default `false`) says whether it speaks a pitch change
+  itself; a driver that says `false` never sees one (see "Pitch changes"
+  below).
 - `SynthSink` — receives the driver's output: `push_pcm(format, samples)`
   takes interleaved 16-bit PCM in whatever format the driver produces and
   returns `ControlFlow::Break` to request cooperative cancellation, and
@@ -53,7 +56,10 @@ Public API:
   GUI's live handle: list synthesizers, switch the active one, read
   descriptors and values, `set_setting` applying immediately (slider drags
   are audible as they happen), `commit` persisting through an injected
-  `PersistFn` so this crate never depends on the config layer, and `revert`
+  `PersistFn` so this crate never depends on the config layer (it is
+  told whether the active synthesizer is the user's choice: one started
+  in place of the configured one is not, until one is chosen in the
+  dialog), and `revert`
   restoring the last committed values.
 - `SpeechEvents` — the observability seam, one call per milestone of each
   utterance: `utterance_queued` (with its rendered text), `audio_started`
@@ -83,7 +89,8 @@ Public API:
   before exiting; then `Pcm(format, samples)`, `Mark`, and `Done` or
   `Failed(reason)` for each utterance, and `SettingApplied(refusal)` for
   each setting. `HostDescription` carries the display name,
-  `places_marks`, the setting descriptors, and their current values.
+  `places_marks`, `changes_pitch`, the setting descriptors, and their
+  current values.
   `write_to_host` and `read_to_host` serve the Core-to-host direction,
   `write_from_host` and `read_from_host` the other; each read returns
   `None` at a clean end of stream (a broken pipe between frames counts as
@@ -182,15 +189,17 @@ speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
 synthesis boundary at each mark.
 
-Pitch changes. Drivers never receive a `SpeechItem::Pitch`. A sequence
-holding one is split at it (and at marks too, when the driver cannot
-place them), and between pieces the synth thread sets the driver's own
-`pitch` setting to the value it had when the job began plus the offset,
-limited to 0 to 100; after the job, however it ended, the pitch is put
-back. So every synthesizer with a `pitch` setting speaks a capital raised,
-which is how `PlainTheme` renders a `SegmentContent::SpelledCapital`: a
-pitch change of `CAPITAL_PITCH_OFFSET` (30, NVDA's default), the letter,
-and a return to the configured pitch.
+Pitch changes. `PlainTheme` renders a `SegmentContent::SpelledCapital`
+as a pitch change of `CAPITAL_PITCH_OFFSET` (30, NVDA's default), the
+letter, and a return to the configured pitch. A driver whose
+`changes_pitch` is `true` (eSpeak NG and OneCore) is given the sequence
+with its pitch changes and speaks them within one synthesis, as NVDA's
+drivers do. For any other, a sequence holding one is split at it (and at
+marks too, when the driver cannot place them), and between pieces the
+synth thread sets the driver's own `pitch` setting to the value it had
+when the job began plus the offset, limited to 0 to 100; after the job,
+however it ended, the pitch is put back. That can leave a short pause
+around the capital. A driver with neither has the pitch changes removed.
 
 Host framing (`hosting.rs`). Every message is one frame: a kind byte, a
 little-endian `u32` body length, and the body, written in a single write

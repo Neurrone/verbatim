@@ -107,6 +107,39 @@ fn a_hosted_synthesizer_streams_audio_and_marks_in_order() {
     );
 }
 
+/// `OneCore` speaks a pitch change inside its SSML: the host says so, and a
+/// raised capital is spoken rather than refused.
+#[test]
+fn onecore_speaks_a_raised_capital_within_one_utterance() {
+    let mut synth =
+        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
+    assert!(synth.changes_pitch(), "OneCore changes pitch itself");
+    let mut sink = Collect {
+        received: Vec::new(),
+        cancelled: false,
+        on_audio: || ControlFlow::Continue(()),
+    };
+    synth
+        .speak(
+            &sequence(
+                1,
+                vec![
+                    SpeechItem::Pitch(30),
+                    SpeechItem::Text("B".to_owned()),
+                    SpeechItem::Pitch(0),
+                ],
+            ),
+            &mut sink,
+        )
+        .expect("speaks");
+    assert!(
+        sink.received
+            .iter()
+            .any(|item| matches!(item, Received::Audio(_))),
+        "the capital is heard"
+    );
+}
+
 #[test]
 fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_same_settings() {
     let mut synth =

@@ -39,9 +39,10 @@ pub enum SpeechItem {
     /// A point to report when playback reaches it.
     Mark(IndexMark),
     /// Speak what follows with the pitch setting raised (or lowered) by
-    /// this much from its configured value; `0` returns to it. Drivers
-    /// never receive these: the manager splits the sequence at them and
-    /// changes the driver's `pitch` setting between the pieces.
+    /// this much from its configured value; `0` returns to it. Only a
+    /// driver whose [`SynthDriver::changes_pitch`] is `true` receives these;
+    /// for any other, the manager splits the sequence at them and changes
+    /// the driver's `pitch` setting between the pieces.
     Pitch(i32),
 }
 
@@ -109,7 +110,7 @@ impl SpeechSequence {
     /// it, and the last piece by none.
     #[must_use]
     pub fn split_at_marks(&self) -> Vec<(Self, Option<IndexMark>)> {
-        self.split(true)
+        self.split(true, false)
             .into_iter()
             .map(|(piece, after)| {
                 let mark = match after {
@@ -121,11 +122,12 @@ impl SpeechSequence {
             .collect()
     }
 
-    /// Splits the sequence at its pitch changes, and at its marks too when
-    /// `at_marks`: each piece is followed by the item that ended it, and
-    /// the last piece by none. Marks not split at stay in their pieces.
+    /// Splits the sequence at its marks when `at_marks`, and at its pitch
+    /// changes when `at_pitch`: each piece is followed by the item that
+    /// ended it, and the last piece by none. Items not split at stay in
+    /// their pieces.
     #[must_use]
-    pub fn split(&self, at_marks: bool) -> Vec<(Self, Option<SpeechItem>)> {
+    pub fn split(&self, at_marks: bool, at_pitch: bool) -> Vec<(Self, Option<SpeechItem>)> {
         let mut pieces = Vec::new();
         let mut items = Vec::new();
         for item in &self.items {
@@ -136,7 +138,7 @@ impl SpeechSequence {
                         Some(item.clone()),
                     ));
                 }
-                SpeechItem::Pitch(_) => {
+                SpeechItem::Pitch(_) if at_pitch => {
                     pieces.push((
                         self.with_items(std::mem::take(&mut items)),
                         Some(item.clone()),
@@ -237,6 +239,15 @@ pub trait SynthDriver: Send {
     /// still exact (decision D17); a driver that says `false` never sees a
     /// mark.
     fn places_marks(&self) -> bool;
+
+    /// Whether the driver speaks a [`SpeechItem::Pitch`] itself, changing
+    /// pitch within one synthesis as NVDA's drivers do. When it cannot, the
+    /// speech manager splits the sequence at pitch changes and changes the
+    /// driver's `pitch` setting between the pieces, which can leave a short
+    /// pause; a driver that says `false` never sees a pitch change.
+    fn changes_pitch(&self) -> bool {
+        false
+    }
 
     /// Synthesizes one sequence, blocking until it finishes or the sink
     /// requests cancellation via `ControlFlow::Break`.

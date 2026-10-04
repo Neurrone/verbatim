@@ -35,7 +35,10 @@ parses the returned WAV by walking RIFF chunks — the format chunk for the real
 and channel count rather than assuming, the data chunk for samples — and
 pushes PCM in roughly 50 ms slices, checking the sink's `ControlFlow`
 between slices so cancellation is prompt. Marks are exact, so
-`places_marks` is `true`: the driver reads `SpeechSynthesisStream.Markers()`
+`changes_pitch` is `true`: a pitch change becomes a `prosody` element in
+the SSML, relative to OneCore's default of 50 as NVDA's OneCore driver
+writes it (50 raised by 30 is "30%"). `places_marks` is `true`: the driver
+reads `SpeechSynthesisStream.Markers()`
 for the time OneCore placed each numbered mark, pushes the audio up to
 that time, reports the mark through `index_reached`, and carries on. The
 display name resolves through `verbatim-i18n`. A `#[ignore]`d integration

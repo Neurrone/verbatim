@@ -38,7 +38,8 @@ subscriber writing to standard error, takes its two pipes with
 `verbatim_process::inherited_pipes`, and builds the driver. If that fails
 it sends `Unavailable(reason)` and exits with a failure code. Otherwise
 it sends `Ready` with a `HostDescription`: the driver's display name,
-`places_marks`, its setting descriptors, and the current value of each.
+`places_marks`, `changes_pitch`, its setting descriptors, and the current
+value of each.
 It then serves requests one at a time on the main thread until Core
 closes the command pipe, when it exits successfully. If a write to Core
 fails, Core is gone and the host exits with a failure code.

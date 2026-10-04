@@ -51,6 +51,8 @@ const CHUNK_MS: c_int = 20;
 const AUDIO_OUTPUT_SYNCHRONOUS: c_int = 2;
 const ESPEAK_INITIALIZE_DONT_EXIT: c_int = 0x8000;
 const ESPEAK_CHARS_UTF8: c_uint = 1;
+/// `espeakSSML`: the text is SSML.
+const ESPEAK_SSML: c_uint = 0x10;
 const POS_CHARACTER: c_int = 1;
 const EE_OK: c_int = 0;
 const ESPEAK_RATE: c_int = 1;
@@ -514,6 +516,10 @@ impl SynthDriver for EspeakSynth {
         Ok(())
     }
 
+    fn changes_pitch(&self) -> bool {
+        true
+    }
+
     fn places_marks(&self) -> bool {
         false
     }
@@ -523,7 +529,7 @@ impl SynthDriver for EspeakSynth {
         sequence: &SpeechSequence,
         sink: &mut dyn SynthSink,
     ) -> Result<(), SynthError> {
-        let text: String = sequence
+        let plain: String = sequence
             .items
             .iter()
             .filter_map(|item| match item {
@@ -531,9 +537,19 @@ impl SynthDriver for EspeakSynth {
                 _ => None,
             })
             .collect();
-        if text.trim().is_empty() || sink.is_cancelled() {
+        if plain.trim().is_empty() || sink.is_cancelled() {
             return Ok(());
         }
+        // A pitch change is spoken within the one synthesis, as SSML, as
+        // NVDA's eSpeak NG driver speaks it; otherwise the text is plain.
+        let (text, flags) = if sequence.has_pitch_changes() {
+            (
+                ssml_with_pitch(sequence, self.pitch),
+                ESPEAK_CHARS_UTF8 | ESPEAK_SSML,
+            )
+        } else {
+            (plain, ESPEAK_CHARS_UTF8)
+        };
         let text = c_string(&text)?;
         let mut synthesis = Synthesis {
             sink,
@@ -550,7 +566,7 @@ impl SynthDriver for EspeakSynth {
                 0,
                 POS_CHARACTER,
                 0,
-                ESPEAK_CHARS_UTF8,
+                flags,
                 std::ptr::null_mut(),
                 (&raw mut synthesis).cast(),
             )
@@ -564,9 +580,67 @@ impl SynthDriver for EspeakSynth {
     }
 }
 
+/// The sequence as SSML for eSpeak NG, its text escaped and each pitch
+/// change a `prosody` element, as NVDA's driver writes it: the new pitch as
+/// a percentage of the configured `pitch` (0 to 100), so 50 raised by 30
+/// is 160%. Marks are left out; this driver does not place them.
+fn ssml_with_pitch(sequence: &SpeechSequence, pitch: i32) -> String {
+    use std::fmt::Write as _;
+    let mut ssml = String::new();
+    let mut open = false;
+    for item in &sequence.items {
+        match item {
+            SpeechItem::Text(text) => ssml.push_str(&escape_xml(text)),
+            SpeechItem::Pitch(offset) => {
+                if open {
+                    ssml.push_str("</prosody>");
+                    open = false;
+                }
+                if *offset != 0 {
+                    let percent = (pitch + offset).clamp(0, 100) * 100 / pitch.max(1);
+                    let _ = write!(ssml, "<prosody pitch=\"{percent}%\">");
+                    open = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if open {
+        ssml.push_str("</prosody>");
+    }
+    ssml
+}
+
+/// Escapes the three characters SSML gives meaning to.
+fn escape_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pitch_change_is_a_prosody_element_relative_to_the_pitch_setting() {
+        let sequence = SpeechSequence {
+            utterance: verbatim_model::UtteranceId(1),
+            trace_id: verbatim_model::TraceId::mint(),
+            language: None,
+            items: vec![
+                SpeechItem::Text("a & ".to_owned()),
+                SpeechItem::Pitch(30),
+                SpeechItem::Text("B".to_owned()),
+                SpeechItem::Pitch(0),
+                SpeechItem::Text(" c".to_owned()),
+            ],
+        };
+        assert_eq!(
+            ssml_with_pitch(&sequence, 50),
+            "a &amp; <prosody pitch=\"160%\">B</prosody> c"
+        );
+    }
 
     #[test]
     fn rate_percent_spans_espeak_ng_s_word_rates() {
