@@ -661,11 +661,24 @@ verified.
   by a theme at the last stage.
 - Speech settings model (driver settings, immediate application).
   NVDA: `SynthDriver.supportedSettings`. Verbatim: **matched
-  (unverified)** — same descriptor-driven model. **Different:** an
-  invalid saved setting stops startup, and switching synthesizer starts
-  the new one at its defaults, where NVDA falls back and loads the saved
-  settings (phase 4). The default voice is the synthesizer's own default,
-  where NVDA picks one matching its or Windows' language. The settings
+  (unverified)** — same descriptor-driven model. Starting a synthesizer,
+  at startup or from the Select Synthesizer dialog, loads its own saved
+  settings, voice first; a saved value it refuses, such as a voice no
+  longer installed, is logged and the synthesizer keeps its own value
+  rather than failing to start (docs/nvda/synth-drivers.md). When the
+  configured synthesizer cannot start, Verbatim tries the others,
+  eSpeak NG first, and logs which it used; a failed switch keeps the
+  previous synthesizer, as NVDA does. **Different:** NVDA applies the
+  refusal fallback to the voice only and fails the synthesizer on other
+  refused settings, where Verbatim skips any refused setting. NVDA's last
+  resort is a silent synthesizer, so it always starts; Verbatim has none
+  and does not start when no synthesizer can. NVDA writes a corrected
+  voice back to the config at once, where Verbatim saves it with the
+  next commit of the settings dialog. A synthesizer used as a fallback
+  is saved as the configured one by the next commit, where NVDA keeps
+  the user's choice to try again at the next start. The default voice is
+  the synthesizer's own default, where NVDA picks one matching its or
+  Windows' language. The settings
   dialog's sliders use wx's default steps rather than each setting's
   minimum and large steps, which gives the same steps for settings from 0
   to 100. Segments are joined with one space where NVDA joins chunks with

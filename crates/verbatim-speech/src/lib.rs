@@ -21,7 +21,7 @@ mod trim;
 pub use driver::{IndexMark, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink};
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};
-pub use manager::{SpeechManager, SpeechManagerConfig};
+pub use manager::{SavedSettingsFn, SpeechManager, SpeechManagerConfig};
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
 pub use theme::{PlainTheme, Theme};

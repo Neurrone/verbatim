@@ -45,7 +45,7 @@ fn speaks_test_through_wasapi() {
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new(ONECORE_ID),
-        initial_settings: Vec::new(),
+        saved_settings: Box::new(|_| Vec::new()),
         mixer: Arc::new(
             Mixer::start(Box::new(WasapiDevice::new().expect("wake event"))).expect("audio starts"),
         ),

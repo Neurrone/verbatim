@@ -78,7 +78,7 @@ impl SettingsHost {
 
 /// Validates a value against the descriptor with the given id, returning the
 /// descriptor-appropriate [`SynthError::Setting`] when it does not fit.
-fn validate(
+pub(crate) fn validate(
     descriptors: &[SettingDescriptor],
     id: &SettingId,
     value: &SettingValue,
