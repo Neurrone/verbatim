@@ -2091,6 +2091,7 @@ dependencies = [
  "crossbeam-channel",
  "tracing",
  "verbatim-i18n",
+ "verbatim-input-windows",
  "verbatim-model",
  "verbatim-speech",
  "verbatim-uia",

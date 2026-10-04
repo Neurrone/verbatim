@@ -361,7 +361,8 @@ verified.
   review speech is queued; the keyboard hook cancels, or pauses and
   resumes, on the key-down before the gesture is sent, with NVDA's
   exceptions, and a gesture injected through the control plane cancels
-  too; a foreground report or a focus in another top-level window cancels,
+  too, while the keys Verbatim injects for itself (the Control tap that
+  unlocks the foreground) leave speech alone, as NVDA ignores its own; a foreground report or a focus in another top-level window cancels,
   as does entering a menu; each focus announcement carries what it is
   about, entered containers are their own utterances, and on every focus
   change the speech manager stops what it has handed on when any of that
@@ -519,7 +520,11 @@ verified.
   setting raised by 30 and then restored, for every synthesizer, as NVDA
   does by default ([Speech](nvda/speech.md), "Capitals when spelling");
   the offset is not yet configurable, and saying "cap" or beeping for
-  capitals is not offered.
+  capitals is not offered. **Different:** NVDA sends the pitch change
+  inside the speech it gives the synthesizer; Verbatim splits the speech
+  at it and changes the pitch setting between separate synthesis calls,
+  so each capital can bring a short pause the synthesizer leaves at the
+  end of a piece. A synthesizer with no pitch setting is not split.
 - Toggle key announcements ("caps lock on", "num lock off", "scroll lock
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:

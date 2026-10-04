@@ -9,7 +9,10 @@ Public API: `InputHook::start(config, map, events, speech)`, which
 installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls. `speech`
 is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect) + Send`) that carries
 out each key press's effect on speech; it is called on the hook thread, so
-it must not block.
+it must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim gives keys
+it injects for its own purposes (the GUI's Control tap that unlocks the
+foreground): the hook still decides them, but leaves speech alone, as
+NVDA ignores the keys it injects itself.
 
 Implementation notes: the hook thread keeps the machine in a thread-local
 (the hook procedure is a bare callback with no user pointer, and only ever

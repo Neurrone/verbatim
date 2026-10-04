@@ -527,6 +527,11 @@ impl QueueThread {
             cancel.store(true, Ordering::Release);
         }
         self.source.cancel_all();
+        // Everything handed on has just been cancelled. The mixer reports
+        // each ending a little later, on its own thread; until then these
+        // must not be judged again, or a focus change in between would
+        // find them expired and stop speech handed on since.
+        self.handed_on.clear();
         self.unpause();
     }
 
@@ -748,17 +753,18 @@ fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
         // Cancelled before it started; the mixer has already ended it.
         return;
     }
-    let split_marks = !driver.places_marks() && sequence.has_marks();
-    let pieces = if split_marks || sequence.has_pitch_changes() {
-        sequence.split(split_marks)
-    } else {
-        vec![(sequence.clone(), None)]
-    };
     // A pitch change is the driver's own pitch setting, changed between
     // pieces from the value it had when the job began, and always put back.
+    // A driver with no pitch setting is not split for pitch at all.
     let base_pitch = match driver.setting(&PITCH) {
         Some(SettingValue::Number(pitch)) if sequence.has_pitch_changes() => Some(pitch),
         _ => None,
+    };
+    let split_marks = !driver.places_marks() && sequence.has_marks();
+    let pieces = if split_marks || base_pitch.is_some() {
+        sequence.split(split_marks)
+    } else {
+        vec![(sequence.without_pitch_changes(), None)]
     };
     let mut sink = PipelineSink {
         source,

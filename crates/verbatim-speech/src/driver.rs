@@ -62,7 +62,8 @@ pub struct SpeechSequence {
 }
 
 impl SpeechSequence {
-    /// The sequence's text alone, every text item joined in order.
+    /// The sequence's text alone, every text item joined in order with
+    /// single spaces: what is reported as queued, not what is synthesized.
     #[must_use]
     pub fn text(&self) -> String {
         self.items
@@ -71,7 +72,8 @@ impl SpeechSequence {
                 SpeechItem::Text(text) => Some(text.as_str()),
                 SpeechItem::Mark(_) | SpeechItem::Pitch(_) => None,
             })
-            .collect()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Whether the sequence holds any index mark.
@@ -80,6 +82,18 @@ impl SpeechSequence {
         self.items
             .iter()
             .any(|item| matches!(item, SpeechItem::Mark(_)))
+    }
+
+    /// The sequence with its pitch changes left out.
+    #[must_use]
+    pub fn without_pitch_changes(&self) -> Self {
+        self.with_items(
+            self.items
+                .iter()
+                .filter(|item| !matches!(item, SpeechItem::Pitch(_)))
+                .cloned()
+                .collect(),
+        )
     }
 
     /// Whether the sequence holds any pitch change.

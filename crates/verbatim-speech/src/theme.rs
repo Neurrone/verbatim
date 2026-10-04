@@ -154,7 +154,7 @@ mod tests {
                 SpeechItem::Text("c".to_owned()),
             ]
         );
-        assert_eq!(sequence.text(), "aBc");
+        assert_eq!(sequence.text(), "a B c");
     }
 
     #[test]

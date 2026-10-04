@@ -895,3 +895,34 @@ fn waiting_focus_speech_is_judged_when_its_turn_comes() {
         Some(UtteranceEnding::Cancelled)
     );
 }
+
+/// A cancel ends everything handed on at once, though the mixer reports
+/// the endings a little later: a focus change in between must not find the
+/// cancelled speech expired and stop speech handed on since.
+#[test]
+fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
+    let harness = control_manager();
+    let left = harness
+        .manager
+        .speak(about("a control left behind", 1, true));
+    assert_eq!(recv_started(&harness.started), "a control left behind");
+    let control = harness.manager.control();
+    control.cancel();
+    let dialog = harness.manager.speak(about("a dialog", 2, false));
+    control.drop_expired(FocusNow {
+        focus: NodeId::new(3),
+        ancestors: vec![NodeId::new(2)],
+        foreground: None,
+    });
+    assert_eq!(recv_started(&harness.started), "a dialog");
+    harness.finish.send(()).unwrap();
+    harness.recorder.endings(2);
+    assert_eq!(
+        harness.recorder.ending_of(left),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(dialog),
+        Some(UtteranceEnding::Completed)
+    );
+}

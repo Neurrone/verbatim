@@ -44,6 +44,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use verbatim_input::map::SharedGestureMap;
 use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
 
+/// The `dwExtraInfo` Verbatim puts on keys it injects for its own purposes
+/// (the Control tap that lets it take the foreground). The hook leaves
+/// speech alone for them, as NVDA ignores the keys it injects itself; keys
+/// injected on a user's behalf, such as the end-to-end harness's, carry no
+/// tag and cancel speech like typed ones.
+pub const OWN_INPUT_TAG: usize = 0x5642_544D;
+
 /// Carries out a key press's effect on speech; called on the hook thread,
 /// so it must not block.
 pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect) + Send>;
@@ -245,7 +252,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 return KeyDecision::Pass;
             };
             let decision = state.machine.on_key(event, Instant::now());
-            if let Some(effect) = decision.speech {
+            if let Some(effect) = decision.speech
+                && kbd.dwExtraInfo != OWN_INPUT_TAG
+            {
                 (state.speech)(effect);
             }
             if let Some(emitted) = decision.emitted {
