@@ -861,12 +861,16 @@ otherwise.
 - `verbatim-jab` — Java Access Bridge client stack (planned, M13).
 - `verbatim-outpost` — the outpost actor and per-app outpost binary, plus the
   Core-side supervisor.
+- `verbatim-process` — contained child processes (kill-on-close job,
+  inherited pipes, per-launch logs), shared by the supervisor and the
+  synthesizer host.
 - `verbatim-control` — control-plane protocol and server.
 - `verbatim-speech` and `verbatim-audio` — pipeline; the mixer and the
   `AudioDevice` seam.
 - `verbatim-audio-wasapi` — the WASAPI device.
-- `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers, and
-  `verbatim-synth-host`, the synthesizer host process (D18).
+- `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers,
+  `verbatim-synth-host`, the synthesizer host process (D18), and
+  `verbatim-synth-hosted`, the Core-side driver that runs one.
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.
 - `verbatim-i18n` — Fluent localization (D10): embedded English fallback,
   runtime locale-folder loading.

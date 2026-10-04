@@ -23,9 +23,6 @@
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
 
-use std::ffi::c_void;
-use std::fs::File;
-use std::os::windows::io::FromRawHandle;
 use std::process::ExitCode;
 
 use verbatim_outpost::{run_attach, run_listener, run_pipe};
@@ -47,8 +44,7 @@ fn main() -> ExitCode {
         }) => {
             // SAFETY: the handle values name pipe ends the supervisor created
             // and this process inherited; each is owned by exactly one File.
-            let reader = unsafe { File::from_raw_handle(pipe_in as *mut c_void) };
-            let writer = unsafe { File::from_raw_handle(pipe_out as *mut c_void) };
+            let (reader, writer) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
             match run_pipe(Box::new(reader), Box::new(writer), target_pid) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -60,8 +56,7 @@ fn main() -> ExitCode {
         Some(Mode::Listener { pipe_in, pipe_out }) => {
             // SAFETY: the handle values name pipe ends the supervisor created
             // and this process inherited; each is owned by exactly one File.
-            let reader = unsafe { File::from_raw_handle(pipe_in as *mut c_void) };
-            let writer = unsafe { File::from_raw_handle(pipe_out as *mut c_void) };
+            let (reader, writer) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
             match run_listener(Box::new(reader), Box::new(writer)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {

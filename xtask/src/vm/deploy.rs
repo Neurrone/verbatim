@@ -47,6 +47,7 @@ struct Artifact {
 pub(crate) struct BuiltArtifacts {
     verbatim: PathBuf,
     outpost: PathBuf,
+    synth_host: PathBuf,
     agent: PathBuf,
 }
 
@@ -62,19 +63,23 @@ pub(crate) struct BuiltArtifacts {
 /// Returns an error if the build fails or an expected artifact is missing
 /// afterwards.
 pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
-    println!("xtask vm deploy: building verbatim-app, verbatim-agent, verbatim-outpost (debug)");
+    println!(
+        "xtask vm deploy: building verbatim-app, verbatim-agent, verbatim-outpost, \
+         verbatim-synth-host (debug)"
+    );
     build_binaries(repo_root)?;
 
     let target_dir = repo_root.join("target").join("debug");
     Ok(BuiltArtifacts {
         verbatim: require_artifact(&target_dir, "verbatim.exe")?,
         outpost: require_artifact(&target_dir, "verbatim-outpost.exe")?,
+        synth_host: require_artifact(&target_dir, "verbatim-synth-host.exe")?,
         agent: require_artifact(&target_dir, "verbatim-agent.exe")?,
     })
 }
 
 /// Stages a `settings.toml` selecting the real `OneCore` synthesizer,
-/// hashes it, `built`'s three binaries, and the vendored `ffmpeg.exe` and
+/// hashes it, `built`'s four binaries, and the vendored `ffmpeg.exe` and
 /// `ffprobe.exe` against the guest's copies, and copies only the ones that
 /// differ. Stops the guest's `VerbatimAgent`
 /// scheduled task and any running Verbatim first, but only when at least
@@ -116,6 +121,12 @@ pub(crate) fn stage_and_copy(
             label: "verbatim-outpost.exe",
             local_path: built.outpost,
             remote_path: format!(r"{VERBATIM_DIR}\verbatim-outpost.exe"),
+            is_executable: true,
+        },
+        Artifact {
+            label: "verbatim-synth-host.exe",
+            local_path: built.synth_host,
+            remote_path: format!(r"{VERBATIM_DIR}\verbatim-synth-host.exe"),
             is_executable: true,
         },
         Artifact {
@@ -247,7 +258,7 @@ fn copy_mismatched_artifacts(
             VM_NAME,
             credentials,
             "Stop-ScheduledTask -TaskName 'VerbatimAgent' -ErrorAction SilentlyContinue\n\
-             Stop-Process -Name 'verbatim-agent','verbatim','verbatim-outpost' -Force -ErrorAction SilentlyContinue\n\
+             Stop-Process -Name 'verbatim-agent','verbatim','verbatim-outpost','verbatim-synth-host' -Force -ErrorAction SilentlyContinue\n\
              Start-Sleep -Seconds 1",
         )?;
         stopped_guest = true;
@@ -375,6 +386,8 @@ fn build_binaries(repo_root: &Path) -> VmResult<()> {
             "verbatim-agent",
             "-p",
             "verbatim-outpost",
+            "-p",
+            "verbatim-synth-host",
         ])
         .current_dir(repo_root);
     if let Some(dir) = &libclang {

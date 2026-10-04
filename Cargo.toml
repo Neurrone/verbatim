@@ -51,8 +51,11 @@ verbatim-input = { path = "crates/verbatim-input" }
 verbatim-input-windows = { path = "crates/verbatim-input-windows" }
 verbatim-model = { path = "crates/verbatim-model" }
 verbatim-outpost = { path = "crates/verbatim-outpost" }
+verbatim-process = { path = "crates/verbatim-process" }
 verbatim-speech = { path = "crates/verbatim-speech" }
 verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
+verbatim-synth-host = { path = "crates/verbatim-synth-host" }
+verbatim-synth-hosted = { path = "crates/verbatim-synth-hosted" }
 verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }
 verbatim-uia = { path = "crates/verbatim-uia" }
 verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }

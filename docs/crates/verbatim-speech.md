@@ -63,6 +63,22 @@ Public API:
   trait, which is why utterances carry their source node's role and screen
   rectangle even though `PlainTheme` ignores both.
 
+- `hosting` (a public module) — the synthesizer host protocol (decision
+  D18), the `SynthDriver` contract made into messages so a host process
+  runs any driver unchanged. `ToHost` is what Core sends: `Speak(sequence)`,
+  `Cancel(utterance_id)`, and `SetSetting { id, value }`. `FromHost` is
+  what a host sends: `Ready(HostDescription)` first, or `Unavailable(reason)`
+  before exiting; then `Pcm(format, samples)`, `Mark`, and `Done` or
+  `Failed(reason)` for each utterance, and `SettingApplied(refusal)` for
+  each setting. `HostDescription` carries the display name,
+  `places_marks`, the setting descriptors, and their current values.
+  `write_to_host` and `read_to_host` serve the Core-to-host direction,
+  `write_from_host` and `read_from_host` the other; each read returns
+  `None` at a clean end of stream (a broken pipe between frames counts as
+  one). The host process is [verbatim-synth-host](verbatim-synth-host.md),
+  and its Core-side driver is
+  [verbatim-synth-hosted](verbatim-synth-hosted.md).
+
 Implementation notes, `SpeechManager`: two dedicated threads, plus the
 mixer's audio thread that plays what they produce. The queue thread owns
 the priority lanes — `Interrupt` cancels current and queued speech, `Next`
@@ -109,3 +125,19 @@ sequence has marks, the synth thread splits it with `split_at_marks` and
 speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
 synthesis boundary at each mark.
+
+Host framing (`hosting.rs`). Every message is one frame: a kind byte, a
+little-endian `u32` body length, and the body, written in a single write
+and flushed, so the peer never sees a frame split by another writer.
+Kind 0 is JSON (serde's encoding of the message enum; every `ToHost` and
+every `FromHost` except PCM). Kind 1 is PCM: the sample rate as a
+little-endian `u32`, the channel count as a little-endian `u16`, then the
+samples as little-endian `i16`, since a synthesizer streams far more audio
+than anything else and JSON would multiply its size. A reader rejects a
+length above 16 MB as `InvalidData` rather than allocating it, and
+rejects an unknown kind, a PCM body shorter than its six-byte header or
+with an odd sample byte count, and a PCM frame sent to a host. A stream
+that ends part-way through a frame is an `UnexpectedEof` error. `Cancel`
+names the utterance it cancels, so a cancel that crosses that utterance's
+`Done` on the pipe cannot cancel the next utterance. A unit test writes
+every message of both directions through a buffer and reads them back.

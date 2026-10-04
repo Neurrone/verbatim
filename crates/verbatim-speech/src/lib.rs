@@ -11,6 +11,7 @@
 mod driver;
 mod events;
 mod host;
+pub mod hosting;
 mod manager;
 mod registry;
 mod settings;

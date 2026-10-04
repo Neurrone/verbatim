@@ -114,7 +114,11 @@ knowing for review:
   shared by the reducer thread, the control plane's `DumpRecorder` handler,
   and the panic hook installed as early as possible so it covers every
   thread spawned after it), the speech pipeline (`build_speech_manager`:
-  OneCore through a `Mixer` over `WasapiDevice` by default, configured
+  OneCore through a `Mixer` over `WasapiDevice` by default, OneCore
+  registered as a hosted synthesizer, `verbatim_synth_hosted::factory`
+  starting `verbatim-synth-host.exe` from the folder `verbatim.exe` runs
+  from (decision D18), so the app no longer links the OneCore driver;
+  configured
   from the base profile, observed by the ledger — `VERBATIM_TEST_AUDIO=null`
   at startup is a test-only escape hatch that registers the capture synth
   from `verbatim-synth-capture` alongside OneCore and builds the mixer

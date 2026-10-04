@@ -208,7 +208,8 @@ impl Scenario {
     /// In runner-direct mode (the default — see [`REMOTE_ENV`]), first
     /// builds the default source binaries unless [`VERBATIM_EXE_ENV`]
     /// overrides them (see [`build_default_source_binaries`]), then
-    /// stages `verbatim.exe` and `verbatim-outpost.exe` into
+    /// stages `verbatim.exe`, `verbatim-outpost.exe`, and
+    /// `verbatim-synth-host.exe` into
     /// `target/e2e-stage` under the workspace root (see [`stage_binaries`]),
     /// then writes [`verbatim_config::Settings::for_e2e`]'s fixed
     /// settings.toml there selecting the capture synthesizer (audio-free
@@ -958,7 +959,15 @@ fn build_default_source_binaries() -> io::Result<()> {
             // Cargo sets CARGO for the processes it runs, tests included.
             let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
             let status = std::process::Command::new(cargo)
-                .args(["build", "-p", "verbatim-app", "-p", "verbatim-outpost"])
+                .args([
+                    "build",
+                    "-p",
+                    "verbatim-app",
+                    "-p",
+                    "verbatim-outpost",
+                    "-p",
+                    "verbatim-synth-host",
+                ])
                 .current_dir(workspace_root())
                 .status()
                 .map_err(|error| format!("could not launch cargo build: {error}"))?;
@@ -966,7 +975,8 @@ fn build_default_source_binaries() -> io::Result<()> {
                 Ok(())
             } else {
                 Err(format!(
-                    "cargo build -p verbatim-app -p verbatim-outpost failed ({status}); set \
+                    "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host \
+                     failed ({status}); set \
                      {VERBATIM_EXE_ENV} to stage an existing build instead"
                 ))
             }
@@ -1000,6 +1010,14 @@ fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
     Ok(stage_dir)
 }
 
+/// The executables a Verbatim launch needs side by side: the app finds the
+/// outpost and the synthesizer host next to itself.
+const STAGED_BINARIES: [&str; 3] = [
+    "verbatim.exe",
+    "verbatim-outpost.exe",
+    "verbatim-synth-host.exe",
+];
+
 /// The directory-parameterized core of [`stage_binaries`], split out so unit
 /// tests can exercise the hash-skip and missing-source-binary behavior
 /// against temporary directories instead of the real workspace's
@@ -1007,7 +1025,7 @@ fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
 /// destination).
 fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(stage_dir)?;
-    for name in ["verbatim.exe", "verbatim-outpost.exe"] {
+    for name in STAGED_BINARIES {
         let source = source_dir.join(name);
         if !source.is_file() {
             return Err(io::Error::other(format!(
@@ -1193,6 +1211,8 @@ mod tests {
         fs::write(source_dir.join("verbatim.exe"), b"verbatim v1").expect("seed verbatim.exe");
         fs::write(source_dir.join("verbatim-outpost.exe"), b"outpost v1")
             .expect("seed verbatim-outpost.exe");
+        fs::write(source_dir.join("verbatim-synth-host.exe"), b"host v1")
+            .expect("seed verbatim-synth-host.exe");
 
         copy_into_stage(&source_dir, &stage_dir).expect("first copy");
         assert_eq!(

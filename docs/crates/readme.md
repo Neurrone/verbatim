@@ -32,10 +32,17 @@ commit updated only the changed crate's own guide.
   and the silent device (D5, D17).
 - [verbatim-audio-wasapi](verbatim-audio-wasapi.md) — the WASAPI device.
 - [verbatim-speech](verbatim-speech.md) — priority lanes, synth threads,
-  themes (D12), and the settings host.
+  themes (D12), the settings host, and the synthesizer host protocol
+  (D18).
 - [verbatim-synth-onecore](verbatim-synth-onecore.md) — the OneCore driver.
 - [verbatim-synth-capture](verbatim-synth-capture.md) — the audio-free test
   synthesizer.
+- [verbatim-process](verbatim-process.md) — contained child processes:
+  kill-on-close jobs, inherited pipes, and per-launch child logs.
+- [verbatim-synth-hosted](verbatim-synth-hosted.md) — `HostedSynth`, the
+  driver that runs a synthesizer in a host process (D18).
+- [verbatim-synth-host](verbatim-synth-host.md) — `verbatim-synth-host.exe`,
+  one synthesizer in its own process.
 - [verbatim-core](verbatim-core.md) — the pure reducer, flight recorder,
   and dump format.
 - [verbatim-uia](verbatim-uia.md) — the UIA client stack.

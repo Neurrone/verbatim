@@ -21,9 +21,13 @@ prints plain text, one fact per line.
 Build and start a Verbatim to inspect first:
 
 ```
-cargo build -p verbatim-app
+cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host
 target\debug\verbatim.exe
 ```
+
+Verbatim finds `verbatim-outpost.exe` and `verbatim-synth-host.exe` next
+to its own executable; without the synthesizer host, OneCore cannot
+start.
 
 Then, in a second terminal, run `verbatim-inspect` subcommands against it.
 Every subcommand accepts a global `--connect <ADDRESS>` option before the
@@ -238,13 +242,14 @@ who opens the VM's console.
 The suite always runs against a fixed, generated configuration, never
 whatever `settings.toml` a developer's own manual runs left behind.
 Concretely, in this runner-direct mode, `Scenario::launch` first runs
-`cargo build -p verbatim-app -p verbatim-outpost`, once per test binary, so
+`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host`,
+once per test binary, so
 a run can never stage an executable older than the source under test
 (`cargo test -p verbatim-e2e` alone builds only this crate and its
 libraries, not Verbatim's executables). That build needs `LIBCLANG_PATH`
 like any direct build of `verbatim-app`, and is a no-op when nothing
-changed. It then copies `verbatim.exe` and `verbatim-outpost.exe` into
-`target/e2e-stage` under the
+changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`, and
+`verbatim-synth-host.exe` into `target/e2e-stage` under the
 workspace root (skipping a copy when the destination already matches
 byte-for-byte) and writes a fresh `settings.toml` there — `Settings::default`
 plus exactly the synthesizer choice — before launching that staged copy.
@@ -324,10 +329,11 @@ the same directory the interleaved timeline
 (`timeline.txt` — the same account an `expect_*` panic already prints),
 what held the foreground before setup and after teardown (`foreground.txt`,
 so a failure can be read against the desktop it started from),
-Verbatim's captured stderr log (`stderr.log`), the per-process outpost and
-listener logs the supervisor redirected each spawned process's stderr into
-(`listener.log` and one `outpost-<image>-<pid>.log` per application,
-Core's own as `outpost-verbatim-<pid>.log` — every file in the launch's own
+Verbatim's captured stderr log (`stderr.log`), the per-process outpost,
+listener, and synthesizer host logs that each spawned process's stderr was
+redirected into (`listener.log`, one `outpost-<image>-<pid>.log` per
+application, Core's own as `outpost-verbatim-<pid>.log`, and
+`synth-onecore.log` when OneCore was started — every file in the launch's own
 log directory, `logs\<Verbatim's pid>` next to Verbatim's executable,
 listed and read through the agent), and a reducer flight-recorder
 dump (`flight-recorder.jsonl`, fetched via the control plane's `DumpRecorder`

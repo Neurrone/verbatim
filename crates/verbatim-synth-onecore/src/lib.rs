@@ -32,7 +32,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::core::HSTRING;
 
 /// The stable id of the `OneCore` driver.
-pub const ONECORE_ID: &str = "onecore";
+pub const ONECORE_ID: &str = verbatim_speech::hosting::synth_ids::ONECORE;
 
 /// The Fluent message id for the `OneCore` driver's display name.
 const ONECORE_DISPLAY_NAME_KEY: &str = "synth-name-onecore";

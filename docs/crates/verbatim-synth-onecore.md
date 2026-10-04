@@ -1,10 +1,17 @@
 # verbatim-synth-onecore
 
 The OneCore driver over WinRT `Windows.Media.SpeechSynthesis` — the voice
-Verbatim first speaks with.
+Verbatim first speaks with. Verbatim runs it inside the synthesizer host
+process (decision D18): [verbatim-synth-host](verbatim-synth-host.md)
+builds it when started with `--synth onecore`, and
+[verbatim-app](verbatim-app.md) registers OneCore through
+[verbatim-synth-hosted](verbatim-synth-hosted.md) rather than linking
+this crate. The driver itself is unchanged by that move.
 
 Public API: `OneCoreSynth::new()`, `ONECORE_ID`, and `factory()` plus
-`register(registry)` conveniences. Everything else is the trait.
+`register(registry)` conveniences, which build the driver in the calling
+process; nothing in Verbatim calls the two conveniences now. Everything
+else is the trait.
 
 Implementation notes: voices enumerate into a `voice` Choice descriptor;
 rate, pitch, and volume are NVDA-convention 0 to 100 numerics mapped onto

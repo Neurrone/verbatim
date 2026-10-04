@@ -31,14 +31,15 @@ arguments for the full verb list printed from the source of truth.
 - `restore [checkpoint]` restores a named checkpoint (default `golden`) and
   waits for the agent — the fast way back to a known-clean state between
   runs, instead of a full `create`.
-- `deploy` builds `verbatim-app`, `verbatim-agent`, and `verbatim-outpost`
-  (debug profile, matching the CI job), then compares a SHA-256 hash of
-  each of the six artifacts it would place in the guest (`verbatim.exe`
-  and `verbatim-outpost.exe` in `C:\VerbatimLab\verbatim`, a staged
+- `deploy` builds `verbatim-app`, `verbatim-agent`, `verbatim-outpost`,
+  and `verbatim-synth-host` (debug profile, matching the CI job), then
+  compares a SHA-256 hash of each of the seven artifacts it would place
+  in the guest (`verbatim.exe`, `verbatim-outpost.exe`, and
+  `verbatim-synth-host.exe` in `C:\VerbatimLab\verbatim`, a staged
   `settings.toml` alongside them selecting the real `OneCore` synthesizer,
   `verbatim-agent.exe` in `C:\VerbatimLab\agent`, and the vendored
   `ffmpeg.exe` and `ffprobe.exe` in `C:\VerbatimLab\tools`) against the
-  guest's existing copy, fetching all six guest-side hashes in a single
+  guest's existing copy, fetching all seven guest-side hashes in a single
   PowerShell Direct call. Only artifacts
   whose hash differs are copied; each is reported as either "unchanged;
   skipping" or "changed; will copy". The guest's `VerbatimAgent` scheduled

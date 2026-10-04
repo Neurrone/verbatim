@@ -25,10 +25,11 @@ Public API:
   `verbatim_control::client::Client`.
 - `Scenario` — the lifecycle owner for one live, agent-driven Verbatim run:
   a guard struct, not a manual-cleanup checklist. In runner-direct mode
-  `Scenario::launch` first builds `verbatim-app` and `verbatim-outpost`
-  (once per test binary, skipped when `VERBATIM_E2E_VERBATIM_EXE` names a
-  build to stage instead), then copies `verbatim.exe` and
-  `verbatim-outpost.exe` into
+  `Scenario::launch` first builds `verbatim-app`, `verbatim-outpost`,
+  and `verbatim-synth-host` (once per test binary, skipped when
+  `VERBATIM_E2E_VERBATIM_EXE` names a build to stage instead), then
+  copies `verbatim.exe`, `verbatim-outpost.exe`, and
+  `verbatim-synth-host.exe` into
   `target/e2e-stage` and writes `Settings::for_e2e`'s fixed `settings.toml`
   there; in remote mode `cargo xtask vm deploy` has already staged the
   guest side. The synthesizer is the capture synthesizer by default
@@ -61,7 +62,7 @@ Public API:
   earlier scenarios typed into); `latency_snapshot` is the non-asserting,
   non-printing fetch the registry's run summary uses (see `registry`
   below), and `collect_run_artifacts` (timeline, stderr, and the per-process
-  outpost and listener logs: every file in the launch's own log directory,
+  outpost, listener, and synthesizer host logs: every file in the launch's own log directory,
   `logs\<Verbatim's pid>`, listed through the agent, so an application that
   a launch handed off to, as Notepad does, is still collected) plus
   `collect_flight_recorder` (the reducer flight recorder, dumped before the

@@ -41,6 +41,7 @@ use verbatim_model::{
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
 use verbatim_outpost::supervisor::EndReason;
 use verbatim_outpost::{OutpostMessage, Supervisor};
+use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
     SynthRegistry,
@@ -129,6 +130,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // Speech pipeline: OneCore through WASAPI by default, observed by the
     // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
     // audio (see build_speech_manager).
+    // Every child process (the synthesizer host below, the outposts and the
+    // listener later) logs into this launch's directory, prepared first.
+    verbatim_process::prepare_launch_logs(&exe_dir());
     let manager = build_speech_manager(&config, &ledger)?;
 
     // The keyboard layout selects which review and object-navigation
@@ -268,6 +272,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The synthesizer host executable, next to this one.
+const SYNTH_HOST_EXE: &str = "verbatim-synth-host.exe";
+
 /// The folder `verbatim.exe` runs from — the root for config, profiles, and
 /// locales (the portable layout).
 fn exe_dir() -> PathBuf {
@@ -341,7 +348,14 @@ fn build_speech_manager(
 ) -> Result<Arc<SpeechManager>, verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
     let mut registry = SynthRegistry::new();
-    verbatim_synth_onecore::register(&mut registry);
+    // Every native synthesizer runs in a synthesizer host process next to
+    // this executable (decision D18).
+    let host_exe = exe_dir().join(SYNTH_HOST_EXE);
+    registry.register(
+        SynthId::new(synth_ids::ONECORE),
+        verbatim_i18n::message("synth-name-onecore"),
+        verbatim_synth_hosted::factory(host_exe, SynthId::new(synth_ids::ONECORE)),
+    );
     if test_audio {
         tracing::warn!(
             "VERBATIM_TEST_AUDIO=null: test audio mode is active; the capture synth is available and audio plays silently in real time"

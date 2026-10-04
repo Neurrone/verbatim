@@ -77,7 +77,7 @@ jobs:
             Write-Warning "libclang.dll not found in known locations; relying on PATH"
           }
       - name: Build verbatim-app and verbatim-agent (debug)
-        run: cargo build -p verbatim-app -p verbatim-agent
+        run: cargo build -p verbatim-app -p verbatim-agent -p verbatim-outpost -p verbatim-synth-host
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so
       # an agent started in a step of its own was gone (connection refused)

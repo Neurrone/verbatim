@@ -2007,9 +2007,10 @@ dependencies = [
  "verbatim-input-windows",
  "verbatim-model",
  "verbatim-outpost",
+ "verbatim-process",
  "verbatim-speech",
  "verbatim-synth-capture",
- "verbatim-synth-onecore",
+ "verbatim-synth-hosted",
  "windows",
 ]
 
@@ -2167,7 +2168,16 @@ dependencies = [
  "tracing-subscriber",
  "verbatim-ia2",
  "verbatim-model",
+ "verbatim-process",
  "verbatim-uia",
+ "windows",
+]
+
+[[package]]
+name = "verbatim-process"
+version = "0.1.0"
+dependencies = [
+ "tracing",
  "windows",
 ]
 
@@ -2177,6 +2187,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "serde",
+ "serde_json",
  "tracing",
  "verbatim-audio",
  "verbatim-i18n",
@@ -2190,6 +2201,32 @@ version = "0.1.0"
 dependencies = [
  "verbatim-audio",
  "verbatim-model",
+ "verbatim-speech",
+]
+
+[[package]]
+name = "verbatim-synth-host"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "tracing",
+ "tracing-subscriber",
+ "verbatim-audio",
+ "verbatim-model",
+ "verbatim-process",
+ "verbatim-speech",
+ "verbatim-synth-hosted",
+ "verbatim-synth-onecore",
+ "windows",
+]
+
+[[package]]
+name = "verbatim-synth-hosted"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "tracing",
+ "verbatim-process",
  "verbatim-speech",
 ]
 
