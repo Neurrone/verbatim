@@ -145,6 +145,10 @@ enum Request {
     CancelAll {
         source: u64,
     },
+    Pause {
+        source: u64,
+        paused: bool,
+    },
     Fail {
         source: u64,
         utterance: UtteranceId,
@@ -205,6 +209,11 @@ struct SourceState {
     segments: VecDeque<Segment>,
     events: VecDeque<Pending>,
     tracked: Vec<Tracked>,
+    /// Held where it is: none of its frames are mixed.
+    paused: bool,
+    /// Resumed from a pause, and not mixed from since: the device running
+    /// dry meanwhile was the pause, not an underrun.
+    resumed: bool,
 }
 
 impl Mixer {
@@ -308,6 +317,8 @@ impl Mixer {
                 segments: VecDeque::new(),
                 events: VecDeque::new(),
                 tracked: Vec::new(),
+                paused: false,
+                resumed: false,
             },
         );
         Source {
@@ -508,6 +519,16 @@ impl Source {
         self.shared.request(Request::CancelAll { source: self.id });
     }
 
+    /// Holds this source's audio where it is, or lets it go on. What the
+    /// device had queued is taken back, so a pause is heard at once, and
+    /// playback events wait with the audio.
+    pub fn pause(&self, paused: bool) {
+        self.shared.request(Request::Pause {
+            source: self.id,
+            paused,
+        });
+    }
+
     /// Appends device frames for `utterance`, waiting for room.
     fn append(&self, utterance: UtteranceId, frames: &[f32]) -> ControlFlow<()> {
         let mut offset = 0;
@@ -683,11 +704,19 @@ impl SourceState {
         self.write_end - self.mixed_end
     }
 
+    /// Frames that may be mixed now: none while paused.
+    fn mixable(&self) -> u64 {
+        if self.paused { 0 } else { self.unmixed() }
+    }
+
     /// Whether an utterance is in the middle of playing: some of its frames
     /// have already gone to the device, and more are still being written or
     /// waiting to be mixed. An utterance whose first frames have not been
     /// mixed yet is starting, not in the middle.
     fn mid_utterance(&self) -> bool {
+        if self.paused || self.resumed {
+            return false;
+        }
         self.tracked.iter().any(|tracked| {
             self.mixed_end > tracked.start && (tracked.writing || self.unmixed() > 0)
         })
@@ -821,7 +850,7 @@ fn frames_to_mix(state: &State, queued: u64, running: bool) -> u64 {
     let available = state
         .sources
         .values()
-        .map(SourceState::unmixed)
+        .map(SourceState::mixable)
         .max()
         .unwrap_or(0);
     let frames = room.min(available);
@@ -829,7 +858,7 @@ fn frames_to_mix(state: &State, queued: u64, running: bool) -> u64 {
     let still_writing = state
         .sources
         .values()
-        .any(|source| source.unmixed() > 0 && source.tracked.iter().any(|tracked| tracked.writing));
+        .any(|source| source.mixable() > 0 && source.tracked.iter().any(|tracked| tracked.writing));
     if !running && frames < start_frames && still_writing {
         0
     } else {
@@ -880,10 +909,11 @@ fn mix_sources(state: &mut State, frames: u64, written: u64, mix: &mut Vec<f32>)
     mix.clear();
     mix.resize(frame_count * channels, 0.0);
     for source in state.sources.values_mut() {
-        let take = source.unmixed().min(frames);
+        let take = source.mixable().min(frames);
         if take == 0 {
             continue;
         }
+        source.resumed = false;
         let offset =
             usize::try_from(source.mixed_end - source.data_start).unwrap_or(usize::MAX) * channels;
         let count = usize::try_from(take).unwrap_or(usize::MAX) * channels;
@@ -937,6 +967,12 @@ fn carry_out(
                         },
                     ));
                 }
+            }
+        }
+        Request::Pause { source, paused } => {
+            if let Some(source) = state.sources.get_mut(&source) {
+                source.resumed = source.paused && !paused;
+                source.paused = paused;
             }
         }
         Request::Fail {

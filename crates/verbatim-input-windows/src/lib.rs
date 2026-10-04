@@ -42,7 +42,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_input::map::SharedGestureMap;
-use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture};
+use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
+
+/// Carries out a key press's effect on speech; called on the hook thread,
+/// so it must not block.
+pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect) + Send>;
 use verbatim_input::{KeyDecision, KeyEvent};
 
 /// Per-hook-thread state reached by the hook procedure.
@@ -54,6 +58,7 @@ use verbatim_input::{KeyDecision, KeyEvent};
 struct HookState {
     machine: DecisionMachine,
     events: Sender<EmittedGesture>,
+    speech: SpeechEffectFn,
 }
 
 thread_local! {
@@ -74,7 +79,10 @@ impl InputHook {
     /// `map` is the lock-free bound-gesture snapshot the hook consults, and
     /// `events` receives gestures as they fire. The send is non-blocking and
     /// drops on a full channel (see the module's never-block constraint), so a
-    /// bounded channel is a fine choice.
+    /// bounded channel is a fine choice. `speech` carries out each key
+    /// press's effect on speech (cancel, or pause and resume), before the
+    /// press's gesture is sent, so speech the gesture causes is never the
+    /// speech it cancels.
     ///
     /// # Errors
     ///
@@ -84,6 +92,7 @@ impl InputHook {
         config: DecisionConfig,
         map: SharedGestureMap,
         events: Sender<EmittedGesture>,
+        speech: SpeechEffectFn,
     ) -> io::Result<Self> {
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
@@ -91,7 +100,7 @@ impl InputHook {
 
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
-            .spawn(move || hook_thread(config, map, events, &ready_tx))?;
+            .spawn(move || hook_thread(config, map, events, speech, &ready_tx))?;
 
         match ready_rx.recv() {
             Ok(Ok(thread_id)) => Ok(Self {
@@ -132,6 +141,7 @@ fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     events: Sender<EmittedGesture>,
+    speech: SpeechEffectFn,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     // SAFETY: `GetModuleHandleW(None)` returns this process's module handle,
@@ -164,6 +174,7 @@ fn hook_thread(
         *state.borrow_mut() = Some(HookState {
             machine: DecisionMachine::new(config, map),
             events,
+            speech,
         });
     });
 
@@ -234,6 +245,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 return KeyDecision::Pass;
             };
             let decision = state.machine.on_key(event, Instant::now());
+            if let Some(effect) = decision.speech {
+                (state.speech)(effect);
+            }
             if let Some(emitted) = decision.emitted {
                 // Never block: drop the gesture if the consumer is backed up.
                 let _ = state.events.try_send(emitted);

@@ -17,6 +17,7 @@ use verbatim_model::{
     QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
     Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
+use verbatim_model::{FocusNow, FocusValidity};
 
 use crate::review;
 use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState};
@@ -204,9 +205,10 @@ fn reduce_activation_completed(
     };
     vec![Effect::Speak(Utterance {
         trace_id,
-        priority: SpeechPriority::Interrupt,
+        priority: SpeechPriority::Queued,
         segments: vec![segment],
         source: None,
+        validity: None,
     })]
 }
 
@@ -335,6 +337,7 @@ fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> 
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(text.clone())],
         source: None,
+        validity: None,
     })]
 }
 
@@ -484,36 +487,110 @@ fn reduce_focus_changed(
         object: report.node.clone(),
         review_offset: 0,
     };
-    if report.foreground && !has_text(report.node.name.as_deref()) {
-        state.focus = Some(new_focus);
-        state.navigator = Some(navigator);
-        return Vec::new();
+    // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
+    // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
+    // new foreground window cancels speech, nameless or not, and so does
+    // entering a menu; speech for a focus the user has since left is
+    // dropped by the speech manager, which is told where the focus now is.
+    let foreground_changed = foreground_changed(state.focus.as_ref(), report, focus_window);
+    if report.foreground {
+        state.foreground = Some(report.node.id);
     }
-
-    let mut segments = Vec::new();
     let entered = if report.ancestors_unknown {
         Vec::new()
     } else {
-        entered_containers(state.focus.as_ref(), window, report.ancestors)
+        entered_ancestors(state.focus.as_ref(), window, report.ancestors)
     };
-    for container in entered {
-        segments.extend(container_segments(container));
+    let entering_menu = entered
+        .iter()
+        .any(|ancestor| matches!(ancestor.role, Role::MenuBar | Role::Menu | Role::MenuItem));
+    let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
+        focus: report.node.id,
+        ancestors: new_focus
+            .ancestors
+            .iter()
+            .map(|ancestor| ancestor.id)
+            .collect(),
+        foreground: state.foreground,
+    })];
+    if foreground_changed || entering_menu {
+        effects.push(Effect::StopSpeech);
     }
-    segments.extend(node_segments(report.node, Reason::Focus));
+    state.focus = Some(new_focus);
+    state.navigator = Some(navigator);
+    if report.foreground && !has_text(report.node.name.as_deref()) {
+        return effects;
+    }
+
+    effects.extend(focus_speech(trace_id, report, entered));
+    effects
+}
+
+/// Whether a new focus brings a new foreground window, which cancels
+/// speech: a foreground report, or a focus in another top-level window
+/// than the previous focus (NVDA's foreground event, run when the top of
+/// the focus ancestry changes).
+fn foreground_changed(
+    previous: Option<&FocusContext>,
+    report: &FocusReport<'_>,
+    window: Option<WindowFacts>,
+) -> bool {
+    let previous_top = previous
+        .and_then(|focus| focus.window)
+        .map(|window| window.top_level);
+    report.foreground
+        || match (previous_top, window.map(|window| window.top_level)) {
+            (Some(old), Some(new)) => old != new,
+            (None, Some(_)) => true,
+            _ => false,
+        }
+}
+
+/// The speech for a new focus: each entered container as its own
+/// utterance, valid while the focus is inside it, then the focus, valid
+/// while it is the focus.
+fn focus_speech(
+    trace_id: TraceId,
+    report: &FocusReport<'_>,
+    entered: Vec<&NodeSnapshot>,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    for container in entered
+        .into_iter()
+        .filter(|ancestor| is_presentable_container(ancestor))
+    {
+        let segments = container_segments(container);
+        if segments.is_empty() {
+            continue;
+        }
+        effects.push(Effect::Speak(Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(source_of(container)),
+            validity: Some(FocusValidity {
+                node: container.id,
+                had_focus: false,
+            }),
+        }));
+    }
+    let mut segments = node_segments(report.node, Reason::Focus);
     // A selection container introduces its selected item right after
     // itself — the roadmap's "announce a focused list's selected item".
     if let Some(selected) = report.selected_child {
         segments.extend(node_segments(selected, Reason::Focus));
     }
-    let utterance = Utterance {
+    effects.push(Effect::Speak(Utterance {
         trace_id,
-        priority: SpeechPriority::Interrupt,
+        priority: SpeechPriority::Queued,
         segments,
         source: Some(source_of(report.node)),
-    };
-    state.focus = Some(new_focus);
-    state.navigator = Some(navigator);
-    vec![Effect::Speak(utterance)]
+        validity: Some(FocusValidity {
+            node: report.node.id,
+            had_focus: true,
+        }),
+    }));
+    effects
 }
 
 /// Whether a name or description has real, non-whitespace text.
@@ -590,6 +667,7 @@ fn reduce_name_changed(
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::label(text.clone())],
         source: Some(source_of(&focus.snapshot)),
+        validity: None,
     })]
 }
 
@@ -633,6 +711,7 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
         priority,
         segments: vec![UtteranceSegment::text(text.clone())],
         source: None,
+        validity: None,
     })]
 }
 
@@ -665,11 +744,12 @@ fn reduce_command(
     let Some(navigator) = state.navigator.as_ref() else {
         return vec![Effect::Speak(Utterance {
             trace_id,
-            priority: SpeechPriority::Interrupt,
+            priority: SpeechPriority::Queued,
             segments: vec![UtteranceSegment::new(SegmentContent::Message(
                 Message::NoNavigatorObject,
             ))],
             source: None,
+            validity: None,
         })];
     };
 
@@ -700,7 +780,7 @@ fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         return Vec::new();
     };
     let object = focus.snapshot.clone();
-    let utterance = announce_node(trace_id, SpeechPriority::Interrupt, &object, Reason::Focus);
+    let utterance = announce_node(trace_id, SpeechPriority::Queued, &object, Reason::Focus);
     state.navigator = Some(Navigator {
         object,
         review_offset: 0,
@@ -715,7 +795,7 @@ fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Ef
     match repeat {
         0 => vec![Effect::Speak(announce_node(
             trace_id,
-            SpeechPriority::Interrupt,
+            SpeechPriority::Queued,
             &navigator.object,
             Reason::Query,
         ))],
@@ -727,9 +807,10 @@ fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Ef
             }
             vec![Effect::Speak(Utterance {
                 trace_id,
-                priority: SpeechPriority::Interrupt,
+                priority: SpeechPriority::Queued,
                 segments,
                 source: Some(source_of(&navigator.object)),
+                validity: None,
             })]
         }
         _ => {
@@ -909,9 +990,10 @@ fn review_text_command(
     }
     vec![Effect::Speak(Utterance {
         trace_id,
-        priority: SpeechPriority::Interrupt,
+        priority: SpeechPriority::Queued,
         segments,
         source: None,
+        validity: None,
     })]
 }
 
@@ -958,9 +1040,10 @@ fn reduce_selection_changed(
     focus.last_selection = Some(node.id);
     vec![Effect::Speak(Utterance {
         trace_id,
-        priority: SpeechPriority::Interrupt,
+        priority: SpeechPriority::Queued,
         segments: node_segments(node, Reason::Focus),
         source: Some(source_of(node)),
+        validity: None,
     })]
 }
 
@@ -1021,9 +1104,10 @@ fn reduce_value_changed(
     };
     vec![Effect::Speak(Utterance {
         trace_id,
-        priority: SpeechPriority::Interrupt,
+        priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::value(text)],
         source: Some(source_of(&focus.snapshot)),
+        validity: None,
     })]
 }
 
@@ -1078,9 +1162,10 @@ fn reduce_states_changed(
 
     vec![Effect::Speak(Utterance {
         trace_id,
-        priority: SpeechPriority::Interrupt,
+        priority: SpeechPriority::Queued,
         segments,
         source: Some(utterance_source),
+        validity: None,
     })]
 }
 
@@ -1127,7 +1212,7 @@ fn reduce_navigate_completed(
         FetchResult::Node(snapshot) => {
             state.latest_navigation = None;
             let utterance =
-                announce_node(trace_id, SpeechPriority::Interrupt, snapshot, Reason::Focus);
+                announce_node(trace_id, SpeechPriority::Queued, snapshot, Reason::Focus);
             state.navigator = Some(Navigator {
                 object: snapshot.clone(),
                 review_offset: 0,
@@ -1152,9 +1237,10 @@ fn reduce_navigate_completed(
             };
             vec![Effect::Speak(Utterance {
                 trace_id,
-                priority: SpeechPriority::Interrupt,
+                priority: SpeechPriority::Queued,
                 segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
                 source: None,
+                validity: None,
             })]
         }
     }
@@ -1197,9 +1283,9 @@ fn source_of(node: &NodeSnapshot) -> UtteranceSource {
 /// top-level window, or with no previous focus, enters its whole chain.
 ///
 /// Entered menu bars, menus, and menu items are never announced: NVDA
-/// cancels speech and stays silent for them, and the focus announcement
-/// that follows interrupts current speech anyway.
-fn entered_containers<'a>(
+/// cancels speech and stays silent for them. Only the presentable ones
+/// ([`is_presentable_container`]) are spoken.
+fn entered_ancestors<'a>(
     previous: Option<&FocusContext>,
     window: Option<WindowFacts>,
     ancestors: &'a [NodeSnapshot],
@@ -1222,7 +1308,6 @@ fn entered_containers<'a>(
     };
     ancestors
         .iter()
-        .filter(|ancestor| is_presentable_container(ancestor))
         .filter(|ancestor| !already_entered(ancestor))
         .collect()
 }
@@ -1395,6 +1480,7 @@ fn announce_node(
         priority,
         segments: node_segments(node, reason),
         source: Some(source_of(node)),
+        validity: None,
     }
 }
 

@@ -486,6 +486,10 @@ pub enum Effect {
     Speak(Utterance),
     /// Cancel current and queued speech.
     StopSpeech,
+    /// The focus has changed: drop queued and playing focus speech that is
+    /// no longer valid ([`crate::FocusValidity`]), together with everything
+    /// queued before the newest such utterance.
+    DropExpiredSpeech(crate::FocusNow),
     /// Ask an outpost for more data; completion re-enters as
     /// [`Input::FetchCompleted`].
     Fetch(Query),

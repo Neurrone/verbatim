@@ -22,6 +22,20 @@
 //! or failed when synthesis or audio fails. Cancellation is per utterance:
 //! each job carries its own flag, and the mixer refuses audio for an
 //! utterance it has already ended.
+//!
+//! When speech is cut off (`docs/nvda/speech.md`, "Cancellation"). Besides
+//! an `Interrupt` utterance, three things end speech early:
+//! [`SpeechControl::cancel`], which a key press calls; speaking while
+//! paused, which cancels first, as a key press would have; and
+//! [`SpeechControl::drop_expired`], which a focus change calls. That last
+//! one finds the newest utterance, queued or already handed on, whose
+//! [`FocusValidity`] no longer holds, and ends it with everything that
+//! came before it; speech queued after it is kept. One already handed on
+//! is stopped together with whatever was synthesized after it, since audio
+//! cannot be taken out of the middle of the mixer's buffer; NVDA keeps the
+//! speech after it. [`SpeechControl::toggle_pause`], which Shift calls,
+//! holds the speech where it is until it is called again or speech is
+//! cancelled.
 
 use std::collections::VecDeque;
 use std::ops::ControlFlow;
@@ -33,7 +47,9 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use tracing::{trace, warn};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, Source};
-use verbatim_model::{SpeechPriority, Utterance, UtteranceEnding, UtteranceId};
+use verbatim_model::{
+    FocusNow, FocusValidity, SpeechPriority, Utterance, UtteranceEnding, UtteranceId,
+};
 
 use crate::driver::{IndexMark, SpeechSequence, SynthDriver, SynthError, SynthSink};
 use crate::events::SpeechEvents;
@@ -112,7 +128,47 @@ pub(crate) enum QueueEvent {
         reply: Sender<Result<DriverState, SynthError>>,
     },
     SynthFinished,
+    /// Cancel everything, as a key press does.
+    Cancel,
+    /// Pause speech, or resume it when paused.
+    TogglePause,
+    /// The focus moved: drop focus speech that no longer holds.
+    DropExpired(FocusNow),
+    /// The mixer ended an utterance it had been handed.
+    Ended(UtteranceId),
     Shutdown,
+}
+
+/// A handle for cutting speech off, from any thread, without blocking:
+/// what a key press and a focus change use. Cheap to clone.
+#[derive(Clone)]
+pub struct SpeechControl {
+    queue_tx: Sender<QueueEvent>,
+}
+
+impl SpeechControl {
+    /// Cancels current and queued speech, and ends a pause.
+    pub fn cancel(&self) {
+        let _ = self.queue_tx.send(QueueEvent::Cancel);
+    }
+
+    /// Pauses speech where it is, or resumes it when paused.
+    pub fn toggle_pause(&self) {
+        let _ = self.queue_tx.send(QueueEvent::TogglePause);
+    }
+
+    /// Drops queued and playing focus speech that no longer holds now
+    /// that the focus is where `now` says, with everything before the
+    /// newest such utterance.
+    pub fn drop_expired(&self, now: FocusNow) {
+        let _ = self.queue_tx.send(QueueEvent::DropExpired(now));
+    }
+}
+
+/// A sequence waiting in a lane, with what its focus speech is about.
+struct Waiting {
+    sequence: SpeechSequence,
+    validity: Option<FocusValidity>,
 }
 
 /// Everything the manager needs from the synth thread once the initial driver
@@ -178,9 +234,9 @@ impl SpeechManager {
             theme,
         } = config;
         let theme = theme.unwrap_or_else(|| Box::new(PlainTheme));
-        let source = mixer.add_source(playback_listener(events.clone()));
-
         let (queue_tx, queue_rx) = unbounded::<QueueEvent>();
+        let source = mixer.add_source(playback_listener(events.clone(), queue_tx.clone()));
+
         let (synth_tx, synth_rx) = unbounded::<SynthCommand>();
         let (startup_tx, startup_rx) = bounded::<Result<StartupInfo, SynthError>>(1);
 
@@ -236,6 +292,8 @@ impl SpeechManager {
                     next_lane: VecDeque::new(),
                     queued_lane: VecDeque::new(),
                     in_flight: None,
+                    handed_on: VecDeque::new(),
+                    paused: false,
                 }
                 .run(&queue_rx);
             })
@@ -264,6 +322,14 @@ impl SpeechManager {
             .queue_tx
             .send(QueueEvent::Speak(id, Box::new(utterance)));
         id
+    }
+
+    /// A handle for cancelling, pausing, and dropping expired speech.
+    #[must_use]
+    pub fn control(&self) -> SpeechControl {
+        SpeechControl {
+            queue_tx: self.queue_tx.clone(),
+        }
     }
 
     /// A settings-GUI handle backed by this manager.
@@ -296,7 +362,10 @@ impl Drop for SpeechManager {
 
 /// Turns the mixer's playback events for speech into [`SpeechEvents`]
 /// calls, on the audio thread.
-fn playback_listener(events: Option<Arc<dyn SpeechEvents>>) -> verbatim_audio::PlaybackListener {
+fn playback_listener(
+    events: Option<Arc<dyn SpeechEvents>>,
+    queue_tx: Sender<QueueEvent>,
+) -> verbatim_audio::PlaybackListener {
     Arc::new(move |event| {
         let now = Instant::now();
         match event {
@@ -325,6 +394,7 @@ fn playback_listener(events: Option<Arc<dyn SpeechEvents>>) -> verbatim_audio::P
                 ending,
             } => {
                 trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, ?ending, "utterance_ended");
+                let _ = queue_tx.send(QueueEvent::Ended(utterance));
                 if let Some(events) = &events {
                     events.utterance_ended(utterance, trace_id, &ending, now);
                 }
@@ -340,10 +410,15 @@ struct QueueThread {
     source: Source,
     events: Option<Arc<dyn SpeechEvents>>,
     theme: Box<dyn Theme>,
-    next_lane: VecDeque<SpeechSequence>,
-    queued_lane: VecDeque<SpeechSequence>,
+    next_lane: VecDeque<Waiting>,
+    queued_lane: VecDeque<Waiting>,
     /// The cancellation flag of the job the synth thread is working on.
     in_flight: Option<Arc<AtomicBool>>,
+    /// Utterances handed to the synth thread and the mixer whose ending
+    /// has not been reported yet, oldest first, for dropping expired speech.
+    handed_on: VecDeque<(UtteranceId, Option<FocusValidity>)>,
+    /// Speech is paused.
+    paused: bool,
 }
 
 impl QueueThread {
@@ -368,6 +443,13 @@ impl QueueThread {
                     self.in_flight = None;
                     self.pump();
                 }
+                QueueEvent::Cancel => self.cancel_everything(),
+                QueueEvent::TogglePause => {
+                    self.paused = !self.paused;
+                    self.source.pause(self.paused);
+                }
+                QueueEvent::DropExpired(now) => self.drop_expired(&now),
+                QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
                 QueueEvent::Shutdown => {
                     self.cancel_everything();
                     let _ = self.synth_tx.send(SynthCommand::Shutdown);
@@ -389,15 +471,82 @@ impl QueueThread {
             priority = ?utterance.priority,
             "utterance_queued"
         );
+        // Speech arriving while paused cancels what was paused first, as
+        // the key press that would otherwise have come first does.
+        if self.paused {
+            self.cancel_everything();
+        }
+        let waiting = Waiting {
+            sequence,
+            validity: utterance.validity,
+        };
         match utterance.priority {
             SpeechPriority::Interrupt => {
                 self.cancel_everything();
-                self.next_lane.push_back(sequence);
+                self.next_lane.push_back(waiting);
             }
-            SpeechPriority::Next => self.next_lane.push_back(sequence),
-            SpeechPriority::Queued => self.queued_lane.push_back(sequence),
+            SpeechPriority::Next => self.next_lane.push_back(waiting),
+            SpeechPriority::Queued => self.queued_lane.push_back(waiting),
         }
         self.pump();
+    }
+
+    /// Drops the newest utterance whose focus validity no longer holds,
+    /// and everything that came before it. Lanes are served next first,
+    /// so "before" is: everything handed on, then the next lane, then the
+    /// queued lane.
+    fn drop_expired(&mut self, now: &FocusNow) {
+        let expired = |validity: &Option<FocusValidity>| {
+            validity.is_some_and(|validity| !validity.holds(now))
+        };
+        let in_lane =
+            |lane: &VecDeque<Waiting>| lane.iter().rposition(|waiting| expired(&waiting.validity));
+        if let Some(last) = in_lane(&self.queued_lane) {
+            self.stop_handed_on();
+            let next = self.next_lane.drain(..).collect::<Vec<_>>();
+            let queued = self.queued_lane.drain(..=last).collect::<Vec<_>>();
+            self.end_waiting(next.into_iter().chain(queued));
+        } else if let Some(last) = in_lane(&self.next_lane) {
+            self.stop_handed_on();
+            let next = self.next_lane.drain(..=last).collect::<Vec<_>>();
+            self.end_waiting(next);
+        } else if self.handed_on.iter().any(|(_, validity)| expired(validity)) {
+            self.stop_handed_on();
+        } else {
+            return;
+        }
+        self.pump();
+    }
+
+    /// Stops everything handed to the synth thread and the mixer.
+    fn stop_handed_on(&mut self) {
+        if let Some(cancel) = &self.in_flight {
+            cancel.store(true, Ordering::Release);
+        }
+        self.source.cancel_all();
+        self.unpause();
+    }
+
+    /// Reports waiting sequences cancelled.
+    fn end_waiting(&self, waiting: impl IntoIterator<Item = Waiting>) {
+        let now = Instant::now();
+        for waiting in waiting {
+            if let Some(events) = &self.events {
+                events.utterance_ended(
+                    waiting.sequence.utterance,
+                    waiting.sequence.trace_id,
+                    &UtteranceEnding::Cancelled,
+                    now,
+                );
+            }
+        }
+    }
+
+    fn unpause(&mut self) {
+        if self.paused {
+            self.paused = false;
+            self.source.pause(false);
+        }
     }
 
     /// Hands the next sequence to the synth thread when it is idle. The
@@ -407,13 +556,14 @@ impl QueueThread {
         if self.in_flight.is_some() {
             return;
         }
-        let Some(sequence) = self
+        let Some(Waiting { sequence, validity }) = self
             .next_lane
             .pop_front()
             .or_else(|| self.queued_lane.pop_front())
         else {
             return;
         };
+        self.handed_on.push_back((sequence.utterance, validity));
         self.source.register(sequence.utterance, sequence.trace_id);
         let cancel = Arc::new(AtomicBool::new(false));
         self.in_flight = Some(Arc::clone(&cancel));
@@ -423,23 +573,16 @@ impl QueueThread {
     }
 
     /// Cancels everything: the job being synthesized, every sequence waiting
-    /// in a lane, and every utterance the mixer has not finished playing.
+    /// in a lane, and every utterance the mixer has not finished playing;
+    /// and ends a pause.
     fn cancel_everything(&mut self) {
-        if let Some(cancel) = &self.in_flight {
-            cancel.store(true, Ordering::Release);
-        }
-        let now = Instant::now();
-        for sequence in self.next_lane.drain(..).chain(self.queued_lane.drain(..)) {
-            if let Some(events) = &self.events {
-                events.utterance_ended(
-                    sequence.utterance,
-                    sequence.trace_id,
-                    &UtteranceEnding::Cancelled,
-                    now,
-                );
-            }
-        }
-        self.source.cancel_all();
+        let waiting = self
+            .next_lane
+            .drain(..)
+            .chain(self.queued_lane.drain(..))
+            .collect::<Vec<_>>();
+        self.end_waiting(waiting);
+        self.stop_handed_on();
     }
 }
 

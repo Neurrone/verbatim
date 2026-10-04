@@ -113,6 +113,7 @@ mod tests {
             priority: SpeechPriority::Queued,
             segments,
             source: None,
+            validity: None,
         }
     }
 

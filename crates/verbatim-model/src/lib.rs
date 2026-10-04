@@ -20,8 +20,8 @@ pub use event::{
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use speech::{
-    Message, SegmentContent, SpeechPriority, Utterance, UtteranceEnding, UtteranceId,
-    UtteranceSegment, UtteranceSource,
+    FocusNow, FocusValidity, Message, SegmentContent, SpeechPriority, Utterance, UtteranceEnding,
+    UtteranceId, UtteranceSegment, UtteranceSource,
 };
 pub use tree::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet, TreeNode};
 

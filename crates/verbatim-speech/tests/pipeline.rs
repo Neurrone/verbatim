@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use verbatim_audio::{Mixer, PcmFormat, SilentDevice};
 use verbatim_model::{
-    Role, SegmentContent, SpeechPriority, TraceId, Utterance, UtteranceEnding, UtteranceId,
-    UtteranceSegment,
+    FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechPriority, TraceId, Utterance,
+    UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
     IndexMark, SettingId, SettingValue, SpeechEvents, SpeechItem, SpeechManager,
@@ -150,6 +150,7 @@ fn utterance(text: &str, priority: SpeechPriority) -> Utterance {
         priority,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        validity: None,
     }
 }
 
@@ -329,6 +330,7 @@ fn renders_tokens_through_capture_synth() {
             UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
         ],
         source: None,
+        validity: None,
     });
 
     assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
@@ -367,6 +369,7 @@ fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact(
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
         source: None,
+        validity: None,
     });
 
     assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
@@ -444,4 +447,103 @@ fn settings_host_get_set_commit_revert() {
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(10)));
     host.revert();
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(75)));
+}
+
+fn about(text: &str, node: u64, had_focus: bool) -> Utterance {
+    Utterance {
+        validity: Some(FocusValidity {
+            node: NodeId::new(node),
+            had_focus,
+        }),
+        ..queued(text)
+    }
+}
+
+#[test]
+fn a_cancel_ends_current_and_queued_speech() {
+    let harness = control_manager();
+    let current = harness.manager.speak(queued("current"));
+    assert_eq!(recv_started(&harness.started), "current");
+    let waiting = harness.manager.speak(queued("waiting"));
+
+    harness.manager.control().cancel();
+
+    assert_eq!(harness.recorder.endings(2).len(), 2);
+    assert_eq!(
+        harness.recorder.ending_of(current),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(waiting),
+        Some(UtteranceEnding::Cancelled)
+    );
+}
+
+/// Speech for a focus the user has left is dropped, with everything queued
+/// before it, as NVDA culls expired focus speech; speech after it stays.
+#[test]
+fn expired_focus_speech_is_dropped_with_what_came_before_it() {
+    let harness = control_manager();
+    let first = harness.manager.speak(about("first control", 1, true));
+    assert_eq!(recv_started(&harness.started), "first control");
+    let second = harness.manager.speak(about("second control", 2, true));
+    let message = harness.manager.speak(queued("a message"));
+
+    // Focus is now on node 3, inside nothing: both controls have expired.
+    harness.manager.control().drop_expired(FocusNow {
+        focus: NodeId::new(3),
+        ancestors: Vec::new(),
+        foreground: None,
+    });
+
+    assert_eq!(recv_started(&harness.started), "a message");
+    harness.finish.send(()).unwrap();
+    harness.recorder.endings(3);
+    assert_eq!(
+        harness.recorder.ending_of(first),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(second),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(message),
+        Some(UtteranceEnding::Completed)
+    );
+}
+
+/// Shift pauses speech where it is: its ending waits until it is resumed.
+/// Speech arriving while paused cancels what was paused.
+#[test]
+fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
+    let harness = control_manager();
+    let held = harness.manager.speak(queued("held"));
+    assert_eq!(recv_started(&harness.started), "held");
+    harness.manager.control().toggle_pause();
+    harness.finish.send(()).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(harness.recorder.ending_of(held), None, "held while paused");
+    harness.manager.control().toggle_pause();
+    harness.recorder.endings(1);
+    assert_eq!(
+        harness.recorder.ending_of(held),
+        Some(UtteranceEnding::Completed)
+    );
+
+    let paused = harness.manager.speak(queued("paused"));
+    assert_eq!(recv_started(&harness.started), "paused");
+    harness.manager.control().toggle_pause();
+    let next = harness.manager.speak(queued("next"));
+    assert_eq!(recv_started(&harness.started), "next");
+    harness.finish.send(()).unwrap();
+    harness.recorder.endings(3);
+    assert_eq!(
+        harness.recorder.ending_of(paused),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(next),
+        Some(UtteranceEnding::Completed)
+    );
 }

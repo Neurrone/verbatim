@@ -9,8 +9,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::TraceId;
 use crate::tree::{Rect, Role, State};
+use crate::{NodeId, TraceId};
 
 /// Identifies one utterance from the moment the speech pipeline accepts it
 /// until its single ending (decision D17). Unlike a [`TraceId`], which names
@@ -202,6 +202,49 @@ pub struct Utterance {
     /// before this field existed deserializing unchanged.
     #[serde(default)]
     pub source: Option<UtteranceSource>,
+    /// For focus speech: the node it announces, so the speech manager can
+    /// drop it once that node is no longer relevant to the focus
+    /// ([`FocusValidity`]). `None` for every other utterance, which only a
+    /// cancel ends early.
+    #[serde(default)]
+    pub validity: Option<FocusValidity>,
+}
+
+/// What focus speech is about, for dropping it once the focus has moved on
+/// (`docs/nvda/speech.md`, "Cancellation", and `docs/nvda/events.md`):
+/// queued or playing speech announcing a node stays valid while that node
+/// is the focus, an ancestor of the focus, or the foreground window, or if
+/// the node never had the focus at all, as a dialog announced on entering
+/// it never does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusValidity {
+    /// The node the speech announces.
+    pub node: NodeId,
+    /// Whether that node was the focus when the speech was made.
+    pub had_focus: bool,
+}
+
+impl FocusValidity {
+    /// Whether speech with this validity is still worth hearing, given
+    /// where the focus now is.
+    #[must_use]
+    pub fn holds(&self, now: &FocusNow) -> bool {
+        !self.had_focus
+            || self.node == now.focus
+            || now.ancestors.contains(&self.node)
+            || now.foreground == Some(self.node)
+    }
+}
+
+/// Where the focus is, for judging [`FocusValidity`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusNow {
+    /// The focus.
+    pub focus: NodeId,
+    /// The focus's ancestors.
+    pub ancestors: Vec<NodeId>,
+    /// The foreground window's node, when known.
+    pub foreground: Option<NodeId>,
 }
 
 #[cfg(test)]

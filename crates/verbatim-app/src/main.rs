@@ -31,7 +31,8 @@ use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{
-    DecisionConfig, EmittedGesture, GestureMap, KeyboardLayout, ScriptAction, SharedGestureMap,
+    DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
+    SharedGestureMap,
 };
 use verbatim_input_windows::InputHook;
 use verbatim_model::{
@@ -226,6 +227,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         ledger: Arc::clone(&ledger),
         bound_gestures: Arc::clone(&bound_gestures),
         gesture_tx: gesture_tx.clone(),
+        speech_control: manager.control(),
         gui_handle: Arc::clone(&gui_handle),
         command_tx: command_tx.clone(),
         recorder: Arc::clone(&recorder),
@@ -237,10 +239,15 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 
     // Keyboard hook, last among the input paths so nothing is swallowed
     // before there is somewhere to route it.
+    let speech_control = manager.control();
     let _hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
         gesture_tx,
+        Box::new(move |effect| match effect {
+            KeySpeechEffect::Cancel => speech_control.cancel(),
+            KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
+        }),
     )?;
 
     // First words, and the initial outpost target (the trigger only fires on
@@ -250,6 +257,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
         source: None,
+        validity: None,
     });
     // Ask the foreground application for its current focus: its outpost is
     // started if needed, and the answer is spoken like a switch to it.
@@ -862,11 +870,8 @@ impl ReducerThread<'_> {
             Effect::Speak(utterance) => {
                 self.context.manager.speak(utterance);
             }
-            Effect::StopSpeech => {
-                // The reducer interrupts through utterance priority and
-                // never emits this; log so a future change is visible.
-                tracing::debug!("StopSpeech effect ignored");
-            }
+            Effect::StopSpeech => self.context.manager.control().cancel(),
+            Effect::DropExpiredSpeech(now) => self.context.manager.control().drop_expired(now),
             Effect::Fetch(query) => {
                 let outpost = query.node_id.outpost();
                 let id = self.requests.begin(
@@ -1110,6 +1115,7 @@ fn report_toggle_key(manager: &Arc<SpeechManager>, key: verbatim_input::ToggleKe
                 verbatim_i18n::messages::toggle_key_state(id, on),
             )],
             source: None,
+            validity: None,
         });
     });
 }
@@ -1129,6 +1135,7 @@ fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
         priority: SpeechPriority::Interrupt,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        validity: None,
     });
 }
 
@@ -1172,6 +1179,8 @@ struct ControlHandlersConfig {
     ledger: Arc<LatencyLedger>,
     bound_gestures: SharedGestureMap,
     gesture_tx: crossbeam_channel::Sender<EmittedGesture>,
+    /// Cancels speech for an injected gesture, as a key press does.
+    speech_control: verbatim_speech::SpeechControl,
     gui_handle: Arc<OnceLock<GuiHandle>>,
     command_tx: Sender<ShellCommand>,
     recorder: SharedRecorder,
@@ -1187,6 +1196,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         ledger,
         bound_gestures,
         gesture_tx,
+        speech_control,
         gui_handle,
         command_tx,
         recorder,
@@ -1209,6 +1219,9 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             if !bound_gestures.load().contains(&gesture) {
                 return Err(format!("gesture {gesture} is not bound"));
             }
+            // Its keys never pass the hook, which cancels speech for every
+            // key press; executing a gesture cancels speech in NVDA too.
+            speech_control.cancel();
             gesture_tx
                 .send(EmittedGesture {
                     trace_id: TraceId::mint(),

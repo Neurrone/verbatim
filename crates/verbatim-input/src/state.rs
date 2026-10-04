@@ -107,6 +107,16 @@ pub struct EmittedGesture {
     pub repeat: u8,
 }
 
+/// What a key press does to speech (`docs/nvda/input.md`, "What a key
+/// press does to speech").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeySpeechEffect {
+    /// Cancel current and queued speech.
+    Cancel,
+    /// Pause speech, or resume it when paused: Shift on its own.
+    TogglePause,
+}
+
 /// The outcome of feeding one [`KeyEvent`] to the state machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decision {
@@ -115,6 +125,10 @@ pub struct Decision {
     /// The gesture this transition raised, if any. Only ever set on a
     /// [`KeyDecision::Swallow`].
     pub emitted: Option<EmittedGesture>,
+    /// What this transition does to speech, carried out before the gesture
+    /// is acted on. Set on nearly every key-down, whether it is bound,
+    /// swallowed, or passed on.
+    pub speech: Option<KeySpeechEffect>,
 }
 
 impl Decision {
@@ -123,6 +137,7 @@ impl Decision {
         Self {
             decision: KeyDecision::Pass,
             emitted: None,
+            speech: None,
         }
     }
 
@@ -131,6 +146,7 @@ impl Decision {
         Self {
             decision: KeyDecision::Swallow,
             emitted: None,
+            speech: None,
         }
     }
 
@@ -139,9 +155,20 @@ impl Decision {
         Self {
             decision: KeyDecision::Swallow,
             emitted: Some(emitted),
+            speech: None,
         }
     }
 }
+
+/// Virtual-key codes the speech effect treats specially.
+const VK_SHIFT: u16 = 0x10;
+const VK_LSHIFT: u16 = 0xA0;
+const VK_RSHIFT: u16 = 0xA1;
+const VK_VOLUME_MUTE: u16 = 0xAD;
+const VK_VOLUME_UP: u16 = 0xAF;
+/// A key Windows does not know, which some devices report for events such
+/// as a gyroscope moving.
+const VK_UNKNOWN: u16 = 0xFF;
 
 /// Identity of a physical key: the virtual-key code paired with the extended
 /// flag, so an extended key and its numpad twin are distinct keys.
@@ -342,10 +369,34 @@ impl DecisionMachine {
     /// lock-free.
     pub fn on_key(&mut self, event: KeyEvent, now: Instant) -> Decision {
         if event.pressed {
-            self.on_press(event, now)
+            let speech = self.speech_effect(event);
+            let mut decision = self.on_press(event, now);
+            decision.speech = speech;
+            decision
         } else {
             self.on_release(event, now)
         }
+    }
+
+    /// What a key-down does to speech, as NVDA decides it: the volume keys
+    /// and a key Windows does not know leave speech alone; Shift on its own
+    /// pauses or resumes it, but not while held, where Windows repeats it;
+    /// every other key cancels it, modifiers included. Read before the
+    /// press is recorded as held.
+    fn speech_effect(&self, event: KeyEvent) -> Option<KeySpeechEffect> {
+        let key: KeyCode = (event.vk, event.extended);
+        if (event.extended && (VK_VOLUME_MUTE..=VK_VOLUME_UP).contains(&event.vk))
+            || event.vk == VK_UNKNOWN
+        {
+            return None;
+        }
+        if matches!(event.vk, VK_SHIFT | VK_LSHIFT | VK_RSHIFT) {
+            if self.held_modifiers.contains(&key) {
+                return None;
+            }
+            return Some(KeySpeechEffect::TogglePause);
+        }
+        Some(KeySpeechEffect::Cancel)
     }
 
     /// Decides a key-down in three steps: what part the key plays, where that
@@ -556,6 +607,43 @@ mod tests {
     const Z: u16 = 0x5A;
     const A: u16 = 0x41;
     const CONTROL: u16 = 0x11;
+
+    #[test]
+    fn every_key_press_cancels_speech_bound_or_not() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = Instant::now();
+        // A typed letter, a lone Control, the Verbatim modifier, and a bound
+        // gesture all cancel; releases do nothing.
+        for (vk, extended) in [(A, false), (CONTROL, false), (CAPS, false), (V, false)] {
+            assert_eq!(
+                m.on_key(down(vk, extended), t).speech,
+                Some(KeySpeechEffect::Cancel),
+                "key {vk:#x}"
+            );
+        }
+        assert_eq!(m.on_key(up(V, false), t).speech, None);
+        // The volume keys and a key Windows does not know leave speech alone.
+        assert_eq!(m.on_key(down(0xAE, true), t).speech, None);
+        assert_eq!(m.on_key(down(0xFF, false), t).speech, None);
+    }
+
+    #[test]
+    fn shift_alone_toggles_pause_once_per_press() {
+        let mut m = machine(DecisionConfig::default(), &[]);
+        let t = Instant::now();
+        let left_shift = 0xA0;
+        assert_eq!(
+            m.on_key(down(left_shift, false), t).speech,
+            Some(KeySpeechEffect::TogglePause)
+        );
+        // Held: Windows repeats the press, which must not toggle again.
+        assert_eq!(m.on_key(down(left_shift, false), t).speech, None);
+        m.on_key(up(left_shift, false), t);
+        assert_eq!(
+            m.on_key(down(left_shift, false), t).speech,
+            Some(KeySpeechEffect::TogglePause)
+        );
+    }
 
     #[test]
     fn caps_then_v_emits_and_swallows_all_four_transitions() {
