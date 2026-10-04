@@ -16,6 +16,9 @@
 //! `TerminateProcess`; the fragmented container means the file is still
 //! playable, losing at most the fragment being written.
 //!
+//! Before capturing, every window on the desktop is minimized, so the video
+//! shows the scenario's own windows rather than whatever was open.
+//!
 //! Recording is on whenever ffmpeg can be started: set [`RECORD_ENV`] to
 //! `0` to turn it off. A recording that cannot start or finish is reported
 //! as a warning and never fails a scenario.
@@ -81,6 +84,7 @@ impl Recording {
     ///
     /// Returns an error if ffmpeg cannot be launched.
     pub fn start(agent: &mut AgentClient, dir: &str) -> io::Result<Self> {
+        minimize_all_windows(agent);
         let ffmpeg = std::env::var(FFMPEG_ENV).unwrap_or_else(|_| "ffmpeg".to_owned());
         let demo = std::env::var(QUALITY_ENV).is_ok_and(|value| value == "demo");
         let mut recording = Self {
@@ -186,6 +190,33 @@ impl Recording {
         }
     }
 }
+
+/// Minimizes every window on the agent's desktop, as the taskbar's Show
+/// Desktop does, so a video shows only the scenario's own windows rather
+/// than whatever was open. Best-effort: the scenario runs either way.
+fn minimize_all_windows(agent: &mut AgentClient) {
+    let minimized = agent
+        .launch_process(
+            "powershell",
+            &[
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                "(New-Object -ComObject Shell.Application).MinimizeAll()".to_owned(),
+            ],
+            None,
+            &[],
+            None,
+        )
+        .and_then(|pid| wait_for_exit(agent, pid, EXIT_TIMEOUT));
+    if let Err(error) = minimized {
+        eprintln!("could not minimize the desktop's windows before recording: {error}");
+    }
+    // The minimize animation finishes before the capture starts.
+    thread::sleep(MINIMIZE_SETTLE);
+}
+
+/// How long windows take to finish minimizing.
+const MINIMIZE_SETTLE: Duration = Duration::from_millis(500);
 
 /// ffmpeg's arguments capturing the desktop into fragmented MP4 at
 /// `output`: playable however it is ended. A hard stop loses only the

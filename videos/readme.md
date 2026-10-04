@@ -34,6 +34,9 @@ card.
 A line for each video: its file name, the scenario it records, and what
 it demonstrates.
 
+Each records an end-to-end scenario with every other window minimized
+first, so only the scenario's own windows appear.
+
 - `tabbing-through-settings.mp4`, from `menu_and_settings_dialog`:
   Verbatim opens its own context menu and Settings dialog and tabs
   through every control of the Speech page (the synthesizer, voice,
@@ -42,3 +45,27 @@ it demonstrates.
   eSpeak NG's voice. It demonstrates eSpeak NG as the default
   synthesizer, Verbatim reading its own interface, and a recording
   carrying Verbatim's speech.
+- `notepad-and-verbatim-menu.mp4`, from `notepad_and_verbatim_menu`:
+  Notepad opens on a file and is announced, window then text area;
+  Verbatim's own menu opens over it and closes, and Notepad is announced
+  again. It demonstrates following the focus between applications.
+- `object-navigation-in-settings.mp4`, from
+  `object_navigation_in_settings`: the navigator object moves through the
+  Settings dialog (to the parent, the next and previous objects, and the
+  first child), each object announced. It demonstrates object
+  navigation.
+- `rapid-tabbing-in-settings.mp4`, from `rapid_tabbing_in_settings`:
+  tabbing quickly through the Settings dialog, each announcement cut off
+  by the next key press, and the last one heard in full. It demonstrates
+  speech keeping up with the focus.
+- `start-menu-search.mp4`, from `start_menu_search`: the Start menu opens
+  and its search box is announced. It demonstrates reading the Windows
+  shell.
+- `switch-to-onecore.mp4`, from `switch_to_onecore`: the Select
+  Synthesizer dialog switches from eSpeak NG to Windows OneCore voices,
+  whose voice is then read, and back. It demonstrates switching
+  synthesizer, and both synthesizers speaking.
+- `synth-host-crash-recovery.mp4`, from `synth_host_crash_recovery`: the
+  synthesizer's host process is killed, and the next announcement is
+  still heard from a new one. It demonstrates recovering from a
+  synthesizer crash.
