@@ -383,6 +383,10 @@ fn build_speech_panel(
         Rc::new(move || {
             if change_synthesizer(dialog, &host) {
                 let old = *dynamic_cell.borrow();
+                // Destroying is deferred to idle time, and until then the old
+                // controls would keep their share of the page's sizer, pushing
+                // the new ones out of sight. A hidden window takes no space.
+                old.show(false);
                 old.destroy();
                 let fresh = build_dynamic_controls(panel, &host);
                 vsizer.add(&fresh, 1, SizerFlag::Expand | SizerFlag::All, 5);

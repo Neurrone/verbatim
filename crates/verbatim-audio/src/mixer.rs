@@ -752,13 +752,7 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
             deliver(notes);
             return;
         }
-        let queued = if device.needs_reopen() {
-            Err(AudioError::Device(
-                "the device asked to be reopened".to_owned(),
-            ))
-        } else {
-            device.queued_frames()
-        };
+        let queued = poll_device(device, written, &mut played);
         let mut queued = match queued {
             Ok(queued) => u64::from(queued).min(written - played),
             Err(error) => {
@@ -1013,6 +1007,27 @@ fn carry_out(
 /// writers and requesters are never held up by it. A device that comes back
 /// in a different format cannot play the frames already converted for the
 /// old one, so every utterance not yet ended fails.
+/// How many written frames the device still has queued, with `played`
+/// brought up to date first. A device asking to be reopened can still say
+/// how much it has played, so that is read before the error that has it
+/// reopened: reopening from the position of an earlier poll would write
+/// again frames already heard.
+fn poll_device(
+    device: &mut dyn AudioDevice,
+    written: u64,
+    played: &mut u64,
+) -> Result<u32, AudioError> {
+    let reopen = device.needs_reopen();
+    let queued = device.queued_frames()?;
+    if reopen {
+        *played = written - u64::from(queued).min(written - *played);
+        return Err(AudioError::Device(
+            "the device asked to be reopened".to_owned(),
+        ));
+    }
+    Ok(queued)
+}
+
 fn recover(shared: &Shared, device: &mut dyn AudioDevice, played: u64, error: &AudioError) {
     warn!(target: "verbatim::audio", %error, "reopening the audio device");
     device.stop();

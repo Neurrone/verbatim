@@ -401,3 +401,42 @@ fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(tapped.lock().unwrap().len(), 5);
 }
+
+/// A device that played some frames and then asked to be reopened, before
+/// the mixer polled it again, is given again only what it had not played:
+/// how far it got is read before it is reopened.
+#[test]
+fn a_device_reopened_between_polls_is_not_given_again_what_it_played() {
+    let harness = harness();
+    harness.speak(1, 10);
+    let deadline = std::time::Instant::now() + WAIT;
+    while harness.device.written().len() < 10 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the frames are written"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    {
+        // Four frames play and the device asks to be reopened, with no
+        // wake-up between, so the mixer sees both at its next poll.
+        let mut state = harness.device.state.0.lock().unwrap();
+        state.queued -= 4;
+        harness.device.reopen.store(true, Ordering::SeqCst);
+    }
+    harness.device.play(0);
+    let deadline = std::time::Instant::now() + WAIT;
+    while harness.device.written().len() < 16 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the unplayed frames are written again"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        harness.device.written().len(),
+        16,
+        "only the six frames not played are written again"
+    );
+}
