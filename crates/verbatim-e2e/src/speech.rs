@@ -354,7 +354,7 @@ impl SpeechCollector {
     /// router silently drops a gesture that arrives before its `GuiHandle`
     /// exists, and a live desktop's own unrelated foreground activity can
     /// occasionally steal the popup before it is ever heard — both
-    /// documented on `crates/verbatim-e2e/tests/m1_exit_regression.rs`).
+    /// documented on `crates/verbatim-e2e/tests/menu_and_settings_dialog.rs`).
     /// A failed attempt's utterances remain in [`transcript`](Self::transcript)
     /// and the shared [`timeline`](crate::timeline::Timeline) for whichever
     /// attempt's panic (if the caller gives up) reports them.

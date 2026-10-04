@@ -35,21 +35,7 @@ pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // Open the Speech settings dialog. Focus settles, after an intermediate
-    // step, on the selected category *item* inside the category list — the
-    // dialog announces the list and its "Speech" selected item, and focus
-    // then lands on that item. Waiting for the item as the settled focus
-    // tolerates the intermediate list announcement and lets the focus
-    // sequence finish before the navigator commands below run.
-    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
-    scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario
-        .speech()
-        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
-    scenario.send_keys(&["enter"]).expect("sends enter");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
+    super::open_speech_settings(scenario, STEP_TIMEOUT);
 
     // Report the current navigator object: the navigator follows focus, so
     // this re-announces the focused list item.

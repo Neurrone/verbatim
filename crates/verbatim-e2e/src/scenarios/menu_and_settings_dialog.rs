@@ -90,7 +90,7 @@
 //! substitute for it.
 //!
 //! Ported into the scenario registry (milestone M3 Track B) from what used
-//! to be `crates/verbatim-e2e/tests/m1_exit_regression.rs`'s whole test
+//! to be `crates/verbatim-e2e/tests/menu_and_settings_dialog.rs`'s whole test
 //! body; that file is now the thin `#[test]` wrapper calling
 //! [`crate::registry::run_named`]. The final `quit_verbatim` call this
 //! scenario used to make itself is now [`crate::registry::run`]'s own,

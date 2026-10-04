@@ -89,7 +89,7 @@ The user presses Verbatim+numpad8 (report current object):
 
 ## 3. The life of an E2E run
 
-`cargo xtask vm test --scenario start_menu` (or the same suite locally
+`cargo xtask vm test --scenario start_menu_search` (or the same suite locally
 against a `verbatim-agent` on this machine):
 
 1. **The harness reaches the agent.** `verbatim-e2e` reads

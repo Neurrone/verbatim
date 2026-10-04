@@ -217,7 +217,7 @@ verified.
   since 2026-10-02 the reducer drops a focus event from one outpost
   observed before the newest focus it applied from another (found live:
   a late focus from Notepad, then from Verbatim's closed menu, broke
-  `multi_outpost_switch`). A UIA focus fact whose element is not the
+  `notepad_and_verbatim_menu`). A UIA focus fact whose element is not the
   focused element is reported from the fact when its window is in the
   foreground, or with no window facts, judged by its application, when
   it has no window of its own. Since 2026-10-03 a focus read on request
@@ -229,7 +229,8 @@ verified.
   that let it be accepted, so a later foreground report for that window
   does not replace the control as the focus (NVDA always knows the
   focus's window). **matched (unverified)**; the
-  `focus_churn` and `multi_outpost_switch` scenarios cover it.
+  `rapid_tabbing_in_settings` and `notepad_and_verbatim_menu` scenarios
+  cover it.
 - Name change on the focus. NVDA: when the focused object's name
   changes, the new name alone is spoken, queued behind current
   speech; a name change on any other object, including an ancestor
@@ -490,7 +491,7 @@ verified.
   E2E; commit d3e13b7).
 - SysTreeView32 via TVM messages, Tree/TreeItem roles. NVDA:
   control-specific overlay. Verbatim: **matched (verified)**
-  (tree_navigation E2E; commits 809214d, 1078614).
+  (system_information_tree E2E; commits 809214d, 1078614).
 - Navigator death recovery: NVDA reports failure and stays; Verbatim
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side
@@ -557,7 +558,7 @@ verified.
   until it moves. Verbatim counts only the window's own answer: a "no"
   slower than a second (real answers took 0 to 89 ms) makes the probe
   wait for the window to process messages and ask again. Found as the
-  cause of `multi_outpost_switch` failing about one run in five; the
+  cause of `notepad_and_verbatim_menu` failing about one run in five; the
   dropped UIA focus had come from Notepad's own provider, and a check 18
   ms after the slow "no" answered "yes". The same failure had a second
   form: UIA itself gives up on a provider after two seconds by default

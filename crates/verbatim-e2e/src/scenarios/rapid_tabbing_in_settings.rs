@@ -45,17 +45,7 @@ pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // Open the settings dialog and wait for focus to settle on the selected
-    // category item, as `object_navigation` does.
-    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
-    scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario
-        .speech()
-        .expect_in_order(&["Settings..."], STEP_TIMEOUT);
-    scenario.send_keys(&["enter"]).expect("sends enter");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
+    super::open_speech_settings(scenario, STEP_TIMEOUT);
 
     // The burst: away and back again in one request.
     let burst: Vec<&str> = std::iter::repeat_n("tab", TABS)

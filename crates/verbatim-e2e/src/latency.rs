@@ -64,7 +64,7 @@ pub fn max_event_to_queue_ms(records: &[LatencyRecord]) -> Option<u64> {
 /// [`crate::scenario::Scenario::latency_snapshot`] calls for the registry's
 /// generic, best-effort per-scenario summary (`crate::registry`'s own doc
 /// comment): every scenario's run summary carries latency counts this way,
-/// not just scenarios (like `m1_exit_regression`) that call [`report`]
+/// not just scenarios (like `menu_and_settings_dialog`) that call [`report`]
 /// themselves as part of what they assert.
 ///
 /// # Errors

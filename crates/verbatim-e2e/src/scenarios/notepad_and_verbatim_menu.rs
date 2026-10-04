@@ -3,7 +3,8 @@
 //! foreground, exercising the whole foreground-announcement flow — window
 //! then focused control, hidden-frame suppression, and an existing outpost
 //! reporting the foreground again rather than being respawned — end to end
-//! against real Windows 11 Notepad and Verbatim's own GUI.
+//! against real Windows 11 Notepad and Verbatim's own GUI. After Notepad
+//! closes, Verbatim must still answer a status request.
 //!
 //! Windows 11 Notepad focuses its edit control almost instantly on launch,
 //! and its top-level window's own name never arrives as a focus event (only
@@ -32,7 +33,7 @@
 //! silently do nothing and leave the real window as a stray.
 //!
 //! Ported into the scenario registry (milestone M3 Track B) from what used
-//! to be `crates/verbatim-e2e/tests/multi_outpost_switch.rs`'s whole test
+//! to be `crates/verbatim-e2e/tests/notepad_and_verbatim_menu.rs`'s whole test
 //! body; that file is now the thin `#[test]` wrapper calling
 //! [`crate::registry::run_named`]. The final `quit_verbatim` call this
 //! scenario used to make itself is now [`crate::registry::run`]'s own,
@@ -41,12 +42,15 @@
 use std::io;
 use std::time::Duration;
 
+use verbatim_control::client::ok_or_error;
+use verbatim_control::protocol::Request;
+
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 /// How long each step's announcement is given to arrive. Generous for the
-/// same reasons `m1_exit_regression`'s step timeout is: this suite runs on a
-/// real desktop where unrelated activity and process-spawn latency are both
+/// same reasons `menu_and_settings_dialog`'s step timeout is: this suite
+/// runs on a real desktop where unrelated activity and process-spawn latency are both
 /// real, and a genuine regression should hang until this fires rather than
 /// flake on a slow run.
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -95,7 +99,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
 #[allow(
     clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature: teardown owns and consumes what setup produced, matching multi_outpost_switch::setup's return"
+    reason = "must match ScenarioDef::teardown's fn-pointer signature: teardown owns and consumes what setup produced, matching notepad_and_verbatim_menu::setup's return"
 )]
 pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
     if let ScenarioState::TargetPid(pid) = state {
@@ -103,6 +107,18 @@ pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
             .kill_target(pid)
             .expect("kills notepad through the agent");
     }
+
+    // Verbatim must still answer requests after the application it was
+    // watching has gone away. The final quit cannot show this: it accepts a
+    // pipe already closed by a Verbatim that crashed.
+    let status = ok_or_error(
+        scenario
+            .control()
+            .request(Request::Status)
+            .expect("sends Status"),
+    )
+    .expect("Verbatim still answers Status after Notepad exits");
+    println!("status after notepad exit: {status:?}");
 }
 
 /// Waits for Notepad's window and then its text area. The text area is a

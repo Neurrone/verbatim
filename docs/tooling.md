@@ -286,20 +286,22 @@ definition, and `crates/verbatim-e2e/tests/` holds one thin `#[test]`
 wrapper per scenario calling `registry::run_named("that scenario's name")`,
 plus `session_info` (the agent reports an interactive session — the
 precondition everything else depends on, not itself a scenario). The
-scenarios today: `notepad_focus` (launching Notepad reaches Verbatim and
-Verbatim survives Notepad exiting), `multi_outpost_switch` (switching
-foreground between Notepad and Verbatim's own menu keeps both outposts
-alive and re-announces correctly), `m1_exit_regression` (the scripted
-walk of the M1 exit criteria — see `docs/roadmap.md`'s M2 section for
-exactly what it asserts and does not assert), `focus_churn` (a burst of
-Tab and Shift+Tab presses in Verbatim's settings dialog must leave focus
-and the navigator on the control that really has focus), `object_navigation` (the M3
+scenarios today: `menu_and_settings_dialog` (the scripted walk of the M1
+exit criteria through Verbatim's menu and Settings dialog — see
+`docs/roadmap.md`'s M2 section for exactly what it asserts and does not
+assert), `notepad_and_verbatim_menu` (switching foreground between Notepad
+and Verbatim's own menu keeps both outposts alive and re-announces
+correctly, and Verbatim still answers after Notepad closes),
+`rapid_tabbing_in_settings` (a burst of Tab and Shift+Tab presses in
+Verbatim's settings dialog must leave focus and the navigator on the
+control that really has focus), `object_navigation_in_settings` (the M3
 object-navigation and review commands against Verbatim's own settings
-dialog), `msinfo32` (an MSAA-only legacy application reaches Verbatim
-through the MSAA stack), and `tree_navigation` (logical object navigation
-through msinfo32's real Win32 tree view — the regression scenario for the
-flat MSAA tree-view exposure), and `start_menu` (pressing the Windows key
-opens the Start/Search surface and Verbatim announces its search box).
+dialog), `start_menu_search` (pressing the Windows key opens the
+Start/Search surface and Verbatim announces its search box), and
+`system_information_tree` (an MSAA-only legacy application, msinfo32,
+reaches Verbatim, and logical object navigation works through its real
+Win32 tree view — the regression scenario for the flat MSAA tree-view
+exposure).
 A real Explorer folder-window scenario is deliberately not among them — see
 the "Explorer" note in `docs/roadmap.md`'s M3 section for why it is verified
 by hand for now, and the same section's toggle-controls and Start-menu notes
@@ -439,7 +441,7 @@ The older path still works too, with no host-side credential storage: open
 `vmconnect.exe localhost verbatim` and turn Enhanced Session on (the
 toolbar or View menu) to get audio redirection.
 
-Every speech assertion in this suite, including `m1_exit_regression`'s
+Every speech assertion in this suite, including `menu_and_settings_dialog`'s
 voice-combo section, expects a fixed pair of voice names chosen by mode: the
 capture synth's two fixed names ("Capture A", "Capture B") for a
 non-audible runner-direct run, or the VM's golden image's always-installed
@@ -447,7 +449,7 @@ non-audible runner-direct run, or the VM's golden image's always-installed
 next) for an audible run, confirmed live — see that test's own module doc
 and its `expected_voices` helper. An audible runner-direct run therefore
 expects the same two `OneCore` voices to be installed on the local machine,
-in that order. `m1_exit_regression`'s trailing latency check asserts that
+in that order. `menu_and_settings_dialog`'s trailing latency check asserts that
 at least one traced utterance reached audio only in a non-audible run;
 under a real voice it reports the timelines without asserting, since at
 this suite's pace a real voice is legitimately interrupted before most

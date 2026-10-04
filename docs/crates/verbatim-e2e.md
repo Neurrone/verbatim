@@ -81,7 +81,7 @@ Public API:
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
   and its recording file name prefix — one identifier, everywhere),
-  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, or `Navigation`, a
+  `group` (a `Group`: `Speech`, `Shell`, or `Navigation`, a
   coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
   `target_images` (image names its `setup` may launch with
@@ -89,11 +89,10 @@ Public API:
   opened with `open_document` is closed by title instead and not listed),
   and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario — today eight: `m1_exit_regression` and
-  `focus_churn` (Speech),
-  `notepad_focus` and `msinfo32` (Legacy), `multi_outpost_switch` and
-  `start_menu` (Shell), and `object_navigation` and `tree_navigation`
-  (Navigation), each implemented in
+  registered scenario — today six: `menu_and_settings_dialog` and
+  `rapid_tabbing_in_settings` (Speech), `notepad_and_verbatim_menu` and
+  `start_menu_search` (Shell), and `object_navigation_in_settings` and
+  `system_information_tree` (Navigation), each implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
@@ -154,8 +153,7 @@ runner-direct CI (`.github/workflows/ci.yml`'s `e2e` job) and plain libtest
 filtering (`cargo test -p verbatim-e2e <name> -- --exact`) working
 unchanged: `cargo test -p verbatim-e2e -- --test-threads=1` still discovers
 and runs every one of them exactly as before the restructuring.
-`m1_exit_regression` is the scripted walk of the M1 exit criteria that
+`menu_and_settings_dialog` is the scripted walk of the M1 exit criteria that
 `docs/roadmap.md`'s M2 section describes, including exactly what it does and
-does not assert about the capture synth's Speech page; `notepad_focus` and
-`multi_outpost_switch` are described in `registry`'s own `Group` doc comment
-above.
+does not assert about the capture synth's Speech page; the others are
+described in `registry`'s own `Group` doc comment above.

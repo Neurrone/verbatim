@@ -596,12 +596,12 @@ mod tests {
     #[test]
     fn recording_guest_path_is_per_scenario_alongside_verbatims_install_directory() {
         assert_eq!(
-            recording_guest_path("notepad_focus"),
-            r"C:\VerbatimLab\verbatim\recording-notepad_focus.mp4"
+            recording_guest_path("notepad_and_verbatim_menu"),
+            r"C:\VerbatimLab\verbatim\recording-notepad_and_verbatim_menu.mp4"
         );
         assert_ne!(
-            recording_guest_path("notepad_focus"),
-            recording_guest_path("start_menu"),
+            recording_guest_path("notepad_and_verbatim_menu"),
+            recording_guest_path("start_menu_search"),
             "two scenarios must never share a guest recording path"
         );
     }
