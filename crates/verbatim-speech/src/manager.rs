@@ -45,7 +45,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use tracing::{trace, warn};
+use tracing::{info, trace, warn};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, Source};
 use verbatim_model::{
     FocusNow, FocusValidity, SpeechPriority, Utterance, UtteranceEnding, UtteranceId,
@@ -92,6 +92,13 @@ fn driver_state(driver: &dyn SynthDriver) -> DriverState {
     }
 }
 
+/// Reads a synthesizer's saved setting values, e.g. from persisted config.
+///
+/// Called on the pipeline's synth thread each time a synthesizer starts, so
+/// it sees values saved since startup. A value the synthesizer refuses is
+/// skipped with a warning, and the synthesizer keeps its own value for it.
+pub type SavedSettingsFn = Box<dyn Fn(&SynthId) -> Vec<(SettingId, SettingValue)> + Send>;
+
 /// Configuration for [`SpeechManager::new`].
 ///
 /// The manager depends on nothing above the pipeline: persistence and
@@ -100,11 +107,12 @@ fn driver_state(driver: &dyn SynthDriver) -> DriverState {
 pub struct SpeechManagerConfig {
     /// The synth drivers available to switch between.
     pub registry: SynthRegistry,
-    /// The synthesizer to make active at startup.
+    /// The synthesizer to make active at startup. When it cannot start, the
+    /// other registered synthesizers are tried in registration order.
     pub initial_synth: SynthId,
-    /// Setting values to apply to the initial synth, e.g. from persisted
-    /// config.
-    pub initial_settings: Vec<(SettingId, SettingValue)>,
+    /// The saved setting values of a synthesizer, applied whenever one
+    /// starts, at startup or on a switch.
+    pub saved_settings: SavedSettingsFn,
     /// The mixer speech plays through. The manager adds its own source.
     pub mixer: Arc<Mixer>,
     /// Optional observer for each utterance's milestones and ending.
@@ -216,19 +224,22 @@ pub struct SpeechManager {
 }
 
 impl SpeechManager {
-    /// Builds the pipeline and starts its threads, initializing the active
-    /// synthesizer and applying the initial settings.
+    /// Builds the pipeline and starts its threads, starting the initial
+    /// synthesizer with its saved settings.
+    ///
+    /// When the initial synthesizer cannot start, the other registered
+    /// synthesizers are tried in registration order and the first that
+    /// starts becomes active, as NVDA falls back (docs/nvda/synth-drivers.md).
     ///
     /// # Errors
     ///
-    /// Returns [`SynthError::Unavailable`] when the initial synthesizer cannot
-    /// be built, or [`SynthError::Setting`] when an initial setting value is
-    /// rejected by the driver.
+    /// Returns [`SynthError::Unavailable`] when no registered synthesizer can
+    /// start.
     pub fn new(config: SpeechManagerConfig) -> Result<Self, SynthError> {
         let SpeechManagerConfig {
             registry,
             initial_synth,
-            initial_settings,
+            saved_settings,
             mixer,
             events,
             theme,
@@ -249,7 +260,7 @@ impl SpeechManager {
                     synth_thread(
                         &registry,
                         &initial_synth,
-                        initial_settings,
+                        &saved_settings,
                         &source,
                         &synth_rx,
                         &queue_tx,
@@ -591,27 +602,21 @@ impl QueueThread {
 fn synth_thread(
     registry: &SynthRegistry,
     initial_synth: &SynthId,
-    initial_settings: Vec<(SettingId, SettingValue)>,
+    saved_settings: &SavedSettingsFn,
     source: &Source,
     synth_rx: &Receiver<SynthCommand>,
     queue_tx: &Sender<QueueEvent>,
     startup_tx: &Sender<Result<StartupInfo, SynthError>>,
 ) {
-    // Build the initial driver and apply persisted settings before reporting
-    // startup success.
-    let mut driver = match registry.build(initial_synth) {
+    // Start a driver with its saved settings before reporting startup
+    // success.
+    let mut driver = match start_first_available(registry, initial_synth, saved_settings) {
         Ok(driver) => driver,
         Err(error) => {
             let _ = startup_tx.send(Err(error));
             return;
         }
     };
-    for (id, value) in initial_settings {
-        if let Err(error) = driver.set_setting(&id, value) {
-            let _ = startup_tx.send(Err(error));
-            return;
-        }
-    }
     let _ = startup_tx.send(Ok(StartupInfo {
         state: driver_state(driver.as_ref()),
         choices: registry.choices(),
@@ -635,16 +640,96 @@ fn synth_thread(
                     }
                 }
             }
-            SynthCommand::Switch { id, reply } => match registry.build(&id) {
-                Ok(new_driver) => {
-                    driver = new_driver;
-                    let _ = reply.send(Ok(driver_state(driver.as_ref())));
+            SynthCommand::Switch { id, reply } => {
+                match start_synth(registry, &id, saved_settings) {
+                    Ok(new_driver) => {
+                        driver = new_driver;
+                        let _ = reply.send(Ok(driver_state(driver.as_ref())));
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                    }
                 }
-                Err(error) => {
-                    let _ = reply.send(Err(error));
-                }
-            },
+            }
             SynthCommand::Shutdown => break,
+        }
+    }
+}
+
+/// Starts `preferred`, or when it cannot start, the first other registered
+/// synthesizer that can, in registration order: NVDA's fallback
+/// (docs/nvda/synth-drivers.md), less its silent last resort.
+fn start_first_available(
+    registry: &SynthRegistry,
+    preferred: &SynthId,
+    saved_settings: &SavedSettingsFn,
+) -> Result<Box<dyn SynthDriver>, SynthError> {
+    let others = registry
+        .choices()
+        .into_iter()
+        .map(|choice| choice.id)
+        .filter(|id| id != preferred);
+    let mut failures = Vec::new();
+    for id in std::iter::once(preferred.clone()).chain(others) {
+        match start_synth(registry, &id, saved_settings) {
+            Ok(driver) => {
+                if failures.is_empty() {
+                    info!(target: "verbatim::speech", synth = %id, "synthesizer started");
+                } else {
+                    warn!(
+                        target: "verbatim::speech",
+                        synth = %id,
+                        configured = %preferred,
+                        "the configured synthesizer could not start; fell back"
+                    );
+                }
+                return Ok(driver);
+            }
+            Err(error) => {
+                warn!(target: "verbatim::speech", synth = %id, %error, "synthesizer could not start");
+                failures.push(format!("{id}: {error}"));
+            }
+        }
+    }
+    Err(SynthError::Unavailable(format!(
+        "no synthesizer could start ({})",
+        failures.join("; ")
+    )))
+}
+
+/// Builds the synthesizer registered as `id` and applies its saved settings.
+fn start_synth(
+    registry: &SynthRegistry,
+    id: &SynthId,
+    saved_settings: &SavedSettingsFn,
+) -> Result<Box<dyn SynthDriver>, SynthError> {
+    let mut driver = registry.build(id)?;
+    apply_saved_settings(driver.as_mut(), &saved_settings(id));
+    Ok(driver)
+}
+
+/// Applies saved values in the driver's descriptor order, which puts the
+/// voice first. A value the descriptors or the driver refuse, such as a
+/// voice no longer installed, is skipped with a warning and the driver
+/// keeps its own value, so one stale setting never costs speech
+/// (docs/nvda/synth-drivers.md). Saved values for settings the driver does
+/// not have are ignored.
+fn apply_saved_settings(driver: &mut dyn SynthDriver, saved: &[(SettingId, SettingValue)]) {
+    for descriptor in driver.supported_settings() {
+        let id = descriptor.id();
+        let Some((_, value)) = saved.iter().find(|(saved_id, _)| saved_id == id) else {
+            continue;
+        };
+        let applied = crate::host::validate(std::slice::from_ref(&descriptor), id, value)
+            .and_then(|()| driver.set_setting(id, value.clone()));
+        if let Err(error) = applied {
+            warn!(
+                target: "verbatim::speech",
+                synth = %driver.id(),
+                setting = %id,
+                %error,
+                "saved setting refused; keeping the synthesizer's own value"
+            );
         }
     }
 }

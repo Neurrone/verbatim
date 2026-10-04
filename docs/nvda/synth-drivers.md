@@ -41,6 +41,31 @@ bridging for 32-bit-only engines; `_synthDrivers32`), `mssp`
 instantiates the new one, re-applying config; drivers can come from
 add-ons ([App modules mechanism](app-modules-mechanism.md)).
 
+## Loading settings and falling back
+
+Each driver has its own section of saved settings, so every synthesizer
+keeps its own voice, rate and so on. Starting a driver, at startup or
+when the user picks another synthesizer, loads that driver's section:
+the voice first, since changing voice can reset other parameters, then
+each remaining supported setting in the driver's order. A saved voice the
+driver rejects, typically one that is no longer installed, is not fatal:
+NVDA logs a warning, keeps the driver's current voice, and writes that
+voice back into the config. A setting the driver does not support is
+ignored. A driver that is starting for the first time has no saved
+section; it starts with its own defaults, which are then saved.
+
+When a synthesizer fails to start (its engine is missing, or its
+constructor or settings loading raises), NVDA does not leave the user
+without speech. If another synthesizer was active before, as when the
+user switched from one to another, it goes back to that one. Otherwise,
+as at startup, it walks a fixed priority list of default synthesizers
+(OneCore, then eSpeak, then the silent driver), skipping the one that
+just failed, and uses the first that starts. A synthesizer reached this
+way is a fallback: it is logged, but the configured synthesizer is not
+overwritten, so the user's choice is tried again at the next start. The
+silent driver is the last resort, so the screen reader itself always
+starts.
+
 ## Audio delivery
 
 Drivers do not touch audio devices directly: they synthesize PCM and

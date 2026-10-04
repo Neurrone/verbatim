@@ -36,9 +36,10 @@ Public API:
 - `SpeechManager` — `new(SpeechManagerConfig)`, `speak(utterance)`, which
   returns the `UtteranceId` the utterance's milestones and ending are
   reported under, and `settings_host(persist)`. The config carries the
-  registry, the initial synth and its persisted setting values, the
-  `Arc<Mixer>` speech plays through (the manager adds its own source to
-  it), an optional observer, and an optional theme.
+  registry, the initial synth, a `SavedSettingsFn` that reads any
+  synthesizer's persisted setting values, the `Arc<Mixer>` speech plays
+  through (the manager adds its own source to it), an optional observer,
+  and an optional theme.
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
   GUI's live handle: list synthesizers, switch the active one, read
   descriptors and values, `set_setting` applying immediately (slider drags
@@ -93,6 +94,21 @@ active driver and is where `SynthDriver::speak` blocks, writing into the
 manager's mixer `Source`. Setting changes and synth switches travel to the
 synth thread as commands, and `SettingsHost` keeps a mirror of descriptors
 and values so GUI reads never hop threads.
+
+Starting a synthesizer, at startup or on a switch, builds it from the
+registry and then applies its saved values, read through the
+`SavedSettingsFn` at that moment so a switch sees values committed since
+startup. Values are applied in the driver's descriptor order, voice first.
+Each is checked against its descriptor and then set; one that fails
+either check, such as a voice no longer installed, is skipped with a
+warning and the driver keeps its own value, so a stale setting never
+costs speech. At startup, when the initial synthesizer cannot be built,
+the manager tries every other registered synthesizer in registration
+order and logs which one it used; `new` fails only when none starts.
+The app registers eSpeak NG first, so it is the first fallback. A failed
+switch leaves the previous synthesizer active. All of this matches NVDA
+as described in docs/nvda/synth-drivers.md, less NVDA's silent last
+resort.
 
 Endings (decision D17). Every utterance `speak` accepts ends exactly once,
 reported through `SpeechEvents::utterance_ended`. Until the queue thread

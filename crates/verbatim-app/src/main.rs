@@ -128,13 +128,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let dumps_dir = exe_dir().join(DUMPS_FOLDER);
     flight_dump::install_panic_hook(Arc::clone(&recorder), dumps_dir.clone());
 
-    // Speech pipeline: OneCore through WASAPI by default, observed by the
-    // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
-    // audio (see build_speech_manager).
     // Every child process (the synthesizer host below, the outposts and the
     // listener later) logs into this launch's directory, prepared first.
     verbatim_process::prepare_launch_logs(&exe_dir());
-    let manager = build_speech_manager(&config, &ledger)?;
 
     // The keyboard layout selects which review and object-navigation
     // bindings are active (roadmap M3); read it before `config` moves into
@@ -146,9 +142,15 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         verbatim_config::KeyboardLayout::Laptop => KeyboardLayout::Laptop,
     };
 
+    // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
+    // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
+    // audio (see build_speech_manager). It reads each synthesizer's saved
+    // settings from the store whenever it starts one.
+    let store = Arc::new(Mutex::new(config));
+    let manager = build_speech_manager(&store, &ledger)?;
+
     // Settings host: the GUI's live handle; commit persists to the base
     // profile through the config store.
-    let store = Arc::new(Mutex::new(config));
     let settings_host = manager.settings_host(persist_fn(Arc::clone(&store)));
 
     // Supervisor (one outpost process per application, decision D9) plus its
@@ -353,9 +355,10 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 ///
 /// # Errors
 ///
-/// Returns an error if the initial synthesizer fails to construct.
+/// Returns an error if no registered synthesizer can start, or the audio
+/// device cannot open.
 fn build_speech_manager(
-    config: &ConfigStore,
+    store: &Arc<Mutex<ConfigStore>>,
     ledger: &Arc<LatencyLedger>,
 ) -> Result<Arc<SpeechManager>, verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
@@ -380,8 +383,7 @@ fn build_speech_manager(
         );
         register_test_audio(&mut registry);
     }
-    let initial_synth = initial_synth(config, &registry);
-    let initial_settings = initial_settings(config, &initial_synth);
+    let initial_synth = initial_synth(&store.lock().unwrap_or_else(PoisonError::into_inner));
     let device: Box<dyn AudioDevice> = if test_audio {
         Box::new(SilentDevice::new())
     } else {
@@ -405,7 +407,7 @@ fn build_speech_manager(
     Ok(Arc::new(SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth,
-        initial_settings,
+        saved_settings: saved_settings_fn(Arc::clone(store)),
         mixer: Arc::new(mixer),
         events: Some(Arc::clone(ledger) as Arc<dyn verbatim_speech::SpeechEvents>),
         theme: None,
@@ -423,24 +425,28 @@ fn register_test_audio(registry: &mut SynthRegistry) {
     );
 }
 
-/// The configured synthesizer when it exists in the registry, otherwise
-/// eSpeak NG.
-fn initial_synth(config: &ConfigStore, registry: &SynthRegistry) -> SynthId {
-    let configured = config
+/// The configured synthesizer, or eSpeak NG when none is configured. One
+/// that is not registered, or cannot start, is left to the speech manager's
+/// fallback, which tries eSpeak NG next because it is registered first.
+fn initial_synth(config: &ConfigStore) -> SynthId {
+    config
         .active()
         .synthesizer()
-        .map_or_else(|| SynthId::new(synth_ids::ESPEAK), SynthId::new);
-    if registry.contains(&configured) {
-        configured
-    } else {
-        tracing::warn!(synth = %configured, "configured synthesizer not installed; using eSpeak NG");
-        SynthId::new(synth_ids::ESPEAK)
-    }
+        .map_or_else(|| SynthId::new(synth_ids::ESPEAK), SynthId::new)
 }
 
-/// Persisted setting values for the initial synthesizer, mapped from config
-/// values to driver values.
-fn initial_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, SettingValue)> {
+/// The callback the speech manager reads each synthesizer's saved settings
+/// through whenever it starts one, at startup or on a switch, so a switch
+/// sees values committed since startup.
+fn saved_settings_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::SavedSettingsFn {
+    Box::new(move |synth| {
+        saved_settings(&store.lock().unwrap_or_else(PoisonError::into_inner), synth)
+    })
+}
+
+/// Persisted setting values for a synthesizer, mapped from config values to
+/// driver values.
+fn saved_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, SettingValue)> {
     config
         .active()
         .synth_settings(&synth.0)

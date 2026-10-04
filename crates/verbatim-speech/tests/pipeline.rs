@@ -16,9 +16,9 @@ use verbatim_model::{
     UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
-    IndexMark, SettingId, SettingValue, SpeechEvents, SpeechItem, SpeechManager,
-    SpeechManagerConfig, SpeechSequence, SpeechSettingsHost, SynthDriver, SynthError, SynthId,
-    SynthRegistry, SynthSink, Theme,
+    IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechEvents, SpeechItem, SpeechManager,
+    SpeechManagerConfig, SpeechSequence, SpeechSettingsHost, SynthDriver, SynthError, SynthFactory,
+    SynthId, SynthRegistry, SynthSink, Theme,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -185,7 +185,7 @@ fn control_manager() -> ControlHarness {
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("control"),
-        initial_settings: Vec::new(),
+        saved_settings: Box::new(|_| Vec::new()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: None,
@@ -222,7 +222,7 @@ fn capture_manager(theme: Option<Box<dyn Theme>>) -> (SpeechManager, CaptureLog,
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("capture"),
-        initial_settings: Vec::new(),
+        saved_settings: Box::new(|_| Vec::new()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme,
@@ -545,5 +545,214 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     assert_eq!(
         harness.recorder.ending_of(next),
         Some(UtteranceEnding::Completed)
+    );
+}
+
+/// A silent synth with a voice and a rate, under any id, that refuses the
+/// voice "refused" the way eSpeak NG refuses a variant it cannot load.
+struct SettingsSynth {
+    id: &'static str,
+    voice: String,
+    rate: i32,
+}
+
+impl SettingsSynth {
+    fn factory(id: &'static str) -> SynthFactory {
+        Box::new(move || {
+            Ok(Box::new(SettingsSynth {
+                id,
+                voice: "default".to_owned(),
+                rate: 50,
+            }) as Box<dyn SynthDriver>)
+        })
+    }
+}
+
+impl SynthDriver for SettingsSynth {
+    fn id(&self) -> SynthId {
+        SynthId::new(self.id)
+    }
+
+    fn display_name(&self) -> String {
+        self.id.to_owned()
+    }
+
+    fn supported_settings(&self) -> Vec<SettingDescriptor> {
+        let options = ["default", "other", "refused"]
+            .map(|voice| (voice.to_owned(), voice.to_owned()))
+            .to_vec();
+        vec![
+            SettingDescriptor::Choice {
+                id: SettingId::new("voice"),
+                label_key: "setting-voice".to_owned(),
+                options,
+            },
+            SettingDescriptor::standard_numeric("rate", "setting-rate"),
+        ]
+    }
+
+    fn setting(&self, id: &SettingId) -> Option<SettingValue> {
+        match id.0.as_str() {
+            "voice" => Some(SettingValue::Choice(self.voice.clone())),
+            "rate" => Some(SettingValue::Number(self.rate)),
+            _ => None,
+        }
+    }
+
+    fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
+        match (id.0.as_str(), value) {
+            ("voice", SettingValue::Choice(voice)) if voice != "refused" => self.voice = voice,
+            ("rate", SettingValue::Number(rate)) => self.rate = rate,
+            (_, value) => return Err(SynthError::Setting(format!("{id} refuses {value:?}"))),
+        }
+        Ok(())
+    }
+
+    fn places_marks(&self) -> bool {
+        true
+    }
+
+    fn speak(&mut self, _: &SpeechSequence, _: &mut dyn SynthSink) -> Result<(), SynthError> {
+        Ok(())
+    }
+}
+
+/// A factory for a synthesizer whose host cannot start.
+fn broken_factory() -> SynthFactory {
+    Box::new(|| {
+        Err(SynthError::Unavailable(
+            "the host would not start".to_owned(),
+        ))
+    })
+}
+
+type SavedStore = Arc<Mutex<Vec<(SynthId, Vec<(SettingId, SettingValue)>)>>>;
+
+/// A manager over `registry` whose saved settings are read live from
+/// `saved`, as the app reads them from its config store.
+fn settings_manager(
+    registry: SynthRegistry,
+    initial: &str,
+    saved: &SavedStore,
+) -> Result<SpeechManager, SynthError> {
+    let saved = Arc::clone(saved);
+    SpeechManager::new(SpeechManagerConfig {
+        registry,
+        initial_synth: SynthId::new(initial),
+        saved_settings: Box::new(move |synth| {
+            saved
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(id, _)| id == synth)
+                .map(|(_, values)| values.clone())
+                .unwrap_or_default()
+        }),
+        mixer: mixer(),
+        events: None,
+        theme: None,
+    })
+}
+
+fn voice_and_rate(voice: &str, rate: i32) -> Vec<(SettingId, SettingValue)> {
+    vec![
+        (
+            SettingId::new("voice"),
+            SettingValue::Choice(voice.to_owned()),
+        ),
+        (SettingId::new("rate"), SettingValue::Number(rate)),
+    ]
+}
+
+#[test]
+fn a_refused_saved_setting_keeps_the_synths_value_and_the_others_apply() {
+    let voice = SettingId::new("voice");
+    let rate = SettingId::new("rate");
+    // The first voice is not among the options; the driver itself refuses
+    // the second.
+    for refused in ["not-installed", "refused"] {
+        let saved: SavedStore = Arc::new(Mutex::new(vec![(
+            SynthId::new("one"),
+            voice_and_rate(refused, 70),
+        )]));
+        let mut registry = SynthRegistry::new();
+        registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+        let manager = settings_manager(registry, "one", &saved).expect("startup survives");
+        let host = manager.settings_host(Box::new(|_, _| Ok(())));
+        assert_eq!(
+            host.setting(&voice),
+            Some(SettingValue::Choice("default".to_owned()))
+        );
+        assert_eq!(host.setting(&rate), Some(SettingValue::Number(70)));
+    }
+}
+
+#[test]
+fn startup_falls_back_in_registration_order_when_the_configured_synth_cannot_start() {
+    let saved: SavedStore = Arc::new(Mutex::new(vec![(
+        SynthId::new("working"),
+        voice_and_rate("other", 30),
+    )]));
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("broken"), "Broken", broken_factory());
+    registry.register(
+        SynthId::new("working"),
+        "Working",
+        SettingsSynth::factory("working"),
+    );
+    registry.register(
+        SynthId::new("spare"),
+        "Spare",
+        SettingsSynth::factory("spare"),
+    );
+    registry.register(SynthId::new("configured"), "Configured", broken_factory());
+
+    let manager = settings_manager(registry, "configured", &saved).expect("a fallback starts");
+    let host = manager.settings_host(Box::new(|_, _| Ok(())));
+    // The configured synth failed, then the first registered one; the next
+    // one starts, with its own saved settings.
+    assert_eq!(host.active_synthesizer().id, SynthId::new("working"));
+    assert_eq!(
+        host.setting(&SettingId::new("voice")),
+        Some(SettingValue::Choice("other".to_owned()))
+    );
+    assert_eq!(
+        host.setting(&SettingId::new("rate")),
+        Some(SettingValue::Number(30))
+    );
+
+    // Only when nothing can start does startup fail.
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("broken"), "Broken", broken_factory());
+    assert!(matches!(
+        settings_manager(registry, "missing", &saved),
+        Err(SynthError::Unavailable(_))
+    ));
+}
+
+#[test]
+fn switching_synth_starts_it_with_its_saved_settings() {
+    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    registry.register(SynthId::new("two"), "Two", SettingsSynth::factory("two"));
+    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
+    let host = manager.settings_host(Box::new(|_, _| Ok(())));
+
+    // Saved after startup, as a commit would, with a voice that is gone.
+    saved
+        .lock()
+        .unwrap()
+        .push((SynthId::new("two"), voice_and_rate("not-installed", 20)));
+    host.set_active_synthesizer(&SynthId::new("two")).unwrap();
+
+    assert_eq!(host.active_synthesizer().id, SynthId::new("two"));
+    assert_eq!(
+        host.setting(&SettingId::new("rate")),
+        Some(SettingValue::Number(20))
+    );
+    assert_eq!(
+        host.setting(&SettingId::new("voice")),
+        Some(SettingValue::Choice("default".to_owned()))
     );
 }
