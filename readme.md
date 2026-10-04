@@ -19,3 +19,11 @@ See the [roadmap](docs/roadmap.md).
 - **Dev tooling that becomes remote support**: Event inspection and simulated keyboard input for driving Verbatim in a VM, built so the same code paths later power a built-in remote-control feature.
 - **Observability**: Correlate accessibility events with the speech actually heard, including event-observed-to-speech-queued latency.
 - **Deferred**: Braille display support comes last due to lack of hardware.
+
+## Licence
+
+Verbatim is free software: you can redistribute it and modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. The full text is in `LICENSE`. Contributions are accepted under
+the contributor licence agreement in `CLA.md`.

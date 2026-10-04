@@ -1,8 +1,9 @@
 # Verbatim Contributor Licence Agreement
 
 Thank you for contributing to Verbatim. Verbatim is published under the
-GNU General Public License version 2 (see `LICENSE`), and its owner also
-licenses parts of it under other terms. To keep that possible, every
+GNU General Public License version 3 or any later version (see
+`LICENSE`), and its owner also licenses parts of it under other terms.
+To keep that possible, every
 contribution needs the permissions below. This agreement is between you
 and Dickson Tan, the owner of Verbatim, called "the owner" here. It covers
 every contribution you submit to the Verbatim repository from the date you
