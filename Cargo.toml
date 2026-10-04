@@ -22,6 +22,9 @@ i18n-embed-fl = "0.10"
 # does not exist; the first in-guest launch panicked in verbatim-i18n's
 # "embedded English must load" assertion for exactly this reason.
 rust-embed = { version = "8", features = ["debug-embed"] }
+# Sample-rate conversion in the audio mixer (decision D17). The FFT
+# resampler is not used, so its default feature stays off.
+rubato = { version = "5", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
@@ -48,8 +51,12 @@ verbatim-input = { path = "crates/verbatim-input" }
 verbatim-input-windows = { path = "crates/verbatim-input-windows" }
 verbatim-model = { path = "crates/verbatim-model" }
 verbatim-outpost = { path = "crates/verbatim-outpost" }
+verbatim-process = { path = "crates/verbatim-process" }
 verbatim-speech = { path = "crates/verbatim-speech" }
 verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
+verbatim-synth-espeak = { path = "crates/verbatim-synth-espeak" }
+verbatim-synth-host = { path = "crates/verbatim-synth-host" }
+verbatim-synth-hosted = { path = "crates/verbatim-synth-hosted" }
 verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }
 verbatim-uia = { path = "crates/verbatim-uia" }
 verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
@@ -58,6 +65,9 @@ verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
 # `#[implement]` macro emits `::windows_core` paths that only resolve when
 # the implementing crate depends on it directly.
 windows-core = "0.62"
+# The `windows` crate's WinRT async operation types, named directly
+# where a driver waits on one.
+windows-future = "0.3"
 
 # The `windows` crate goes last because its feature list needs a dedicated
 # table, and a TOML table header would swallow any bare keys that followed
@@ -107,3 +117,9 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+
+# The audio mixer's resampler runs on every utterance in real time; an
+# unoptimized build of it takes about a tenth of real time, enough to run
+# the device dry under load, so it is optimized in development builds too.
+[profile.dev.package.rubato]
+opt-level = 3

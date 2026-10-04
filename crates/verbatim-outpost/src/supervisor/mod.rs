@@ -166,9 +166,8 @@ impl Supervisor {
             .parent()
             .ok_or_else(|| io::Error::other("current exe has no parent directory"))?
             .join("verbatim-outpost.exe");
-        if let Some(exe_dir) = exe_path.parent() {
-            process::prepare_launch_logs(exe_dir);
-        }
+        // The launch's log directory was prepared by the app at startup,
+        // before any child (the synthesizer host first) began writing to it.
         let writers: Writers = Arc::default();
         let (owner_tx, owner_rx) = unbounded();
         owner::start(owner::Setup {

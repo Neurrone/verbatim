@@ -21,8 +21,10 @@ trailing line notes when the outpost's depth or node-count cap truncated
 the tree); `dump-recorder` (milestone M2: asks Core to write its flight
 recorder's current contents to disk and prints the path it wrote to);
 `quit`. Each speech line shows the queue-time delta since the triggering
-event, and a follow-up line appears when audio actually starts, carrying
-the true event-to-audio latency; an interrupted utterance simply never
-gets the follow-up. Timestamps render as local wall-clock time
-(`2026-07-14T10:42:32.158`, no zone suffix) via the Win32 conversion that
+event and is labelled with the utterance id; a follow-up line appears
+when the utterance's first frame plays, and another when it ends, with
+its ending (completed, cancelled, or failed). An utterance cancelled
+before it played gets no audio-started line, only its ending. The true
+event-to-audio latency per trace is what `latency` reports. Timestamps
+render as local wall-clock time (`2026-07-14T10:42:32.158`, no zone suffix) via the Win32 conversion that
 is correct across DST transitions.

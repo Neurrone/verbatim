@@ -190,13 +190,26 @@ fn switch_to(state: &SrState, source: Pid) -> SrState {
     reduce(state, &foreground_in(source, window(handle), window_node)).0
 }
 
+/// The utterances among `effects`. A focus change also tells the speech
+/// manager where the focus is, and may cancel speech; those effects are
+/// left out here and checked by their own tests.
 fn speak_effects(effects: &[Effect]) -> Vec<&Utterance> {
     effects
         .iter()
-        .map(|effect| match effect {
-            Effect::Speak(utterance) => utterance,
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(utterance),
+            Effect::DropExpiredSpeech(_) | Effect::StopSpeech => None,
             other => panic!("expected Speak effect, got {other:?}"),
         })
+        .collect()
+}
+
+/// Every segment spoken by `effects`, in order, across utterances: an
+/// entered container is its own utterance, before the focus's.
+fn spoken_segments(effects: &[Effect]) -> Vec<UtteranceSegment> {
+    speak_effects(effects)
+        .into_iter()
+        .flat_map(|utterance| utterance.segments.clone())
         .collect()
 }
 
@@ -215,10 +228,10 @@ fn focus_menu_item_with_popup_speaks_name_and_submenu() {
 
     let (next, effects) = reduce(&state, &focus_event(trace_id, source, snapshot));
 
-    assert_eq!(effects.len(), 1);
+    assert_eq!(speak_effects(&effects).len(), 1);
     let utterances = speak_effects(&effects);
     assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
         utterances[0].segments,
         vec![
@@ -264,7 +277,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     assert_eq!(effects.len(), 1);
     let utterances = speak_effects(&effects);
     assert_eq!(utterances[0].trace_id, trace_2);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(utterances[0].segments, vec![UtteranceSegment::value("55")]);
     assert_eq!(
         state.focused().map(|(_, n)| n.value.clone()),
@@ -569,7 +582,7 @@ fn states_changed_checkbox_toggle_on_announces_checked() {
     let utterances = speak_effects(&effects);
     assert_eq!(utterances.len(), 1);
     assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
         utterances[0].segments,
         vec![UtteranceSegment::new(SegmentContent::State(State::Checked))]
@@ -603,7 +616,7 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
     let utterances = speak_effects(&effects);
     assert_eq!(utterances.len(), 1);
     assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
         utterances[0].segments,
         vec![UtteranceSegment::new(SegmentContent::NegatedState(
@@ -820,9 +833,8 @@ fn entering_a_dialog_announces_it_before_the_control() {
         &focus_event_with_ancestors(TraceId::mint(), source, button, vec![window, dialog]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        spoken_segments(&effects),
         vec![
             // The named window and then the dialog introduce themselves,
             // outermost first.
@@ -920,9 +932,8 @@ fn nameless_groups_are_not_announced_but_named_ones_are() {
         &focus_event_with_ancestors(TraceId::mint(), source, field, vec![nameless, named]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        spoken_segments(&effects),
         vec![
             UtteranceSegment::label("Margins"),
             UtteranceSegment::new(SegmentContent::Role(Role::Group)),
@@ -946,9 +957,8 @@ fn a_named_list_ancestor_is_announced_as_entered_context() {
         &focus_event_with_ancestors(TraceId::mint(), source, item, vec![list]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        spoken_segments(&effects),
         vec![
             UtteranceSegment::label("Categories"),
             UtteranceSegment::new(SegmentContent::Role(Role::List)),
@@ -971,9 +981,8 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
         &focus_event_with_ancestors(TraceId::mint(), source, item, vec![tree]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        spoken_segments(&effects),
         vec![
             UtteranceSegment::new(SegmentContent::Role(Role::Tree)),
             UtteranceSegment::label("Home"),
@@ -1024,9 +1033,8 @@ fn a_named_window_ancestor_is_announced_as_entered_context() {
         &focus_event_with_ancestors(TraceId::mint(), source, button, vec![window]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        spoken_segments(&effects),
         vec![
             UtteranceSegment::label("App - Window"),
             UtteranceSegment::new(SegmentContent::Role(Role::Window)),
@@ -1364,7 +1372,7 @@ fn identical_back_to_back_focus_is_suppressed() {
         &SrState::new(),
         &focus_event(TraceId::mint(), source, button.clone()),
     );
-    assert_eq!(effects.len(), 1, "first focus is announced");
+    assert_eq!(speak_effects(&effects).len(), 1, "first focus is announced");
 
     // The exact same node focusing again from the same app: suppressed.
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), source, button));
@@ -1389,7 +1397,7 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
     let state = switch_to(&state, Pid(1));
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), a));
     assert_eq!(
-        effects.len(),
+        speak_effects(&effects).len(),
         1,
         "focus that differs from the last announced one is announced, even if seen earlier"
     );
@@ -1397,7 +1405,7 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
 
 // ---- Object navigation and review cursor (M3 reducer item 4) ----
 
-use verbatim_model::ReviewCommand;
+use verbatim_model::{FocusNow, FocusValidity, ReviewCommand};
 
 fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
@@ -1437,7 +1445,7 @@ fn report_object_announces_spells_then_copies() {
     assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Name"));
 
     // Second press: spell the name and value, as NVDA does, the space
-    // spoken as "space".
+    // spoken as "space" and the capitals marked for a raised pitch.
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 1),
@@ -1446,12 +1454,12 @@ fn report_object_announces_spells_then_copies() {
     assert_eq!(
         utterances[0].segments,
         vec![
-            UtteranceSegment::text("N"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("N".to_owned())),
             UtteranceSegment::text("a"),
             UtteranceSegment::text("m"),
             UtteranceSegment::text("e"),
             UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Space)),
-            UtteranceSegment::text("A"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("A".to_owned())),
             UtteranceSegment::text("n"),
             UtteranceSegment::text("n"),
         ]
@@ -1614,7 +1622,7 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         &observed_at(focus_event(TraceId::mint(), Pid(1), menu_item), 2_000),
         OutpostId(1),
     );
-    assert_eq!(effects.len(), 1);
+    assert_eq!(speak_effects(&effects).len(), 1);
     let edit = node(
         1,
         Role::EditableText,
@@ -1634,7 +1642,7 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         &observed_at(focus_event(TraceId::mint(), Pid(1), other_item), 1_990),
         OutpostId(1),
     );
-    assert_eq!(effects.len(), 1);
+    assert_eq!(speak_effects(&effects).len(), 1);
     let edit = node(
         1,
         Role::EditableText,
@@ -1647,7 +1655,7 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         &focus_event(TraceId::mint(), Pid(2), edit),
         OutpostId(2),
     );
-    assert_eq!(effects.len(), 1);
+    assert_eq!(speak_effects(&effects).len(), 1);
 }
 
 #[test]
@@ -1690,7 +1698,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
         &observed_at(focus_in(source, facts, edit, vec![]), 1_000),
         OutpostId(2),
     );
-    assert_eq!(effects.len(), 1, "the edit is spoken");
+    assert_eq!(speak_effects(&effects).len(), 1, "the edit is spoken");
     let (state, effects) = reduce_from(&state, &foreground(3_000), OutpostId(2));
     assert!(effects.is_empty(), "focus is already in that window");
     let menu_item = node(
@@ -1723,7 +1731,7 @@ fn an_entered_container_is_spoken_as_a_focus_is() {
         &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![label, list]),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
+        spoken_segments(&effects),
         vec![
             UtteranceSegment::label("Options"),
             UtteranceSegment::label("Files"),
@@ -2304,7 +2312,11 @@ fn entering_menus_is_silent_and_only_the_item_is_announced() {
     );
 
     let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
+    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
+    assert!(
+        effects.contains(&Effect::StopSpeech),
+        "entering a menu cancels speech"
+    );
     assert_eq!(
         utterances[0].segments,
         vec![UtteranceSegment::label("Open"),]
@@ -2345,7 +2357,7 @@ fn topmost_shared_owner_and_active_uwp_windows_are_attended() {
         let state = switch_to(&SrState::new(), Pid(1));
         let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
         let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, button, vec![]));
-        assert_eq!(effects.len(), 1, "attended: {facts:?}");
+        assert_eq!(speak_effects(&effects).len(), 1, "attended: {facts:?}");
     }
 }
 
@@ -2361,7 +2373,11 @@ fn without_window_facts_the_application_decides() {
     assert!(effects.is_empty(), "another application without facts");
 
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
-    assert_eq!(effects.len(), 1, "the attention application without facts");
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "the attention application without facts"
+    );
 }
 
 #[test]
@@ -2370,7 +2386,7 @@ fn a_foreground_change_is_always_accepted_and_moves_attention() {
     let other = node(2, Role::Window, Some("Calculator"), None, StateSet::new());
 
     let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), other));
-    assert_eq!(effects.len(), 1);
+    assert_eq!(speak_effects(&effects).len(), 1);
     assert_eq!(state.attention(), Some(Pid(2)));
 
     // The previous application is now in the background.
@@ -2693,11 +2709,15 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
 
     let (state, effects) = reduce(&state, &focus_in(Pid(2), facts, item, vec![]));
 
-    assert_eq!(effects.len(), 1, "the focus is spoken");
+    assert_eq!(speak_effects(&effects).len(), 1, "the focus is spoken");
     assert_eq!(state.attention(), Some(Pid(2)), "attention follows it");
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
     let (_, effects) = reduce(&state, &focus_in(Pid(2), window(30), button, vec![]));
-    assert_eq!(effects.len(), 1, "the window's later events are attended");
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "the window's later events are attended"
+    );
 }
 
 #[test]
@@ -2712,11 +2732,19 @@ fn focus_returning_from_a_topmost_popup_is_still_attended() {
         ..window(77)
     };
     let (state, effects) = reduce(&state, &focus_in(source, popup, item, vec![]));
-    assert_eq!(effects.len(), 1, "the topmost menu is attended");
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "the topmost menu is attended"
+    );
 
     let edit = node(3, Role::EditableText, Some("Text"), None, StateSet::new());
     let (_, effects) = reduce(&state, &focus_in(source, window(1000), edit, vec![]));
-    assert_eq!(effects.len(), 1, "focus back in the foreground window");
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "focus back in the foreground window"
+    );
 }
 
 #[test]
@@ -2725,7 +2753,14 @@ fn a_nameless_foreground_window_moves_attention_silently() {
     let nameless = node(5, Role::Window, None, None, StateSet::new());
 
     let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), nameless));
-    assert!(effects.is_empty(), "a bare window says nothing");
+    assert!(
+        speak_effects(&effects).is_empty(),
+        "a bare window says nothing"
+    );
+    assert!(
+        effects.contains(&Effect::StopSpeech),
+        "a new foreground window cancels speech, nameless or not"
+    );
     assert_eq!(state.attention(), Some(Pid(2)));
 
     // The window has its name by the time its control takes focus, so it is
@@ -3478,5 +3513,104 @@ fn an_activation_says_its_action_activate_or_no_action() {
     assert_eq!(
         outcome(false, None),
         vec![message(verbatim_model::Message::NoAction)]
+    );
+}
+
+/// When speech is cut off (`docs/nvda/speech.md`, "Cancellation"): a
+/// window coming to the front cancels speech and is announced, and its
+/// control taking the focus a moment later queues behind the window's
+/// title rather than cutting it off, since the title stays valid while its
+/// window is in front.
+#[test]
+fn a_window_title_is_queued_before_its_control_not_cut_off() {
+    let notepad = node(10, Role::Window, Some("Notepad"), None, StateSet::new());
+    let (state, effects) = reduce(&SrState::new(), &foreground_in(Pid(4), window(40), notepad));
+    assert!(
+        effects.contains(&Effect::StopSpeech),
+        "a new foreground cancels speech"
+    );
+    let title = speak_effects(&effects);
+    assert_eq!(title.len(), 1);
+    assert_eq!(title[0].priority, SpeechPriority::Queued);
+    let validity = title[0]
+        .validity
+        .expect("focus speech carries its validity");
+    assert_eq!(validity.node.number(), 10);
+    assert!(validity.had_focus);
+
+    let editor = node(
+        11,
+        Role::Document,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (_, effects) = reduce(&state, &focus_in(Pid(4), window(40), editor, vec![]));
+    assert!(
+        !effects.contains(&Effect::StopSpeech),
+        "the same window: nothing is cancelled"
+    );
+    let Some(Effect::DropExpiredSpeech(now)) = effects.first() else {
+        panic!("the speech manager is told where the focus is first: {effects:?}");
+    };
+    assert_eq!(now.focus.number(), 11);
+    assert_eq!(now.foreground.map(NodeId::number), Some(10));
+    assert!(
+        title[0]
+            .validity
+            .is_some_and(|validity| validity.holds(now)),
+        "the window's title is still worth hearing"
+    );
+    let control = speak_effects(&effects);
+    assert_eq!(control.len(), 1);
+    assert_eq!(control[0].priority, SpeechPriority::Queued);
+}
+
+/// Focus speech for a control the user has left no longer holds, but an
+/// entered container's does while the focus is inside it, and so does
+/// speech for a node that never had the focus.
+#[test]
+fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
+    let now = FocusNow {
+        focus: NodeId::new(3),
+        ancestors: vec![NodeId::new(1)],
+        foreground: Some(NodeId::new(9)),
+    };
+    let left = FocusValidity {
+        node: NodeId::new(2),
+        had_focus: true,
+    };
+    assert!(!left.holds(&now), "a control the user has left");
+    for node in [1, 3, 9] {
+        let validity = FocusValidity {
+            node: NodeId::new(node),
+            had_focus: true,
+        };
+        assert!(validity.holds(&now), "node {node}");
+    }
+    let never_focused = FocusValidity {
+        node: NodeId::new(2),
+        had_focus: false,
+    };
+    assert!(
+        never_focused.holds(&now),
+        "a dialog announced on entering it"
+    );
+}
+
+/// Spelling marks each capital so the theme raises its pitch, as NVDA
+/// does; other characters stay plain text.
+#[test]
+fn spelling_marks_capitals_for_a_raised_pitch() {
+    let state = reviewing("Hi");
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(
+        spoken_segments(&effects),
+        vec![UtteranceSegment::new(SegmentContent::SpelledCapital(
+            "H".to_owned()
+        ))]
     );
 }

@@ -76,8 +76,7 @@ During the build, Packer runs two PowerShell provisioners in order:
 and `C:\VerbatimLab\image.json`), then
 `scripts/Initialize-VerbatimHarness.ps1` (everything the M2 harness needs
 on top: persistent autologon, an unattended-friendly session, a pinned
-1920x1080 display resolution, a best-effort Scream virtual audio device,
-the `VerbatimAgent` scheduled task, and its firewall rule — see that
+1920x1080 display resolution, the `VerbatimAgent` scheduled task, and its firewall rule — see that
 script's own header comment for the full, idempotent step list).
 
 The generated image output is written under `artifacts/packer/windows11`

@@ -17,7 +17,9 @@ Public API:
 - `AgentClient` — a typed host-side client for `verbatim_agent::protocol`:
   connects over TCP, completes the agent's `Hello` handshake, and exposes
   `launch_process`, `kill_process`, `process_status`, `session_info`,
-  `read_file`, and `open_control_tunnel` as plain methods.
+  `read_file`, `copy_file` (a file of any size on the agent's machine,
+  read in chunks with the agent's `ReadFileChunk` request and written to a
+  path on this machine), and `open_control_tunnel` as plain methods.
   `open_control_tunnel` is the seam into Verbatim's own control plane: it
   asks the agent to stop speaking its own protocol on the connection and
   relay Verbatim's control-plane pipe instead, then completes the control
@@ -25,18 +27,31 @@ Public API:
   `verbatim_control::client::Client`.
 - `Scenario` — the lifecycle owner for one live, agent-driven Verbatim run:
   a guard struct, not a manual-cleanup checklist. In runner-direct mode
-  `Scenario::launch` first builds `verbatim-app` and `verbatim-outpost`
-  (once per test binary, skipped when `VERBATIM_E2E_VERBATIM_EXE` names a
-  build to stage instead), then copies `verbatim.exe` and
-  `verbatim-outpost.exe` into
-  `target/e2e-stage` and writes `Settings::for_e2e`'s fixed `settings.toml`
-  there; in remote mode `cargo xtask vm deploy` has already staged the
-  guest side. The synthesizer is the capture synthesizer by default
-  (audio-free, no installed voices needed — deliberately not `OneCore`,
-  whose `new` fails outright with none installed), with
-  `VERBATIM_TEST_AUDIO=null` set; an audible run (`AUDIBLE_ENV`, which
-  `cargo xtask vm test` always sets) selects `OneCore` and omits that
-  variable, so Verbatim speaks through the real `WasapiSink`. It then
+  `Scenario::launch` first builds `verbatim-app`, `verbatim-outpost`,
+  and `verbatim-synth-host` (once per test binary, skipped when
+  `VERBATIM_E2E_VERBATIM_EXE` names a build to stage instead), then
+  copies `verbatim.exe`, `verbatim-outpost.exe`,
+  `verbatim-synth-host.exe`, and eSpeak NG's `espeak-ng-data` directory
+  into `target/e2e-stage` (staging fails if the data directory is
+  missing, which building `verbatim-synth-host` creates) and writes
+  `Settings::for_e2e`'s fixed `settings.toml` there; in remote mode
+  `cargo xtask vm deploy` has already staged the guest side. Every run
+  selects eSpeak NG, the default synthesizer, which is built with
+  Verbatim and so needs nothing installed on the machine. A silent run,
+  the default, sets `VERBATIM_TEST_AUDIO=null`, so Verbatim plays through
+  the silent real-time device; an audible run (`AUDIBLE_ENV`, which
+  `cargo xtask vm test` always sets) omits that variable, so Verbatim
+  speaks through the real `WasapiDevice`. The two differ only in the
+  device: the same synthesizer speaks the same audio, and every utterance
+  takes its real duration either way. Before launching Verbatim it starts
+  the scenario's recording (see `recording` below) when recording is
+  enabled, and passes the recording's `VERBATIM_RECORD_AUDIO` to
+  Verbatim's launch; ffmpeg failing to start is a warning, and the
+  scenario runs unrecorded. `finish_recording(to)` ends and saves that
+  recording (a warning, never a failure, when it cannot); the `Drop` impl
+  stops a capture still running. `kill_processes_by_name` ends every
+  process with a given image name through the agent, which is how a
+  scenario kills the synthesizer host. It then
   launches Verbatim through the agent, waits for its
   control plane to answer over the agent's tunnel, opens a *second*,
   dedicated tunnel connection for speech collection, and pauses briefly
@@ -59,7 +74,7 @@ Public API:
   earlier scenarios typed into); `latency_snapshot` is the non-asserting,
   non-printing fetch the registry's run summary uses (see `registry`
   below), and `collect_run_artifacts` (timeline, stderr, and the per-process
-  outpost and listener logs: every file in the launch's own log directory,
+  outpost, listener, and synthesizer host logs: every file in the launch's own log directory,
   `logs\<Verbatim's pid>`, listed through the agent, so an application that
   a launch handed off to, as Notepad does, is still collected) plus
   `collect_flight_recorder` (the reducer flight recorder, dumped before the
@@ -77,11 +92,29 @@ Public API:
   `registry::swept_target_image_names()`, derived from every registered
   scenario's own declared target images instead of a name maintained by
   hand.
+- `SpeechCollector` — the speech assertions, reading the dedicated
+  speech connection and never sending a request on it after subscribing,
+  so no frame is discarded. Every utterance Verbatim queues arrives as a
+  `Speech` frame and later ends with exactly one `SpeechEnded` frame
+  (decision D17). The `expect_*` assertions (`expect_in_order`,
+  `expect_in_order_capturing`, `expect_change_capturing`,
+  `expect_captured`) match queued text, then wait up to 30 seconds for
+  the matched utterance's ending and fail unless it completed, so a
+  passing assertion means the speech was heard in full and the next input
+  cannot cut it off. Utterances queued while an assertion waits are kept
+  for the next assertion. `wait_until_quiet(quiet_for, timeout)` waits
+  until every utterance queued so far has ended and nothing has been
+  queued or ended for `quiet_for`, and panics with the timeline if that
+  does not happen within `timeout`.
+- `timeline` — the scenario's shared log of injected gestures and keys
+  and of speech: each utterance at queue time, its audio start, and its
+  ending, rendered as `completed`, `cancelled`, or `failed` with the
+  reason. Failure messages print it in time order.
 - `registry` — the scenario registry itself. `ScenarioDef` is one named,
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
-  and its recording file name prefix — one identifier, everywhere),
-  `group` (a `Group`: `Speech`, `Shell`, `Legacy`, or `Navigation`, a
+  and its video's file name, `<name>.mp4` — one identifier, everywhere),
+  `group` (a `Group`: `Speech`, `Shell`, or `Navigation`, a
   coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
   `target_images` (image names its `setup` may launch with
@@ -89,11 +122,12 @@ Public API:
   opened with `open_document` is closed by title instead and not listed),
   and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario — today eight: `m1_exit_regression` and
-  `focus_churn` (Speech),
-  `notepad_focus` and `msinfo32` (Legacy), `multi_outpost_switch` and
-  `start_menu` (Shell), and `object_navigation` and `tree_navigation`
-  (Navigation), each implemented in
+  registered scenario — today eight. The Speech group holds
+  `menu_and_settings_dialog`, `rapid_tabbing_in_settings`,
+  `switch_to_onecore`, and `synth_host_crash_recovery`; the Shell group
+  holds `notepad_and_verbatim_menu` and `start_menu_search`; the
+  Navigation group holds `object_navigation_in_settings` and
+  `system_information_tree`. Each is implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
@@ -101,7 +135,10 @@ Public API:
   on any unrecognized name; `run_named` is the thin entry point
   every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
   `run_named`'s internal `run` launches, runs `setup` then `body` then
-  `teardown` — `body` and `teardown` each in their own
+  `teardown`, waiting after `body` until speech is quiet
+  (`wait_until_quiet` with a 30-second limit) so the last thing asserted is
+  heard in full and nothing is still playing when teardown closes the
+  scenario's applications — `body` and `teardown` each in their own
   `std::panic::catch_unwind`, so a panicking `body` still lets `teardown`
   run with whatever `setup` produced (borrowed, not moved, so the panic
   leaves it intact) rather than skipping cleanup — asserts a clean
@@ -110,7 +147,8 @@ Public API:
   so nothing more is proved by also demanding a graceful quit), collects
   the run artifacts (timeline, stderr, and the reducer flight recorder — the
   last dumped before the quit while Verbatim is still up) for every run pass
-  or fail, always writes a `ScenarioSummary`, then re-raises whatever panic
+  or fail, finishes the recording into `<name>.mp4` in the scenario's
+  artifacts directory with `Scenario::finish_recording`, always writes a `ScenarioSummary`, then re-raises whatever panic
   occurred so `cargo test` still reports the original failure. None of this weakens `Scenario`'s own guard-struct
   discipline; `setup`/`body`/`teardown` are structure on top of it for
   scenario-specific state `Scenario` itself does not track, not a
@@ -131,14 +169,36 @@ Public API:
   parsing a subprocess's stdout. `archive_run` copies each finished run's
   directory into `history/<scenario>/<UTC time>-<pass or fail>` under the
   root and keeps the newest 100 runs of each scenario, since the scenario's
-  own directory holds only the latest run.
+  own directory holds only the latest run. It leaves out `.mp4` files, so
+  there is at most one video per scenario on disk.
+- `recording` — a video of each scenario with Verbatim's speech (decision
+  D16). `enabled()` is true unless `RECORD_ENV` (`VERBATIM_E2E_RECORD`) is
+  `0` or `false`; `FFMPEG_ENV` (`VERBATIM_E2E_FFMPEG`) names ffmpeg on the
+  agent's machine, `ffmpeg` on its `PATH` by default. `Recording::start`
+  launches ffmpeg through the agent, since only a process in the
+  interactive session can capture the desktop, recording it with
+  `gdigrab` into fragmented MP4 in Verbatim's launch directory on the
+  agent's machine, a fragment starting at each keyframe, one a
+  second, with zero-latency encoding, so the file stays playable however
+  ffmpeg is ended and loses at most the last second, after the scenario
+  has ended. `audio_env` is the
+  `VERBATIM_RECORD_AUDIO` variable naming the WAV file, in the same
+  directory, that Verbatim's own `WavRecorder` writes everything it plays
+  into, with its start time beside it (see the
+  [verbatim-audio guide](verbatim-audio.md)). `finish` ends the capture
+  with `TerminateProcess`, reads the wall-clock time of the first video
+  frame from ffmpeg's log and the audio's start time, muxes the two on the
+  agent's machine into one MP4 with AAC audio, the audio delayed or
+  trimmed to line up with the video (video alone when the audio's start
+  time is missing), and copies the result to this machine with
+  `AgentClient::copy_file`. `stop` only ends the capture.
 - `latency::fetch` — fetches the most recent `last_n` latency timelines with
   no printing and no assertion, the raw building block `report` (below) and
   `Scenario::latency_snapshot` both use.
 - `latency::report` — `fetch`, then prints one fact per line and asserts at
-  least one timeline reached audio — but only outside audible mode, since a
-  real synthesizer is legitimately interrupted before playback at this
-  suite's pace (a capture-synth invariant, not a real-synth one).
+  least one timeline reached audio, audible or not: every speech assertion
+  waits for its utterance to be heard in full, so a scenario that asserted
+  any speech has timelines that reached audio.
 
 Implementation notes: `REMOTE_ENV` (`VERBATIM_E2E_REMOTE`) marks a run where
 Verbatim lives in a guest rather than sharing this process's filesystem —
@@ -154,8 +214,17 @@ runner-direct CI (`.github/workflows/ci.yml`'s `e2e` job) and plain libtest
 filtering (`cargo test -p verbatim-e2e <name> -- --exact`) working
 unchanged: `cargo test -p verbatim-e2e -- --test-threads=1` still discovers
 and runs every one of them exactly as before the restructuring.
-`m1_exit_regression` is the scripted walk of the M1 exit criteria that
-`docs/roadmap.md`'s M2 section describes, including exactly what it does and
-does not assert about the capture synth's Speech page; `notepad_focus` and
-`multi_outpost_switch` are described in `registry`'s own `Group` doc comment
-above.
+`menu_and_settings_dialog` is the scripted walk of the M1 exit criteria that
+`docs/roadmap-done.md`'s M2 section describes; it now asserts eSpeak NG's
+Speech page, the default voice English (Great Britain), English
+(Scotland) listed after it, and the variant Max. The others are
+described in `registry`'s own `Group` doc comment above.
+`synth_host_crash_recovery` opens the Verbatim menu, kills
+`verbatim-synth-host.exe` with `kill_processes_by_name` (expecting
+exactly one), and expects the next menu item to be heard in full from
+the replacement host. `switch_to_onecore` chooses Windows OneCore voices
+through the Speech page's Select Synthesizer dialog, expects the rebuilt
+page's voice to be one of Microsoft's, switches back to eSpeak NG, and
+cancels the settings dialog so the configuration is left as it was; it
+needs OneCore voices installed, which Windows 11 and GitHub's Windows
+runners have.

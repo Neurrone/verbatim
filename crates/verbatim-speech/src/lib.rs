@@ -1,25 +1,27 @@
 //! Speech pipeline (architecture section 6).
 //!
-//! Stages in order: utterance, dictionary and symbol processing, language
-//! tagging, synth driver, PCM, audio sink. Phase 1 of milestone M1 freezes
-//! the seams — the synchronous [`SynthDriver`] contract, the data-driven
-//! [`SettingDescriptor`] model mirroring NVDA's driver settings, and the
-//! [`SpeechSettingsHost`] handle the GUI talks to; the pipeline
-//! implementation (priority lanes, synth threads, token rendering) lands
-//! with workstream WS-A.
+//! Stages in order: utterance, presentation (a theme flattens it to a
+//! [`SpeechSequence`]), silence trimming, synth driver, PCM, and the audio
+//! mixer, which reports when each utterance is heard (decision D17). The
+//! seams are the synchronous [`SynthDriver`] contract, the data-driven
+//! [`SettingDescriptor`] model mirroring NVDA's driver settings, the
+//! [`SpeechEvents`] observer, and the [`SpeechSettingsHost`] handle the GUI
+//! talks to.
 
 mod driver;
 mod events;
 mod host;
+pub mod hosting;
 mod manager;
 mod registry;
 mod settings;
 mod theme;
+mod trim;
 
-pub use driver::{IndexMark, RequestMark, SpeechRequest, SynthDriver, SynthError, SynthSink};
+pub use driver::{IndexMark, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink};
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};
-pub use manager::{SpeechManager, SpeechManagerConfig};
+pub use manager::{SavedSettingsFn, SpeechControl, SpeechManager, SpeechManagerConfig};
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
 pub use theme::{PlainTheme, Theme};

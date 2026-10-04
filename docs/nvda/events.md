@@ -99,18 +99,28 @@ behavior:
    link at the splice). It stores the list and computes the
    *focus difference level* — the index of the first ancestor that
    differs from the previous focus's chain.
-2. If the difference level is 0 or 1 (the top changed), NVDA decides the
+2. With the new focus and its ancestors in place, the speech manager
+   culls expired focus speech (`removeCancelledSpeechCommands`): of the
+   utterances already handed to the synthesizer, the newest whose
+   validity check fails is removed with everything queued before it,
+   and the synthesizer is cancelled. Speech for an object stays valid
+   while the object is the focus, an ancestor of the focus, or the
+   foreground object, or if it never had the focus, and for a menu item
+   when the focus has moved to a popup menu; the exact rules are under
+   "Expired focus speech" in [Speech](speech.md). This happens on every
+   focus change, before anything about the new focus is spoken.
+3. If the difference level is 0 or 1 (the top changed), NVDA decides the
    foreground changed: it asks the desktop object for the real foreground
    (`objectInForeground`), falls back to ancestor index 1 if that fails,
    sets it (`api.setForegroundObject`), and executes a synthetic
    `foreground` event on it — foreground announcements are therefore an
    *effect of focus processing*, not a separate platform event.
-3. It fires `focusEntered` on each ancestor from the difference level
+4. It fires `focusEntered` on each ancestor from the difference level
    down — the "you have entered this container" announcements — before
    the gainFocus event itself runs. Which ancestors actually speak is
    decided by the object model's presentation rules
    ([Focus and the navigator](focus-and-navigator.md)).
-4. Tree interceptor bookkeeping: if the focus moved into or out of a
+5. Tree interceptor bookkeeping: if the focus moved into or out of a
    document with a tree interceptor, `event_treeInterceptor_loseFocus` /
    `gainFocus` fire (browse mode entry/exit; [Browse mode](browse-mode.md)).
 
@@ -146,9 +156,12 @@ window is spoken only through the two ordinary focus paths.
   presentable focus ancestors.
 
 `event_foreground`, run from `doPreGainFocus` whenever the top of the
-ancestry changes, only cancels speech; its own documentation says it
-must not speak the object, because `focusEntered` or `gainFocus`
-will.
+ancestry changes (a focus difference level of 0 or 1), only cancels
+speech; its own documentation says it must not speak the object, because
+`focusEntered` or `gainFocus` will. It runs whether or not the new
+window has a name, so moving to another application always cuts off
+speech from the one left behind, before the new window and focus are
+announced.
 
 A window that has no name when focus enters it is never announced
 later. `event_nameChange` speaks only when the changed object is the

@@ -31,19 +31,25 @@ arguments for the full verb list printed from the source of truth.
 - `restore [checkpoint]` restores a named checkpoint (default `golden`) and
   waits for the agent — the fast way back to a known-clean state between
   runs, instead of a full `create`.
-- `deploy` builds `verbatim-app`, `verbatim-agent`, and `verbatim-outpost`
-  (debug profile, matching the CI job), then compares a SHA-256 hash of
-  each of the six artifacts it would place in the guest (`verbatim.exe`
-  and `verbatim-outpost.exe` in `C:\VerbatimLab\verbatim`, a staged
-  `settings.toml` alongside them selecting the real `OneCore` synthesizer,
-  `verbatim-agent.exe` in `C:\VerbatimLab\agent`, and the vendored
-  `ffmpeg.exe` and `ffprobe.exe` in `C:\VerbatimLab\tools`) against the
-  guest's existing copy, fetching all six guest-side hashes in a single
-  PowerShell Direct call. Only artifacts
+- `deploy` builds `verbatim-app`, `verbatim-agent`, `verbatim-outpost`,
+  and `verbatim-synth-host` (debug profile, matching the CI job), then
+  compares a SHA-256 hash of each artifact it would place in the guest
+  (`verbatim.exe`, `verbatim-outpost.exe`, and `verbatim-synth-host.exe`
+  in `C:\VerbatimLab\verbatim`; eSpeak NG's `espeak-ng-data` directory,
+  which the build puts next to the executables, archived with Windows'
+  own `tar` into one `espeak-ng-data.tar`, copied beside them and
+  unpacked there when it changed; a staged
+  `settings.toml` beside the executables selecting eSpeak NG, the default
+  synthesizer; `verbatim-agent.exe` in `C:\VerbatimLab\agent`; and the
+  vendored `ffmpeg.exe` in `C:\VerbatimLab\tools`, which each scenario's
+  recording runs)
+  against the guest's existing copy, fetching all the guest-side hashes in
+  a single PowerShell Direct call. Only artifacts
   whose hash differs are copied; each is reported as either "unchanged;
   skipping" or "changed; will copy". The guest's `VerbatimAgent` scheduled
   task and any running Verbatim are stopped first, but only when at least
-  one executable (never `settings.toml` alone) actually needs copying, and
+  one executable or eSpeak NG data file (which a running synthesizer host
+  may hold open; never `settings.toml` alone) actually needs copying, and
   the task is restarted afterward only if it was stopped or
   `verbatim-agent.exe` itself was among the copied artifacts. When every
   hash already matches, the guest is left completely untouched — no stop,
@@ -55,8 +61,8 @@ arguments for the full verb list printed from the source of truth.
   (needs `LIBCLANG_PATH`, set automatically when found — see "Hearing and
   recording a run" in the tooling guide), then starts the guest if it is
   not running and waits for its agent, stages and copies that build onto it
-  (always with the real `OneCore` synthesizer — no more capture-synth
-  choice on the VM path), discovers the guest's IP address, runs
+  (always selecting eSpeak NG, the same synthesizer every runner-direct
+  run uses), discovers the guest's IP address, runs
   `session_info`'s own test once as a precondition (not itself a scenario,
   not recorded, and not affected by `--scenario`/`--group` — a failure here
   aborts the whole run, since nothing downstream can work from a
@@ -65,14 +71,20 @@ arguments for the full verb list printed from the source of truth.
   runs as its own `cargo test -p verbatim-e2e <name> -- --exact` subprocess
   on the host with `VERBATIM_E2E_ENDPOINT` pointed at the guest's agent,
   `VERBATIM_E2E_VERBATIM_EXE` pointed at the guest-side path,
-  `VERBATIM_E2E_REMOTE=1`, and `VERBATIM_E2E_AUDIBLE=1` set — this is what
-  gives `--record` a clean, one-scenario-at-a-time recording boundary (see
-  "Hearing and recording a run" in the tooling guide) with no new
-  machinery inside `verbatim-e2e` itself. Building first is deliberate: a
+  `VERBATIM_E2E_REMOTE=1`, `VERBATIM_E2E_AUDIBLE=1`, and
+  `VERBATIM_E2E_FFMPEG` naming the guest's `C:\VerbatimLab\tools\ffmpeg.exe`
+  set, so each scenario has its own process boundary with no new
+  machinery inside `verbatim-e2e` itself. Every scenario is recorded, as
+  every end-to-end run is: its video, with Verbatim's own audio, lands in
+  `target/e2e-artifacts/<scenario>/<scenario>.mp4` on the host, pass or
+  fail, and `VERBATIM_E2E_RECORD=0` turns that off. Recording does not
+  depend on any audio device in the guest, so a run can be watched and
+  heard live over `cargo xtask vm connect` while it is recorded (see
+  "Hearing and recording a run" in the tooling guide). Building first is deliberate: a
   compile failure is then caught with zero VM state changes. This is the
   one-command loop `docs/roadmap.md`'s M2 exit criteria describes.
   - `--scenario <name>` (repeatable) and `--group <name>` (repeatable, one
-    of `speech`, `shell`, `legacy`, `navigation`) select which scenarios
+    of `speech`, `shell`, `navigation`) select which scenarios
     run; with neither given, every registered scenario runs. An unrecognized name is reported and the run aborts before
     anything touches the VM.
   - `--list` prints the scenario registry (name and group, one per line)
@@ -86,12 +98,6 @@ arguments for the full verb list printed from the source of truth.
     a run's wall-clock cost. An acceptance run must pass `--restore`, since
     only a run that restored `golden` first demonstrates the harness's real
     exit criteria.
-  - `--record` additionally captures each scenario as its own video with
-    audio into `artifacts/vm-recordings`, one file per scenario named after
-    it; see "Hearing and recording a run" above for the key constraint that
-    recording audio and a connected RDP session are mutually exclusive, and
-    how `--record` degrades to a video-only, `-no-audio`-tagged recording
-    with a warning rather than aborting when a session is connected anyway.
   - Every flag may be given together, in any order (aside from `--list`,
     which short-circuits before any of the others matter).
   - At the end of a run selecting more than one scenario, `cargo xtask vm
@@ -183,14 +189,17 @@ Steps:
    M2 harness proper: persistent autologon, every unattended-session
    setting listed in that script's own header comment, a pinned
    1920x1080 display resolution so control positions stay deterministic
-   across runs, the VB-CABLE virtual audio driver (the guest's WASAPI
-   render endpoint every VM run now uses, audible by default, required
-   rather than best-effort), the `VerbatimAgent` scheduled task
+   across runs, the `VerbatimAgent` scheduled task
    (restart-on-failure, so an agent killed by an RDP disconnect tearing
    down its session comes back on its own), and its inbound firewall rule).
-   ffmpeg and ffprobe are deliberately not installed by the image build;
-   `cargo xtask vm deploy` stages them from `vm/vendor/ffmpeg` at deploy
-   time (see the note under "Hearing and recording a run" above and
+   No audio driver is installed: Verbatim records its own audio for the
+   videos, and with no audio device it plays silently in real time, while
+   a connected `cargo xtask vm connect` session gives it that session's
+   Remote Audio to speak through. An image built before VB-CABLE was
+   retired still has that driver and works unchanged; Verbatim simply
+   plays to it. ffmpeg is deliberately not installed by the image build;
+   `cargo xtask vm deploy` stages it from `vm/vendor/ffmpeg` at deploy
+   time (see "Hearing and recording a run" in the tooling guide and
    `vm/vendor/ffmpeg/README.md`), which is why an in-guest ffmpeg download
    is not among the provisioner steps. The
    wrapper then clears compression on the exported files and runs

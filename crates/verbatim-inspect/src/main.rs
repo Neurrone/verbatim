@@ -246,46 +246,34 @@ fn watch_speech(client: &mut Client) -> io::Result<()> {
 
 /// Formats a speech frame as one line, or `None` for other frame kinds.
 fn speech_line(frame: &Frame) -> Option<String> {
-    let Frame::Speech {
-        trace_id,
-        text,
-        event_observed_at_ms,
-        queued_at_ms,
-        audio_started_at_ms,
-    } = frame
-    else {
-        return None;
-    };
-    // A frame with an audio-start time is the follow-up sent when the first
-    // buffer reached the device — the true event-to-audio latency; a frame
-    // without one was sent at queue time, before any audio existed.
-    let line = if let Some(started) = audio_started_at_ms {
-        let delta = event_observed_at_ms.map_or_else(
-            || {
+    match frame {
+        Frame::Speech {
+            utterance,
+            trace_id,
+            text,
+            event_observed_at_ms,
+            queued_at_ms,
+        } => {
+            let delta = event_observed_at_ms.map_or_else(String::new, |observed| {
                 format!(
-                    " (+{} ms after queue)",
-                    started.saturating_sub(*queued_at_ms)
+                    " (+{} ms after event)",
+                    queued_at_ms.saturating_sub(observed)
                 )
-            },
-            |observed| format!(" (+{} ms after event)", started.saturating_sub(observed)),
-        );
-        format!(
-            "trace {trace_id} audio started {}{delta}: {text}",
-            timestamp::local(*started)
-        )
-    } else {
-        let delta = event_observed_at_ms.map_or_else(String::new, |observed| {
-            format!(
-                " (+{} ms after event)",
-                queued_at_ms.saturating_sub(observed)
-            )
-        });
-        format!(
-            "trace {trace_id} queued {}{delta}: {text}",
-            timestamp::local(*queued_at_ms)
-        )
-    };
-    Some(line)
+            });
+            Some(format!(
+                "{utterance} (trace {trace_id}) queued {}{delta}: {text}",
+                timestamp::local(*queued_at_ms)
+            ))
+        }
+        // The first frame played: the true end of the event-to-audio
+        // timeline, which `latency` reports per trace.
+        Frame::SpeechStarted { utterance, at_ms } => Some(format!(
+            "{utterance} audio started {}",
+            timestamp::local(*at_ms)
+        )),
+        Frame::SpeechEnded { utterance, ending } => Some(format!("{utterance} ended: {ending:?}")),
+        _ => None,
+    }
 }
 
 fn send_gesture(client: &mut Client, identifier: String) -> io::Result<()> {

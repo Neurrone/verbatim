@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use verbatim_control::protocol::LatencyRecord;
 use verbatim_control::server::ControlServer;
-use verbatim_model::TraceId;
+use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 use verbatim_speech::SpeechEvents;
 
 /// Milliseconds since the Unix epoch, the ledger's shared time base — the
@@ -31,9 +31,6 @@ struct Entry {
     event_observed_at_ms: Option<u64>,
     speech_queued_at_ms: Option<u64>,
     audio_started_at_ms: Option<u64>,
-    /// The rendered speech text, kept so the audio-start follow-up frame can
-    /// repeat it for readable watcher output.
-    text: Option<String>,
 }
 
 /// A bounded ring of recent timelines.
@@ -102,7 +99,6 @@ impl LatencyLedger {
             event_observed_at_ms: None,
             speech_queued_at_ms: None,
             audio_started_at_ms: None,
-            text: None,
         };
         let result = apply(&mut entry);
         entries.push_back(entry);
@@ -114,47 +110,53 @@ impl LatencyLedger {
 }
 
 impl SpeechEvents for LatencyLedger {
-    fn utterance_queued(&self, trace_id: TraceId, text: &str, _at: std::time::Instant) {
+    fn utterance_queued(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        text: &str,
+        _at: std::time::Instant,
+    ) {
         let at_ms = now_ms();
         let event_observed_at_ms = self.update(trace_id, |entry| {
             entry.speech_queued_at_ms = Some(at_ms);
-            entry.text = Some(text.to_owned());
             entry.event_observed_at_ms
         });
         if let Some(server) = self.server.get() {
-            server.broadcast_speech(trace_id, text.to_owned(), event_observed_at_ms, at_ms, None);
-        }
-    }
-
-    fn audio_started(&self, trace_id: TraceId, _at: std::time::Instant) {
-        let at_ms = now_ms();
-        let (event_observed_at_ms, queued_at_ms, text) = self.update(trace_id, |entry| {
-            entry.audio_started_at_ms = Some(at_ms);
-            (
-                entry.event_observed_at_ms,
-                entry.speech_queued_at_ms,
-                entry.text.clone(),
-            )
-        });
-        // The follow-up frame completing the timeline for live watchers: an
-        // interrupted utterance never starts audio and never gets one.
-        if let Some(server) = self.server.get() {
             server.broadcast_speech(
+                utterance,
                 trace_id,
-                text.unwrap_or_default(),
+                text.to_owned(),
                 event_observed_at_ms,
-                queued_at_ms.unwrap_or(at_ms),
-                Some(at_ms),
+                at_ms,
             );
         }
     }
 
-    fn utterance_finished(&self, trace_id: TraceId, _at: std::time::Instant) {
-        // No ledger field to fill — the timeline stops at audio-started — so
-        // this only mirrors the completion to speech subscribers, letting a
-        // paced consumer wait for an utterance to be heard in full.
+    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, _at: std::time::Instant) {
+        let at_ms = now_ms();
+        // A trace's timeline ends at its first audio: when several
+        // utterances share a trace, the first to be heard counts.
+        self.update(trace_id, |entry| {
+            entry.audio_started_at_ms.get_or_insert(at_ms);
+        });
         if let Some(server) = self.server.get() {
-            server.broadcast_speech_finished(trace_id);
+            server.broadcast_speech_started(utterance, at_ms);
+        }
+    }
+
+    fn utterance_ended(
+        &self,
+        utterance: UtteranceId,
+        _trace_id: TraceId,
+        ending: &UtteranceEnding,
+        _at: std::time::Instant,
+    ) {
+        // No ledger field to fill — the timeline stops at audio-started — so
+        // this only mirrors the ending to speech subscribers, letting a
+        // consumer wait for an utterance to be heard in full.
+        if let Some(server) = self.server.get() {
+            server.broadcast_speech_ended(utterance, ending.clone());
         }
     }
 }
@@ -172,8 +174,13 @@ mod tests {
         let ledger = ledger();
         let trace = TraceId::mint();
         ledger.event_observed(trace, 100);
-        ledger.utterance_queued(trace, "Rate slider 50", std::time::Instant::now());
-        ledger.audio_started(trace, std::time::Instant::now());
+        ledger.utterance_queued(
+            UtteranceId(1),
+            trace,
+            "Rate slider 50",
+            std::time::Instant::now(),
+        );
+        ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
 
         let records = ledger.recent(10);
         assert_eq!(records.len(), 1);
@@ -202,7 +209,12 @@ mod tests {
     fn core_originated_speech_uses_queue_time_as_start() {
         let ledger = ledger();
         let trace = TraceId::mint();
-        ledger.utterance_queued(trace, "Verbatim is starting.", std::time::Instant::now());
+        ledger.utterance_queued(
+            UtteranceId(1),
+            trace,
+            "Verbatim is starting.",
+            std::time::Instant::now(),
+        );
         let records = ledger.recent(1);
         assert_eq!(
             Some(records[0].event_observed_at_ms),

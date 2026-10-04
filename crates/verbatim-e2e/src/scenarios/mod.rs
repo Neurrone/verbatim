@@ -9,14 +9,14 @@ use std::time::Duration;
 
 use crate::scenario::Scenario;
 
-pub(crate) mod focus_churn;
-pub(crate) mod m1_exit_regression;
-pub(crate) mod msinfo32;
-pub(crate) mod multi_outpost_switch;
-pub(crate) mod notepad_focus;
-pub(crate) mod object_navigation;
-pub(crate) mod start_menu;
-pub(crate) mod tree_navigation;
+pub(crate) mod menu_and_settings_dialog;
+pub(crate) mod notepad_and_verbatim_menu;
+pub(crate) mod object_navigation_in_settings;
+pub(crate) mod rapid_tabbing_in_settings;
+pub(crate) mod start_menu_search;
+pub(crate) mod switch_to_onecore;
+pub(crate) mod synth_host_crash_recovery;
+pub(crate) mod system_information_tree;
 
 /// Opens the Verbatim menu with Verbatim+V and waits for the popup to be
 /// announced before returning, so the caller's very next arrow key lands
@@ -40,4 +40,21 @@ pub(crate) fn open_verbatim_menu(scenario: &mut Scenario, timeout: Duration) {
     scenario
         .speech()
         .expect_in_order(&["Context", "menu"], timeout);
+}
+
+/// Opens Verbatim's settings dialog from its menu and waits until focus has
+/// settled on the selected category item, "Speech".
+///
+/// Focus settles after an intermediate step: the dialog announces the
+/// category list with its selected item, and focus then lands on that item.
+/// Waiting for the item as the settled focus lets the focus sequence finish
+/// before the caller's next keys run.
+pub(crate) fn open_speech_settings(scenario: &mut Scenario, timeout: Duration) {
+    open_verbatim_menu(scenario, timeout);
+    scenario.send_keys(&["downarrow"]).expect("sends downarrow");
+    scenario.speech().expect_in_order(&["Settings..."], timeout);
+    scenario.send_keys(&["enter"]).expect("sends enter");
+    scenario
+        .speech()
+        .expect_in_order(&["Categories: list", "Speech"], timeout);
 }

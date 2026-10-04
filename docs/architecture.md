@@ -37,8 +37,9 @@ screen reader in both rendered and source form.
   or VM, or against a local Hyper-V VM. The maintainer develops in a single
   Windows VM on a Proxmox host and runs the suite runner-direct there;
   there is no Proxmox backend for the harness. Hosted runners
-  are the only CI: the end-to-end suite runs there silently with the
-  capture synthesizer on every change, recordings included (section 14),
+  are the only CI: the end-to-end suite runs there silently on every
+  change, eSpeak NG speaking into the silent real-time device,
+  recordings included (section 14),
   and NVDA is never installed or run in CI. Everything else, including
   audible runs against a real audio device, is the interactive loop, not
   CI. There are no self-hosted runners and no nested virtualization on
@@ -67,7 +68,9 @@ screen reader in both rendered and source form.
   is widget glue only: typed page models are pulled from Rust, and a
   callbacks object owned by Rust drives the dialogs.
 - **D5 — Audio backend is WASAPI behind an `AudioSink` trait.** Rationale:
-  allows alternate backends without touching the speech pipeline.
+  allows alternate backends without touching the speech pipeline. Since
+  D17 the seam is the `AudioDevice` trait behind the mixer: the mixer
+  writes to it, and WASAPI is its device implementation.
 - **D6 — Extensions are Wasm components.** The WIT-defined API is the durable
   contract, capability-gated and deny-by-default. wasmtime is the default
   runtime choice, kept behind the extension-host seam so it stays
@@ -220,14 +223,57 @@ screen reader in both rendered and source form.
   The ledger still records only observed, queued, and first audio; the
   per-stage timeline is not implemented yet.
 - **D16 — Recordings take their audio from Verbatim's own rendering.** A
-  tee at the `AudioSink` seam writes every utterance's PCM with its
+  tee at the audio output writes every utterance's PCM with its
   wall-clock start time while still playing it, and the recording step
   muxes that track with the screen grab. No virtual audio device is
   involved, so recordings work on a hosted CI runner with no sound device,
   on any hypervisor, and while the run is being heard live over RDP or
   locally. Consequently everything Verbatim makes audible, earcons and
-  tones included, is rendered as PCM through the `AudioSink` seam and
+  tones included, is rendered as PCM through that audio output and
   mixed there, never through a separate path. Ratified 2026-09-02.
+  Amended 2026-10-04: the tee copies the mixer's output (D17), so every
+  stream Verbatim mixes is recorded together, to a WAV file beside the
+  screen grab on the agent's machine, silence-filled by the clock so it
+  runs in step with real time; the recording step encodes it as the
+  video's AAC audio track. The screen grab is ffmpeg's desktop capture, launched
+  through the agent for every scenario on every path (runner-direct,
+  hosted CI, and the Hyper-V harness alike), and VB-CABLE is retired.
+- **D17 — Every utterance has one truthful ending, measured at playback.**
+  The theme flattens an `Utterance` into a speech sequence: text pieces
+  mixed with commands (index mark, pitch, rate, volume, language,
+  character mode, pause), plain serializable data that can cross a
+  process, Wasm, or network boundary unchanged, designed so that a sound
+  item can join it when earcons arrive (sounds will start at their place
+  in the sequence and overlap the speech that follows, belonging to the
+  utterance). Each utterance carries its own id and ends exactly once, as
+  completed, cancelled, or failed, including utterances cleared from a
+  lane before they were synthesized. A synthesizer only produces PCM and
+  never plays it; Verbatim's audio output is a mixer with one audio
+  thread, a buffer per source, and conversion of every source to the
+  device's format, and it tracks which samples belong to which utterance.
+  So the end of an utterance, and each index mark, are reported when the
+  device has played that sample, for every synthesizer without its
+  cooperation. A synthesizer that cannot place marks in its audio has its
+  sequence split at the marks by the speech manager, so mark positions
+  are exact for every backend. Leading and trailing silence is trimmed
+  centrally for every synthesizer, except a pause the sequence asks for.
+  Decided 2026-10-04 (phase 4 of the 2026-09-02 handoff).
+- **D18 — Native synthesizers run in a synthesizer host process.**
+  `verbatim-synth-host.exe` runs one synthesizer per process, OneCore and
+  eSpeak NG included, behind the same `SynthDriver` trait; in Core,
+  `HostedSynth` implements that trait by forwarding requests over a
+  private pipe with a small buffer, so backpressure and cancellation
+  cross the boundary unchanged and audio is still rendered by Core's
+  mixer. A host runs while something uses it (the active synthesizer, a
+  settings dialog listing its voices, later an extension holding it), is
+  ended when nothing does, sits in a kill-on-close job like the outposts,
+  and is started again with its saved settings after a crash, the
+  utterance in flight ending as failed. Pipes, not shared memory, until
+  the latency ledger shows the hop matters. The AppContainer sandbox and
+  the 32-bit host for Eloquence remain M7 work. Verbatim is licensed GPL
+  version 3 or later from the same date, and eSpeak NG (GPL version 3 or
+  later) is statically linked into the host, not into `verbatim.exe`.
+  Decided 2026-10-04.
 
 ## 1. Process and thread model
 
@@ -260,8 +306,9 @@ Verbatim runs as three kinds of process:
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
    callbacks) and a small query thread pool for UIA and IA2 COM calls.
-3. **Sandboxed helper processes** — currently the native synth host
-   (AppContainer plus job object), streaming PCM to Core over shared memory.
+3. **Synthesizer host processes** (D18) — one per synthesizer in use, in
+   a kill-on-close job, streaming PCM to Core over a pipe; the AppContainer
+   sandbox arrives with Eloquence in M7.
 
 A supervisor in Core spawns outposts, tracks their health, and kills and
 respawns any that stop responding. Because Windows has no parent-child
@@ -581,8 +628,10 @@ A low-level keyboard hook (`WH_KEYBOARD_LL`) lives on a dedicated,
 never-blocking thread in Core. Constraint: Windows silently removes hooks that
 exceed the `LowLevelHooksTimeout`, so the swallow/pass decision must be made in
 microseconds against a read-only, lock-free snapshot of the gesture map
-(rebuilt atomically when bindings change). The hook only decides and enqueues;
-gesture semantics run on the reducer thread. Gesture maps are user-remappable
+(rebuilt atomically when bindings change). The hook only decides and enqueues,
+plus one non-blocking send to the speech manager: every key-down but a few
+cancels speech, and Shift pauses and resumes it, as in NVDA, before the key's
+gesture is enqueued; gesture semantics run on the reducer thread. Gesture maps are user-remappable
 and per-app-module overridable, NVDA-style. Touch and mouse tracking come
 later but route through the same `Input` type.
 
@@ -591,30 +640,42 @@ later but route through the same `Input` type.
 Pipeline stages, in order: structured utterance (semantic spans, per D12),
 dictionary and symbol processing (per span), presentation (a theme flattens
 spans to text, voice changes, and earcons; the default theme is plain
-speech), language tagging, synth driver, PCM, `AudioSink`.
+speech), language tagging, synth driver, PCM, the mixer (D17), and the
+`AudioDevice` it writes to.
 
 - **Speech manager**: priority lanes (interrupt/next/queued), index marks with
   callbacks (say-all, braille sync, latency probes), rate/pitch/volume state,
-  per-language voice switching. Multilingual from the start: utterances carry
+  per-language voice switching. As in NVDA, announcements queue rather than
+  interrupt; speech is cut off by a cancel (a key press, a new foreground
+  window, entering a menu) and, on each focus change, by dropping focus
+  speech whose focus validity no longer holds. Multilingual from the start: utterances carry
   language tags end-to-end.
 - **Synth drivers** implement one trait — streaming PCM plus index-mark
-  events — regardless of origin:
-  - Built-in: **OneCore** (WinRT `Windows.Media.SpeechSynthesis` via
-    windows-rs) and **eSpeak NG** (statically linked; builds cleanly on ARM64).
+  events — regardless of origin, and only ever produce PCM (D17):
+  - Built-in: **eSpeak NG**, the default (built from the vendored source
+    in the `third_party/espeak-ng` submodule and statically linked into
+    the synth host; builds cleanly on ARM64), and **OneCore** (WinRT
+    `Windows.Media.SpeechSynthesis` via windows-rs), each run in the
+    synthesizer host process (D18).
   - **Wasm synths**: components implementing the `verbatim:synth` WIT world,
-    PCM via shared buffer. Path for source-available synths.
-  - **Native synth host**: separate sandboxed process (low-integrity /
-    AppContainer, job object) matching the DLL's architecture (x86 under
-    emulation if needed), streaming PCM over a shared-memory ring. Eloquence
-    is the proof of concept. Latency budget applies equally (shared-memory
-    hop is negligible).
-- **Audio**: `AudioSink` trait; WASAPI event-driven shared mode with small
-  buffers as the only initial implementation.
+    receiving the typed speech sequence and returning PCM. Path for
+    source-available synths. Whether they run in Core's extension host or
+    in a synth host is decided in M5.
+  - **Native synth host** (D18): one process per synthesizer, matching the
+    DLL's architecture (x86 under emulation if needed, M7), streaming PCM
+    over a pipe. Eloquence adds the AppContainer sandbox in M7. Latency
+    budget applies equally (the pipe hop is tens of microseconds).
+- **Audio**: a mixer with one audio thread that converts every source to
+  the device's format, sums them, and tracks playback position per
+  utterance (D17), writing to the `AudioDevice` trait; WASAPI
+  event-driven shared mode is the device implementation, with a silent
+  real-time device for machines without one and for test audio.
 - **Latency budget** (enforced by tests, not aspiration): per D15, 10 ms
   or under from event observation to the utterance being queued on every
   backend, and 10 ms or under from queued to the first audio sample with
-  eSpeak. eSpeak NG lands in M4 so the second half is measurable from the
-  first text work onward. Every stage is traced (section 9).
+  eSpeak. eSpeak NG is built in and the default synthesizer from the
+  opening work of M4, so the second half is measurable from the first
+  text work onward. Every stage is traced (section 9).
 
 ## 7. Extensions (Wasm)
 
@@ -740,7 +801,9 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
    apps (Notepad, Explorer, Terminal, Edge, Office), driven via the control
    plane, on a hosted CI runner, a developer's own machine or VM, or a
    local Hyper-V VM (D3);
-   speech asserted via capture synth; a separate WASAPI smoke test in the
+   speech asserted on the control plane's speech stream, spoken by
+   eSpeak NG through the silent real-time device in a silent run or the
+   real device in an audible one; a separate WASAPI smoke test in the
    interactive loop proves audio actually reaches a device.
 
 Expected behaviour comes from NVDA, used as a reference rather than as an
@@ -771,8 +834,8 @@ unattended install, then the VM is imported and snapshotted as a golden
 image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
 (artifacts copied in over SSH and the agent restarted), `test` (deploy,
 then run the E2E suite through the agent, audible by default with real
-OneCore speech and the real `WasapiSink`, with `--record` to also capture
-the run as an mp4), `logs`, `connect`, `delete`. A restore is only ever
+eSpeak NG speech and the real WASAPI device, every scenario recorded as an
+mp4 as in every other mode), `logs`, `connect`, `delete`. A restore is only ever
 explicit, through `restore` or an opt-in flag on `test`; nothing is
 installed into the guest by a run, so an ordinary run has nothing to undo.
 
@@ -784,7 +847,7 @@ audio: the desktop stops rendering in a disconnected session, so screen
 capture needs the session attached, or a headless run. The pre-2026-09-02
 design captured loopback audio from a VB-CABLE device, which made
 recording and listening mutually exclusive; its dead ends are recorded in
-`docs/tooling.md` for history.
+`docs/roadmap-done.md` for history.
 
 Interactive-session rule: Verbatim, the agent, and screen capture only
 work in a session with a visible window station. SSH, WinRM, PowerShell
@@ -809,10 +872,17 @@ otherwise.
 - `verbatim-jab` — Java Access Bridge client stack (planned, M13).
 - `verbatim-outpost` — the outpost actor and per-app outpost binary, plus the
   Core-side supervisor.
+- `verbatim-process` — contained child processes (kill-on-close job,
+  inherited pipes, per-launch logs), shared by the supervisor and the
+  synthesizer host.
 - `verbatim-control` — control-plane protocol and server.
-- `verbatim-speech` and `verbatim-audio` — pipeline; the `AudioSink` seam.
-- `verbatim-audio-wasapi` — the WASAPI sink.
-- `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers.
+- `verbatim-speech` and `verbatim-audio` — pipeline; the mixer and the
+  `AudioDevice` seam.
+- `verbatim-audio-wasapi` — the WASAPI device.
+- `verbatim-synth-*` — eSpeak NG (the default, built from the vendored
+  `third_party/espeak-ng` source), OneCore, and capture (test) drivers,
+  `verbatim-synth-host`, the synthesizer host process (D18), and
+  `verbatim-synth-hosted`, the Core-side driver that runs one.
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.
 - `verbatim-i18n` — Fluent localization (D10): embedded English fallback,
   runtime locale-folder loading.

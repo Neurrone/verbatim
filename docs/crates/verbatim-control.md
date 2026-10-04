@@ -9,16 +9,26 @@ Public API:
 - `protocol` — `Request` (`Hello`, `Status`, `SubscribeEvents`,
   `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `DumpTree`,
   `DumpRecorder`, `Quit`) in a `RequestEnvelope` with a correlation id;
-  `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechFinished`); `StatusInfo`,
+  `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechStarted`,
+  `SpeechEnded`); `StatusInfo`,
   `OutpostStatus`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
   same newline-JSON framing helpers. Of the two readers, `read_message` is
   for connections whose reads never time out: a read that fails partway
   through a line loses the part already read. `MessageReader` is for
   connections with a read timeout, such as the end-to-end suite's tunnels:
   it keeps a partly received message across a timeout, so the next read
-  continues it and each message is decoded exactly once. A speech frame carries the trace id,
-  rendered text, the observation timestamp of the triggering event when
-  there is one, the queue time, and the audio-start time once known.
+  continues it and each message is decoded exactly once. The speech
+  subscription carries three frames per utterance (decision D17).
+  `Speech` is sent when the utterance is queued and carries its
+  `UtteranceId`, the trace id, the rendered text, the observation
+  timestamp of the triggering event when there is one, and the queue
+  time. `SpeechStarted` carries the utterance id and the time its first
+  frame played, and is absent for an utterance that never played.
+  `SpeechEnded` carries the utterance id and its `UtteranceEnding`
+  (completed, cancelled, or failed with a reason); every utterance
+  announced by a `Speech` frame is followed by exactly one. `SpeechEnded`
+  carries no text, so it never competes with `Speech` as a matchable
+  utterance.
   `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
   tree (`verbatim_model::TreeNode`) and whether the outpost's depth or
   node-count cap cut it short; a walk that could not complete at all comes
@@ -41,8 +51,9 @@ Public API:
   routing, latency queries, tree dumps, flight-recorder dumps, and quit,
   keeping this crate ignorant of the application's internals.
 - `ControlServer` — `start(handlers)` on the well-known pipe name,
-  `start_on(name, handlers)` for tests; `broadcast_event(..)` and
-  `broadcast_speech(..)` fan frames out to subscribed connections; drop
+  `start_on(name, handlers)` for tests; `broadcast_event(..)`,
+  `broadcast_speech(..)`, `broadcast_speech_started(..)`, and
+  `broadcast_speech_ended(..)` fan frames out to subscribed connections; drop
   stops accepting and disconnects every client.
 - `send_keys` — `parse_combo` and `parse_all` (validating every entry
   against the shared key-name vocabulary before anything is injected) and
@@ -60,7 +71,11 @@ so a pending blocking read on one thread blocks a concurrent write from
 another thread — even across duplicated handles — which deadlocked the
 original implementation. With overlapped I/O one handle serves a dedicated
 reader thread and a dedicated writer thread per connection. Each
-connection's writer drains a bounded queue (256 frames) and drops with a
-warning when a client stalls, so a slow inspector can never block Core.
+connection's writer drains a bounded queue (256 frames), so a slow
+inspector can never block Core. A subscribed client whose queue is full
+is disconnected with a warning rather than having frames dropped: a
+subscriber relies on seeing every frame, an utterance's ending above all,
+and a disconnect ends its stream visibly where a dropped frame would
+not.
 The per-connection dispatch loop is generic over reader and writer, which
 is what lets a loopback test exercise the identical code path with no pipe.

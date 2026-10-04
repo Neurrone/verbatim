@@ -11,7 +11,9 @@ hook reports it reached the operating system. The reducer thread selects on both
 command channel the gesture router feeds, so a review or object-navigation
 gesture is reduced and its effects executed by the same path as an
 accessibility event; `Effect::Activate` and `Effect::CopyToClipboard` are
-executed there alongside `Speak` and `Fetch`. The router builds its gesture
+executed there alongside `Speak` and `Fetch`, and so are
+`Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
+manager's `SpeechControl` (`cancel` and `drop_expired`). The router builds its gesture
 map and its gesture-to-script table from `verbatim_input::bindings_for` for
 the configured keyboard layout, so the active review and navigation bindings
 follow `settings.toml`'s `keyboard.layout`.
@@ -86,11 +88,13 @@ knowing for review:
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
   ID, fed from three threads across two processes: the reducer thread
   records event observation (using the outpost's own timestamp), and the
-  pipeline observer callbacks record queue and audio start. It broadcasts a
-  speech frame at queue time (carrying the observed-to-queued delta) and a
-  follow-up frame at audio start, and it answers the `latency` command
-  newest first. Core-originated speech with no event reports its queue time
-  as the timeline start.
+  pipeline observer callbacks record queue and audio start (when several
+  utterances share a trace, the first to be heard counts). It mirrors
+  each utterance's milestones to speech subscribers as a `Speech` frame at
+  queue time, a `SpeechStarted` frame when its first frame plays, and a
+  `SpeechEnded` frame with its ending, and it answers the `latency`
+  command newest first. Core-originated speech with no event reports its
+  queue time as the timeline start.
 - `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` clones the
   shared `Arc<Mutex<ReducerRecorder>>`'s retained entries under a brief
   lock (recovering a poisoned lock rather than propagating it, since the
@@ -112,12 +116,25 @@ knowing for review:
   shared by the reducer thread, the control plane's `DumpRecorder` handler,
   and the panic hook installed as early as possible so it covers every
   thread spawned after it), the speech pipeline (`build_speech_manager`:
-  OneCore through WASAPI by default, configured from the base profile,
-  observed by the ledger — `VERBATIM_TEST_AUDIO=null` at startup is a
-  test-only escape hatch that registers the capture synth from
-  `verbatim-synth-capture` alongside OneCore and swaps in `NullSink` for
-  `WasapiSink`, logging a warning, so E2E and CI runs work with no sound
-  card), the settings host with a persist callback writing through the
+  eSpeak NG through a `Mixer` over `WasapiDevice` by default; eSpeak NG
+  and OneCore are both registered as hosted synthesizers, eSpeak NG first
+  as the default, by the ids in `verbatim_speech::hosting::synth_ids`,
+  each with `verbatim_synth_hosted::factory` starting
+  `verbatim-synth-host.exe` from the folder `verbatim.exe` runs from
+  (decision D18), so the app links neither driver. The configured
+  synthesizer is used when it is registered; when none is configured, or
+  the configured one is not registered, eSpeak NG is used, with a
+  warning in the second case. The pipeline is configured
+  from the base profile, observed by the ledger — `VERBATIM_TEST_AUDIO=null`
+  at startup is a test-only escape hatch that registers the capture synth
+  from `verbatim-synth-capture` alongside the real synthesizers and
+  builds the mixer over `SilentDevice` instead, logging a warning, so E2E and CI runs work
+  with no sound card while every utterance still takes its real
+  duration; `VERBATIM_RECORD_AUDIO=<path>` at startup starts the mixer
+  with a `verbatim_audio::WavRecorder` tap writing everything Verbatim
+  plays to that WAV file, for the end-to-end harness's videos, decision
+  D16, and a file that cannot be created is logged as a warning and
+  ignored), the settings host with a persist callback writing through the
   config store, the supervisor with its focus listener (decision D13;
   targeting the current foreground once at startup by poll, since the
   listener thereafter reports foreground changes as facts — Core no longer
@@ -129,8 +146,11 @@ knowing for review:
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
   one-answer reply channel to the reducer thread and waits five seconds for
   the answer; `dump_recorder` calls `flight_dump::dump_now` directly, no
-  outpost round trip needed),
-  the keyboard hook last among input paths, the startup announcement, and
+  outpost round trip needed; an injected gesture cancels speech before it
+  is sent, as a key press does, since its keys never pass the hook),
+  the keyboard hook last among input paths (given a callback that maps
+  each `KeySpeechEffect` to the speech manager's `SpeechControl`: `Cancel`
+  to `cancel`, `TogglePause` to `toggle_pause`), the startup announcement, and
   finally the GUI loop on the main thread. The gesture router binds three
   gestures in M3: Verbatim+V pops the menu, Verbatim+F12 speaks the time
   (an Interrupt-priority text-span utterance with no source node), and

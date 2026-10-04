@@ -1,6 +1,6 @@
 //! The presentation stage (decision D12): the pipeline boundary where a
 //! [`Theme`] flattens a structured [`Utterance`] into a flat
-//! [`SpeechRequest`].
+//! [`SpeechSequence`].
 //!
 //! The reducer composes announcements from semantic spans, never display
 //! text, so localization and presentation both happen here — just before
@@ -15,9 +15,9 @@
 use verbatim_i18n::{
     level, message_text, negated_state_name, position_in_set, role_name, state_name,
 };
-use verbatim_model::{SegmentContent, Utterance};
+use verbatim_model::{SegmentContent, Utterance, UtteranceId};
 
-use crate::driver::SpeechRequest;
+use crate::driver::{SpeechItem, SpeechSequence};
 
 /// A presentation theme: flattens structured utterances at the end of the
 /// speech pipeline.
@@ -26,9 +26,9 @@ use crate::driver::SpeechRequest;
 /// must be cheap: this sits between "utterance queued" and "synthesis
 /// starts" on every spoken announcement, inside the latency budget.
 pub trait Theme: Send {
-    /// Flattens one structured utterance to the flat request handed to the
-    /// synthesizer.
-    fn flatten(&self, utterance: &Utterance) -> SpeechRequest;
+    /// Flattens one structured utterance, which the pipeline has numbered
+    /// `id`, to the sequence handed to the synthesizer.
+    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence;
 }
 
 /// The default theme: plain speech, no earcons, no voice changes.
@@ -39,33 +39,57 @@ pub trait Theme: Send {
 /// absences not worth announcing) contribute nothing; a position within a
 /// set becomes the localized "2 of 5" (and contributes nothing without a
 /// set size — a bare position has no useful spoken form); a level becomes
-/// the localized "level 3". The groups are joined with single spaces.
+/// the localized "level 3". The groups are joined with single spaces. A
+/// capital spelled out is spoken with the pitch raised by
+/// [`CAPITAL_PITCH_OFFSET`], as NVDA raises it by default.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlainTheme;
 
+/// How far the pitch setting is raised for a capital letter spelled out:
+/// NVDA's default `capPitchChange`, which is not yet configurable here.
+pub const CAPITAL_PITCH_OFFSET: i32 = 30;
+
 impl Theme for PlainTheme {
-    /// The request carries no index marks: no current utterance embeds
-    /// them, and drivers that need marks receive requests built directly.
-    /// The language tag is taken from the first segment that overrides it,
-    /// if any.
-    fn flatten(&self, utterance: &Utterance) -> SpeechRequest {
-        let parts: Vec<String> = utterance
-            .segments
-            .iter()
-            .filter_map(|segment| spoken_form(&segment.content))
-            .collect();
+    /// The sequence is text items, or none when nothing is spoken; a
+    /// spelled capital is a text item between two pitch changes, the
+    /// second back to the configured pitch. It carries no index marks,
+    /// since no current utterance embeds them. The language tag is taken
+    /// from the first segment that overrides it, if any.
+    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
+        let mut items = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
+        for segment in &utterance.segments {
+            if let SegmentContent::SpelledCapital(text) = &segment.content {
+                flush(&mut parts, &mut items);
+                items.push(SpeechItem::Pitch(CAPITAL_PITCH_OFFSET));
+                items.push(SpeechItem::Text(text.clone()));
+                items.push(SpeechItem::Pitch(0));
+            } else if let Some(part) = spoken_form(&segment.content) {
+                parts.push(part);
+            }
+        }
+        flush(&mut parts, &mut items);
 
         let language = utterance
             .segments
             .iter()
             .find_map(|segment| segment.language.clone());
 
-        SpeechRequest {
+        SpeechSequence {
+            utterance: id,
             trace_id: utterance.trace_id,
-            text: parts.join(" "),
             language,
-            marks: Vec::new(),
+            items,
         }
+    }
+}
+
+/// Ends a run of spoken groups as one text item.
+fn flush(parts: &mut Vec<String>, items: &mut Vec<SpeechItem>) {
+    let text = parts.join(" ");
+    parts.clear();
+    if !text.is_empty() {
+        items.push(SpeechItem::Text(text));
     }
 }
 
@@ -108,7 +132,29 @@ mod tests {
             priority: SpeechPriority::Queued,
             segments,
             source: None,
+            validity: None,
         }
+    }
+
+    #[test]
+    fn a_spelled_capital_is_raised_in_pitch_and_the_pitch_restored() {
+        let utterance = utterance_of(vec![
+            UtteranceSegment::text("a"),
+            UtteranceSegment::new(SegmentContent::SpelledCapital("B".to_owned())),
+            UtteranceSegment::text("c"),
+        ]);
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(
+            sequence.items,
+            vec![
+                SpeechItem::Text("a".to_owned()),
+                SpeechItem::Pitch(CAPITAL_PITCH_OFFSET),
+                SpeechItem::Text("B".to_owned()),
+                SpeechItem::Pitch(0),
+                SpeechItem::Text("c".to_owned()),
+            ]
+        );
+        assert_eq!(sequence.text(), "a B c");
     }
 
     #[test]
@@ -117,9 +163,9 @@ mod tests {
             UtteranceSegment::text("Settings"),
             UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
         ]);
-        let request = PlainTheme.flatten(&utterance);
-        assert_eq!(request.text, "Settings menu item");
-        assert_eq!(request.marks, Vec::new());
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(sequence.text(), "Settings menu item");
+        assert!(!sequence.has_marks());
     }
 
     #[test]
@@ -130,8 +176,8 @@ mod tests {
             UtteranceSegment::value("50"),
             UtteranceSegment::new(SegmentContent::Description("Speech rate".to_owned())),
         ]);
-        let request = PlainTheme.flatten(&utterance);
-        assert_eq!(request.text, "Rate slider 50 Speech rate");
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(sequence.text(), "Rate slider 50 Speech rate");
     }
 
     #[test]
@@ -142,8 +188,8 @@ mod tests {
             UtteranceSegment::new(SegmentContent::State(State::Focusable)),
             UtteranceSegment::new(SegmentContent::NegatedState(State::Checked)),
         ]);
-        let request = PlainTheme.flatten(&utterance);
-        assert_eq!(request.text, "Bold not checked");
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(sequence.text(), "Bold not checked");
     }
 
     #[test]
@@ -152,19 +198,25 @@ mod tests {
             position: 2,
             set_size: Some(5),
         })]);
-        assert_eq!(PlainTheme.flatten(&with_size).text, "2 of 5");
+        assert_eq!(
+            PlainTheme.flatten(&with_size, UtteranceId(1)).text(),
+            "2 of 5"
+        );
 
         let without_size = utterance_of(vec![UtteranceSegment::new(SegmentContent::Position {
             position: 2,
             set_size: None,
         })]);
-        assert_eq!(PlainTheme.flatten(&without_size).text, "");
+        assert_eq!(PlainTheme.flatten(&without_size, UtteranceId(1)).text(), "");
     }
 
     #[test]
     fn level_renders_its_localized_phrase() {
         let utterance = utterance_of(vec![UtteranceSegment::new(SegmentContent::Level(3))]);
-        assert_eq!(PlainTheme.flatten(&utterance).text, "level 3");
+        assert_eq!(
+            PlainTheme.flatten(&utterance, UtteranceId(1)).text(),
+            "level 3"
+        );
     }
 
     #[test]
@@ -172,7 +224,7 @@ mod tests {
         let mut segment = UtteranceSegment::text("hola");
         segment.language = Some("es".to_owned());
         let utterance = utterance_of(vec![segment]);
-        let request = PlainTheme.flatten(&utterance);
-        assert_eq!(request.language.as_deref(), Some("es"));
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(sequence.language.as_deref(), Some("es"));
     }
 }

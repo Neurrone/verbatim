@@ -23,10 +23,11 @@ verbatim-i18n.workspace = true
 verbatim-input.workspace = true
 verbatim-input-windows.workspace = true
 verbatim-model.workspace = true
+verbatim-process.workspace = true
 verbatim-outpost.workspace = true
 verbatim-speech.workspace = true
 verbatim-synth-capture.workspace = true
-verbatim-synth-onecore.workspace = true
+verbatim-synth-hosted.workspace = true
 windows.workspace = true
 
 [lints]

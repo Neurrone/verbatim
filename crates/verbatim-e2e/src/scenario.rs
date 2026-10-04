@@ -32,6 +32,7 @@ use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 
 use crate::agent_client::AgentClient;
+use crate::recording::Recording;
 use crate::speech::SpeechCollector;
 use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
@@ -106,42 +107,19 @@ fn is_remote() -> bool {
 }
 
 /// Environment variable requesting an *audible* run: [`Scenario::launch`]
-/// selects the real `OneCore` synthesizer instead of the capture synth, and
 /// does not set `VERBATIM_TEST_AUDIO=null`, so Verbatim speaks through the
-/// real `WasapiSink` on real hardware instead of the silent, voice-free
-/// path a default runner-direct run uses. `cargo xtask vm test` always sets
-/// it, since every VM run is audible; set it by hand for an audible
-/// runner-direct run.
-///
-/// The speech assertions hold under either synthesizer, with one
-/// mode-dependent expectation: the M1 exit regression's voice-combo section
-/// asserts a fixed pair of voice names per mode (see `expected_voices` in
-/// that scenario). [`crate::latency::report`]'s "some speech reached audio"
-/// assertion applies only to non-audible runs, since a real voice is
-/// legitimately interrupted before playback at this suite's pace. In
-/// runner-direct mode, real speech also means Verbatim will speak over any
-/// other screen reader already running on the desktop.
+/// real audio device instead of the silent real-time device a default run
+/// uses. Both speak through eSpeak NG and take the same time, so every
+/// assertion is the same either way. `cargo xtask vm test` always sets it,
+/// since every VM run is audible; set it by hand for an audible
+/// runner-direct run, which then speaks over any other screen reader
+/// running on the desktop.
 pub const AUDIBLE_ENV: &str = "VERBATIM_E2E_AUDIBLE";
 
 /// Whether this is an audible run; see [`AUDIBLE_ENV`].
 #[must_use]
 pub fn is_audible() -> bool {
     std::env::var(AUDIBLE_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-}
-
-/// Environment variable that switches a scenario into paced mode: every
-/// speech assertion additionally waits for the matched utterance's audio to
-/// finish before the next input, so a human watching or a recording hears
-/// each utterance in full. Set by `cargo xtask vm test --paced` (and implied
-/// by `--record`, since a recording nobody can follow is pointless). Purely a
-/// presentation aid — it never changes what is asserted, only the timing —
-/// so ordinary fast runs leave it unset.
-pub const PACED_ENV: &str = "VERBATIM_E2E_PACED";
-
-/// Whether this is a paced run; see [`PACED_ENV`].
-#[must_use]
-pub fn is_paced() -> bool {
-    std::env::var(PACED_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
 /// How long [`Scenario::launch`] waits for Verbatim's control plane to come
@@ -214,6 +192,9 @@ pub struct Scenario {
     /// [`process_agent`](Self::process_agent)'s `read_file` — what
     /// [`Scenario::collect_run_artifacts`] pulls on every run.
     stderr_log_path: String,
+    /// The video of this run, while it is being captured (see
+    /// [`crate::recording`]).
+    recording: Option<Recording>,
 }
 
 impl Scenario {
@@ -223,14 +204,13 @@ impl Scenario {
     /// In runner-direct mode (the default — see [`REMOTE_ENV`]), first
     /// builds the default source binaries unless [`VERBATIM_EXE_ENV`]
     /// overrides them (see [`build_default_source_binaries`]), then
-    /// stages `verbatim.exe` and `verbatim-outpost.exe` into
+    /// stages `verbatim.exe`, `verbatim-outpost.exe`, and
+    /// `verbatim-synth-host.exe` into
     /// `target/e2e-stage` under the workspace root (see [`stage_binaries`]),
     /// then writes [`verbatim_config::Settings::for_e2e`]'s fixed
-    /// settings.toml there selecting the capture synthesizer (audio-free
-    /// and dependency-free — it needs no installed voices, unlike
-    /// `OneCore`), and launches *that* staged copy with
-    /// `VERBATIM_TEST_AUDIO=null` (device-free `NullSink`, still emitting
-    /// complete latency timelines). The developer's own
+    /// settings.toml there selecting eSpeak NG, and launches *that* staged
+    /// copy with `VERBATIM_TEST_AUDIO=null` (the silent real-time device,
+    /// still measuring complete latency timelines). The developer's own
     /// `target/debug/verbatim.exe` and its `settings.toml` are never read or
     /// written by this. In remote mode `cargo xtask vm deploy` already
     /// staged the guest side equivalently, so this launches
@@ -246,10 +226,8 @@ impl Scenario {
     /// speech collection (see [`crate::speech::SpeechCollector`] for why it
     /// must not share the command connection).
     ///
-    /// Under [`AUDIBLE_ENV`] both choices flip: the settings selects
-    /// `OneCore` and `VERBATIM_TEST_AUDIO=null` is not passed, so Verbatim
-    /// speaks for real. See that constant's doc comment for what changes
-    /// in the assertions.
+    /// Under [`AUDIBLE_ENV`], `VERBATIM_TEST_AUDIO=null` is not passed, so
+    /// Verbatim speaks through the real audio device.
     ///
     /// # Errors
     ///
@@ -285,8 +263,8 @@ impl Scenario {
 
         // In a remote run the path above names a location in the guest, so
         // neither staging nor the config write can happen here; `cargo
-        // xtask vm deploy` staged both inside the guest already (always
-        // selecting OneCore, since every VM run is audible). In
+        // xtask vm deploy` staged both inside the guest already (selecting
+        // eSpeak NG, as here). In
         // runner-direct mode, stage a private copy so this suite never
         // reads or writes the developer's own build output directory.
         let (launch_exe, launch_dir) = if remote {
@@ -300,8 +278,9 @@ impl Scenario {
                 .parent()
                 .ok_or_else(|| io::Error::other("verbatim.exe path has no parent directory"))?;
             let stage_dir = stage_binaries(source_dir)?;
-            let synth_id = if audible { "onecore" } else { "capture" };
-            configure_synth(&stage_dir, synth_id)?;
+            // eSpeak NG, the default synthesizer, in every run; a silent
+            // run differs only in playing through the silent device.
+            configure_synth(&stage_dir, ESPEAK_ID)?;
             let staged_exe = stage_dir.join("verbatim.exe");
             (staged_exe, stage_dir)
         };
@@ -315,12 +294,12 @@ impl Scenario {
         let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
 
         // Audible mode omits VERBATIM_TEST_AUDIO=null entirely, so
-        // verbatim-app's own startup check leaves the real WasapiSink in
-        // place instead of swapping in NullSink; see AUDIBLE_ENV.
-        let launch_env: &[(String, String)] = if audible {
-            &[]
+        // verbatim-app plays through the real device rather than the silent
+        // one; see AUDIBLE_ENV.
+        let mut launch_env: Vec<(String, String)> = if audible {
+            Vec::new()
         } else {
-            &[("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
+            vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
         };
 
         let mut process_agent = AgentClient::connect(&agent_addr)?;
@@ -340,39 +319,35 @@ impl Scenario {
         if let Err(error) = process_agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
             tracing::warn!(%error, "failed to close leftover harness documents");
         }
-        let verbatim_pid = process_agent.launch_process(
-            exe_str,
-            &[],
-            Some(exe_dir_str),
-            launch_env,
-            Some(&stderr_path),
-        )?;
-
-        let deadline = Instant::now() + LAUNCH_TIMEOUT;
-        let control = match wait_for_control_tunnel(&agent_addr, deadline) {
-            Ok(client) => client,
+        // The capture starts before Verbatim, so the video shows it start.
+        let mut recording = start_recording(&mut process_agent, exe_dir_str);
+        if let Some(recording) = &recording {
+            launch_env.push(recording.audio_env());
+        }
+        let started = process_agent
+            .launch_process(
+                exe_str,
+                &[],
+                Some(exe_dir_str),
+                &launch_env,
+                Some(&stderr_path),
+            )
+            .and_then(|pid| {
+                connect(&agent_addr)
+                    .map(|connected| (pid, connected))
+                    .inspect_err(|_| {
+                        let _ = process_agent.kill_process(pid);
+                    })
+            });
+        let (verbatim_pid, (control, speech, timeline)) = match started {
+            Ok(started) => started,
             Err(error) => {
-                let _ = process_agent.kill_process(verbatim_pid);
-                return Err(io::Error::other(format!(
-                    "Verbatim's control plane never came up: {error}"
-                )));
+                if let Some(recording) = &mut recording {
+                    recording.stop(&mut process_agent);
+                }
+                return Err(error);
             }
         };
-        let speech_tunnel = match wait_for_control_tunnel(&agent_addr, deadline) {
-            Ok(client) => client,
-            Err(error) => {
-                let _ = process_agent.kill_process(verbatim_pid);
-                return Err(io::Error::other(format!(
-                    "could not open a second control-plane tunnel for speech: {error}"
-                )));
-            }
-        };
-        let timeline = Timeline::new();
-        let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone(), is_paced())
-            .map_err(|error| {
-                let _ = process_agent.kill_process(verbatim_pid);
-                io::Error::other(format!("could not subscribe to speech: {error}"))
-            })?;
 
         // See GUI_SETTLE_DELAY's doc comment: the control plane answering
         // does not yet mean the GUI thread has installed its gesture
@@ -388,7 +363,21 @@ impl Scenario {
             timeline,
             launched: Vec::new(),
             stderr_log_path: stderr_path,
+            recording,
         })
+    }
+
+    /// Ends this run's video and saves it, with Verbatim's audio, to `to`.
+    /// Best-effort: a failure is printed as a warning, never failing the
+    /// scenario. Does nothing when this run is not recording.
+    pub fn finish_recording(&mut self, to: &Path) {
+        let Some(mut recording) = self.recording.take() else {
+            return;
+        };
+        match recording.finish(&mut self.process_agent, to) {
+            Ok(()) => println!("recording saved to {}", to.display()),
+            Err(error) => eprintln!("WARNING: could not save the recording: {error}"),
+        }
     }
 
     /// The primary control-plane connection: status, gestures, keys,
@@ -560,6 +549,16 @@ impl Scenario {
             "no usable foreground window to start from: {}",
             describe_foreground(&info)
         )))
+    }
+
+    /// Ends every process named `image` (for example
+    /// `verbatim-synth-host.exe`), returning how many were ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn kill_processes_by_name(&mut self, image: &str) -> io::Result<u32> {
+        self.process_agent.kill_processes_by_name(image)
     }
 
     /// Ends an application a scenario launched and stops tracking it: one
@@ -873,7 +872,40 @@ impl Drop for Scenario {
                 "failed to kill Verbatim during scenario cleanup"
             );
         }
+        if let Some(recording) = &mut self.recording {
+            recording.stop(&mut self.process_agent);
+        }
     }
+}
+
+/// Starts this run's video, when recording (see [`crate::recording`]).
+fn start_recording(agent: &mut AgentClient, dir: &str) -> Option<Recording> {
+    if !crate::recording::enabled() {
+        return None;
+    }
+    Recording::start(agent, dir)
+        .inspect_err(|error| {
+            eprintln!("not recording a video: ffmpeg could not be started: {error}");
+        })
+        .ok()
+}
+
+/// Connects to a just-launched Verbatim: the command connection, then a
+/// second one subscribed to its speech.
+fn connect(agent_addr: &str) -> io::Result<(ControlClient, SpeechCollector, Timeline)> {
+    let deadline = Instant::now() + LAUNCH_TIMEOUT;
+    let control = wait_for_control_tunnel(agent_addr, deadline).map_err(|error| {
+        io::Error::other(format!("Verbatim's control plane never came up: {error}"))
+    })?;
+    let speech_tunnel = wait_for_control_tunnel(agent_addr, deadline).map_err(|error| {
+        io::Error::other(format!(
+            "could not open a second control-plane tunnel for speech: {error}"
+        ))
+    })?;
+    let timeline = Timeline::new();
+    let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone())
+        .map_err(|error| io::Error::other(format!("could not subscribe to speech: {error}")))?;
+    Ok((control, speech, timeline))
 }
 
 /// Repeatedly connects a fresh [`AgentClient`] and attempts
@@ -973,7 +1005,15 @@ fn build_default_source_binaries() -> io::Result<()> {
             // Cargo sets CARGO for the processes it runs, tests included.
             let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
             let status = std::process::Command::new(cargo)
-                .args(["build", "-p", "verbatim-app", "-p", "verbatim-outpost"])
+                .args([
+                    "build",
+                    "-p",
+                    "verbatim-app",
+                    "-p",
+                    "verbatim-outpost",
+                    "-p",
+                    "verbatim-synth-host",
+                ])
                 .current_dir(workspace_root())
                 .status()
                 .map_err(|error| format!("could not launch cargo build: {error}"))?;
@@ -981,7 +1021,8 @@ fn build_default_source_binaries() -> io::Result<()> {
                 Ok(())
             } else {
                 Err(format!(
-                    "cargo build -p verbatim-app -p verbatim-outpost failed ({status}); set \
+                    "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host \
+                     failed ({status}); set \
                      {VERBATIM_EXE_ENV} to stage an existing build instead"
                 ))
             }
@@ -1015,6 +1056,14 @@ fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
     Ok(stage_dir)
 }
 
+/// The executables a Verbatim launch needs side by side: the app finds the
+/// outpost and the synthesizer host next to itself.
+const STAGED_BINARIES: [&str; 3] = [
+    "verbatim.exe",
+    "verbatim-outpost.exe",
+    "verbatim-synth-host.exe",
+];
+
 /// The directory-parameterized core of [`stage_binaries`], split out so unit
 /// tests can exercise the hash-skip and missing-source-binary behavior
 /// against temporary directories instead of the real workspace's
@@ -1022,7 +1071,7 @@ fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
 /// destination).
 fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(stage_dir)?;
-    for name in ["verbatim.exe", "verbatim-outpost.exe"] {
+    for name in STAGED_BINARIES {
         let source = source_dir.join(name);
         if !source.is_file() {
             return Err(io::Error::other(format!(
@@ -1033,6 +1082,32 @@ fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
         let destination = stage_dir.join(name);
         if !files_match(&source, &destination)? {
             fs::copy(&source, &destination)?;
+        }
+    }
+    copy_dir_into_stage(&source_dir.join(ESPEAK_DATA), &stage_dir.join(ESPEAK_DATA))
+}
+
+/// eSpeak NG's data directory, which the synthesizer host reads next to
+/// itself; the eSpeak NG crate's build puts it next to the executables.
+const ESPEAK_DATA: &str = "espeak-ng-data";
+
+/// Copies a directory tree into the stage, file by file, skipping files
+/// that already match.
+fn copy_dir_into_stage(source: &Path, destination: &Path) -> io::Result<()> {
+    if !source.is_dir() {
+        return Err(io::Error::other(format!(
+            "{} not found; building verbatim-synth-host builds it",
+            source.display()
+        )));
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_into_stage(&entry.path(), &target)?;
+        } else if !files_match(&entry.path(), &target)? {
+            fs::copy(entry.path(), &target)?;
         }
     }
     Ok(())
@@ -1058,20 +1133,10 @@ fn files_match(source: &Path, destination: &Path) -> io::Result<bool> {
 /// writes it fresh, so a run's configuration can never accumulate state
 /// left over from a previous run.
 ///
-/// Two call shapes, both from [`Scenario::launch`]:
-///
-/// - The ordinary, silent case passes `"capture"`: the capture synthesizer,
-///   registered by `verbatim-app` only when `VERBATIM_TEST_AUDIO=null` is
-///   set (see `verbatim-synth-capture`). Deliberately not `onecore` there:
-///   `OneCoreSynth::new` fails outright when no `OneCore` voices are
-///   installed, which would fail every scenario launch on a bare CI
-///   runner. The capture synth needs no installed voices and exercises the
-///   same setting-descriptor-driven dialog machinery with a smaller
-///   descriptor set (voice choice, rate slider; no rate-boost toggle,
-///   unlike `OneCore` — the M1 exit-regression test documents this where it
-///   walks the Speech dialog's controls).
-/// - [`AUDIBLE_ENV`]'s case passes `"onecore"`: the real synthesizer, so a
-///   human listening to the run hears real speech through real hardware.
+/// Every run selects eSpeak NG ([`ESPEAK_ID`]), the default synthesizer:
+/// it is built with Verbatim, so it needs nothing installed on the machine
+/// (`OneCore` voices are), and a silent run hears exactly what an audible
+/// one does, through the silent real-time device.
 ///
 /// Called only in runner-direct mode, on `dir` being [`stage_binaries`]'s
 /// staging directory (this suite and the staged copy share a filesystem, so
@@ -1087,6 +1152,9 @@ fn configure_synth(dir: &Path, synth_id: &str) -> io::Result<()> {
 fn config_error(error: &verbatim_config::ConfigError) -> io::Error {
     io::Error::other(error.to_string())
 }
+
+/// The synthesizer every run selects.
+const ESPEAK_ID: &str = "espeak";
 
 /// The image (executable file) name [`Scenario::launch_target`] records
 /// for later cleanup: just the file name component of `command`, matching
@@ -1208,6 +1276,15 @@ mod tests {
         fs::write(source_dir.join("verbatim.exe"), b"verbatim v1").expect("seed verbatim.exe");
         fs::write(source_dir.join("verbatim-outpost.exe"), b"outpost v1")
             .expect("seed verbatim-outpost.exe");
+        fs::write(source_dir.join("verbatim-synth-host.exe"), b"host v1")
+            .expect("seed verbatim-synth-host.exe");
+        fs::create_dir_all(source_dir.join(ESPEAK_DATA).join("voices"))
+            .expect("seed the eSpeak NG data directory");
+        fs::write(
+            source_dir.join(ESPEAK_DATA).join("voices").join("en"),
+            b"voice",
+        )
+        .expect("seed an eSpeak NG data file");
 
         copy_into_stage(&source_dir, &stage_dir).expect("first copy");
         assert_eq!(
@@ -1217,6 +1294,11 @@ mod tests {
         assert_eq!(
             fs::read(stage_dir.join("verbatim-outpost.exe")).expect("read staged outpost"),
             b"outpost v1"
+        );
+        assert_eq!(
+            fs::read(stage_dir.join(ESPEAK_DATA).join("voices").join("en"))
+                .expect("read the staged eSpeak NG data"),
+            b"voice"
         );
 
         // Simulate a stale staged copy left over from an earlier build, then

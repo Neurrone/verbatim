@@ -308,6 +308,52 @@ impl AgentClient {
         }
     }
 
+    /// Reads a guest file of any size, in chunks, into `to` on this machine;
+    /// `to` appears only once the whole file has been copied.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails, a reply is not valid base64, or
+    /// `to` cannot be written.
+    pub fn copy_file(&mut self, path: &str, to: &std::path::Path) -> io::Result<()> {
+        // Written beside `to` and renamed once complete, so a failed copy
+        // never leaves a partial file under the final name.
+        let mut partial = to.as_os_str().to_owned();
+        partial.push(".part");
+        let partial = std::path::PathBuf::from(partial);
+        let copied = self.copy_into(path, &partial);
+        match copied {
+            Ok(()) => std::fs::rename(&partial, to),
+            Err(error) => {
+                let _ = std::fs::remove_file(&partial);
+                Err(error)
+            }
+        }
+    }
+
+    fn copy_into(&mut self, path: &str, to: &std::path::Path) -> io::Result<()> {
+        use std::io::Write;
+        let mut out = std::fs::File::create(to)?;
+        let mut offset = 0u64;
+        loop {
+            let chunk = match self.request(Request::ReadFileChunk {
+                path: path.to_owned(),
+                offset,
+            })? {
+                Frame::Reply {
+                    payload: ReplyPayload::FileContents { data_base64 },
+                    ..
+                } => STANDARD.decode(data_base64).map_err(io::Error::other)?,
+                other => return Err(unexpected("ReadFileChunk", &other)),
+            };
+            if chunk.is_empty() {
+                return Ok(());
+            }
+            out.write_all(&chunk)?;
+            offset += chunk.len() as u64;
+        }
+    }
+
     /// Lists the names of the files directly inside a guest directory.
     ///
     /// # Errors

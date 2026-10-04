@@ -10,7 +10,9 @@ use std::io::{self, BufRead, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, NormalizedEvent, Pid, TraceId, TreeNode, WindowFacts};
+use verbatim_model::{
+    Backend, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding, UtteranceId, WindowFacts,
+};
 
 /// The protocol version this vocabulary defines.
 pub const PROTOCOL_VERSION: u32 = 0;
@@ -107,10 +109,13 @@ pub enum Frame {
         /// The event itself.
         event: NormalizedEvent,
     },
-    /// One spoken utterance (subscription frame), captured where text
-    /// enters the synth driver.
+    /// One utterance queued to be spoken (subscription frame). Every
+    /// utterance announced this way is followed, later, by exactly one
+    /// [`Frame::SpeechEnded`] (decision D17).
     Speech {
-        /// Trace ID of the utterance.
+        /// The utterance.
+        utterance: UtteranceId,
+        /// Trace ID of the event behind it.
         trace_id: TraceId,
         /// The rendered text handed to the synth.
         text: String,
@@ -121,20 +126,23 @@ pub enum Frame {
         event_observed_at_ms: Option<u64>,
         /// Milliseconds since the Unix epoch when the utterance was queued.
         queued_at_ms: u64,
-        /// Milliseconds since the Unix epoch when audio started, when it
-        /// already has by frame time.
-        audio_started_at_ms: Option<u64>,
     },
-    /// An utterance's audio has finished playing (subscription frame, same
-    /// speech subscription as [`Frame::Speech`]). Emitted once per utterance
-    /// that plays to completion — not for one interrupted or dropped before
-    /// audio — right after its buffers drain. Lets a paced consumer wait for
-    /// speech to be heard in full before acting (see `verbatim-e2e`'s
-    /// `SpeechCollector` pacing); carries no text, only the `trace_id`, so it
-    /// never competes with [`Frame::Speech`] as a matchable utterance.
-    SpeechFinished {
-        /// Trace ID of the utterance that finished.
-        trace_id: TraceId,
+    /// An utterance's first audio frame has played (subscription frame).
+    SpeechStarted {
+        /// The utterance.
+        utterance: UtteranceId,
+        /// Milliseconds since the Unix epoch when it started.
+        at_ms: u64,
+    },
+    /// An utterance has ended (subscription frame): completed when the
+    /// device played its last frame, or cancelled, or failed. Carries no
+    /// text, so it never competes with [`Frame::Speech`] as a matchable
+    /// utterance.
+    SpeechEnded {
+        /// The utterance.
+        utterance: UtteranceId,
+        /// How it ended.
+        ending: UtteranceEnding,
     },
 }
 

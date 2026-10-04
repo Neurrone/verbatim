@@ -121,6 +121,20 @@ after every keystroke would drown both. (`speakObjectProperties` and
 `silentValuesForRoles` in `controlTypes/role.py`; the edit field rule is
 `event_valueChange` on NVDA's editable text classes.)
 
+### Capitals when spelling
+
+When NVDA spells, whether spelling a word or line on request or speaking
+a single character as the review cursor or caret moves over it, each
+uppercase letter is spoken with the pitch raised: the letter is preceded
+by a pitch command offset by the synthesizer's "capital pitch change"
+setting (`capPitchChange`, default 30, from -100 to 100) and followed by
+a pitch command that returns to the configured pitch. The offset is added
+to the user's pitch setting, so with pitch at 50 a capital is spoken at
+80; the synthesizer limits the result to its range. Two other settings,
+both off by default, can also mark capitals: saying "cap" before the
+letter (`sayCapForCapitals`) and a short beep (`beepForCapitals`).
+(`_getSpellingCharAddCapNotification` in `speech/speech.py`.)
+
 ## The manager
 
 `SpeechManager` (all on the main thread, by design):
@@ -148,7 +162,40 @@ after every keystroke would drown both. (`speakObjectProperties` and
 - **Cancellation**: `speech.cancelSpeech()` clears queues and calls
   the driver's `cancel()`; cancellable commands are additionally
   culled when their validity check fails while still queued
-  (`removeCancelledSpeechCommands`) — the expired-focus case.
+  (`removeCancelledSpeechCommands`) — the expired-focus case. What
+  cancels speech is listed under "What a key press does to speech" in
+  [Keyboard input](input.md) and "The focus gate" in
+  [Event handling](events.md): every key press but a few, a change of
+  foreground, and entering a menu. Focus speech is otherwise queued,
+  never interrupting.
+- **Expired focus speech**: a focus announcement carries a
+  `FocusLossCancellableSpeechCommand` (`eventHandler.py`) for the object
+  it is about. That speech stays valid while any of these holds:
+  - the object is the focus;
+  - the object never had the focus, which is the case for an entered
+    container announced by `focusEntered` (the object is marked as
+    having had the focus when the command is made while it is the
+    focus);
+  - the object is an ancestor of the focus;
+  - the object is the foreground object, so a dialog's title survives
+    the focus moving into the dialog;
+  - the object is an MSAA menu item, check menu item, or radio menu item
+    with a parent, and the focus is now a popup menu: some applications
+    focus a submenu's first item and then the submenu itself, and the
+    item must still be spoken (NVDA issues 12624 and 14550).
+
+  The check runs at two moments. On each focus change, after the new
+  focus and its ancestors are set (`doPreGainFocus`), the manager looks
+  at the utterances it has already handed to the synthesizer, finds the
+  newest whose check fails, removes everything in the queue up to and
+  including it, cancels the synthesizer, and pushes the next speech, so
+  later queued speech is still heard. And an utterance still waiting in
+  the queue is checked when it comes up to be handed to the
+  synthesizer (`_checkForCancellations`); if it has expired it is
+  dropped and the next one is tried. A queued utterance that has expired
+  therefore never costs speech queued before it. The advanced setting
+  "Attempt to cancel speech for expired focus events"
+  (`cancelExpiredFocusSpeech`, on by default) turns both checks off.
 
 ## Say-all
 

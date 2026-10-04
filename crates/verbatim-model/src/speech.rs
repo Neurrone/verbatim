@@ -5,10 +5,39 @@
 //! localized words at its boundary (via `verbatim-i18n`) just before
 //! dictionary and symbol processing.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
-use crate::TraceId;
 use crate::tree::{Rect, Role, State};
+use crate::{NodeId, TraceId};
+
+/// Identifies one utterance from the moment the speech pipeline accepts it
+/// until its single ending (decision D17). Unlike a [`TraceId`], which names
+/// the event behind speech and can be shared by several utterances, an
+/// utterance id is never reused within a process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct UtteranceId(pub u64);
+
+impl fmt::Display for UtteranceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "u{}", self.0)
+    }
+}
+
+/// How an utterance ended (decision D17). Every utterance the speech
+/// pipeline accepts ends exactly once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UtteranceEnding {
+    /// The audio device played all of the utterance's audio. An utterance
+    /// that produced no audio completes when the audio before it has played.
+    Completed,
+    /// The utterance was cut off or dropped before all of it was heard: by
+    /// speech that interrupts, a synthesizer switch, or shutdown.
+    Cancelled,
+    /// Synthesis or audio output failed; the text says why.
+    Failed(String),
+}
 
 /// Priority lane for an utterance (architecture section 6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +95,10 @@ pub enum SegmentContent {
     /// property of any node (a navigation edge, for instance) without
     /// pre-flattening text.
     Message(Message),
+    /// An uppercase character spoken while spelling, or while reading a
+    /// single character: a theme speaks it at a raised pitch, as NVDA does
+    /// (`docs/nvda/speech.md`, "Capitals when spelling").
+    SpelledCapital(String),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.
@@ -173,6 +206,49 @@ pub struct Utterance {
     /// before this field existed deserializing unchanged.
     #[serde(default)]
     pub source: Option<UtteranceSource>,
+    /// For focus speech: the node it announces, so the speech manager can
+    /// drop it once that node is no longer relevant to the focus
+    /// ([`FocusValidity`]). `None` for every other utterance, which only a
+    /// cancel ends early.
+    #[serde(default)]
+    pub validity: Option<FocusValidity>,
+}
+
+/// What focus speech is about, for dropping it once the focus has moved on
+/// (`docs/nvda/speech.md`, "Cancellation", and `docs/nvda/events.md`):
+/// queued or playing speech announcing a node stays valid while that node
+/// is the focus, an ancestor of the focus, or the foreground window, or if
+/// the node never had the focus at all, as a dialog announced on entering
+/// it never does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusValidity {
+    /// The node the speech announces.
+    pub node: NodeId,
+    /// Whether that node was the focus when the speech was made.
+    pub had_focus: bool,
+}
+
+impl FocusValidity {
+    /// Whether speech with this validity is still worth hearing, given
+    /// where the focus now is.
+    #[must_use]
+    pub fn holds(&self, now: &FocusNow) -> bool {
+        !self.had_focus
+            || self.node == now.focus
+            || now.ancestors.contains(&self.node)
+            || now.foreground == Some(self.node)
+    }
+}
+
+/// Where the focus is, for judging [`FocusValidity`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusNow {
+    /// The focus.
+    pub focus: NodeId,
+    /// The focus's ancestors.
+    pub ancestors: Vec<NodeId>,
+    /// The foreground window's node, when known.
+    pub foreground: Option<NodeId>,
 }
 
 #[cfg(test)]

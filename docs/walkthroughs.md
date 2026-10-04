@@ -46,9 +46,12 @@ in order:
 6. **Speech renders and plays.** `verbatim-speech`'s queue thread
    flattens the utterance through the theme, dispatches at Interrupt
    priority (cancelling anything in flight), and the synth thread
-   drives the driver into the WASAPI sink (`verbatim-audio-wasapi`), which
-   emits `audio_started` with the same trace id — closing the latency
-   timeline that began at step 2's observation timestamp.
+   drives the driver into the audio mixer (`verbatim-audio`), which plays
+   through the WASAPI device (`verbatim-audio-wasapi`). When the device
+   has played the utterance's first frame the mixer reports
+   `audio_started` with the same trace id, closing the latency timeline
+   that began at step 2's observation timestamp; when it has played the
+   last frame, the utterance ends as completed.
 
 Failure paths to know: events from a window the system reports hung are
 dropped unread, and a call that hangs past its deadline abandons the
@@ -89,7 +92,7 @@ The user presses Verbatim+numpad8 (report current object):
 
 ## 3. The life of an E2E run
 
-`cargo xtask vm test --scenario start_menu` (or the same suite locally
+`cargo xtask vm test --scenario start_menu_search` (or the same suite locally
 against a `verbatim-agent` on this machine):
 
 1. **The harness reaches the agent.** `verbatim-e2e` reads
@@ -98,8 +101,9 @@ against a `verbatim-agent` on this machine):
    locally) — it refuses to start in a non-interactive session, since
    injected input needs a real desktop ([Tooling](tooling.md)).
 2. **`Scenario::launch` boots a real Verbatim**: writes a
-   `settings.toml` selecting the capture synth (no audio device
-   needed; `VERBATIM_TEST_AUDIO=null`), launches `verbatim.exe`
+   `settings.toml` selecting eSpeak NG (in a silent run,
+   `VERBATIM_TEST_AUDIO=null` plays it through the silent real-time
+   device, so no audio device is needed), launches `verbatim.exe`
    through the agent with stderr redirected to a readable file, waits
    for the control plane to answer through the agent's byte-relay
    tunnel onto Verbatim's named pipe, and opens a second tunnel

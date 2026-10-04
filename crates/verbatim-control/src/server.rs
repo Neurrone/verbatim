@@ -43,7 +43,9 @@ use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use tracing::warn;
-use verbatim_model::{Backend, NormalizedEvent, Pid, TraceId, WindowFacts};
+use verbatim_model::{
+    Backend, NormalizedEvent, Pid, TraceId, UtteranceEnding, UtteranceId, WindowFacts,
+};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GetLastError, HANDLE,
     HLOCAL, LocalFree,
@@ -761,8 +763,8 @@ fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>, conn_id: C
 /// Accepts connections until `shutdown` is set, spawning a reader and
 /// writer thread pair for each.
 fn accept_loop(
-    pipe_name: &str,
-    security: &SecurityDescriptor,
+    mut first: Option<RawPipe>,
+    create: &dyn Fn() -> io::Result<RawPipe>,
     shutdown: &AtomicBool,
     registry: &Registry,
     connections: &Connections,
@@ -773,7 +775,8 @@ fn accept_loop(
         if shutdown.load(Ordering::Acquire) {
             break;
         }
-        let raw = match create_pipe_instance(pipe_name, security) {
+        let created = first.take().map_or_else(create, Ok);
+        let raw = match created {
             Ok(raw) => raw,
             Err(error) => {
                 warn!(%error, "failed to create a control-plane pipe instance; accept loop stopping");
@@ -831,7 +834,8 @@ impl ControlServer {
     /// # Errors
     ///
     /// Returns an error if the owner-only security descriptor cannot be
-    /// built or the accept thread cannot be spawned.
+    /// built, the pipe cannot be created, or the accept thread cannot be
+    /// spawned. Once this returns, the pipe exists and clients can connect.
     pub fn start(handlers: ServerHandlers) -> io::Result<Self> {
         Self::start_on(PIPE_NAME, handlers)
     }
@@ -842,7 +846,8 @@ impl ControlServer {
     /// # Errors
     ///
     /// Returns an error if the owner-only security descriptor cannot be
-    /// built or the accept thread cannot be spawned.
+    /// built, the pipe cannot be created, or the accept thread cannot be
+    /// spawned. Once this returns, the pipe exists and clients can connect.
     pub fn start_on(pipe_name: &str, handlers: ServerHandlers) -> io::Result<Self> {
         let security = build_owner_only_security_descriptor()?;
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -851,6 +856,10 @@ impl ControlServer {
         let handlers = Arc::new(handlers);
         let next_conn_id = Arc::new(AtomicU64::new(0));
         let pipe_name_owned = pipe_name.to_owned();
+        // The first instance is created here rather than on the accept
+        // thread, so the pipe exists once this returns: a client that
+        // connects straight after starting the server finds it.
+        let first = create_pipe_instance(pipe_name, &security)?;
 
         let accept_thread = {
             let shutdown = Arc::clone(&shutdown);
@@ -861,8 +870,8 @@ impl ControlServer {
                 .name("verbatim-control-accept".to_owned())
                 .spawn(move || {
                     accept_loop(
-                        &pipe_name,
-                        &security,
+                        Some(first),
+                        &|| create_pipe_instance(&pipe_name, &security),
                         &shutdown,
                         &registry,
                         &connections,
@@ -904,32 +913,39 @@ impl ControlServer {
         });
     }
 
-    /// Fans a captured utterance out to every connection subscribed via
+    /// Fans a queued utterance out to every connection subscribed via
     /// [`Request::SubscribeSpeech`].
     pub fn broadcast_speech(
         &self,
+        utterance: UtteranceId,
         trace_id: TraceId,
         text: String,
         event_observed_at_ms: Option<u64>,
         queued_at_ms: u64,
-        audio_started_at_ms: Option<u64>,
     ) {
         let frame = Frame::Speech {
+            utterance,
             trace_id,
             text,
             event_observed_at_ms,
             queued_at_ms,
-            audio_started_at_ms,
         };
         self.fan_out(&frame, |entry| {
             entry.speech_subscribed.load(Ordering::Relaxed)
         });
     }
 
-    /// Fans a [`Frame::SpeechFinished`] out to every speech subscriber,
-    /// marking that `trace_id`'s audio has finished playing.
-    pub fn broadcast_speech_finished(&self, trace_id: TraceId) {
-        let frame = Frame::SpeechFinished { trace_id };
+    /// Fans a [`Frame::SpeechStarted`] out to every speech subscriber.
+    pub fn broadcast_speech_started(&self, utterance: UtteranceId, at_ms: u64) {
+        let frame = Frame::SpeechStarted { utterance, at_ms };
+        self.fan_out(&frame, |entry| {
+            entry.speech_subscribed.load(Ordering::Relaxed)
+        });
+    }
+
+    /// Fans a [`Frame::SpeechEnded`] out to every speech subscriber.
+    pub fn broadcast_speech_ended(&self, utterance: UtteranceId, ending: UtteranceEnding) {
+        let frame = Frame::SpeechEnded { utterance, ending };
         self.fan_out(&frame, |entry| {
             entry.speech_subscribed.load(Ordering::Relaxed)
         });
@@ -944,8 +960,24 @@ impl ControlServer {
             }
             match entry.outbound.try_send(frame.clone()) {
                 Ok(()) => {}
+                // A subscriber relies on seeing every frame: an utterance's
+                // ending, above all, must never vanish without a trace. One
+                // that cannot keep up is disconnected, so it sees the stream
+                // end, rather than silently missing frames.
                 Err(TrySendError::Full(_)) => {
-                    warn!(conn_id, "dropping a control-plane frame for a slow client");
+                    warn!(
+                        conn_id,
+                        "control-plane client is not keeping up; disconnecting it"
+                    );
+                    dead.push(conn_id);
+                    if let Some(raw) = self
+                        .connections
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get(&conn_id)
+                    {
+                        raw.disconnect();
+                    }
                 }
                 // The connection's writer thread has exited (its receiver is
                 // gone) while the reader side still holds the session open —
@@ -1329,6 +1361,62 @@ mod tests {
 
         drop(client_reader);
         drop(client);
+        drop(server);
+    }
+
+    // A speech subscriber that stops reading must be disconnected, not left
+    // connected and silently missing frames: a test waiting for an
+    // utterance's ending would otherwise wait for a frame that was dropped.
+    #[test]
+    #[ignore = "starts a real named pipe; run explicitly, not part of the default suite"]
+    fn a_subscriber_that_falls_behind_is_disconnected_not_skipped() {
+        let pipe_name = r"\\.\pipe\verbatim-control-test-slow-subscriber";
+        let server = ControlServer::start_on(pipe_name, test_handlers()).expect("starts");
+        let mut client = None;
+        for _ in 0..100 {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(pipe_name)
+            {
+                Ok(opened) => {
+                    client = Some(opened);
+                    break;
+                }
+                Err(_) => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        let mut client = client.expect("connects to the test pipe within the retry window");
+        let mut reader =
+            io::BufReader::new(client.try_clone().expect("duplicates the pipe handle"));
+        for (id, request) in [
+            (
+                1,
+                Request::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            ),
+            (2, Request::SubscribeSpeech),
+        ] {
+            write_message(&mut client, &RequestEnvelope { id, request }).expect("writes");
+            let _: Frame = read_message(&mut reader).expect("reads").expect("not EOF");
+        }
+
+        // Far more frames than the connection's queue and the pipe's buffer
+        // hold, with nobody reading.
+        for index in 0..20_000 {
+            server.broadcast_speech_ended(UtteranceId(index), UtteranceEnding::Completed);
+        }
+
+        // Reading now finds the stream ends, after only part of the frames.
+        let mut received = 0;
+        while let Ok(Some(_)) = read_message::<_, Frame>(&mut reader) {
+            received += 1;
+        }
+        assert!(
+            received < 20_000,
+            "the stream ended early, after {received} frames"
+        );
         drop(server);
     }
 }

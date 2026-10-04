@@ -1,3 +1,6 @@
 [submodule "nvda"]
 	path = nvda
 	url = https://github.com/nvaccess/nvda.git
+[submodule "third_party/espeak-ng"]
+	path = third_party/espeak-ng
+	url = https://github.com/espeak-ng/espeak-ng.git

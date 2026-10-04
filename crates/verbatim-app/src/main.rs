@@ -23,15 +23,16 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use verbatim_audio::{AudioSink, NullSink};
-use verbatim_audio_wasapi::WasapiSink;
+use verbatim_audio::{AudioDevice, Mixer, SilentDevice, WavRecorder};
+use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::{ConfigStore, ConfigValue};
 use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{
-    DecisionConfig, EmittedGesture, GestureMap, KeyboardLayout, ScriptAction, SharedGestureMap,
+    DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
+    SharedGestureMap,
 };
 use verbatim_input_windows::InputHook;
 use verbatim_model::{
@@ -41,6 +42,7 @@ use verbatim_model::{
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
 use verbatim_outpost::supervisor::EndReason;
 use verbatim_outpost::{OutpostMessage, Supervisor};
+use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
     SynthRegistry,
@@ -126,10 +128,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let dumps_dir = exe_dir().join(DUMPS_FOLDER);
     flight_dump::install_panic_hook(Arc::clone(&recorder), dumps_dir.clone());
 
-    // Speech pipeline: OneCore through WASAPI by default, observed by the
-    // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
-    // audio (see build_speech_manager).
-    let manager = build_speech_manager(&config, &ledger)?;
+    // Every child process (the synthesizer host below, the outposts and the
+    // listener later) logs into this launch's directory, prepared first.
+    verbatim_process::prepare_launch_logs(&exe_dir());
 
     // The keyboard layout selects which review and object-navigation
     // bindings are active (roadmap M3); read it before `config` moves into
@@ -141,9 +142,15 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         verbatim_config::KeyboardLayout::Laptop => KeyboardLayout::Laptop,
     };
 
+    // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
+    // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
+    // audio (see build_speech_manager). It reads each synthesizer's saved
+    // settings from the store whenever it starts one.
+    let store = Arc::new(Mutex::new(config));
+    let manager = build_speech_manager(&store, &ledger)?;
+
     // Settings host: the GUI's live handle; commit persists to the base
     // profile through the config store.
-    let store = Arc::new(Mutex::new(config));
     let settings_host = manager.settings_host(persist_fn(Arc::clone(&store)));
 
     // Supervisor (one outpost process per application, decision D9) plus its
@@ -222,6 +229,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         ledger: Arc::clone(&ledger),
         bound_gestures: Arc::clone(&bound_gestures),
         gesture_tx: gesture_tx.clone(),
+        speech_control: manager.control(),
         gui_handle: Arc::clone(&gui_handle),
         command_tx: command_tx.clone(),
         recorder: Arc::clone(&recorder),
@@ -233,10 +241,15 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 
     // Keyboard hook, last among the input paths so nothing is swallowed
     // before there is somewhere to route it.
+    let speech_control = manager.control();
     let _hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
         gesture_tx,
+        Box::new(move |effect| match effect {
+            KeySpeechEffect::Cancel => speech_control.cancel(),
+            KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
+        }),
     )?;
 
     // First words, and the initial outpost target (the trigger only fires on
@@ -246,6 +259,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
         source: None,
+        validity: None,
     });
     // Ask the foreground application for its current focus: its outpost is
     // started if needed, and the answer is spoken like a switch to it.
@@ -267,6 +281,12 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // process exits.
     Ok(())
 }
+
+/// Names a WAV file to record everything Verbatim plays into.
+const RECORD_AUDIO_ENV: &str = "VERBATIM_RECORD_AUDIO";
+
+/// The synthesizer host executable, next to this one.
+const SYNTH_HOST_EXE: &str = "verbatim-synth-host.exe";
 
 /// The folder `verbatim.exe` runs from — the root for config, profiles, and
 /// locales (the portable layout).
@@ -326,47 +346,76 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
     }
 }
 
-/// Builds the speech pipeline: `OneCore` through WASAPI by default,
+/// Builds the speech pipeline: eSpeak NG (or the configured synthesizer),
+/// each in a synthesizer host, through the mixer and WASAPI by default,
 /// observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
-/// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that swaps in
-/// the device-free capture synth and [`NullSink`] instead, so E2E and CI
-/// runs work with no sound card.
+/// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that
+/// adds the capture synth and plays through [`SilentDevice`] instead, which
+/// takes real time but makes no sound.
 ///
 /// # Errors
 ///
-/// Returns an error if the initial synthesizer fails to construct.
+/// Returns an error if no registered synthesizer can start, or the audio
+/// device cannot open.
 fn build_speech_manager(
-    config: &ConfigStore,
+    store: &Arc<Mutex<ConfigStore>>,
     ledger: &Arc<LatencyLedger>,
 ) -> Result<Arc<SpeechManager>, verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
     let mut registry = SynthRegistry::new();
-    verbatim_synth_onecore::register(&mut registry);
+    // Every native synthesizer runs in a synthesizer host process next to
+    // this executable (decision D18).
+    // eSpeak NG is the default, so it is listed first.
+    let host_exe = exe_dir().join(SYNTH_HOST_EXE);
+    for (id, name_key) in [
+        (synth_ids::ESPEAK, "synth-name-espeak"),
+        (synth_ids::ONECORE, "synth-name-onecore"),
+    ] {
+        registry.register(
+            SynthId::new(id),
+            verbatim_i18n::message(name_key),
+            verbatim_synth_hosted::factory(host_exe.clone(), SynthId::new(id)),
+        );
+    }
     if test_audio {
         tracing::warn!(
-            "VERBATIM_TEST_AUDIO=null: test audio mode is active; using the capture synth and a null audio sink, no sound will play"
+            "VERBATIM_TEST_AUDIO=null: test audio mode is active; the capture synth is available and audio plays silently in real time"
         );
         register_test_audio(&mut registry);
     }
-    let initial_synth = initial_synth(config, &registry);
-    let initial_settings = initial_settings(config, &initial_synth);
-    let sink: Box<dyn AudioSink> = if test_audio {
-        Box::new(NullSink::new())
+    let initial_synth = initial_synth(&store.lock().unwrap_or_else(PoisonError::into_inner));
+    let device: Box<dyn AudioDevice> = if test_audio {
+        Box::new(SilentDevice::new())
     } else {
-        Box::new(WasapiSink::new())
+        Box::new(
+            WasapiDevice::new()
+                .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?,
+        )
     };
+    // `VERBATIM_RECORD_AUDIO=<file.wav>` records everything Verbatim plays,
+    // as heard, for the end-to-end harness's videos (decision D16).
+    let recorder = std::env::var_os(RECORD_AUDIO_ENV).and_then(|path| {
+        WavRecorder::create(std::path::Path::new(&path))
+            .inspect_err(|error| tracing::warn!(%error, "cannot record audio"))
+            .ok()
+    });
+    let mixer = match recorder {
+        Some(recorder) => Mixer::start_with_tap(device, Box::new(recorder)),
+        None => Mixer::start(device),
+    }
+    .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
     Ok(Arc::new(SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth,
-        initial_settings,
-        sink,
+        saved_settings: saved_settings_fn(Arc::clone(store)),
+        mixer: Arc::new(mixer),
         events: Some(Arc::clone(ledger) as Arc<dyn verbatim_speech::SpeechEvents>),
         theme: None,
     })?))
 }
 
 /// Registers the capture synth from `verbatim-synth-capture` alongside
-/// `OneCore`, for `VERBATIM_TEST_AUDIO=null` runs. Test-only: never active
+/// the real synthesizers, for `VERBATIM_TEST_AUDIO=null` runs. Test-only: never active
 /// unless that environment variable is set at startup.
 fn register_test_audio(registry: &mut SynthRegistry) {
     registry.register(
@@ -376,24 +425,28 @@ fn register_test_audio(registry: &mut SynthRegistry) {
     );
 }
 
-/// The configured synthesizer when it exists in the registry, otherwise
-/// `OneCore`.
-fn initial_synth(config: &ConfigStore, registry: &SynthRegistry) -> SynthId {
-    let configured = config
+/// The configured synthesizer, or eSpeak NG when none is configured. One
+/// that is not registered, or cannot start, is left to the speech manager's
+/// fallback, which tries eSpeak NG next because it is registered first.
+fn initial_synth(config: &ConfigStore) -> SynthId {
+    config
         .active()
         .synthesizer()
-        .map_or_else(|| SynthId::new("onecore"), SynthId::new);
-    if registry.contains(&configured) {
-        configured
-    } else {
-        tracing::warn!(synth = %configured, "configured synthesizer not installed; using onecore");
-        SynthId::new("onecore")
-    }
+        .map_or_else(|| SynthId::new(synth_ids::ESPEAK), SynthId::new)
 }
 
-/// Persisted setting values for the initial synthesizer, mapped from config
-/// values to driver values.
-fn initial_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, SettingValue)> {
+/// The callback the speech manager reads each synthesizer's saved settings
+/// through whenever it starts one, at startup or on a switch, so a switch
+/// sees values committed since startup.
+fn saved_settings_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::SavedSettingsFn {
+    Box::new(move |synth| {
+        saved_settings(&store.lock().unwrap_or_else(PoisonError::into_inner), synth)
+    })
+}
+
+/// Persisted setting values for a synthesizer, mapped from config values to
+/// driver values.
+fn saved_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, SettingValue)> {
     config
         .active()
         .synth_settings(&synth.0)
@@ -410,14 +463,18 @@ fn initial_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, Se
 }
 
 /// The persist callback the settings host commits through: write the active
-/// synth and its values into the base profile and save it.
+/// synth's values into the base profile, and the synth itself as the
+/// configured one when it is the user's choice rather than a fallback, and
+/// save it.
 fn persist_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::PersistFn {
-    Box::new(move |synth_id, values| {
+    Box::new(move |synth_id, chosen, values| {
         let mut store = store
             .lock()
             .map_err(|_| "config store poisoned".to_owned())?;
         let speech = &mut store.settings_mut().speech;
-        speech.synthesizer = Some(synth_id.0.clone());
+        if chosen {
+            speech.synthesizer = Some(synth_id.0.clone());
+        }
         let settings = speech.synth_settings.entry(synth_id.0.clone()).or_default();
         for (id, value) in values {
             let config_value = match value {
@@ -820,12 +877,11 @@ impl ReducerThread<'_> {
     /// Executes one reducer effect.
     fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
-            Effect::Speak(utterance) => self.context.manager.speak(utterance),
-            Effect::StopSpeech => {
-                // The reducer interrupts through utterance priority and
-                // never emits this; log so a future change is visible.
-                tracing::debug!("StopSpeech effect ignored");
+            Effect::Speak(utterance) => {
+                self.context.manager.speak(utterance);
             }
+            Effect::StopSpeech => self.context.manager.control().cancel(),
+            Effect::DropExpiredSpeech(now) => self.context.manager.control().drop_expired(now),
             Effect::Fetch(query) => {
                 let outpost = query.node_id.outpost();
                 let id = self.requests.begin(
@@ -1069,6 +1125,7 @@ fn report_toggle_key(manager: &Arc<SpeechManager>, key: verbatim_input::ToggleKe
                 verbatim_i18n::messages::toggle_key_state(id, on),
             )],
             source: None,
+            validity: None,
         });
     });
 }
@@ -1088,6 +1145,7 @@ fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
         priority: SpeechPriority::Interrupt,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        validity: None,
     });
 }
 
@@ -1131,6 +1189,8 @@ struct ControlHandlersConfig {
     ledger: Arc<LatencyLedger>,
     bound_gestures: SharedGestureMap,
     gesture_tx: crossbeam_channel::Sender<EmittedGesture>,
+    /// Cancels speech for an injected gesture, as a key press does.
+    speech_control: verbatim_speech::SpeechControl,
     gui_handle: Arc<OnceLock<GuiHandle>>,
     command_tx: Sender<ShellCommand>,
     recorder: SharedRecorder,
@@ -1146,6 +1206,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         ledger,
         bound_gestures,
         gesture_tx,
+        speech_control,
         gui_handle,
         command_tx,
         recorder,
@@ -1168,6 +1229,9 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             if !bound_gestures.load().contains(&gesture) {
                 return Err(format!("gesture {gesture} is not bound"));
             }
+            // Its keys never pass the hook, which cancels speech for every
+            // key press; executing a gesture cancels speech in NVDA too.
+            speech_control.cancel();
             gesture_tx
                 .send(EmittedGesture {
                     trace_id: TraceId::mint(),

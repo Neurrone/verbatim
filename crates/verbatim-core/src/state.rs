@@ -97,6 +97,9 @@ pub struct SrState {
     /// handles every event in one queue; a focus event from another outpost
     /// observed before this one is stale and dropped.
     pub(crate) latest_focus: Option<(OutpostId, u64)>,
+    /// The node of the window most recently reported as the foreground,
+    /// whose speech stays valid while it is in front (`FocusNow`).
+    pub(crate) foreground: Option<NodeId>,
 }
 
 impl SrState {

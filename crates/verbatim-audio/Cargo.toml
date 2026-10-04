@@ -1,11 +1,12 @@
 [package]
 name = "verbatim-audio"
-description = "The AudioSink seam and the device-free NullSink"
+description = "The audio mixer, the AudioDevice seam, and the silent real-time device"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+rubato.workspace = true
 tracing.workspace = true
 verbatim-model.workspace = true
 

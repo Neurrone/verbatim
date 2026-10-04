@@ -19,20 +19,26 @@ use crate::settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, S
 
 /// Persists the active synthesizer's settings.
 ///
-/// Called by [`commit`](SpeechSettingsHost::commit) with the active synth id
-/// and its current values. Returns a human-readable message on failure, which
-/// the host surfaces as [`SynthError::Setting`].
+/// Called by [`commit`](SpeechSettingsHost::commit) with the active synth id,
+/// whether it is the user's choice, and its current values. It is not the
+/// user's choice when it was started in place of a configured synthesizer
+/// that could not start: its settings are saved, but the configured choice
+/// is kept, to be tried again at the next start, as NVDA does. Returns a
+/// human-readable message on failure, which the host surfaces as
+/// [`SynthError::Setting`].
 pub type PersistFn =
-    Box<dyn Fn(&SynthId, &[(SettingId, SettingValue)]) -> Result<(), String> + Send + Sync>;
+    Box<dyn Fn(&SynthId, bool, &[(SettingId, SettingValue)]) -> Result<(), String> + Send + Sync>;
 
 /// The shared, cloneable form of [`PersistFn`] the host stores.
 type PersistArc =
-    Arc<dyn Fn(&SynthId, &[(SettingId, SettingValue)]) -> Result<(), String> + Send + Sync>;
+    Arc<dyn Fn(&SynthId, bool, &[(SettingId, SettingValue)]) -> Result<(), String> + Send + Sync>;
 
 /// The mirror of the active synthesizer's settings state.
 struct HostState {
     synths: Vec<SynthChoice>,
     active: SynthChoice,
+    /// The active synthesizer is the user's choice, not a fallback.
+    chosen: bool,
     descriptors: Vec<SettingDescriptor>,
     current: Vec<(SettingId, SettingValue)>,
     committed: Vec<(SettingId, SettingValue)>,
@@ -54,11 +60,13 @@ impl SettingsHost {
         queue_tx: Sender<QueueEvent>,
         initial: &DriverState,
         synths: Vec<SynthChoice>,
+        chosen: bool,
         persist: PersistFn,
     ) -> Self {
         let state = HostState {
             synths,
             active: initial.choice.clone(),
+            chosen,
             descriptors: initial.descriptors.clone(),
             current: initial.values.clone(),
             committed: initial.values.clone(),
@@ -78,7 +86,7 @@ impl SettingsHost {
 
 /// Validates a value against the descriptor with the given id, returning the
 /// descriptor-appropriate [`SynthError::Setting`] when it does not fit.
-fn validate(
+pub(crate) fn validate(
     descriptors: &[SettingDescriptor],
     id: &SettingId,
     value: &SettingValue,
@@ -145,6 +153,7 @@ impl SpeechSettingsHost for SettingsHost {
 
         let mut guard = self.shared.lock().expect("settings mirror poisoned");
         guard.active = state.choice;
+        guard.chosen = true;
         guard.descriptors = state.descriptors;
         guard.current.clone_from(&state.values);
         guard.committed = state.values;
@@ -182,9 +191,9 @@ impl SpeechSettingsHost for SettingsHost {
     }
 
     fn commit(&self) -> Result<(), SynthError> {
-        let (active_id, current) =
-            self.with_state(|state| (state.active.id.clone(), state.current.clone()));
-        (self.persist)(&active_id, &current).map_err(SynthError::Setting)?;
+        let (active_id, chosen, current) =
+            self.with_state(|state| (state.active.id.clone(), state.chosen, state.current.clone()));
+        (self.persist)(&active_id, chosen, &current).map_err(SynthError::Setting)?;
         let mut guard = self.shared.lock().expect("settings mirror poisoned");
         let current = guard.current.clone();
         guard.committed = current;

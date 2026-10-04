@@ -25,7 +25,8 @@ fn main() {
     let map = GestureMap::new(bindings).into_shared();
 
     let (tx, rx) = crossbeam_channel::bounded(64);
-    let _hook = InputHook::start(DecisionConfig::default(), map, tx).expect("install hook");
+    let _hook = InputHook::start(DecisionConfig::default(), map, tx, Box::new(|_| {}))
+        .expect("install hook");
 
     println!("Keyboard hook installed. Try caps lock + V or caps lock + T. Exiting in 8 seconds.");
     let deadline = Instant::now() + Duration::from_secs(8);

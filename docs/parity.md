@@ -192,7 +192,8 @@ verified.
   ancestor walk that timed out leaves no ancestors to compare. A
   window that has no name when focus enters it is not announced
   later, and a foreground change to a nameless window moves
-  attention without speaking (a bare "window" says nothing).
+  attention without speaking (a bare "window" says nothing), though it
+  cancels speech, as NVDA's foreground event does.
   **matched (unverified)**; the Start menu and window-switch scenarios
   verified the earlier, separate announcement.
 - Duplicate focus suppression (same control announced once when two
@@ -217,7 +218,7 @@ verified.
   since 2026-10-02 the reducer drops a focus event from one outpost
   observed before the newest focus it applied from another (found live:
   a late focus from Notepad, then from Verbatim's closed menu, broke
-  `multi_outpost_switch`). A UIA focus fact whose element is not the
+  `notepad_and_verbatim_menu`). A UIA focus fact whose element is not the
   focused element is reported from the fact when its window is in the
   foreground, or with no window facts, judged by its application, when
   it has no window of its own. Since 2026-10-03 a focus read on request
@@ -229,7 +230,8 @@ verified.
   that let it be accepted, so a later foreground report for that window
   does not replace the control as the focus (NVDA always knows the
   focus's window). **matched (unverified)**; the
-  `focus_churn` and `multi_outpost_switch` scenarios cover it.
+  `rapid_tabbing_in_settings` and `notepad_and_verbatim_menu` scenarios
+  cover it.
 - Name change on the focus. NVDA: when the focused object's name
   changes, the new name alone is spoken, queued behind current
   speech; a name change on any other object, including an ancestor
@@ -241,8 +243,12 @@ verified.
   menu, or a menu item as an ancestor, speech is cancelled and the
   ancestor is not announced; the focused item is announced as usual
   ([Event handling](nvda/events.md), "The focus gate"). Verbatim: entering
-  one interrupts current speech and it is not announced.
-  **matched (unverified)**.
+  one cancels current speech (`Effect::StopSpeech`) and it is not
+  announced. **matched (unverified)**. **Different:** NVDA cancels as it
+  reaches the menu among the entered ancestors, outermost first, so a
+  container entered outside the menu in the same focus change (a newly
+  entered window, say) is cut off too; Verbatim cancels before any of the
+  new focus's speech, so that container is still spoken.
 - Event acceptance. NVDA: every event except UIA notifications must
   come from a window related to the system's foreground window: a
   descendant of it, sharing its root owner, a topmost window or one
@@ -336,16 +342,55 @@ verified.
   **different (unverified)**: NVDA releases an object when nothing
   refers to it, Verbatim when Core reports it no longer holds the node.
 - When speech is cut off, and cancellation of expired focus speech
-  (focus left before speaking). NVDA: focus speech is queued, and speech
-  is cancelled on a key press, a foreground change, a menu, and for a
-  focus no longer current (`FocusLossCancellableSpeechCommand`, which
-  keeps speech for the focus, its ancestors, and the foreground object).
-  Verbatim: **different, not yet (phase 4)**: every focus, value, state,
-  selection, and navigation announcement interrupts, so a window or dialog
-  title is cut off by its control's announcement a moment later, and a
-  queued toast or name change is discarded by the next focus; and no key
-  press cancels speech. Recorded in the handoff's phase 4, which designs
-  cancellation as a whole.
+  (focus left before speaking). NVDA: focus speech is queued, never
+  interrupting; every key-down cancels speech before its gesture runs,
+  bound or not, modifiers and typed characters included, except the
+  volume keys and the unknown key `0xFF`; Shift alone pauses and resumes,
+  its auto-repeat ignored; speaking while paused cancels first, and a
+  cancel ends the pause ([Keyboard input](nvda/input.md), "What a key
+  press does to speech"). A foreground change, which NVDA infers whenever
+  the top of the focus ancestry changes, cancels speech, named window or
+  not, and so does entering a menu bar, menu, or menu item. On each focus
+  change, speech for a focus no longer current is culled
+  (`FocusLossCancellableSpeechCommand`, which keeps speech for the
+  focus, its ancestors, the foreground object, an object that never had
+  the focus, and a menu item when the focus has moved to a popup menu;
+  [Speech](nvda/speech.md), "Expired focus speech", and
+  [Event handling](nvda/events.md)). Verbatim: **matched (unverified)**
+  since 2026-10-04: focus, value, state, selection, navigation, and
+  review speech is queued; the keyboard hook cancels, or pauses and
+  resumes, on the key-down before the gesture is sent, with NVDA's
+  exceptions, and a gesture injected through the control plane cancels
+  too, while the keys Verbatim injects for itself (the Control tap that
+  unlocks the foreground) leave speech alone, as NVDA ignores its own; a foreground report or a focus in another top-level window cancels,
+  as does entering a menu; each focus announcement carries what it is
+  about, entered containers are their own utterances, and on every focus
+  change the speech manager stops what it has handed on when any of that
+  has expired, and judges waiting focus speech when its turn comes, as
+  NVDA does. A selection in a list the focus
+  controls still interrupts, as NVDA cancels for it, and notifications
+  keep their processing hint. Reducer, input, and speech pipeline tests
+  cover the rules, and the end-to-end scenarios pass with them, but no
+  scenario asserts where live speech is cut off yet.
+  **Different:**
+  - Audio cannot be taken out of the middle of the mixer's buffer, so
+    when anything handed to the synthesizer or the mixer has expired,
+    everything handed on is stopped; NVDA stops up to the newest expired
+    utterance and keeps what was handed on after it.
+  - The validity check has no clause for a menu item whose focus has
+    moved to a popup menu (NVDA issues 12624 and 14550, MSAA only);
+    `FocusValidity::holds` keeps speech for the focus, its ancestors, the
+    foreground window, and a node that never had the focus.
+  - The foreground node the check uses is the window most recently
+    reported as the foreground; NVDA asks for the real foreground object
+    on every focus change that changes the top of the ancestry, so a
+    focus that reaches another window without a foreground report leaves
+    Verbatim's foreground node on the old window until one arrives.
+  - **Not yet:** NVDA's settings "Speech interrupt for typed characters"
+    and "Speech interrupt for Enter" (both on by default) are not
+    configurable; Verbatim always behaves as their defaults do. NVDA's
+    advanced setting to turn the culling of expired focus speech off is
+    not offered either.
 - Menu popup announcements. NVDA: menu events with fake-focus
   fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim:
   NVDA's menu rules run in the outpost's worker. Within a batch, focus
@@ -469,9 +514,17 @@ verified.
   with the text (its length from 1024 characters on) after reading the
   clipboard back, or "Unable to copy". **Not yet:** the current character's
   description on a second press and spelling with descriptions on a third,
-  which wait for the character descriptions table (M4), and raised pitch
-  for capitals in spelling, which needs a pitch change mid-utterance from
-  the speech pipeline (phase 4).
+  which wait for the character descriptions table (M4). Raised pitch for
+  capitals is **matched since 2026-10-04** (unverified by ear): spelling
+  and reading a single character speak an uppercase letter with the pitch
+  setting raised by 30 and then restored, for every synthesizer, as NVDA
+  does by default ([Speech](nvda/speech.md), "Capitals when spelling");
+  the offset is not yet configurable, and saying "cap" or beeping for
+  capitals is not offered. eSpeak NG and OneCore speak the pitch change
+  within one synthesis, as SSML prosody written as NVDA's drivers write
+  it, so a capital brings no pause; a synthesizer that cannot is given
+  the change as a pitch setting between separate synthesis calls, which
+  can leave a short pause.
 - Toggle key announcements ("caps lock on", "num lock off", "scroll lock
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:
@@ -490,7 +543,7 @@ verified.
   E2E; commit d3e13b7).
 - SysTreeView32 via TVM messages, Tree/TreeItem roles. NVDA:
   control-specific overlay. Verbatim: **matched (verified)**
-  (tree_navigation E2E; commits 809214d, 1078614).
+  (system_information_tree E2E; commits 809214d, 1078614).
 - Navigator death recovery: NVDA reports failure and stays; Verbatim
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side
@@ -557,7 +610,7 @@ verified.
   until it moves. Verbatim counts only the window's own answer: a "no"
   slower than a second (real answers took 0 to 89 ms) makes the probe
   wait for the window to process messages and ask again. Found as the
-  cause of `multi_outpost_switch` failing about one run in five; the
+  cause of `notepad_and_verbatim_menu` failing about one run in five; the
   dropped UIA focus had come from Notepad's own provider, and a check 18
   ms after the slow "no" answered "yes". The same failure had a second
   form: UIA itself gives up on a provider after two seconds by default
@@ -646,25 +699,45 @@ verified.
 ## Speech and audio
 
 - Priority lanes. NVDA: NORMAL/NEXT/NOW with resume of interrupted
-  speech ([Speech](nvda/speech.md)). Verbatim: **partial** —
-  Queued/Next/Interrupt exist; NVDA's *resume of interrupted
-  lower-priority speech* is **not yet**: Verbatim's Interrupt
-  discards. Decide whether to match before M8 profiles work.
+  speech ([Speech](nvda/speech.md)); almost all speech is NORMAL, and
+  what cuts it off is a cancel, not a priority. Verbatim: **partial** —
+  Queued/Next/Interrupt exist, and since 2026-10-04 announcements are
+  `Queued` as NVDA's are, with key presses, foreground changes, menus,
+  and expired focus speech cutting speech off (see "When speech is cut
+  off" above); `Interrupt` remains for a selection in a list the focus
+  controls, notifications that ask for it, and a few direct messages such
+  as the time. NVDA's *resume of interrupted lower-priority speech* is
+  **not yet**: Verbatim's Interrupt discards. Decide whether to match
+  before M8 profiles work.
 - Index marks driving callbacks at audible position. NVDA: manager
   indexing + WASAPI feed-end callbacks ([Audio output](nvda/audio.md)).
-  Verbatim: **matched (unverified)** — index-mark echoes exist in
-  the synth contract; say-all (the main consumer) is **not yet
-  (M4)**.
+  Verbatim: **matched (unverified)** — the mixer reports each mark
+  when the device has played it, for every synthesizer (D17); say-all
+  (the main consumer) is **not yet (M4)**.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.
 - Speech settings model (driver settings, immediate application).
   NVDA: `SynthDriver.supportedSettings`. Verbatim: **matched
-  (unverified)** — same descriptor-driven model. **Different:** an
-  invalid saved setting stops startup, and switching synthesizer starts
-  the new one at its defaults, where NVDA falls back and loads the saved
-  settings (phase 4). The default voice is the synthesizer's own default,
-  where NVDA picks one matching its or Windows' language. The settings
+  (unverified)** — same descriptor-driven model. Starting a synthesizer,
+  at startup or from the Select Synthesizer dialog, loads its own saved
+  settings, voice first; a saved value it refuses, such as a voice no
+  longer installed, is logged and the synthesizer keeps its own value
+  rather than failing to start (docs/nvda/synth-drivers.md). When the
+  configured synthesizer cannot start, Verbatim tries the others,
+  eSpeak NG first, and logs which it used; a failed switch keeps the
+  previous synthesizer, as NVDA does. **Different:** NVDA applies the
+  refusal fallback to the voice only and fails the synthesizer on other
+  refused settings, where Verbatim skips any refused setting. NVDA's last
+  resort is a silent synthesizer, so it always starts; Verbatim has none
+  and does not start when no synthesizer can. NVDA writes a corrected
+  voice back to the config at once, where Verbatim saves it with the
+  next commit of the settings dialog. A synthesizer used as a fallback
+  has its settings saved but is not saved as the configured one, so the
+  user's choice is tried again at the next start, as in NVDA; choosing a
+  synthesizer in the dialog makes it the choice. The default voice is
+  the synthesizer's own default, where NVDA picks one matching its or
+  Windows' language. The settings
   dialog's sliders use wx's default steps rather than each setting's
   minimum and large steps, which gives the same steps for settings from 0
   to 100. Segments are joined with one space where NVDA joins chunks with

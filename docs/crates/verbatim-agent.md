@@ -35,7 +35,10 @@ Public API:
   text, then a wait for them to go), `WriteFile` (a small file, such as the
   document a test opens Notepad on), and `BringToForeground`'s optional
   title filter (protocol version 3; all from the `desktop` and `files`
-  modules), `OpenControlTunnel`. `KillOutcome` makes
+  modules), `ReadFileChunk` (up to 8 MiB of a file of any size from a
+  given offset, answered like `ReadFile` and empty past the end, so a
+  client can copy a file too large for `ReadFile`, such as a scenario's
+  video; protocol version 4), `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` inherits the launched child's stdio (uncaptured) by
@@ -62,8 +65,24 @@ launches via `std::process::Command`, inheriting the agent's own
 interactive session and stdio (never captured) — the reason this exists
 at all rather than something reachable over WinRM or PowerShell Direct.
 Lookup and termination act on raw pids via `OpenProcess`,
-`TerminateProcess`, and `GetExitCodeProcess` rather than tracking handles
-from launch, so a test can manage a process it did not itself spawn.
+`TerminateProcess`, and `GetExitCodeProcess`, so a test can manage a
+process it did not itself spawn. The agent also keeps the handle of every
+child it launched until `ProcessStatus` reports that child's exit, and
+answers `ProcessStatus` for such a child from that handle: without a
+handle, an exited process's object, and with it the exit code, is gone the
+moment it exits, so the exit code is now reported however long after the
+child exited it is asked for. The first report of the exit releases the
+handle. This is what lets the recording read ffmpeg's exit code after
+muxing.
+Each launched child also runs in a job object of its own: it is created
+suspended, assigned to the job, and only then resumed, so everything it
+starts is in the job from the start. `KillProcess` on a launched child
+terminates its whole job. Before this, killing a launcher that runs the
+real program as its own child, such as the Chocolatey shim that `ffmpeg`
+on `PATH` often is, left the real program running: ten desktop captures
+accumulated this way and slowed window activation enough to make the
+Notepad scenario fail. The job does not kill on close, so the agent
+exiting leaves its children as it always did.
 `KillProcess`'s tolerance for an already-exited process handles two
 distinct races: a pid that cannot be opened at all, and one that opens
 fine but has already exited — the latter discovered because

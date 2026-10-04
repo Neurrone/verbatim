@@ -1,0 +1,13 @@
+[package]
+name = "verbatim-process"
+description = "Contained child processes: job objects, inherited pipes, and per-launch child logs"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+tracing.workspace = true
+windows.workspace = true
+
+[lints]
+workspace = true

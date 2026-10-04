@@ -14,6 +14,8 @@ use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
+use verbatim_model::UtteranceEnding;
+
 /// One thing that happened during a scenario: an injected gesture, an
 /// injected key combination, or a heard utterance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,22 +29,13 @@ enum TimelineKind {
     /// An utterance's full rendered text, as heard on the speech
     /// connection at queue time — the frame assertions match against.
     Utterance(String),
-    /// The audio-start follow-up for an utterance already recorded as an
-    /// [`Utterance`](TimelineKind::Utterance): the same text again, arriving
-    /// whenever the synthesizer actually began playing it. Recorded so the
-    /// rendered timeline shows real audio timing, but never part of
-    /// [`Timeline::utterances`] — under a loaded real synthesizer these
-    /// arrive seconds late and interleaved with fresh queue-time frames, and
-    /// matching them as utterances is exactly the off-by-one that broke the
-    /// M1 walk on a cold guest.
+    /// An utterance already recorded as an
+    /// [`Utterance`](TimelineKind::Utterance) began to play: its text again,
+    /// for reading. Recorded so the rendered timeline shows real audio
+    /// timing, and never part of [`Timeline::utterances`].
     AudioStarted(String),
-    /// A paced run confirmed that this utterance played to completion: its
-    /// own `SpeechFinished` frame arrived.
-    Played(String),
-    /// A paced run gave up waiting for this utterance's `SpeechFinished`.
-    /// It may have been interrupted, failed, or simply not finished in time;
-    /// the speech pipeline cannot yet say which. Never successful playback.
-    PlaybackUnconfirmed(String),
+    /// An utterance ended: its text and how it ended.
+    Ended(String, UtteranceEnding),
 }
 
 /// One [`TimelineKind`] paired with the [`Instant`] it was recorded at.
@@ -101,14 +94,9 @@ impl Timeline {
         self.push(TimelineKind::AudioStarted(text.to_owned()));
     }
 
-    /// Records that a paced wait saw this utterance play to completion.
-    pub fn push_played(&self, text: &str) {
-        self.push(TimelineKind::Played(text.to_owned()));
-    }
-
-    /// Records that a paced wait ended without this utterance's completion.
-    pub fn push_playback_unconfirmed(&self, text: &str) {
-        self.push(TimelineKind::PlaybackUnconfirmed(text.to_owned()));
+    /// Records that the utterance with this text ended as `ending` says.
+    pub fn push_ended(&self, text: &str, ending: &UtteranceEnding) {
+        self.push(TimelineKind::Ended(text.to_owned(), ending.clone()));
     }
 
     fn push(&self, kind: TimelineKind) {
@@ -132,8 +120,7 @@ impl Timeline {
                 TimelineKind::Gesture(_)
                 | TimelineKind::Keys(_)
                 | TimelineKind::AudioStarted(_)
-                | TimelineKind::Played(_)
-                | TimelineKind::PlaybackUnconfirmed(_) => None,
+                | TimelineKind::Ended(..) => None,
             })
             .collect()
     }
@@ -167,11 +154,14 @@ impl Timeline {
                 TimelineKind::AudioStarted(text) => {
                     format!("+{elapsed}ms audio {text:?}")
                 }
-                TimelineKind::Played(text) => {
-                    format!("+{elapsed}ms played {text:?}")
+                TimelineKind::Ended(text, UtteranceEnding::Completed) => {
+                    format!("+{elapsed}ms completed {text:?}")
                 }
-                TimelineKind::PlaybackUnconfirmed(text) => {
-                    format!("+{elapsed}ms playback not confirmed {text:?}")
+                TimelineKind::Ended(text, UtteranceEnding::Cancelled) => {
+                    format!("+{elapsed}ms cancelled {text:?}")
+                }
+                TimelineKind::Ended(text, UtteranceEnding::Failed(reason)) => {
+                    format!("+{elapsed}ms failed {text:?}: {reason}")
                 }
             };
             let _ = writeln!(out, "{line}");

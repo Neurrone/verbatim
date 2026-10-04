@@ -41,6 +41,7 @@ tray-list-right-click = &Right Click
 ## Synthesizer display names.
 
 synth-name-onecore = Windows OneCore voices
+synth-name-espeak = eSpeak NG
 
 ## Synthesizer setting labels, referenced by setting descriptors.
 

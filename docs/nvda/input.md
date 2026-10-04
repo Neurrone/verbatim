@@ -45,9 +45,67 @@ braille display keys, touch); `GlobalGestureMap` holds user and
 default bindings (gesture identifier to (module, class, script
 name)), loaded from `gestures.ini` and add-ons; the Input Gestures
 dialog edits it. `executeGesture` also implements *input help mode*
-(announce the gesture and its script instead of running it) and
-gesture-to-speech echo (`speechEffectWhenExecuted`, e.g. speech
-interruption on any key press when `speechInterruptForCharacters`).
+(announce the gesture and its script instead of running it) and each
+gesture's effect on speech (`speechEffectWhenExecuted`; see the next
+section).
+
+## What a key press does to speech
+
+Every key-down that reaches the input core changes speech before its
+gesture does anything else, whether or not the gesture is bound to a
+script. `executeGesture` reads the gesture's `speechEffectWhenExecuted`
+and queues the effect on the main thread before it queues the script,
+so the cancel always runs first and never cuts off speech the script
+itself produces. Modifiers count: pressing Control alone, the NVDA
+modifier, or Alt cancels speech, and so does a typed character that
+NVDA passes straight to the application. Key-ups have no effect. Keys
+NVDA never sees as gestures, such as those passed through after "pass
+next key through" or injected keys NVDA is set to ignore, change
+nothing.
+
+For a keyboard gesture the effect is decided by
+`_get_speechEffectWhenExecuted` in `keyboardHandler.py`, in this order:
+
+- While input help is on, every key cancels.
+- The volume keys (mute, volume down, and volume up, as extended keys)
+  leave speech alone, so the user can adjust the volume of what is being
+  said.
+- Virtual-key code `0xFF`, a key Windows does not know, leaves speech
+  alone: some devices report events such as a gyroscope moving with it
+  (NVDA issue 3468).
+- With the setting "Speech interrupt for typed characters"
+  (`speechInterruptForCharacters`) turned off, a typed character, and
+  Shift, leave speech alone. A typed character here is a key whose name
+  is a single character, or Space, pressed with no modifier or with
+  Shift alone; a lock key also counts here, since it is not reported as
+  a command. So with the setting off, typing does not cut speech off,
+  and Shift no longer pauses it, while command keys, such as arrows,
+  Tab, Enter, and modified letters, still cancel.
+- With the setting "Speech interrupt for Enter" (`speechInterruptForEnter`)
+  turned off, Enter leaves speech alone, so the user can submit a line
+  without cutting off what is being read.
+- Shift (left, right, or generic) pauses speech, or resumes it when
+  speech is paused.
+- Every other key cancels speech.
+
+Both settings are on by default, so by default every key except the
+volume keys, the unknown key, and Shift cancels speech.
+
+Holding Shift does not stutter. Windows repeats a held key's key-down,
+and NVDA's key-down handler drops a repeated press of a modifier whose
+effect is pause or resume when that key is already among the held
+modifiers, so one physical press pauses or resumes once.
+
+Pausing and cancelling interact through the speech state (`speech.py`):
+
+- `pauseSpeech(switch)` tells the synthesizer to pause or resume and
+  records whether speech is paused.
+- `cancelSpeech()` cancels the speech manager and the synthesizer and
+  clears the paused flag, so a key press while paused ends the pause by
+  discarding what was paused.
+- `speak()` cancels first when speech is paused: new speech arriving
+  while paused, for example from a focus change, throws the paused
+  speech away rather than queueing behind it, and is heard at once.
 
 ## Script resolution
 

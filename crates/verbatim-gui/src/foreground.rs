@@ -47,14 +47,18 @@ pub(crate) fn hwnd_of(handle: *mut c_void) -> Option<HWND> {
 /// Deliberately `VK_CONTROL`, not `VK_MENU`: a lone Alt press activates menu
 /// bars and bounces foreground straight back, also confirmed live.
 fn nudge_foreground_lock() {
+    // Tagged as Verbatim's own, so the keyboard hook does not take it for
+    // a key press that cancels speech.
     let down = KEYBDINPUT {
         wVk: VK_CONTROL,
         dwFlags: KEYBD_EVENT_FLAGS(0),
+        dwExtraInfo: verbatim_input_windows::OWN_INPUT_TAG,
         ..Default::default()
     };
     let up = KEYBDINPUT {
         wVk: VK_CONTROL,
         dwFlags: KEYEVENTF_KEYUP,
+        dwExtraInfo: verbatim_input_windows::OWN_INPUT_TAG,
         ..Default::default()
     };
     let inputs = [

@@ -221,7 +221,12 @@ pub fn archive_run(root: &Path, scenario_name: &str, dir: &Path, passed: bool) -
     fs::create_dir_all(&target)?;
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        if entry.file_type()?.is_file() {
+        // Videos are kept only for the latest run: at most one per scenario.
+        let video = entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "mp4");
+        if entry.file_type()?.is_file() && !video {
             fs::copy(entry.path(), target.join(entry.file_name()))?;
         }
     }
@@ -419,8 +424,8 @@ mod tests {
     fn scenario_dir_joins_root_and_name() {
         let root = PathBuf::from(r"C:\somewhere\e2e-artifacts");
         assert_eq!(
-            scenario_dir(&root, "notepad_focus"),
-            PathBuf::from(r"C:\somewhere\e2e-artifacts\notepad_focus")
+            scenario_dir(&root, "notepad_and_verbatim_menu"),
+            PathBuf::from(r"C:\somewhere\e2e-artifacts\notepad_and_verbatim_menu")
         );
     }
 
@@ -445,7 +450,8 @@ mod tests {
     #[test]
     fn summary_round_trips_through_write_and_read() {
         let dir = temp_dir("round-trip");
-        let summary = ScenarioSummary::new("m1_exit_regression", true, Some(&sample_records()));
+        let summary =
+            ScenarioSummary::new("menu_and_settings_dialog", true, Some(&sample_records()));
         summary.write(&dir).expect("writes the summary");
 
         let read_back = ScenarioSummary::read(&dir).expect("reads the summary back");
@@ -455,7 +461,7 @@ mod tests {
     #[test]
     fn summary_round_trips_with_no_latency_data() {
         let dir = temp_dir("round-trip-no-latency");
-        let summary = ScenarioSummary::new("notepad_focus", false, None);
+        let summary = ScenarioSummary::new("notepad_and_verbatim_menu", false, None);
         summary.write(&dir).expect("writes the summary");
 
         let read_back = ScenarioSummary::read(&dir).expect("reads the summary back");

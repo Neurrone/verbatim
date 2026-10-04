@@ -7,8 +7,8 @@
 //! `cargo test -p verbatim-e2e <name> -- --exact` selects exactly one
 //! scenario), `cargo xtask vm test --scenario <name>`'s selector, the
 //! per-scenario artifacts directory ([`crate::artifacts::scenario_dir`]),
-//! and the per-scenario recording filename `xtask` writes under
-//! `artifacts/vm-recordings`. Keeping every one of those in lockstep off a
+//! and the name of the scenario's video in that directory
+//! ([`crate::recording`]). Keeping every one of those in lockstep off a
 //! single `&'static str` is deliberate: a scenario renamed in one place is a
 //! compile error (or an unmistakable "unknown scenario" message) everywhere
 //! else, rather than a silently stale mapping maintained by hand.
@@ -44,37 +44,45 @@
 //!
 //! - [`Group::Speech`]: Verbatim's own menu and Speech settings dialog, and
 //!   the latency reporting built into walking them —
-//!   [`m1_exit_regression`](crate::scenarios::m1_exit_regression), and
-//!   [`focus_churn`](crate::scenarios::focus_churn), a burst of focus changes
-//!   in the settings dialog that must leave focus where it really is.
+//!   [`menu_and_settings_dialog`](crate::scenarios::menu_and_settings_dialog),
+//!   and
+//!   [`rapid_tabbing_in_settings`](crate::scenarios::rapid_tabbing_in_settings),
+//!   a burst of focus changes in the settings dialog that must leave focus
+//!   where it really is, and
+//!   [`synth_host_crash_recovery`](crate::scenarios::synth_host_crash_recovery),
+//!   speech going on after the synthesizer host is killed, and
+//!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
+//!   to Windows `OneCore` voices and back.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
-//!   [`multi_outpost_switch`](crate::scenarios::multi_outpost_switch)) and
-//!   opening the Start/Search surface
-//!   ([`start_menu`](crate::scenarios::start_menu)).
-//! - [`Group::Legacy`]: a real external target application, standing in for
-//!   the "at least one MSAA-only legacy app" M3 exit item until a
-//!   genuinely MSAA-only one is chosen —
-//!   [`notepad_focus`](crate::scenarios::notepad_focus) today.
+//!   [`notepad_and_verbatim_menu`](crate::scenarios::notepad_and_verbatim_menu))
+//!   and opening the Start/Search surface
+//!   ([`start_menu_search`](crate::scenarios::start_menu_search)).
 //! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
 //!   commands (`docs/roadmap.md`'s M3 section) —
-//!   [`object_navigation`](crate::scenarios::object_navigation) against
-//!   Verbatim's own settings dialog, and
-//!   [`tree_navigation`](crate::scenarios::tree_navigation) against
-//!   msinfo32's real Win32 tree view over MSAA.
+//!   [`object_navigation_in_settings`](crate::scenarios::object_navigation_in_settings)
+//!   against Verbatim's own settings dialog, and
+//!   [`system_information_tree`](crate::scenarios::system_information_tree)
+//!   against msinfo32's real Win32 tree view over MSAA, which is also the
+//!   suite's MSAA-only legacy application (the M3 exit item).
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
+use std::time::Duration;
 
 use verbatim_control::protocol::LatencyRecord;
 
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
-    focus_churn, m1_exit_regression, msinfo32, multi_outpost_switch, notepad_focus,
-    object_navigation, start_menu, tree_navigation,
+    menu_and_settings_dialog, notepad_and_verbatim_menu, object_navigation_in_settings,
+    rapid_tabbing_in_settings, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
+    system_information_tree,
 };
+
+/// The longest a scenario's speech may take to end after its body.
+const QUIET_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
 /// own doc comment for what each group is meant to hold.
@@ -85,8 +93,6 @@ pub enum Group {
     Speech,
     /// Switching foreground between applications ("task switching").
     Shell,
-    /// A real external, non-Verbatim target application.
-    Legacy,
     /// Object navigation and review-cursor commands.
     Navigation,
 }
@@ -100,7 +106,6 @@ impl Group {
         match self {
             Self::Speech => "speech",
             Self::Shell => "shell",
-            Self::Legacy => "legacy",
             Self::Navigation => "navigation",
         }
     }
@@ -112,7 +117,6 @@ impl Group {
         match name {
             "speech" => Some(Self::Speech),
             "shell" => Some(Self::Shell),
-            "legacy" => Some(Self::Legacy),
             "navigation" => Some(Self::Navigation),
             _ => None,
         }
@@ -174,68 +178,68 @@ pub struct ScenarioDef {
 /// [`select`] preserves and `--list` prints in).
 pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
-        name: "m1_exit_regression",
+        name: "menu_and_settings_dialog",
         group: Group::Speech,
         target_images: &[],
-        setup: m1_exit_regression::setup,
-        body: m1_exit_regression::body,
-        teardown: m1_exit_regression::teardown,
+        setup: menu_and_settings_dialog::setup,
+        body: menu_and_settings_dialog::body,
+        teardown: menu_and_settings_dialog::teardown,
     },
     ScenarioDef {
-        name: "notepad_focus",
-        group: Group::Legacy,
-        target_images: &[],
-        setup: notepad_focus::setup,
-        body: notepad_focus::body,
-        teardown: notepad_focus::teardown,
-    },
-    ScenarioDef {
-        name: "multi_outpost_switch",
+        name: "notepad_and_verbatim_menu",
         group: Group::Shell,
         target_images: &[],
-        setup: multi_outpost_switch::setup,
-        body: multi_outpost_switch::body,
-        teardown: multi_outpost_switch::teardown,
+        setup: notepad_and_verbatim_menu::setup,
+        body: notepad_and_verbatim_menu::body,
+        teardown: notepad_and_verbatim_menu::teardown,
     },
     ScenarioDef {
-        name: "focus_churn",
+        name: "rapid_tabbing_in_settings",
         group: Group::Speech,
         target_images: &[],
-        setup: focus_churn::setup,
-        body: focus_churn::body,
-        teardown: focus_churn::teardown,
+        setup: rapid_tabbing_in_settings::setup,
+        body: rapid_tabbing_in_settings::body,
+        teardown: rapid_tabbing_in_settings::teardown,
     },
     ScenarioDef {
-        name: "object_navigation",
+        name: "object_navigation_in_settings",
         group: Group::Navigation,
         target_images: &[],
-        setup: object_navigation::setup,
-        body: object_navigation::body,
-        teardown: object_navigation::teardown,
+        setup: object_navigation_in_settings::setup,
+        body: object_navigation_in_settings::body,
+        teardown: object_navigation_in_settings::teardown,
     },
     ScenarioDef {
-        name: "msinfo32",
-        group: Group::Legacy,
-        target_images: &["msinfo32.exe"],
-        setup: msinfo32::setup,
-        body: msinfo32::body,
-        teardown: msinfo32::teardown,
+        name: "switch_to_onecore",
+        group: Group::Speech,
+        target_images: &[],
+        setup: switch_to_onecore::setup,
+        body: switch_to_onecore::body,
+        teardown: switch_to_onecore::teardown,
     },
     ScenarioDef {
-        name: "start_menu",
+        name: "synth_host_crash_recovery",
+        group: Group::Speech,
+        target_images: &[],
+        setup: synth_host_crash_recovery::setup,
+        body: synth_host_crash_recovery::body,
+        teardown: synth_host_crash_recovery::teardown,
+    },
+    ScenarioDef {
+        name: "start_menu_search",
         group: Group::Shell,
         target_images: &[],
-        setup: start_menu::setup,
-        body: start_menu::body,
-        teardown: start_menu::teardown,
+        setup: start_menu_search::setup,
+        body: start_menu_search::body,
+        teardown: start_menu_search::teardown,
     },
     ScenarioDef {
-        name: "tree_navigation",
+        name: "system_information_tree",
         group: Group::Navigation,
         target_images: &["msinfo32.exe"],
-        setup: tree_navigation::setup,
-        body: tree_navigation::body,
-        teardown: tree_navigation::teardown,
+        setup: system_information_tree::setup,
+        body: system_information_tree::body,
+        teardown: system_information_tree::teardown,
     },
 ];
 
@@ -364,6 +368,7 @@ fn run(def: &ScenarioDef) {
         Ok(state) => state,
         Err(error) => {
             scenario.collect_run_artifacts(&dir);
+            scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)));
             scenario.collect_flight_recorder(&dir);
             // Setup failed before any input was driven, so a latency
             // snapshot here would be empty; record none rather than racing
@@ -381,8 +386,15 @@ fn run(def: &ScenarioDef) {
         }
     };
 
-    let body_outcome =
-        panic::catch_unwind(AssertUnwindSafe(|| (def.body)(&mut scenario, &mut state)));
+    // A scenario's speech must be over before its teardown starts, so the
+    // last thing it asserted is heard in full and nothing it caused is still
+    // playing when the scenario's applications close.
+    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        (def.body)(&mut scenario, &mut state);
+        scenario
+            .speech()
+            .wait_until_quiet(Duration::ZERO, QUIET_TIMEOUT);
+    }));
     let teardown_outcome =
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)));
 
@@ -437,6 +449,7 @@ fn run(def: &ScenarioDef) {
     // passing run leaves its timings behind). The flight-recorder dump
     // already happened above, before the quit, for every run.
     scenario.collect_run_artifacts(&dir);
+    scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)));
     foreground.push(format!("after teardown: {}", scenario.foreground_report()));
     write_foreground(&dir, &foreground);
     write_summary(&dir, def.name, passed, latency.as_deref());
@@ -544,12 +557,7 @@ mod tests {
 
     #[test]
     fn group_parse_round_trips_every_variant_name() {
-        for group in [
-            Group::Speech,
-            Group::Shell,
-            Group::Legacy,
-            Group::Navigation,
-        ] {
+        for group in [Group::Speech, Group::Shell, Group::Navigation] {
             assert_eq!(Group::parse(group.name()), Some(group));
         }
     }
@@ -562,9 +570,8 @@ mod tests {
 
     #[test]
     fn find_locates_a_real_registered_scenario() {
-        assert!(find("m1_exit_regression").is_some());
-        assert!(find("notepad_focus").is_some());
-        assert!(find("multi_outpost_switch").is_some());
+        assert!(find("menu_and_settings_dialog").is_some());
+        assert!(find("notepad_and_verbatim_menu").is_some());
         assert!(find("no_such_scenario").is_none());
     }
 

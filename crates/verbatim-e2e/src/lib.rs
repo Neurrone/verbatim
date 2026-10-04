@@ -14,9 +14,8 @@
 //! [`registry::run_named`] is what each thin `#[test]` wrapper under
 //! `crates/verbatim-e2e/tests/` calls, and what `cargo xtask vm test`
 //! selects by name or group ([`registry::select`]) and invokes once per
-//! scenario (one `cargo test` subprocess per scenario, so a `--record`
-//! recording's boundary is exactly one scenario's setup, body, and
-//! teardown — see `docs/tooling.md`). [`artifacts`] is the host-side
+//! scenario (one `cargo test` subprocess per scenario). [`recording`]
+//! records each scenario's video, with Verbatim's audio. [`artifacts`] is the host-side
 //! artifacts (a summary, and on failure the timeline, Verbatim's stderr
 //! log, and a flight-recorder dump) both sides of that process boundary
 //! agree on without any argument passing between them.
@@ -45,6 +44,7 @@
 pub mod agent_client;
 pub mod artifacts;
 pub mod latency;
+pub mod recording;
 pub mod registry;
 pub mod scenario;
 mod scenarios;

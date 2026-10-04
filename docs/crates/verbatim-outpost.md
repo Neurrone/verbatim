@@ -215,15 +215,19 @@ Public API:
     it stops answering or its pipe closes, and a replacement's `Ready` asks
     the attention application to report again, since facts were lost in the
     gap.
-  - Process creation (`process`): each child is spawned suspended into a
+  - Process creation (`process`): each child is launched through
+    [verbatim-process](verbatim-process.md), spawned suspended into a
     kill-on-close job with a 200 MB memory cap and resumed, inheriting only
     its own two pipe ends and its log handle through a
     `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, so two launches running at once can
-    never keep each other's pipes open.
+    never keep each other's pipes open. The module itself keeps only the
+    role's command line and log name and the two local process and window
+    queries the owner uses.
 
 Implementation notes:
 
-- Spawning (`Supervisor`): the outpost is created suspended with two
+- Spawning (`Supervisor`, through `verbatim-process`): the outpost is
+  created suspended with two
   anonymous pipes whose child ends are the only inheritable handles, placed
   in a job object carrying kill-on-job-close and a 200 MB memory cap, and
   only then resumed — inside the job before executing a single
@@ -236,9 +240,12 @@ Implementation notes:
   and listener's own `tracing` output — which otherwise had no subscriber and
   went nowhere — lands in a per-role log file in this Verbatim launch's own
   log directory (`logs\<Verbatim's pid>\outpost-<target image>-<target
-  pid>.log` and `listener.log`, next to the outpost executable). The
-  supervisor empties that directory at startup if an earlier process with
-  the same pid left it, and keeps only the newest ten launch directories. The outpost binary
+  pid>.log` and `listener.log`, next to the outpost executable; the
+  synthesizer host's `synth-<id>.log` lands there too). The app calls
+  `verbatim_process::prepare_launch_logs` at startup, before it starts
+  any child, which empties
+  that directory if an earlier process with the same pid left it and
+  keeps only the newest ten launch directories. The outpost binary
   installs a stderr `tracing` subscriber at startup for exactly this; the E2E
   harness fetches these logs alongside the timeline and stderr, so a silent
   outpost is readable after the fact instead of theorized. Best-effort: a
