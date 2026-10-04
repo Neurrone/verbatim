@@ -132,6 +132,7 @@ fn main() -> ExitCode {
 /// Builds the driver of the named synthesizer.
 fn build(synth: &str) -> Result<Box<dyn SynthDriver>, SynthError> {
     match synth {
+        synth_ids::ESPEAK => Ok(Box::new(verbatim_synth_espeak::EspeakSynth::new()?)),
         synth_ids::ONECORE => Ok(Box::new(verbatim_synth_onecore::OneCoreSynth::new()?)),
         other => Err(SynthError::Unavailable(format!(
             "this host has no synthesizer named {other}"

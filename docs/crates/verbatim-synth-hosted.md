@@ -24,7 +24,7 @@ Public API:
   description the first host sent, with no round trip; `set_setting` and
   `speak` go to the host.
 - `factory(exe, synth)` — a `SynthFactory` that calls `start`, which is
-  how `verbatim-app` registers OneCore.
+  how `verbatim-app` registers eSpeak NG and OneCore.
 - `HANG_TIMEOUT` — ten seconds: how long a host may send nothing while
   Core waits on it, starting or speaking or applying a setting, before
   it is judged hung. A synthesizer produces audio many times faster than
@@ -71,7 +71,8 @@ host.
 Recovery. A host that is no longer usable is ended: a closed pipe, a
 host that sent nothing for `HANG_TIMEOUT`, or a message out of turn. The
 host is dropped, which kills it through its job, and the error is
-returned, so the speech manager fails that utterance. A `Failed` reply
+returned, so the speech manager fails that utterance, unless `speak`
+resends it (see below). A `Failed` reply
 is different: the host reported a synthesis error in turn, the stream is
 still in step, so only that utterance fails and the host carries on. The
 next `speak` or `set_setting` after a host was ended starts a new host
@@ -83,6 +84,23 @@ the ones the first host described, plus each later successful
 `set_setting`. The new host's own description is not used. Restarts log a warning under the
 `verbatim::speech` target.
 
+A host that died between requests is found before the next one. A host
+sends nothing while idle, so if a message is already waiting when
+`speak` or `set_setting` begins (the reader thread queues the pipe's end
+of stream when the process dies, and anything else would be out of
+turn), the host is ended and a new one started before the request is
+sent, rather than the request being lost to the dead host.
+
+Ending a process is not immediate, so a request can still reach a host
+that is dying. `speak` therefore sends an utterance once more, to a fresh
+host, when the host's pipe ended before any of its audio or marks were
+relayed to the sink: nothing of it was heard, so nothing is repeated. It
+is not resent when anything was relayed (an utterance cut off part-way
+fails), when the host hung or answered out of turn (a second host would
+likely do the same, and a hang has already cost ten seconds), when the
+sink reports the utterance cancelled, or a second time.
+`set_setting` is never resent.
+
 Settings. `set_setting` sends `SetSetting` and waits for
 `SettingApplied`. A refusal is returned as `SynthError::Setting` and
 keeps the host; success also updates the cached value that `setting`
@@ -90,4 +108,8 @@ reads.
 
 Tests: the crate has no tests of its own; it is tested against the real
 host executable in `crates/verbatim-synth-host/tests/hosting.rs` (see
-[verbatim-synth-host](verbatim-synth-host.md)).
+[verbatim-synth-host](verbatim-synth-host.md)), and end to end by the
+`synth_host_crash_recovery` scenario ([verbatim-e2e](verbatim-e2e.md)),
+which kills the host once the Verbatim menu's announcement has been
+heard and expects the next
+announcement to be heard in full.

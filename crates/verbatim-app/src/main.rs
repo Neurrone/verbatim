@@ -333,8 +333,9 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
     }
 }
 
-/// Builds the speech pipeline: `OneCore` through the mixer and WASAPI by
-/// default, observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
+/// Builds the speech pipeline: eSpeak NG (or the configured synthesizer),
+/// each in a synthesizer host, through the mixer and WASAPI by default,
+/// observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
 /// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that
 /// adds the capture synth and plays through [`SilentDevice`] instead, which
 /// takes real time but makes no sound.
@@ -350,12 +351,18 @@ fn build_speech_manager(
     let mut registry = SynthRegistry::new();
     // Every native synthesizer runs in a synthesizer host process next to
     // this executable (decision D18).
+    // eSpeak NG is the default, so it is listed first.
     let host_exe = exe_dir().join(SYNTH_HOST_EXE);
-    registry.register(
-        SynthId::new(synth_ids::ONECORE),
-        verbatim_i18n::message("synth-name-onecore"),
-        verbatim_synth_hosted::factory(host_exe, SynthId::new(synth_ids::ONECORE)),
-    );
+    for (id, name_key) in [
+        (synth_ids::ESPEAK, "synth-name-espeak"),
+        (synth_ids::ONECORE, "synth-name-onecore"),
+    ] {
+        registry.register(
+            SynthId::new(id),
+            verbatim_i18n::message(name_key),
+            verbatim_synth_hosted::factory(host_exe.clone(), SynthId::new(id)),
+        );
+    }
     if test_audio {
         tracing::warn!(
             "VERBATIM_TEST_AUDIO=null: test audio mode is active; the capture synth is available and audio plays silently in real time"
@@ -385,7 +392,7 @@ fn build_speech_manager(
 }
 
 /// Registers the capture synth from `verbatim-synth-capture` alongside
-/// `OneCore`, for `VERBATIM_TEST_AUDIO=null` runs. Test-only: never active
+/// the real synthesizers, for `VERBATIM_TEST_AUDIO=null` runs. Test-only: never active
 /// unless that environment variable is set at startup.
 fn register_test_audio(registry: &mut SynthRegistry) {
     registry.register(
@@ -396,17 +403,17 @@ fn register_test_audio(registry: &mut SynthRegistry) {
 }
 
 /// The configured synthesizer when it exists in the registry, otherwise
-/// `OneCore`.
+/// eSpeak NG.
 fn initial_synth(config: &ConfigStore, registry: &SynthRegistry) -> SynthId {
     let configured = config
         .active()
         .synthesizer()
-        .map_or_else(|| SynthId::new("onecore"), SynthId::new);
+        .map_or_else(|| SynthId::new(synth_ids::ESPEAK), SynthId::new);
     if registry.contains(&configured) {
         configured
     } else {
-        tracing::warn!(synth = %configured, "configured synthesizer not installed; using onecore");
-        SynthId::new("onecore")
+        tracing::warn!(synth = %configured, "configured synthesizer not installed; using eSpeak NG");
+        SynthId::new(synth_ids::ESPEAK)
     }
 }
 

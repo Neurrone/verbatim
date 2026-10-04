@@ -101,8 +101,9 @@ against a `verbatim-agent` on this machine):
    locally) — it refuses to start in a non-interactive session, since
    injected input needs a real desktop ([Tooling](tooling.md)).
 2. **`Scenario::launch` boots a real Verbatim**: writes a
-   `settings.toml` selecting the capture synth (no audio device
-   needed; `VERBATIM_TEST_AUDIO=null`), launches `verbatim.exe`
+   `settings.toml` selecting eSpeak NG (in a silent run,
+   `VERBATIM_TEST_AUDIO=null` plays it through the silent real-time
+   device, so no audio device is needed), launches `verbatim.exe`
    through the agent with stderr redirected to a readable file, waits
    for the control plane to answer through the agent's byte-relay
    tunnel onto Verbatim's named pipe, and opens a second tunnel

@@ -3,6 +3,8 @@
 #
 # The nvda/ submodule is reference material only and is deliberately not
 # checked out here (actions/checkout does not fetch submodules by default).
+# The third_party/espeak-ng submodule is fetched by each job: eSpeak NG is
+# built from it as part of the workspace.
 
 name: CI
 
@@ -19,6 +21,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch eSpeak NG's source
+        run: git submodule update --init --depth 1 third_party/espeak-ng
       # rust-toolchain.toml pins the toolchain, installed on the first cargo
       # invocation; everything builds for the runner's own architecture.
       - uses: Swatinem/rust-cache@v2
@@ -31,6 +35,8 @@ jobs:
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch eSpeak NG's source
+        run: git submodule update --init --depth 1 third_party/espeak-ng
       - name: Install rustup if the image lacks it
         shell: pwsh
         run: |
@@ -55,6 +61,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch eSpeak NG's source
+        run: git submodule update --init --depth 1 third_party/espeak-ng
       - uses: Swatinem/rust-cache@v2
       - name: Locate libclang for wxDragon's bindgen
         shell: pwsh
@@ -76,7 +84,7 @@ jobs:
           } else {
             Write-Warning "libclang.dll not found in known locations; relying on PATH"
           }
-      - name: Build verbatim-app and verbatim-agent (debug)
+      - name: Build Verbatim, its child processes, and the agent (debug)
         run: cargo build -p verbatim-app -p verbatim-agent -p verbatim-outpost -p verbatim-synth-host
       # The agent is started in the same step as the suite: GitHub's Windows
       # runner ends the processes a step started when that step finishes, so

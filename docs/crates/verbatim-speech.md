@@ -77,7 +77,10 @@ Public API:
   `write_to_host` and `read_to_host` serve the Core-to-host direction,
   `write_from_host` and `read_from_host` the other; each read returns
   `None` at a clean end of stream (a broken pipe between frames counts as
-  one). The host process is [verbatim-synth-host](verbatim-synth-host.md),
+  one). `synth_ids` holds the ids of the hosted synthesizers, which
+  Core registers and the host builds by: `ESPEAK` (`espeak`) and
+  `ONECORE` (`onecore`). The host process is
+  [verbatim-synth-host](verbatim-synth-host.md),
   and its Core-side driver is
   [verbatim-synth-hosted](verbatim-synth-hosted.md).
 

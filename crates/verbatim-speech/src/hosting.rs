@@ -94,6 +94,9 @@ const PCM: u8 = 1;
 pub mod synth_ids {
     /// Windows `OneCore` voices.
     pub const ONECORE: &str = "onecore";
+
+    /// eSpeak NG.
+    pub const ESPEAK: &str = "espeak";
 }
 
 /// The largest frame either side accepts: 16 MB, far beyond any message,

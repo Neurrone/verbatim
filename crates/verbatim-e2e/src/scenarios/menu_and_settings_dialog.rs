@@ -11,39 +11,19 @@
 //! rather than an exact string so wording the platform controls (list and
 //! button chrome, MSAA's own phrasing) cannot make this test fragile.
 //!
-//! Deliberately defaults to the capture synthesizer in runner-direct mode
-//! (see `Scenario::launch`'s doc comment for why), but `cargo xtask vm
-//! test` deploys and runs the real `OneCore` synthesizer by default now —
-//! see `Scenario::launch`'s `AUDIBLE_ENV` doc comment. One consequence of
-//! the capture synth specifically: its Speech page offers a voice choice
-//! and a rate slider but no toggle, so this walk asserts value changes
-//! (both directions on the slider, and the combo box changed and changed
-//! back) but no check-box state change. The reducer's checked and
-//! not-checked announcements are covered by `verbatim-core`'s unit tests
-//! and, cross-process, by `mockapp`'s scripted state-change events; a
-//! state-change assertion belongs here too the day a toggle appears on a
-//! synthesizer page this suite can drive without installed `OneCore`
-//! voices.
-//!
-//! The voice combo box asserts a fixed pair of expected names per mode
-//! (see `expected_voices` below) rather than capturing whatever the active
-//! synthesizer happens to announce first: the capture synth always offers
-//! the same two fixed names ("Capture A", "Capture B"), and the VM's golden
-//! image always installs the same `OneCore` voice set in the same order
-//! ("Microsoft David" default, "Microsoft Zira" listed next), confirmed
-//! live, so both modes can assert literal names instead. One structural
-//! difference between the two synths' descriptor sets still shows up in the
-//! Tab order, confirmed live: `OneCore`'s Speech page has more controls
-//! between the rate slider and OK than the capture synth's two-descriptor
-//! page does — at least a "Rate boost" toggle and a pitch slider, and
-//! possibly more depending on the guest's installed voices — so this walk's
-//! Tab step after the rate slider tabs forward one control at a time,
-//! bounded, until OK is reached (see the code comment there), capturing
-//! each control's own announced value there instead of asserting a literal
-//! one, since those extra controls' values are not fixed the way the voice
-//! names are. It does not assert on any of those extra controls' own
-//! values either way, for the same reason the capture synth's Speech page
-//! cannot expose a toggle to assert on: see the previous paragraph.
+//! Every run speaks through eSpeak NG, the default synthesizer, whether
+//! audible or silent (a silent run plays through the silent real-time
+//! device), so the Speech page always has the same controls: voice,
+//! variant, rate, pitch, inflection, and volume. The voice combo box asserts
+//! eSpeak NG's default voice and the one listed after it, both fixed by its
+//! data; the variant asserts its default, Max. eSpeak NG's page has no
+//! toggle, so this walk asserts value changes (both directions on the
+//! slider, and the combo box changed and changed back) but no check-box
+//! state change. The reducer's checked and not-checked announcements are
+//! covered by `verbatim-core`'s unit tests and, cross-process, by
+//! `mockapp`'s scripted state-change events. After the rate slider the walk
+//! tabs forward one control at a time, bounded, until OK is reached (see
+//! the code comment there), without asserting the other sliders' values.
 //!
 //! On audio: every speech assertion waits for its utterance to be heard in
 //! full (decision D17), so the final `report_latency` asserts that the
@@ -92,7 +72,6 @@ use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::scenario::is_audible;
 
 /// How long each single-step announcement is given to arrive. Generous —
 /// see this module's doc for why steps are not retried, only waited on
@@ -107,19 +86,11 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 /// where this is used.
 const MAX_EXTRA_SYNTH_CONTROLS: u32 = 5;
 
-/// The voice combo box's default and second-listed voice name, as a fixed
-/// pair per mode — see this module's doc for why both modes have a known,
-/// literal pair rather than a value captured at runtime. `cargo xtask vm
-/// test` (audible by default now) always deploys `OneCore` with "Microsoft
-/// David" as the default voice and "Microsoft Zira" listed next (confirmed
-/// live); a non-audible run (runner-direct with `VERBATIM_E2E_AUDIBLE`
-/// unset) uses the capture synth's two fixed names instead.
+/// The voice combo box's default and next-listed voice: eSpeak NG's English
+/// (Great Britain), and English (Scotland) after it in eSpeak NG's own
+/// order.
 fn expected_voices() -> (&'static str, &'static str) {
-    if is_audible() {
-        ("Microsoft David", "Microsoft Zira")
-    } else {
-        ("Capture A", "Capture B")
-    }
+    ("English (Great Britain)", "English (Scotland)")
 }
 
 /// The last run of ASCII digits in `text`, parsed as an integer: the value a
@@ -187,7 +158,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect_in_order(&["Categories", "list", "Speech"], STEP_TIMEOUT);
 
     // Tab walks the dialog in the live-confirmed order: Change... button,
-    // then the capture synth's three driver-generated controls, then OK,
+    // then eSpeak NG's six driver-generated controls, then OK,
     // Cancel, Apply (see this module's doc for why that order, not creation
     // order, is correct).
     scenario.send_keys(&["tab"]).expect("sends tab");
@@ -200,7 +171,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // rather than a value captured at runtime — see this module's doc for
     // why both modes have a known, literal pair. This first utterance
     // carries the full focus announcement (role and state included, e.g.
-    // "Voice combo box Capture A collapsed" against the capture synth) —
+    // "Voice combo box English (Great Britain) collapsed") —
     // confirmed live against the VM.
     let (default_voice, other_voice) = expected_voices();
     scenario
@@ -210,8 +181,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // new value; changing it back speaks the original, proving the
     // announcement tracks the selection rather than firing once. Confirmed
     // live: unlike the initial focus announcement, a value-change speaks
-    // only the bare name with no role or state chrome (e.g. bare "Capture
-    // B").
+    // only the bare name with no role or state chrome (e.g. bare "English
+    // (Scotland)").
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
     scenario
         .speech()
@@ -221,12 +192,18 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .speech()
         .expect_in_order(&[default_voice], STEP_TIMEOUT);
 
+    // eSpeak NG's variant, Max by default.
+    scenario.send_keys(&["tab"]).expect("sends tab");
+    scenario
+        .speech()
+        .expect_in_order(&["Variant", "combo box", "Max"], STEP_TIMEOUT);
+
     scenario.send_keys(&["tab"]).expect("sends tab");
     // Rate: a standard 0..=100 numeric descriptor. Capture its starting
     // value from the focus announcement ("Rate slider <n>") rather than
     // pinning a literal, so this walk holds for whatever rate the deployed
     // configuration selected — `Settings::for_e2e` sets it uniformly
-    // (`verbatim_config::E2E_RATE`) for both the capture synth and OneCore,
+    // (`verbatim_config::E2E_RATE`) whichever synthesizer it selects,
     // and this scenario must not have to change when that value does.
     let rate_focus = scenario
         .speech()
@@ -252,21 +229,18 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .speech()
         .expect_in_order(&[&rate_plus_one], STEP_TIMEOUT);
 
-    // OneCore's Speech page has more controls between the rate slider and
-    // OK than the capture synth does — confirmed live: at least a "Rate
-    // boost" toggle and a pitch slider, neither of which the capture synth
-    // exposes at all (this module's doc). Rather than assume a fixed
-    // count, tab forward one control at a time until OK is reached, bounded
-    // generously so a real regression still fails loudly instead of
-    // spinning. Each step's utterance is captured the same
+    // eSpeak NG's page has three more sliders between the rate slider and
+    // OK (pitch, inflection, volume); rather than assume a fixed count, tab
+    // forward one control at a time until OK is reached, bounded generously
+    // so a real regression still fails loudly instead of spinning. Each
+    // step's utterance is captured the same
     // duplicate-tolerant way the voice combo box needed: a value's own last
     // announcement (starting with the rate slider's captured <n>+1) can
     // re-announce once more before the next control's real focus change
     // lands, so each capture waits for whatever differs from the previous
     // one rather than assuming the very next utterance is already the new
     // control. This walk does not assert on any of these extra controls'
-    // own values, for the same reason the capture synth's page cannot: see
-    // the module doc.
+    // own values.
     let mut last_seen = rate_plus_one;
     let mut extra_controls = 0u32;
     loop {

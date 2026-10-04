@@ -33,18 +33,22 @@ arguments for the full verb list printed from the source of truth.
   runs, instead of a full `create`.
 - `deploy` builds `verbatim-app`, `verbatim-agent`, `verbatim-outpost`,
   and `verbatim-synth-host` (debug profile, matching the CI job), then
-  compares a SHA-256 hash of each of the seven artifacts it would place
-  in the guest (`verbatim.exe`, `verbatim-outpost.exe`, and
-  `verbatim-synth-host.exe` in `C:\VerbatimLab\verbatim`, a staged
-  `settings.toml` alongside them selecting the real `OneCore` synthesizer,
-  `verbatim-agent.exe` in `C:\VerbatimLab\agent`, and the vendored
-  `ffmpeg.exe` and `ffprobe.exe` in `C:\VerbatimLab\tools`) against the
-  guest's existing copy, fetching all seven guest-side hashes in a single
-  PowerShell Direct call. Only artifacts
+  compares a SHA-256 hash of each artifact it would place in the guest
+  (`verbatim.exe`, `verbatim-outpost.exe`, and `verbatim-synth-host.exe`
+  in `C:\VerbatimLab\verbatim`; eSpeak NG's `espeak-ng-data` directory,
+  which the build puts next to the executables, archived with Windows'
+  own `tar` into one `espeak-ng-data.tar`, copied beside them and
+  unpacked there when it changed; a staged
+  `settings.toml` beside the executables selecting eSpeak NG, the default
+  synthesizer; `verbatim-agent.exe` in `C:\VerbatimLab\agent`; and the
+  vendored `ffmpeg.exe` and `ffprobe.exe` in `C:\VerbatimLab\tools`)
+  against the guest's existing copy, fetching all the guest-side hashes in
+  a single PowerShell Direct call. Only artifacts
   whose hash differs are copied; each is reported as either "unchanged;
   skipping" or "changed; will copy". The guest's `VerbatimAgent` scheduled
   task and any running Verbatim are stopped first, but only when at least
-  one executable (never `settings.toml` alone) actually needs copying, and
+  one executable or eSpeak NG data file (which a running synthesizer host
+  may hold open; never `settings.toml` alone) actually needs copying, and
   the task is restarted afterward only if it was stopped or
   `verbatim-agent.exe` itself was among the copied artifacts. When every
   hash already matches, the guest is left completely untouched — no stop,
@@ -56,8 +60,8 @@ arguments for the full verb list printed from the source of truth.
   (needs `LIBCLANG_PATH`, set automatically when found — see "Hearing and
   recording a run" in the tooling guide), then starts the guest if it is
   not running and waits for its agent, stages and copies that build onto it
-  (always with the real `OneCore` synthesizer — no more capture-synth
-  choice on the VM path), discovers the guest's IP address, runs
+  (always selecting eSpeak NG, the same synthesizer every runner-direct
+  run uses), discovers the guest's IP address, runs
   `session_info`'s own test once as a precondition (not itself a scenario,
   not recorded, and not affected by `--scenario`/`--group` — a failure here
   aborts the whole run, since nothing downstream can work from a

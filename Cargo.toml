@@ -54,6 +54,7 @@ verbatim-outpost = { path = "crates/verbatim-outpost" }
 verbatim-process = { path = "crates/verbatim-process" }
 verbatim-speech = { path = "crates/verbatim-speech" }
 verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
+verbatim-synth-espeak = { path = "crates/verbatim-synth-espeak" }
 verbatim-synth-host = { path = "crates/verbatim-synth-host" }
 verbatim-synth-hosted = { path = "crates/verbatim-synth-hosted" }
 verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }

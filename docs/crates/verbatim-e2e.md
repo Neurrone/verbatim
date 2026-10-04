@@ -28,18 +28,22 @@ Public API:
   `Scenario::launch` first builds `verbatim-app`, `verbatim-outpost`,
   and `verbatim-synth-host` (once per test binary, skipped when
   `VERBATIM_E2E_VERBATIM_EXE` names a build to stage instead), then
-  copies `verbatim.exe`, `verbatim-outpost.exe`, and
-  `verbatim-synth-host.exe` into
-  `target/e2e-stage` and writes `Settings::for_e2e`'s fixed `settings.toml`
-  there; in remote mode `cargo xtask vm deploy` has already staged the
-  guest side. The synthesizer is the capture synthesizer by default
-  (audio-free, no installed voices needed — deliberately not `OneCore`,
-  whose `new` fails outright with none installed), with
-  `VERBATIM_TEST_AUDIO=null` set; an audible run (`AUDIBLE_ENV`, which
-  `cargo xtask vm test` always sets) selects `OneCore` and omits that
-  variable, so Verbatim speaks through the real `WasapiDevice`. Either
-  way every utterance takes its real duration, since the default path
-  plays through the silent real-time device. It then
+  copies `verbatim.exe`, `verbatim-outpost.exe`,
+  `verbatim-synth-host.exe`, and eSpeak NG's `espeak-ng-data` directory
+  into `target/e2e-stage` (staging fails if the data directory is
+  missing, which building `verbatim-synth-host` creates) and writes
+  `Settings::for_e2e`'s fixed `settings.toml` there; in remote mode
+  `cargo xtask vm deploy` has already staged the guest side. Every run
+  selects eSpeak NG, the default synthesizer, which is built with
+  Verbatim and so needs nothing installed on the machine. A silent run,
+  the default, sets `VERBATIM_TEST_AUDIO=null`, so Verbatim plays through
+  the silent real-time device; an audible run (`AUDIBLE_ENV`, which
+  `cargo xtask vm test` always sets) omits that variable, so Verbatim
+  speaks through the real `WasapiDevice`. The two differ only in the
+  device: the same synthesizer speaks the same audio, and every utterance
+  takes its real duration either way. `kill_processes_by_name` ends every
+  process with a given image name through the agent, which is how a
+  scenario kills the synthesizer host. It then
   launches Verbatim through the agent, waits for its
   control plane to answer over the agent's tunnel, opens a *second*,
   dedicated tunnel connection for speech collection, and pauses briefly
@@ -110,10 +114,12 @@ Public API:
   opened with `open_document` is closed by title instead and not listed),
   and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario — today six: `menu_and_settings_dialog` and
-  `rapid_tabbing_in_settings` (Speech), `notepad_and_verbatim_menu` and
-  `start_menu_search` (Shell), and `object_navigation_in_settings` and
-  `system_information_tree` (Navigation), each implemented in
+  registered scenario — today eight. The Speech group holds
+  `menu_and_settings_dialog`, `rapid_tabbing_in_settings`,
+  `switch_to_onecore`, and `synth_host_crash_recovery`; the Shell group
+  holds `notepad_and_verbatim_menu` and `start_menu_search`; the
+  Navigation group holds `object_navigation_in_settings` and
+  `system_information_tree`. Each is implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
@@ -178,6 +184,16 @@ filtering (`cargo test -p verbatim-e2e <name> -- --exact`) working
 unchanged: `cargo test -p verbatim-e2e -- --test-threads=1` still discovers
 and runs every one of them exactly as before the restructuring.
 `menu_and_settings_dialog` is the scripted walk of the M1 exit criteria that
-`docs/roadmap.md`'s M2 section describes, including exactly what it does and
-does not assert about the capture synth's Speech page; the others are
+`docs/roadmap-done.md`'s M2 section describes; it now asserts eSpeak NG's
+Speech page, the default voice English (Great Britain), English
+(Scotland) listed after it, and the variant Max. The others are
 described in `registry`'s own `Group` doc comment above.
+`synth_host_crash_recovery` opens the Verbatim menu, kills
+`verbatim-synth-host.exe` with `kill_processes_by_name` (expecting
+exactly one), and expects the next menu item to be heard in full from
+the replacement host. `switch_to_onecore` chooses Windows OneCore voices
+through the Speech page's Select Synthesizer dialog, expects the rebuilt
+page's voice to be one of Microsoft's, switches back to eSpeak NG, and
+cancels the settings dialog so the configuration is left as it was; it
+needs OneCore voices installed, which Windows 11 and GitHub's Windows
+runners have.

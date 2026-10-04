@@ -29,10 +29,14 @@ module tree, not a library):
   /`restore`/`delete`), `logs`, `connect` — one module per verb or verb
   family, each orchestrating `Host` calls; `mod.rs` dispatches
   `cargo xtask vm <verb>` to them. `deploy::stage_and_copy` always stages a
-  `settings.toml` selecting the real `OneCore` synthesizer now — there is
-  no more capture-synth choice or `--audible` flag on the VM path, since
-  `test` is audible by default; the capture synth remains the runner-direct
-  default, independently, in `verbatim_e2e::scenario`. `deploy::build`
+  `settings.toml` selecting eSpeak NG (`Settings::for_e2e("espeak")`),
+  the same synthesizer `verbatim_e2e::scenario` selects for runner-direct
+  runs, and copies every file of the `espeak-ng-data` directory found
+  next to the built `verbatim-synth-host.exe` into the guest's Verbatim
+  folder, one artifact per file so each hash-skips on its own; the data
+  files count as executables for stopping the guest, since a running
+  synthesizer host may hold them open. There is no `--audible` flag on
+  the VM path, since `test` is audible by default. `deploy::build`
   probes for `libclang.dll` before its `cargo build` the same way
   `xtask`'s own `ci` command does (reusing `find_libclang`), since building
   `verbatim-app` pulls in `verbatim-gui`'s wxDragon dependency. When an

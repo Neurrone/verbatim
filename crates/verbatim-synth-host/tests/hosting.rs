@@ -235,3 +235,70 @@ fn an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries
     assert_ne!(sink.received, []);
     assert_eq!(synth.process_id(), pid);
 }
+
+#[test]
+fn espeak_ng_speaks_from_a_folder_with_a_non_ascii_name() {
+    // The host and eSpeak NG's data, side by side as deployed, in a folder
+    // whose name the ANSI code page cannot represent.
+    let built = host_exe();
+    let folder = std::env::temp_dir().join(format!("verbatim-Zoë-日本-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    copy_tree(
+        &built.with_file_name("espeak-ng-data"),
+        &folder.join("espeak-ng-data"),
+    );
+    let exe = folder.join("verbatim-synth-host.exe");
+    std::fs::copy(&built, &exe).expect("copies the host");
+
+    let mut synth = HostedSynth::start(exe, SynthId::new("espeak")).expect("eSpeak NG starts");
+    let mut sink = Collect {
+        received: Vec::new(),
+        cancelled: false,
+        on_audio: || ControlFlow::Continue(()),
+    };
+    synth
+        .speak(
+            &sequence(1, vec![SpeechItem::Text("hello".to_owned())]),
+            &mut sink,
+        )
+        .expect("speaks");
+    assert_ne!(sink.received, []);
+    drop(synth);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_host_that_died_while_idle_is_replaced_before_the_next_utterance() {
+    let mut synth =
+        HostedSynth::start(host_exe(), SynthId::new("espeak")).expect("the host starts");
+    let first_pid = synth.process_id().expect("a host is running");
+    kill(first_pid);
+    // The next request finds the host gone (or reaches it as it dies, and
+    // is sent again), and the utterance is spoken by a new host, not lost.
+    let mut sink = Collect {
+        received: Vec::new(),
+        cancelled: false,
+        on_audio: || ControlFlow::Continue(()),
+    };
+    synth
+        .speak(
+            &sequence(1, vec![SpeechItem::Text("hello".to_owned())]),
+            &mut sink,
+        )
+        .expect("the utterance is spoken");
+    assert_ne!(sink.received, []);
+    assert_ne!(synth.process_id(), Some(first_pid));
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).expect("creates the folder");
+    for entry in std::fs::read_dir(from).expect("reads the data") {
+        let entry = entry.expect("reads an entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("reads a type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copies a file");
+        }
+    }
+}

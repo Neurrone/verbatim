@@ -48,7 +48,11 @@
 //!   and
 //!   [`rapid_tabbing_in_settings`](crate::scenarios::rapid_tabbing_in_settings),
 //!   a burst of focus changes in the settings dialog that must leave focus
-//!   where it really is.
+//!   where it really is, and
+//!   [`synth_host_crash_recovery`](crate::scenarios::synth_host_crash_recovery),
+//!   speech going on after the synthesizer host is killed, and
+//!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
+//!   to Windows `OneCore` voices and back.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
@@ -73,7 +77,8 @@ use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     menu_and_settings_dialog, notepad_and_verbatim_menu, object_navigation_in_settings,
-    rapid_tabbing_in_settings, start_menu_search, system_information_tree,
+    rapid_tabbing_in_settings, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
+    system_information_tree,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -203,6 +208,22 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: object_navigation_in_settings::setup,
         body: object_navigation_in_settings::body,
         teardown: object_navigation_in_settings::teardown,
+    },
+    ScenarioDef {
+        name: "switch_to_onecore",
+        group: Group::Speech,
+        target_images: &[],
+        setup: switch_to_onecore::setup,
+        body: switch_to_onecore::body,
+        teardown: switch_to_onecore::teardown,
+    },
+    ScenarioDef {
+        name: "synth_host_crash_recovery",
+        group: Group::Speech,
+        target_images: &[],
+        setup: synth_host_crash_recovery::setup,
+        body: synth_host_crash_recovery::body,
+        teardown: synth_host_crash_recovery::teardown,
     },
     ScenarioDef {
         name: "start_menu_search",

@@ -1,9 +1,11 @@
 //! Contained child processes: what Core launches outposts, the focus
 //! listener, and synthesizer hosts with (architecture section 1).
 //!
-//! A child is spawned suspended, placed in a kill-on-close job object, and
-//! only then resumed, so it is contained before it runs a single
+//! A child is created inside a kill-on-close job object
+//! (`PROC_THREAD_ATTRIBUTE_JOB_LIST`), so it is contained from its first
 //! instruction, and dies when Core's job handle closes, whatever ends Core.
+//! Creation and containment are one step: a Core that dies while
+//! launching a child cannot leave it outside a job, running or suspended.
 //! It talks to Core over two anonymous pipes whose child ends it inherits;
 //! it inherits exactly those and its log file, never another child's
 //! handles, so two launches running at once cannot keep each other's pipes
@@ -26,16 +28,16 @@ use windows::Win32::Storage::FileSystem::{
     OPEN_ALWAYS,
 };
 use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectExtendedLimitInformation, SetInformationJobObject,
+    CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject,
 };
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
-    STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+    CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -91,7 +93,7 @@ pub fn launch(spec: &ChildSpec<'_>) -> io::Result<(Contained, ChildPipes)> {
     // Best-effort: a failed log open leaves the child unredirected, never
     // unspawned.
     let log = child_log_handle(spec.exe, spec.log_stem);
-    let spawned = spawn_suspended(&command_line, &job, &pipes, log);
+    let spawned = spawn_in_job(&command_line, &job, &pipes, log);
     if let Some(log) = log {
         // The child inherited its own copy; drop ours whether or not the
         // spawn succeeded.
@@ -102,11 +104,6 @@ pub fn launch(spec: &ChildSpec<'_>) -> io::Result<(Contained, ChildPipes)> {
     close_handle(pipes.child_in);
     close_handle(pipes.child_out);
     let spawned = spawned?;
-    // SAFETY: `spawned.thread` is the suspended primary thread handle.
-    unsafe {
-        ResumeThread(spawned.thread);
-    }
-    close_handle(spawned.thread);
     Ok((
         Contained {
             job,
@@ -235,19 +232,18 @@ fn create_job(memory_cap: Option<usize>) -> io::Result<OwnedHandle> {
     Ok(unsafe { OwnedHandle::from_raw_handle(job.0 as RawHandle) })
 }
 
-/// The handles and id a spawned process yields.
+/// The handle and id a spawned process yields.
 struct Spawned {
     process: HANDLE,
-    thread: HANDLE,
     pid: u32,
 }
 
-/// Creates the child suspended and assigns it to `job` before it runs. The
-/// child inherits only the handles named in a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`:
+/// Creates the child inside `job`. The child inherits only the handles
+/// named in a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`:
 /// its two pipe ends and, when `log` is `Some`, the log file its standard
 /// output and error are redirected to (its standard input too, harmlessly — a
 /// child reads its command pipe, never stdin).
-fn spawn_suspended(
+fn spawn_in_job(
     command_line: &str,
     job: &OwnedHandle,
     pipes: &Pipes,
@@ -259,6 +255,7 @@ fn spawn_suspended(
         .collect();
     let mut inherited = vec![pipes.child_in, pipes.child_out];
     inherited.extend(log);
+    let jobs = [HANDLE(job.as_raw_handle().cast::<c_void>())];
 
     // Size, allocate, and fill the attribute list naming the inherited
     // handles.
@@ -266,18 +263,19 @@ fn spawn_suspended(
     // SAFETY: the first call only reports the size needed; its failure with
     // "insufficient buffer" is expected.
     unsafe {
-        let _ = InitializeProcThreadAttributeList(None, 1, None, &raw mut size);
+        let _ = InitializeProcThreadAttributeList(None, 2, None, &raw mut size);
     }
     let mut buffer = vec![0u8; size];
     let attributes = LPPROC_THREAD_ATTRIBUTE_LIST(buffer.as_mut_ptr().cast());
     // SAFETY: `buffer` is `size` bytes as the first call asked for, and
     // outlives every use of `attributes` below, which ends with the delete.
     unsafe {
-        InitializeProcThreadAttributeList(Some(attributes), 1, None, &raw mut size)
+        InitializeProcThreadAttributeList(Some(attributes), 2, None, &raw mut size)
             .map_err(to_io)?;
     }
     let result = (|| {
-        // SAFETY: `inherited` outlives the CreateProcessW call that reads it.
+        // SAFETY: `inherited` and `jobs` outlive the CreateProcessW call
+        // that reads them.
         unsafe {
             UpdateProcThreadAttribute(
                 attributes,
@@ -285,6 +283,16 @@ fn spawn_suspended(
                 PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
                 Some(inherited.as_ptr().cast()),
                 inherited.len() * size_of::<HANDLE>(),
+                None,
+                None,
+            )
+            .map_err(to_io)?;
+            UpdateProcThreadAttribute(
+                attributes,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+                Some(jobs.as_ptr().cast()),
+                size_of::<HANDLE>(),
                 None,
                 None,
             )
@@ -310,26 +318,17 @@ fn spawn_suspended(
                 None,
                 None,
                 true,
-                CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+                CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
                 None,
                 None,
                 (&raw const startup).cast(),
                 &raw mut info,
             )
             .map_err(to_io)?;
-            // Contained before it runs.
-            let job_handle = HANDLE(job.as_raw_handle().cast::<c_void>());
-            if let Err(error) = AssignProcessToJobObject(job_handle, info.hProcess) {
-                // Outside the job nothing would ever kill it.
-                let _ = TerminateProcess(info.hProcess, 1);
-                close_handle(info.hThread);
-                close_handle(info.hProcess);
-                return Err(to_io(error));
-            }
         }
+        close_handle(info.hThread);
         Ok(Spawned {
             process: info.hProcess,
-            thread: info.hThread,
             pid: info.dwProcessId,
         })
     })();

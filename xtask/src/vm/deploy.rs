@@ -29,7 +29,7 @@ use super::{AGENT_DIR, TOOLS_DIR, VERBATIM_DIR, VM_NAME, VmResult};
 /// One artifact `deploy` may need to copy into the guest.
 struct Artifact {
     /// Human-readable name used in progress output.
-    label: &'static str,
+    label: String,
     /// The file's path on the host, after building.
     local_path: PathBuf,
     /// The file's destination path inside the guest.
@@ -38,6 +38,8 @@ struct Artifact {
     /// execution, and so must be stopped before it can be overwritten.
     /// `settings.toml` is data, not code, so it is never held open this way.
     is_executable: bool,
+    /// A guest PowerShell script to run once the file has been copied.
+    after_copy: Option<String>,
 }
 
 /// The host paths [`build`] produces, threaded into [`stage_and_copy`]. A
@@ -110,36 +112,42 @@ pub(crate) fn stage_and_copy(
     let ffmpeg_dir = repo_root.join("vm").join("vendor").join("ffmpeg");
     ensure_vendored_ffmpeg(&ffmpeg_dir)?;
 
-    let artifacts = [
+    let data_dir = built.synth_host.with_file_name(ESPEAK_DATA);
+    let mut artifacts = vec![
         Artifact {
-            label: "verbatim.exe",
+            label: "verbatim.exe".to_owned(),
             local_path: built.verbatim,
             remote_path: format!(r"{VERBATIM_DIR}\verbatim.exe"),
             is_executable: true,
+            after_copy: None,
         },
         Artifact {
-            label: "verbatim-outpost.exe",
+            label: "verbatim-outpost.exe".to_owned(),
             local_path: built.outpost,
             remote_path: format!(r"{VERBATIM_DIR}\verbatim-outpost.exe"),
             is_executable: true,
+            after_copy: None,
         },
         Artifact {
-            label: "verbatim-synth-host.exe",
+            label: "verbatim-synth-host.exe".to_owned(),
             local_path: built.synth_host,
             remote_path: format!(r"{VERBATIM_DIR}\verbatim-synth-host.exe"),
             is_executable: true,
+            after_copy: None,
         },
         Artifact {
-            label: "settings.toml",
+            label: "settings.toml".to_owned(),
             local_path: settings_path,
             remote_path: format!(r"{VERBATIM_DIR}\settings.toml"),
             is_executable: false,
+            after_copy: None,
         },
         Artifact {
-            label: "verbatim-agent.exe",
+            label: "verbatim-agent.exe".to_owned(),
             local_path: built.agent,
             remote_path: format!(r"{AGENT_DIR}\verbatim-agent.exe"),
             is_executable: true,
+            after_copy: None,
         },
         // The LFS-vendored ffmpeg/ffprobe (vm/vendor/ffmpeg) that
         // `--record` launches and probes with, staged the same fast
@@ -150,18 +158,44 @@ pub(crate) fn stage_and_copy(
         // (ffmpeg runs only during an active `--record` capture, which never
         // overlaps a deploy), so a lone version bump need not stop the guest.
         Artifact {
-            label: "ffmpeg.exe",
+            label: "ffmpeg.exe".to_owned(),
             local_path: ffmpeg_dir.join("ffmpeg.exe"),
             remote_path: format!(r"{TOOLS_DIR}\ffmpeg.exe"),
             is_executable: false,
+            after_copy: None,
         },
         Artifact {
-            label: "ffprobe.exe",
+            label: "ffprobe.exe".to_owned(),
             local_path: ffmpeg_dir.join("ffprobe.exe"),
             remote_path: format!(r"{TOOLS_DIR}\ffprobe.exe"),
             is_executable: false,
+            after_copy: None,
         },
     ];
+
+    // eSpeak NG's data, which the synthesizer host reads next to itself:
+    // about 380 files, shipped as one archive so it is hashed and copied
+    // once, then unpacked in the guest. Marked executable because a running
+    // host may hold the files open.
+    let archive = archive_espeak_data(repo_root, &data_dir)?;
+    artifacts.push(Artifact {
+        label: ESPEAK_ARCHIVE.to_owned(),
+        local_path: archive,
+        remote_path: format!(r"{VERBATIM_DIR}\{ESPEAK_ARCHIVE}"),
+        is_executable: true,
+        after_copy: Some(
+            [
+                format!(
+                    r"Remove-Item -Recurse -Force -LiteralPath '{VERBATIM_DIR}\{ESPEAK_DATA}' -ErrorAction SilentlyContinue"
+                ),
+                format!(r"tar -xf '{VERBATIM_DIR}\{ESPEAK_ARCHIVE}' -C '{VERBATIM_DIR}'"),
+                format!(
+                    r#"if ($LASTEXITCODE -ne 0) {{ throw "unpacking {ESPEAK_ARCHIVE} failed" }}"#
+                ),
+            ]
+            .join("\n"),
+        ),
+    });
 
     let needs_copy = artifacts_needing_copy(host, credentials, &artifacts)?;
     if needs_copy.is_empty() {
@@ -170,6 +204,40 @@ pub(crate) fn stage_and_copy(
     }
 
     copy_mismatched_artifacts(host, credentials, &artifacts, &needs_copy)
+}
+
+/// eSpeak NG's data directory, next to the synthesizer host.
+const ESPEAK_DATA: &str = "espeak-ng-data";
+
+/// The archive eSpeak NG's data is shipped to the guest as.
+const ESPEAK_ARCHIVE: &str = "espeak-ng-data.tar";
+
+/// Archives eSpeak NG's data directory (next to the built executables) with
+/// Windows' own `tar`, into the deploy staging directory.
+fn archive_espeak_data(repo_root: &Path, data_dir: &Path) -> VmResult<PathBuf> {
+    let staging_dir = repo_root.join("target").join("xtask-vm-staging");
+    fs::create_dir_all(&staging_dir)
+        .map_err(|error| format!("could not create {}: {error}", staging_dir.display()))?;
+    let archive = staging_dir.join(ESPEAK_ARCHIVE);
+    let parent = data_dir
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", data_dir.display()))?;
+    // Windows' own tar, by its full path: under Git Bash a bare `tar` is
+    // GNU tar, which reads `C:\...` as a remote host.
+    let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    let tar = Path::new(&system_root).join("System32").join("tar.exe");
+    let status = std::process::Command::new(tar)
+        .arg("-cf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(parent)
+        .arg(ESPEAK_DATA)
+        .status()
+        .map_err(|error| format!("could not run tar: {error}"))?;
+    if !status.success() {
+        return Err(format!("archiving {} failed: {status}", data_dir.display()));
+    }
+    Ok(archive)
 }
 
 /// Builds then stages-and-copies in one call — the composition the
@@ -274,9 +342,12 @@ fn copy_mismatched_artifacts(
                     artifact.label, artifact.remote_path
                 );
                 host.copy_file_to_guest(VM_NAME, &artifact.local_path, &artifact.remote_path)?;
-                copied_labels.push(artifact.label);
+                if let Some(script) = &artifact.after_copy {
+                    host.run_in_guest(VM_NAME, credentials, script)?;
+                }
+                copied_labels.push(artifact.label.as_str());
             } else {
-                skipped_labels.push(artifact.label);
+                skipped_labels.push(artifact.label.as_str());
             }
         }
         Ok(())
@@ -474,7 +545,7 @@ fn write_synth_settings(repo_root: &Path) -> VmResult<PathBuf> {
             )
         })?;
     }
-    let store = ConfigStore::from_settings(&staging_dir, Settings::for_e2e("onecore"));
+    let store = ConfigStore::from_settings(&staging_dir, Settings::for_e2e("espeak"));
     store
         .save_settings()
         .map_err(|error| format!("could not write settings.toml: {error}"))?;
@@ -484,6 +555,29 @@ fn write_synth_settings(repo_root: &Path) -> VmResult<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn espeak_data_is_archived_as_one_tar_of_its_directory() {
+        let root =
+            std::env::temp_dir().join(format!("verbatim-xtask-archive-{}", std::process::id()));
+        let data = root.join("debug").join(ESPEAK_DATA);
+        fs::create_dir_all(data.join("voices")).expect("creates the data");
+        fs::write(data.join("voices").join("en"), b"voice").expect("writes a file");
+
+        let archive = archive_espeak_data(&root, &data).expect("archives");
+        let listing = std::process::Command::new(
+            Path::new(&std::env::var_os("SystemRoot").expect("set on Windows"))
+                .join("System32")
+                .join("tar.exe"),
+        )
+        .arg("-tf")
+        .arg(&archive)
+        .output()
+        .expect("lists the archive");
+        let listing = String::from_utf8_lossy(&listing.stdout);
+        assert!(listing.contains("espeak-ng-data/voices/en"), "{listing}");
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn parse_guest_hashes_reads_path_equals_hash_lines() {

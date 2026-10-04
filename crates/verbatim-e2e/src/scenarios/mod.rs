@@ -14,6 +14,8 @@ pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod rapid_tabbing_in_settings;
 pub(crate) mod start_menu_search;
+pub(crate) mod switch_to_onecore;
+pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
 
 /// Opens the Verbatim menu with Verbatim+V and waits for the popup to be

@@ -12,14 +12,26 @@ audio, so recording, device recovery, and mixing stay in one place
 there.
 
 Command line: `--pipe-in <handle> --pipe-out <handle> --synth <id>`, in
-any order. Anything else prints a usage line and exits with code 2. The
-only synthesizer it knows today is `onecore`, built with
-`OneCoreSynth::new` from
-[verbatim-synth-onecore](verbatim-synth-onecore.md); any other id, or a
-OneCore that cannot start (no voices installed, for example), is
-reported as unavailable.
+any order. Anything else prints a usage line and exits with code 2. It
+knows two synthesizers, by the ids in
+`verbatim_speech::hosting::synth_ids`: `espeak`, built with
+`EspeakSynth::new` from [verbatim-synth-espeak](verbatim-synth-espeak.md),
+and `onecore`, built with `OneCoreSynth::new` from
+[verbatim-synth-onecore](verbatim-synth-onecore.md). Any other id, or a
+synthesizer that cannot start (eSpeak NG without its data, or OneCore
+with no voices installed, for example), is reported as unavailable.
+eSpeak NG reads its data from `espeak-ng-data` next to the host
+executable, so that directory must be deployed beside it.
 
 The crate has no library API; it is a binary.
+
+Implementation notes, code page. The executable embeds an application
+manifest (`verbatim-synth-host.manifest`, through `build.rs`) that makes
+UTF-8 the process's code page. eSpeak NG opens its data with the C
+runtime's narrow file functions, which read paths in the process code
+page, so without it an install folder whose name the ANSI code page
+cannot represent (C:\Users\Zoë) kept eSpeak NG, the default synthesizer,
+from starting. `tests/hosting.rs` runs the host from such a folder.
 
 Implementation notes, lifecycle. The host installs a `tracing`
 subscriber writing to standard error, takes its two pipes with
@@ -60,7 +72,7 @@ value 0 matches none.
 
 Logs. Core redirects the host's standard output and error to
 `logs\<Verbatim's pid>\synth-<id>.log` next to the executables, for
-example `synth-onecore.log`, in append mode, so a host that crashed and
+example `synth-espeak.log` or `synth-onecore.log`, in append mode, so a host that crashed and
 its replacement write to the same file. The default filter is `info`;
 `RUST_LOG` overrides it. The end-to-end harness collects this file with
 the outpost and listener logs.

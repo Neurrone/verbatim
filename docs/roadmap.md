@@ -22,7 +22,10 @@ and exit-criteria evidence are archived in
   `IAudioClient3` low-latency audio and MMCSS (moved up from M8 so the
   audio half of the budget is measurable from here on), and the attention
   model replacing the foreground gate (D14), which is what the deferred
-  Explorer and Settings scenarios wait on.
+  Explorer and Settings scenarios wait on. eSpeak NG has landed: it is
+  built from the vendored source in the `third_party/espeak-ng`
+  submodule, runs in the synthesizer host, and is the default
+  synthesizer, and every end-to-end run speaks through it.
 - TextPattern support in the model; caret tracking, typed-character echo,
   word/line/character navigation; say-all with index-mark continuation.
 - Text runs carry formatting attributes as utterance spans (spelling and

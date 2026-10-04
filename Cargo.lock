@@ -2205,6 +2205,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-synth-espeak"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+ "tracing",
+ "verbatim-audio",
+ "verbatim-model",
+ "verbatim-speech",
+]
+
+[[package]]
 name = "verbatim-synth-host"
 version = "0.1.0"
 dependencies = [
@@ -2215,6 +2226,7 @@ dependencies = [
  "verbatim-model",
  "verbatim-process",
  "verbatim-speech",
+ "verbatim-synth-espeak",
  "verbatim-synth-hosted",
  "verbatim-synth-onecore",
  "windows",

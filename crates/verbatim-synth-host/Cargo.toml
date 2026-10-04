@@ -12,6 +12,7 @@ tracing-subscriber.workspace = true
 verbatim-audio.workspace = true
 verbatim-process.workspace = true
 verbatim-speech.workspace = true
+verbatim-synth-espeak.workspace = true
 verbatim-synth-onecore.workspace = true
 
 [dev-dependencies]

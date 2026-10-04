@@ -23,8 +23,9 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   (`verbatim-uia`), MSAA/IA2 (`verbatim-ia2`), later JAB.
   [Architecture](architecture.md) section 4.
 - **Capture synth** — the test synthesizer that records the flattened
-  speech it was asked to speak instead of producing audio; what E2E
-  assertions read. [verbatim-synth-capture](crates/verbatim-synth-capture.md).
+  speech it was asked to speak instead of producing audio; what speech
+  pipeline unit tests assert on (E2E runs speak through eSpeak NG).
+  [verbatim-synth-capture](crates/verbatim-synth-capture.md).
 - **Attention** — the reducer's record of the application and
   top-level window of the most recent foreground change, standing in
   for the system's foreground window; events are accepted or dropped

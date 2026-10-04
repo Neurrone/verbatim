@@ -10,6 +10,24 @@ Like every doc in this repository, this one avoids ASCII diagrams, box
 drawings, arrow chains, and pipe tables, so it reads well with a screen
 reader in both rendered and source form.
 
+## First-time setup
+
+eSpeak NG, Verbatim's default synthesizer, is built from source that
+lives in a git submodule, so a fresh clone must fetch it before anything
+builds:
+
+```
+git submodule update --init third_party/espeak-ng
+```
+
+The `nvda` submodule is reference material and stays optional; the
+command above fetches only eSpeak NG. Building eSpeak NG also needs CMake
+on `PATH` (Visual Studio's own copy, or a standalone install); the
+`cmake` crate drives eSpeak NG's CMake build with Visual Studio's
+generator. Building `verbatim-app` additionally needs `libclang.dll` for
+wxDragon's bindgen, as `CLAUDE.md` describes. GitHub Actions fetches the
+eSpeak NG submodule in every job.
+
 ## Driving a running Verbatim with verbatim-inspect
 
 `verbatim-inspect` is a developer CLI over the control plane
@@ -26,8 +44,11 @@ target\debug\verbatim.exe
 ```
 
 Verbatim finds `verbatim-outpost.exe` and `verbatim-synth-host.exe` next
-to its own executable; without the synthesizer host, OneCore cannot
-start.
+to its own executable; without the synthesizer host, no synthesizer can
+start. Building `verbatim-synth-host` also puts eSpeak NG's compiled
+data, the `espeak-ng-data` directory, in `target\debug`, where the host
+looks for it; a copy of Verbatim run from another folder needs that
+directory beside the host.
 
 Then, in a second terminal, run `verbatim-inspect` subcommands against it.
 Every subcommand accepts a global `--connect <ADDRESS>` option before the
@@ -101,18 +122,20 @@ event.
 `VERBATIM_TEST_AUDIO=null`, set in the environment before starting
 `verbatim.exe`, is a test-only escape hatch `verbatim-app`'s `run` checks at
 startup. It does two things together: registers the capture synthesizer
-(`verbatim-synth-capture`, id `capture`) alongside OneCore, and builds the
-audio mixer over `verbatim_audio::SilentDevice` instead of the real
-`WasapiDevice`.
+(`verbatim-synth-capture`, id `capture`) alongside eSpeak NG and OneCore,
+and builds the audio mixer over `verbatim_audio::SilentDevice` instead of
+the real `WasapiDevice`. It does not change which synthesizer is
+selected: that is still whatever `settings.toml` names, eSpeak NG by
+default.
 
-This exists because most of the tooling in this document needs to run with
-no sound card and no installed OneCore voices — a bare CI runner, a fresh VM
-image, or just a dev machine where you don't want Verbatim actually talking
-while you script a test. The capture synth records every `SpeechSequence`
-with a timestamp into an in-memory log and produces only a short quiet
-tone, and exposes just a voice choice and a rate numeric (no toggle — see the
-Troubleshooting-adjacent note in the E2E section below for why that matters
-to one specific regression test). `SilentDevice` plays at real-time speed
+This exists because much of the tooling in this document needs to run
+with no sound card — a bare CI runner, a fresh VM image, or just a dev
+machine where you don't want Verbatim actually talking while you script a
+test. eSpeak NG is built with Verbatim, so it needs no installed voices
+either. The capture synth records every `SpeechSequence` with a
+timestamp into an in-memory log and produces only a short quiet tone; the
+end-to-end suite no longer selects it, and it remains for unit tests and
+for by-hand use under this variable. `SilentDevice` plays at real-time speed
 into silence: frames leave its queue at the rate a real device would play
 them, so the mixer reports each utterance's audio start and ending at the
 moments a listener would have heard them. `LatencyLedger` therefore still
@@ -122,15 +145,14 @@ utterance still takes its real duration, so a test's speech is paced
 exactly as it would be on real hardware.
 
 Every scenario `crates/verbatim-e2e` launches sets this variable in
-runner-direct mode unless `VERBATIM_E2E_AUDIBLE` is set (see below); that
-mode defaults to the capture synth for exactly the
-same reason (no installed voices required, cross-process setting-descriptor
-coverage is still exercised). `cargo xtask vm deploy` (and `vm test`, and
-`vm create`'s own bake-in of the golden checkpoint) is different: it always
-stages a `settings.toml` selecting the real `OneCore` synthesizer instead,
-since the VM's golden image always has `OneCore` voices installed and a
-real VB-CABLE audio device — see "Hearing and recording a run" below for
-what that means for a VM run's audio.
+runner-direct mode unless `VERBATIM_E2E_AUDIBLE` is set (see below).
+Every run, silent or audible, selects eSpeak NG, so silent and audible
+runs differ only in the device: the same synthesizer produces the same
+speech, played into silence or through the real device.
+`cargo xtask vm deploy` (and `vm test`, and `vm create`'s own bake-in of
+the golden checkpoint) stages a `settings.toml` selecting eSpeak NG too,
+and every VM run is audible — see "Hearing and recording a run" below
+for what that means for a VM run's audio.
 
 ## Running mockapp by hand
 
@@ -248,11 +270,12 @@ a run can never stage an executable older than the source under test
 (`cargo test -p verbatim-e2e` alone builds only this crate and its
 libraries, not Verbatim's executables). That build needs `LIBCLANG_PATH`
 like any direct build of `verbatim-app`, and is a no-op when nothing
-changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`, and
-`verbatim-synth-host.exe` into `target/e2e-stage` under the
-workspace root (skipping a copy when the destination already matches
-byte-for-byte) and writes a fresh `settings.toml` there — `Settings::default`
-plus exactly the synthesizer choice — before launching that staged copy.
+changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`,
+`verbatim-synth-host.exe`, and the `espeak-ng-data` directory into
+`target/e2e-stage` under the workspace root (skipping a copy when the
+destination already matches byte-for-byte, file by file for the data
+directory) and writes a fresh `settings.toml` there — `Settings::for_e2e`
+selecting eSpeak NG — before launching that staged copy.
 Your own `target/debug/verbatim.exe` and its `settings.toml` are never read
 or mutated by a test run. Against the VM, `cargo xtask vm deploy` stages the
 guest side the same way, independently (the two crates cannot share code, so
@@ -292,10 +315,15 @@ definition, and `crates/verbatim-e2e/tests/` holds one thin `#[test]`
 wrapper per scenario calling `registry::run_named("that scenario's name")`,
 plus `session_info` (the agent reports an interactive session — the
 precondition everything else depends on, not itself a scenario). The
-scenarios today: `menu_and_settings_dialog` (the scripted walk of the M1
-exit criteria through Verbatim's menu and Settings dialog — see
-`docs/roadmap.md`'s M2 section for exactly what it asserts and does not
-assert), `notepad_and_verbatim_menu` (switching foreground between Notepad
+eight scenarios today: `menu_and_settings_dialog` (the scripted walk of
+the M1 exit criteria through Verbatim's menu and Settings dialog, now
+asserting eSpeak NG's voices and its Max variant on the Speech page),
+`synth_host_crash_recovery` (the synthesizer host is killed from outside
+and the next announcement is still heard in full, from the host Verbatim
+starts in its place), `switch_to_onecore` (switching to Windows OneCore
+voices through the Select Synthesizer dialog and back to eSpeak NG,
+which needs OneCore voices installed, as Windows 11 and GitHub's
+runners have), `notepad_and_verbatim_menu` (switching foreground between Notepad
 and Verbatim's own menu keeps both outposts alive and re-announces
 correctly, and Verbatim still answers after Notepad closes),
 `rapid_tabbing_in_settings` (a burst of Tab and Shift+Tab presses in
@@ -333,8 +361,8 @@ Verbatim's captured stderr log (`stderr.log`), the per-process outpost,
 listener, and synthesizer host logs that each spawned process's stderr was
 redirected into (`listener.log`, one `outpost-<image>-<pid>.log` per
 application, Core's own as `outpost-verbatim-<pid>.log`, and
-`synth-onecore.log` when OneCore was started — every file in the launch's own
-log directory, `logs\<Verbatim's pid>` next to Verbatim's executable,
+`synth-espeak.log`, plus `synth-onecore.log` when OneCore was started —
+every file in the launch's own log directory, `logs\<Verbatim's pid>` next to Verbatim's executable,
 listed and read through the agent), and a reducer flight-recorder
 dump (`flight-recorder.jsonl`, fetched via the control plane's `DumpRecorder`
 request and read back through the agent) — the timeline, stderr, and outpost
@@ -388,7 +416,8 @@ session. All of that is gone. A VM run now picks one of two things to do
 with its audio, per invocation, and the two never overlap:
 
 - `cargo xtask vm test`, with no flags, is audible by default: it deploys
-  and runs the real `OneCore` synthesizer and real `WasapiDevice`, always —
+  and runs eSpeak NG, the default synthesizer, through the real
+  `WasapiDevice`, always —
   there is no more capture-synth default and no `--audible` flag to opt
   into real audio, since a silent, unrecorded headless VM run produces
   nothing observable and has no purpose.
@@ -448,15 +477,14 @@ The older path still works too, with no host-side credential storage: open
 `vmconnect.exe localhost verbatim` and turn Enhanced Session on (the
 toolbar or View menu) to get audio redirection.
 
-Every speech assertion in this suite, including `menu_and_settings_dialog`'s
-voice-combo section, expects a fixed pair of voice names chosen by mode: the
-capture synth's two fixed names ("Capture A", "Capture B") for a
-non-audible runner-direct run, or the VM's golden image's always-installed
-`OneCore` voice order ("Microsoft David" default, "Microsoft Zira" listed
-next) for an audible run, confirmed live — see that test's own module doc
-and its `expected_voices` helper. An audible runner-direct run therefore
-expects the same two `OneCore` voices to be installed on the local machine,
-in that order. `menu_and_settings_dialog`'s trailing latency check asserts that
+Every run speaks through eSpeak NG, audible or not, so the speech
+assertions are the same in every mode. `menu_and_settings_dialog`'s
+voice-combo section expects eSpeak NG's default voice, "English (Great
+Britain)", and the voice listed after it, "English (Scotland)", both
+fixed by eSpeak NG's data — see that test's own module doc and its
+`expected_voices` helper. Only `switch_to_onecore` depends on the
+machine: it needs some Microsoft OneCore voice installed, whichever one
+is the default. `menu_and_settings_dialog`'s trailing latency check asserts that
 at least one traced utterance reached audio, audible or not: every speech
 assertion waits for its utterance to be heard in full, so a scenario that
 asserted any speech has timelines that reached audio

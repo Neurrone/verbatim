@@ -10,3 +10,9 @@ sequences at their marks before they reach it, which is how that fallback
 is tested. Pipeline unit
 tests assert on its log; it exposes a voice choice and a rate numeric so
 the settings host is exercised too.
+
+It is used only by those unit tests and by `VERBATIM_TEST_AUDIO=null`,
+under which `verbatim-app` registers it alongside the real synthesizers
+(see [verbatim-app](verbatim-app.md)). The end-to-end suite no longer
+selects it: every run, silent or audible, speaks through eSpeak NG, and a
+silent run differs only in playing through the silent real-time device.

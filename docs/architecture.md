@@ -37,8 +37,9 @@ screen reader in both rendered and source form.
   or VM, or against a local Hyper-V VM. The maintainer develops in a single
   Windows VM on a Proxmox host and runs the suite runner-direct there;
   there is no Proxmox backend for the harness. Hosted runners
-  are the only CI: the end-to-end suite runs there silently with the
-  capture synthesizer on every change, recordings included (section 14),
+  are the only CI: the end-to-end suite runs there silently on every
+  change, eSpeak NG speaking into the silent real-time device,
+  recordings included (section 14),
   and NVDA is never installed or run in CI. Everything else, including
   audible runs against a real audio device, is the interactive loop, not
   CI. There are no self-hosted runners and no nested virtualization on
@@ -645,10 +646,11 @@ speech), language tagging, synth driver, PCM, the mixer (D17), and the
   language tags end-to-end.
 - **Synth drivers** implement one trait — streaming PCM plus index-mark
   events — regardless of origin, and only ever produce PCM (D17):
-  - Built-in: **OneCore** (WinRT `Windows.Media.SpeechSynthesis` via
-    windows-rs) and **eSpeak NG** (statically linked into the synth host;
-    builds cleanly on ARM64), each run in the synthesizer host process
-    (D18).
+  - Built-in: **eSpeak NG**, the default (built from the vendored source
+    in the `third_party/espeak-ng` submodule and statically linked into
+    the synth host; builds cleanly on ARM64), and **OneCore** (WinRT
+    `Windows.Media.SpeechSynthesis` via windows-rs), each run in the
+    synthesizer host process (D18).
   - **Wasm synths**: components implementing the `verbatim:synth` WIT world,
     receiving the typed speech sequence and returning PCM. Path for
     source-available synths. Whether they run in Core's extension host or
@@ -665,8 +667,9 @@ speech), language tagging, synth driver, PCM, the mixer (D17), and the
 - **Latency budget** (enforced by tests, not aspiration): per D15, 10 ms
   or under from event observation to the utterance being queued on every
   backend, and 10 ms or under from queued to the first audio sample with
-  eSpeak. eSpeak NG lands in M4 so the second half is measurable from the
-  first text work onward. Every stage is traced (section 9).
+  eSpeak. eSpeak NG is built in and the default synthesizer from the
+  opening work of M4, so the second half is measurable from the first
+  text work onward. Every stage is traced (section 9).
 
 ## 7. Extensions (Wasm)
 
@@ -792,7 +795,9 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
    apps (Notepad, Explorer, Terminal, Edge, Office), driven via the control
    plane, on a hosted CI runner, a developer's own machine or VM, or a
    local Hyper-V VM (D3);
-   speech asserted via capture synth; a separate WASAPI smoke test in the
+   speech asserted on the control plane's speech stream, spoken by
+   eSpeak NG through the silent real-time device in a silent run or the
+   real device in an audible one; a separate WASAPI smoke test in the
    interactive loop proves audio actually reaches a device.
 
 Expected behaviour comes from NVDA, used as a reference rather than as an
@@ -823,7 +828,7 @@ unattended install, then the VM is imported and snapshotted as a golden
 image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
 (artifacts copied in over SSH and the agent restarted), `test` (deploy,
 then run the E2E suite through the agent, audible by default with real
-OneCore speech and the real WASAPI device, with `--record` to also capture
+eSpeak NG speech and the real WASAPI device, with `--record` to also capture
 the run as an mp4), `logs`, `connect`, `delete`. A restore is only ever
 explicit, through `restore` or an opt-in flag on `test`; nothing is
 installed into the guest by a run, so an ordinary run has nothing to undo.
@@ -868,7 +873,8 @@ otherwise.
 - `verbatim-speech` and `verbatim-audio` — pipeline; the mixer and the
   `AudioDevice` seam.
 - `verbatim-audio-wasapi` — the WASAPI device.
-- `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers,
+- `verbatim-synth-*` — eSpeak NG (the default, built from the vendored
+  `third_party/espeak-ng` source), OneCore, and capture (test) drivers,
   `verbatim-synth-host`, the synthesizer host process (D18), and
   `verbatim-synth-hosted`, the Core-side driver that runs one.
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.

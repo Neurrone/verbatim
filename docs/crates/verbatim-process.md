@@ -41,12 +41,15 @@ Public API:
 Implementation notes, launching. `launch` creates the job, then the two
 anonymous pipes, then asks `arguments` for the command line with the
 child ends' handle values, and spawns the executable with
-`CREATE_SUSPENDED` and `CREATE_NO_WINDOW`. The suspended process is
-assigned to the job before its primary thread is resumed, so it is
-contained before it runs a single instruction. If the assignment fails,
-the process is terminated, since outside the job nothing would ever kill
-it. Core holds the only job handle, so however Core ends, the kernel
-closes the handle and kills every child.
+`CREATE_NO_WINDOW`, naming the job in a `PROC_THREAD_ATTRIBUTE_JOB_LIST`
+attribute, so `CreateProcessW` creates the process already inside the
+job. It is contained from its first instruction, and creation and
+containment are one step: a Core that dies while launching a child
+cannot leave it outside a job, running or suspended. (An earlier version
+spawned the child suspended and then called `AssignProcessToJobObject`;
+a Verbatim killed between the two steps left a suspended orphan.) Core
+holds the only job handle, so however Core ends, the kernel closes the
+handle and kills every child.
 
 The job. It always carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. With a
 `memory_cap` it also carries `JOB_OBJECT_LIMIT_PROCESS_MEMORY` with that
@@ -56,7 +59,8 @@ synthesizer hosts pass none.
 Pipes and inheritance. Each pipe is created with inheritable handles, and
 the parent end is then marked non-inheritable, so only the child ends can
 cross. The spawn goes further: `bInheritHandles` is true, but a
-`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` names exactly the handles this child
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, in the same attribute list as the
+job, names exactly the handles this child
 inherits, its two pipe ends and its log file. Without the list, two
 launches running at once on different threads could each inherit the
 other's pipe ends and keep that pipe open after its own child died, so

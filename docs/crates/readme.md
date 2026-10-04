@@ -35,6 +35,8 @@ commit updated only the changed crate's own guide.
   themes (D12), the settings host, and the synthesizer host protocol
   (D18).
 - [verbatim-synth-onecore](verbatim-synth-onecore.md) — the OneCore driver.
+- [verbatim-synth-espeak](verbatim-synth-espeak.md) — the eSpeak NG
+  driver, built from the vendored source; the default synthesizer.
 - [verbatim-synth-capture](verbatim-synth-capture.md) — the audio-free test
   synthesizer.
 - [verbatim-process](verbatim-process.md) — contained child processes:

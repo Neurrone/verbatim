@@ -1,7 +1,8 @@
 # verbatim-synth-onecore
 
-The OneCore driver over WinRT `Windows.Media.SpeechSynthesis` — the voice
-Verbatim first speaks with. Verbatim runs it inside the synthesizer host
+The OneCore driver over WinRT `Windows.Media.SpeechSynthesis`, the
+built-in alternative to the default, eSpeak NG
+([verbatim-synth-espeak](verbatim-synth-espeak.md)). Verbatim runs it inside the synthesizer host
 process (decision D18): [verbatim-synth-host](verbatim-synth-host.md)
 builds it when started with `--synth onecore`, and
 [verbatim-app](verbatim-app.md) registers OneCore through

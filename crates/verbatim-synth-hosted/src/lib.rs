@@ -97,6 +97,19 @@ impl HostedSynth {
     /// request; a setting it refuses (a voice since uninstalled) is only
     /// logged.
     fn host(&mut self) -> Result<&mut Host, SynthError> {
+        // Between requests a host sends nothing, so anything waiting from it
+        // is its end (the reader queues the pipe's end of stream when the
+        // process dies) or a message out of turn: either way it is replaced
+        // now, before the next request is lost to it.
+        if self
+            .host
+            .as_ref()
+            .is_some_and(|host| !host.replies.is_empty())
+        {
+            self.lose_host(&SynthError::Synthesis(
+                "the synthesizer host ended while idle".to_owned(),
+            ));
+        }
         if self.host.is_none() {
             warn!(target: "verbatim::speech", synth = %self.synth, "starting the synthesizer host again");
             let (mut host, _) = Host::start(&self.exe, &self.synth)?;
@@ -265,24 +278,48 @@ impl SynthDriver for HostedSynth {
         sequence: &SpeechSequence,
         sink: &mut dyn SynthSink,
     ) -> Result<(), SynthError> {
-        let host = self.host()?;
-        match speak_with(host, sequence, sink) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.lose_host(&error);
-                Err(error)
+        // A host can die at any moment, and ending a process is not
+        // immediate, so a request can reach a host that is already dying.
+        // If its pipe ended before any of the utterance was relayed,
+        // nothing was heard, so it is sent once more to a fresh host. An
+        // utterance cut off part-way fails, and so does one whose host hung
+        // or answered out of turn, which a second host would likely repeat.
+        let mut attempt = Attempt::default();
+        for round in 0..2 {
+            let host = self.host()?;
+            match speak_with(host, sequence, sink, &mut attempt) {
+                Ok(outcome) => return outcome,
+                Err(error) => {
+                    self.lose_host(&error);
+                    if attempt.relayed || attempt.misbehaved || round == 1 || sink.is_cancelled() {
+                        return Err(error);
+                    }
+                }
             }
         }
+        unreachable!("the second attempt always returns")
     }
+}
+
+/// What happened while a host was asked to speak.
+#[derive(Default)]
+struct Attempt {
+    /// Some audio or a mark was passed to the sink.
+    relayed: bool,
+    /// The host hung or sent something out of turn, rather than ending.
+    misbehaved: bool,
 }
 
 /// Runs one utterance on `host`, relaying its audio and marks to `sink`.
 /// The outer error means the host is no longer usable; the inner result is
 /// the utterance's own outcome, which the host reported in turn.
+/// `attempt` records whether anything was relayed, and whether the host
+/// misbehaved rather than ended.
 fn speak_with(
     host: &mut Host,
     sequence: &SpeechSequence,
     sink: &mut dyn SynthSink,
+    attempt: &mut Attempt,
 ) -> Result<Result<(), SynthError>, SynthError> {
     host.send(&ToHost::Speak(sequence.clone()))?;
     let mut cancelled = false;
@@ -299,6 +336,7 @@ fn speak_with(
             }
             Err(RecvTimeoutError::Timeout) => {
                 if last_heard.elapsed() >= HANG_TIMEOUT {
+                    attempt.misbehaved = true;
                     return Err(SynthError::Synthesis(format!(
                         "the synthesizer host sent nothing for {HANG_TIMEOUT:?}"
                     )));
@@ -317,6 +355,7 @@ fn speak_with(
         };
         match reply {
             FromHost::Pcm(format, samples) => {
+                attempt.relayed |= !cancelled;
                 if !cancelled && sink.push_pcm(format, &samples).is_break() {
                     cancelled = true;
                     host.send(&ToHost::Cancel(sequence.utterance))?;
@@ -324,12 +363,14 @@ fn speak_with(
             }
             FromHost::Mark(mark) => {
                 if !cancelled {
+                    attempt.relayed = true;
                     sink.index_reached(mark);
                 }
             }
             FromHost::Done => return Ok(Ok(())),
             FromHost::Failed(reason) => return Ok(Err(SynthError::Synthesis(reason))),
             other => {
+                attempt.misbehaved = true;
                 return Err(SynthError::Synthesis(format!(
                     "the synthesizer host sent {other:?} while speaking"
                 )));
