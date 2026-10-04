@@ -228,6 +228,48 @@ screen reader in both rendered and source form.
   locally. Consequently everything Verbatim makes audible, earcons and
   tones included, is rendered as PCM through the `AudioSink` seam and
   mixed there, never through a separate path. Ratified 2026-09-02.
+  Amended 2026-10-04: the tee copies the mixer's output (D17), so every
+  stream Verbatim mixes is recorded together, to a temporary WAV file;
+  the recording step encodes it as the video's AAC audio track and
+  deletes it. The screen grab is ffmpeg's desktop capture, launched
+  through the agent for every scenario on every path (runner-direct,
+  hosted CI, and the Hyper-V harness alike), and VB-CABLE is retired.
+- **D17 — Every utterance has one truthful ending, measured at playback.**
+  The theme flattens an `Utterance` into a speech sequence: text pieces
+  mixed with commands (index mark, pitch, rate, volume, language,
+  character mode, pause), plain serializable data that can cross a
+  process, Wasm, or network boundary unchanged, designed so that a sound
+  item can join it when earcons arrive (sounds will start at their place
+  in the sequence and overlap the speech that follows, belonging to the
+  utterance). Each utterance carries its own id and ends exactly once, as
+  completed, cancelled, or failed, including utterances cleared from a
+  lane before they were synthesized. A synthesizer only produces PCM and
+  never plays it; Verbatim's audio output is a mixer with one audio
+  thread, a buffer per source, and conversion of every source to the
+  device's format, and it tracks which samples belong to which utterance.
+  So the end of an utterance, and each index mark, are reported when the
+  device has played that sample, for every synthesizer without its
+  cooperation. A synthesizer that cannot place marks in its audio has its
+  sequence split at the marks by the speech manager, so mark positions
+  are exact for every backend. Leading and trailing silence is trimmed
+  centrally for every synthesizer, except a pause the sequence asks for.
+  Decided 2026-10-04 (phase 4 of the 2026-09-02 handoff).
+- **D18 — Native synthesizers run in a synthesizer host process.**
+  `verbatim-synth-host.exe` runs one synthesizer per process, OneCore and
+  eSpeak NG included, behind the same `SynthDriver` trait; in Core,
+  `HostedSynth` implements that trait by forwarding requests over a
+  private pipe with a small buffer, so backpressure and cancellation
+  cross the boundary unchanged and audio is still rendered by Core's
+  mixer. A host runs while something uses it (the active synthesizer, a
+  settings dialog listing its voices, later an extension holding it), is
+  ended when nothing does, sits in a kill-on-close job like the outposts,
+  and is started again with its saved settings after a crash, the
+  utterance in flight ending as failed. Pipes, not shared memory, until
+  the latency ledger shows the hop matters. The AppContainer sandbox and
+  the 32-bit host for Eloquence remain M7 work. Verbatim is licensed GPL
+  version 3 or later from the same date, and eSpeak NG (GPL version 3 or
+  later) is statically linked into the host, not into `verbatim.exe`.
+  Decided 2026-10-04.
 
 ## 1. Process and thread model
 
@@ -260,8 +302,9 @@ Verbatim runs as three kinds of process:
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
    callbacks) and a small query thread pool for UIA and IA2 COM calls.
-3. **Sandboxed helper processes** — currently the native synth host
-   (AppContainer plus job object), streaming PCM to Core over shared memory.
+3. **Synthesizer host processes** (D18) — one per synthesizer in use, in
+   a kill-on-close job, streaming PCM to Core over a pipe; the AppContainer
+   sandbox arrives with Eloquence in M7.
 
 A supervisor in Core spawns outposts, tracks their health, and kills and
 respawns any that stop responding. Because Windows has no parent-child
@@ -598,18 +641,22 @@ speech), language tagging, synth driver, PCM, `AudioSink`.
   per-language voice switching. Multilingual from the start: utterances carry
   language tags end-to-end.
 - **Synth drivers** implement one trait — streaming PCM plus index-mark
-  events — regardless of origin:
+  events — regardless of origin, and only ever produce PCM (D17):
   - Built-in: **OneCore** (WinRT `Windows.Media.SpeechSynthesis` via
-    windows-rs) and **eSpeak NG** (statically linked; builds cleanly on ARM64).
+    windows-rs) and **eSpeak NG** (statically linked into the synth host;
+    builds cleanly on ARM64), each run in the synthesizer host process
+    (D18).
   - **Wasm synths**: components implementing the `verbatim:synth` WIT world,
-    PCM via shared buffer. Path for source-available synths.
-  - **Native synth host**: separate sandboxed process (low-integrity /
-    AppContainer, job object) matching the DLL's architecture (x86 under
-    emulation if needed), streaming PCM over a shared-memory ring. Eloquence
-    is the proof of concept. Latency budget applies equally (shared-memory
-    hop is negligible).
-- **Audio**: `AudioSink` trait; WASAPI event-driven shared mode with small
-  buffers as the only initial implementation.
+    receiving the typed speech sequence and returning PCM. Path for
+    source-available synths. Whether they run in Core's extension host or
+    in a synth host is decided in M5.
+  - **Native synth host** (D18): one process per synthesizer, matching the
+    DLL's architecture (x86 under emulation if needed, M7), streaming PCM
+    over a pipe. Eloquence adds the AppContainer sandbox in M7. Latency
+    budget applies equally (the pipe hop is tens of microseconds).
+- **Audio**: `AudioSink` trait; WASAPI event-driven shared mode as the only
+  device implementation, behind a mixer that converts every source to the
+  device's format and tracks playback position per utterance (D17).
 - **Latency budget** (enforced by tests, not aspiration): per D15, 10 ms
   or under from event observation to the utterance being queued on every
   backend, and 10 ms or under from queued to the first audio sample with
@@ -812,7 +859,8 @@ otherwise.
 - `verbatim-control` — control-plane protocol and server.
 - `verbatim-speech` and `verbatim-audio` — pipeline; the `AudioSink` seam.
 - `verbatim-audio-wasapi` — the WASAPI sink.
-- `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers.
+- `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers, and
+  `verbatim-synth-host`, the synthesizer host process (D18).
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.
 - `verbatim-i18n` — Fluent localization (D10): embedded English fallback,
   runtime locale-folder loading.
