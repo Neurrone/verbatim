@@ -449,9 +449,16 @@ fn build_dynamic_controls(parent: Panel, host: &Arc<dyn SpeechSettingsHost>) -> 
             } => {
                 let text = StaticText::builder(&panel).with_label(&label).build();
                 let choice = Choice::builder(&panel).build();
+                // Frozen while filled: wxWidgets otherwise resizes the
+                // dropdown after every entry, which took up to half a second
+                // for eSpeak NG's voices. Thawing does not resize it, so it
+                // is resized once, to its own size, afterwards.
+                choice.freeze();
                 for (_, display) in &options {
                     choice.append(display);
                 }
+                choice.thaw();
+                choice.set_size(choice.get_size());
                 if let Some(index) = selected {
                     choice.set_selection(u32::try_from(index).unwrap_or(0));
                 }
