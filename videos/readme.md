@@ -31,5 +31,14 @@ card.
 
 ## The videos
 
-None yet. Add a line here for each video: its file name, the scenario
-it records, and what it demonstrates.
+A line for each video: its file name, the scenario it records, and what
+it demonstrates.
+
+- `tabbing-through-settings.mp4`, from `menu_and_settings_dialog`:
+  Verbatim opens its own context menu and Settings dialog and tabs
+  through every control of the Speech page (the synthesizer, voice,
+  variant, and the rate, pitch, inflection, and volume sliders, with a
+  voice and a rate changed and changed back), each announced in full in
+  eSpeak NG's voice. It demonstrates eSpeak NG as the default
+  synthesizer, Verbatim reading its own interface, and a recording
+  carrying Verbatim's speech.
