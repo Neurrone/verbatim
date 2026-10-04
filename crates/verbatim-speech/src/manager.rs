@@ -2,35 +2,48 @@
 //!
 //! Two dedicated threads carry every utterance. The *queue thread* owns the
 //! priority lanes and decides ordering and cancellation; the *synth thread*
-//! owns the active driver and the audio sink and is where
-//! [`SynthDriver::speak`] blocks. They never touch application code, so the
-//! founding responsiveness rule holds: nothing here blocks on another app.
+//! owns the active driver and is where [`SynthDriver::speak`] blocks. The
+//! audio mixer's own thread plays what the synth thread writes. None of
+//! them touches application code, so the founding responsiveness rule
+//! holds: nothing here blocks on another app.
 //!
 //! Priority lanes follow architecture section 6. An `Interrupt` utterance
 //! cancels the current utterance and empties both lanes before it speaks; a
 //! `Next` utterance jumps ahead of the queue but behind the current one;
-//! `Queued` appends. Cancellation is cooperative: the queue thread sets a
-//! shared flag that the sink returns `ControlFlow::Break` on, the driver
-//! returns from `speak` promptly, and the synth thread then discards buffered
-//! audio with [`AudioSink::stop`].
+//! `Queued` appends.
+//!
+//! Endings (decision D17). Every utterance [`SpeechManager::speak`] accepts
+//! ends exactly once, reported through [`SpeechEvents::utterance_ended`].
+//! Until the queue thread hands an utterance to the synth thread, the queue
+//! thread owns its ending: one cleared from a lane is cancelled there. From
+//! that hand-over on, the mixer owns it: the queue thread registers the
+//! utterance with the mixer first, and the mixer reports it completed when
+//! its last frame has played, cancelled when the mixer is told to cancel,
+//! or failed when synthesis or audio fails. Cancellation is per utterance:
+//! each job carries its own flag, and the mixer refuses audio for an
+//! utterance it has already ended.
 
 use std::collections::VecDeque;
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use tracing::{trace, warn};
-use verbatim_audio::{AudioSink, PcmFormat};
-use verbatim_model::{TraceId, Utterance};
+use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, Source};
+use verbatim_model::{SpeechPriority, Utterance, UtteranceEnding, UtteranceId};
 
-use crate::driver::{IndexMark, SpeechRequest, SynthDriver, SynthError, SynthSink};
+use crate::driver::{IndexMark, SpeechSequence, SynthDriver, SynthError, SynthSink};
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
 use crate::settings::{SettingId, SettingValue, SynthChoice, SynthId};
 use crate::theme::{PlainTheme, Theme};
+use crate::trim::{Piece, Trimmer};
+
+/// The mint counter for utterance ids, process-wide.
+static NEXT_UTTERANCE: AtomicU64 = AtomicU64::new(1);
 
 /// The current settings snapshot of the active driver, returned when the
 /// manager builds or switches drivers so the settings host can mirror it.
@@ -76,9 +89,9 @@ pub struct SpeechManagerConfig {
     /// Setting values to apply to the initial synth, e.g. from persisted
     /// config.
     pub initial_settings: Vec<(SettingId, SettingValue)>,
-    /// Where synthesized audio goes.
-    pub sink: Box<dyn AudioSink>,
-    /// Optional observer for the queue and audio-start milestones.
+    /// The mixer speech plays through. The manager adds its own source.
+    pub mixer: Arc<Mixer>,
+    /// Optional observer for each utterance's milestones and ending.
     pub events: Option<Arc<dyn SpeechEvents>>,
     /// The presentation theme flattening utterances (decision D12);
     /// `None` selects [`PlainTheme`], plain speech.
@@ -88,7 +101,7 @@ pub struct SpeechManagerConfig {
 /// Commands the queue thread accepts, from the manager, the settings host, and
 /// (as `SynthFinished`) the synth thread itself.
 pub(crate) enum QueueEvent {
-    Speak(Box<Utterance>),
+    Speak(UtteranceId, Box<Utterance>),
     ApplySetting {
         id: SettingId,
         value: SettingValue,
@@ -111,7 +124,7 @@ struct StartupInfo {
 
 /// Commands the synth thread accepts from the queue thread.
 enum SynthCommand {
-    Job(SpeechRequest),
+    Job(Job),
     SetSetting {
         id: SettingId,
         value: SettingValue,
@@ -124,6 +137,12 @@ enum SynthCommand {
     Shutdown,
 }
 
+/// One sequence handed to the synth thread, with its own cancellation flag.
+struct Job {
+    sequence: SpeechSequence,
+    cancel: Arc<AtomicBool>,
+}
+
 /// The running speech pipeline.
 ///
 /// Constructed with [`SpeechManager::new`]; feed it structured utterances with
@@ -132,6 +151,8 @@ enum SynthCommand {
 /// both threads.
 pub struct SpeechManager {
     queue_tx: Sender<QueueEvent>,
+    /// Kept so the mixer outlives the threads writing to it.
+    _mixer: Arc<Mixer>,
     initial_state: DriverState,
     choices: Vec<SynthChoice>,
     queue_handle: Option<JoinHandle<()>>,
@@ -152,34 +173,31 @@ impl SpeechManager {
             registry,
             initial_synth,
             initial_settings,
-            sink,
+            mixer,
             events,
             theme,
         } = config;
         let theme = theme.unwrap_or_else(|| Box::new(PlainTheme));
+        let source = mixer.add_source(playback_listener(events.clone()));
 
-        let cancel = Arc::new(AtomicBool::new(false));
         let (queue_tx, queue_rx) = unbounded::<QueueEvent>();
         let (synth_tx, synth_rx) = unbounded::<SynthCommand>();
         let (startup_tx, startup_rx) = bounded::<Result<StartupInfo, SynthError>>(1);
 
         let synth_handle = {
-            let cancel = Arc::clone(&cancel);
-            let events = events.clone();
+            let source = source.clone();
             let queue_tx = queue_tx.clone();
             std::thread::Builder::new()
                 .name("verbatim-synth".to_owned())
                 .spawn(move || {
                     synth_thread(
-                        registry,
-                        initial_synth,
+                        &registry,
+                        &initial_synth,
                         initial_settings,
-                        sink,
-                        cancel,
-                        events,
-                        synth_rx,
-                        queue_tx,
-                        startup_tx,
+                        &source,
+                        &synth_rx,
+                        &queue_tx,
+                        &startup_tx,
                     );
                 })
                 .map_err(|error| {
@@ -207,21 +225,27 @@ impl SpeechManager {
             choices,
         } = startup;
 
-        let queue_handle = {
-            let cancel = Arc::clone(&cancel);
-            let events = events.clone();
-            std::thread::Builder::new()
-                .name("verbatim-speech-queue".to_owned())
-                .spawn(move || {
-                    queue_thread(queue_rx, synth_tx, cancel, events, theme);
-                })
-                .map_err(|error| {
-                    SynthError::Unavailable(format!("failed to start queue thread: {error}"))
-                })?
-        };
+        let queue_handle = std::thread::Builder::new()
+            .name("verbatim-speech-queue".to_owned())
+            .spawn(move || {
+                QueueThread {
+                    synth_tx,
+                    source,
+                    events,
+                    theme,
+                    next_lane: VecDeque::new(),
+                    queued_lane: VecDeque::new(),
+                    in_flight: None,
+                }
+                .run(&queue_rx);
+            })
+            .map_err(|error| {
+                SynthError::Unavailable(format!("failed to start queue thread: {error}"))
+            })?;
 
         Ok(Self {
             queue_tx,
+            _mixer: mixer,
             initial_state,
             choices,
             queue_handle: Some(queue_handle),
@@ -229,12 +253,17 @@ impl SpeechManager {
         })
     }
 
-    /// Renders and enqueues one utterance according to its priority lane.
+    /// Renders and enqueues one utterance according to its priority lane,
+    /// returning the id its milestones and ending are reported under.
     ///
     /// Non-blocking: the utterance is handed to the queue thread and this
-    /// returns at once. A dropped pipeline silently discards the utterance.
-    pub fn speak(&self, utterance: Utterance) {
-        let _ = self.queue_tx.send(QueueEvent::Speak(Box::new(utterance)));
+    /// returns at once.
+    pub fn speak(&self, utterance: Utterance) -> UtteranceId {
+        let id = UtteranceId(NEXT_UTTERANCE.fetch_add(1, Ordering::Relaxed));
+        let _ = self
+            .queue_tx
+            .send(QueueEvent::Speak(id, Box::new(utterance)));
+        id
     }
 
     /// A settings-GUI handle backed by this manager.
@@ -265,110 +294,169 @@ impl Drop for SpeechManager {
     }
 }
 
-/// The queue thread: owns the priority lanes and dispatches one job at a time
-/// to the synth thread.
-// The parameters are moved in to be owned for the thread's lifetime, even
-// where the body only reads them.
-#[allow(clippy::needless_pass_by_value)]
-fn queue_thread(
-    queue_rx: Receiver<QueueEvent>,
+/// Turns the mixer's playback events for speech into [`SpeechEvents`]
+/// calls, on the audio thread.
+fn playback_listener(events: Option<Arc<dyn SpeechEvents>>) -> verbatim_audio::PlaybackListener {
+    Arc::new(move |event| {
+        let now = Instant::now();
+        match event {
+            PlaybackEvent::Started {
+                utterance,
+                trace_id,
+            } => {
+                trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, "audio_started");
+                if let Some(events) = &events {
+                    events.audio_started(utterance, trace_id, now);
+                }
+            }
+            PlaybackEvent::Mark {
+                utterance,
+                trace_id,
+                mark,
+            } => {
+                trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, mark, "mark_reached");
+                if let Some(events) = &events {
+                    events.mark_reached(utterance, trace_id, IndexMark(mark), now);
+                }
+            }
+            PlaybackEvent::Ended {
+                utterance,
+                trace_id,
+                ending,
+            } => {
+                trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, ?ending, "utterance_ended");
+                if let Some(events) = &events {
+                    events.utterance_ended(utterance, trace_id, &ending, now);
+                }
+            }
+        }
+    })
+}
+
+/// The queue thread: owns the priority lanes and dispatches one job at a
+/// time to the synth thread.
+struct QueueThread {
     synth_tx: Sender<SynthCommand>,
-    cancel: Arc<AtomicBool>,
+    source: Source,
     events: Option<Arc<dyn SpeechEvents>>,
     theme: Box<dyn Theme>,
-) {
-    let mut next_lane: VecDeque<SpeechRequest> = VecDeque::new();
-    let mut queued_lane: VecDeque<SpeechRequest> = VecDeque::new();
-    let mut busy = false;
+    next_lane: VecDeque<SpeechSequence>,
+    queued_lane: VecDeque<SpeechSequence>,
+    /// The cancellation flag of the job the synth thread is working on.
+    in_flight: Option<Arc<AtomicBool>>,
+}
 
-    let pump = |next_lane: &mut VecDeque<SpeechRequest>,
-                queued_lane: &mut VecDeque<SpeechRequest>,
-                busy: &mut bool| {
-        if *busy {
-            return;
-        }
-        let request = next_lane.pop_front().or_else(|| queued_lane.pop_front());
-        if let Some(request) = request {
-            // Reset the cancel flag for this fresh job right before dispatch.
-            cancel.store(false, Ordering::Release);
-            *busy = true;
-            let _ = synth_tx.send(SynthCommand::Job(request));
-        }
-    };
-
-    while let Ok(event) = queue_rx.recv() {
-        match event {
-            QueueEvent::Speak(utterance) => {
-                let priority = utterance.priority;
-                let request = theme.flatten(&utterance);
-                let at = Instant::now();
-                if let Some(observer) = &events {
-                    observer.utterance_queued(request.trace_id, &request.text, at);
+impl QueueThread {
+    fn run(mut self, queue_rx: &Receiver<QueueEvent>) {
+        while let Ok(event) = queue_rx.recv() {
+            match event {
+                QueueEvent::Speak(id, utterance) => self.speak(id, &utterance),
+                QueueEvent::ApplySetting { id, value } => {
+                    let _ = self.synth_tx.send(SynthCommand::SetSetting { id, value });
                 }
-                trace!(
-                    target: "verbatim::speech",
-                    trace_id = %request.trace_id,
-                    priority = ?priority,
-                    "utterance_queued"
-                );
-                match priority {
-                    verbatim_model::SpeechPriority::Interrupt => {
-                        cancel.store(true, Ordering::Release);
-                        next_lane.clear();
-                        queued_lane.clear();
-                        next_lane.push_back(request);
-                    }
-                    verbatim_model::SpeechPriority::Next => next_lane.push_back(request),
-                    verbatim_model::SpeechPriority::Queued => queued_lane.push_back(request),
+                QueueEvent::RestoreSettings(values) => {
+                    let _ = self.synth_tx.send(SynthCommand::RestoreSettings(values));
                 }
-                pump(&mut next_lane, &mut queued_lane, &mut busy);
-            }
-            QueueEvent::ApplySetting { id, value } => {
-                let _ = synth_tx.send(SynthCommand::SetSetting { id, value });
-            }
-            QueueEvent::RestoreSettings(values) => {
-                let _ = synth_tx.send(SynthCommand::RestoreSettings(values));
-            }
-            QueueEvent::SwitchSynth { id, reply } => {
-                // Interrupt any current speech so the switch, and the caller
-                // waiting on its reply, are not blocked behind a long
-                // utterance.
-                cancel.store(true, Ordering::Release);
-                next_lane.clear();
-                queued_lane.clear();
-                let _ = synth_tx.send(SynthCommand::Switch { id, reply });
-            }
-            QueueEvent::SynthFinished => {
-                busy = false;
-                pump(&mut next_lane, &mut queued_lane, &mut busy);
-            }
-            QueueEvent::Shutdown => {
-                let _ = synth_tx.send(SynthCommand::Shutdown);
-                break;
+                QueueEvent::SwitchSynth { id, reply } => {
+                    // Silence current speech so the switch, and the caller
+                    // waiting on its reply, are not blocked behind a long
+                    // utterance.
+                    self.cancel_everything();
+                    let _ = self.synth_tx.send(SynthCommand::Switch { id, reply });
+                }
+                QueueEvent::SynthFinished => {
+                    self.in_flight = None;
+                    self.pump();
+                }
+                QueueEvent::Shutdown => {
+                    self.cancel_everything();
+                    let _ = self.synth_tx.send(SynthCommand::Shutdown);
+                    break;
+                }
             }
         }
     }
+
+    fn speak(&mut self, id: UtteranceId, utterance: &Utterance) {
+        let sequence = self.theme.flatten(utterance, id);
+        if let Some(events) = &self.events {
+            events.utterance_queued(id, sequence.trace_id, &sequence.text(), Instant::now());
+        }
+        trace!(
+            target: "verbatim::speech",
+            utterance = %id,
+            trace_id = %sequence.trace_id,
+            priority = ?utterance.priority,
+            "utterance_queued"
+        );
+        match utterance.priority {
+            SpeechPriority::Interrupt => {
+                self.cancel_everything();
+                self.next_lane.push_back(sequence);
+            }
+            SpeechPriority::Next => self.next_lane.push_back(sequence),
+            SpeechPriority::Queued => self.queued_lane.push_back(sequence),
+        }
+        self.pump();
+    }
+
+    /// Hands the next sequence to the synth thread when it is idle. The
+    /// mixer is told about the utterance first, so from here on the mixer
+    /// owns its ending.
+    fn pump(&mut self) {
+        if self.in_flight.is_some() {
+            return;
+        }
+        let Some(sequence) = self
+            .next_lane
+            .pop_front()
+            .or_else(|| self.queued_lane.pop_front())
+        else {
+            return;
+        };
+        self.source.register(sequence.utterance, sequence.trace_id);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.in_flight = Some(Arc::clone(&cancel));
+        let _ = self
+            .synth_tx
+            .send(SynthCommand::Job(Job { sequence, cancel }));
+    }
+
+    /// Cancels everything: the job being synthesized, every sequence waiting
+    /// in a lane, and every utterance the mixer has not finished playing.
+    fn cancel_everything(&mut self) {
+        if let Some(cancel) = &self.in_flight {
+            cancel.store(true, Ordering::Release);
+        }
+        let now = Instant::now();
+        for sequence in self.next_lane.drain(..).chain(self.queued_lane.drain(..)) {
+            if let Some(events) = &self.events {
+                events.utterance_ended(
+                    sequence.utterance,
+                    sequence.trace_id,
+                    &UtteranceEnding::Cancelled,
+                    now,
+                );
+            }
+        }
+        self.source.cancel_all();
+    }
 }
 
-/// The synth thread: owns the active driver and the audio sink and runs
+/// The synth thread: owns the active driver and runs
 /// [`SynthDriver::speak`].
-// The parameters are moved in to be owned for the thread's lifetime, even
-// where the body only reads them.
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn synth_thread(
-    registry: SynthRegistry,
-    initial_synth: SynthId,
+    registry: &SynthRegistry,
+    initial_synth: &SynthId,
     initial_settings: Vec<(SettingId, SettingValue)>,
-    mut sink: Box<dyn AudioSink>,
-    cancel: Arc<AtomicBool>,
-    events: Option<Arc<dyn SpeechEvents>>,
-    synth_rx: Receiver<SynthCommand>,
-    queue_tx: Sender<QueueEvent>,
-    startup_tx: Sender<Result<StartupInfo, SynthError>>,
+    source: &Source,
+    synth_rx: &Receiver<SynthCommand>,
+    queue_tx: &Sender<QueueEvent>,
+    startup_tx: &Sender<Result<StartupInfo, SynthError>>,
 ) {
     // Build the initial driver and apply persisted settings before reporting
     // startup success.
-    let mut driver = match registry.build(&initial_synth) {
+    let mut driver = match registry.build(initial_synth) {
         Ok(driver) => driver,
         Err(error) => {
             let _ = startup_tx.send(Err(error));
@@ -386,11 +474,10 @@ fn synth_thread(
         choices: registry.choices(),
     }));
 
-    let events = events.as_deref();
     while let Ok(command) = synth_rx.recv() {
         match command {
-            SynthCommand::Job(request) => {
-                run_job(driver.as_mut(), sink.as_mut(), &cancel, events, &request);
+            SynthCommand::Job(job) => {
+                run_job(driver.as_mut(), source, &job);
                 let _ = queue_tx.send(QueueEvent::SynthFinished);
             }
             SynthCommand::SetSetting { id, value } => {
@@ -419,112 +506,98 @@ fn synth_thread(
     }
 }
 
-/// Runs one synthesis job end to end: streams PCM through the sink, honoring
-/// cancellation, and finishes or discards the audio accordingly.
-fn run_job(
-    driver: &mut dyn SynthDriver,
-    sink: &mut dyn AudioSink,
-    cancel: &AtomicBool,
-    events: Option<&dyn SpeechEvents>,
-    request: &SpeechRequest,
-) {
-    let format = driver.pcm_format();
-    let mut pipeline = PipelineSink {
-        audio: sink,
-        cancel,
-        events,
-        trace_id: request.trace_id,
-        format,
-        begun: false,
-        first_written: false,
-        error: None,
+/// Synthesizes one job into the mixer. The job's utterance is already
+/// registered with the mixer, which reports its ending; this only tells the
+/// mixer when the audio is complete or that synthesis failed.
+fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
+    let sequence = &job.sequence;
+    let utterance = sequence.utterance;
+    if job.cancel.load(Ordering::Acquire) {
+        // Cancelled before it started; the mixer has already ended it.
+        return;
+    }
+    let pieces = if driver.places_marks() || !sequence.has_marks() {
+        vec![(sequence.clone(), None)]
+    } else {
+        sequence.split_at_marks()
     };
-    let result = driver.speak(request, &mut pipeline);
-    let begun = pipeline.begun;
-    let sink_error = pipeline.error.take();
-    // End the mutable borrow of `sink` before using it directly.
-    drop(pipeline);
-
-    let cancelled = cancel.load(Ordering::Acquire);
-    let had_sink_error = sink_error.is_some();
-    let had_synth_error = result.is_err();
-    if begun {
-        if cancelled || had_sink_error || had_synth_error {
-            sink.stop();
-        } else if let Err(error) = sink.end() {
-            warn!(target: "verbatim::speech", %error, "draining audio failed");
+    let mut sink = PipelineSink {
+        source,
+        utterance,
+        cancel: &job.cancel,
+        trimmer: Trimmer::default(),
+        stopped: false,
+    };
+    let mut result = Ok(());
+    for (piece, mark) in pieces {
+        if !piece.items.is_empty() {
+            result = driver.speak(&piece, &mut sink);
+            if result.is_err() || sink.stopped || job.cancel.load(Ordering::Acquire) {
+                break;
+            }
+        }
+        if let Some(mark) = mark {
+            sink.index_reached(mark);
         }
     }
-    if let Some(error) = sink_error {
-        warn!(target: "verbatim::speech", %error, "audio sink error, utterance dropped");
-    }
-    if let Err(error) = result {
-        warn!(target: "verbatim::speech", %error, "synthesis failed, utterance dropped");
-    }
-    // The utterance played to completion (audio began, drained cleanly, no
-    // cancellation) — report it, on the synth thread, right after `sink.end()`
-    // above returned from draining. An interrupted or failed utterance is
-    // deliberately silent here, so this pairs with `audio_started`.
-    if begun
-        && !cancelled
-        && !had_sink_error
-        && !had_synth_error
-        && let Some(observer) = events
-    {
-        observer.utterance_finished(request.trace_id, Instant::now());
+    match result {
+        Ok(()) => {
+            let tail = sink.trimmer.finish();
+            let _ = sink.forward(tail);
+            source.finish(utterance);
+        }
+        Err(error) => {
+            warn!(target: "verbatim::speech", %utterance, %error, "synthesis failed");
+            source.fail(utterance, error.to_string());
+        }
     }
 }
 
-/// Bridges a driver's [`SynthSink`] output to the [`AudioSink`], opening the
-/// stream on the first PCM, reporting cancellation, and firing the
-/// audio-started milestone.
+/// Bridges a driver's [`SynthSink`] output, trimmed of silence, to the
+/// mixer.
 struct PipelineSink<'a> {
-    audio: &'a mut dyn AudioSink,
+    source: &'a Source,
+    utterance: UtteranceId,
     cancel: &'a AtomicBool,
-    events: Option<&'a dyn SpeechEvents>,
-    trace_id: TraceId,
-    format: PcmFormat,
-    begun: bool,
-    first_written: bool,
-    error: Option<verbatim_audio::AudioError>,
+    trimmer: Trimmer,
+    /// The mixer refused audio: the utterance has ended.
+    stopped: bool,
 }
 
-impl SynthSink for PipelineSink<'_> {
-    fn push_pcm(&mut self, samples: &[i16]) -> ControlFlow<()> {
-        if self.cancel.load(Ordering::Acquire) {
-            return ControlFlow::Break(());
-        }
-        if !self.begun {
-            if let Err(error) = self.audio.begin(self.format, self.trace_id) {
-                self.error = Some(error);
-                return ControlFlow::Break(());
+impl PipelineSink<'_> {
+    fn forward(&mut self, pieces: Vec<Piece>) -> ControlFlow<()> {
+        for piece in pieces {
+            match piece {
+                Piece::Pcm(format, samples) => {
+                    if self
+                        .source
+                        .write(self.utterance, format, &samples)
+                        .is_break()
+                    {
+                        self.stopped = true;
+                        return ControlFlow::Break(());
+                    }
+                }
+                Piece::Mark(mark) => self.source.mark(self.utterance, mark.0),
             }
-            self.begun = true;
-        }
-        if let Err(error) = self.audio.write(samples) {
-            self.error = Some(error);
-            return ControlFlow::Break(());
-        }
-        if !self.first_written {
-            self.first_written = true;
-            if let Some(observer) = self.events {
-                observer.audio_started(self.trace_id, Instant::now());
-            }
-        }
-        if self.cancel.load(Ordering::Acquire) {
-            return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
     }
+}
+
+impl SynthSink for PipelineSink<'_> {
+    fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
+        if self.stopped || self.cancel.load(Ordering::Acquire) {
+            return ControlFlow::Break(());
+        }
+        let pieces = self.trimmer.push(format, samples);
+        self.forward(pieces)
+    }
 
     fn index_reached(&mut self, mark: IndexMark) {
-        // M1 has no index-callback registry yet; record the crossing on the
-        // trace so say-all and braille-sync consumers can be layered on later.
-        trace!(
-            target: "verbatim::speech",
-            trace_id = %self.trace_id,
-            mark = mark.0,
-            "index_reached"
-        );
+        if !self.stopped {
+            let pieces = self.trimmer.mark(mark);
+            let _ = self.forward(pieces);
+        }
     }
 }

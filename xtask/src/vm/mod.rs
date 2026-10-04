@@ -112,7 +112,7 @@ fn unknown_arg(verb: &str, arg: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Parses `test`'s flags — `--restore`, `--record`, `--paced`, `--list`,
+/// Parses `test`'s flags — `--restore`, `--record`, `--list`,
 /// and the repeatable `--scenario <name>` and `--group <name>` — accepted in
 /// any order and independently. Returns a [`test::TestFlags`], or the first
 /// unrecognized argument (or a `--scenario`/`--group` missing its value) as
@@ -125,7 +125,6 @@ fn parse_test_flags(args: &[String]) -> Result<test::TestFlags, String> {
         match arg.as_str() {
             "--restore" => flags.restore = true,
             "--record" => flags.record = true,
-            "--paced" => flags.paced = true,
             "--list" => flags.list = true,
             "--scenario" => {
                 let value = iter
@@ -202,11 +201,7 @@ fn print_usage() {
     eprintln!("                   session are mutually exclusive (RDP hides the VB-CABLE capture");
     eprintln!("                   device), so --record against a connected guest degrades to");
     eprintln!("                   video-only, tagged -no-audio, with a warning, rather than");
-    eprintln!("                   aborting; --paced waits for each utterance's audio to finish");
-    eprintln!(
-        "                   before the next keystroke so speech is heard in full (implied by"
-    );
-    eprintln!("                   --record; recording, when on, is per scenario, not per whole");
+    eprintln!("                   aborting; recording, when on, is per scenario, not per whole");
     eprintln!("                   run); --scenario <name> and --group <name> (each repeatable)");
     eprintln!(
         "                   select which scenarios run; with neither given, every registered"

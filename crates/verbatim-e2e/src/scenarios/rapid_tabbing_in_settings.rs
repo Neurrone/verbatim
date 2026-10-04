@@ -35,6 +35,10 @@ const TABS: usize = 6;
 /// final check, so nothing the burst caused is mistaken for its answer.
 const SETTLE: Duration = Duration::from_secs(3);
 
+/// The longest the burst's speech may take to go quiet: every utterance it
+/// queued ended and nothing new for [`SETTLE`].
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[allow(
     clippy::unnecessary_wraps,
     reason = "must match ScenarioDef::setup's fn-pointer signature"
@@ -53,18 +57,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .collect();
     scenario.send_keys(&burst).expect("sends the burst");
 
-    // Discard whatever the burst caused until the stream has been quiet for
-    // the settle time. The matcher never appears, so each wait reads until
-    // it times out; a wait that read nothing new means the stream is quiet.
-    loop {
-        let before = scenario.speech().transcript().len();
-        let _ = scenario
-            .speech()
-            .try_expect_in_order(&["\u{0}never spoken"], SETTLE);
-        if scenario.speech().transcript().len() == before {
-            break;
-        }
-    }
+    // Let whatever the burst caused finish: every utterance ended, and
+    // nothing new queued for the settle time.
+    scenario.speech().wait_until_quiet(SETTLE, SETTLE_TIMEOUT);
 
     // The navigator follows focus, so reporting it names the control that
     // really has focus: the category item the burst returned to.

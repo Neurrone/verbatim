@@ -67,7 +67,9 @@ screen reader in both rendered and source form.
   is widget glue only: typed page models are pulled from Rust, and a
   callbacks object owned by Rust drives the dialogs.
 - **D5 — Audio backend is WASAPI behind an `AudioSink` trait.** Rationale:
-  allows alternate backends without touching the speech pipeline.
+  allows alternate backends without touching the speech pipeline. Since
+  D17 the seam is the `AudioDevice` trait behind the mixer: the mixer
+  writes to it, and WASAPI is its device implementation.
 - **D6 — Extensions are Wasm components.** The WIT-defined API is the durable
   contract, capability-gated and deny-by-default. wasmtime is the default
   runtime choice, kept behind the extension-host seam so it stays
@@ -220,13 +222,13 @@ screen reader in both rendered and source form.
   The ledger still records only observed, queued, and first audio; the
   per-stage timeline is not implemented yet.
 - **D16 — Recordings take their audio from Verbatim's own rendering.** A
-  tee at the `AudioSink` seam writes every utterance's PCM with its
+  tee at the audio output writes every utterance's PCM with its
   wall-clock start time while still playing it, and the recording step
   muxes that track with the screen grab. No virtual audio device is
   involved, so recordings work on a hosted CI runner with no sound device,
   on any hypervisor, and while the run is being heard live over RDP or
   locally. Consequently everything Verbatim makes audible, earcons and
-  tones included, is rendered as PCM through the `AudioSink` seam and
+  tones included, is rendered as PCM through that audio output and
   mixed there, never through a separate path. Ratified 2026-09-02.
   Amended 2026-10-04: the tee copies the mixer's output (D17), so every
   stream Verbatim mixes is recorded together, to a temporary WAV file;
@@ -634,7 +636,8 @@ later but route through the same `Input` type.
 Pipeline stages, in order: structured utterance (semantic spans, per D12),
 dictionary and symbol processing (per span), presentation (a theme flattens
 spans to text, voice changes, and earcons; the default theme is plain
-speech), language tagging, synth driver, PCM, `AudioSink`.
+speech), language tagging, synth driver, PCM, the mixer (D17), and the
+`AudioDevice` it writes to.
 
 - **Speech manager**: priority lanes (interrupt/next/queued), index marks with
   callbacks (say-all, braille sync, latency probes), rate/pitch/volume state,
@@ -654,9 +657,11 @@ speech), language tagging, synth driver, PCM, `AudioSink`.
     DLL's architecture (x86 under emulation if needed, M7), streaming PCM
     over a pipe. Eloquence adds the AppContainer sandbox in M7. Latency
     budget applies equally (the pipe hop is tens of microseconds).
-- **Audio**: `AudioSink` trait; WASAPI event-driven shared mode as the only
-  device implementation, behind a mixer that converts every source to the
-  device's format and tracks playback position per utterance (D17).
+- **Audio**: a mixer with one audio thread that converts every source to
+  the device's format, sums them, and tracks playback position per
+  utterance (D17), writing to the `AudioDevice` trait; WASAPI
+  event-driven shared mode is the device implementation, with a silent
+  real-time device for machines without one and for test audio.
 - **Latency budget** (enforced by tests, not aspiration): per D15, 10 ms
   or under from event observation to the utterance being queued on every
   backend, and 10 ms or under from queued to the first audio sample with
@@ -818,7 +823,7 @@ unattended install, then the VM is imported and snapshotted as a golden
 image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
 (artifacts copied in over SSH and the agent restarted), `test` (deploy,
 then run the E2E suite through the agent, audible by default with real
-OneCore speech and the real `WasapiSink`, with `--record` to also capture
+OneCore speech and the real WASAPI device, with `--record` to also capture
 the run as an mp4), `logs`, `connect`, `delete`. A restore is only ever
 explicit, through `restore` or an opt-in flag on `test`; nothing is
 installed into the guest by a run, so an ordinary run has nothing to undo.
@@ -857,8 +862,9 @@ otherwise.
 - `verbatim-outpost` — the outpost actor and per-app outpost binary, plus the
   Core-side supervisor.
 - `verbatim-control` — control-plane protocol and server.
-- `verbatim-speech` and `verbatim-audio` — pipeline; the `AudioSink` seam.
-- `verbatim-audio-wasapi` — the WASAPI sink.
+- `verbatim-speech` and `verbatim-audio` — pipeline; the mixer and the
+  `AudioDevice` seam.
+- `verbatim-audio-wasapi` — the WASAPI device.
 - `verbatim-synth-*` — OneCore, eSpeak NG, capture (test) drivers, and
   `verbatim-synth-host`, the synthesizer host process (D18).
 - `verbatim-ext` and `verbatim-ext-api` — wasmtime host; WIT plus guest SDK.

@@ -45,21 +45,9 @@
 //! values either way, for the same reason the capture synth's Speech page
 //! cannot expose a toggle to assert on: see the previous paragraph.
 //!
-//! On audio under an audible run: a substantial fraction of this walk's
-//! utterances do reach audio through the real `OneCore`/`WasapiSink` path
-//! (measured live: 18 of 80 timelines on one audible VM run, with the other
-//! scenarios similar). The fraction is partial, not total, because the walk
-//! drives input fast — each focus change or keypress interrupts the
-//! previous utterance, and real `OneCore` synthesis takes long enough that
-//! many utterances are cancelled before playback begins. That is expected
-//! real-synth behavior, not a defect; `--paced` (which waits for each
-//! utterance's audio to finish) raises the fraction when a run is meant to
-//! be heard or recorded. An earlier revision of this comment described the
-//! audible path as never reaching audio at all; that no longer reproduces,
-//! so the final `report_latency` below asserts only that records exist (its
-//! audio assertion is skipped in audible mode by `crate::latency::report`,
-//! precisely because interruption before audio is a legitimate real-synth
-//! outcome at this pace).
+//! On audio: every speech assertion waits for its utterance to be heard in
+//! full (decision D17), so the final `report_latency` asserts that the
+//! walk's timelines reached audio, audible or not.
 //!
 //! Every expectation below was confirmed live, running this suite against
 //! the M2 Hyper-V guest (`cargo xtask vm test`). Two of them were wrong when
@@ -307,18 +295,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Close the dialog (Cancel path via the dialog's escape id) and report
     // the latency timelines this whole walk produced.
     scenario.send_keys(&["escape"]).expect("sends escape");
-
-    // Outside audible mode `report_latency` asserts at least one queued
-    // utterance actually reached audio (`crate::latency::report`'s doc
-    // comment); in audible mode that assertion is skipped, since real
-    // `OneCore` synthesis is legitimately interrupted before playback at
-    // this walk's pace. Every step above waits only for an utterance to be
-    // *queued*, not for it to finish playing, so under the capture synth's
-    // near-instant `NullSink` the very next utterance almost always still
-    // reaches audio before being interrupted; this settle pause gives the
-    // last, otherwise uninterrupted utterance room to finish starting on a
-    // slower path.
-    std::thread::sleep(Duration::from_millis(1500));
 
     let records = scenario
         .report_latency(200)

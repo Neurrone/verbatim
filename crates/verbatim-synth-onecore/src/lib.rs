@@ -11,16 +11,19 @@
 //! using NVDA's `OneCore` curve (see `nvda/source/synthDrivers/oneCore.py`):
 //! rate, pitch, and volume are the NVDA-standard 0..=100 sliders.
 //!
-//! Index marks: `OneCore` cannot report positions mid-utterance in M1, so any
-//! marks on a request are echoed once synthesis completes.
+//! Speech sequences become SSML, with each index mark a `<mark>` element.
+//! `OneCore` reports where in its audio each mark fell, so the driver pushes
+//! the audio up to a mark, reports the mark, and carries on: marks are
+//! exact.
 
+use std::fmt::Write as _;
 use std::ops::ControlFlow;
 
 use tracing::debug;
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
-    IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechRequest, SynthDriver, SynthError,
-    SynthFactory, SynthId, SynthRegistry, SynthSink,
+    IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
+    SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
 use windows::Media::SpeechSynthesis::SpeechSynthesizer;
 use windows::Storage::Streams::DataReader;
@@ -57,17 +60,15 @@ const MAX_PITCH: f64 = 2.0;
 /// is observed promptly between chunks.
 const CHUNK_SAMPLES: usize = 1_102;
 
-/// The default PCM format assumed before the first synthesis reveals the
-/// current voice's true format. `OneCore` voices are 22050 Hz, 16-bit, mono.
-const DEFAULT_FORMAT: PcmFormat = PcmFormat {
-    sample_rate: 22_050,
-    channels: 1,
-};
+/// `TimeSpan` ticks per second (100-nanosecond units).
+const TICKS_PER_SECOND: u64 = 10_000_000;
 
 /// One selectable voice.
 struct VoiceEntry {
     id: String,
     display_name: String,
+    /// BCP 47 tag of the voice's language, for the SSML `xml:lang`.
+    language: String,
 }
 
 /// The `OneCore` synthesizer driver.
@@ -79,7 +80,6 @@ pub struct OneCoreSynth {
     rate_boost: bool,
     pitch: i32,
     volume: i32,
-    last_format: PcmFormat,
 }
 
 /// Initializes COM for this thread as MTA, tolerating a prior init in another
@@ -151,7 +151,15 @@ impl OneCoreSynth {
                 .DisplayName()
                 .map_err(|error| unavailable("voice name", &error))?
                 .to_string();
-            voices.push(VoiceEntry { id, display_name });
+            let language = info
+                .Language()
+                .map_err(|error| unavailable("voice language", &error))?
+                .to_string();
+            voices.push(VoiceEntry {
+                id,
+                display_name,
+                language,
+            });
         }
         if voices.is_empty() {
             return Err(SynthError::Unavailable(
@@ -176,7 +184,6 @@ impl OneCoreSynth {
             rate_boost: false,
             pitch: 50,
             volume: 100,
-            last_format: DEFAULT_FORMAT,
         })
     }
 
@@ -240,10 +247,6 @@ impl SynthDriver for OneCoreSynth {
         onecore_display_name()
     }
 
-    fn pcm_format(&self) -> PcmFormat {
-        self.last_format
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         vec![
             SettingDescriptor::Choice {
@@ -305,18 +308,27 @@ impl SynthDriver for OneCoreSynth {
         }
     }
 
+    fn places_marks(&self) -> bool {
+        true
+    }
+
     fn speak(
         &mut self,
-        request: &SpeechRequest,
+        sequence: &SpeechSequence,
         sink: &mut dyn SynthSink,
     ) -> Result<(), SynthError> {
         self.apply_voice()?;
         self.apply_options();
 
-        let text = HSTRING::from(request.text.as_str());
+        let language = self
+            .voices
+            .iter()
+            .find(|voice| voice.id == self.current_voice_id)
+            .map_or("en-US", |voice| voice.language.as_str());
+        let ssml = HSTRING::from(ssml(sequence, language));
         let operation = self
             .synth
-            .SynthesizeTextToStreamAsync(&text)
+            .SynthesizeSsmlToStreamAsync(&ssml)
             .map_err(|error| synthesis("start synthesis", &error))?;
         // Block on this dedicated thread until synthesis completes.
         while operation
@@ -330,22 +342,103 @@ impl SynthDriver for OneCoreSynth {
         let stream = operation
             .GetResults()
             .map_err(|error| synthesis("finish synthesis", &error))?;
-
+        let marks = read_marks(&stream)?;
         let wav = read_stream(&stream)?;
         let (format, samples) = parse_wav(&wav)?;
-        self.last_format = format;
 
-        for chunk in samples.chunks(CHUNK_SAMPLES) {
-            if let ControlFlow::Break(()) = sink.push_pcm(chunk) {
+        let channels = usize::from(format.channels.max(1));
+        let frames = samples.len() / channels;
+        let mut pushed = 0;
+        for (ticks, mark) in marks {
+            let at = usize::try_from(
+                ticks.saturating_mul(u64::from(format.sample_rate)) / TICKS_PER_SECOND,
+            )
+            .unwrap_or(usize::MAX)
+            .clamp(pushed, frames);
+            if push_frames(sink, format, &samples[pushed * channels..at * channels]).is_break() {
                 return Ok(());
             }
+            pushed = at;
+            sink.index_reached(mark);
         }
-        // Echo marks at completion: OneCore cannot track positions mid-text.
-        for mark in &request.marks {
-            sink.index_reached(IndexMark(mark.mark.0));
-        }
+        let _ = push_frames(sink, format, &samples[pushed * channels..]);
         Ok(())
     }
+}
+
+/// Pushes `samples` to the sink in chunks, so cancellation is seen between
+/// them.
+fn push_frames(sink: &mut dyn SynthSink, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
+    for chunk in samples.chunks(CHUNK_SAMPLES * usize::from(format.channels.max(1))) {
+        sink.push_pcm(format, chunk)?;
+    }
+    ControlFlow::Continue(())
+}
+
+/// Builds the SSML for a sequence: its text, escaped, with each index mark
+/// as a `<mark>` named by the mark's number.
+fn ssml(sequence: &SpeechSequence, language: &str) -> String {
+    let mut ssml = format!(
+        "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"{}\">",
+        escape(language)
+    );
+    for item in &sequence.items {
+        match item {
+            SpeechItem::Text(text) => ssml.push_str(&escape(text)),
+            SpeechItem::Mark(mark) => {
+                let _ = write!(ssml, "<mark name=\"{}\"/>", mark.0);
+            }
+            _ => {}
+        }
+    }
+    ssml.push_str("</speak>");
+    ssml
+}
+
+/// Escapes text for SSML. Characters XML 1.0 does not allow at all (most
+/// control characters, and U+FFFE and U+FFFF), which window titles and
+/// clipboard text can contain, become spaces, so they cannot make the whole
+/// utterance fail to parse.
+fn escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '\t' | '\n' | '\r' => escaped.push(character),
+            '\u{0}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}' => escaped.push(' '),
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+/// Reads the index marks `OneCore` placed in the audio, as times in
+/// `TimeSpan` ticks, in time order. Only marks whose name is a number are
+/// ours.
+fn read_marks(
+    stream: &windows::Media::SpeechSynthesis::SpeechSynthesisStream,
+) -> Result<Vec<(u64, IndexMark)>, SynthError> {
+    let markers = stream
+        .Markers()
+        .map_err(|error| synthesis("read marks", &error))?;
+    let mut marks = Vec::new();
+    for marker in markers {
+        let Ok(name) = marker.Text() else { continue };
+        let Ok(mark) = name.to_string().parse::<u64>() else {
+            continue;
+        };
+        let ticks = marker
+            .Time()
+            .map_err(|error| synthesis("read a mark's time", &error))?
+            .Duration;
+        marks.push((u64::try_from(ticks).unwrap_or(0), IndexMark(mark)));
+    }
+    marks.sort_by_key(|(ticks, _)| *ticks);
+    Ok(marks)
 }
 
 /// Validates and stores a 0..=100 percent setting.
@@ -513,6 +606,23 @@ mod tests {
 
         // Disabling boost returns the same percent to 1.0x.
         assert!((percent_to_param(percent, MIN_RATE, max_rate(false)) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ssml_escapes_text_and_names_marks_by_number() {
+        let sequence = SpeechSequence {
+            utterance: verbatim_model::UtteranceId(1),
+            trace_id: verbatim_model::TraceId::mint(),
+            language: None,
+            items: vec![
+                SpeechItem::Text("Tom & Jerry <3\u{7}".to_owned()),
+                SpeechItem::Mark(IndexMark(7)),
+            ],
+        };
+        assert_eq!(
+            ssml(&sequence, "en-US"),
+            "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\">Tom &amp; Jerry &lt;3 <mark name=\"7\"/></speak>"
+        );
     }
 
     #[test]

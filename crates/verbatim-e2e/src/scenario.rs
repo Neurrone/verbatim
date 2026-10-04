@@ -108,8 +108,8 @@ fn is_remote() -> bool {
 /// Environment variable requesting an *audible* run: [`Scenario::launch`]
 /// selects the real `OneCore` synthesizer instead of the capture synth, and
 /// does not set `VERBATIM_TEST_AUDIO=null`, so Verbatim speaks through the
-/// real `WasapiSink` on real hardware instead of the silent, voice-free
-/// path a default runner-direct run uses. `cargo xtask vm test` always sets
+/// real audio device instead of the silent, real-time path a default
+/// runner-direct run uses. `cargo xtask vm test` always sets
 /// it, since every VM run is audible; set it by hand for an audible
 /// runner-direct run.
 ///
@@ -127,21 +127,6 @@ pub const AUDIBLE_ENV: &str = "VERBATIM_E2E_AUDIBLE";
 #[must_use]
 pub fn is_audible() -> bool {
     std::env::var(AUDIBLE_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-}
-
-/// Environment variable that switches a scenario into paced mode: every
-/// speech assertion additionally waits for the matched utterance's audio to
-/// finish before the next input, so a human watching or a recording hears
-/// each utterance in full. Set by `cargo xtask vm test --paced` (and implied
-/// by `--record`, since a recording nobody can follow is pointless). Purely a
-/// presentation aid — it never changes what is asserted, only the timing —
-/// so ordinary fast runs leave it unset.
-pub const PACED_ENV: &str = "VERBATIM_E2E_PACED";
-
-/// Whether this is a paced run; see [`PACED_ENV`].
-#[must_use]
-pub fn is_paced() -> bool {
-    std::env::var(PACED_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
 /// How long [`Scenario::launch`] waits for Verbatim's control plane to come
@@ -229,8 +214,8 @@ impl Scenario {
     /// settings.toml there selecting the capture synthesizer (audio-free
     /// and dependency-free — it needs no installed voices, unlike
     /// `OneCore`), and launches *that* staged copy with
-    /// `VERBATIM_TEST_AUDIO=null` (device-free `NullSink`, still emitting
-    /// complete latency timelines). The developer's own
+    /// `VERBATIM_TEST_AUDIO=null` (the silent real-time device, still
+    /// measuring complete latency timelines). The developer's own
     /// `target/debug/verbatim.exe` and its `settings.toml` are never read or
     /// written by this. In remote mode `cargo xtask vm deploy` already
     /// staged the guest side equivalently, so this launches
@@ -315,8 +300,8 @@ impl Scenario {
         let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
 
         // Audible mode omits VERBATIM_TEST_AUDIO=null entirely, so
-        // verbatim-app's own startup check leaves the real WasapiSink in
-        // place instead of swapping in NullSink; see AUDIBLE_ENV.
+        // verbatim-app plays through the real device rather than the silent
+        // one; see AUDIBLE_ENV.
         let launch_env: &[(String, String)] = if audible {
             &[]
         } else {
@@ -368,8 +353,8 @@ impl Scenario {
             }
         };
         let timeline = Timeline::new();
-        let speech = SpeechCollector::subscribe(speech_tunnel, timeline.clone(), is_paced())
-            .map_err(|error| {
+        let speech =
+            SpeechCollector::subscribe(speech_tunnel, timeline.clone()).map_err(|error| {
                 let _ = process_agent.kill_process(verbatim_pid);
                 io::Error::other(format!("could not subscribe to speech: {error}"))
             })?;

@@ -104,15 +104,10 @@
 //! [`recording::pull_recording`] copies the result to
 //! `artifacts/vm-recordings` on the host.
 //!
-//! `--paced` (`paced` here) makes every speech assertion additionally wait for
-//! the matched utterance's audio to finish before the next input is injected,
-//! so a human watching over `cargo xtask vm connect` — or a recording — hears
-//! each utterance in full instead of having it cut off by the next keystroke.
-//! It sets `VERBATIM_E2E_PACED` for the suite process (`verbatim_e2e`'s
-//! `PACED_ENV`); the collector waits on the control plane's per-utterance
-//! `SpeechFinished` frame. It changes only timing, never what is asserted, so
-//! an ordinary fast run leaves it off. `--record` implies it, since a
-//! recording whose speech is clipped defeats the purpose of recording.
+//! Every speech assertion waits for the matched utterance to be heard in
+//! full before the next input is injected (decision D17), so a human
+//! watching over `cargo xtask vm connect`, or a recording, hears each
+//! utterance whole.
 //!
 //! **Recording audio and a connected RDP session are mutually exclusive.**
 //! The moment an RDP session (`cargo xtask vm connect`, plain `mstsc.exe`,
@@ -188,8 +183,7 @@ fn prepare_guest(
 
 /// The flags `cargo xtask vm test` accepts, all defaulting to off or empty:
 /// `--restore` restores the golden checkpoint first, `--record` captures a
-/// video per scenario, `--paced` waits for each utterance to finish before
-/// the next input, `--list` prints the scenario registry and exits, and
+/// video per scenario, `--list` prints the scenario registry and exits, and
 /// `--scenario`/`--group` (each repeatable) select which scenarios run. See
 /// this module's own doc comment for the details, and `parse_test_flags` in
 /// `super` for the parsing.
@@ -201,7 +195,6 @@ fn prepare_guest(
 pub(crate) struct TestFlags {
     pub restore: bool,
     pub record: bool,
-    pub paced: bool,
     pub list: bool,
     pub scenarios: Vec<String>,
     pub groups: Vec<String>,
@@ -221,7 +214,6 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     let TestFlags {
         restore,
         record,
-        paced,
         list,
         scenarios,
         groups,
@@ -241,11 +233,6 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
         );
     }
 
-    // --record implies pacing: a recording nobody can follow because each
-    // utterance is cut off by the next keystroke defeats the point of
-    // recording (see this module's own doc comment and `verbatim_e2e`'s
-    // `PACED_ENV`).
-    let paced = paced || record;
     let credentials = dotenv::load_guest_credentials(repo_root)?;
 
     println!(
@@ -282,16 +269,12 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
         "xtask vm test: checking the session_info precondition (agent reports an interactive \
          session)"
     );
-    let session_status = run_scenario_subprocess(
-        repo_root,
-        &endpoint,
-        &guest_exe,
-        paced,
-        SESSION_INFO_TEST_NAME,
-    )
-    .map_err(|error| {
-        format!("could not launch cargo test for the session_info precondition: {error}")
-    })?;
+    let session_status =
+        run_scenario_subprocess(repo_root, &endpoint, &guest_exe, SESSION_INFO_TEST_NAME).map_err(
+            |error| {
+                format!("could not launch cargo test for the session_info precondition: {error}")
+            },
+        )?;
     if !session_status.success() {
         return Err(format!(
             "session_info precondition failed ({session_status}); the agent is not reporting an \
@@ -318,7 +301,6 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
             repo_root,
             &endpoint,
             &guest_exe,
-            paced,
             record,
             def.name,
             &mut errors,
@@ -352,7 +334,6 @@ fn run_one_scenario(
     repo_root: &Path,
     endpoint: &str,
     guest_exe: &str,
-    paced: bool,
     record: bool,
     scenario_name: &str,
     errors: &mut Vec<String>,
@@ -380,8 +361,7 @@ fn run_one_scenario(
         None
     };
 
-    let scenario_process =
-        run_scenario_subprocess(repo_root, endpoint, guest_exe, paced, scenario_name);
+    let scenario_process = run_scenario_subprocess(repo_root, endpoint, guest_exe, scenario_name);
     let process_ok = match scenario_process {
         Ok(status) if status.success() => true,
         Ok(status) => {
@@ -523,7 +503,6 @@ fn run_scenario_subprocess(
     repo_root: &Path,
     endpoint: &str,
     guest_exe: &str,
-    paced: bool,
     test_name: &str,
 ) -> io::Result<ExitStatus> {
     let mut command = Command::new(env!("CARGO"));
@@ -542,12 +521,6 @@ fn run_scenario_subprocess(
         .env("VERBATIM_E2E_REMOTE", "1")
         .env("VERBATIM_E2E_AUDIBLE", "1")
         .current_dir(repo_root);
-    if paced {
-        // Each speech assertion waits for the utterance's audio to finish
-        // before the next input, so a recording or a live watcher hears every
-        // utterance in full (verbatim_e2e's PACED_ENV).
-        command.env("VERBATIM_E2E_PACED", "1");
-    }
     command.status()
 }
 

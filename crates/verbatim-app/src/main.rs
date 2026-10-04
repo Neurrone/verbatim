@@ -23,8 +23,8 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use verbatim_audio::{AudioSink, NullSink};
-use verbatim_audio_wasapi::WasapiSink;
+use verbatim_audio::{AudioDevice, Mixer, SilentDevice};
+use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::{ConfigStore, ConfigValue};
 use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
@@ -326,11 +326,11 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
     }
 }
 
-/// Builds the speech pipeline: `OneCore` through WASAPI by default,
-/// observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
-/// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that swaps in
-/// the device-free capture synth and [`NullSink`] instead, so E2E and CI
-/// runs work with no sound card.
+/// Builds the speech pipeline: `OneCore` through the mixer and WASAPI by
+/// default, observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
+/// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that
+/// adds the capture synth and plays through [`SilentDevice`] instead, which
+/// takes real time but makes no sound.
 ///
 /// # Errors
 ///
@@ -344,22 +344,27 @@ fn build_speech_manager(
     verbatim_synth_onecore::register(&mut registry);
     if test_audio {
         tracing::warn!(
-            "VERBATIM_TEST_AUDIO=null: test audio mode is active; using the capture synth and a null audio sink, no sound will play"
+            "VERBATIM_TEST_AUDIO=null: test audio mode is active; the capture synth is available and audio plays silently in real time"
         );
         register_test_audio(&mut registry);
     }
     let initial_synth = initial_synth(config, &registry);
     let initial_settings = initial_settings(config, &initial_synth);
-    let sink: Box<dyn AudioSink> = if test_audio {
-        Box::new(NullSink::new())
+    let device: Box<dyn AudioDevice> = if test_audio {
+        Box::new(SilentDevice::new())
     } else {
-        Box::new(WasapiSink::new())
+        Box::new(
+            WasapiDevice::new()
+                .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?,
+        )
     };
+    let mixer = Mixer::start(device)
+        .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
     Ok(Arc::new(SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth,
         initial_settings,
-        sink,
+        mixer: Arc::new(mixer),
         events: Some(Arc::clone(ledger) as Arc<dyn verbatim_speech::SpeechEvents>),
         theme: None,
     })?))
@@ -820,7 +825,9 @@ impl ReducerThread<'_> {
     /// Executes one reducer effect.
     fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
-            Effect::Speak(utterance) => self.context.manager.speak(utterance),
+            Effect::Speak(utterance) => {
+                self.context.manager.speak(utterance);
+            }
             Effect::StopSpeech => {
                 // The reducer interrupts through utterance priority and
                 // never emits this; log so a future change is visible.

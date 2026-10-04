@@ -46,9 +46,12 @@ in order:
 6. **Speech renders and plays.** `verbatim-speech`'s queue thread
    flattens the utterance through the theme, dispatches at Interrupt
    priority (cancelling anything in flight), and the synth thread
-   drives the driver into the WASAPI sink (`verbatim-audio-wasapi`), which
-   emits `audio_started` with the same trace id — closing the latency
-   timeline that began at step 2's observation timestamp.
+   drives the driver into the audio mixer (`verbatim-audio`), which plays
+   through the WASAPI device (`verbatim-audio-wasapi`). When the device
+   has played the utterance's first frame the mixer reports
+   `audio_started` with the same trace id, closing the latency timeline
+   that began at step 2's observation timestamp; when it has played the
+   last frame, the utterance ends as completed.
 
 Failure paths to know: events from a window the system reports hung are
 dropped unread, and a call that hangs past its deadline abandons the

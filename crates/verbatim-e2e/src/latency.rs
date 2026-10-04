@@ -1,20 +1,16 @@
 //! Latency reporting for the M2 E2E harness.
 //!
 //! A non-audible run launches Verbatim with `VERBATIM_TEST_AUDIO=null`
-//! ([`crate::scenario::Scenario`]), which swaps in [`verbatim_audio::NullSink`]
-//! — a device-free sink that still emits the `audio_started` tracing event
-//! on an utterance's first (discarded) PCM write, so a timeline completes
-//! with no sound card in the loop. An audible run
-//! ([`crate::scenario::AUDIBLE_ENV`]) uses the real sink instead; see
-//! [`report`] for what that changes.
+//! ([`crate::scenario::Scenario`]), which plays through
+//! [`verbatim_audio::SilentDevice`]: real time, no sound, so a timeline's
+//! audio start is still measured at playback with no sound card in the
+//! loop. An audible run ([`crate::scenario::AUDIBLE_ENV`]) plays through the
+//! real device instead.
 //!
 //! What that does *not* mean is that every timeline completes. Focus
 //! announcements are spoken at `Interrupt` priority, so each new focus
 //! change cancels whatever is still speaking; an utterance cancelled before
-//! its first PCM write never reaches audio and never gets an audio-start
-//! time, exactly as `verbatim-inspect` documents ("an interrupted utterance
-//! simply never gets the follow-up"). Walking a dialog quickly, as the M1
-//! regression does, interrupts most of what it queues — so this module
+//! its first frame plays never gets an audio-start time. So this module
 //! requires that speech reached audio *at all*, and reports every timeline,
 //! rather than demanding that none of them were interrupted.
 
@@ -100,16 +96,9 @@ pub fn fetch(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<Latency
 /// # Panics
 ///
 /// Panics if no returned record reached audio at all, which would mean
-/// speech never made it out of the pipeline — but only under the capture
-/// synthesizer's instant [`verbatim_audio::NullSink`], where reaching audio
-/// is immediate. Under a real synthesizer (audible mode) this invariant does
-/// not hold: a real voice takes long enough to start that this suite's pace
-/// — each step waits only for an utterance to be *queued*, then moves focus,
-/// interrupting it at `Interrupt` priority — legitimately interrupts every
-/// utterance before its first sample plays. That is correct screen-reader
-/// behavior, not a pipeline failure, so the assertion is skipped when
-/// [`crate::scenario::is_audible`]; the timelines are still fetched and
-/// printed.
+/// speech never made it out of the pipeline. Every speech assertion waits
+/// for its utterance to be heard in full, so a scenario that asserted any
+/// speech has timelines that reached audio, audible or not.
 pub fn report(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
     let records = fetch(control, last_n)?;
 
@@ -138,14 +127,10 @@ pub fn report(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<Latenc
         "latency: {reached_audio} of {} timelines reached audio; the rest were interrupted by a later announcement",
         records.len()
     );
-    // See this function's doc comment: reaching audio is a capture-synth
-    // invariant, not a real-synth one, so the assertion is capture-mode only.
-    if !crate::scenario::is_audible() {
-        assert!(
-            reached_audio > 0 || records.is_empty(),
-            "no utterance reached audio in {} timelines; speech never left the pipeline",
-            records.len()
-        );
-    }
+    assert!(
+        reached_audio > 0 || records.is_empty(),
+        "no utterance reached audio in {} timelines; speech never left the pipeline",
+        records.len()
+    );
     Ok(records)
 }

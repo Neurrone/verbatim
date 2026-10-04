@@ -104,6 +104,14 @@ Public API:
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
   position without a pipeline change.
+- `UtteranceId` and `UtteranceEnding` (decision D17). An `UtteranceId`
+  names one utterance from the moment the speech pipeline accepts it until
+  its single ending and is never reused within a process, unlike a
+  `TraceId`, which names the event behind speech and can be shared by
+  several utterances. `UtteranceEnding` is `Completed` (the device played
+  all of its audio; one with no audio completes when the audio before it
+  has played), `Cancelled` (cut off or dropped before all of it was
+  heard), or `Failed` with a reason.
 - `GestureId` — normalized gesture identifiers, NVDA's scheme.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases

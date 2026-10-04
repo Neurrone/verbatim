@@ -65,6 +65,7 @@
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
+use std::time::Duration;
 
 use verbatim_control::protocol::LatencyRecord;
 
@@ -74,6 +75,9 @@ use crate::scenarios::{
     menu_and_settings_dialog, notepad_and_verbatim_menu, object_navigation_in_settings,
     rapid_tabbing_in_settings, start_menu_search, system_information_tree,
 };
+
+/// The longest a scenario's speech may take to end after its body.
+const QUIET_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
 /// own doc comment for what each group is meant to hold.
@@ -360,8 +364,15 @@ fn run(def: &ScenarioDef) {
         }
     };
 
-    let body_outcome =
-        panic::catch_unwind(AssertUnwindSafe(|| (def.body)(&mut scenario, &mut state)));
+    // A scenario's speech must be over before its teardown starts, so the
+    // last thing it asserted is heard in full and nothing it caused is still
+    // playing when the scenario's applications close.
+    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        (def.body)(&mut scenario, &mut state);
+        scenario
+            .speech()
+            .wait_until_quiet(Duration::ZERO, QUIET_TIMEOUT);
+    }));
     let teardown_outcome =
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)));
 

@@ -48,11 +48,12 @@ The subcommands:
   one line per event: the trace id, the source, the backend (UIA or MSAA),
   and a summary (a focus change's role and name, a property change's new
   value, and so on).
-- `watch-speech` subscribes to captured speech and prints one line per
-  utterance. A line with no audio-start time was printed at queue time; a
-  follow-up line for the same trace, printed once audio actually starts,
-  carries the true event-to-audio latency. An interrupted utterance simply
-  never gets that follow-up line.
+- `watch-speech` subscribes to speech and prints up to three lines per
+  utterance, each labelled with its utterance id: one when it is queued
+  (with its text, its trace id, and the delta since the triggering
+  event), one when its first frame plays, and one when it ends, saying
+  whether it completed, was cancelled, or failed. An utterance cancelled
+  before it played gets no audio-started line, only its ending.
 - `watch` subscribes to both on one connection and interleaves them in
   arrival order, each line prefixed `event` or `speech`. Because the lines
   interleave in the order Verbatim actually produced them, an event line
@@ -96,22 +97,25 @@ event.
 `VERBATIM_TEST_AUDIO=null`, set in the environment before starting
 `verbatim.exe`, is a test-only escape hatch `verbatim-app`'s `run` checks at
 startup. It does two things together: registers the capture synthesizer
-(`verbatim-synth-capture`, id `capture`) alongside OneCore, and swaps in
-`verbatim_audio::NullSink` for the real `WasapiSink`.
+(`verbatim-synth-capture`, id `capture`) alongside OneCore, and builds the
+audio mixer over `verbatim_audio::SilentDevice` instead of the real
+`WasapiDevice`.
 
 This exists because most of the tooling in this document needs to run with
 no sound card and no installed OneCore voices — a bare CI runner, a fresh VM
 image, or just a dev machine where you don't want Verbatim actually talking
-while you script a test. The capture synth records every `SpeechRequest`
-with a timestamp into an in-memory log instead of producing audio, and
-exposes just a voice choice and a rate numeric (no toggle — see the
+while you script a test. The capture synth records every `SpeechSequence`
+with a timestamp into an in-memory log and produces only a short quiet
+tone, and exposes just a voice choice and a rate numeric (no toggle — see the
 Troubleshooting-adjacent note in the E2E section below for why that matters
-to one specific regression test). `NullSink` accepts any PCM format and
-discards every sample, but still emits the `audio_started` tracing event on
-each utterance's first (discarded) write, at exactly the point `WasapiSink`
-would have emitted it on real hardware — so `LatencyLedger` still records a
-complete event-to-audio timeline with nothing actually playing, and
-`--last N`/`report_latency` assertions still have something to check.
+to one specific regression test). `SilentDevice` plays at real-time speed
+into silence: frames leave its queue at the rate a real device would play
+them, so the mixer reports each utterance's audio start and ending at the
+moments a listener would have heard them. `LatencyLedger` therefore still
+records a complete event-to-audio timeline with nothing audible, `--last
+N`/`report_latency` assertions still have something to check, and every
+utterance still takes its real duration, so a test's speech is paced
+exactly as it would be on real hardware.
 
 Every scenario `crates/verbatim-e2e` launches sets this variable in
 runner-direct mode unless `VERBATIM_E2E_AUDIBLE` is set (see below); that
@@ -269,16 +273,13 @@ Two more environment variables matter for less common cases:
   recording a run" below. Set by hand for a runner-direct audible run;
   `cargo xtask vm test` sets it automatically now, always, since a VM run
   is audible by default.
-- `VERBATIM_E2E_PACED=1` makes every speech assertion wait for the matched
-  utterance's audio to finish (the control plane's per-utterance
-  `SpeechFinished` frame) before the next keystroke, so each utterance is
-  heard in full rather than cut off — for watching or recording a run, not
-  for fast CI. It changes only timing, never what is asserted. `cargo xtask
-  vm test --paced` sets it, and `--record` implies it; set it by hand for a
-  paced runner-direct run. It is only useful alongside
-  `VERBATIM_E2E_AUDIBLE`: under the capture synth the completion frames
-  still arrive, but almost at once, since `NullSink` discards samples
-  instead of playing them.
+
+Every speech assertion waits for the matched utterance to end (its
+`SpeechEnded` frame) before the scenario injects its next input, and fails
+unless the utterance completed, so each utterance is heard in full in
+every run, audible or not. After each scenario's body, the registry also
+waits until speech is quiet before teardown. There is no separate paced
+mode.
 
 The suite is a scenario registry (`crates/verbatim-e2e/src/registry.rs`,
 milestone M3 Track B): every scenario is a named, grouped setup/body/teardown
@@ -362,16 +363,16 @@ messages — the second appends "underlying error: ..." — so a suite that
 hangs and then fails is not automatically the same bug as one that dies
 outright.
 
-Every utterance reaches the speech stream twice — a queue-time frame, then
-an audio-start follow-up whenever the synthesizer actually begins playing
-it. The collector matches assertions against queue-time frames only:
-under a loaded real synthesizer the audio follow-ups arrive seconds late,
-interleaved with fresh queue-time frames, and matching them satisfied
-assertions with stale text (the off-by-one that broke the M1 tab walk on
-a cold guest until this was fixed). The rendered timeline still records
-both, each audio follow-up as its own `audio`-tagged line, so a failure
-readout shows real audio timing without the stale text ever counting as
-an utterance.
+Every utterance reaches the speech stream as up to three frames: a
+queue-time `Speech` frame with its text, a `SpeechStarted` frame when its
+first frame plays, and exactly one `SpeechEnded` frame. The collector
+matches assertions against queue-time frames only, then waits for the
+matched utterance's ending. The rendered timeline records all three, the
+start as an `audio` line and the ending as a `completed`, `cancelled`, or
+`failed` line (with the reason), so a failure readout shows real audio
+timing and how each utterance ended. An assertion that fails because its
+utterance was cancelled usually means some other speech interrupted it;
+the lines just above the `cancelled` line show what.
 
 ### Hearing and recording a run: the three-mode story
 
@@ -381,7 +382,7 @@ session. All of that is gone. A VM run now picks one of two things to do
 with its audio, per invocation, and the two never overlap:
 
 - `cargo xtask vm test`, with no flags, is audible by default: it deploys
-  and runs the real `OneCore` synthesizer and real `WasapiSink`, always —
+  and runs the real `OneCore` synthesizer and real `WasapiDevice`, always —
   there is no more capture-synth default and no `--audible` flag to opt
   into real audio, since a silent, unrecorded headless VM run produces
   nothing observable and has no purpose.
@@ -450,10 +451,10 @@ next) for an audible run, confirmed live — see that test's own module doc
 and its `expected_voices` helper. An audible runner-direct run therefore
 expects the same two `OneCore` voices to be installed on the local machine,
 in that order. `menu_and_settings_dialog`'s trailing latency check asserts that
-at least one traced utterance reached audio only in a non-audible run;
-under a real voice it reports the timelines without asserting, since at
-this suite's pace a real voice is legitimately interrupted before most
-utterances start playing (`crate::latency::report`'s doc comment).
+at least one traced utterance reached audio, audible or not: every speech
+assertion waits for its utterance to be heard in full, so a scenario that
+asserted any speech has timelines that reached audio
+(`crate::latency::report`'s doc comment).
 
 **To record a run:** make sure no RDP session is connected to the guest,
 then `cargo xtask vm test --record` (combinable with `--restore`, in

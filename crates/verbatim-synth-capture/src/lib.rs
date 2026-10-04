@@ -1,12 +1,14 @@
 //! Capture synth (architecture section 13, layer 3).
 //!
-//! A [`SynthDriver`] that records every [`SpeechRequest`] with a timestamp
-//! instead of producing real audio, so pipeline tests and the E2E harness can
+//! A [`SynthDriver`] that records every [`SpeechSequence`] with a timestamp
+//! instead of producing speech, so pipeline tests and the E2E harness can
 //! assert on what would have been spoken and on latency against the budget. It
-//! still exercises the full sink contract: it emits a short burst of silent
-//! PCM (honoring cooperative cancellation) and echoes every index mark, so the
-//! priority lanes, cancellation path, and audio seam are all driven by tests
-//! without a sound card.
+//! still exercises the full sink contract: it emits a short, quiet tone
+//! (honoring cooperative cancellation; audible to the silence trimmer, which
+//! would drop digital silence), so the priority lanes, cancellation path,
+//! and audio seam are all driven by tests without a sound card. It cannot
+//! place index marks, so sequences with marks reach it split at them by the
+//! speech manager, which is how that fallback is tested.
 //!
 //! The recording log is an `Arc<Mutex<Vec<CaptureRecord>>>` shared with the
 //! test: construct the driver with [`CaptureSynth::new`] and read the log back
@@ -19,25 +21,28 @@ use std::time::Instant;
 
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
-    IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechRequest, SynthDriver, SynthError,
-    SynthId,
+    SettingDescriptor, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError, SynthId,
 };
 
-/// Sample rate of the capture synth's silent PCM.
+/// Sample rate of the capture synth's PCM.
 const CAPTURE_SAMPLE_RATE: u32 = 22_050;
 
-/// Number of silent samples emitted per request.
-const SILENT_SAMPLE_COUNT: usize = 100;
+/// Number of samples emitted per sequence: about 4.5 ms.
+const TONE_SAMPLE_COUNT: usize = 100;
+
+/// The tone's amplitude: quiet (about -30 dBFS), but well above the silence
+/// trimmer's threshold.
+const TONE_LEVEL: i16 = 1_000;
 
 /// The stable id of the capture synth.
 const CAPTURE_ID: &str = "capture";
 
-/// One recorded request: the exact [`SpeechRequest`] the pipeline handed the
+/// One recorded request: the exact [`SpeechSequence`] the pipeline handed the
 /// driver, plus the moment `speak` received it.
 #[derive(Clone, Debug)]
 pub struct CaptureRecord {
-    /// The request as rendered by the pipeline.
-    pub request: SpeechRequest,
+    /// The sequence as rendered by the pipeline.
+    pub sequence: SpeechSequence,
     /// When `speak` was entered, for latency assertions.
     pub at: Instant,
 }
@@ -105,13 +110,6 @@ impl SynthDriver for CaptureSynth {
         "Capture synth".to_owned()
     }
 
-    fn pcm_format(&self) -> PcmFormat {
-        PcmFormat {
-            sample_rate: CAPTURE_SAMPLE_RATE,
-            channels: 1,
-        }
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         vec![
             SettingDescriptor::Choice {
@@ -158,32 +156,38 @@ impl SynthDriver for CaptureSynth {
         }
     }
 
+    fn places_marks(&self) -> bool {
+        false
+    }
+
     fn speak(
         &mut self,
-        request: &SpeechRequest,
+        sequence: &SpeechSequence,
         sink: &mut dyn verbatim_speech::SynthSink,
     ) -> Result<(), SynthError> {
         // Record first, so a request is visible to tests even if synthesis is
         // cancelled before any audio flows.
         if let Ok(mut log) = self.log.lock() {
             log.push(CaptureRecord {
-                request: request.clone(),
+                sequence: sequence.clone(),
                 at: Instant::now(),
             });
         }
-
-        let silence = [0i16; SILENT_SAMPLE_COUNT];
-        if let ControlFlow::Break(()) = sink.push_pcm(&silence) {
-            // Cooperative cancel: stop promptly, echo nothing further.
-            return Ok(());
-        }
-
-        // Echo every mark: the capture synth cannot track positions mid-text,
-        // so it reports them all once synthesis completes, matching the
-        // OneCore driver's contract.
-        for mark in &request.marks {
-            sink.index_reached(IndexMark(mark.mark.0));
-        }
+        let format = PcmFormat {
+            sample_rate: CAPTURE_SAMPLE_RATE,
+            channels: 1,
+        };
+        let tone: Vec<i16> = (0..TONE_SAMPLE_COUNT)
+            .map(|index| {
+                if index % 2 == 0 {
+                    TONE_LEVEL
+                } else {
+                    -TONE_LEVEL
+                }
+            })
+            .collect();
+        // Cooperative cancel: a Break needs nothing further.
+        let _: ControlFlow<()> = sink.push_pcm(format, &tone);
         Ok(())
     }
 }

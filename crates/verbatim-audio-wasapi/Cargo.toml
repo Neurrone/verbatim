@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-audio-wasapi"
-description = "The WASAPI event-driven shared-mode AudioSink"
+description = "The WASAPI output device behind the audio mixer"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -10,6 +10,7 @@ tracing.workspace = true
 verbatim-audio.workspace = true
 verbatim-model.workspace = true
 windows.workspace = true
+windows-core.workspace = true
 
 [lints]
 workspace = true

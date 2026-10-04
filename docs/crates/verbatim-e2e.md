@@ -36,7 +36,9 @@ Public API:
   whose `new` fails outright with none installed), with
   `VERBATIM_TEST_AUDIO=null` set; an audible run (`AUDIBLE_ENV`, which
   `cargo xtask vm test` always sets) selects `OneCore` and omits that
-  variable, so Verbatim speaks through the real `WasapiSink`. It then
+  variable, so Verbatim speaks through the real `WasapiDevice`. Either
+  way every utterance takes its real duration, since the default path
+  plays through the silent real-time device. It then
   launches Verbatim through the agent, waits for its
   control plane to answer over the agent's tunnel, opens a *second*,
   dedicated tunnel connection for speech collection, and pauses briefly
@@ -77,6 +79,24 @@ Public API:
   `registry::swept_target_image_names()`, derived from every registered
   scenario's own declared target images instead of a name maintained by
   hand.
+- `SpeechCollector` — the speech assertions, reading the dedicated
+  speech connection and never sending a request on it after subscribing,
+  so no frame is discarded. Every utterance Verbatim queues arrives as a
+  `Speech` frame and later ends with exactly one `SpeechEnded` frame
+  (decision D17). The `expect_*` assertions (`expect_in_order`,
+  `expect_in_order_capturing`, `expect_change_capturing`,
+  `expect_captured`) match queued text, then wait up to 30 seconds for
+  the matched utterance's ending and fail unless it completed, so a
+  passing assertion means the speech was heard in full and the next input
+  cannot cut it off. Utterances queued while an assertion waits are kept
+  for the next assertion. `wait_until_quiet(quiet_for, timeout)` waits
+  until every utterance queued so far has ended and nothing has been
+  queued or ended for `quiet_for`, and panics with the timeline if that
+  does not happen within `timeout`.
+- `timeline` — the scenario's shared log of injected gestures and keys
+  and of speech: each utterance at queue time, its audio start, and its
+  ending, rendered as `completed`, `cancelled`, or `failed` with the
+  reason. Failure messages print it in time order.
 - `registry` — the scenario registry itself. `ScenarioDef` is one named,
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
@@ -100,7 +120,10 @@ Public API:
   on any unrecognized name; `run_named` is the thin entry point
   every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
   `run_named`'s internal `run` launches, runs `setup` then `body` then
-  `teardown` — `body` and `teardown` each in their own
+  `teardown`, waiting after `body` until speech is quiet
+  (`wait_until_quiet` with a 30-second limit) so the last thing asserted is
+  heard in full and nothing is still playing when teardown closes the
+  scenario's applications — `body` and `teardown` each in their own
   `std::panic::catch_unwind`, so a panicking `body` still lets `teardown`
   run with whatever `setup` produced (borrowed, not moved, so the panic
   leaves it intact) rather than skipping cleanup — asserts a clean
@@ -135,9 +158,9 @@ Public API:
   no printing and no assertion, the raw building block `report` (below) and
   `Scenario::latency_snapshot` both use.
 - `latency::report` — `fetch`, then prints one fact per line and asserts at
-  least one timeline reached audio — but only outside audible mode, since a
-  real synthesizer is legitimately interrupted before playback at this
-  suite's pace (a capture-synth invariant, not a real-synth one).
+  least one timeline reached audio, audible or not: every speech assertion
+  waits for its utterance to be heard in full, so a scenario that asserted
+  any speech has timelines that reached audio.
 
 Implementation notes: `REMOTE_ENV` (`VERBATIM_E2E_REMOTE`) marks a run where
 Verbatim lives in a guest rather than sharing this process's filesystem —

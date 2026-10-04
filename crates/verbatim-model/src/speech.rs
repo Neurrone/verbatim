@@ -5,10 +5,39 @@
 //! localized words at its boundary (via `verbatim-i18n`) just before
 //! dictionary and symbol processing.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::TraceId;
 use crate::tree::{Rect, Role, State};
+
+/// Identifies one utterance from the moment the speech pipeline accepts it
+/// until its single ending (decision D17). Unlike a [`TraceId`], which names
+/// the event behind speech and can be shared by several utterances, an
+/// utterance id is never reused within a process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct UtteranceId(pub u64);
+
+impl fmt::Display for UtteranceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "u{}", self.0)
+    }
+}
+
+/// How an utterance ended (decision D17). Every utterance the speech
+/// pipeline accepts ends exactly once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UtteranceEnding {
+    /// The audio device played all of the utterance's audio. An utterance
+    /// that produced no audio completes when the audio before it has played.
+    Completed,
+    /// The utterance was cut off or dropped before all of it was heard: by
+    /// speech that interrupts, a synthesizer switch, or shutdown.
+    Cancelled,
+    /// Synthesis or audio output failed; the text says why.
+    Failed(String),
+}
 
 /// Priority lane for an utterance (architecture section 6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

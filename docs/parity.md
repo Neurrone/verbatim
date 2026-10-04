@@ -653,9 +653,9 @@ verified.
   discards. Decide whether to match before M8 profiles work.
 - Index marks driving callbacks at audible position. NVDA: manager
   indexing + WASAPI feed-end callbacks ([Audio output](nvda/audio.md)).
-  Verbatim: **matched (unverified)** — index-mark echoes exist in
-  the synth contract; say-all (the main consumer) is **not yet
-  (M4)**.
+  Verbatim: **matched (unverified)** — the mixer reports each mark
+  when the device has played it, for every synthesizer (D17); say-all
+  (the main consumer) is **not yet (M4)**.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.

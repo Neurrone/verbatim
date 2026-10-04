@@ -28,8 +28,9 @@ commit updated only the changed crate's own guide.
   key names, and gesture tables.
 - [verbatim-input-windows](verbatim-input-windows.md) — the keyboard hook
   thread.
-- [verbatim-audio](verbatim-audio.md) — the AudioSink seam and NullSink (D5).
-- [verbatim-audio-wasapi](verbatim-audio-wasapi.md) — the WASAPI sink.
+- [verbatim-audio](verbatim-audio.md) — the mixer, the AudioDevice seam,
+  and the silent device (D5, D17).
+- [verbatim-audio-wasapi](verbatim-audio-wasapi.md) — the WASAPI device.
 - [verbatim-speech](verbatim-speech.md) — priority lanes, synth threads,
   themes (D12), and the settings host.
 - [verbatim-synth-onecore](verbatim-synth-onecore.md) — the OneCore driver.

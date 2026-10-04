@@ -86,11 +86,13 @@ knowing for review:
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
   ID, fed from three threads across two processes: the reducer thread
   records event observation (using the outpost's own timestamp), and the
-  pipeline observer callbacks record queue and audio start. It broadcasts a
-  speech frame at queue time (carrying the observed-to-queued delta) and a
-  follow-up frame at audio start, and it answers the `latency` command
-  newest first. Core-originated speech with no event reports its queue time
-  as the timeline start.
+  pipeline observer callbacks record queue and audio start (when several
+  utterances share a trace, the first to be heard counts). It mirrors
+  each utterance's milestones to speech subscribers as a `Speech` frame at
+  queue time, a `SpeechStarted` frame when its first frame plays, and a
+  `SpeechEnded` frame with its ending, and it answers the `latency`
+  command newest first. Core-originated speech with no event reports its
+  queue time as the timeline start.
 - `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` clones the
   shared `Arc<Mutex<ReducerRecorder>>`'s retained entries under a brief
   lock (recovering a poisoned lock rather than propagating it, since the
@@ -112,12 +114,13 @@ knowing for review:
   shared by the reducer thread, the control plane's `DumpRecorder` handler,
   and the panic hook installed as early as possible so it covers every
   thread spawned after it), the speech pipeline (`build_speech_manager`:
-  OneCore through WASAPI by default, configured from the base profile,
-  observed by the ledger — `VERBATIM_TEST_AUDIO=null` at startup is a
-  test-only escape hatch that registers the capture synth from
-  `verbatim-synth-capture` alongside OneCore and swaps in `NullSink` for
-  `WasapiSink`, logging a warning, so E2E and CI runs work with no sound
-  card), the settings host with a persist callback writing through the
+  OneCore through a `Mixer` over `WasapiDevice` by default, configured
+  from the base profile, observed by the ledger — `VERBATIM_TEST_AUDIO=null`
+  at startup is a test-only escape hatch that registers the capture synth
+  from `verbatim-synth-capture` alongside OneCore and builds the mixer
+  over `SilentDevice` instead, logging a warning, so E2E and CI runs work
+  with no sound card while every utterance still takes its real
+  duration), the settings host with a persist callback writing through the
   config store, the supervisor with its focus listener (decision D13;
   targeting the current foreground once at startup by poll, since the
   listener thereafter reports foreground changes as facts — Core no longer

@@ -1,82 +1,90 @@
-//! Pipeline tests (architecture section 13, layer 3): priority lanes and
-//! cancellation driven by a step-controlled synth, token rendering asserted
-//! through the capture synth, and the settings host round-tripped including
-//! its persist callback.
+//! Pipeline tests (architecture section 13, layer 3): priority lanes,
+//! cancellation, and each utterance's single ending (decision D17), driven
+//! by a step-controlled synth through the real mixer on a silent real-time
+//! device; token rendering and the mark fallback asserted through the
+//! capture synth; and the settings host round-tripped including its persist
+//! callback.
 
 use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
-use verbatim_audio::{AudioError, AudioSink, PcmFormat};
-use verbatim_model::{Role, SegmentContent, SpeechPriority, TraceId, Utterance, UtteranceSegment};
+use verbatim_audio::{Mixer, PcmFormat, SilentDevice};
+use verbatim_model::{
+    Role, SegmentContent, SpeechPriority, TraceId, Utterance, UtteranceEnding, UtteranceId,
+    UtteranceSegment,
+};
 use verbatim_speech::{
-    SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechRequest, SpeechSettingsHost,
-    SynthDriver, SynthError, SynthId, SynthRegistry, SynthSink,
+    IndexMark, SettingId, SettingValue, SpeechEvents, SpeechItem, SpeechManager,
+    SpeechManagerConfig, SpeechSequence, SpeechSettingsHost, SynthDriver, SynthError, SynthId,
+    SynthRegistry, SynthSink, Theme,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A fake audio sink that records the sequence of sink calls, so tests can
-/// assert that interrupted utterances are stopped and completed ones drained.
-#[derive(Clone, Default)]
-struct RecordingSink {
-    events: Arc<Mutex<Vec<SinkEvent>>>,
+const FORMAT: PcmFormat = PcmFormat {
+    sample_rate: 22_050,
+    channels: 1,
+};
+
+/// What the pipeline reported: every ending and every mark, in order.
+#[derive(Default)]
+struct Recorder {
+    endings: Mutex<Vec<(UtteranceId, UtteranceEnding)>>,
+    marks: Mutex<Vec<(UtteranceId, IndexMark)>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum SinkEvent {
-    Begin,
-    Write(usize),
-    End,
-    Stop,
-}
+impl SpeechEvents for Recorder {
+    fn utterance_queued(&self, _: UtteranceId, _: TraceId, _: &str, _: Instant) {}
 
-impl RecordingSink {
-    fn events(&self) -> Vec<SinkEvent> {
-        self.events.lock().unwrap().clone()
-    }
-}
+    fn audio_started(&self, _: UtteranceId, _: TraceId, _: Instant) {}
 
-impl AudioSink for RecordingSink {
-    fn begin(&mut self, _format: PcmFormat, _trace_id: TraceId) -> Result<(), AudioError> {
-        self.events.lock().unwrap().push(SinkEvent::Begin);
-        Ok(())
+    fn mark_reached(&self, utterance: UtteranceId, _: TraceId, mark: IndexMark, _: Instant) {
+        self.marks.lock().unwrap().push((utterance, mark));
     }
 
-    fn write(&mut self, samples: &[i16]) -> Result<(), AudioError> {
-        self.events
+    fn utterance_ended(
+        &self,
+        utterance: UtteranceId,
+        _: TraceId,
+        ending: &UtteranceEnding,
+        _: Instant,
+    ) {
+        self.endings
             .lock()
             .unwrap()
-            .push(SinkEvent::Write(samples.len()));
-        Ok(())
-    }
-
-    fn end(&mut self) -> Result<(), AudioError> {
-        self.events.lock().unwrap().push(SinkEvent::End);
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        self.events.lock().unwrap().push(SinkEvent::Stop);
+            .push((utterance, ending.clone()));
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Completion {
-    text: String,
-    cancelled: bool,
+impl Recorder {
+    /// Waits until `count` endings have been reported, then returns them all.
+    fn endings(&self, count: usize) -> Vec<(UtteranceId, UtteranceEnding)> {
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        while self.endings.lock().unwrap().len() < count && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.endings.lock().unwrap().clone()
+    }
+
+    fn ending_of(&self, id: UtteranceId) -> Option<UtteranceEnding> {
+        self.endings
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(utterance, _)| *utterance == id)
+            .map(|(_, ending)| ending.clone())
+    }
 }
 
-/// A synth whose `speak` announces its start and then streams silent PCM until
-/// the test signals it to finish or the pipeline cancels it. Streaming (rather
-/// than a per-chunk handshake) lets cancellation be observed without racing the
-/// interrupt against a manual step.
+/// A synth whose `speak` announces its start and then streams quiet tone
+/// until the test signals it to finish or the pipeline cancels it. Text
+/// "fail" fails at once.
 struct ControlSynth {
     started: Sender<String>,
     finish: Receiver<()>,
-    completions: Arc<Mutex<Vec<Completion>>>,
 }
 
 impl SynthDriver for ControlSynth {
@@ -86,13 +94,6 @@ impl SynthDriver for ControlSynth {
 
     fn display_name(&self) -> String {
         "Control synth".to_owned()
-    }
-
-    fn pcm_format(&self) -> PcmFormat {
-        PcmFormat {
-            sample_rate: 22_050,
-            channels: 1,
-        }
     }
 
     fn supported_settings(&self) -> Vec<verbatim_speech::SettingDescriptor> {
@@ -107,24 +108,28 @@ impl SynthDriver for ControlSynth {
         Err(SynthError::Setting(format!("no setting {id}")))
     }
 
+    fn places_marks(&self) -> bool {
+        true
+    }
+
     fn speak(
         &mut self,
-        request: &SpeechRequest,
+        sequence: &SpeechSequence,
         sink: &mut dyn SynthSink,
     ) -> Result<(), SynthError> {
-        self.started.send(request.text.clone()).unwrap();
-        let chunk = [0i16; 16];
+        let text = sequence.text();
+        self.started.send(text.clone()).unwrap();
+        if text == "fail" {
+            return Err(SynthError::Synthesis("asked to fail".to_owned()));
+        }
+        let chunk = [1_000i16; 16];
         let deadline = Instant::now() + STEP_TIMEOUT;
         loop {
             match self.finish.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => {
-                    self.record(&request.text, false);
-                    return Ok(());
-                }
+                Ok(()) | Err(TryRecvError::Disconnected) => return Ok(()),
                 Err(TryRecvError::Empty) => {}
             }
-            if let ControlFlow::Break(()) = sink.push_pcm(&chunk) {
-                self.record(&request.text, true);
+            if let ControlFlow::Break(()) = sink.push_pcm(FORMAT, &chunk) {
                 return Ok(());
             }
             if Instant::now() > deadline {
@@ -132,15 +137,6 @@ impl SynthDriver for ControlSynth {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-    }
-}
-
-impl ControlSynth {
-    fn record(&self, text: &str, cancelled: bool) {
-        self.completions.lock().unwrap().push(Completion {
-            text: text.to_owned(),
-            cancelled,
-        });
     }
 }
 
@@ -157,19 +153,20 @@ fn utterance(text: &str, priority: SpeechPriority) -> Utterance {
     }
 }
 
+fn mixer() -> Arc<Mixer> {
+    Arc::new(Mixer::start(Box::new(SilentDevice::new())).expect("the silent device opens"))
+}
+
 struct ControlHarness {
     manager: SpeechManager,
-    sink: RecordingSink,
+    recorder: Arc<Recorder>,
     started: Receiver<String>,
     finish: Sender<()>,
-    completions: Arc<Mutex<Vec<Completion>>>,
 }
 
 fn control_manager() -> ControlHarness {
     let (started_tx, started_rx) = unbounded::<String>();
     let (finish_tx, finish_rx) = unbounded::<()>();
-    let completions = Arc::new(Mutex::new(Vec::new()));
-    let completions_for_factory = Arc::clone(&completions);
 
     let mut registry = SynthRegistry::new();
     registry.register(
@@ -179,28 +176,26 @@ fn control_manager() -> ControlHarness {
             Ok(Box::new(ControlSynth {
                 started: started_tx.clone(),
                 finish: finish_rx.clone(),
-                completions: Arc::clone(&completions_for_factory),
             }) as Box<dyn SynthDriver>)
         }),
     );
 
-    let sink = RecordingSink::default();
+    let recorder = Arc::new(Recorder::default());
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("control"),
         initial_settings: Vec::new(),
-        sink: Box::new(sink.clone()),
-        events: None,
+        mixer: mixer(),
+        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: None,
     })
     .expect("pipeline starts");
 
     ControlHarness {
         manager,
-        sink,
+        recorder,
         started: started_rx,
         finish: finish_tx,
-        completions,
     }
 }
 
@@ -208,92 +203,9 @@ fn recv_started(started: &Receiver<String>) -> String {
     started.recv_timeout(STEP_TIMEOUT).expect("synth started")
 }
 
-fn wait_for_completions(
-    completions: &Arc<Mutex<Vec<Completion>>>,
-    count: usize,
-) -> Vec<Completion> {
-    let deadline = Instant::now() + STEP_TIMEOUT;
-    while completions.lock().unwrap().len() < count && Instant::now() < deadline {
-        std::thread::yield_now();
-    }
-    completions.lock().unwrap().clone()
-}
-
-#[test]
-fn next_lane_jumps_ahead_of_queued() {
-    let harness = control_manager();
-
-    harness.manager.speak(queued("first"));
-    assert_eq!(recv_started(&harness.started), "first");
-
-    // With "first" streaming, enqueue a queued then a next utterance.
-    harness.manager.speak(queued("second-queued"));
-    harness
-        .manager
-        .speak(utterance("third-next", SpeechPriority::Next));
-
-    // Finish each; the pipeline must serve the next-lane utterance first.
-    harness.finish.send(()).unwrap();
-    assert_eq!(recv_started(&harness.started), "third-next");
-    harness.finish.send(()).unwrap();
-    assert_eq!(recv_started(&harness.started), "second-queued");
-    harness.finish.send(()).unwrap();
-
-    let texts: Vec<String> = wait_for_completions(&harness.completions, 3)
-        .into_iter()
-        .map(|completion| completion.text)
-        .collect();
-    assert_eq!(texts, ["first", "third-next", "second-queued"]);
-}
-
-#[test]
-fn interrupt_cancels_current_and_queued() {
-    let harness = control_manager();
-
-    harness.manager.speak(queued("current"));
-    assert_eq!(recv_started(&harness.started), "current");
-
-    // Queue a victim, then interrupt: the interrupt cancels "current" and
-    // drops "queued-victim" before speaking.
-    harness.manager.speak(queued("queued-victim"));
-    harness
-        .manager
-        .speak(utterance("urgent", SpeechPriority::Interrupt));
-
-    // The streaming "current" observes the cancel flag on its own; "urgent"
-    // then runs.
-    assert_eq!(recv_started(&harness.started), "urgent");
-    harness.finish.send(()).unwrap();
-
-    let recorded = wait_for_completions(&harness.completions, 2);
-    assert_eq!(
-        recorded,
-        vec![
-            Completion {
-                text: "current".to_owned(),
-                cancelled: true,
-            },
-            Completion {
-                text: "urgent".to_owned(),
-                cancelled: false,
-            },
-        ],
-        "the queued victim never speaks; current is cancelled, urgent completes"
-    );
-
-    // The interrupted stream was discarded with stop(), not drained with end().
-    let events = harness.sink.events();
-    assert!(
-        events.contains(&SinkEvent::Stop),
-        "interrupt discards audio: {events:?}"
-    );
-}
-
-#[test]
-fn renders_tokens_through_capture_synth() {
+fn capture_manager(theme: Option<Box<dyn Theme>>) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
     let log: CaptureLog = CaptureSynth::new().log();
     let log_for_factory = Arc::clone(&log);
-
     let mut registry = SynthRegistry::new();
     registry.register(
         SynthId::new("capture"),
@@ -305,18 +217,111 @@ fn renders_tokens_through_capture_synth() {
             )
         }),
     );
-
+    let recorder = Arc::new(Recorder::default());
     let manager = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("capture"),
         initial_settings: Vec::new(),
-        sink: Box::new(RecordingSink::default()),
-        events: None,
-        theme: None,
+        mixer: mixer(),
+        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        theme,
     })
     .expect("pipeline starts");
+    (manager, log, recorder)
+}
 
-    manager.speak(Utterance {
+#[test]
+fn next_lane_jumps_ahead_of_queued_and_each_completes_once_played() {
+    let harness = control_manager();
+
+    let first = harness.manager.speak(queued("first"));
+    assert_eq!(recv_started(&harness.started), "first");
+
+    // With "first" streaming, enqueue a queued then a next utterance.
+    let second = harness.manager.speak(queued("second-queued"));
+    let third = harness
+        .manager
+        .speak(utterance("third-next", SpeechPriority::Next));
+
+    // Finish each; the pipeline must serve the next-lane utterance first.
+    harness.finish.send(()).unwrap();
+    assert_eq!(recv_started(&harness.started), "third-next");
+    harness.finish.send(()).unwrap();
+    assert_eq!(recv_started(&harness.started), "second-queued");
+    harness.finish.send(()).unwrap();
+
+    assert_eq!(
+        harness.recorder.endings(3),
+        vec![
+            (first, UtteranceEnding::Completed),
+            (third, UtteranceEnding::Completed),
+            (second, UtteranceEnding::Completed),
+        ]
+    );
+}
+
+#[test]
+fn interrupt_cancels_current_and_queued_each_exactly_once() {
+    let harness = control_manager();
+
+    let current = harness.manager.speak(queued("current"));
+    assert_eq!(recv_started(&harness.started), "current");
+
+    // Queue a victim, then interrupt: the interrupt cancels "current" and
+    // drops "queued-victim" before speaking.
+    let victim = harness.manager.speak(queued("queued-victim"));
+    let urgent = harness
+        .manager
+        .speak(utterance("urgent", SpeechPriority::Interrupt));
+
+    assert_eq!(recv_started(&harness.started), "urgent");
+    harness.finish.send(()).unwrap();
+
+    let endings = harness.recorder.endings(3);
+    assert_eq!(endings.len(), 3, "one ending each: {endings:?}");
+    assert_eq!(
+        harness.recorder.ending_of(current),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(victim),
+        Some(UtteranceEnding::Cancelled)
+    );
+    assert_eq!(
+        harness.recorder.ending_of(urgent),
+        Some(UtteranceEnding::Completed)
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(harness.recorder.endings(3).len(), 3, "and never a second");
+}
+
+#[test]
+fn failed_synthesis_ends_the_utterance_as_failed_and_speech_carries_on() {
+    let harness = control_manager();
+
+    let failing = harness.manager.speak(queued("fail"));
+    assert_eq!(recv_started(&harness.started), "fail");
+    let next = harness.manager.speak(queued("next"));
+    assert_eq!(recv_started(&harness.started), "next");
+    harness.finish.send(()).unwrap();
+
+    assert_eq!(
+        harness.recorder.endings(2),
+        vec![
+            (
+                failing,
+                UtteranceEnding::Failed("synthesis failed: asked to fail".to_owned())
+            ),
+            (next, UtteranceEnding::Completed),
+        ]
+    );
+}
+
+#[test]
+fn renders_tokens_through_capture_synth() {
+    let (manager, log, recorder) = capture_manager(None);
+
+    let id = manager.speak(Utterance {
         trace_id: TraceId::mint(),
         priority: SpeechPriority::Queued,
         segments: vec![
@@ -326,13 +331,60 @@ fn renders_tokens_through_capture_synth() {
         source: None,
     });
 
-    let deadline = Instant::now() + STEP_TIMEOUT;
-    while log.lock().unwrap().is_empty() && Instant::now() < deadline {
-        std::thread::yield_now();
+    assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
+    let requests = log.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].sequence.text(), "Settings menu item");
+}
+
+/// A theme that puts a mark after each segment.
+struct MarkingTheme;
+
+impl Theme for MarkingTheme {
+    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
+        let mut items = Vec::new();
+        for (index, segment) in utterance.segments.iter().enumerate() {
+            if let SegmentContent::Text(text) = &segment.content {
+                items.push(SpeechItem::Text(text.clone()));
+            }
+            items.push(SpeechItem::Mark(IndexMark(index as u64 + 1)));
+        }
+        SpeechSequence {
+            utterance: id,
+            trace_id: utterance.trace_id,
+            language: None,
+            items,
+        }
     }
-    let recorded = log.lock().unwrap();
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(recorded[0].request.text, "Settings menu item");
+}
+
+#[test]
+fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact() {
+    let (manager, log, recorder) = capture_manager(Some(Box::new(MarkingTheme)));
+
+    let id = manager.speak(Utterance {
+        trace_id: TraceId::mint(),
+        priority: SpeechPriority::Queued,
+        segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
+        source: None,
+    });
+
+    assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
+    let texts: Vec<String> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|record| record.sequence.text())
+        .collect();
+    assert_eq!(
+        texts,
+        ["one", "two"],
+        "one synthesis per piece, no marks inside"
+    );
+    assert_eq!(
+        *recorder.marks.lock().unwrap(),
+        vec![(id, IndexMark(1)), (id, IndexMark(2))]
+    );
 }
 
 #[test]
@@ -341,22 +393,7 @@ fn settings_host_get_set_commit_revert() {
     let persisted: Persisted = Arc::new(Mutex::new(Vec::new()));
     let persisted_for_cb = Arc::clone(&persisted);
 
-    let mut registry = SynthRegistry::new();
-    registry.register(
-        SynthId::new("capture"),
-        "Capture synth",
-        Box::new(|| Ok(Box::new(CaptureSynth::new()) as Box<dyn SynthDriver>)),
-    );
-
-    let manager = SpeechManager::new(SpeechManagerConfig {
-        registry,
-        initial_synth: SynthId::new("capture"),
-        initial_settings: Vec::new(),
-        sink: Box::new(RecordingSink::default()),
-        events: None,
-        theme: None,
-    })
-    .expect("pipeline starts");
+    let (manager, _log, _recorder) = capture_manager(None);
 
     let host = manager.settings_host(Box::new(move |id, values| {
         persisted_for_cb
