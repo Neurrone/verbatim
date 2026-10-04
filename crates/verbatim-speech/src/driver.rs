@@ -142,6 +142,11 @@ pub trait SynthSink {
     /// Reports that the audio pushed so far reaches index mark `mark`: the
     /// mark sits between the last sample pushed and the next.
     fn index_reached(&mut self, mark: IndexMark);
+
+    /// Whether the utterance has been cancelled, for a driver that works a
+    /// while before it has audio to push: it can stop its synthesis early
+    /// rather than learn of the cancel at its first push.
+    fn is_cancelled(&self) -> bool;
 }
 
 /// A speech synthesizer, whatever its origin: built-in, Wasm component, or

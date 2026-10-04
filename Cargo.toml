@@ -64,6 +64,9 @@ verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
 # `#[implement]` macro emits `::windows_core` paths that only resolve when
 # the implementing crate depends on it directly.
 windows-core = "0.62"
+# The `windows` crate's WinRT async operation types, named directly
+# where a driver waits on one.
+windows-future = "0.3"
 
 # The `windows` crate goes last because its feature list needs a dedicated
 # table, and a TOML table header would swallow any bare keys that followed

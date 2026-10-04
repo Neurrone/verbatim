@@ -19,17 +19,21 @@
 use std::fmt::Write as _;
 use std::ops::ControlFlow;
 
+use std::sync::mpsc;
 use tracing::debug;
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
     IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
     SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
-use windows::Media::SpeechSynthesis::SpeechSynthesizer;
+
+use windows::Media::SpeechSynthesis::{SpeechAppendedSilence, SpeechSynthesizer, VoiceInformation};
 use windows::Storage::Streams::DataReader;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::core::HSTRING;
+use windows::core::Interface;
+use windows_future::IAsyncOperation;
 
 /// The stable id of the `OneCore` driver.
 pub const ONECORE_ID: &str = verbatim_speech::hosting::synth_ids::ONECORE;
@@ -43,9 +47,9 @@ fn onecore_display_name() -> String {
     verbatim_i18n::message(ONECORE_DISPLAY_NAME_KEY)
 }
 
-/// `AsyncStatus::Started`; the operation is still running. Compared as the raw
-/// discriminant so the `windows-future` type need not be named.
-const ASYNC_STARTED: i32 = 0;
+/// How often a synthesis in progress checks whether its utterance was
+/// cancelled.
+const CANCEL_CHECK: std::time::Duration = std::time::Duration::from_millis(10);
 
 // NVDA OneCore mapping constants (oneCore.py). Without rate boost, 50 maps to
 // 1.0x exactly; the rate-boost toggle lifts the maximum to 6.0x, matching
@@ -63,8 +67,9 @@ const CHUNK_SAMPLES: usize = 1_102;
 /// `TimeSpan` ticks per second (100-nanosecond units).
 const TICKS_PER_SECOND: u64 = 10_000_000;
 
-/// One selectable voice.
+/// One selectable voice, read once when the driver starts.
 struct VoiceEntry {
+    info: VoiceInformation,
     id: String,
     display_name: String,
     /// BCP 47 tag of the voice's language, for the SSML `xml:lang`.
@@ -80,6 +85,9 @@ pub struct OneCoreSynth {
     rate_boost: bool,
     pitch: i32,
     volume: i32,
+    /// The voice last given to the synthesizer, so it is set only when the
+    /// selection changes.
+    applied_voice: Option<String>,
 }
 
 /// Initializes COM for this thread as MTA, tolerating a prior init in another
@@ -156,6 +164,7 @@ impl OneCoreSynth {
                 .map_err(|error| unavailable("voice language", &error))?
                 .to_string();
             voices.push(VoiceEntry {
+                info,
                 id,
                 display_name,
                 language,
@@ -184,30 +193,38 @@ impl OneCoreSynth {
             rate_boost: false,
             pitch: 50,
             volume: 100,
+            applied_voice: None,
         })
+        .inspect(Self::minimize_appended_silence)
     }
 
-    /// Applies the current voice selection to the synthesizer.
-    fn apply_voice(&self) -> Result<(), SynthError> {
-        let all = SpeechSynthesizer::AllVoices()
-            .map_err(|error| synthesis("enumerate voices", &error))?;
-        let count = all
-            .Size()
-            .map_err(|error| synthesis("voice count", &error))?;
-        for index in 0..count {
-            let info = all
-                .GetAt(index)
-                .map_err(|error| synthesis("read voice", &error))?;
-            let id = info
-                .Id()
-                .map_err(|error| synthesis("voice id", &error))?
-                .to_string();
-            if id == self.current_voice_id {
-                self.synth
-                    .SetVoice(&info)
-                    .map_err(|error| synthesis("set voice", &error))?;
-                return Ok(());
-            }
+    /// Asks the synthesizer for the least silence after each utterance, as
+    /// NVDA does (`AppendedSilence` minimum); the speech manager trims what
+    /// is left. Best effort: older Windows builds lack the option.
+    fn minimize_appended_silence(&self) {
+        let result = self
+            .synth
+            .Options()
+            .and_then(|options| options.SetAppendedSilence(SpeechAppendedSilence::Min));
+        if let Err(error) = result {
+            debug!(target: "verbatim::synth::onecore", %error, "appended silence cannot be set");
+        }
+    }
+
+    /// Gives the synthesizer the selected voice, when it changed.
+    fn apply_voice(&mut self) -> Result<(), SynthError> {
+        if self.applied_voice.as_ref() == Some(&self.current_voice_id) {
+            return Ok(());
+        }
+        if let Some(voice) = self
+            .voices
+            .iter()
+            .find(|voice| voice.id == self.current_voice_id)
+        {
+            self.synth
+                .SetVoice(&voice.info)
+                .map_err(|error| synthesis("set voice", &error))?;
+            self.applied_voice = Some(voice.id.clone());
         }
         Ok(())
     }
@@ -330,18 +347,34 @@ impl SynthDriver for OneCoreSynth {
             .synth
             .SynthesizeSsmlToStreamAsync(&ssml)
             .map_err(|error| synthesis("start synthesis", &error))?;
-        // Block on this dedicated thread until synthesis completes.
-        while operation
-            .Status()
-            .map_err(|error| synthesis("poll synthesis", &error))?
-            .0
-            == ASYNC_STARTED
-        {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        let stream = operation
-            .GetResults()
-            .map_err(|error| synthesis("finish synthesis", &error))?;
+        // Wait on this dedicated thread for the operation to complete, and
+        // cancel it if the utterance is cancelled first: OneCore produces no
+        // audio until it has synthesized the whole utterance, so there is no
+        // push at which the driver would otherwise hear of the cancel.
+        let (completed_tx, completed) = mpsc::channel();
+        operation
+            .when(move |result| {
+                let _ = completed_tx.send(result);
+            })
+            .map_err(|error| synthesis("wait for synthesis", &error))?;
+        let stream = loop {
+            match completed.recv_timeout(CANCEL_CHECK) {
+                Ok(result) => {
+                    break result.map_err(|error| synthesis("finish synthesis", &error))?;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if sink.is_cancelled() {
+                        let _ = operation.Cancel();
+                        return Ok(());
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(SynthError::Synthesis(
+                        "synthesis ended without a result".to_owned(),
+                    ));
+                }
+            }
+        };
         let marks = read_marks(&stream)?;
         let wav = read_stream(&stream)?;
         let (format, samples) = parse_wav(&wav)?;
@@ -467,18 +500,12 @@ fn read_stream(
         .map_err(|error| synthesis("stream input", &error))?;
     let reader =
         DataReader::CreateDataReader(&input).map_err(|error| synthesis("create reader", &error))?;
-    let load = reader
+    // The stream is already in memory, so loading it completes at once.
+    let load: IAsyncOperation<u32> = reader
         .LoadAsync(size)
+        .and_then(|load| load.cast())
         .map_err(|error| synthesis("load stream", &error))?;
-    while load
-        .Status()
-        .map_err(|error| synthesis("poll load", &error))?
-        .0
-        == ASYNC_STARTED
-    {
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    load.GetResults()
+    load.join()
         .map_err(|error| synthesis("finish load", &error))?;
     let mut bytes = vec![0u8; size as usize];
     reader

@@ -8,7 +8,7 @@
 //! `Unavailable` and exits), then serves requests one at a time until the
 //! command pipe closes. A reader thread watches the command pipe while an
 //! utterance is being spoken, so a `Cancel` reaches the driver at its next
-//! push of audio.
+//! push of audio, or at its next `is_cancelled` check.
 //!
 //! The host renders nothing: it only synthesizes, and Core's mixer plays
 //! the audio, so recording, device recovery, and mixing stay in one place.
@@ -168,6 +168,10 @@ impl<W: Write> SynthSink for PipeSink<'_, W> {
         if !self.broken && write_from_host(self.to_core, &FromHost::Mark(mark)).is_err() {
             self.broken = true;
         }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.broken || self.cancelled.load(Ordering::Acquire) == self.utterance
     }
 }
 

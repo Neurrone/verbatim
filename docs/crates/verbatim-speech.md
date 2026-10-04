@@ -16,7 +16,9 @@ Public API:
 - `SynthSink` — receives the driver's output: `push_pcm(format, samples)`
   takes interleaved 16-bit PCM in whatever format the driver produces and
   returns `ControlFlow::Break` to request cooperative cancellation, and
-  `index_reached(mark)` says the audio pushed so far reaches a mark.
+  `index_reached(mark)` says the audio pushed so far reaches a mark, and
+  `is_cancelled()` lets a driver that works a while before it has audio
+  (OneCore) stop early.
 - `SpeechSequence` — what a synthesizer is asked to speak: the utterance
   id, the trace id, an optional BCP 47 language, and `items`, a list of
   `SpeechItem::Text` and `SpeechItem::Mark`. Plain serializable data, so

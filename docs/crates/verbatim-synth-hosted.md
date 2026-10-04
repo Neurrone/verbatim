@@ -45,8 +45,10 @@ to the speech manager's sink: `Pcm` to `push_pcm`, `Mark` to
 returns `SynthError::Synthesis`. Any other message while speaking is an
 error.
 
-Cancellation by utterance id. When `push_pcm` returns `Break`, the driver
-sends `Cancel(utterance)` naming the utterance being spoken and keeps
+Cancellation by utterance id. When `push_pcm` returns `Break`, or the
+sink reports the utterance cancelled while the driver waits for the host
+(it waits in 10 ms slices, so a cancel reaches a host that has not sent
+audio yet), the driver sends `Cancel(utterance)` naming the utterance being spoken and keeps
 reading until that utterance's `Done`, discarding any PCM and marks that
 were already in flight. Waiting for `Done` keeps the pipe in step, so the
 next `Speak` never reads the cancelled utterance's leftovers. The host

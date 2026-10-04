@@ -600,4 +600,8 @@ impl SynthSink for PipelineSink<'_> {
             let _ = self.forward(pieces);
         }
     }
+
+    fn is_cancelled(&self) -> bool {
+        self.stopped || self.cancel.load(Ordering::Acquire)
+    }
 }

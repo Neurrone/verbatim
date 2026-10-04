@@ -40,6 +40,7 @@ enum Received {
 struct Collect<F: FnMut() -> ControlFlow<()>> {
     received: Vec<Received>,
     on_audio: F,
+    cancelled: bool,
 }
 
 impl<F: FnMut() -> ControlFlow<()>> SynthSink for Collect<F> {
@@ -50,6 +51,10 @@ impl<F: FnMut() -> ControlFlow<()>> SynthSink for Collect<F> {
 
     fn index_reached(&mut self, mark: IndexMark) {
         self.received.push(Received::Mark(mark));
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 }
 
@@ -69,6 +74,7 @@ fn a_hosted_synthesizer_streams_audio_and_marks_in_order() {
     assert!(synth.places_marks(), "OneCore places marks itself");
     let mut sink = Collect {
         received: Vec::new(),
+        cancelled: false,
         on_audio: || ControlFlow::Continue(()),
     };
     synth
@@ -114,6 +120,7 @@ fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_sa
     let mut killed = false;
     let mut sink = Collect {
         received: Vec::new(),
+        cancelled: false,
         on_audio: || {
             if !killed {
                 killed = true;
@@ -138,6 +145,7 @@ fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_sa
 
     let mut sink = Collect {
         received: Vec::new(),
+        cancelled: false,
         on_audio: || ControlFlow::Continue(()),
     };
     synth
@@ -158,6 +166,7 @@ fn a_cancelled_utterance_ends_promptly_and_the_host_carries_on() {
         HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
     let mut sink = Collect {
         received: Vec::new(),
+        cancelled: false,
         on_audio: || ControlFlow::Break(()),
     };
     synth
@@ -179,6 +188,7 @@ fn a_cancelled_utterance_ends_promptly_and_the_host_carries_on() {
 
     let mut sink = Collect {
         received: Vec::new(),
+        cancelled: false,
         on_audio: || ControlFlow::Continue(()),
     };
     synth
@@ -187,4 +197,41 @@ fn a_cancelled_utterance_ends_promptly_and_the_host_carries_on() {
             &mut sink,
         )
         .expect("the same host speaks the next utterance");
+}
+
+#[test]
+fn an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries_on() {
+    let mut synth =
+        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
+    let pid = synth.process_id();
+    let mut sink = Collect {
+        received: Vec::new(),
+        cancelled: true,
+        on_audio: || ControlFlow::Continue(()),
+    };
+    let text = "a long paragraph that would take OneCore a while to synthesize, ".repeat(20);
+    synth
+        .speak(&sequence(1, vec![SpeechItem::Text(text)]), &mut sink)
+        .expect("a cancelled utterance is not a failure");
+    assert_eq!(
+        sink.received,
+        [],
+        "nothing is relayed for a cancelled utterance"
+    );
+    assert_eq!(synth.process_id(), pid, "the host is kept");
+
+    // Nothing of the cancelled utterance is left on the pipe for the next.
+    let mut sink = Collect {
+        received: Vec::new(),
+        cancelled: false,
+        on_audio: || ControlFlow::Continue(()),
+    };
+    synth
+        .speak(
+            &sequence(2, vec![SpeechItem::Text("next".to_owned())]),
+            &mut sink,
+        )
+        .expect("the same host speaks the next utterance");
+    assert_ne!(sink.received, []);
+    assert_eq!(synth.process_id(), pid);
 }

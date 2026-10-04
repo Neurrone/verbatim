@@ -49,7 +49,10 @@ accepts audio. That blocking is the backpressure that paces the driver.
 Cancellation by utterance id. The reader thread stores the id of the
 utterance Core last cancelled in an atomic. Before each write of audio,
 the sink compares it with the utterance being spoken and, on a match,
-returns `Break` without writing, so the driver stops at its next push.
+returns `Break` without writing, so the driver stops at its next push;
+the sink's `is_cancelled` answers from the same atomic, so a driver that
+has no audio yet (OneCore, which synthesizes a whole utterance first)
+abandons its synthesis early.
 Because the check is by id, a cancel that arrives after its utterance has
 already finished, crossing that utterance's `Done` on the pipe, never
 stops the utterance after it. Utterance ids start at 1, so the initial

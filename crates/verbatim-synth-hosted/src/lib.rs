@@ -25,7 +25,7 @@
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, bounded};
 use tracing::warn;
@@ -40,6 +40,11 @@ use verbatim_speech::{
 /// judged hung and ended. A synthesizer produces audio many times faster
 /// than real time, so ten seconds without a message is never normal.
 pub const HANG_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often a driver waiting for its host checks whether the utterance
+/// was cancelled, so a cancel reaches a synthesizer that has not produced
+/// audio yet.
+const CANCEL_CHECK: Duration = Duration::from_millis(10);
 
 /// The buffer asked for on the pipe the host writes PCM to: about 90 ms of
 /// 22 kHz mono, so the host cannot run far ahead of playback.
@@ -281,8 +286,36 @@ fn speak_with(
 ) -> Result<Result<(), SynthError>, SynthError> {
     host.send(&ToHost::Speak(sequence.clone()))?;
     let mut cancelled = false;
+    let mut last_heard = Instant::now();
     loop {
-        match host.receive()? {
+        // Wait in short slices, so a cancel that arrives before the host
+        // has sent any audio still reaches it promptly.
+        let reply = match host.replies.recv_timeout(CANCEL_CHECK) {
+            Ok(reply) => {
+                last_heard = Instant::now();
+                reply.map_err(|error| {
+                    SynthError::Synthesis(format!("the synthesizer host ended: {error}"))
+                })?
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if last_heard.elapsed() >= HANG_TIMEOUT {
+                    return Err(SynthError::Synthesis(format!(
+                        "the synthesizer host sent nothing for {HANG_TIMEOUT:?}"
+                    )));
+                }
+                if !cancelled && sink.is_cancelled() {
+                    cancelled = true;
+                    host.send(&ToHost::Cancel(sequence.utterance))?;
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(SynthError::Synthesis(
+                    "the synthesizer host ended".to_owned(),
+                ));
+            }
+        };
+        match reply {
             FromHost::Pcm(format, samples) => {
                 if !cancelled && sink.push_pcm(format, &samples).is_break() {
                     cancelled = true;
