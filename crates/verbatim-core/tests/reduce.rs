@@ -72,6 +72,15 @@ fn window(handle: u64) -> WindowFacts {
     }
 }
 
+/// The facts of window `handle` as its outpost reads them while it is in the
+/// system's foreground window.
+fn foreground_window(handle: u64) -> WindowFacts {
+    WindowFacts {
+        in_foreground: true,
+        ..window(handle)
+    }
+}
+
 /// An event from `source` concerning the window described by `facts`.
 fn event_in(source: Pid, facts: Option<WindowFacts>, event: NormalizedEvent) -> Input {
     Input::Event {
@@ -1664,7 +1673,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     // after the menu's last focus, arrives first; the menu's arrives later
     // and is stale.
     let source = Pid(2);
-    let facts = window(30);
+    let facts = foreground_window(30);
     let foreground = |ms| Input::Event {
         observed_at_ms: ms,
         trace_id: TraceId::mint(),
@@ -1725,7 +1734,7 @@ fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
     // foreground, after SystemSettings' content focus inside the same window
     // was observed, and that focus arrives later. It is in the window the
     // newest focus is in, so it is not stale.
-    let facts = window(40);
+    let facts = foreground_window(40);
     let frame = Input::Event {
         observed_at_ms: 1_130,
         trace_id: TraceId::mint(),
@@ -2252,7 +2261,7 @@ fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
     let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
-        &focus_in(source, window(10), edit, vec![same_window]),
+        &focus_in(source, foreground_window(10), edit, vec![same_window]),
     );
 
     let utterances = speak_effects(&effects);
@@ -2290,7 +2299,7 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
         &state,
         &focus_in(
             settings,
-            window(10),
+            foreground_window(10),
             toggle,
             vec![frame_seen_from_page, group],
         ),
@@ -2314,7 +2323,7 @@ fn a_name_change_on_a_focus_ancestor_is_silent() {
     let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_in(source, window(10), edit, vec![window_node]),
+        &focus_in(source, foreground_window(10), edit, vec![window_node]),
     );
 
     let (_, effects) = reduce(
@@ -2373,15 +2382,59 @@ fn a_focus_from_a_window_outside_attention_is_dropped() {
 }
 
 #[test]
+fn a_focus_read_after_its_window_lost_the_foreground_is_dropped() {
+    // The desktop holds attention; Notepad has become the foreground, but
+    // its report has not reached Core yet when a desktop focus, read after
+    // the change, arrives. NVDA judges a focus against the real foreground
+    // window, so it is dropped although the attention record still names
+    // the desktop's window (D14, amended 2026-10-05).
+    let source = Pid(1);
+    let desktop = node(
+        1,
+        Role::Pane,
+        Some("Program Manager"),
+        None,
+        StateSet::new(),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &foreground_in(source, foreground_window(10), desktop),
+    );
+    let item = node(
+        2,
+        Role::ListItem,
+        Some("Recycle Bin"),
+        None,
+        StateSet::new(),
+    );
+
+    let (state, effects) = reduce(&state, &focus_in(source, window(10), item.clone(), vec![]));
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+    assert_eq!(state.attention(), Some(source));
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(source, foreground_window(10), item, vec![]),
+    );
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "read while its window was the foreground"
+    );
+}
+
+#[test]
 fn topmost_shared_owner_and_active_uwp_windows_are_attended() {
     let attended = [
         WindowFacts {
             topmost: true,
             ..window(20)
         },
+        // A window sharing the foreground window's root owner: its outpost
+        // reads it as in the foreground.
         WindowFacts {
             root_owner: WindowHandle(1000),
-            ..window(30)
+            ..foreground_window(30)
         },
         WindowFacts {
             under_active_window: Some(true),
@@ -2452,7 +2505,10 @@ fn notifications_are_spoken_only_from_the_focus_application() {
     // focus is in another application's content inside that window.
     let state = switch_to(&SrState::new(), Pid(1));
     let toggle = node(2001, Role::Button, Some("Wi-Fi"), None, StateSet::new());
-    let (state, _) = reduce(&state, &focus_in(Pid(2), window(1000), toggle, vec![]));
+    let (state, _) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(1000), toggle, vec![]),
+    );
 
     let (_, effects) = reduce(&state, &notification_in(Pid(2), None));
     assert_eq!(speak_effects(&effects).len(), 1, "the focus's application");
@@ -2747,7 +2803,10 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
     assert_eq!(speak_effects(&effects).len(), 1, "the focus is spoken");
     assert_eq!(state.attention(), Some(Pid(2)), "attention follows it");
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
-    let (_, effects) = reduce(&state, &focus_in(Pid(2), window(30), button, vec![]));
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(30), button, vec![]),
+    );
     assert_eq!(
         speak_effects(&effects).len(),
         1,
@@ -2774,7 +2833,10 @@ fn focus_returning_from_a_topmost_popup_is_still_attended() {
     );
 
     let edit = node(3, Role::EditableText, Some("Text"), None, StateSet::new());
-    let (_, effects) = reduce(&state, &focus_in(source, window(1000), edit, vec![]));
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(source, foreground_window(1000), edit, vec![]),
+    );
     assert_eq!(
         speak_effects(&effects).len(),
         1,
@@ -2802,7 +2864,10 @@ fn a_nameless_foreground_window_moves_attention_silently() {
     // entered as named context.
     let named = node(6, Role::Window, Some("Calculator"), None, StateSet::new());
     let button = node(7, Role::Button, Some("Seven"), None, StateSet::new());
-    let (_, effects) = reduce(&state, &focus_in(Pid(2), window(20), button, vec![named]));
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(20), button, vec![named]),
+    );
     assert_eq!(
         speak_effects(&effects)[0].segments[..2],
         [
@@ -3580,7 +3645,10 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
         None,
         StateSet::new(),
     );
-    let (_, effects) = reduce(&state, &focus_in(Pid(4), window(40), editor, vec![]));
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(4), foreground_window(40), editor, vec![]),
+    );
     assert!(
         !effects.contains(&Effect::StopSpeech),
         "the same window: nothing is cancelled"

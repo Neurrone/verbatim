@@ -94,9 +94,10 @@ enum Acceptance {
     Dropped,
 }
 
-/// Classifies one event against the attention record. A foreground change is
-/// always attended: its intake has already confirmed the window is the
-/// system's foreground window. With no attention yet, everything is
+/// Classifies one event against the attention record, or, for a focus with
+/// window facts, against the system's foreground window as its outpost read
+/// it. A foreground change is always attended: its intake has already
+/// confirmed the window is the system's foreground window. With no attention yet, everything is
 /// attended, since there is nothing to compare against. `focus_source` is
 /// the application the focus belongs to, which UIA notifications are judged
 /// by.
@@ -118,6 +119,23 @@ fn classify(
             foreground: true, ..
         }
         | NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
+        // Any other focus is judged by NVDA's own test against the system's
+        // foreground window, made by its outpost when it read the event,
+        // not against the attention record: a focus can reach Core before
+        // the foreground change that moved the foreground away from its
+        // window (D14, amended 2026-10-05). With no window facts, the
+        // application decides.
+        NormalizedEvent::FocusChanged { .. } => {
+            let attended = match window {
+                Some(event) => event_window_is_foreground(event),
+                None => window_is_attended(attention, source, None),
+            };
+            if attended {
+                Acceptance::Attended
+            } else {
+                Acceptance::Dropped
+            }
+        }
         // A toast is spoken from anywhere.
         NormalizedEvent::Alert { .. } => {
             if window_is_attended(attention, source, window) {
@@ -181,12 +199,22 @@ fn is_stale_focus(
         })
 }
 
+/// Whether an event's window was in the system's foreground when its outpost
+/// read it, by NVDA's test for accepting an event: inside the foreground
+/// window or sharing its root owner, a topmost window, or a
+/// `Windows.UI.Core` window under the input thread's active window.
+fn event_window_is_foreground(event: WindowFacts) -> bool {
+    event.in_foreground || event.topmost || event.under_active_window == Some(true)
+}
+
 /// Whether an event's window is one the attention record covers: the same
 /// top-level window, the same root owner, a topmost window, or a
 /// `Windows.UI.Core` window under the input thread's active window — NVDA's
 /// foreground test, made against the attention record — or a window its
-/// outpost found in the system's foreground window when it read the event. When either side has no window facts there is nothing to
-/// compare, so the application decides.
+/// outpost found in the system's foreground window when it read the event.
+/// When either side has no window facts there is nothing to compare, so the
+/// application decides. Focus events with window facts are judged by
+/// [`event_window_is_foreground`] instead.
 fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowFacts>) -> bool {
     match (attention.window, window) {
         (Some(attended), Some(event)) => {

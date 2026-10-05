@@ -28,8 +28,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   [verbatim-synth-capture](crates/verbatim-synth-capture.md).
 - **Attention** — the reducer's record of the application and
   top-level window of the most recent foreground change, standing in
-  for the system's foreground window; events are accepted or dropped
-  against it (D14). [verbatim-core](crates/verbatim-core.md).
+  for the system's foreground window; events other than focus changes
+  are accepted or dropped against it, while a focus is judged against
+  the real foreground window as its outpost read it (D14).
+  [verbatim-core](crates/verbatim-core.md).
 - **Cold case** — a window arbitration has never seen: the first event
   for it resolves a real verdict with a provider probe on the worker.
   [verbatim-outpost](crates/verbatim-outpost.md).
@@ -110,7 +112,8 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   root owner, whether it is topmost, and for `Windows.UI.Core` windows
   whether it is under the input thread's active window, and whether it is
   in the system's foreground window; the reducer
-  classifies the event against attention with them.
+  classifies the event with them, against attention or, for a focus,
+  against the foreground window.
   [verbatim-model](crates/verbatim-model.md).
 - **Worker** — the one thread per outpost that takes entries from the
   intake queue in order and is the only thread that calls into the

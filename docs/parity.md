@@ -286,8 +286,13 @@ verified.
   before its foreground event, is then judged against the real
   foreground. The bound was measured live on 2026-10-02: over 245 such
   events, the window arrived 5 to 100 ms after its event. Without the
-  wait, msinfo32 was sometimes never announced. Every other event, focus
-  events included, is classified against the record from window
+  wait, msinfo32 was sometimes never announced. A focus event is
+  attended only when its window was in the system's foreground window
+  when its outpost read it, topmost, or a `Windows.UI.Core` window under
+  the input thread's active window, as NVDA tests it against the real
+  foreground window (since 2026-10-05: a desktop focus read after Notepad
+  took the foreground reached Core before Notepad's report and was
+  spoken). Every other event is classified against the record from window
   facts its outpost attached: top-level window, root owner, topmost,
   for `Windows.UI.Core` windows whether the window is under the
   input thread's active window, and whether the window is in the

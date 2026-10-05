@@ -193,6 +193,18 @@ screen reader in both rendered and source form.
   from the attention application only, except the shell's window-snap
   results. Of the alerts, only toasts are reported for now. The attention
   model is implemented in this redesign instead of at M4.
+  Amended 2026-10-05: a focus event is attended only when its outpost
+  found its window in the system's foreground window when it read the
+  event (its top-level window or root owner is the foreground window, or
+  shares the foreground window's root owner), or the window is topmost,
+  or it is a `Windows.UI.Core` window under the input thread's active
+  window; that is NVDA's own test, made against the real foreground
+  window rather than the attention record. A focus with no window facts
+  is still judged by its application. A focus can reach Core before the
+  report of the foreground change that left its window (found live: the
+  desktop's list raised a focus 4 ms after Notepad became the foreground,
+  and Verbatim spoke it), and judged against the attention record it was
+  attended. Foreground changes and the other events keep their rules.
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms

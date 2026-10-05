@@ -117,7 +117,12 @@ Implementation notes, `reduce`:
   classified against it before anything else. A
   foreground change (a `FocusChanged` with `foreground` set) is always
   accepted, because its outpost has already checked that the window is
-  still the system's foreground window. Any other event is attended when
+  still the system's foreground window. Any other focus is attended only
+  when its window facts say the window was in the system's foreground
+  window when its outpost read it, or is topmost, or is a
+  `Windows.UI.Core` window under the input thread's active window, NVDA's
+  test against the real foreground (D14 as amended on 2026-10-05); a focus
+  with no window facts is judged by its application. Any other event is attended when
   its window facts share the attention window's top-level window or root
   owner, are topmost, report a `Windows.UI.Core` window under the input
   thread's active window, or say the window is in the system's foreground
