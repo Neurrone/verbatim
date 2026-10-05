@@ -365,12 +365,24 @@ impl Uia {
         let walker = unsafe { self.client.RawViewWalker() }?;
         let mut chain = Vec::new();
         let mut current = element.clone();
+        let started = std::time::Instant::now();
+        let mut hops = 0u32;
+        let log = |hops: u32, ending: &str| {
+            tracing::debug!(
+                hops,
+                ending,
+                elapsed_us = started.elapsed().as_micros(),
+                "UIA ancestor walk"
+            );
+        };
         let out_of_time = || deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
         for _ in 0..max_hops {
             if out_of_time() {
                 chain.reverse();
+                log(hops, "out of time");
                 return Ok((chain, None, AncestorWalk::OutOfTime));
             }
+            hops += 1;
             // SAFETY: `current` is either the caller's `element` (per its
             // contract) or a parent built with `cache` by the previous hop.
             let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) }) else {
@@ -382,12 +394,14 @@ impl Uia {
                     AncestorWalk::Complete
                 };
                 chain.reverse();
+                log(hops, "root");
                 return Ok((chain, None, ending));
             };
             // SAFETY: `parent` was just built with `cache`.
             let hwnd = unsafe { crate::map::cached_native_window_handle(&parent) };
             if hwnd != 0 && read_by_other_api(hwnd) {
                 chain.reverse();
+                log(hops, "crossed into MSAA");
                 return Ok((chain, Some(hwnd), AncestorWalk::Complete));
             }
             // SAFETY: `parent` was just built with `cache`.
@@ -407,12 +421,14 @@ impl Uia {
                 chain.push(snapshot);
                 if known(id) {
                     chain.reverse();
+                    log(hops, "met a known ancestor");
                     return Ok((chain, None, AncestorWalk::MetKnown(id)));
                 }
             }
             current = parent;
         }
         chain.reverse();
+        log(hops, "hop limit");
         Ok((chain, None, AncestorWalk::Complete))
     }
 

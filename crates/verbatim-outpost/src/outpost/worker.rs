@@ -1063,7 +1063,9 @@ impl Worker<'_> {
             tracing::debug!("UIA focus dropped: the element does not have the keyboard focus");
             return;
         }
+        let reading = Instant::now();
         let element = self.live_focus_element(&fact.runtime_id);
+        let element_us = reading.elapsed().as_micros();
         // The event's own window; else the element's; else, for deciding
         // the backend only, this application's focus window. Another
         // application's window is never used, and a window the event did not
@@ -1104,6 +1106,7 @@ impl Worker<'_> {
         };
         let node = Self::uia_node(context, fact, Some(&element));
         let previous = self.focus_chain();
+        let enriching = Instant::now();
         let enrichment = match self.client.uia() {
             Some(uia) => match uia.base_cache_request() {
                 Ok(cache) => {
@@ -1113,6 +1116,13 @@ impl Worker<'_> {
             },
             None => (None, None),
         };
+        tracing::debug!(
+            %trace,
+            element_us,
+            enrichment_us = enriching.elapsed().as_micros(),
+            total_us = reading.elapsed().as_micros(),
+            "UIA focus read"
+        );
         self.emit_focus(
             trace,
             observed_at_ms,

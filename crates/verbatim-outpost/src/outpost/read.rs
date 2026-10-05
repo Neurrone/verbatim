@@ -303,20 +303,29 @@ fn uia_ancestors(
     let Some(hwnd) = crossed else {
         return Some(uia_chain);
     };
-    let Some(client) = verbatim_ia2::acquire::snapshot_from_event(
+    let crossing = std::time::Instant::now();
+    let chain = (|| {
+        let Some(client) = verbatim_ia2::acquire::snapshot_from_event(
+            hwnd,
+            OBJID_CLIENT.0,
+            CHILDID_SELF,
+            &context.msaa_registry,
+        ) else {
+            return Some(uia_chain);
+        };
+        let below: Vec<NodeSnapshot> = std::iter::once(client.clone()).chain(uia_chain).collect();
+        if known(client.id) {
+            return Some(splice(previous, below, client.id));
+        }
+        let above = msaa_ancestors(context, Some((uia, cache)), &client, previous, deadline)?;
+        Some(above.into_iter().chain(below).collect())
+    })();
+    tracing::debug!(
         hwnd,
-        OBJID_CLIENT.0,
-        CHILDID_SELF,
-        &context.msaa_registry,
-    ) else {
-        return Some(uia_chain);
-    };
-    let below: Vec<NodeSnapshot> = std::iter::once(client.clone()).chain(uia_chain).collect();
-    if known(client.id) {
-        return Some(splice(previous, below, client.id));
-    }
-    let above = msaa_ancestors(context, Some((uia, cache)), &client, previous, deadline)?;
-    Some(above.into_iter().chain(below).collect())
+        elapsed_us = crossing.elapsed().as_micros(),
+        "UIA ancestors continued through MSAA"
+    );
+    chain
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
