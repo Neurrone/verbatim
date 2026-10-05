@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 verbatim-audio.workspace = true
-verbatim-model.workspace = true
 verbatim-speech.workspace = true
 
 [lints]

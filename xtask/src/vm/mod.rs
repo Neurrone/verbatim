@@ -31,10 +31,8 @@ pub(crate) const VM_NAME: &str = "verbatim";
 /// The checkpoint name `create` takes and `restore` defaults to.
 pub(crate) const CHECKPOINT_NAME: &str = "golden";
 
-/// TCP port the in-guest agent listens on
-/// (`verbatim_agent::protocol::DEFAULT_PORT`, duplicated here rather than
-/// depending on `verbatim-agent` just for one constant).
-pub(crate) const AGENT_PORT: u16 = 44_001;
+/// TCP port the in-guest agent listens on.
+pub(crate) const AGENT_PORT: u16 = verbatim_agent::protocol::DEFAULT_PORT;
 
 /// Verbatim's install directory in the guest; `xtask vm deploy` writes
 /// `verbatim.exe`, `verbatim-outpost.exe` (resolved next to it, per

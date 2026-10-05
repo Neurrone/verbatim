@@ -40,7 +40,8 @@ Public API:
   hang Verbatim: a guard thread abandons the worker after a three second
   deadline (the outpost watchdog's discipline, kept local and simple
   for a one-shot query) and the request just logs and presents nothing.
-- `plan` — the pure, unit-tested layer: `plan_for(descriptor, value)` maps
+- `plan` — the pure, unit-tested layer, private to the crate except for
+  the re-exported `ControlPlan`, `DialogGuard`, and `OpenAction`: `plan_for(descriptor, value)` maps
   a `SettingDescriptor` to a `ControlPlan` (slider, choice, or check box
   with clamped initial value), `accessible_name` strips ampersand
   mnemonics for accessible names (a check box otherwise announces as a
@@ -77,8 +78,13 @@ lazily built panel on the right, OK, Cancel, and Apply buttons, hand-rolled
 Enter, Ctrl+S, and Ctrl+Tab handling (wxDragon binds no accelerator
 tables), and a title that tracks the active category. The Speech panel is
 generated from the settings host's descriptors; every control change
-applies live, OK and Apply persist, Cancel reverts. Escape and window close
-follow the dialog's escape id.
+applies live, OK and Apply persist, and Cancel reverts when clicked or
+pressed with Space. Escape and window close follow the dialog's escape id.
+Two known defects (audit item 7) wait for the GUI port, which rewrites this
+logic: Enter on Cancel or Apply is handled as Enter on the dialog, so it
+commits the changes and closes; and Enter, Ctrl+S, and Ctrl+Tab are bound
+only to the dialog and its three buttons, so they do nothing while focus is
+inside the Speech panel.
 
 The systrayList replica (M3) composes the two new modules:
 `OpenShellItemList` focuses the existing dialog when one is open (the

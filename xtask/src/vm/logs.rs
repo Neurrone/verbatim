@@ -8,19 +8,13 @@
 use std::fs;
 use std::path::Path;
 
+use verbatim_e2e::scenario::VERBATIM_STDERR_LOG_NAME;
+
 use super::dotenv::GuestCredentials;
 use super::host::Host;
 use super::{AGENT_DIR, VERBATIM_DIR, VM_NAME, VmResult};
 
 const AGENT_LOG_NAME: &str = "agent.log";
-
-/// Name (and, joined with [`VERBATIM_DIR`], guest path) of the stdout and
-/// stderr capture file a launched Verbatim's `LaunchProcess.stderr_to`
-/// names, matching `crates/verbatim-e2e/src/scenario.rs`'s remote-mode
-/// path. This is exactly what a crash-diagnosis pull needs: the flight
-/// recorder proves a panic happened, this file says what the panic message
-/// was.
-const VERBATIM_STDERR_LOG_NAME: &str = "stderr-e2e.log";
 
 /// # Errors
 ///

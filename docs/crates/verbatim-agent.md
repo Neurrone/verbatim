@@ -7,6 +7,14 @@ tests reach it over TCP to manage processes and to tunnel through to
 Verbatim's own control-plane named pipe, which deliberately never listens
 on the network itself (architecture section 10, decision D8).
 
+The agent has no authentication: anyone who can reach its port can launch
+and kill processes, read files, and drive Verbatim as the signed-in user.
+It binds all interfaces by default, because the Hyper-V host reaches the
+guest at an address not known ahead of time. That is acceptable only on an
+isolated lab network or a disposable CI runner. On a development machine,
+run it with `--bind-address 127.0.0.1`, as `docs/tooling.md` does, and stop
+it when the suite is done.
+
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from

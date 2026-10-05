@@ -962,6 +962,10 @@ fn resolve_verbatim_exe_path(override_path: Option<String>) -> PathBuf {
         .join("verbatim.exe")
 }
 
+/// The name of the file a launched Verbatim's stdout and stderr are captured
+/// into, next to its executable; `cargo xtask vm logs` pulls it by this name.
+pub const VERBATIM_STDERR_LOG_NAME: &str = "stderr-e2e.log";
+
 /// The path a launched Verbatim's stdout and stderr are captured into (see
 /// [`crate::agent_client::AgentClient::launch_process`]'s `stderr_to`),
 /// truncated fresh on every launch so each scenario's log is its own and
@@ -974,10 +978,12 @@ fn resolve_verbatim_exe_path(override_path: Option<String>) -> PathBuf {
 /// copy itself, alongside its `settings.toml`.
 fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> {
     if remote {
-        return Ok(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned());
+        return Ok(format!(
+            r"C:\VerbatimLab\verbatim\{VERBATIM_STDERR_LOG_NAME}"
+        ));
     }
     exe_dir
-        .join("stderr-e2e.log")
+        .join(VERBATIM_STDERR_LOG_NAME)
         .to_str()
         .map(str::to_owned)
         .ok_or_else(|| io::Error::other("stderr log path is not valid UTF-8"))
