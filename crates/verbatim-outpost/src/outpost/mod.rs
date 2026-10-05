@@ -29,7 +29,7 @@
 mod intake;
 mod outbound;
 mod read;
-mod window;
+pub(crate) mod window;
 mod worker;
 
 use std::io::{self, BufReader, Write};

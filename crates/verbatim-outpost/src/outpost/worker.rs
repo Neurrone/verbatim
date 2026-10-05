@@ -24,7 +24,7 @@ use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
     Backend, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, TraceId,
 };
-use verbatim_uia::map::snapshot_from_cached_element;
+use verbatim_uia::map::{cached_process_id, snapshot_from_cached_element};
 use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handle};
 use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
@@ -539,6 +539,20 @@ fn describe(item: &Item) -> String {
     }
 }
 
+/// What reading the focused element found for a focus fact.
+enum LiveFocus {
+    /// The fact's element, live.
+    Found(IUIAutomationElement),
+    /// The keyboard focus is in another application now: the fact is out of
+    /// date, and the newer focus's own event reports it.
+    InAnotherApplication,
+    /// The read did not answer in time or failed, or answered with another
+    /// element of this application, which may be a stand-in from an
+    /// application still starting (module doc of [`Worker::uia_focus`]) or
+    /// a newer focus, whose own event follows.
+    Unresolved,
+}
+
 /// One entry's handling, by the worker in charge.
 struct Worker<'a> {
     context: &'a Context,
@@ -849,7 +863,10 @@ impl Worker<'_> {
             .and_then(|agile| agile.resolve().ok());
         let focused = match known {
             Some(element) => element,
-            None => self.live_focus_element(&focus_id)?,
+            None => match self.live_focus_element(&focus_id) {
+                LiveFocus::Found(element) => element,
+                LiveFocus::InAnotherApplication | LiveFocus::Unresolved => return None,
+            },
         };
         let uia = self.client.uia()?;
         let cache = uia.base_cache_request().ok()?;
@@ -900,8 +917,12 @@ impl Worker<'_> {
                 id_object,
                 id_child,
             } => self.msaa_focus(hwnd, id_object, id_child, trace, observed_at_ms),
-            DeliveredFact::UiaFocus { hwnd, snapshot } => {
-                self.uia_focus(hwnd, &snapshot, trace, observed_at_ms);
+            DeliveredFact::UiaFocus {
+                hwnd,
+                focus_window,
+                snapshot,
+            } => {
+                self.uia_focus((hwnd, focus_window), &snapshot, trace, observed_at_ms);
             }
             DeliveredFact::UiaSelection { hwnd, snapshot } => self.uia_event(
                 UiaEvent {
@@ -1094,9 +1115,13 @@ impl Worker<'_> {
     /// a nameless edit). Without it the focus is still reported, with its
     /// ancestors unknown, and a follow-up finds the element later for the
     /// focus-following property subscription.
+    ///
+    /// A fact whose element has lost the keyboard focus to another
+    /// application is dropped: the newer focus's own event reports it, and
+    /// NVDA would find the element's window no longer in the foreground.
     fn uia_focus(
         &mut self,
-        fact_hwnd: isize,
+        (fact_hwnd, focus_window): (isize, isize),
         fact: &UiaSnapshotFact,
         trace: TraceId,
         observed_at_ms: u64,
@@ -1107,17 +1132,29 @@ impl Worker<'_> {
             return;
         }
         let reading = Instant::now();
-        let element = self.live_focus_element(&fact.runtime_id);
+        let element = match self.live_focus_element(&fact.runtime_id) {
+            LiveFocus::Found(element) => Some(element),
+            LiveFocus::InAnotherApplication => {
+                tracing::debug!("UIA focus dropped: the focus is in another application now");
+                return;
+            }
+            LiveFocus::Unresolved => None,
+        };
         let element_us = reading.elapsed().as_micros();
-        // The event's own window; else the element's; else, for deciding
-        // the backend only, this application's focus window. Another
-        // application's window is never used, and a window the event did not
-        // name is not reported with it, so a late event from a closed menu
-        // cannot pass as being in the current window.
+        // The event's own window; else the element's nearest; else, for an
+        // element not resolved, this application's keyboard focus window
+        // when the listener captured the event, which hosts the element
+        // when the event is current but, in an application with several
+        // windows, may be another of its windows when the event is late;
+        // else, for deciding the backend only, this application's focus
+        // window now, which is never reported.
         let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            element.as_ref().and_then(nearest_window_handle)
+            element
+                .as_ref()
+                .and_then(nearest_window_handle)
+                .or((focus_window != 0).then_some(focus_window))
         };
         let judged = reported.or_else(|| focus_window_of(context.target_pid));
         if judged.is_some_and(window_belongs_to_hidden_frame) {
@@ -1179,18 +1216,31 @@ impl Worker<'_> {
     }
 
     /// The live element for the focus `runtime_id` names, read as the
-    /// focused element within [`FOCUS_READ_WAIT`]; `None` when the read did
-    /// not answer in time, failed, or found another element.
-    fn live_focus_element(&mut self, runtime_id: &[i32]) -> Option<IUIAutomationElement> {
-        let uia = self.client.uia()?;
-        let cache = uia.base_cache_request().ok()?;
-        let element = uia
-            .within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache))
-            .ok()?
-            .ok()?;
+    /// focused element within [`FOCUS_READ_WAIT`].
+    fn live_focus_element(&mut self, runtime_id: &[i32]) -> LiveFocus {
+        let Some(uia) = self.client.uia() else {
+            return LiveFocus::Unresolved;
+        };
+        let Ok(cache) = uia.base_cache_request() else {
+            return LiveFocus::Unresolved;
+        };
+        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache)) else {
+            return LiveFocus::Unresolved;
+        };
         // SAFETY: `element` was built with the base cache request.
-        let found = unsafe { snapshot_parts_from_cached_element(&element) }.runtime_id;
-        (found == runtime_id).then_some(element)
+        let (found, process) = unsafe {
+            (
+                snapshot_parts_from_cached_element(&element).runtime_id,
+                cached_process_id(&element),
+            )
+        };
+        if found == runtime_id {
+            LiveFocus::Found(element)
+        } else if process.is_some_and(|pid| pid != 0 && pid != self.context.target_pid) {
+            LiveFocus::InAnotherApplication
+        } else {
+            LiveFocus::Unresolved
+        }
     }
 
     /// Queues a follow-up that finds the live element of the focus

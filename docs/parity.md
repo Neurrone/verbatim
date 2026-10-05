@@ -219,9 +219,14 @@ verified.
   observed before the newest focus it applied from another (found live:
   a late focus from Notepad, then from Verbatim's closed menu, broke
   `notepad_and_verbatim_menu`). A UIA focus fact whose element is not the
-  focused element is reported from the fact when its window is in the
-  foreground, or with no window facts, judged by its application, when
-  it has no window of its own. Since 2026-10-03 a focus read on request
+  focused element is dropped when the focus is in another application
+  by then, and otherwise reported from the fact with its window: its
+  own, or for a windowless element the keyboard focus window the
+  listener found in the element's process when it captured the event,
+  standing in for the nearest window NVDA walks up to (exact when the
+  event is current; for a late event in an application with several
+  windows it can be another of them); only with neither is it judged by
+  its application. Since 2026-10-03 a focus read on request
   (at startup, after an outpost is replaced, or after a menu closes)
   carries the time its read began, so it is ordered with the events as
   NVDA's queue orders the focus it reads; it had carried no time, so it

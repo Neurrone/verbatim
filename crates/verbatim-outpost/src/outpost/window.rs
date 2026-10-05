@@ -265,7 +265,7 @@ fn window_owner(handle: isize) -> (u32, u32) {
 
 /// The focus window of `target_pid`, or `None` if the keyboard focus is not
 /// in that process.
-pub(super) fn focus_window_of(target_pid: u32) -> Option<isize> {
+pub(crate) fn focus_window_of(target_pid: u32) -> Option<isize> {
     let window = focus_window()?;
     let mut pid = 0u32;
     // SAFETY: the call fails safely on a window that has since been destroyed.

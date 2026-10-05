@@ -158,6 +158,20 @@ screen reader in both rendered and source form.
   alert facts. Outposts lose their window-scoped UIA subscriptions in
   favour of one property subscription that follows the focus and its
   ancestors.
+  Amended 2026-10-05: the listener stays the only receiver of focus
+  events; outposts do not subscribe to their own, so no event is handled
+  twice and no ordering between two sources is needed. NVDA judges a UIA
+  focus against the foreground using the element's nearest window, a
+  cross-process walk the listener may not make. Instead, for an element
+  with no window of its own, the listener sends the foreground thread's
+  keyboard focus window when it belongs to the element's process, a
+  local read that names the window hosting the element when the event is
+  current (for a late event in an application with several windows it
+  can name another of them, a known limitation). The outpost, which
+  must read the focused element again because a UIA element cannot cross
+  processes, drops a fact whose focus has meanwhile moved to another
+  application, and reports one it cannot resolve with the window the
+  listener found, so Core judges it against the foreground window (D14).
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier

@@ -277,7 +277,22 @@ fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistrat
         // SAFETY: a cached focus element from the registration's base cache
         // request.
         if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
-            callback_outgoing.fact(pid, DeliveredFact::UiaFocus { hwnd, snapshot }, None);
+            // A windowless element is in the keyboard focus window of its own
+            // process, if that process still has the focus: a local read.
+            let focus_window = if hwnd == 0 {
+                crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)
+            } else {
+                0
+            };
+            callback_outgoing.fact(
+                pid,
+                DeliveredFact::UiaFocus {
+                    hwnd,
+                    focus_window,
+                    snapshot,
+                },
+                None,
+            );
         }
     });
     match FocusRegistration::new(callback) {

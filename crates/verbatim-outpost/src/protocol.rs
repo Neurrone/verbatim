@@ -109,11 +109,23 @@ impl ListenerFact {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum DeliveredFact {
     /// A UIA focus change: the element's cached native window handle (0 when
-    /// the element is not itself a window) and its cached snapshot parts.
+    /// the element is not itself a window), the keyboard focus window when
+    /// the event was captured, and its cached snapshot parts.
     UiaFocus {
         /// The element's cached native window handle, or 0 when it is not a
         /// window in its own right.
         hwnd: isize,
+        /// For an element that is not a window: the foreground thread's
+        /// keyboard focus window when the listener captured the event, if it
+        /// belongs to the element's process, else 0. When the event is
+        /// current it is the window hosting a windowless element, such as
+        /// Explorer's items view, read locally where NVDA walks up to the
+        /// element's nearest window, so a focus the outpost cannot resolve
+        /// can still be judged against the foreground window; for a late
+        /// event in an application with several windows it may be another
+        /// of them. 0 when the focus had already moved to another process.
+        #[serde(default)]
+        focus_window: isize,
         /// The element's cached snapshot parts.
         snapshot: UiaSnapshotFact,
     },
@@ -768,6 +780,7 @@ mod tests {
             pid: Pid(1234),
             fact: DeliveredFact::UiaFocus {
                 hwnd: 0,
+                focus_window: 0,
                 snapshot: snapshot.clone(),
             },
         };
@@ -789,7 +802,11 @@ mod tests {
         assert_eq!(fact.pid(), Pid(1234));
         assert_eq!(
             fact.into_delivered(),
-            DeliveredFact::UiaFocus { hwnd: 0, snapshot }
+            DeliveredFact::UiaFocus {
+                hwnd: 0,
+                focus_window: 0,
+                snapshot
+            }
         );
 
         let deliver = SupervisorToOutpost::DeliverFact {
@@ -830,6 +847,7 @@ mod tests {
             DeliveredFact::Foreground { hwnd: 1 },
             DeliveredFact::UiaFocus {
                 hwnd: 0,
+                focus_window: 0,
                 snapshot: snapshot.clone(),
             },
             DeliveredFact::UiaMenuOpened {

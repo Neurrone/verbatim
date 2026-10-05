@@ -347,9 +347,14 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
                     id_object,
                     id_child,
                 } => (Key::MsaaFocus(*hwnd, *id_object, *id_child), *hwnd),
-                DeliveredFact::UiaFocus { hwnd, snapshot } => {
-                    (Key::UiaFocus(snapshot.runtime_id.clone()), *hwnd)
-                }
+                DeliveredFact::UiaFocus {
+                    hwnd,
+                    focus_window,
+                    snapshot,
+                } => (
+                    Key::UiaFocus(snapshot.runtime_id.clone()),
+                    if *hwnd == 0 { *focus_window } else { *hwnd },
+                ),
                 DeliveredFact::MenuPopup {
                     hwnd,
                     id_object,
@@ -635,6 +640,7 @@ mod tests {
         waiting.push(fact(
             DeliveredFact::UiaFocus {
                 hwnd: 3,
+                focus_window: 0,
                 snapshot: UiaSnapshotFact {
                     runtime_id: vec![42],
                     role: verbatim_model::Role::ListItem,

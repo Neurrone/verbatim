@@ -344,10 +344,22 @@ Implementation notes:
   and navigation. Without it the focus is emitted with
   `ancestors_unknown`, and a queued `Item::ResolveFocus` follow-up (up to
   three attempts, while the focus is unchanged) finds the element and
-  moves the focus-following subscription to it. A fact that names no
-  window is arbitrated against this application's own focus window but
-  reported without window facts. An MSAA focus fact is read with NVDA's
-  child-0-on-a-list redirect (`snapshot_from_focus_event`) and accepted
+  moves the focus-following subscription to it. When the focused element
+  read is in another application, the fact is out of date and dropped;
+  another element of this application can be a stand-in from an
+  application still starting, so it is treated as unresolved. For an
+  element with no window of its own the listener also sends the keyboard
+  focus window it found when it captured the event (`focus_window`, the
+  foreground thread's focus window when it belongs to the element's
+  process, a local read); an element the outpost cannot resolve is
+  reported with that window's facts, so Core judges it against the
+  foreground window. That window is exact when the event is current; for
+  a late event in an application with several windows it can be another
+  of them. Intake also uses it as the entry's window, so a hung focus
+  window drops the fact and the watchdog's moved-on check applies to it.
+  Only a fact with neither is reported without window facts, arbitrated
+  against this application's own focus window. An MSAA focus fact is
+  read with NVDA's child-0-on-a-list redirect (`snapshot_from_focus_event`) and accepted
   only when the object or an ancestor has the focused state.
 - Ancestors (`read::uia_enrichment`, `read::msaa_enrichment`): the walk
   stops at the first ancestor in the previous focus's chain (the tracking
