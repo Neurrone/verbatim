@@ -401,6 +401,8 @@ fn run_entry(
     context
         .watch
         .start(deadline, running, window_of(&entry.item));
+    let description = describe(&entry.item);
+    let trace = entry.trace;
     let started = Instant::now();
     let handled = catch_unwind(AssertUnwindSafe(|| {
         let mut worker = Worker {
@@ -419,6 +421,12 @@ fn run_entry(
     context
         .arbitrator()
         .renew_probes_since(started, Instant::now());
+    tracing::debug!(
+        %trace,
+        item = %description,
+        elapsed_us = started.elapsed().as_micros(),
+        "handled"
+    );
     match context.watch.finish(generation) {
         Err(()) => {
             tracing::info!(
@@ -483,6 +491,24 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         }
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
+    }
+}
+
+/// A short description of an entry's item, for the debug log of what the
+/// worker spent its time on.
+fn describe(item: &Item) -> String {
+    match item {
+        Item::Msaa {
+            kind,
+            hwnd,
+            id_object,
+            id_child,
+        } => format!("MSAA {kind:?} hwnd={hwnd} object={id_object} child={id_child}"),
+        Item::Uia(event) => format!("UIA {:?}", event.kind),
+        Item::Fact(fact) => format!("fact {:?}", fact.key()),
+        Item::Query { query, .. } => format!("query {query:?}"),
+        Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
+        Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
     }
 }
 
