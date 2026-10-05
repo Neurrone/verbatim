@@ -44,8 +44,10 @@ screen reader in both rendered and source form.
   audible runs against a real audio device, is the interactive loop, not
   CI. There are no self-hosted runners and no nested virtualization on
   hosted runners. Guest transport is standard tooling, not bespoke
-  protocol: OpenSSH on the guest carries file copies and remote commands
-  on every hypervisor, and the agent keeps only what SSH cannot do, which
+  protocol: PowerShell Direct carries file copies and remote commands
+  into the Hyper-V guest (OpenSSH was planned for other hypervisors,
+  which are no longer planned), and the agent keeps only what a remote
+  channel cannot do, which
   is launching processes in the interactive session, reporting session
   facts, and tunnelling the control-plane pipe. Hypervisor backends handle
   lifecycle and snapshots only, and a snapshot restore is always an
@@ -188,7 +190,8 @@ screen reader in both rendered and source form.
   notifications, toast alerts, menu popups, tooltip and notification-bar
   classes, and configured progress bars are accepted from anywhere as
   background. Background events never move focus or the navigator, are
-  spoken at Queued priority, and sit under a per-source flood cap. So that
+  spoken at Queued priority, and sit under a per-source flood cap (not
+  implemented yet; `docs/parity.md` lists it). So that
   processes which never held focus can still be heard, the focus listener
   additionally hooks `EVENT_SYSTEM_ALERT` and a desktop-wide UIA
   notification registration and forwards them as facts that spawn an
@@ -336,7 +339,10 @@ Verbatim runs as three kinds of process:
    - the extension-host threads (wasmtime with epoch preemption).
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
-   callbacks) and a small query thread pool for UIA and IA2 COM calls.
+   callbacks), one worker, the only thread that calls into the
+   application, a watchdog that abandons and replaces a worker past its
+   deadline, and a writer (the outpost redesign; the earlier query thread
+   pool is gone).
 3. **Synthesizer host processes** (D18) — one per synthesizer in use, in
    a kill-on-close job, streaming PCM to Core over a pipe; the AppContainer
    sandbox arrives with Eloquence in M7.
@@ -450,7 +456,8 @@ cross-process call.** A UIA focus callback delivers the element with its
 properties already cached, so building a snapshot is local memory reads;
 an MSAA WinEvent delivers raw window and object ids, which are forwarded
 untouched; the only other reads are hang-safe local ones (the window's
-owning process id, its class name). No cross-process calls means no
+owning process id, its class name, and for a UIA focus on an element with
+no window of its own, the keyboard focus window from `GetGUIThreadInfo`). No cross-process calls means no
 deadlines, no query pool, no parked threads, and no way for any
 application — hung or not — to stall focus detection for the rest of the
 desktop. The listener holds no per-application state either, so a crash
@@ -854,16 +861,15 @@ kept for contributors who test in a local VM; the maintainer runs the suite
 runner-direct on a development VM instead (D3). A fake implementation
 drives the verb logic in unit tests. Everything that
 touches the guest's contents goes over standard transport rather than a
-hypervisor channel: OpenSSH on the guest for file copies and remote
-commands, and the in-guest agent over TCP for the three things SSH cannot
+channel: PowerShell Direct for file copies and remote commands, and the
+in-guest agent over TCP for the three things a remote channel cannot
 do (launching in the interactive session, reporting session facts, and
 tunnelling the control-plane pipe). The guest's provisioning script is
 hypervisor-agnostic: autologon, the agent as an at-logon interactive
-scheduled task, sshd with key authentication, and the runtime
-prerequisites. Verbs: `create` (Packer builds the base image from an
+scheduled task, and the runtime prerequisites. Verbs: `create` (Packer builds the base image from an
 unattended install, then the VM is imported and snapshotted as a golden
 image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
-(artifacts copied in over SSH and the agent restarted), `test` (deploy,
+(artifacts copied in over PowerShell Direct and the agent restarted), `test` (deploy,
 then run the E2E suite through the agent, audible by default with real
 eSpeak NG speech and the real WASAPI device, every scenario recorded as an
 mp4 as in every other mode), `logs`, `connect`, `delete`. A restore is only ever

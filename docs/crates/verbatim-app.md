@@ -148,7 +148,8 @@ knowing for review:
   D16, and a file that cannot be created is logged as a warning and
   ignored), the settings host with a persist callback writing through the
   config store, the supervisor with its focus listener (decision D13;
-  targeting the current foreground once at startup by poll, since the
+  asking the current foreground application for its focus once at
+  startup with a focus-now query (`ShellCommand::FocusNow`), since the
   listener thereafter reports foreground changes as facts — Core no longer
   runs its own foreground hook; a foreground change reaches the reducer as a
   focus on the window, which moves its attention), the reducer thread

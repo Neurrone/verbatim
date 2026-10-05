@@ -269,9 +269,10 @@ Implementation notes:
   moves the reducer's attention; the reducer does not speak a nameless
   foreground window, and nothing announces it later. The window's own
   accessible object is read: UIA via `element_from_handle`, MSAA via the
-  `OBJID_WINDOW` object (not `OBJID_CLIENT`, which reads back as role
-  "client" — confirmed live against Windows 11 Notepad, whose window
-  announcement read "Untitled - Notepad, unknown" until this was fixed). A
+  window's client object (`OBJID_CLIENT`), as NVDA reads a foreground
+  window, so a focus event on the client area that follows is the same
+  node and is not announced again; a popup menu window (`#32768`) reads
+  the same way, as role menu (`read::window_snapshot`). A
   window whose accessible object cannot be read yet (a freshly created
   msinfo32 window, found live) is reported from local window data, and a
   window whose accessible name is still empty takes its window text

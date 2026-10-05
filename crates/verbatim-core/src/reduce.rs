@@ -415,8 +415,9 @@ struct FocusReport<'a> {
 ///   (NVDA's already-the-focus early return): the UIA focus callback and a
 ///   delivered fact can both report one control.
 /// - Otherwise the newly entered containers, the node, and a selection
-///   container's selected item are spoken, interrupting current speech, and
-///   the navigator follows focus. When the outpost could not read the
+///   container's selected item are spoken, queued behind current speech
+///   (which the key press that moved focus has already cut off), and the
+///   navigator follows focus. When the outpost could not read the
 ///   ancestors in time, no container is announced and the previous focus's
 ///   chain is kept for the next comparison, so the next focus does not
 ///   announce every container again.

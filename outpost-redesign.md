@@ -234,7 +234,12 @@ item 25).
 - A UIA focus fact is resolved with one `focused_element` call, compared
   against the fact's runtime id. A mismatch means focus has already moved
   and the newer fact will arrive; the stale one is dropped. There is no
-  runtime-id search (handoff hot-path notes).
+  runtime-id search (handoff hot-path notes). (Revised as implemented: a
+  starting application can answer with a stand-in element of its own, so
+  only a focused element in another application drops the fact; any other
+  mismatch, or no answer in time, reports the focus from the fact, judged
+  against the foreground with the window the listener found. See D13 and
+  D14 as amended on 2026-10-05.)
 - Each element is resolved once per event and reused for the window, the
   ancestors, and the selected child.
 - A focus event carries the focused node, its ancestors, its selected

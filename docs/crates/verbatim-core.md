@@ -81,7 +81,7 @@ Implementation notes, `reduce`:
   anonymous text, and every utterance carries its source node's role and
   rectangle (`UtteranceSource`) for presentation themes. Each entered
   container is its own utterance, carrying a `FocusValidity` with
-  `had_focus` false, so it stays valid while the focus is inside it; the
+  `had_focus` false, which never expires (`FocusValidity::holds`); the
   focus's own utterance (with a selection container's selected child)
   carries `had_focus` true, so it is dropped once the focus moves to
   something that is not it or below it.

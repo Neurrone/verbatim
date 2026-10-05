@@ -8,7 +8,7 @@ chains, readable with a screen reader in source and rendered form.
 ## Reading paths
 
 **New to the project.** Read the repository `CLAUDE.md`, then
-[Walkthroughs](walkthroughs.md) (three end-to-end narratives), then
+[Walkthroughs](walkthroughs.md) (six end-to-end narratives), then
 [Architecture](architecture.md) (decisions of record D1 onward and the
 system design), keeping [the glossary](glossary.md) at hand for the
 project's invented vocabulary. If Windows APIs are unfamiliar,
@@ -42,8 +42,9 @@ troubleshooting traps; [the VM harness guide](vm.md) covers every
   what is ahead, and the archived evidence of what is done.
 - [Crate guides](crates/readme.md) — one file per crate, in dependency
   order.
-- [Walkthroughs](walkthroughs.md) — the life of a focus change, of a
-  command keystroke, and of an E2E run, across crate boundaries.
+- [Walkthroughs](walkthroughs.md) — the life of a focus change, a
+  command keystroke, an utterance, a query, recovery from failures, and
+  an E2E run, across process and crate boundaries.
 - [Parity ledger](parity.md) — every NVDA-parity claim and its
   verification status.
 - [docs/nvda](nvda/readme.md) — how NVDA implements its nontrivial

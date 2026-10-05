@@ -16,11 +16,13 @@
 //! A UIA callback delivers the element with its properties already cached, so
 //! building a fact is local memory reads (plus `GetRuntimeId`, a local read
 //! on a cached element); an MSAA `WinEvent` delivers a raw window and object
-//! address, forwarded untouched; the only other reads are the hang-safe local
-//! `GetWindowThreadProcessId` that names the owning process and
-//! `GetForegroundWindow`, which drops a foreground event whose window is no
-//! longer the foreground, as NVDA's `processForegroundWinEvent` does. No
-//! cross-process calls means no deadlines and no way for any application to
+//! address, forwarded untouched; the only other reads are hang-safe local
+//! ones: `GetWindowThreadProcessId`, which names the owning process, and,
+//! for a UIA focus on an element with no window of its own,
+//! `GetGUIThreadInfo`, which names the keyboard focus window. A foreground
+//! event is forwarded unchecked; the outpost's worker checks that its
+//! window is the foreground, as NVDA's `processForegroundWinEvent` does,
+//! after waiting for the change to complete. No cross-process calls means no deadlines and no way for any application to
 //! stall focus detection for the rest of the desktop.
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
