@@ -258,6 +258,7 @@ impl SpeechManager {
         let synth_handle = {
             let source = source.clone();
             let queue_tx = queue_tx.clone();
+            let events = events.clone();
             std::thread::Builder::new()
                 .name("verbatim-synth".to_owned())
                 .spawn(move || {
@@ -265,7 +266,10 @@ impl SpeechManager {
                         &registry,
                         &initial_synth,
                         &saved_settings,
-                        &source,
+                        Output {
+                            source: &source,
+                            events: events.as_deref(),
+                        },
                         &synth_rx,
                         &queue_tx,
                         &startup_tx,
@@ -612,13 +616,20 @@ impl QueueThread {
     }
 }
 
+/// Where the synth thread's audio goes, and who hears of its milestones.
+#[derive(Clone, Copy)]
+struct Output<'a> {
+    source: &'a Source,
+    events: Option<&'a dyn SpeechEvents>,
+}
+
 /// The synth thread: owns the active driver and runs
 /// [`SynthDriver::speak`].
 fn synth_thread(
     registry: &SynthRegistry,
     initial_synth: &SynthId,
     saved_settings: &SavedSettingsFn,
-    source: &Source,
+    output: Output<'_>,
     synth_rx: &Receiver<SynthCommand>,
     queue_tx: &Sender<QueueEvent>,
     startup_tx: &Sender<Result<StartupInfo, SynthError>>,
@@ -640,7 +651,7 @@ fn synth_thread(
     while let Ok(command) = synth_rx.recv() {
         match command {
             SynthCommand::Job(job) => {
-                run_job(driver.as_mut(), source, &job);
+                run_job(driver.as_mut(), output, &job);
                 let _ = queue_tx.send(QueueEvent::SynthFinished);
             }
             SynthCommand::SetSetting { id, value } => {
@@ -752,12 +763,16 @@ fn apply_saved_settings(driver: &mut dyn SynthDriver, saved: &[(SettingId, Setti
 /// Synthesizes one job into the mixer. The job's utterance is already
 /// registered with the mixer, which reports its ending; this only tells the
 /// mixer when the audio is complete or that synthesis failed.
-fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
+fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
+    let Output { source, events } = output;
     let sequence = &job.sequence;
     let utterance = sequence.utterance;
     if job.cancel.load(Ordering::Acquire) {
         // Cancelled before it started; the mixer has already ended it.
         return;
+    }
+    if let Some(events) = events {
+        events.synthesis_started(utterance, sequence.trace_id, Instant::now());
     }
     // A driver that changes pitch itself is given the pitch changes. For
     // any other, a pitch change is its own pitch setting, changed between
@@ -785,9 +800,13 @@ fn run_job(driver: &mut dyn SynthDriver, source: &Source, job: &Job) {
     let mut sink = PipelineSink {
         source,
         utterance,
+        trace_id: sequence.trace_id,
+        events,
         cancel: &job.cancel,
         trimmer: Trimmer::default(),
         stopped: false,
+        driver_audio: false,
+        mixer_audio: false,
     };
     let mut result = Ok(());
     for (piece, mark) in pieces {
@@ -839,6 +858,11 @@ fn set_pitch(driver: &mut dyn SynthDriver, pitch: i32) {
 struct PipelineSink<'a> {
     source: &'a Source,
     utterance: UtteranceId,
+    trace_id: verbatim_model::TraceId,
+    events: Option<&'a dyn SpeechEvents>,
+    /// The driver has given audio, and the trimmer has passed audio on.
+    driver_audio: bool,
+    mixer_audio: bool,
     cancel: &'a AtomicBool,
     trimmer: Trimmer,
     /// The mixer refused audio: the utterance has ended.
@@ -850,6 +874,12 @@ impl PipelineSink<'_> {
         for piece in pieces {
             match piece {
                 Piece::Pcm(format, samples) => {
+                    if !self.mixer_audio {
+                        self.mixer_audio = true;
+                        if let Some(events) = self.events {
+                            events.audio_to_mixer(self.utterance, self.trace_id, Instant::now());
+                        }
+                    }
                     if self
                         .source
                         .write(self.utterance, format, &samples)
@@ -870,6 +900,12 @@ impl SynthSink for PipelineSink<'_> {
     fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
         if self.stopped || self.cancel.load(Ordering::Acquire) {
             return ControlFlow::Break(());
+        }
+        if !self.driver_audio {
+            self.driver_audio = true;
+            if let Some(events) = self.events {
+                events.synthesizer_audio(self.utterance, self.trace_id, Instant::now());
+            }
         }
         let pieces = self.trimmer.push(format, samples);
         self.forward(pieces)

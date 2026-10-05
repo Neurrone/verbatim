@@ -264,7 +264,7 @@ fn msaa_set_name_raises_a_name_change_win_event() {
     let _hook = WinEventHook::install(
         pid,
         APP_SUBSCRIPTIONS,
-        Box::new(move |kind, _hwnd, _id_object, _id_child| {
+        Box::new(move |kind, _hwnd, _id_object, _id_child, _| {
             seen_cb
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -295,7 +295,7 @@ fn msaa_set_value_raises_a_value_change_win_event() {
     let _hook = WinEventHook::install(
         pid,
         APP_SUBSCRIPTIONS,
-        Box::new(move |kind, _hwnd, _id_object, _id_child| {
+        Box::new(move |kind, _hwnd, _id_object, _id_child, _| {
             seen_cb
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -326,7 +326,7 @@ fn msaa_select_raises_a_selection_win_event() {
     let _hook = WinEventHook::install(
         pid,
         APP_SUBSCRIPTIONS,
-        Box::new(move |kind, _hwnd, _id_object, _id_child| {
+        Box::new(move |kind, _hwnd, _id_object, _id_child, _| {
             seen_cb
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

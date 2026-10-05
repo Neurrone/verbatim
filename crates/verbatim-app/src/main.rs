@@ -752,9 +752,11 @@ impl ReducerThread<'_> {
                 observed_at_ms,
                 backend,
                 window,
+                timing,
                 event,
             } => {
                 self.context.ledger.event_observed(trace_id, observed_at_ms);
+                self.context.ledger.event_received(trace_id, timing);
                 if let Some(server) = self.context.server_slot.get() {
                     server.broadcast_event(trace_id, source, backend, window, event.clone());
                 }
@@ -825,6 +827,7 @@ impl ReducerThread<'_> {
             _ => TraceId::mint(),
         };
         let (next, effects) = reduce(&self.state, &input);
+        self.context.ledger.reduced(trace_id);
         self.state = next;
         {
             let mut recorder = self

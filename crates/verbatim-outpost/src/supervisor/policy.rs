@@ -116,6 +116,7 @@ impl CrashHistory {
 pub(super) struct HeldFact {
     pub(super) trace_id: TraceId,
     pub(super) observed_at_ms: u64,
+    pub(super) timing: crate::protocol::EventTiming,
     pub(super) fact: DeliveredFact,
 }
 
@@ -236,6 +237,7 @@ mod tests {
         HeldFact {
             trace_id: TraceId::mint(),
             observed_at_ms,
+            timing: crate::protocol::EventTiming::default(),
             fact,
         }
     }

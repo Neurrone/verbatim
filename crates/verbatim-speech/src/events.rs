@@ -27,6 +27,17 @@ pub trait SpeechEvents: Send + Sync {
     /// The utterance's first audio frame has played.
     fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant);
 
+    /// Synthesis of the utterance has begun. The time since it was queued
+    /// was spent waiting behind earlier speech.
+    fn synthesis_started(&self, _utterance: UtteranceId, _trace_id: TraceId, _at: Instant) {}
+
+    /// The synthesizer has given the utterance's first audio.
+    fn synthesizer_audio(&self, _utterance: UtteranceId, _trace_id: TraceId, _at: Instant) {}
+
+    /// The utterance's first audio past leading silence has gone to the
+    /// mixer.
+    fn audio_to_mixer(&self, _utterance: UtteranceId, _trace_id: TraceId, _at: Instant) {}
+
     /// Playback has reached index mark `mark` in the utterance.
     fn mark_reached(
         &self,

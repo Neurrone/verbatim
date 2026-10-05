@@ -98,6 +98,36 @@ The subcommands:
 - `latency --last N` prints the N most recent end-to-end latency timelines
   (default 10), newest first: event-observed time, and the millisecond
   deltas to speech-queued and audio-started when each is known.
+
+Verbatim's own log also carries one line per announcement, always, at
+`info` on the `verbatim::latency` target, written when its audio starts.
+For example:
+
+`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to outpost 0.2, outpost queue 3.5, outpost read 5.5, to Core 0.2, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
+
+The total is everything from Windows raising the event to the audio engine
+taking the first sample, except time spent waiting behind earlier speech,
+which is reported separately. The stages, in milliseconds:
+
+- Windows: how long before the hook saw it Windows raised the event
+  (whole milliseconds, and only for WinEvents).
+- Listener to outpost: from the listener observing the event, through
+  Core, to the application's outpost, for focus the listener sees.
+- Outpost queue: waiting for the outpost's worker, behind the
+  application's other events.
+- Outpost read: the worker's cross-process UIA and MSAA calls.
+- To Core, reducer, to speech: the pipe to Core, the reducer, and the
+  hand-off to the speech manager.
+- Synthesis: from synthesis starting to the synthesizer's first audio,
+  including the pipes to and from the synthesizer host.
+- Leading silence: audio the trimmer held back as leading silence.
+- Mixer and device: until the audio engine took the first sample.
+
+A stage is left out when the announcement did not pass it; speech from a
+read Core asked for (the focus after a menu closes, at startup) has no
+outpost stages. For the synthesizer host's own split between the pipe and
+synthesis, set `RUST_LOG=info,verbatim::stage=trace`: the host then logs
+`host request` and `host audio` with each trace id.
 - `dump-tree` asks the outpost for the foreground application's
   accessibility tree, walked from its top-level window, and prints one node
   per line indented two spaces per depth level, reusing the same

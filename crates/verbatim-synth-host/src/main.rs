@@ -98,11 +98,14 @@ fn main() -> ExitCode {
     while let Ok(request) = requests.recv() {
         let reply = match request {
             ToHost::Speak(sequence) => {
+                tracing::trace!(target: "verbatim::stage", trace = %sequence.trace_id, stage = "host request");
                 let mut sink = PipeSink {
                     to_core: &mut to_core,
                     utterance: sequence.utterance.0,
+                    trace_id: sequence.trace_id,
                     cancelled: &cancelled,
                     broken: false,
+                    audio: false,
                 };
                 let result = driver.speak(&sequence, &mut sink);
                 if sink.broken {
@@ -150,12 +153,20 @@ struct PipeSink<'a, W: Write> {
     cancelled: &'a AtomicU64,
     /// Core is gone: the pipe could not be written.
     broken: bool,
+    /// The trace the utterance belongs to, and whether the driver has given
+    /// audio yet, for the stage log.
+    trace_id: verbatim_model::TraceId,
+    audio: bool,
 }
 
 impl<W: Write> SynthSink for PipeSink<'_, W> {
     fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
         if self.broken || self.cancelled.load(Ordering::Acquire) == self.utterance {
             return ControlFlow::Break(());
+        }
+        if !self.audio {
+            self.audio = true;
+            tracing::trace!(target: "verbatim::stage", trace = %self.trace_id, stage = "host audio");
         }
         // Blocks while Core is behind: the pipe's small buffer is the
         // backpressure that paces the synthesizer.

@@ -50,7 +50,8 @@ use verbatim_uia::{
 use crate::arbitration::Arbitrator;
 use crate::event_thread::EventThread;
 use crate::protocol::{
-    OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaSnapshotFact, read_message,
+    EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaSnapshotFact,
+    now_us, read_message,
 };
 
 use intake::{Entry, Intake, Item, UiaEvent, UiaKind};
@@ -84,11 +85,12 @@ impl Context {
         self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64) {
+    fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64, timing: EventTiming) {
         self.intake.push(Entry {
             item,
             trace,
             observed_at_ms,
+            timing,
         });
     }
 }
@@ -138,7 +140,7 @@ impl Outpost {
         let hook_context = Arc::clone(&context);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let context = Arc::clone(&hook_context);
-            Box::new(move |kind, hwnd, id_object, id_child| {
+            Box::new(move |kind, hwnd, id_object, id_child, raised_ms_ago| {
                 if kind == verbatim_ia2::WinEventKind::Destroy
                     && (id_object != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
                         || id_child != verbatim_ia2::CHILDID_SELF)
@@ -154,6 +156,11 @@ impl Outpost {
                     },
                     TraceId::mint(),
                     now_ms(),
+                    EventTiming {
+                        raised_ms_ago: Some(raised_ms_ago),
+                        observed_at_us: now_us(),
+                        ..EventTiming::default()
+                    },
                 );
             })
         });
@@ -185,8 +192,17 @@ impl Outpost {
             SupervisorToOutpost::DeliverFact {
                 trace_id,
                 observed_at_ms,
+                timing,
                 fact,
-            } => context.push(Item::Fact(fact.clone()), *trace_id, *observed_at_ms),
+            } => context.push(
+                Item::Fact(fact.clone()),
+                *trace_id,
+                *observed_at_ms,
+                EventTiming {
+                    relayed_at_us: now_us(),
+                    ..*timing
+                },
+            ),
             SupervisorToOutpost::Query {
                 trace_id,
                 request_id,
@@ -198,6 +214,7 @@ impl Outpost {
                 },
                 *trace_id,
                 now_ms(),
+                EventTiming::default(),
             ),
             SupervisorToOutpost::Cancel { request_id } => {
                 if context.intake.cancel(*request_id) {
@@ -226,6 +243,7 @@ impl Outpost {
                 },
                 TraceId::mint(),
                 now_ms(),
+                EventTiming::default(),
             ),
         }
     }
@@ -289,7 +307,15 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
     let callback = Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
         // SAFETY: the property element carries cached values.
         let event = unsafe { capture(element, UiaKind::Property(property_id)) };
-        callback_context.push(Item::Uia(event), TraceId::mint(), now_ms());
+        callback_context.push(
+            Item::Uia(event),
+            TraceId::mint(),
+            now_ms(),
+            EventTiming {
+                observed_at_us: now_us(),
+                ..EventTiming::default()
+            },
+        );
     });
     let subscription = Subscription::Properties {
         properties: FOCUS_PROPERTIES.to_vec(),

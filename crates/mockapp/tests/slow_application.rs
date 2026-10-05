@@ -42,7 +42,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     let _hook = WinEventHook::install(
         pid,
         &[WinEventKind::Focus],
-        Box::new(move |_, hwnd, id_object, id_child| {
+        Box::new(move |_, hwnd, id_object, id_child, _| {
             *seen.lock().unwrap_or_else(PoisonError::into_inner) =
                 Some((hwnd, id_object, id_child));
         }),
@@ -71,6 +71,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     outpost.handle_command(&SupervisorToOutpost::DeliverFact {
         trace_id: TraceId::mint(),
         observed_at_ms: 0,
+        timing: verbatim_outpost::protocol::EventTiming::default(),
         fact: DeliveredFact::MsaaFocus {
             hwnd,
             id_object,

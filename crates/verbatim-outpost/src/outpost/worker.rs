@@ -32,7 +32,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW;
 
 use crate::protocol::{
-    DeliveredFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult, UiaSnapshotFact,
+    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
+    UiaSnapshotFact, now_us,
 };
 
 use super::Context;
@@ -392,6 +393,10 @@ fn run_entry(
     entry: Entry,
     menu: bool,
 ) -> Result<(), ()> {
+    let timing = EventTiming {
+        dequeued_at_us: now_us(),
+        ..entry.timing
+    };
     let (deadline, running) = budget(&entry);
     context
         .watch
@@ -403,6 +408,7 @@ fn run_entry(
             client,
             generation,
             batch,
+            timing,
         };
         if menu {
             worker.menu_opened(&entry);
@@ -487,6 +493,9 @@ struct Worker<'a> {
     generation: u64,
     /// The batch the entry belongs to.
     batch: u64,
+    /// When the entry was raised, observed, relayed, and dequeued, for the
+    /// latency log.
+    timing: EventTiming,
 }
 
 impl Worker<'_> {
@@ -495,6 +504,7 @@ impl Worker<'_> {
             item,
             trace,
             observed_at_ms,
+            ..
         } = entry;
         match item {
             Item::Msaa {
@@ -558,6 +568,10 @@ impl Worker<'_> {
                 observed_at_ms,
                 backend,
                 window: window.map(window_facts),
+                timing: EventTiming {
+                    published_at_us: now_us(),
+                    ..self.timing
+                },
                 event,
             },
         )
@@ -869,6 +883,7 @@ impl Worker<'_> {
                     item: Item::Fact(menu),
                     trace,
                     observed_at_ms,
+                    timing: crate::protocol::EventTiming::default(),
                 });
             }
         }
@@ -1114,6 +1129,7 @@ impl Worker<'_> {
             },
             trace,
             observed_at_ms: 0,
+            timing: crate::protocol::EventTiming::default(),
         });
     }
 

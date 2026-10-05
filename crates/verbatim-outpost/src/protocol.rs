@@ -11,6 +11,39 @@ use std::io::{self, BufRead, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+/// When an event reached each point on its way through the listener and
+/// the outpost, for the latency log Core writes for every announcement:
+/// microseconds since the Unix epoch, 0 for a point it did not pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventTiming {
+    /// How many milliseconds before it was observed Windows raised the
+    /// event; only `WinEvents` carry the time they were raised.
+    pub raised_ms_ago: Option<u32>,
+    /// When the listener or the outpost observed it.
+    pub observed_at_us: u64,
+    /// When the outpost received it from Core, for an event the listener
+    /// observed.
+    pub relayed_at_us: u64,
+    /// When the outpost's worker took it from its queue.
+    pub dequeued_at_us: u64,
+    /// When the outpost sent the resulting event to Core.
+    pub published_at_us: u64,
+}
+
+/// Microseconds since the Unix epoch, the clock [`EventTiming`] and the
+/// latency log share across processes.
+#[must_use]
+pub fn now_us() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros(),
+    )
+    .unwrap_or(u64::MAX)
+}
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification, OutpostId, Pid,
     QueryKind, Role, StateSet, TraceId, TreeNode, WindowFacts,
@@ -239,6 +272,9 @@ pub enum SupervisorToOutpost {
         /// Milliseconds since the Unix epoch when the listener observed the
         /// OS event — the first point on the keypress-to-audio timeline.
         observed_at_ms: u64,
+        /// When it was raised and observed, for the latency log.
+        #[serde(default)]
+        timing: EventTiming,
         /// The routed fact, minus the pid (routing is done).
         fact: DeliveredFact,
     },
@@ -411,6 +447,10 @@ pub enum OutpostToSupervisor {
         /// when the event was observed; `None` when it had no window.
         #[serde(default)]
         window: Option<WindowFacts>,
+        /// When the event reached each point in the outpost, for the
+        /// latency log.
+        #[serde(default)]
+        timing: EventTiming,
         /// The event itself.
         event: NormalizedEvent,
     },
@@ -449,6 +489,9 @@ pub enum OutpostToSupervisor {
         trace_id: TraceId,
         /// Milliseconds since the Unix epoch when the OS event was observed.
         observed_at_ms: u64,
+        /// When it was raised and observed, for the latency log.
+        #[serde(default)]
+        timing: EventTiming,
         /// The captured fact, tagged with the pid Core routes it to.
         fact: ListenerFact,
     },
@@ -570,6 +613,7 @@ mod tests {
     fn messages_round_trip_over_a_byte_stream() {
         let event = OutpostToSupervisor::Event {
             trace_id: TraceId::mint(),
+            timing: EventTiming::default(),
             observed_at_ms: 1_752_000_000_000,
             backend: Backend::Msaa,
             window: None,
@@ -624,6 +668,7 @@ mod tests {
         };
         let mut event = OutpostToSupervisor::Event {
             trace_id: TraceId::mint(),
+            timing: EventTiming::default(),
             observed_at_ms: 0,
             backend: Backend::Uia,
             window: None,
@@ -724,6 +769,7 @@ mod tests {
         };
         let focus_fact = OutpostToSupervisor::FocusFact {
             trace_id: TraceId::mint(),
+            timing: EventTiming::default(),
             observed_at_ms: 1_752_000_000_000,
             fact: fact.clone(),
         };
@@ -744,6 +790,7 @@ mod tests {
 
         let deliver = SupervisorToOutpost::DeliverFact {
             trace_id: TraceId::mint(),
+            timing: EventTiming::default(),
             observed_at_ms: 1_752_000_000_001,
             fact: DeliveredFact::MsaaFocus {
                 hwnd: 0x1234,

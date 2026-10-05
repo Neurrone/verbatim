@@ -13,7 +13,8 @@ use crossbeam_channel::{Receiver, Sender, select, tick};
 use verbatim_model::{OutpostId, Pid, TraceId};
 
 use crate::protocol::{
-    DeliveredFact, ListenerFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    read_message,
 };
 
 use super::policy::{
@@ -43,6 +44,7 @@ pub(super) enum OwnerEvent {
     Fact {
         trace_id: TraceId,
         observed_at_ms: u64,
+        timing: EventTiming,
         fact: ListenerFact,
     },
     /// From the listener's reader: a menu or the Alt+Tab switcher closed.
@@ -189,8 +191,9 @@ impl Owner {
             OwnerEvent::Fact {
                 trace_id,
                 observed_at_ms,
+                timing,
                 fact,
-            } => self.route_fact(trace_id, observed_at_ms, fact),
+            } => self.route_fact(trace_id, observed_at_ms, timing, fact),
             OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
                 let _ = self
                     .events_tx
@@ -400,7 +403,13 @@ impl Owner {
     /// if there is none — unless crashes have stopped respawning for that
     /// application. A foreground change earns a stopped application another
     /// try.
-    fn route_fact(&mut self, trace_id: TraceId, observed_at_ms: u64, fact: ListenerFact) {
+    fn route_fact(
+        &mut self,
+        trace_id: TraceId,
+        observed_at_ms: u64,
+        timing: EventTiming,
+        fact: ListenerFact,
+    ) {
         let pid = fact.pid();
         if matches!(fact.fact, DeliveredFact::Foreground { .. })
             && let Some(history) = self.crashes.get_mut(&pid)
@@ -410,6 +419,7 @@ impl Owner {
         let held = HeldFact {
             trace_id,
             observed_at_ms,
+            timing,
             fact: fact.into_delivered(),
         };
         match self.records.get_mut(&pid) {
@@ -591,6 +601,7 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
     let command = SupervisorToOutpost::DeliverFact {
         trace_id: held.trace_id,
         observed_at_ms: held.observed_at_ms,
+        timing: held.timing,
         fact: held.fact,
     };
     if let Err(error) = writer.push(Outgoing::Fact(key, command)) {
@@ -714,10 +725,12 @@ fn read_listener(outpost: OutpostId, from_child: File, own_tx: &Sender<OwnerEven
             OutpostToSupervisor::FocusFact {
                 trace_id,
                 observed_at_ms,
+                timing,
                 fact,
             } => OwnerEvent::Fact {
                 trace_id,
                 observed_at_ms,
+                timing,
                 fact,
             },
             OutpostToSupervisor::Pong { .. } => OwnerEvent::Pong {

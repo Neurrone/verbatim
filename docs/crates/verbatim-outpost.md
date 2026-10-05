@@ -30,12 +30,18 @@ asks the application for its current focus with a single focus-now query.
 Public API:
 
 - `protocol` — the wire vocabulary the supervisor and each outpost speak.
+  `EventTiming` records, in microseconds from `now_us`, when an event was
+  observed, relayed to the outpost by Core, taken from the outpost's queue,
+  and published to Core, and for a WinEvent how long before it was observed
+  Windows raised it; the listener's `FocusFact`, Core's `DeliverFact`, and
+  the outpost's `Event` carry it, and Core's latency log reads it.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration), `DeliverFact` (a
   focus fact the listener captured, routed to this outpost — a UIA focus
   element's cached snapshot parts, an MSAA focus or menu-popup address, or a
   foreground window — carrying the listener's own trace id and observation
-  timestamp so the latency timeline starts at the OS event), `Query` (a
+  timestamp so the latency timeline starts at the OS event, and its
+  `EventTiming`), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, or `DumpTree`), `Cancel` (withdraws a query that
   has not started), and `Ping`. There is no shutdown message: Core ends a

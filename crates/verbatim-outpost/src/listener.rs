@@ -57,8 +57,8 @@ use verbatim_uia::{FocusRegistration, Registration, Scope, Subscription};
 use crate::event_thread::EventThread;
 use crate::outpost::now_ms;
 use crate::protocol::{
-    DeliveredFact, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    UiaSnapshotFact, read_message, write_message,
+    DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    UiaSnapshotFact, now_us, read_message, write_message,
 };
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
@@ -94,12 +94,18 @@ impl Outgoing {
     }
 
     /// Queues a fact, replacing any waiting fact for the same element and
-    /// kind.
-    fn fact(&self, pid: Pid, fact: DeliveredFact) {
+    /// kind. `raised_ms_ago` is how long before now Windows raised the event,
+    /// when it says.
+    fn fact(&self, pid: Pid, fact: DeliveredFact, raised_ms_ago: Option<u32>) {
         let key = fact.key().map(|key| (pid, key));
         let message = OutpostToSupervisor::FocusFact {
             trace_id: TraceId::mint(),
             observed_at_ms: now_ms(),
+            timing: EventTiming {
+                raised_ms_ago,
+                observed_at_us: now_us(),
+                ..EventTiming::default()
+            },
             fact: ListenerFact { pid, fact },
         };
         let mut state = self.lock();
@@ -207,8 +213,8 @@ impl Listener {
         let msaa_outgoing = Arc::clone(&outgoing);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
             let outgoing = Arc::clone(&msaa_outgoing);
-            Box::new(move |kind, hwnd, id_object, id_child| {
-                forward_msaa_event(&outgoing, kind, hwnd, id_object, id_child);
+            Box::new(move |kind, hwnd, id_object, id_child, raised_ms_ago| {
+                forward_msaa_event(&outgoing, kind, hwnd, id_object, id_child, raised_ms_ago);
             })
         });
         let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_callback);
@@ -271,7 +277,7 @@ fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistrat
         // SAFETY: a cached focus element from the registration's base cache
         // request.
         if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
-            callback_outgoing.fact(pid, DeliveredFact::UiaFocus { hwnd, snapshot });
+            callback_outgoing.fact(pid, DeliveredFact::UiaFocus { hwnd, snapshot }, None);
         }
     });
     match FocusRegistration::new(callback) {
@@ -294,7 +300,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
         callback: Arc::new(move |element: &IUIAutomationElement| {
             // SAFETY: a cached element from the registration's cache request.
             if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
-                selection_outgoing.fact(pid, DeliveredFact::UiaSelection { hwnd, snapshot });
+                selection_outgoing.fact(pid, DeliveredFact::UiaSelection { hwnd, snapshot }, None);
             }
         }),
     };
@@ -305,7 +311,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
         callback: Arc::new(move |element: &IUIAutomationElement| {
             // SAFETY: as above.
             if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
-                menu_outgoing.fact(pid, DeliveredFact::UiaMenuOpened { hwnd, snapshot });
+                menu_outgoing.fact(pid, DeliveredFact::UiaMenuOpened { hwnd, snapshot }, None);
             }
         }),
     };
@@ -333,6 +339,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
                             snapshot,
                             notification,
                         },
+                        None,
                     );
                 }
             },
@@ -364,6 +371,7 @@ fn forward_msaa_event(
     hwnd: isize,
     id_object: i32,
     id_child: i32,
+    raised_ms_ago: u32,
 ) {
     if matches!(kind, WinEventKind::MenuEnd | WinEventKind::SwitchEnd) {
         // Not routed to an outpost: if no focus event follows, Core reads
@@ -405,7 +413,7 @@ fn forward_msaa_event(
         // The listener subscribes to nothing else (LISTENER_SUBSCRIPTIONS).
         _ => return,
     };
-    outgoing.fact(Pid(pid), fact);
+    outgoing.fact(Pid(pid), fact, Some(raised_ms_ago));
 }
 
 /// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
@@ -482,7 +490,7 @@ mod tests {
         // dropped or fail to read.
         let outgoing = Arc::new(Outgoing::default());
         outgoing.menu_or_switch_ended();
-        outgoing.fact(Pid(5), msaa_focus());
+        outgoing.fact(Pid(5), msaa_focus(), None);
         let messages = drain(&outgoing);
         let first = messages
             .recv_timeout(Duration::from_secs(5))

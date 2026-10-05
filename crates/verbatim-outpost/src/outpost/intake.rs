@@ -87,6 +87,8 @@ pub(super) struct Entry {
     pub(super) item: Item,
     pub(super) trace: TraceId,
     pub(super) observed_at_ms: u64,
+    /// When it was raised, observed, and relayed, for the latency log.
+    pub(super) timing: crate::protocol::EventTiming,
 }
 
 /// The object and kind an entry concerns, for the one-per-object rule and for
@@ -517,6 +519,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_ms: u64::try_from(child).unwrap_or(0),
+                timing: crate::protocol::EventTiming::default(),
             },
         }
     }
@@ -533,6 +536,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_ms,
+                timing: crate::protocol::EventTiming::default(),
             },
         }
     }
@@ -552,6 +556,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_ms: 0,
+                timing: crate::protocol::EventTiming::default(),
             },
         }
     }
@@ -663,6 +668,7 @@ mod tests {
                 },
                 trace: TraceId::mint(),
                 observed_at_ms,
+                timing: crate::protocol::EventTiming::default(),
             });
         };
         push(1, 10);
@@ -688,6 +694,7 @@ mod tests {
                 },
                 trace: TraceId::mint(),
                 observed_at_ms: 0,
+                timing: crate::protocol::EventTiming::default(),
             });
         }
         let Some((Planned::Run(entry), _, _)) = intake.next() else {
@@ -714,6 +721,7 @@ mod tests {
                 item: Item::Fact(fact),
                 trace: TraceId::mint(),
                 observed_at_ms: 0,
+                timing: crate::protocol::EventTiming::default(),
             });
         };
         push(DeliveredFact::MsaaFocus {
@@ -746,6 +754,7 @@ mod tests {
             },
             trace: TraceId::mint(),
             observed_at_ms: 0,
+            timing: crate::protocol::EventTiming::default(),
         });
         assert!(intake.cancel(5));
         assert!(!intake.cancel(5), "already withdrawn");

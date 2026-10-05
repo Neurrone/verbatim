@@ -89,7 +89,11 @@ knowing for review:
   ID, fed from three threads across two processes: the reducer thread
   records event observation (using the outpost's own timestamp), and the
   pipeline observer callbacks record queue and audio start (when several
-  utterances share a trace, the first to be heard counts). It mirrors
+  utterances share a trace, the first to be heard counts). It also keeps
+  each announcement's stages in microseconds (the outpost's
+  `EventTiming`, Core's receipt and reduction, and the speech milestones
+  of the trace's first utterance) and logs them as one `verbatim::latency`
+  line when its audio starts (see `docs/tooling.md`). It mirrors
   each utterance's milestones to speech subscribers as a `Speech` frame at
   queue time, a `SpeechStarted` frame when its first frame plays, and a
   `SpeechEnded` frame with its ending, and it answers the `latency`

@@ -26,6 +26,7 @@ use std::cell::RefCell;
 use crate::com::CHILDID_SELF;
 
 use windows::Win32::Foundation::HWND;
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
@@ -132,9 +133,11 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
 ];
 
 /// Called on the installing thread for each in-scope event, with the event
-/// kind and its MSAA address `(hwnd, id_object, id_child)`. It must not block:
-/// its job is to enqueue the address for handling elsewhere.
-pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32)>;
+/// kind, its MSAA address `(hwnd, id_object, id_child)`, and how many
+/// milliseconds ago Windows raised it (delivery to an out-of-context hook
+/// waits for this thread's message loop). It must not block: its job is to
+/// enqueue the address for handling elsewhere.
+pub type WinEventCallback = Box<dyn Fn(WinEventKind, isize, i32, i32, u32)>;
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
@@ -255,8 +258,10 @@ unsafe extern "system" fn win_event_proc(
     id_object: i32,
     id_child: i32,
     _thread: u32,
-    _time: u32,
+    time: u32,
 ) {
+    // SAFETY: GetTickCount has no preconditions; `time` is on the same clock.
+    let raised_ms_ago = unsafe { GetTickCount() }.wrapping_sub(time);
     let Some(kind) = kind_of(event) else {
         return;
     };
@@ -276,7 +281,7 @@ unsafe extern "system" fn win_event_proc(
         };
     CALLBACK.with(|slot| {
         if let Some(callback) = slot.borrow().as_ref() {
-            callback(kind, hwnd.0 as isize, id_object, id_child);
+            callback(kind, hwnd.0 as isize, id_object, id_child, raised_ms_ago);
         }
     });
 }

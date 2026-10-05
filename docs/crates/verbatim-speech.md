@@ -64,7 +64,10 @@ Public API:
 - `SpeechEvents` — the observability seam, one call per milestone of each
   utterance: `utterance_queued` (with its rendered text), `audio_started`
   (its first frame has played), `mark_reached` (playback reached an index
-  mark; a default no-op), and `utterance_ended` (its one ending, as an
+  mark; a default no-op), `synthesis_started`, `synthesizer_audio` (the
+  driver's first audio), and `audio_to_mixer` (its first audio past the
+  trimmer; these three are default no-ops, called on the synth thread,
+  for the latency log), and `utterance_ended` (its one ending, as an
   `UtteranceEnding`). `utterance_queued`, and the ending of an utterance
   cancelled before synthesis, are called on the queue thread; the rest on
   the mixer's audio thread, so every implementation must be cheap and
