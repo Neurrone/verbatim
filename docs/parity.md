@@ -553,9 +553,22 @@ verified.
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:
   `KeyboardInputGesture.reportExtra`. Verbatim: **matched since
-  2026-10-03**, verified live with Num Lock.
+  2026-10-03**, verified live with Num Lock, and covered by the
+  `lock_key_announcements` scenario with Scroll Lock since 2026-10-05. The
+  Verbatim key passed in share mode is not announced: the screen reader
+  behind Verbatim decides whether it reaches the operating system and
+  announces its state itself.
 - Parent/next/previous/first-child moves with edge reporting ("no
-  parent" etc. spoken, not silence). Verbatim: **matched (verified)**
+  parent" etc. spoken, not silence). An MSAA `accNavigate` result that is
+  the same COM object counts only when its child id moves the right way,
+  as NVDA's `_get_next`, `_get_previous`, and `_get_firstChild` check
+  (Verbatim compares canonical `IUnknown`s where NVDA compares interface
+  pointers; NVDA's descendant-window check on a first child and its
+  `AccessibleChildren` fallback are **not yet** done) (the
+  settings dialog's rate slider answers next and previous with itself,
+  confirmed live on 2026-10-05; another object, such as a windowless
+  sibling in the same window, is a real neighbor). Verbatim: **matched
+  (verified)**
   (commits 9bd6bec, 0fe39f0); NVDA wording comparison still
   worthwhile.
 - Sibling navigation resolving back to self reported as edge

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use crate::scenario::Scenario;
 
+pub(crate) mod lock_key_announcements;
 pub(crate) mod menu_and_settings_dialog;
 pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod object_navigation_in_settings;

@@ -783,20 +783,40 @@ pub fn navigate(
     // SAFETY: `target_child` is valid for `target_acc`, per `resolve_child`.
     let target_child_id = unsafe { child_id_of(&target_child) };
     let target_key = (target_hwnd, OBJID_CLIENT.0, target_child_id);
-    // NVDA's `accNavigate` sanity check (its `IAccessible._get_next`): a
-    // control whose window is its whole world answers sibling navigation
-    // with itself — the focused settings slider's `accNavigate(NEXT)`
-    // returns the slider again, and reading that as a neighbor re-announced
-    // the same control (or, for a result with no readable identity, spoke
-    // nothing at all) instead of reporting the edge. Treat a result that
-    // resolves back to the source object as "no such neighbor" so the
-    // reducer speaks the edge message; a simple child advancing to a
-    // different child id (a list item stepping to the next item, the
-    // msinfo32 case) has a different id and passes through. Sibling
-    // navigation between the actual controls happens at the window level
-    // (see `window_navigate`), which is why a user moves up to the frame
-    // first.
-    if target_hwnd == hwnd && target_child_id == id_child {
+    let same_object = canonical(&acc).is_some() && canonical(&acc) == canonical(&target_acc);
+    tracing::debug!(
+        ?direction,
+        hwnd,
+        id_child,
+        target_hwnd,
+        target_child_id,
+        same_object,
+        "MSAA navigation step"
+    );
+    // NVDA's `accNavigate` sanity check (its `IAccessible._get_next`,
+    // `_get_previous`, and `_get_firstChild`): a control whose window is its
+    // whole world answers sibling navigation with itself — the settings
+    // dialog's rate slider answers next and previous with its own object
+    // and child 0 (confirmed live, 2026-10-05) — and reading that as a
+    // neighbor re-announced the same control instead of reporting the
+    // edge. A result that is the same COM object is used only when its
+    // child id moves the right way; another object always is, so a
+    // different windowless object in the same window is a real neighbor.
+    // Verbatim compares objects by their canonical `IUnknown`, where NVDA
+    // compares interface pointers, so a self-return through another
+    // interface pointer is also caught here. NVDA's first-child check also
+    // requires a different object to be in a descendant window, and falls
+    // back to `AccessibleChildren` when `accNavigate` finds no first child;
+    // neither is done here yet.
+    // Sibling navigation between the actual controls happens at the window
+    // level (see `window_navigate`), which is why a user moves up to the
+    // frame first.
+    // The child id `accNavigate` was called with, which can differ from the
+    // node's address: an object acquired at a child's address may be the
+    // child's own object, with child 0.
+    // SAFETY: `child` is the variant `locate` returned with `acc`.
+    let source_child = unsafe { child_id_of(&child) };
+    if !navigation_result_is_usable(direction, same_object, source_child, target_child_id) {
         return Ok(None);
     }
     // SAFETY: `target_acc` is live and `target_child` valid for it, per
@@ -1125,6 +1145,28 @@ unsafe fn resolve_child(
         } else {
             (parent.clone(), child_variant(CHILDID_SELF), parent_hwnd)
         }
+    }
+}
+
+/// Whether an `accNavigate` result is a neighbor in `direction`, by NVDA's
+/// check: another COM object always is; the same object is only when its
+/// child id moves the right way from `source_child`, past it for the next
+/// sibling, before it (and after child 1) for the previous one, and to a
+/// child of the object itself for the first child.
+fn navigation_result_is_usable(
+    direction: NavigateDirection,
+    same_object: bool,
+    source_child: i32,
+    target_child: i32,
+) -> bool {
+    if !same_object {
+        return true;
+    }
+    match direction {
+        NavigateDirection::NextSibling => source_child > 0 && target_child > source_child,
+        NavigateDirection::PreviousSibling => source_child > 1 && target_child < source_child,
+        NavigateDirection::FirstChild => source_child == CHILDID_SELF && target_child > 0,
+        NavigateDirection::Parent => true,
     }
 }
 
@@ -1665,5 +1707,28 @@ unsafe fn window_of(acc: &IAccessible) -> Option<isize> {
         let mut hwnd = HWND::default();
         WindowFromAccessibleObject(acc, Some(&raw mut hwnd)).ok()?;
         Some(hwnd.0 as isize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_same_object_is_a_neighbor_only_when_its_child_id_moves_the_right_way() {
+        use NavigateDirection::{FirstChild, NextSibling, PreviousSibling};
+        // The settings slider: next and previous answer the slider itself.
+        assert!(!navigation_result_is_usable(NextSibling, true, 0, 0));
+        assert!(!navigation_result_is_usable(PreviousSibling, true, 0, 0));
+        // A simple child stepping along its list.
+        assert!(navigation_result_is_usable(NextSibling, true, 3, 4));
+        assert!(!navigation_result_is_usable(NextSibling, true, 3, 3));
+        assert!(navigation_result_is_usable(PreviousSibling, true, 3, 2));
+        assert!(!navigation_result_is_usable(PreviousSibling, true, 1, 0));
+        // The first child is a child of the object itself.
+        assert!(navigation_result_is_usable(FirstChild, true, 0, 1));
+        assert!(!navigation_result_is_usable(FirstChild, true, 0, 0));
+        // Another object, a windowless sibling in the same window included.
+        assert!(navigation_result_is_usable(NextSibling, false, 0, 0));
     }
 }

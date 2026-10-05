@@ -262,9 +262,13 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 let _ = state.events.try_send(emitted);
             }
             // A lock key reaching the operating system is reported, for its
-            // new state to be announced, as NVDA announces it.
+            // new state to be announced, as NVDA announces it. The Verbatim
+            // modifier passed in share mode is not: the screen reader behind
+            // Verbatim decides whether it reaches the operating system, and
+            // announces the state itself if it lets it through.
             if event.pressed
                 && decision.decision == KeyDecision::Pass
+                && !decision.shared_modifier
                 && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
             {
                 let _ = state.events.try_send(verbatim_input::EmittedGesture {

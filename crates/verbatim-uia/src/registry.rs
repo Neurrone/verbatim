@@ -30,6 +30,10 @@ use windows::core::AgileReference;
 
 use verbatim_model::NodeId;
 
+/// The first part of the runtime id UIA gives a window and every element it
+/// hosts; the window handle follows ([`NodeIdRegistry::forget_window`]).
+const WINDOW_RUNTIME_ID: i32 = 42;
+
 /// Elements a [`NodeIdRegistry`] has released. Releasing an element can call
 /// into its process, so the caller drops this after any lock it holds is
 /// released.
@@ -177,6 +181,46 @@ impl NodeIdRegistry {
         }
     }
 
+    /// Releases every node whose element was in window `hwnd`, which has
+    /// been destroyed, so a reused window handle never inherits them. UIA
+    /// gives a window the runtime id 42 followed by its handle, and every
+    /// element it hosts, windowless ones included, a runtime id that begins
+    /// the same way (confirmed live on the taskbar: its XAML buttons read
+    /// 42, the handle of the window hosting them, 4, and their own number).
+    /// The elements are released after the lock, since releasing one can
+    /// call into its process.
+    ///
+    /// This is Verbatim's own rule, with no NVDA counterpart: NVDA holds
+    /// live elements and never maps runtime ids back to them, so a reused
+    /// handle cannot collide there. The 42 prefix is observed Windows
+    /// behavior, not a documented contract; an element whose runtime id
+    /// does not follow it is simply not forgotten here, as before.
+    pub fn forget_window(&self, hwnd: isize) {
+        let Ok(handle) = i32::try_from(hwnd) else {
+            return;
+        };
+        let released = {
+            let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let gone: Vec<NodeId> = inner
+                .reverse
+                .iter()
+                .filter(|(_, runtime_id)| runtime_id.starts_with(&[WINDOW_RUNTIME_ID, handle]))
+                .map(|(&id, _)| id)
+                .collect();
+            let elements: Vec<_> = gone
+                .iter()
+                .filter_map(|id| {
+                    if let Some(runtime_id) = inner.reverse.remove(id) {
+                        inner.forward.remove(&runtime_id);
+                    }
+                    inner.elements.remove(id)
+                })
+                .collect();
+            elements
+        };
+        drop(released);
+    }
+
     /// Returns the runtime ID previously mapped to `node`, for re-fetching the
     /// node's current state on the worker.
     #[must_use]
@@ -227,6 +271,27 @@ mod tests {
         let other = registry.id_for(&[42, 8]);
         assert_eq!(first, again);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn a_destroyed_window_forgets_its_nodes_and_only_them() {
+        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+        let window = registry.id_for(&[42, 500]);
+        let hosted = registry.id_for(&[42, 500, 4, 7]);
+        let other_window = registry.id_for(&[42, 501, 4, 7]);
+        let provider_defined = registry.id_for(&[7, 500]);
+
+        registry.forget_window(500);
+
+        let mut kept = registry.ids();
+        kept.sort_by_key(|id| id.number());
+        assert_eq!(kept, vec![other_window, provider_defined]);
+        assert_ne!(
+            registry.id_for(&[42, 500]),
+            window,
+            "a reused handle is a new node"
+        );
+        assert_ne!(registry.id_for(&[42, 500, 4, 7]), hosted);
     }
 
     #[test]

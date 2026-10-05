@@ -157,7 +157,12 @@ Public API:
   live element behind each; takes an injected shared counter so the UIA and
   MSAA registries in one outpost never hand out the same id. Nodes stay
   until the outpost releases them with `retain` (the clear-at-2048 element
-  cache is gone), and `take_touched` reports the nodes issued or looked up
+  cache is gone) or their window is destroyed (`forget_window`: UIA gives a
+  window the runtime id 42 followed by its handle, and every element it
+  hosts one that begins the same way, so a reused handle never inherits
+  them; Verbatim's own rule, based on runtime ids observed live, with no
+  NVDA counterpart, since NVDA holds live elements rather than mapping ids
+  back to them), and `take_touched` reports the nodes issued or looked up
   since the last call. `init_mta()`, role and state mapping in
   `map`, plus `map`'s total `notification_kind_from_uia` and
   `notification_processing_from_uia` tables for the notification payload.

@@ -740,12 +740,12 @@ same suite on GitHub's runner or against a Hyper-V guest
    `cargo test` subprocess with `VERBATIM_E2E_REMOTE=1` and an audible
    run, and builds its summary from each `summary.txt` ([vm.md](vm.md)).
 
-The eight scenarios: `menu_and_settings_dialog`,
-`rapid_tabbing_in_settings`, `switch_to_onecore`, and
-`synth_host_crash_recovery` (speech); `notepad_and_verbatim_menu` and
+The nine scenarios: `menu_and_settings_dialog`,
+`rapid_tabbing_in_settings`, `switch_to_onecore`,
+`synth_host_crash_recovery`, and `lock_key_announcements` (speech); `notepad_and_verbatim_menu` and
 `start_menu_search` (shell); `object_navigation_in_settings` and
-`system_information_tree` (navigation). On 2026-10-05 the full suite
-passed 6 of 6 runs on this machine with the session parked and NVDA
+`system_information_tree` (navigation). On 2026-10-05 the full suite, with
+`lock_key_announcements` added, passed 4 of 4 runs on this machine with the session parked and NVDA
 closed, and CI's job passed on every push.
 
 Not yet, or known limitations: the Hyper-V path has not been run since

@@ -52,7 +52,9 @@
 //!   [`synth_host_crash_recovery`](crate::scenarios::synth_host_crash_recovery),
 //!   speech going on after the synthesizer host is killed, and
 //!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
-//!   to Windows `OneCore` voices and back.
+//!   to Windows `OneCore` voices and back, and
+//!   [`lock_key_announcements`](crate::scenarios::lock_key_announcements),
+//!   a lock key's new state spoken.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
@@ -76,9 +78,9 @@ use verbatim_control::protocol::LatencyRecord;
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
-    menu_and_settings_dialog, notepad_and_verbatim_menu, object_navigation_in_settings,
-    rapid_tabbing_in_settings, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree,
+    lock_key_announcements, menu_and_settings_dialog, notepad_and_verbatim_menu,
+    object_navigation_in_settings, rapid_tabbing_in_settings, start_menu_search, switch_to_onecore,
+    synth_host_crash_recovery, system_information_tree,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -224,6 +226,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: synth_host_crash_recovery::setup,
         body: synth_host_crash_recovery::body,
         teardown: synth_host_crash_recovery::teardown,
+    },
+    ScenarioDef {
+        name: "lock_key_announcements",
+        group: Group::Speech,
+        target_images: &[],
+        setup: lock_key_announcements::setup,
+        body: lock_key_announcements::body,
+        teardown: lock_key_announcements::teardown,
     },
     ScenarioDef {
         name: "start_menu_search",

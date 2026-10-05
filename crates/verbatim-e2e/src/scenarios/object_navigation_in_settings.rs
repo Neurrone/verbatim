@@ -7,7 +7,10 @@
 //! plane's `SendGesture`, which routes them exactly as a physical keypress
 //! would: report the current object, move to the list's first child (the
 //! "Speech" category item), report again to confirm the navigator moved,
-//! then snap the navigator back to focus. Assertions are substring matches,
+//! then snap the navigator back to focus. Last, it tabs to the rate slider,
+//! whose MSAA object answers next and previous with itself, and checks that
+//! object navigation reports the edge ("No next", "No previous") rather than
+//! landing on the slider again. Assertions are substring matches,
 //! tolerant of the platform controls' own wording, matching the M1
 //! regression's style.
 //!
@@ -76,6 +79,29 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .send_gesture("kb:verbatim+numpadminus")
         .expect("sends move-review-to-focus");
     scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
+
+    // The rate slider's MSAA object answers next and previous with itself,
+    // since its window is its whole world: object navigation must report
+    // the edge rather than land on the slider again. Tab reaches it after
+    // the Change button and the voice and variant boxes.
+    scenario
+        .send_keys(&["tab", "tab", "tab", "tab"])
+        .expect("sends four tabs");
+    scenario
+        .speech()
+        .expect_in_order(&["Rate", "slider"], STEP_TIMEOUT);
+    scenario
+        .send_gesture("kb:verbatim+numpad6")
+        .expect("sends move-to-next");
+    scenario
+        .speech()
+        .expect_in_order(&["No next"], STEP_TIMEOUT);
+    scenario
+        .send_gesture("kb:verbatim+numpad4")
+        .expect("sends move-to-previous");
+    scenario
+        .speech()
+        .expect_in_order(&["No previous"], STEP_TIMEOUT);
 }
 
 #[allow(

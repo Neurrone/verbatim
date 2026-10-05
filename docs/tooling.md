@@ -407,7 +407,7 @@ definition, and `crates/verbatim-e2e/tests/` holds one thin `#[test]`
 wrapper per scenario calling `registry::run_named("that scenario's name")`,
 plus `session_info` (the agent reports an interactive session — the
 precondition everything else depends on, not itself a scenario). The
-eight scenarios today: `menu_and_settings_dialog` (the scripted walk of
+nine scenarios today: `menu_and_settings_dialog` (the scripted walk of
 the M1 exit criteria through Verbatim's menu and Settings dialog, now
 asserting eSpeak NG's voices and its Max variant on the Speech page),
 `synth_host_crash_recovery` (the synthesizer host is killed from outside
@@ -418,6 +418,8 @@ which needs OneCore voices installed, as Windows 11 and GitHub's
 runners have), `notepad_and_verbatim_menu` (switching foreground between Notepad
 and Verbatim's own menu keeps both outposts alive and re-announces
 correctly, and Verbatim still answers after Notepad closes),
+`lock_key_announcements` (Scroll Lock pressed twice is announced on,
+then off, or the reverse),
 `rapid_tabbing_in_settings` (a burst of Tab and Shift+Tab presses in
 Verbatim's settings dialog must leave focus and the navigator on the
 control that really has focus), `object_navigation_in_settings` (the M3

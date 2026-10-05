@@ -15,14 +15,14 @@ mod live;
 mod requests;
 mod single_instance;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 use verbatim_audio::{AudioDevice, Mixer, SilentDevice, WavRecorder};
 use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::{ConfigStore, ConfigValue};
@@ -1058,14 +1058,35 @@ fn router_loop(
     // The active layout's gesture-to-script table, looked up per press.
     let scripts: HashMap<GestureId, ScriptAction> =
         verbatim_input::bindings_for(layout).into_iter().collect();
-    while let Ok(emitted) = gesture_rx.recv() {
+    // Lock keys whose new state is announced once [`TOGGLE_KEY_DELAY`] has
+    // passed, in the order pressed.
+    let mut toggles: VecDeque<(Instant, verbatim_input::ToggleKey)> = VecDeque::new();
+    loop {
+        let received = match toggles.front() {
+            Some(&(due, _)) => gesture_rx.recv_deadline(due),
+            None => gesture_rx
+                .recv()
+                .map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        let now = Instant::now();
+        while let Some(&(due, key)) = toggles.front()
+            && due <= now
+        {
+            toggles.pop_front();
+            report_toggle_key(manager, key);
+        }
+        let emitted = match received {
+            Ok(emitted) => emitted,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         tracing::info!(trace_id = %emitted.trace_id, gesture = %emitted.gesture, "gesture");
         if emitted.gesture == show_menu {
             send_gui_command(gui_handle, GuiCommand::ShowMenu);
             continue;
         }
         if let Some(key) = verbatim_input::ToggleKey::of_gesture(&emitted.gesture) {
-            report_toggle_key(manager, key);
+            toggles.push_back((Instant::now() + TOGGLE_KEY_DELAY, key));
             continue;
         }
         let Some(action) = scripts.get(&emitted.gesture) else {
@@ -1159,32 +1180,31 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
     }
 }
 
-/// Announces a lock key's new state ("caps lock on") 30 milliseconds after
-/// it reached the operating system, as NVDA does: Windows has changed the
-/// state by then.
-fn report_toggle_key(manager: &Arc<SpeechManager>, key: verbatim_input::ToggleKey) {
-    let manager = Arc::clone(manager);
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        // SAFETY: GetKeyState takes a virtual-key code and reads key state.
-        let on = unsafe {
-            windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(key.vk()))
-        } & 1
+/// How long after a lock key reached the operating system its new state is
+/// read and announced, as NVDA does: Windows has changed the state by then.
+const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(30);
+
+/// Announces a lock key's new state ("caps lock on"), once
+/// [`TOGGLE_KEY_DELAY`] has passed; the router waits for it.
+fn report_toggle_key(manager: &SpeechManager, key: verbatim_input::ToggleKey) {
+    // SAFETY: GetKeyState takes a virtual-key code and reads key state.
+    let on =
+        unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(key.vk())) }
+            & 1
             != 0;
-        let id = match key {
-            verbatim_input::ToggleKey::CapsLock => "toggle-caps-lock",
-            verbatim_input::ToggleKey::NumLock => "toggle-num-lock",
-            verbatim_input::ToggleKey::ScrollLock => "toggle-scroll-lock",
-        };
-        manager.speak(Utterance {
-            trace_id: TraceId::mint(),
-            priority: SpeechPriority::Interrupt,
-            segments: vec![UtteranceSegment::text(
-                verbatim_i18n::messages::toggle_key_state(id, on),
-            )],
-            source: None,
-            validity: None,
-        });
+    let id = match key {
+        verbatim_input::ToggleKey::CapsLock => "toggle-caps-lock",
+        verbatim_input::ToggleKey::NumLock => "toggle-num-lock",
+        verbatim_input::ToggleKey::ScrollLock => "toggle-scroll-lock",
+    };
+    manager.speak(Utterance {
+        trace_id: TraceId::mint(),
+        priority: SpeechPriority::Interrupt,
+        segments: vec![UtteranceSegment::text(
+            verbatim_i18n::messages::toggle_key_state(id, on),
+        )],
+        source: None,
+        validity: None,
     });
 }
 
@@ -1288,6 +1308,14 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         }),
         send_gesture: Box::new(move |identifier| {
             let gesture = GestureId::parse(identifier).map_err(|error| error.to_string())?;
+            if verbatim_input::ToggleKey::of_gesture(&gesture).is_some() {
+                // Its announcement reports the key's state after the key
+                // reached Windows; injecting the gesture alone would report
+                // the state unchanged.
+                return Err(format!(
+                    "gesture {gesture} follows a real lock key; send the key with SendKeys"
+                ));
+            }
             if !bound_gestures.load().contains(&gesture) {
                 return Err(format!("gesture {gesture} is not bound"));
             }

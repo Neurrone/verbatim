@@ -50,7 +50,9 @@ pub enum Request {
     /// Routes a gesture identifier through the gesture router as if the
     /// keys had been pressed. Which identifiers are accepted is up to the
     /// server's handler; Verbatim accepts only bound gestures and answers
-    /// any other with an error.
+    /// any other with an error. A lock key's gesture is refused too: it
+    /// reports the key's state after the real key changed it, so a lock key
+    /// is sent with [`Request::SendKeys`].
     SendGesture {
         /// Identifier such as `kb:verbatim+v`.
         identifier: String,

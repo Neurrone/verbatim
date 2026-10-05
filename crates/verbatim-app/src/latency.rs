@@ -247,7 +247,9 @@ impl SpeechEvents for LatencyLedger {
         let at_ms = now_ms();
         let now = now_us();
         let event_observed_at_ms = self.update(trace_id, |entry| {
-            entry.speech_queued_at_ms = Some(at_ms);
+            // The first utterance of a trace is queued first and heard
+            // first, so its queue time pairs with the trace's audio start.
+            entry.speech_queued_at_ms.get_or_insert(at_ms);
             if entry.stages.utterance.is_none() {
                 entry.stages.utterance = Some(utterance);
                 text.clone_into(&mut entry.stages.text);
@@ -353,6 +355,29 @@ mod tests {
         assert_eq!(record.event_observed_at_ms, 100);
         assert!(record.speech_queued_at_ms.is_some());
         assert!(record.audio_started_at_ms.is_some());
+    }
+
+    #[test]
+    fn a_trace_keeps_its_first_utterances_queue_time() {
+        // A window, then its control, in one trace: the timeline runs from
+        // the first utterance's queuing to the first audio.
+        let ledger = ledger();
+        let trace = TraceId::mint();
+        ledger.utterance_queued(UtteranceId(1), trace, "Notepad", std::time::Instant::now());
+        let first_queued = ledger.recent(1)[0].speech_queued_at_ms;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        ledger.utterance_queued(
+            UtteranceId(2),
+            trace,
+            "Text editor",
+            std::time::Instant::now(),
+        );
+
+        let record = &ledger.recent(1)[0];
+        assert_eq!(record.speech_queued_at_ms, first_queued);
+        assert!(record.speech_queued_at_ms <= record.audio_started_at_ms);
     }
 
     #[test]

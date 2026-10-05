@@ -61,7 +61,9 @@ Public API:
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent
   implementation), `navigate` (parent via `accParent`, siblings and first
-  child via `accNavigate`; returns `Ok(None)` for a genuine edge and
+  child via `accNavigate`, where a result that is the same COM object
+  counts only when its child id moves the right way, as NVDA checks;
+  returns `Ok(None)` for a genuine edge and
   `Err(AcquireError::Gone)` when the source node itself is no longer
   reachable, so the outpost can report `Gone` rather than a fake edge),
   `selected_child`, and `activate` (`accDoDefaultAction`, MSAA's only

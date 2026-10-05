@@ -129,6 +129,13 @@ pub struct Decision {
     /// is acted on. Set on nearly every key-down, whether it is bound,
     /// swallowed, or passed on.
     pub speech: Option<KeySpeechEffect>,
+    /// Whether a passed transition is the Verbatim modifier key's own, held
+    /// or double-tapped, passed in share mode for the screen reader hooked
+    /// behind Verbatim
+    /// ([`DecisionConfig::share_modifier`]). That reader decides whether the
+    /// key reaches the operating system, so whether a lock key used this
+    /// way changes state is not known here.
+    pub shared_modifier: bool,
 }
 
 impl Decision {
@@ -138,6 +145,15 @@ impl Decision {
             decision: KeyDecision::Pass,
             emitted: None,
             speech: None,
+            shared_modifier: false,
+        }
+    }
+
+    /// Pass the Verbatim modifier's own transition in share mode.
+    fn pass_shared_modifier() -> Self {
+        Self {
+            shared_modifier: true,
+            ..Self::pass()
         }
     }
 
@@ -145,8 +161,7 @@ impl Decision {
     fn swallow() -> Self {
         Self {
             decision: KeyDecision::Swallow,
-            emitted: None,
-            speech: None,
+            ..Self::pass()
         }
     }
 
@@ -155,7 +170,7 @@ impl Decision {
         Self {
             decision: KeyDecision::Swallow,
             emitted: Some(emitted),
-            speech: None,
+            ..Self::pass()
         }
     }
 }
@@ -458,10 +473,16 @@ impl DecisionMachine {
         // hooked behind Verbatim to see and swallow in its turn.
         if role == KeyRole::Modifier {
             if self.config.share_modifier {
-                return Decision::pass();
+                return Decision::pass_shared_modifier();
             }
             self.swallowed_downs.insert(key);
             return Decision::swallow();
+        }
+        // A double tap passes the modifier key to the operating system; in
+        // share mode the screen reader behind Verbatim decides that press's
+        // fate as much as any other.
+        if hands_to_os && self.config.share_modifier {
+            return Decision::pass_shared_modifier();
         }
         Decision::pass()
     }
@@ -678,8 +699,25 @@ mod tests {
         // Second tap, comfortably inside the window, passes through both
         // transitions so the OS toggles caps lock.
         let t2 = t + Duration::from_millis(100);
-        assert_eq!(m.on_key(down(CAPS, false), t2).decision, KeyDecision::Pass);
+        let second = m.on_key(down(CAPS, false), t2);
+        assert_eq!(second.decision, KeyDecision::Pass);
+        assert!(!second.shared_modifier, "Verbatim alone decides its fate");
         assert_eq!(m.on_key(up(CAPS, false), t2).decision, KeyDecision::Pass);
+
+        // In share mode the double tap passes for the screen reader behind
+        // Verbatim, which decides whether it reaches the operating system.
+        let mut m = machine(
+            DecisionConfig {
+                share_modifier: true,
+                ..DecisionConfig::default()
+            },
+            &[],
+        );
+        m.on_key(down(CAPS, false), t);
+        m.on_key(up(CAPS, false), t);
+        let second = m.on_key(down(CAPS, false), t2);
+        assert_eq!(second.decision, KeyDecision::Pass);
+        assert!(second.shared_modifier);
     }
 
     #[test]
@@ -930,8 +968,11 @@ mod tests {
         let mut m = machine(config, &["kb:v+verbatim"]);
         let t = Instant::now();
 
-        assert_eq!(m.on_key(down(CAPS, false), t).decision, KeyDecision::Pass);
+        let caps = m.on_key(down(CAPS, false), t);
+        assert_eq!(caps.decision, KeyDecision::Pass);
+        assert!(caps.shared_modifier, "passed as the shared modifier");
         let z = m.on_key(down(Z, false), t);
+        assert!(!z.shared_modifier);
         assert_eq!(z.decision, KeyDecision::Pass);
         assert!(z.emitted.is_none());
         assert_eq!(m.on_key(up(Z, false), t).decision, KeyDecision::Pass);
