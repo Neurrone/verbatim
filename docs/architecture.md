@@ -196,8 +196,9 @@ screen reader in both rendered and source form.
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms
-  or under with eSpeak NG, through `IAudioClient3` shared-mode streams at
-  the device's minimum period and MMCSS registration of the synth thread;
+  or under with eSpeak NG, through an event-driven shared-mode stream at
+  the audio engine's standard period and MMCSS registration of the audio
+  thread;
   OneCore is exempt from this half because it synthesizes whole utterances
   before returning. The process model is not where the time goes (three
   pipe hops cost under a millisecond); the cost is the per-hop ancestor
@@ -222,6 +223,10 @@ screen reader in both rendered and source form.
   MSAA for the rest of its life).
   The ledger still records only observed, queued, and first audio; the
   per-stage timeline is not implemented yet.
+  Amended 2026-10-05: the second half no longer relies on `IAudioClient3`.
+  The development machine's device offers no shared-mode period shorter
+  than the engine's standard 10 ms, and queued to first audio measured
+  3 to 8 ms in the usual case without it, most of that the engine period.
 - **D16 — Recordings take their audio from Verbatim's own rendering.** A
   tee at the audio output writes every utterance's PCM with its
   wall-clock start time while still playing it, and the recording step

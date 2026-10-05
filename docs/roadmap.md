@@ -19,11 +19,13 @@ and exit-criteria evidence are archived in
   walk (D15), eSpeak NG as the built-in reference synthesizer (moved
   forward again on 2026-10-04 into the speech-delivery work, as the
   default synthesizer in the synth host of D18), and the attention
-  model replacing the foreground gate (D14), which is what the deferred
-  Explorer and Settings scenarios wait on. eSpeak NG has landed: it is
-  built from the vendored source in the `third_party/espeak-ng`
+  model replacing the foreground gate (D14). The last two have landed.
+  eSpeak NG is built from the vendored source in the `third_party/espeak-ng`
   submodule, runs in the synthesizer host, and is the default
-  synthesizer, and every end-to-end run speaks through it.
+  synthesizer, and every end-to-end run speaks through it. The attention
+  model was implemented in the outpost redesign of 2026-10-01, which also
+  removed the foreground process-id gate; what remains is testing it on
+  the deferred Explorer and Settings scenarios, which waited on it.
 - TextPattern support in the model; caret tracking, typed-character echo,
   word/line/character navigation; say-all with index-mark continuation.
 - Text runs carry formatting attributes as utterance spans (spelling and
