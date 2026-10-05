@@ -53,12 +53,9 @@ pub enum WinEventKind {
     StateChange,
     /// `EVENT_OBJECT_NAMECHANGE`.
     NameChange,
-    /// `EVENT_OBJECT_SELECTION`, `EVENT_OBJECT_SELECTIONADD`,
-    /// `EVENT_OBJECT_SELECTIONREMOVE`, or `EVENT_OBJECT_SELECTIONWITHIN` —
-    /// collapsed to one normalized kind since all four report "the
-    /// selection within a container changed" and the outpost reads the
-    /// current selection from the event's own address regardless of which
-    /// one fired (roadmap M3's selection-events bullet).
+    /// `EVENT_OBJECT_SELECTION`: an item became the selection. The other
+    /// three selection events are reported as [`WinEventKind::StateChange`],
+    /// as NVDA handles them.
     Selection,
     /// `EVENT_SYSTEM_MENUPOPUPSTART` — a popup menu just opened. NVDA
     /// announces menus from this event; announcing from anything slower (a
@@ -83,8 +80,9 @@ pub enum WinEventKind {
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
 /// kind. An install subscribes to the subset whose kind the caller asked for;
 /// [`kind_of`] maps a delivered event id back to its kind against this whole
-/// table. `Selection` maps four raw ids to the one kind, so a caller that
-/// wants selection events gets all four hooks from naming it once.
+/// table. `StateChange` maps four raw ids to the one kind, so a caller that
+/// wants state changes also gets the selection add, remove, and within
+/// hooks.
 const SUBSCRIPTIONS: [(u32, WinEventKind); 15] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),

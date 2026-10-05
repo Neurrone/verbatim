@@ -71,8 +71,8 @@ pub(crate) type KeptObject = (AgileReference<IAccessible>, i32);
 /// What a lookup for a new sighting found.
 pub(crate) enum Found {
     /// A kept node was the same COM object with the same child id, if its
-    /// kept object still has that identity, and has this role.
-    Object(NodeId, Option<KeptObject>, Option<Role>),
+    /// kept object still has that identity.
+    Object(NodeId, Option<KeptObject>),
     /// A kept node has the same address, with its object (if kept) and role,
     /// for the caller to compare.
     Key(NodeId, Option<KeptObject>, Option<Role>),
@@ -145,7 +145,7 @@ impl NodeIdRegistry {
                 .held
                 .as_ref()
                 .map(|held| (held.object.clone(), held.child));
-            return Found::Object(id, held, node.role);
+            return Found::Object(id, held);
         }
         if !at_address {
             return Found::Nothing;

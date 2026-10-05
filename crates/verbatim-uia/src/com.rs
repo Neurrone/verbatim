@@ -2,6 +2,9 @@
 //! apartment initialization and extraction of scalars from the `VARIANT`s and
 //! `SAFEARRAY`s that UIA returns.
 
+use windows::Win32::Foundation::{
+    CO_E_OBJNOTCONNECTED, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED, RPC_E_SERVER_DIED_DNE,
+};
 use windows::Win32::System::Com::SAFEARRAY;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::System::Ole::{
@@ -11,11 +14,42 @@ use windows::Win32::System::Variant::{
     VARIANT, VT_BOOL, VT_R8, VariantToBooleanWithDefault, VariantToDouble, VariantToInt32,
     VariantToStringAlloc,
 };
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE};
+use windows::core::HRESULT;
 
 /// `RPC_E_CHANGED_MODE`: this thread already joined the other apartment kind.
 /// Harmless for us — an outpost thread that is already in some apartment can
 /// still use the UIA client library — so it is treated as success.
 const RPC_E_CHANGED_MODE: i32 = 0x8001_0106_u32.cast_signed();
+
+/// The RPC server is unavailable, as an `HRESULT`: what a call answers once
+/// the provider's process has exited.
+const RPC_S_SERVER_UNAVAILABLE: HRESULT = HRESULT(0x8007_06BA_u32.cast_signed());
+
+/// The remote procedure call failed, as an `HRESULT`.
+const RPC_S_CALL_FAILED: HRESULT = HRESULT(0x8007_06BE_u32.cast_signed());
+
+/// The remote procedure call failed and did not execute, as an `HRESULT`.
+const RPC_S_CALL_FAILED_DNE: HRESULT = HRESULT(0x8007_06BF_u32.cast_signed());
+
+/// Whether a failed call on an element says the element itself is gone: UIA
+/// reports it no longer available, or the provider's process or proxy has
+/// disconnected or become unreachable. Any other failure, a timeout from a busy provider above
+/// all, says nothing about whether the element is still alive.
+#[must_use]
+pub fn element_is_gone(error: &windows::core::Error) -> bool {
+    [
+        HRESULT(UIA_E_ELEMENTNOTAVAILABLE.cast_signed()),
+        RPC_E_DISCONNECTED,
+        CO_E_OBJNOTCONNECTED,
+        RPC_E_SERVER_DIED,
+        RPC_E_SERVER_DIED_DNE,
+        RPC_S_SERVER_UNAVAILABLE,
+        RPC_S_CALL_FAILED,
+        RPC_S_CALL_FAILED_DNE,
+    ]
+    .contains(&error.code())
+}
 
 /// Joins this thread to the process multithreaded apartment (architecture
 /// section 4: UIA client threads live in the MTA). Idempotent per thread.
@@ -102,6 +136,16 @@ pub unsafe fn variant_bool(value: &VARIANT) -> bool {
     unsafe { VariantToBooleanWithDefault(value, false).as_bool() }
 }
 
+/// `element`'s runtime id, empty when the read fails. The array UIA returns
+/// is owned here and destroyed once, so no caller handles it.
+pub fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
+    // SAFETY: `GetRuntimeId` returns a SAFEARRAY of i32 that the caller owns,
+    // which `take_i32_safearray` takes.
+    unsafe { element.GetRuntimeId() }
+        .map(|array| unsafe { take_i32_safearray(array) })
+        .unwrap_or_default()
+}
+
 /// Copies a UIA runtime-id `SAFEARRAY` of `i32` into a `Vec`, destroying the
 /// array afterward. Returns an empty vector for a null or malformed array.
 ///
@@ -110,7 +154,7 @@ pub unsafe fn variant_bool(value: &VARIANT) -> bool {
 /// `array` must be a `SAFEARRAY` pointer owned by the caller (as returned by
 /// `IUIAutomationElement::GetRuntimeId`); this function takes ownership and
 /// destroys it.
-pub unsafe fn take_i32_safearray(array: *mut SAFEARRAY) -> Vec<i32> {
+unsafe fn take_i32_safearray(array: *mut SAFEARRAY) -> Vec<i32> {
     if array.is_null() {
         return Vec::new();
     }

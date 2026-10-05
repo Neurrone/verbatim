@@ -10,11 +10,10 @@ Public API:
   WinEvent hooks for a caller-chosen set of event kinds, scoped to one
   process id (or global for pid zero). Two constant sets name the two
   callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
-  installs — value, state, name, and selection changes (the four
-  `EVENT_OBJECT_SELECTION*` events collapse to one `WinEventKind::Selection`,
-  since all four report "the selection within a container changed" and
-  acquisition reads the affected node from the event's own address either
-  way); and `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
+  installs — value, state, name, and selection changes
+  (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
+  remove, and within events are reported as `WinEventKind::StateChange`, as
+  NVDA handles them); and `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
   globally — focus (`EVENT_OBJECT_FOCUS`), foreground
   (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
   absorbs Core's old foreground trigger), menu-popup opens
@@ -32,9 +31,10 @@ Public API:
 - `acquire` — the query-pool side: `snapshot_from_event` (from
   `AccessibleObjectFromEvent` through name, role, value, state,
   description, keyboard-shortcut, and location reads to a `NodeSnapshot` —
-  the `NodeDetails` half plain MSAA can express; position-in-set and level
-  stay `None` on this backend until IA2's `groupPosition` lands in M6,
-  never faked by counting siblings), `snapshot_from_focus_event` (the
+  the `NodeDetails` half plain MSAA can express; position-in-set is
+  counted for list-view and tree-view items, as described below, and is
+  otherwise `None` until IA2's `groupPosition` (roadmap M6)),
+  `snapshot_from_focus_event` (the
   focus-specific entry the outpost uses for `EVENT_OBJECT_FOCUS` addresses,
   applying NVDA's `processFocusWinEvent` child-0-on-a-list redirect: when a
   focus event names a list on its own object — child id 0, MSAA role
@@ -44,8 +44,7 @@ Public API:
   generic list, announces the focused item rather than the container; the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_snapshot` also uses, so the child-id and child-object forms are
-  handled once), `resnapshot` for re-reading whatever is at an address,
-  `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
+  handled once), `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
   for the synthetic focus event an outpost emits after a foreground
   change), and the node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from

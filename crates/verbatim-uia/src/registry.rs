@@ -82,16 +82,20 @@ impl NodeIdRegistry {
     /// [`id_for`](Self::id_for), and additionally caches `element` as the
     /// live element behind the returned node (module doc), refreshing any
     /// previously cached one — the newest sighting is the most likely to
-    /// still be alive.
+    /// still be alive. The element it replaces is released after the lock,
+    /// since releasing an element can call into its process.
     #[must_use]
     pub fn id_for_element(&self, runtime_id: &[i32], element: &IUIAutomationElement) -> NodeId {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let id = Self::id_for_locked(&self.counter, &mut inner, runtime_id);
+        let mut replaced = None;
         if !runtime_id.is_empty()
             && let Ok(agile) = AgileReference::new(element)
         {
-            inner.elements.insert(id, agile);
+            replaced = inner.elements.insert(id, agile);
         }
+        drop(inner);
+        drop(replaced);
         id
     }
 
@@ -109,6 +113,18 @@ impl NodeIdRegistry {
             inner.touched.push(id);
         }
         id
+    }
+
+    /// The kept node for `runtime_id`, if there is one, without issuing a
+    /// node or recording it as reported.
+    #[must_use]
+    pub fn existing_id(&self, runtime_id: &[i32]) -> Option<NodeId> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .forward
+            .get(runtime_id)
+            .copied()
     }
 
     /// Every kept node.
@@ -189,13 +205,13 @@ impl NodeIdRegistry {
 
     /// Drops the cached live element behind `node` — called when a resolved
     /// element turns out dead, so the next lookup goes straight to the
-    /// search fallback instead of retrying a corpse.
+    /// search fallback instead of retrying a corpse. The element is released
+    /// after the lock, since releasing it can call into its process.
     pub fn evict_element(&self, node: NodeId) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .elements
-            .remove(&node);
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let evicted = inner.elements.remove(&node);
+        drop(inner);
+        drop(evicted);
     }
 }
 

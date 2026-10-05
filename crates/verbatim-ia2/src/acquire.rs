@@ -5,10 +5,10 @@
 //! from a `WinEvent` address, or from the focused window, it acquires an
 //! `IAccessible`, reads name/role/value/state, and maps to a [`NodeSnapshot`].
 //!
-//! IA2 seam: in M3 the richer `IAccessible2` interfaces (text, hypertext,
-//! relations) are acquired here by calling `IServiceProvider::QueryService` on
-//! the `IAccessible` obtained below. That is deliberately left as a module
-//! boundary for now — see [`acquire_ia2`].
+//! `IAccessible2` is not implemented. Roadmap M6 adds it here, with the
+//! browsers that need it, by calling `IServiceProvider::QueryService` on the
+//! `IAccessible` obtained below for the IA2 text, hypertext, and relation
+//! interfaces.
 //!
 //! `SysTreeView32` seam: a Win32 common-control tree view (comctl32) exposes
 //! every visible item to MSAA as a flat sibling list directly under the tree
@@ -238,8 +238,9 @@ unsafe fn focus_event_names_list(
 }
 
 /// Acquires the `IAccessible` and child variant named by a `WinEvent`
-/// address, the shared first step behind [`snapshot_from_event`] and
-/// [`ancestor_chain`]. Returns `None` if the object cannot be acquired.
+/// address: the first step behind [`snapshot_from_event`], and behind
+/// [`ancestor_chain`] for a node with no kept object. Returns `None` if the
+/// object cannot be acquired.
 ///
 /// # Safety
 ///
@@ -838,14 +839,6 @@ pub fn activate(
     Ok(name.map(verbatim_model::ActionName::Named))
 }
 
-/// Re-reads a node previously seen at `key`. Returns `None` if it can no longer
-/// be acquired. Blocking; worker only.
-#[must_use]
-pub fn resnapshot(key: MsaaKey, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
-    let (hwnd, id_object, id_child) = key;
-    snapshot_from_event(hwnd, id_object, id_child, registry)
-}
-
 /// Reads the selected child of a selection container via `accSelection`: a
 /// `VT_I4` result names a child by id on the container itself, a
 /// `VT_DISPATCH` carries the child's own `IAccessible`. A multi-selection
@@ -897,10 +890,6 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
 /// Reads the currently focused object of `target_pid`, for a focus-now query
 /// (including Core's after a menu closes). Uses `GetGUIThreadInfo` then `accFocus`,
 /// with a fallback to the focused window itself. Blocking; worker only.
-///
-/// M1 keys the focused node by its window and child id; a focused child exposed
-/// only as a distinct `IDispatch` is keyed to its own window, which is adequate
-/// for the M1 targets and refined when IA2 lands.
 #[must_use]
 pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
     // SAFETY: each call below fails safely on a bad handle; `info` is fully
@@ -1237,20 +1226,11 @@ fn window_sibling(
     }
 }
 
-/// The IA2 acquisition seam (architecture section 4, roadmap M3). From the
-/// `IAccessible` acquired above, `IServiceProvider::QueryService` yields
-/// `IAccessible2` and the text, hypertext, and relation interfaces. Not
-/// implemented in M1; present so the boundary is explicit.
-#[allow(dead_code)]
-fn acquire_ia2() {
-    // Intentionally empty: the IA2 QueryService path lands in M3.
-}
-
-/// Reads name, role, value, state, and the M3 [`NodeDetails`] properties
-/// plain MSAA offers (`accDescription`, `accKeyboardShortcut`, `accLocation`)
-/// from an accessible and its child id. Position-in-set stays `None` on this
-/// backend until IA2 lands in M6 (architecture section 4;
-/// `IServiceProvider::QueryService` is the seam, not touched here).
+/// Reads name, role, value, state, and the [`NodeDetails`] properties plain
+/// MSAA offers (`accDescription`, `accKeyboardShortcut`, `accLocation`) from
+/// an accessible and its child id. Position-in-set is computed for list-view
+/// and tree-view items (`position_of`) and is otherwise `None` until IA2's
+/// group position (roadmap M6).
 ///
 /// Level is the one exception: a `SysTreeView32` item ([`Role::TreeItem`])
 /// overloads `accValue` to report its 0-based indent depth as a numeric
@@ -1441,18 +1421,21 @@ fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u
 /// The node for an object just read for `key`, matched against the kept
 /// nodes in NVDA's comparison order for MSAA objects (`docs/parity.md`,
 /// "Held objects"): a kept node that is the same COM object with the same
-/// child id in the same window, and the same role, is that node; otherwise,
-/// if the object was acquired at `key` (`at_address`), a kept node acquired
-/// at the same address is that node unless its role differs or both objects
-/// have identity strings (`IAccIdentity`) that differ. Anything else is
+/// child id in the same window is that node; otherwise, if the object was
+/// acquired at `key` (`at_address`), a kept node acquired at the same address
+/// is that node when a fresh read of its kept object has the same role as
+/// `role` and the same identity string (`IAccIdentity`), both absent
+/// counting as the same. A kept object that can no longer be resolved is a
+/// different object; one whose role read fails reads as an unknown role, as
+/// NVDA's does, so it no longer matches a sighting that has a role. A kept
+/// node with
+/// no object is compared by the role it was issued with. Anything else is
 /// issued a new node, which keeps `acc` as its object. An address made up
 /// for an object reached through `accParent` or as a child object is never
 /// compared, since other objects in the same window share it.
 ///
 /// NVDA also compares `IAccessible2` unique ids, which Verbatim does not read
-/// yet, and the location and name; those two change while an object lives,
-/// and Verbatim would compare them with values read when the node was issued
-/// rather than a fresh read of both, so they are left out.
+/// yet, and the location and name, which are not compared here yet either.
 ///
 /// # Safety
 ///
@@ -1469,30 +1452,28 @@ unsafe fn node_for(
     match registry.find(key, identity, child, at_address) {
         // The kept object must still have that identity: while it is kept
         // its address cannot be reused by another object.
-        Found::Object(id, held, held_role)
-            if held_role.is_none_or(|held_role| held_role == role)
-                && held.as_ref().is_some_and(|(object, _)| {
-                    object.resolve().ok().as_ref().and_then(canonical) == identity
-                }) =>
+        Found::Object(id, held)
+            if held.as_ref().is_some_and(|(object, _)| {
+                object.resolve().ok().as_ref().and_then(canonical) == identity
+            }) =>
         {
             registry.touch(id);
             return id;
         }
         Found::Key(id, held, held_role) => {
-            let same_role = held_role.is_none_or(|held_role| held_role == role);
-            let same_identity = held
-                .and_then(|(object, held_child)| {
-                    let object = object.resolve().ok()?;
-                    // SAFETY: both objects are live.
+            let same = match held {
+                Some((object, held_child)) => object.resolve().is_ok_and(|object| {
+                    // SAFETY: `object` was just resolved and `acc` is live. A
+                    // failed role read is an unknown role on either side, as
+                    // NVDA's is.
                     unsafe {
-                        Some((
-                            identity_string(&object, held_child)?,
-                            identity_string(acc, child)?,
-                        ))
+                        role_of(&object, held_child).unwrap_or(Role::Unknown) == role
+                            && identity_string(&object, held_child) == identity_string(acc, child)
                     }
-                })
-                .is_none_or(|(held, new)| held == new);
-            if same_role && same_identity {
+                }),
+                None => held_role.is_none_or(|held_role| held_role == role),
+            };
+            if same {
                 registry.touch(id);
                 return id;
             }
@@ -1515,6 +1496,22 @@ fn canonical(acc: &IAccessible) -> Option<usize> {
     acc.cast::<IUnknown>()
         .ok()
         .map(|unknown| unknown.as_raw() as usize)
+}
+
+/// The role `acc` reports for `child`, or `None` when the read fails.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible`.
+unsafe fn role_of(acc: &IAccessible, child: i32) -> Option<Role> {
+    // SAFETY: forwarded to the caller's contract; `variant_i32` reads only
+    // the VARIANT `get_accRole` just returned.
+    unsafe {
+        acc.get_accRole(&child_variant(child))
+            .ok()
+            .and_then(|v| variant_i32(&v))
+            .map(|r| role_from_msaa(r.cast_unsigned()))
+    }
 }
 
 /// The object's MSAA identity string for `child` (`IAccIdentity`), or `None`

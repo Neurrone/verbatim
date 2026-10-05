@@ -9,10 +9,7 @@
 
 use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
-use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayPutElement};
-use windows::Win32::System::Variant::{
-    VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4,
-};
+use windows::Win32::System::Variant::InitVariantFromInt32Array;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern,
@@ -184,46 +181,24 @@ impl Uia {
         if runtime_id.is_empty() {
             return Ok(None);
         }
-        // SAFETY: a VT_ARRAY | VT_I4 VARIANT is built around a freshly created
-        // i32 SAFEARRAY sized to the runtime id; the array is filled by index
-        // within bounds. The VARIANT owns the array: `windows`'s `VARIANT`
-        // has a `Drop` impl that calls `VariantClear`, which destroys the
-        // `parray` for a VT_ARRAY variant, so the array is freed exactly once
-        // when `variant` drops at the end of this scope — after
-        // `CreatePropertyCondition` has copied it into the condition and after
-        // the search below. It must NOT also be destroyed explicitly: that
-        // was a double free (`SafeArrayDestroy` then `VariantClear` on the
-        // same pointer), the heap corruption an outpost crash-loop traced to
-        // this exact spot under the M3 focus-enrichment query. The search
-        // walks the subtree under the caller's `root`.
+        // SAFETY: `InitVariantFromInt32Array` returns a VT_ARRAY | VT_I4
+        // VARIANT that owns its array; `windows`'s `VARIANT` frees it once,
+        // in its `Drop`, after `CreatePropertyCondition` has copied it into
+        // the condition. Nothing else may destroy the array: doing so as well
+        // was a double free, the heap corruption an outpost crash-loop traced
+        // to this spot under the M3 focus-enrichment query. The search walks
+        // the subtree under the caller's `root`.
         unsafe {
-            let count = u32::try_from(runtime_id.len()).unwrap_or(0);
-            let array = SafeArrayCreateVector(VT_I4, 0, count);
-            if array.is_null() {
-                return Ok(None);
-            }
-            for (index, &value) in runtime_id.iter().enumerate() {
-                let idx = i32::try_from(index).unwrap_or(0);
-                let cell = value;
-                let _ = SafeArrayPutElement(array, &raw const idx, (&raw const cell).cast());
-            }
-            let variant = VARIANT {
-                Anonymous: VARIANT_0 {
-                    Anonymous: std::mem::ManuallyDrop::new(VARIANT_0_0 {
-                        vt: VARENUM(VT_ARRAY.0 | VT_I4.0),
-                        wReserved1: 0,
-                        wReserved2: 0,
-                        wReserved3: 0,
-                        Anonymous: VARIANT_0_0_0 { parray: array },
-                    }),
-                },
-            };
+            let variant = InitVariantFromInt32Array(runtime_id)?;
             let condition = self
                 .client
                 .CreatePropertyCondition(UIA_RuntimeIdPropertyId, &variant)?;
             match root.FindFirstBuildCache(TreeScope_Subtree, &condition, cache) {
                 Ok(element) => Ok(Some(element)),
-                Err(_) => Ok(None),
+                // No match is a null element, which `windows` reports as an
+                // error carrying no failure code.
+                Err(error) if error.code().is_ok() => Ok(None),
+                Err(error) => Err(error),
             }
         }
     }
@@ -258,14 +233,14 @@ impl Uia {
             // SAFETY: `index` is within the array's length.
             let root = unsafe { controlled.GetElement(index) }?;
             // A descendant, not the controlled element itself.
-            // SAFETY: `root` is live; a failed read is no runtime id.
-            let root_id = unsafe { root.GetRuntimeId() }
-                .map(|array| unsafe { crate::com::take_i32_safearray(array) })
-                .unwrap_or_default();
+            // A failed read is no runtime id.
+            let root_id = crate::com::runtime_id(&root);
             if root_id == runtime_id {
                 continue;
             }
-            if let Some(found) = self.element_by_runtime_id(&root, runtime_id, cache)? {
+            // A search that fails under one controlled element leaves the
+            // others to try.
+            if let Ok(Some(found)) = self.element_by_runtime_id(&root, runtime_id, cache) {
                 return Ok(Some(found));
             }
         }
@@ -387,7 +362,9 @@ impl Uia {
             // contract) or a parent built with `cache` by the previous hop.
             let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) }) else {
                 // A hop that fails because the deadline passed while it
-                // waited is an incomplete chain, not the root.
+                // waited is an incomplete chain, not the root. Any other
+                // failure ends the chain as the root, as NVDA's does: its
+                // parent read answers no parent when the call fails.
                 let ending = if out_of_time() {
                     AncestorWalk::OutOfTime
                 } else {
@@ -510,7 +487,9 @@ impl Uia {
     ///
     /// # Errors
     ///
-    /// Returns the COM error if the tree walker itself cannot be created.
+    /// Returns the COM error if the tree walker cannot be created, or the
+    /// step's error when it says the element is gone
+    /// ([`element_is_gone`](crate::element_is_gone)).
     ///
     /// # Safety
     ///
@@ -542,6 +521,10 @@ impl Uia {
             Ok(neighbor) => Ok(Some(unsafe {
                 snapshot_from_cached_element(&neighbor, registry)
             })),
+            // A dead element is reported as such; any other failure reads as
+            // no neighbor, as NVDA's tree-walker failures do, and so does the
+            // null element `windows` reports for a genuine edge.
+            Err(error) if crate::element_is_gone(&error) => Err(error),
             Err(_) => Ok(None),
         }
     }

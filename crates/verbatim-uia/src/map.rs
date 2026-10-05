@@ -543,13 +543,9 @@ pub struct CachedUiaParts {
 #[must_use]
 pub unsafe fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> CachedUiaParts {
     // SAFETY: `element` was built with the base cache request per the contract,
-    // so GetRuntimeId and every cached read below are satisfied. The runtime-id
-    // SAFEARRAY is consumed by `take_i32_safearray`.
+    // so GetRuntimeId and every cached read below are satisfied.
     unsafe {
-        let runtime_id = element
-            .GetRuntimeId()
-            .map(|array| crate::com::take_i32_safearray(array))
-            .unwrap_or_default();
+        let runtime_id = crate::com::runtime_id(element);
         let control_type = cached_i32(element, UIA_ControlTypePropertyId.0).unwrap_or(0);
         let toggle_available = cached_bool(element, UIA_IsTogglePatternAvailablePropertyId.0);
         let class_name = cached_string(element, UIA_ClassNamePropertyId.0);

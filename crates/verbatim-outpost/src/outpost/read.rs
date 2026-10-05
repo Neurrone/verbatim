@@ -473,33 +473,50 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
 
 /// Resolves a UIA node to a live element built with `cache`: the registry's
 /// kept element first (refreshing its cache both updates it and proves it
-/// still answers), then a runtime-id search of the application's top-level
-/// windows.
+/// still answers), then, if that element is gone, a runtime-id search of the
+/// application's top-level windows. A kept element that fails for another
+/// reason, such as a busy provider timing out, is kept and the read fails:
+/// it may well still be alive, and the search would miss a virtualized one.
 fn resolve_uia_element(
     context: &Context,
     uia: &Uia,
     cache: &IUIAutomationCacheRequest,
     node_id: NodeId,
-) -> Option<IUIAutomationElement> {
+) -> Result<IUIAutomationElement, ReadError> {
     if let Some(agile) = context.uia_registry.element_of(node_id) {
         if let Ok(element) = agile.resolve() {
             // SAFETY: a dead underlying element fails the call rather than
             // crashing.
-            if let Ok(fresh) = unsafe { element.BuildUpdatedCache(cache) } {
-                return Some(fresh);
+            match unsafe { element.BuildUpdatedCache(cache) } {
+                Ok(fresh) => return Ok(fresh),
+                Err(error) if !verbatim_uia::element_is_gone(&error) => {
+                    return Err(ReadError::Failed(format!("reading the element: {error}")));
+                }
+                Err(_) => {}
             }
         }
         context.uia_registry.evict_element(node_id);
     }
-    let runtime_id = context.uia_registry.runtime_id_of(node_id)?;
+    let runtime_id = context
+        .uia_registry
+        .runtime_id_of(node_id)
+        .ok_or(ReadError::Gone)?;
+    // Gone only when every search finished without finding it; a search
+    // that failed, a timeout above all, may have missed a live element.
+    let mut failed = None;
     for hwnd in top_level_windows(context.target_pid) {
-        if let Ok(root) = uia.element_from_handle(hwnd, cache)
-            && let Ok(Some(element)) = uia.element_by_runtime_id(&root, &runtime_id, cache)
-        {
-            return Some(element);
+        let Ok(root) = uia.element_from_handle(hwnd, cache) else {
+            continue;
+        };
+        match uia.element_by_runtime_id(&root, &runtime_id, cache) {
+            Ok(Some(element)) => return Ok(element),
+            Ok(None) => {}
+            Err(error) => failed = Some(error),
         }
     }
-    None
+    Err(failed.map_or(ReadError::Gone, |error| {
+        ReadError::Failed(format!("searching for the element: {error}"))
+    }))
 }
 
 /// A UIA node's live element, or the error a query reports for it.
@@ -509,7 +526,7 @@ fn uia_node<'a>(
     node_id: NodeId,
 ) -> Result<(&'a Uia, IUIAutomationCacheRequest, IUIAutomationElement), ReadError> {
     let (uia, cache) = client.uia_and_cache()?;
-    let element = resolve_uia_element(context, uia, &cache, node_id).ok_or(ReadError::Gone)?;
+    let element = resolve_uia_element(context, uia, &cache, node_id)?;
     Ok((uia, cache, element))
 }
 
@@ -542,7 +559,13 @@ pub(super) fn navigate(
         let from_window = verbatim_uia::nearest_window_handle(&element);
         // SAFETY: `element` was built with `cache`.
         let neighbor = unsafe { uia.navigate(&element, &cache, &context.uia_registry, kind) }
-            .map_err(|error| ReadError::Failed(format!("UIA navigation failed: {error}")))?;
+            .map_err(|error| {
+                if verbatim_uia::element_is_gone(&error) {
+                    ReadError::Gone
+                } else {
+                    ReadError::Failed(format!("UIA navigation failed: {error}"))
+                }
+            })?;
         (neighbor, from_window)
     } else {
         let from_window = context.msaa_registry.key_of(node_id).map(|key| key.0);

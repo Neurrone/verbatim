@@ -328,15 +328,15 @@ verified.
   answers "gone". Navigation, activation, and ancestor reads of an MSAA
   node use the object that was announced. A new MSAA sighting is the
   same node when it is the same COM object with the same child id in the
-  same window and has the same role, or when it was acquired at the same
-  address as the node, has the same role, and, if both objects offer
-  one, the same identity string. An object reached through `accParent`
-  or as a child object has no address of its own (other objects in its
-  window share the one Verbatim would make up), so it is matched only as
-  the same COM object. `IAccessible2` unique ids are
-  not read yet, and location and name are not compared, because
-  Verbatim would compare them with values read when the node was
-  issued rather than a fresh read of both. A window's nodes are
+  same window, or when it was acquired at the same address as the node
+  and a fresh read of the node's kept object gives the same role and the
+  same identity string (both absent counts as the same); a failed role
+  read is an unknown role, as for NVDA, so a kept object that no longer
+  answers stops matching. An object reached through `accParent` or as a child object has
+  no address of its own (other objects in its window share the one
+  Verbatim would make up), so it is matched only as the same COM object.
+  `IAccessible2` unique ids are not read yet, and location and name are
+  not compared when matching a sighting. A window's nodes are
   dropped when the window is destroyed. Positional child ids in simple
   list controls remain a known limitation that NVDA shares.
   **different (unverified)**: NVDA releases an object when nothing

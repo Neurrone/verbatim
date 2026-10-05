@@ -822,10 +822,10 @@ impl Worker<'_> {
         let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
             return None;
         };
-        let known = self
-            .context
-            .uia_registry
-            .element_of(self.context.uia_registry.id_for(&focus_id))
+        let registry = &self.context.uia_registry;
+        let known = registry
+            .existing_id(&focus_id)
+            .and_then(|id| registry.element_of(id))
             .and_then(|agile| agile.resolve().ok());
         let focused = match known {
             Some(element) => element,

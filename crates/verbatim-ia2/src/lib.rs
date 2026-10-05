@@ -5,8 +5,8 @@
 //! name/role/value/state and maps into the normalized model. Every property is
 //! a cross-process COM round trip, so all acquisition runs on the outpost's
 //! deadline-guarded worker (risk R1). The `IAccessible2` interfaces (text,
-//! hypertext, relations) are acquired via `IServiceProvider::QueryService` in
-//! M3; that boundary is marked in [`acquire`].
+//! hypertext, relations) are not implemented yet; roadmap M6 adds them in
+//! [`acquire`].
 //!
 //! The pieces:
 //!

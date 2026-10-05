@@ -45,7 +45,7 @@ mod subscribe;
 pub use cache::base_cache_request;
 pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{AncestorStops, AncestorWalk, Uia};
-pub use com::init_mta;
+pub use com::{element_is_gone, init_mta};
 pub use focus::{FocusCallback, FocusRegistration};
 pub use nearest::nearest_window_handle;
 pub use probe::{has_server_side_provider, probe_server_side_provider};

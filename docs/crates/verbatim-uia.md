@@ -48,8 +48,11 @@ Public API:
 - `Uia::navigate` — one raw-view tree-walker step (parent, next or
   previous sibling, first child, named by a navigation `QueryKind` from
   `verbatim-model`) returning
-  the neighbor's snapshot, with `Ok(None)` as the first-class "no such
-  neighbor" outcome distinct from an error. Deliberately the full,
+  the neighbor's snapshot, with `Ok(None)` for "no such neighbor". A step
+  that fails because the element is gone (`element_is_gone`: UIA's element
+  not available, or a disconnected provider) is an error, which the outpost
+  answers as "gone"; any other failure reads as no neighbor, as NVDA's
+  tree-walker failures do. Deliberately the full,
   unfiltered tree: a recorded decision matching NVDA with its simple
   review mode off, the user's baseline (an intermediate revision
   projected NVDA's simple-review filtering here and was reverted). The
@@ -63,7 +66,11 @@ Public API:
   destroys the wrapped `SAFEARRAY` — so a manually built array variant
   must *not* also be freed with `SafeArrayDestroy`. The double free was
   latent heap corruption that surfaced as a continuous outpost
-  crash-respawn loop once M3 made runtime-id lookup per-focus-event.
+  crash-respawn loop once M3 made runtime-id lookup per-focus-event. The
+  variant is now built by `InitVariantFromInt32Array`, so no raw array is
+  ever handled, and reading a runtime id goes through one helper that owns
+  the returned array. A search that finds nothing is `Ok(None)`; a search
+  that fails is an error.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then `SelectionItem`'s select, answering `ActionName::Invoke` for an
   Invoke and no name otherwise, as NVDA names them; each fetched live since
