@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later"
 tracing.workspace = true
 verbatim-audio.workspace = true
 verbatim-speech.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [build-dependencies]
 cmake = "0.1"

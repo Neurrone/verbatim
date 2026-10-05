@@ -11,6 +11,7 @@ tracing.workspace = true
 verbatim-input.workspace = true
 verbatim-model.workspace = true
 windows.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [lints]
 workspace = true

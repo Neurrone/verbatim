@@ -13,6 +13,7 @@ tracing.workspace = true
 verbatim-audio.workspace = true
 verbatim-i18n.workspace = true
 verbatim-model.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 verbatim-synth-capture.workspace = true

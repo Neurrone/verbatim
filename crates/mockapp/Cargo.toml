@@ -12,6 +12,7 @@ serde_json.workspace = true
 verbatim-model.workspace = true
 windows.workspace = true
 windows-core.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 verbatim-ia2.workspace = true

@@ -15,6 +15,7 @@ verbatim-model.workspace = true
 verbatim-speech.workspace = true
 verbatim-synth-espeak.workspace = true
 verbatim-synth-onecore.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 verbatim-synth-hosted.workspace = true

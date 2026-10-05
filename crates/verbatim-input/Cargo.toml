@@ -10,6 +10,7 @@ arc-swap.workspace = true
 crossbeam-channel.workspace = true
 tracing.workspace = true
 verbatim-model.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [lints]
 workspace = true

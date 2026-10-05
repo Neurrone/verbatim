@@ -93,6 +93,15 @@ fn ci() -> ExitCode {
     // `target/debug`, the same output the end-to-end suite and plain
     // `cargo test` use.
     let steps: &[(&str, &[&str])] = &[
+        // The workspace-hack crate must match what cargo-hakari would
+        // generate, and every package must depend on it, or commands that
+        // select different packages build dependencies apart again
+        // (`docs/tooling.md`, "The workspace-hack crate").
+        ("workspace-hack", &["hakari", "generate", "--diff"]),
+        (
+            "workspace-hack dependencies",
+            &["hakari", "manage-deps", "--dry-run"],
+        ),
         ("rustfmt", &["fmt", "--all", "--check"]),
         (
             "clippy",

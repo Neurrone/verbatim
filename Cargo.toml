@@ -64,10 +64,18 @@ verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
 # `windows-core` is a direct dependency because the `windows` crate's
 # `#[implement]` macro emits `::windows_core` paths that only resolve when
 # the implementing crate depends on it directly.
-windows-core = "0.62"
+#
+# This and `windows-future` are asked for exactly as the `windows` crate asks
+# for them, with only `std`. Their default feature is the same `std`, but
+# asking for it gives a different feature set, which cargo builds apart, and
+# then `windows` and everything above it are built apart too, whenever a
+# command selects packages that do or do not use these directly. They are
+# kept out of the workspace-hack crate, which would otherwise unify them
+# (`.config/hakari.toml`).
+windows-core = { version = "0.62", default-features = false, features = ["std"] }
 # The `windows` crate's WinRT async operation types, named directly
 # where a driver waits on one.
-windows-future = "0.3"
+windows-future = { version = "0.3", default-features = false, features = ["std"] }
 
 # The `windows` crate goes last because its feature list needs a dedicated
 # table, and a TOML table header would swallow any bare keys that followed
@@ -124,3 +132,10 @@ pedantic = { level = "warn", priority = -1 }
 # the device dry under load, so it is optimized in development builds too.
 [profile.dev.package.rubato]
 opt-level = 3
+
+# Third-party crates keep line tables, enough for a backtrace through them,
+# but not full debug info: their full PDBs were half the size of every build
+# (`windows` alone runs to hundreds of megabytes). Workspace crates, which
+# "*" does not match, keep full debug info.
+[profile.dev.package."*"]
+debug = "line-tables-only"

@@ -37,7 +37,7 @@ We are using GitHub actions for CI.
 
 ## Commands
 
-`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: the platform-neutral dependency check (the crates listed under NVDA provenance must not pull in the Windows bindings), rustfmt, clippy (pedantic via workspace lints, warnings denied), and unit tests, all for the host's architecture and into `target/debug`, the same output the end-to-end suite uses.
+`cargo xtask ci` is the standard check, and exactly what GitHub Actions runs: the platform-neutral dependency check (the crates listed under NVDA provenance must not pull in the Windows bindings), a check that the generated `crates/workspace-hack` crate is current (it needs `cargo install cargo-hakari --locked`; after adding a package or changing a third-party dependency, run `cargo hakari generate` and `cargo hakari manage-deps`, as `docs/tooling.md` explains), rustfmt, clippy (pedantic via workspace lints, warnings denied), and unit tests, all for the host's architecture and into `target/debug`, the same output the end-to-end suite uses.
 
 `cargo xtask vm <cmd>` drives the Hyper-V harness: `create` (Packer-built golden image, imported, deployed to, checkpointed), `start`, `stop`, `restart`, `restore`, `deploy`, `test` (the end-to-end suite against the VM), `logs`, and `delete`. Guest credentials come from a `.env` at the repo root, which is never committed. See `docs/tooling.md`.
 

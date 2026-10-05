@@ -13,6 +13,7 @@ verbatim-config.workspace = true
 verbatim-control.workspace = true
 # TraceId, which speech.rs's paced waits match utterance completions by.
 verbatim-model.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [lints]
 workspace = true

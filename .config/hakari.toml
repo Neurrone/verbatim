@@ -1,0 +1,38 @@
+# Settings for `cargo hakari`, which generates crates/workspace-hack so that
+# every cargo command, whichever packages it selects, builds each third-party
+# dependency with the same features, and so shares one set of artifacts.
+# See https://docs.rs/cargo-hakari/latest/cargo_hakari/config and the
+# workspace-hack section of docs/tooling.md.
+
+hakari-package = "workspace-hack"
+
+# Format version for hakari's output.
+dep-format-version = "4"
+
+# The workspace uses resolver 3, which hakari treats as 2.
+resolver = "2"
+
+# Both first-class targets.
+platforms = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+
+# Every package depends on workspace-hack, including the platform-neutral
+# ones, which must never depend on the Windows bindings (CLAUDE.md, "NVDA
+# provenance"). The windows-rs family is left out of it; those crates get
+# their features from the one list in the root Cargo.toml.
+[final-excludes]
+third-party = [
+    { name = "windows" },
+    { name = "windows-collections" },
+    { name = "windows-core" },
+    { name = "windows-future" },
+    { name = "windows-implement" },
+    { name = "windows-interface" },
+    { name = "windows-link" },
+    { name = "windows-numerics" },
+    { name = "windows-result" },
+    { name = "windows-strings" },
+    { name = "windows-threading" },
+]
