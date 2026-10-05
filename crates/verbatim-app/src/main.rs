@@ -51,7 +51,7 @@ use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
 use live::LiveOutposts;
-use requests::{Asker, DumpTreeResult, RequestId, RequestTable};
+use requests::{Asker, DumpTicket, DumpTreeResult, RequestId, RequestTable};
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -565,7 +565,10 @@ struct ReducerContext {
 /// tree dump, answered on the given channel.
 enum ShellCommand {
     Input(Box<Input>),
-    DumpTree(Sender<DumpTreeResult>),
+    DumpTree(DumpTicket, Sender<DumpTreeResult>),
+    /// The control-plane caller waiting for this tree dump stopped waiting:
+    /// withdraw the dump if its outpost has not started it.
+    DumpTreeGivenUp(DumpTicket),
     /// Ask this application for its current focus: at startup, for the
     /// foreground application.
     FocusNow(Pid),
@@ -804,7 +807,8 @@ impl ReducerThread<'_> {
     fn on_command(&mut self, command: ShellCommand) {
         match command {
             ShellCommand::Input(input) => self.apply(*input),
-            ShellCommand::DumpTree(reply) => self.dump_tree(reply),
+            ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
+            ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
         }
     }
@@ -932,7 +936,7 @@ impl ReducerThread<'_> {
     /// Starts a control-plane tree dump of the application holding attention.
     /// The answer goes to `reply`; the requester waits on it with its own
     /// timeout, and a late answer to a request it gave up on is dropped.
-    fn dump_tree(&mut self, reply: Sender<DumpTreeResult>) {
+    fn dump_tree(&mut self, ticket: DumpTicket, reply: Sender<DumpTreeResult>) {
         let Some(pid) = self.state.attention() else {
             let _ = reply.try_send(Err("no application holds attention yet".to_owned()));
             return;
@@ -941,13 +945,30 @@ impl ReducerThread<'_> {
             let _ = reply.try_send(Err(format!("no outpost is watching pid {pid}")));
             return;
         };
-        let id = self.requests.begin(outpost, Asker::DumpTree(reply));
+        let id = self
+            .requests
+            .begin(outpost, Asker::DumpTree { ticket, reply });
         let command = SupervisorToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
             query: Query::DumpTree,
         };
         self.send(outpost, id, command);
+    }
+
+    /// Withdraws the tree dump named `ticket`, whose caller stopped
+    /// waiting. The outpost answers "not started" if the dump was still
+    /// queued; a dump already running finishes, within its own walk budget.
+    /// Either way the request keeps its one outcome, which goes nowhere.
+    fn dump_tree_given_up(&mut self, ticket: DumpTicket) {
+        let Some((id, outpost)) = self.requests.dump_tree_request(ticket) else {
+            return;
+        };
+        let command = SupervisorToOutpost::Cancel { request_id: id.0 };
+        if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
+            // The outpost is going away; its end answers the request.
+            tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");
+        }
     }
 }
 
@@ -1260,17 +1281,22 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
 /// Answers [`Request::DumpTree`](verbatim_control::protocol::Request::DumpTree):
 /// hands the request to the reducer thread, which sends `DumpTree` to the
 /// outpost of the application holding attention and records it in its
-/// request table, then waits for the answer with a timeout. Every request
-/// has its own id, so a late answer to one that timed out can never satisfy
-/// a newer one.
+/// request table, then waits for the answer with a timeout, withdrawing the
+/// dump when it expires. Every request has its own id, so a late answer to
+/// one that timed out can never satisfy a newer one.
 fn request_dump_tree(command_tx: &Sender<ShellCommand>) -> DumpTreeResult {
+    let ticket = DumpTicket::mint();
     let (reply_tx, reply_rx) = bounded(1);
     command_tx
-        .send(ShellCommand::DumpTree(reply_tx))
+        .send(ShellCommand::DumpTree(ticket, reply_tx))
         .map_err(|_| "the reducer thread is gone".to_owned())?;
     reply_rx
         .recv_timeout(DUMP_TREE_TIMEOUT)
-        .unwrap_or_else(|_| Err("tree dump timed out".to_owned()))
+        .unwrap_or_else(|_| {
+            // Nobody will read a later answer, so the outpost need not work on it.
+            let _ = command_tx.send(ShellCommand::DumpTreeGivenUp(ticket));
+            Err("tree dump timed out".to_owned())
+        })
 }
 
 #[cfg(test)]

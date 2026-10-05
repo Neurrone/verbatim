@@ -42,6 +42,10 @@ struct DeviceState {
 struct ManualDevice {
     state: Arc<(Mutex<DeviceState>, Condvar)>,
     reopen: Arc<AtomicBool>,
+    /// The next poll fails, as a device that was unplugged does.
+    fail: Arc<AtomicBool>,
+    /// The format the device comes back in when reopened, if not [`FORMAT`].
+    reopened_format: Arc<Mutex<Option<DeviceFormat>>>,
 }
 
 impl ManualDevice {
@@ -63,10 +67,13 @@ impl AudioDevice for ManualDevice {
     fn open(&mut self) -> Result<DeviceFormat, AudioError> {
         self.reopen.store(false, Ordering::SeqCst);
         self.state.0.lock().unwrap().queued = 0;
-        Ok(FORMAT)
+        Ok(self.reopened_format.lock().unwrap().unwrap_or(FORMAT))
     }
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
+        if self.fail.swap(false, Ordering::SeqCst) {
+            return Err(AudioError::Device("the device was unplugged".to_owned()));
+        }
         Ok(self.state.0.lock().unwrap().queued)
     }
 
@@ -355,6 +362,46 @@ fn a_reopened_device_is_given_again_what_had_not_played() {
     harness.play(6);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
     assert_eq!(harness.device.written()[10..], [1_000.0 / 32_768.0; 6]);
+}
+
+#[test]
+fn a_failed_device_is_reopened_and_the_utterance_completes_only_once_heard() {
+    let harness = harness();
+    let trace = harness.speak(1, 10);
+    harness.play(4);
+    assert_eq!(harness.next(), started(1, trace));
+
+    harness.device.fail.store(true, Ordering::SeqCst);
+    harness.device.play(0);
+    // The reopened device is given the frames not yet played and reports
+    // nothing until it has played them.
+    harness.nothing_more();
+    harness.play(20);
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+}
+
+#[test]
+fn a_device_that_comes_back_in_another_format_fails_the_unheard_utterance() {
+    let harness = harness();
+    let trace = harness.speak(1, 10);
+    harness.play(4);
+    assert_eq!(harness.next(), started(1, trace));
+
+    *harness.device.reopened_format.lock().unwrap() = Some(DeviceFormat {
+        sample_rate: 2_000,
+        ..FORMAT
+    });
+    harness.device.reopen.store(true, Ordering::SeqCst);
+    harness.device.play(0);
+    assert_eq!(
+        harness.next(),
+        ended(
+            1,
+            trace,
+            UtteranceEnding::Failed("the audio device changed format".to_owned())
+        )
+    );
+    harness.nothing_more();
 }
 
 /// Collects what the tap is given.

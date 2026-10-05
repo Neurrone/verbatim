@@ -380,16 +380,26 @@ mod tests {
             message: "second".to_owned(),
         };
         let first_line = frame_line(&first);
-        let (head, tail) = first_line.split_at(first_line.len() / 2);
+        let third = first_line.len() / 3;
+        let (head, tail) = first_line.split_at(third);
+        let (middle, tail) = tail.split_at(third);
         let mut rest = tail.to_vec();
         rest.extend(frame_line(&second));
-        let script = [Some(head.to_vec()), None, Some(rest)]
-            .into_iter()
-            .collect();
+        let script = [
+            Some(head.to_vec()),
+            None,
+            Some(middle.to_vec()),
+            None,
+            Some(rest),
+        ]
+        .into_iter()
+        .collect();
         let mut reader = MessageReader::new(io::BufReader::new(ScriptedReader(script)));
 
-        let timed_out = reader.read::<Frame>().expect_err("the read times out");
-        assert_eq!(timed_out.kind(), io::ErrorKind::TimedOut);
+        for _ in 0..2 {
+            let timed_out = reader.read::<Frame>().expect_err("the read times out");
+            assert_eq!(timed_out.kind(), io::ErrorKind::TimedOut);
+        }
         assert_eq!(reader.read::<Frame>().expect("reads"), Some(first));
         assert_eq!(reader.read::<Frame>().expect("reads"), Some(second));
         assert_eq!(reader.read::<Frame>().expect("reads"), None);

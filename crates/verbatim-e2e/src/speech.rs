@@ -545,6 +545,30 @@ mod tests {
     }
 
     #[test]
+    fn only_the_matched_utterances_own_ending_counts() {
+        for matched_ending in [
+            None,
+            Some(UtteranceEnding::Cancelled),
+            Some(UtteranceEnding::Failed("no audio device".to_owned())),
+        ] {
+            let mut frames = vec![
+                queued(1, "matched"),
+                queued(2, "other"),
+                ended(2, UtteranceEnding::Completed),
+            ];
+            frames.extend(matched_ending.clone().map(|ending| ended(1, ending)));
+            let (mut speech, _) = collector(frames);
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                speech.expect_in_order(&["matched"], SHORT);
+            }));
+            assert!(
+                result.is_err(),
+                "another utterance completing does not make {matched_ending:?} heard"
+            );
+        }
+    }
+
+    #[test]
     fn an_ending_read_before_its_assertion_still_counts() {
         let (mut speech, _) = collector(vec![
             queued(1, "first"),

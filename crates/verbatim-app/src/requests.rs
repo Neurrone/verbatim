@@ -10,6 +10,7 @@
 //! outstanding when its outpost ends ("gone").
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
 use verbatim_model::{
@@ -21,6 +22,20 @@ use verbatim_outpost::protocol::{FocusNow, QueryOutcome, QueryResult};
 /// The answer a tree-dump request waits for: the walked tree and whether the
 /// walk was truncated, or a reason it failed.
 pub(crate) type DumpTreeResult = Result<(TreeNode, bool), String>;
+
+/// Names one control-plane tree dump, minted by the caller that waits for
+/// it, so the caller can withdraw it without holding anything that keeps
+/// its reply channel open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DumpTicket(u64);
+
+impl DumpTicket {
+    /// A ticket no other dump in this process has.
+    pub(crate) fn mint() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 /// Names one query Core sent an outpost. Unique for the life of the table,
 /// so an old reply can never satisfy a newer request.
@@ -45,10 +60,15 @@ pub(crate) enum Asker {
         /// The command's trace.
         trace_id: TraceId,
     },
-    /// A control-plane tree dump, answered on this channel. The channel is
+    /// A control-plane tree dump, answered on `reply`. The channel is
     /// bounded with room for the one answer, so sending never blocks; a
     /// requester that already gave up has dropped its receiver.
-    DumpTree(Sender<DumpTreeResult>),
+    DumpTree {
+        /// The requester's name for the dump.
+        ticket: DumpTicket,
+        /// Where the answer goes.
+        reply: Sender<DumpTreeResult>,
+    },
     /// The shell's focus-now query, at startup or after an outpost or the
     /// listener was replaced: its answer re-enters the reducer as a
     /// foreground change and a focus, from application `source`.
@@ -120,6 +140,20 @@ impl RequestTable {
             .collect()
     }
 
+    /// The outstanding tree dump named `ticket`, and the outpost it went
+    /// to: the request a control-plane caller who stopped waiting for it can
+    /// withdraw.
+    pub(crate) fn dump_tree_request(&self, ticket: DumpTicket) -> Option<(RequestId, OutpostId)> {
+        self.entries
+            .iter()
+            .find_map(|(id, entry)| match &entry.asker {
+                Asker::DumpTree { ticket: asked, .. } if *asked == ticket => {
+                    Some((*id, entry.outpost))
+                }
+                _ => None,
+            })
+    }
+
     /// How many requests are outstanding.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
@@ -166,6 +200,16 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
         Asker::Activation { trace_id } => {
             let (activated, action) = match outcome {
                 QueryOutcome::Done(QueryResult::Activated(action)) => (true, action),
+                // The activation started and passed its deadline: whether it
+                // happened is unknown, so nothing is said either way.
+                // Whatever it caused, such as a dialog taking focus,
+                // announces itself.
+                QueryOutcome::Abandoned => {
+                    tracing::warn!(
+                        "activation passed its deadline; whether it happened is unknown"
+                    );
+                    return Vec::new();
+                }
                 other => {
                     tracing::warn!(reason = describe(&other), "activation did not complete");
                     (false, None)
@@ -177,7 +221,7 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
                 action,
             }]
         }
-        Asker::DumpTree(reply) => {
+        Asker::DumpTree { reply, .. } => {
             let answer = match outcome {
                 QueryOutcome::Done(QueryResult::Tree(dumped)) => {
                     Ok((dumped.root, dumped.truncated))
@@ -271,6 +315,13 @@ mod tests {
         }
     }
 
+    fn dump(reply: Sender<DumpTreeResult>) -> Asker {
+        Asker::DumpTree {
+            ticket: DumpTicket::mint(),
+            reply,
+        }
+    }
+
     fn node(role: Role, name: &str) -> NodeSnapshot {
         NodeSnapshot {
             id: NodeId::new(1),
@@ -353,6 +404,8 @@ mod tests {
         for (outcome, expected) in [
             (QueryOutcome::Done(QueryResult::Activated(None)), true),
             (QueryOutcome::Failed("no action".to_owned()), false),
+            (QueryOutcome::NotStarted, false),
+            (QueryOutcome::Gone, false),
         ] {
             let mut table = RequestTable::default();
             let id = table.begin(
@@ -366,6 +419,39 @@ mod tests {
                 [Input::ActivationCompleted { activated, .. }] if *activated == expected
             ));
         }
+    }
+
+    #[test]
+    fn an_activation_that_passed_its_deadline_is_not_reported_either_way() {
+        let mut table = RequestTable::default();
+        let id = table.begin(
+            OutpostId(1),
+            Asker::Activation {
+                trace_id: TraceId::mint(),
+            },
+        );
+        assert_eq!(
+            table.finish(id, OutpostId(1), QueryOutcome::Abandoned),
+            [] as [verbatim_model::Input; 0]
+        );
+        assert_eq!(
+            table.len(),
+            0,
+            "the abandoned outcome is still its one outcome"
+        );
+    }
+
+    #[test]
+    fn a_dump_request_is_found_by_its_ticket_and_by_nothing_else() {
+        let mut table = RequestTable::default();
+        let (ticket, reply) = (DumpTicket::mint(), bounded(1).0);
+        let first = table.begin(OutpostId(1), Asker::DumpTree { ticket, reply });
+        table.begin(OutpostId(2), dump(bounded(1).0));
+        table.begin(OutpostId(1), navigation(7));
+
+        assert_eq!(table.dump_tree_request(ticket), Some((first, OutpostId(1))));
+        table.finish(first, OutpostId(1), QueryOutcome::NotStarted);
+        assert_eq!(table.dump_tree_request(ticket), None);
     }
 
     #[test]
@@ -390,11 +476,11 @@ mod tests {
     fn an_old_dump_reply_never_satisfies_a_newer_request() {
         let mut table = RequestTable::default();
         let (old_tx, old_rx) = bounded(1);
-        let old = table.begin(OutpostId(1), Asker::DumpTree(old_tx));
+        let old = table.begin(OutpostId(1), dump(old_tx));
         // The first requester timed out and went away; a second asks.
         drop(old_rx);
         let (new_tx, new_rx) = bounded(1);
-        let new = table.begin(OutpostId(1), Asker::DumpTree(new_tx));
+        let new = table.begin(OutpostId(1), dump(new_tx));
 
         // The old request's late reply arrives first.
         table.finish(old, OutpostId(1), QueryOutcome::Failed("old".to_owned()));

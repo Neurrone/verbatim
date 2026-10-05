@@ -179,6 +179,22 @@ impl Watch {
         self.changed.notify_one();
     }
 
+    /// Runs `send` under the watch lock if `generation` is still the worker in
+    /// charge, ending its entry first, and says whether it ran. The watchdog
+    /// abandons under the same lock, so an entry is either published or
+    /// abandoned, never both.
+    fn publish(&self, generation: u64, send: impl FnOnce(&mut WatchState)) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        state.deadline = None;
+        state.started = None;
+        state.running = None;
+        send(&mut state);
+        true
+    }
+
     /// Ends the deadline, if `generation` is still in charge, returning the
     /// query still waiting for its reply, if any. `Err` for an abandoned
     /// worker, which is then no longer counted and must exit.
@@ -230,21 +246,15 @@ pub(super) struct Tracking {
 /// recorded as reported at the current position. That may include nodes the
 /// message does not carry, which are then only kept a little longer.
 fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> bool {
-    let mut state = context.watch.lock();
-    if state.generation != generation {
-        return false;
-    }
-    state.deadline = None;
-    state.started = None;
-    state.running = None;
-    let touched = context
-        .uia_registry
-        .take_touched()
-        .into_iter()
-        .chain(context.msaa_registry.take_touched());
-    state.record(message.carries_nodes(), touched.map(NodeId::number));
-    context.outbound.send(message);
-    true
+    context.watch.publish(generation, |state| {
+        let touched = context
+            .uia_registry
+            .take_touched()
+            .into_iter()
+            .chain(context.msaa_registry.take_touched());
+        state.record(message.carries_nodes(), touched.map(NodeId::number));
+        context.outbound.send(message);
+    })
 }
 
 /// Starts the first worker and the watchdog.
@@ -1340,6 +1350,39 @@ mod tests {
         assert_eq!(watch.finish(0), Err(()), "the old worker must exit");
         assert_eq!(watch.abandoned(), 0, "and is no longer counted");
         assert_eq!(watch.finish(1), Ok(None), "its replacement is in charge");
+    }
+
+    #[test]
+    fn an_abandoned_query_gets_only_the_abandoned_reply() {
+        let watch = Watch::default();
+        let trace = TraceId::mint();
+        let mut replies = Vec::new();
+        watch.start(STEP_DEADLINE, Some((7, trace)), 0);
+
+        // The watchdog abandons the worker and answers its query.
+        if let Some((request_id, _)) = watch.lock().abandon() {
+            replies.push((request_id, "abandoned"));
+        }
+        // The old worker's call returns and it tries to publish its answer.
+        let published = watch.publish(0, |_| replies.push((7, "done")));
+
+        assert!(!published, "an abandoned worker publishes nothing");
+        assert_eq!(replies, [(7, "abandoned")]);
+    }
+
+    #[test]
+    fn a_published_query_can_no_longer_be_abandoned() {
+        let watch = Watch::default();
+        let mut replies = Vec::new();
+        watch.start(STEP_DEADLINE, Some((7, TraceId::mint())), 0);
+
+        assert!(watch.publish(0, |_| replies.push((7, "done"))));
+        // A watchdog that wakes just after finds no query to answer.
+        if let Some((request_id, _)) = watch.lock().abandon() {
+            replies.push((request_id, "abandoned"));
+        }
+
+        assert_eq!(replies, [(7, "done")]);
     }
 
     #[test]

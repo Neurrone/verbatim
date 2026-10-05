@@ -65,7 +65,10 @@ knowing for review:
   echoes it with one of five outcomes. The first outcome removes the
   entry and goes to the asker: a navigation outcome re-enters the reducer
   as `Input::FetchCompleted` under the reducer's own query id, an
-  activation's is logged, a tree dump's is sent on its reply channel, and a
+  activation's becomes `Input::ActivationCompleted`, which the reducer
+  speaks, except that an abandoned activation (started, then past its
+  deadline, so it may or may not have happened) is only logged and says
+  nothing; a tree dump's is sent on its reply channel; and a
   focus-now query's becomes reducer input: a foreground change to the window,
   when the application holds the foreground, then a focus on its focused
   control. The reducer thread sends a focus-now query at startup (for the
@@ -148,8 +151,11 @@ knowing for review:
   imperative commands — `GuiCommand`s or direct speech — or, for review and
   object navigation, reducer commands), the control server with its
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
-  one-answer reply channel to the reducer thread and waits five seconds for
-  the answer; `dump_recorder` calls `flight_dump::dump_now` directly, no
+  `DumpTicket` and a one-answer reply channel to the reducer thread and
+  waits five seconds for the answer, then sends
+  `ShellCommand::DumpTreeGivenUp` with the ticket, and the reducer thread
+  sends the outpost a `Cancel`, which withdraws the dump if it has not
+  started; `dump_recorder` calls `flight_dump::dump_now` directly, no
   outpost round trip needed; an injected gesture cancels speech before it
   is sent, as a key press does, since its keys never pass the hook),
   the keyboard hook last among input paths (given a callback that maps
