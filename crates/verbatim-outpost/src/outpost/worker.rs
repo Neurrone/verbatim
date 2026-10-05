@@ -752,7 +752,6 @@ impl Worker<'_> {
                 self.context.arbitrator().forget(hwnd);
                 // A reused window handle must never inherit these nodes.
                 self.context.msaa_registry.forget_window(hwnd);
-                self.context.uia_registry.forget_window(hwnd);
             }
             return;
         }

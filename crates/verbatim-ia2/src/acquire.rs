@@ -29,7 +29,7 @@ use windows::Win32::Foundation::{
     RPC_E_SERVER_DIED_DNE, WPARAM,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
-use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_I4};
+use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_EMPTY, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccIdentity,
     IAccessible, NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, WindowFromAccessibleObject,
@@ -40,7 +40,7 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_PARENT, GUITHREADINFO, GW_HWNDNEXT, GW_HWNDPREV, GetAncestor, GetClassNameW,
-    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowThreadProcessId,
+    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowThreadProcessId, IsChild,
     IsWindow, IsWindowVisible, OBJID_CLIENT, OBJID_WINDOW, SendMessageW,
 };
 use windows::core::{AgileReference, IUnknown, Interface};
@@ -769,11 +769,31 @@ pub fn navigate(
         NavigateDirection::FirstChild => NAVDIR_FIRSTCHILD,
         NavigateDirection::Parent => unreachable!("handled above"),
     };
+    // The child id `accNavigate` is called with, which can differ from the
+    // node's address: an object acquired at a child's address may be the
+    // child's own object, with child 0.
+    // SAFETY: `child` is the variant `locate` returned with `acc`.
+    let source_child = unsafe { child_id_of(&child) };
     // SAFETY: `acc` is live; `child` is valid for it.
-    let result = match unsafe { acc.accNavigate(navdir.cast_signed(), &child) } {
-        Ok(result) => result,
+    let navigated = match unsafe { acc.accNavigate(navdir.cast_signed(), &child) } {
+        // SAFETY: reading the type of the VARIANT just returned.
+        Ok(result) if unsafe { result.Anonymous.Anonymous.vt } != VT_EMPTY => Some(result),
         Err(error) if disconnected(&error) => return Err(AcquireError::Gone),
-        Err(_) => return Ok(None),
+        // An empty answer or another failure: no such neighbor.
+        Ok(_) | Err(_) => None,
+    };
+    let result = match navigated {
+        Some(result) => result,
+        // NVDA's `_get_firstChild`: an object whose `accNavigate` finds no
+        // first child is asked for its children instead.
+        None if direction == NavigateDirection::FirstChild && source_child == CHILDID_SELF => {
+            // SAFETY: `acc` is live.
+            match unsafe { first_accessible_child(&acc) } {
+                Some(first) => first,
+                None => return Ok(None),
+            }
+        }
+        None => return Ok(None),
     };
     // SAFETY: `result` is the VARIANT `accNavigate` just returned; `acc` is
     // live, matching `resolve_child`'s contract even though this result did
@@ -804,19 +824,26 @@ pub fn navigate(
     // different windowless object in the same window is a real neighbor.
     // Verbatim compares objects by their canonical `IUnknown`, where NVDA
     // compares interface pointers, so a self-return through another
-    // interface pointer is also caught here. NVDA's first-child check also
-    // requires a different object to be in a descendant window, and falls
-    // back to `AccessibleChildren` when `accNavigate` finds no first child;
-    // neither is done here yet.
+    // interface pointer is also caught here.
     // Sibling navigation between the actual controls happens at the window
     // level (see `window_navigate`), which is why a user moves up to the
     // frame first.
-    // The child id `accNavigate` was called with, which can differ from the
-    // node's address: an object acquired at a child's address may be the
-    // child's own object, with child 0.
-    // SAFETY: `child` is the variant `locate` returned with `acc`.
-    let source_child = unsafe { child_id_of(&child) };
-    if !navigation_result_is_usable(direction, same_object, source_child, target_child_id) {
+    // NVDA's `_get_firstChild` takes another object as the first child only
+    // when its window is this object's window or one inside it, or this
+    // object is the desktop's.
+    // SAFETY: IsChild and GetDesktopWindow tolerate any handle.
+    let in_own_window = target_hwnd == hwnd
+        || unsafe {
+            IsChild(HWND(hwnd as *mut c_void), HWND(target_hwnd as *mut c_void)).as_bool()
+                || GetDesktopWindow().0 as isize == hwnd
+        };
+    if !navigation_result_is_usable(
+        direction,
+        same_object,
+        in_own_window,
+        source_child,
+        target_child_id,
+    ) {
         return Ok(None);
     }
     // SAFETY: `target_acc` is live and `target_child` valid for it, per
@@ -1149,18 +1176,20 @@ unsafe fn resolve_child(
 }
 
 /// Whether an `accNavigate` result is a neighbor in `direction`, by NVDA's
-/// check: another COM object always is; the same object is only when its
-/// child id moves the right way from `source_child`, past it for the next
-/// sibling, before it (and after child 1) for the previous one, and to a
-/// child of the object itself for the first child.
+/// check: another COM object is, except that a first child must be in the
+/// object's own window or one inside it (`in_own_window`); the same object
+/// is only when its child id moves the right way from `source_child`, past
+/// it for the next sibling, before it (and after child 1) for the previous
+/// one, and to a child of the object itself for the first child.
 fn navigation_result_is_usable(
     direction: NavigateDirection,
     same_object: bool,
+    in_own_window: bool,
     source_child: i32,
     target_child: i32,
 ) -> bool {
     if !same_object {
-        return true;
+        return direction != NavigateDirection::FirstChild || in_own_window;
     }
     match direction {
         NavigateDirection::NextSibling => source_child > 0 && target_child > source_child,
@@ -1168,6 +1197,22 @@ fn navigation_result_is_usable(
         NavigateDirection::FirstChild => source_child == CHILDID_SELF && target_child > 0,
         NavigateDirection::Parent => true,
     }
+}
+
+/// The first entry `AccessibleChildren` reports for `acc`, as `accNavigate`
+/// would name it, or `None` when it has no children.
+///
+/// # Safety
+///
+/// `acc` must be a live `IAccessible`.
+unsafe fn first_accessible_child(acc: &IAccessible) -> Option<VARIANT> {
+    let mut buffer = [VARIANT::default()];
+    let mut obtained = 0i32;
+    // SAFETY: `acc` is live per the contract; `buffer` holds one zeroed
+    // VARIANT, and `AccessibleChildren` writes at most that many.
+    unsafe { AccessibleChildren(acc, 0, &mut buffer, &raw mut obtained) }.ok()?;
+    let [first] = buffer;
+    (obtained > 0).then_some(first)
 }
 
 /// Whether `hwnd` is a window a user would navigate onto — NVDA's
@@ -1717,18 +1762,30 @@ mod tests {
     #[test]
     fn the_same_object_is_a_neighbor_only_when_its_child_id_moves_the_right_way() {
         use NavigateDirection::{FirstChild, NextSibling, PreviousSibling};
+        let usable = |direction, same_object, source, target| {
+            navigation_result_is_usable(direction, same_object, true, source, target)
+        };
         // The settings slider: next and previous answer the slider itself.
-        assert!(!navigation_result_is_usable(NextSibling, true, 0, 0));
-        assert!(!navigation_result_is_usable(PreviousSibling, true, 0, 0));
+        assert!(!usable(NextSibling, true, 0, 0));
+        assert!(!usable(PreviousSibling, true, 0, 0));
         // A simple child stepping along its list.
-        assert!(navigation_result_is_usable(NextSibling, true, 3, 4));
-        assert!(!navigation_result_is_usable(NextSibling, true, 3, 3));
-        assert!(navigation_result_is_usable(PreviousSibling, true, 3, 2));
-        assert!(!navigation_result_is_usable(PreviousSibling, true, 1, 0));
+        assert!(usable(NextSibling, true, 3, 4));
+        assert!(!usable(NextSibling, true, 3, 3));
+        assert!(usable(PreviousSibling, true, 3, 2));
+        assert!(!usable(PreviousSibling, true, 1, 0));
         // The first child is a child of the object itself.
-        assert!(navigation_result_is_usable(FirstChild, true, 0, 1));
-        assert!(!navigation_result_is_usable(FirstChild, true, 0, 0));
+        assert!(usable(FirstChild, true, 0, 1));
+        assert!(!usable(FirstChild, true, 0, 0));
         // Another object, a windowless sibling in the same window included.
-        assert!(navigation_result_is_usable(NextSibling, false, 0, 0));
+        assert!(usable(NextSibling, false, 0, 0));
+    }
+
+    #[test]
+    fn another_object_is_a_first_child_only_in_the_objects_own_windows() {
+        use NavigateDirection::{FirstChild, NextSibling};
+        assert!(navigation_result_is_usable(FirstChild, false, true, 0, 0));
+        assert!(!navigation_result_is_usable(FirstChild, false, false, 0, 0));
+        // Siblings are not held to it, as NVDA's are not.
+        assert!(navigation_result_is_usable(NextSibling, false, false, 0, 0));
     }
 }

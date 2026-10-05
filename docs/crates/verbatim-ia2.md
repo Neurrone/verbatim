@@ -62,7 +62,10 @@ Public API:
   remote-ops analog, so unlike UIA's equivalent this stays the permanent
   implementation), `navigate` (parent via `accParent`, siblings and first
   child via `accNavigate`, where a result that is the same COM object
-  counts only when its child id moves the right way, as NVDA checks;
+  counts only when its child id moves the right way and another object
+  taken as a first child must be in the object's own window or one inside
+  it, with `AccessibleChildren` asked when `accNavigate` finds no first
+  child, as NVDA does;
   returns `Ok(None)` for a genuine edge and
   `Err(AcquireError::Gone)` when the source node itself is no longer
   reachable, so the outpost can report `Gone` rather than a fake edge),

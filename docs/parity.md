@@ -360,8 +360,13 @@ verified.
   no address of its own (other objects in its window share the one
   Verbatim would make up), so it is matched only as the same COM object.
   `IAccessible2` unique ids are not read yet, and location and name are
-  not compared when matching a sighting. A window's nodes are
-  dropped when the window is destroyed. Positional child ids in simple
+  not compared when matching a sighting. A window's MSAA nodes are
+  dropped when the window is destroyed; UIA nodes are not, since a
+  runtime id has no documented structure naming its window, so a UIA
+  node Core still holds after its window closed (the navigator left
+  there) matches a new element given the same runtime id after the
+  window handle value is reused, as an NVDA object compared by runtime
+  id would. Positional child ids in simple
   list controls remain a known limitation that NVDA shares.
   **different (unverified)**: NVDA releases an object when nothing
   refers to it, Verbatim when Core reports it no longer holds the node.
@@ -563,11 +568,12 @@ verified.
   the same COM object counts only when its child id moves the right way,
   as NVDA's `_get_next`, `_get_previous`, and `_get_firstChild` check
   (Verbatim compares canonical `IUnknown`s where NVDA compares interface
-  pointers; NVDA's descendant-window check on a first child and its
-  `AccessibleChildren` fallback are **not yet** done) (the
-  settings dialog's rate slider answers next and previous with itself,
-  confirmed live on 2026-10-05; another object, such as a windowless
-  sibling in the same window, is a real neighbor). Verbatim: **matched
+  pointers). The settings dialog's rate slider answers next and previous
+  with itself (confirmed live on 2026-10-05); another object, such as a
+  windowless sibling in the same window, is a real neighbor, except that
+  a first child must be in the object's own window or one inside it, and
+  an object whose `accNavigate` finds no first child is asked for its
+  children (`AccessibleChildren`), both as NVDA does. Verbatim: **matched
   (verified)**
   (commits 9bd6bec, 0fe39f0); NVDA wording comparison still
   worthwhile.
