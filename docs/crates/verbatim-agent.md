@@ -53,8 +53,9 @@ Public API:
   per connection; blocking, so callers needing to do other work run it on
   a background thread.
 - `session::current()` — session id, whether the process's window station
-  is interactive, and the input desktop's name when it can be opened. This
-  is what `Request::SessionInfo` answers, and what the binary checks at
+  is interactive, and the input desktop's name when it can be opened, read
+  by `verbatim_process::session` (Verbatim makes the same check at its own
+  startup). This is what `Request::SessionInfo` answers, and what the binary checks at
   its own startup: a screen reader test driven from a non-interactive
   session (the "session 0" problem WinRM and PowerShell Direct create) can
   never work, so the agent refuses to even bind a socket in that case,

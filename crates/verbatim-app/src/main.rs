@@ -82,6 +82,14 @@ fn main() -> ExitCode {
     init_tracing(config.settings().log_filter.as_deref());
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "verbatim starting");
 
+    // Checked before replacing a running instance, so a launch that cannot
+    // work never stops one that does.
+    if let Err(diagnosis) = check_interactive_session() {
+        tracing::error!(diagnosis, "verbatim cannot run in this session");
+        eprintln!("verbatim: {diagnosis}");
+        return ExitCode::FAILURE;
+    }
+
     // Replace a running instance before creating anything it might still own.
     let _instance = match single_instance::acquire_replacing() {
         Ok(guard) => guard,
@@ -104,6 +112,25 @@ fn main() -> ExitCode {
             eprintln!("verbatim: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Refuses a session no screen reader can work in: one whose window station
+/// is not interactive, which is where `WinRM`, PowerShell Direct, and
+/// services start processes (the "session 0" problem). There is no input
+/// desktop there to read or speak for, and without this check the launch
+/// would fail later in ways that do not name the cause. A locked or secure
+/// input desktop is not refused: the session is still the user's.
+fn check_interactive_session() -> Result<(), String> {
+    let session = verbatim_process::session::current()
+        .map_err(|error| format!("could not read this process's session: {error}"))?;
+    if session.interactive_window_station {
+        Ok(())
+    } else {
+        Err(format!(
+            "this process's window station is not interactive (session {}), so no screen reader can work here. It was probably started from a non-interactive context such as WinRM, PowerShell Direct, or a service, rather than from the signed-in user's desktop.",
+            session.id
+        ))
     }
 }
 

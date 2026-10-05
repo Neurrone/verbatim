@@ -620,7 +620,9 @@ guest's real autologon session, which is why
 `LogonType Interactive` with a real `UserId` (not SYSTEM, not "run whether
 user is logged on or not") triggered `AtLogOn`, and why `verbatim-agent`
 itself refuses to even bind a socket at startup — and `SessionInfo` reports
-the same check live — when its own window station is not interactive. If
+the same check live — when its own window station is not interactive.
+`verbatim.exe` makes the same check and exits with a diagnosis, so a
+Verbatim launched from WinRM or PowerShell Direct says why it cannot run. If
 `session_info` (the E2E test, or `AgentClient::session_info` by hand) ever
 reports `interactive_window_station: false`, something restarted the agent
 outside that scheduled task; check the task's last run result in the guest

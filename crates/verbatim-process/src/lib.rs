@@ -11,6 +11,11 @@
 //! handles, so two launches running at once cannot keep each other's pipes
 //! open. Each child's standard output and error go to a log file named for
 //! it in this launch's log directory.
+//!
+//! The [`session`] module reads the calling process's own session, which
+//! Verbatim and the test agent check before starting.
+
+pub mod session;
 
 use std::ffi::c_void;
 use std::fs::File;

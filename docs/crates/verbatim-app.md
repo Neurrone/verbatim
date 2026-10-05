@@ -22,8 +22,10 @@ Public surface: none — this is the binary. Internal structure worth
 knowing for review:
 
 - `main` orders startup: namespace trace IDs, load config (materializing
-  missing files), start tracing, replace any running instance, load
-  locales, then `run`.
+  missing files), start tracing, refuse a session that is not interactive
+  (`verbatim_process::session`; a launch from WinRM, PowerShell Direct, or
+  a service exits with a diagnosis, before it could replace a working
+  instance), replace any running instance, load locales, then `run`.
 - `single_instance::acquire_replacing` — NVDA's algorithm: find the old
   instance's hidden window by title, post `WM_QUIT` so its loop exits and
   its normal teardown runs, wait four seconds, `TerminateProcess` as the

@@ -1986,6 +1986,7 @@ dependencies = [
  "tracing",
  "verbatim-control",
  "verbatim-model",
+ "verbatim-process",
  "windows",
 ]
 
@@ -2568,6 +2569,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "serde_json",
+ "verbatim-agent",
  "verbatim-config",
  "verbatim-e2e",
 ]

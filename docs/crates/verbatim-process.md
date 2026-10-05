@@ -4,8 +4,10 @@ Contained child processes (architecture section 1): what Core launches
 outposts, the focus listener, and synthesizer hosts with. The code was
 extracted from `verbatim-outpost`'s supervisor when the synthesizer host
 (decision D18) needed the same containment, so both kinds of child are
-launched the same way. It is a Windows-specific crate and depends only on
-`tracing` and the Windows bindings.
+launched the same way. It also reads the calling process's
+session, which Verbatim and the test agent check at startup. It is a
+Windows-specific crate and depends only on `tracing` and the Windows
+bindings.
 
 Public API:
 
@@ -37,6 +39,14 @@ Public API:
   an inherited pipe handle the process owns and nothing else uses.
   `verbatim-synth-host` uses it; the outpost binary still converts its
   handles itself.
+- `session::current()` — the calling process's `Session`: its session
+  `id`, whether its window station is interactive
+  (`interactive_window_station`), and the input desktop's name when it can
+  be opened (`input_desktop_name`). A process in a non-interactive window
+  station (the "session 0" that WinRM, PowerShell Direct, and services
+  start processes in) can never be a working screen reader; Verbatim exits
+  with a diagnosis then, and the agent refuses to bind its socket. A locked
+  or secure input desktop is not refused.
 
 Implementation notes, launching. `launch` creates the job, then the two
 anonymous pipes, then asks `arguments` for the command line with the
