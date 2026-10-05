@@ -261,7 +261,10 @@ Implementation notes:
   10 ms with local calls, for that fact's window to become the system's
   foreground window (`Intake::next` names the window), as NVDA holds back
   event handling after a foreground event (issue 3831). Then a
-  foreground fact is reported at once,
+  foreground fact is reported at once, stamped with the time its window
+  was confirmed as the foreground rather than the time Windows raised the
+  event, which comes before the change completes (`docs/parity.md`,
+  "Stale focus events"),
   named or not, as a focus on the window, since the foreground change is what
   moves the reducer's attention; the reducer does not speak a nameless
   foreground window, and nothing announces it later. The window's own

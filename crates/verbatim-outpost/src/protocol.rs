@@ -437,8 +437,12 @@ pub enum OutpostToSupervisor {
         /// outpost.
         trace_id: TraceId,
         /// Milliseconds since the Unix epoch when the OS event was first
-        /// observed — the first point on the keypress-to-audio latency
-        /// timeline. Defaults to 0 for messages from older peers.
+        /// observed, which orders it against other outposts' events. A
+        /// foreground change carries instead the time its window was
+        /// confirmed as the foreground, since Windows raises the event
+        /// before the change completes; `timing` keeps the first
+        /// observation, where the latency timeline starts. Defaults to 0
+        /// for messages from older peers.
         #[serde(default)]
         observed_at_ms: u64,
         /// Which backend sourced the event.

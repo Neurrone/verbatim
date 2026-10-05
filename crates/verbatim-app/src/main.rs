@@ -785,7 +785,17 @@ impl ReducerThread<'_> {
                 timing,
                 event,
             } => {
-                self.context.ledger.event_observed(trace_id, observed_at_ms);
+                // The latency timeline starts when the event was first
+                // observed. That is `observed_at_ms` except for a foreground
+                // change, which is ordered by when its window became the
+                // foreground, later than Windows raised it.
+                let first_observed_ms = match timing.observed_at_us {
+                    0 => observed_at_ms,
+                    us => us / 1000,
+                };
+                self.context
+                    .ledger
+                    .event_observed(trace_id, first_observed_ms);
                 self.context.ledger.event_received(trace_id, timing);
                 if let Some(server) = self.context.server_slot.get() {
                     server.broadcast_event(trace_id, source, backend, window, event.clone());

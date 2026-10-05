@@ -160,11 +160,25 @@ fn classify(
 /// focus-now query carries the time the outpost began reading it, so it is
 /// ordered with the events by that; a report with no observation time
 /// (0) is never stale.
-fn is_stale_focus(state: &SrState, outpost: OutpostId, observed_at_ms: u64) -> bool {
+///
+/// A focus in the same top-level window as the newest focus is never stale:
+/// one window can hold several applications (a Settings page's content
+/// inside `ApplicationFrameHost`'s frame), and a foreground change is ordered
+/// by when its window became the foreground, after the content's own focus
+/// may have been observed (`docs/parity.md`, "Stale focus events").
+fn is_stale_focus(
+    state: &SrState,
+    outpost: OutpostId,
+    observed_at_ms: u64,
+    window: Option<WindowFacts>,
+) -> bool {
+    let top_level = window.map(|window| window.top_level);
     observed_at_ms != 0
-        && state
-            .latest_focus
-            .is_some_and(|(latest, at)| latest != outpost && observed_at_ms < at)
+        && state.latest_focus.is_some_and(|(latest, at, latest_top)| {
+            latest != outpost
+                && observed_at_ms < at
+                && !(top_level.is_some() && top_level == latest_top)
+        })
 }
 
 /// Whether an event's window is one the attention record covers: the same
@@ -221,7 +235,7 @@ fn reduce_event(
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
     if let NormalizedEvent::FocusChanged { node, .. } = event
-        && is_stale_focus(state, node.id.outpost(), observed_at_ms)
+        && is_stale_focus(state, node.id.outpost(), observed_at_ms, window)
     {
         return Vec::new();
     }
@@ -239,7 +253,11 @@ fn reduce_event(
     if let NormalizedEvent::FocusChanged { node, .. } = event
         && observed_at_ms != 0
     {
-        state.latest_focus = Some((node.id.outpost(), observed_at_ms));
+        state.latest_focus = Some((
+            node.id.outpost(),
+            observed_at_ms,
+            window.map(|window| window.top_level),
+        ));
     }
 
     let effects = match event {

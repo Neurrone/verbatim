@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use verbatim_model::{NodeId, NodeSnapshot, OutpostId, Pid, QueryId, WindowFacts};
+use verbatim_model::{NodeId, NodeSnapshot, OutpostId, Pid, QueryId, WindowFacts, WindowHandle};
 
 /// The focused node and what the reducer knows about where it sits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,8 +95,10 @@ pub struct SrState {
     /// Each outpost keeps its own events in order, but two outposts can
     /// deliver theirs out of the order they were observed in, where NVDA
     /// handles every event in one queue; a focus event from another outpost
-    /// observed before this one is stale and dropped.
-    pub(crate) latest_focus: Option<(OutpostId, u64)>,
+    /// observed before this one is stale and dropped, unless it is in the
+    /// same top-level window. The window is this focus's top-level window,
+    /// when known.
+    pub(crate) latest_focus: Option<(OutpostId, u64, Option<WindowHandle>)>,
     /// The node of the window most recently reported as the foreground,
     /// whose speech stays valid while it is in front (`FocusNow`).
     pub(crate) foreground: Option<NodeId>,
@@ -136,7 +138,8 @@ impl SrState {
     /// milliseconds since the Unix epoch; `None` before any.
     #[must_use]
     pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.latest_focus.map(|(_, observed_at_ms)| observed_at_ms)
+        self.latest_focus
+            .map(|(_, observed_at_ms, _)| observed_at_ms)
     }
 
     /// Every node the state refers to, grouped by the outpost that issued

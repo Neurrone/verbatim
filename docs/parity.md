@@ -225,7 +225,21 @@ verified.
   (at startup, after an outpost is replaced, or after a menu closes)
   carries the time its read began, so it is ordered with the events as
   NVDA's queue orders the focus it reads; it had carried no time, so it
-  was never judged stale and did not count as the newest focus. A focus
+  was never judged stale and did not count as the newest focus. Since
+  2026-10-05 a foreground change is ordered by the time its window was
+  confirmed as the system's foreground window, not when Windows raised
+  the event: Windows raises it before the change completes, and the old
+  foreground window's focus events in between (found live: the desktop's
+  list, about 130 ms after Notepad's foreground event, which made
+  `notepad_and_verbatim_menu` miss "Notepad" in every full-suite run)
+  were newer and made the change stale. NVDA judges a foreground event
+  against the foreground window when it processes it, which orders it at
+  the same point. A focus in the same top-level window as the newest
+  focus is never stale, since one window can hold several applications
+  (a Settings page's content inside ApplicationFrameHost's frame) whose
+  own focus may be observed before the frame's foreground is confirmed.
+  The latency timeline still starts when a foreground event was first
+  observed. A focus
   with no window facts is taken to be in the attended window, since only
   that let it be accepted, so a later foreground report for that window
   does not replace the control as the focus (NVDA always knows the

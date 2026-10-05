@@ -40,8 +40,8 @@ use super::Context;
 use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::window::{
-    focus_window_of, front_is_another_thread_of_its_application, window_belongs_to_hidden_frame,
-    window_facts, window_is_foreground,
+    focus_window_of, front_is_another_thread_of_its_application, now_ms,
+    window_belongs_to_hidden_frame, window_facts, window_is_foreground,
 };
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
@@ -364,12 +364,26 @@ fn run(context: &Context, generation: u64) {
         tracing::warn!(%error, "the worker could not join the multithreaded apartment");
     }
     let mut client = Client::default();
+    // When the current batch's foreground change was confirmed. `next` names
+    // the window only with a batch's first entry, and the foreground fact
+    // need not be that entry, so the time is kept for the whole batch.
+    let mut confirmed: Option<(u64, Option<u64>)> = None;
     while let Some((planned, batch, foreground)) = context.intake.next() {
         if let Some(hwnd) = foreground {
-            wait_for_foreground(hwnd);
+            confirmed = Some((batch, wait_for_foreground(hwnd)));
         }
+        let foreground_at_ms = confirmed
+            .filter(|(confirmed_batch, _)| *confirmed_batch == batch)
+            .and_then(|(_, at)| at);
         let mut run = |entry: Entry, menu: bool| {
-            run_entry(context, &mut client, generation, batch, entry, menu)
+            run_entry(
+                context,
+                &mut client,
+                generation,
+                (batch, foreground_at_ms),
+                entry,
+                menu,
+            )
         };
         let outcome = match planned {
             Planned::Run(entry) => run(entry, false),
@@ -393,13 +407,14 @@ fn run(context: &Context, generation: u64) {
     }
 }
 
-/// Handles one entry under its deadline. `Err` when this worker was
-/// abandoned meanwhile and must exit.
+/// Handles one entry of `batch`, whose foreground change, if it holds one,
+/// was confirmed at `foreground_at_ms`, under its deadline. `Err` when this
+/// worker was abandoned meanwhile and must exit.
 fn run_entry(
     context: &Context,
     client: &mut Client,
     generation: u64,
-    batch: u64,
+    (batch, foreground_at_ms): (u64, Option<u64>),
     entry: Entry,
     menu: bool,
 ) -> Result<(), ()> {
@@ -420,6 +435,7 @@ fn run_entry(
             client,
             generation,
             batch,
+            foreground_at_ms,
             timing,
         };
         if menu {
@@ -471,7 +487,7 @@ fn run_entry(
 /// window, as NVDA holds back event handling after a foreground event until
 /// the foreground window matches (`_shouldGetEvents`, issue 3831). Local
 /// calls only; the application is never asked.
-fn wait_for_foreground(hwnd: isize) {
+fn wait_for_foreground(hwnd: isize) -> Option<u64> {
     let deadline = Instant::now() + FOREGROUND_WAIT;
     while !window_is_foreground(hwnd) {
         if Instant::now() >= deadline {
@@ -479,10 +495,11 @@ fn wait_for_foreground(hwnd: isize) {
                 hwnd,
                 "the foreground window did not become the event's window"
             );
-            return;
+            return None;
         }
         thread::sleep(FOREGROUND_POLL);
     }
+    Some(now_ms())
 }
 
 /// The deadline for an entry, and the query it answers, if it is one.
@@ -529,6 +546,9 @@ struct Worker<'a> {
     generation: u64,
     /// The batch the entry belongs to.
     batch: u64,
+    /// When the batch's foreground change was confirmed: its window had
+    /// become the system's foreground window.
+    foreground_at_ms: Option<u64>,
     /// When the entry was raised, observed, relayed, and dequeued, for the
     /// latency log.
     timing: EventTiming,
@@ -962,6 +982,16 @@ impl Worker<'_> {
     /// A foreground change: reported at once, named or not, as a focus on
     /// the window, unless the window is no longer the system's foreground
     /// window by the time it is read.
+    ///
+    /// It is stamped with the time its window was confirmed as the
+    /// foreground, not the time Windows raised the event: Windows raises it
+    /// before the change completes (measured live: Notepad's event arrived
+    /// while the desktop was still the foreground window, which it stayed
+    /// for about 130 ms more), and the old foreground window's own focus
+    /// events in that interval would otherwise be newer than the change
+    /// and make Core drop it as stale. NVDA judges a foreground event
+    /// against the foreground window when it processes the event, so it
+    /// orders the change at the same point.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
@@ -975,9 +1005,12 @@ impl Worker<'_> {
             );
             return;
         }
+        // Confirmed by the wait before the batch, or, when the wait timed
+        // out, by the check just made.
+        let confirmed_at_ms = self.foreground_at_ms.unwrap_or_else(now_ms);
         self.emit_focus(
             trace,
-            observed_at_ms,
+            observed_at_ms.max(confirmed_at_ms),
             backend,
             Some(hwnd),
             node,

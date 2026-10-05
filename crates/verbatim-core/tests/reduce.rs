@@ -1720,6 +1720,41 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
 }
 
 #[test]
+fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
+    // Settings: ApplicationFrameHost's frame is reported when it became the
+    // foreground, after SystemSettings' content focus inside the same window
+    // was observed, and that focus arrives later. It is in the window the
+    // newest focus is in, so it is not stale.
+    let facts = window(40);
+    let frame = Input::Event {
+        observed_at_ms: 1_130,
+        trace_id: TraceId::mint(),
+        source: Pid(10),
+        backend: Backend::Uia,
+        window: Some(facts),
+        event: NormalizedEvent::FocusChanged {
+            node: node(1, Role::Window, Some("Settings"), None, StateSet::new()),
+            foreground: true,
+            ancestors: vec![],
+            ancestors_unknown: false,
+            selected_child: None,
+        },
+    };
+    let (state, _) = reduce_from(&SrState::new(), &frame, OutpostId(1));
+    let toggle = node(1, Role::CheckBox, Some("Bluetooth"), None, StateSet::new());
+    let (_, effects) = reduce_from(
+        &state,
+        &observed_at(focus_in(Pid(11), facts, toggle, vec![]), 1_040),
+        OutpostId(2),
+    );
+    assert_eq!(
+        speak_effects(&effects).len(),
+        1,
+        "the content focus is spoken"
+    );
+}
+
+#[test]
 fn an_entered_container_is_spoken_as_a_focus_is() {
     // A named static text entered as context says its name alone; a list,
     // which is not a silent role, still says "list".
