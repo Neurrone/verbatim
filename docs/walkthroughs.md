@@ -62,7 +62,7 @@ again with a focus-now query to cover the gap.
 
 ## 2. The life of a command keystroke
 
-The user presses Verbatim+numpad8 (report current object):
+The user presses Verbatim+numpad5 (report current object):
 
 1. **The hook decides.** The `WH_KEYBOARD_LL` hook thread
    (`verbatim-input-windows`) runs `verbatim-input`'s pure

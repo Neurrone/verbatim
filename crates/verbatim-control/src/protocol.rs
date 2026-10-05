@@ -3,8 +3,9 @@
 //! Newline-delimited compact JSON over the named pipe
 //! `\\.\pipe\verbatim-control`. Clients send [`RequestEnvelope`]s; the
 //! server answers every request with a [`Frame::Reply`] or [`Frame::Error`]
-//! carrying the request's id, and pushes [`Frame::Event`] and
-//! [`Frame::Speech`] frames to connections that subscribed.
+//! carrying the request's id, and pushes [`Frame::Event`] frames, and
+//! [`Frame::Speech`], [`Frame::SpeechStarted`], and [`Frame::SpeechEnded`]
+//! frames, to connections that subscribed.
 
 use std::io::{self, BufRead, Write};
 
@@ -43,11 +44,13 @@ pub enum Request {
     Status,
     /// Starts streaming [`Frame::Event`] frames on this connection.
     SubscribeEvents,
-    /// Starts streaming [`Frame::Speech`] frames on this connection.
+    /// Starts streaming [`Frame::Speech`], [`Frame::SpeechStarted`], and
+    /// [`Frame::SpeechEnded`] frames on this connection.
     SubscribeSpeech,
     /// Routes a gesture identifier through the gesture router as if the
-    /// keys had been pressed. Any well-formed identifier is accepted, bound
-    /// or not.
+    /// keys had been pressed. Which identifiers are accepted is up to the
+    /// server's handler; Verbatim accepts only bound gestures and answers
+    /// any other with an error.
     SendGesture {
         /// Identifier such as `kb:verbatim+v`.
         identifier: String,

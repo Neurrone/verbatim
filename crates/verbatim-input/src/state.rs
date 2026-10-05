@@ -4,7 +4,7 @@
 //! nothing here touches the operating system: the machine turns a stream of
 //! [`KeyEvent`]s into swallow-or-pass [`Decision`]s and emitted gestures,
 //! driven only by its configuration, the bound-gesture snapshot, and a
-//! caller-supplied clock. The hook thread ([`crate::hook`]) is the thin
+//! caller-supplied clock. The hook thread (in `verbatim-input-windows`) is the thin
 //! imperative shell that feeds it real events, which is what lets the whole
 //! of Verbatim's keyboard behaviour be exercised by ordinary unit tests with
 //! scripted key streams and scripted time.

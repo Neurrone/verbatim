@@ -23,8 +23,9 @@ pub type SharedGestureMap = Arc<ArcSwap<GestureMap>>;
 /// The set of gesture identifiers currently bound to some action.
 ///
 /// Membership is all the hook needs: it swallows and emits a gesture when the
-/// map contains it, and otherwise leaves the keys alone (modulo the
-/// modifier-companion trapping rule). Identifiers are already normalized by
+/// map contains it, and otherwise leaves the keys alone, apart from the
+/// Verbatim modifier's own transitions, which the decision machine swallows.
+/// Identifiers are already normalized by
 /// [`GestureId`], so lookup is order- and case-insensitive.
 #[derive(Clone, Debug, Default)]
 pub struct GestureMap {

@@ -378,8 +378,10 @@ pub enum Input {
         command: ReviewCommand,
         /// How many times the gesture was pressed in quick succession, zero
         /// for the first press: report-current-object reports on 0, spells
-        /// on 1, copies on 2 (NVDA's multi-press semantics). Other commands
-        /// ignore it.
+        /// on 1, copies on 2 (NVDA's multi-press semantics); the
+        /// current-line, current-word, and current-character review
+        /// commands spell on a repeat, and a third press of current
+        /// character speaks its character code. Other commands ignore it.
         repeat: u8,
     },
     /// An activation the reducer asked for finished: `activated` is whether

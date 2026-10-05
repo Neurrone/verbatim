@@ -10,8 +10,8 @@ Public API:
   `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `DumpTree`,
   `DumpRecorder`, `Quit`) in a `RequestEnvelope` with a correlation id;
   `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechStarted`,
-  `SpeechEnded`); `StatusInfo`,
-  `OutpostStatus`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
+  `SpeechEnded`); `ReplyPayload`, `StatusInfo`,
+  `OutpostStatus`, `OutpostState`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
   same newline-JSON framing helpers. Of the two readers, `read_message` is
   for connections whose reads never time out: a read that fails partway
   through a line loses the part already read. `MessageReader` is for
@@ -38,10 +38,17 @@ Public API:
 - `client` — the control-plane client, promoted here from
   `verbatim-inspect` so any client, not just the CLI, can share it:
   `Client::connect_pipe()` on the well-known pipe, `connect_pipe_named(name)`
-  for tests, and `connect_tcp(addr)` for a Verbatim reached over TCP (a
-  remote session, or from inside a VM host); `request` completes the
-  `Hello` handshake and matches replies by correlation id, discarding
-  stream frames that arrive while a reply is pending; `next_frame` reads
+  for tests, `connect_tcp(addr)`, which dials `addr` and sends the
+  control `Hello` at once, so it reaches only an endpoint that speaks the
+  control protocol from the first byte (Verbatim itself never listens on
+  TCP), and `from_tcp_stream(stream)`, which completes the handshake on a
+  socket that is already connected: the end-to-end suite reaches a
+  Verbatim through the in-guest agent by sending the agent's `Hello` and
+  `OpenControlTunnel` on one socket, then handing that socket to
+  `from_tcp_stream`. Every constructor completes the `Hello` handshake;
+  `request` matches replies by correlation id, discarding every other
+  frame that arrives while a reply is pending, stream frames on a
+  subscribed connection included; `next_frame` reads
   any frame, for subscription loops. Both read through a `MessageReader`,
   so a read timeout set on a TCP transport never splits a frame.
   Single-threaded by design, which is
@@ -55,7 +62,8 @@ Public API:
   `broadcast_speech(..)`, `broadcast_speech_started(..)`, and
   `broadcast_speech_ended(..)` fan frames out to subscribed connections; drop
   stops accepting and disconnects every client.
-- `send_keys` — `parse_combo` and `parse_all` (validating every entry
+- `send_keys` (a private module, used by the server's `SendKeys`
+  handler) — `parse_combo` and `parse_all` (validating every entry
   against the shared key-name vocabulary before anything is injected) and
   `inject`, which synthesizes the modifier-down, key, modifier-up sequence
   via `SendInput` with correct extended-key flags.

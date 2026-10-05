@@ -19,7 +19,10 @@ Implementation notes: the hook thread keeps the machine in a thread-local
 runs on the thread that installed it), calls `speech` with the decision's
 speech effect before sending the gesture, so speech the gesture causes is
 never the speech the key press cancels, forwards emitted gestures with a
-non-blocking `try_send` that drops on a full channel, and returns 1 to
+non-blocking `try_send` that drops on a full channel, also sends the
+lock-key gesture (`ToggleKey::gesture`, with a repeat of 0) when a Caps
+Lock, Num Lock, or Scroll Lock press passes to the operating system, so
+its new state can be announced, and returns 1 to
 swallow or calls `CallNextHookEx` to pass. The never-block constraint is
 load-bearing: Windows silently removes low-level hooks whose procedure
 exceeds the system timeout, and the reader would go deaf to the keyboard

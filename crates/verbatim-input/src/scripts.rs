@@ -1,4 +1,4 @@
-//! The M3 script vocabulary and binding tables (`docs/roadmap.md`'s M3
+//! The M3 script vocabulary and binding tables (`docs/roadmap-done.md`'s M3
 //! object-navigation bullet, transcribed exactly).
 //!
 //! [`ScriptAction`] names every M3 command abstractly, independent of any
@@ -97,7 +97,7 @@ pub enum ScriptAction {
 /// below read as plain data.
 type RawBinding = (&'static str, ScriptAction);
 
-/// The M3 bindings of every layout, in `docs/roadmap.md` order: object
+/// The M3 bindings of every layout, in `docs/roadmap-done.md` order: object
 /// navigation, then review-cursor text reading, then time and tray list.
 /// NVDA binds each of these for all layouts (`kb:` rather than
 /// `kb(desktop):`), so a laptop-layout user with a numpad keeps them.
@@ -182,7 +182,7 @@ const LAPTOP_BINDINGS: &[RawBinding] = &[
 ];
 
 /// The complete M3 gesture table for the chosen layout, as bound in
-/// `docs/roadmap.md`'s M3 object-navigation bullet.
+/// `docs/roadmap-done.md`'s M3 object-navigation bullet.
 ///
 /// # Panics
 ///
@@ -209,18 +209,14 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
 /// Builds the hook's bound-gesture set from a binding table, ready to wrap
 /// in a [`crate::SharedGestureMap`] (or store into an existing one).
 ///
-/// This is the seam the application uses to activate a layout: read the
-/// configured layout from `Settings.keyboard.layout`, map it to this
-/// crate's [`KeyboardLayout`], call [`bindings_for`], build the hook's map
-/// here, and keep the same `Vec<(GestureId, ScriptAction)>` (or a `HashMap`
-/// built from it) on the application side to resolve an emitted gesture to
-/// its action in the router — [`GestureMap`] is a plain membership set, not
-/// generic over the bound action, so the action half of each pair lives
-/// with the consumer. Rebinding, for example on a layout change, is one
-/// atomic [`store`](arc_swap::ArcSwapAny::store) of the map built here on
-/// the existing [`crate::SharedGestureMap`]; the hook picks up the new
-/// snapshot on its next keystroke with no restart. Wiring this into
-/// `verbatim-app` is the reducer-side consumer's job, not this crate's.
+/// [`GestureMap`] is a plain membership set, not generic over the bound
+/// action, so the action half of each pair lives with the consumer, which
+/// keeps the same `Vec<(GestureId, ScriptAction)>` (or a `HashMap` built
+/// from it) to resolve an emitted gesture to its action. `verbatim-app`
+/// does not call this: it reads `Settings.keyboard.layout` once at
+/// startup, builds its own map from [`bindings_for`] plus the menu
+/// gesture, and its router builds the lookup. Layouts are not rebound at
+/// runtime; a layout change takes effect on the next start.
 #[must_use]
 pub fn gesture_map_for(bindings: &[(GestureId, ScriptAction)]) -> GestureMap {
     GestureMap::new(bindings.iter().map(|(gesture, _)| gesture.clone()))

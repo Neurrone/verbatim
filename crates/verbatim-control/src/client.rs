@@ -18,8 +18,9 @@ use crate::protocol::{
 };
 
 /// The two transports a [`Client`] can speak: the local named pipe, or a
-/// TCP socket for a Verbatim reachable over the network (or from inside a
-/// VM host).
+/// TCP socket that carries the control protocol. Verbatim itself never
+/// listens on TCP; the one such socket in this workspace is the in-guest
+/// agent's control tunnel, handed over with [`Client::from_tcp_stream`].
 enum Transport {
     Pipe(File),
     Tcp(TcpStream),
@@ -106,9 +107,11 @@ impl Client {
         Self::handshake(Transport::Pipe(file))
     }
 
-    /// Connects to `addr` over TCP and completes the `Hello` handshake —
-    /// the transport a remote or in-VM control-plane client uses instead of
-    /// the local named pipe.
+    /// Connects to `addr` over TCP and completes the `Hello` handshake at
+    /// once, so `addr` must speak the control protocol from the first byte.
+    /// Verbatim never listens on TCP, and the in-guest agent speaks its own
+    /// protocol until a tunnel is opened, so reaching a Verbatim through the
+    /// agent goes through [`Client::from_tcp_stream`] instead.
     ///
     /// # Errors
     ///
@@ -158,8 +161,8 @@ impl Client {
     }
 
     /// Sends one request and waits for its matching reply or error,
-    /// discarding any subscription frames (event or speech) that arrive
-    /// first on a connection that has not subscribed to them.
+    /// discarding every other frame that arrives first, including event and
+    /// speech frames on a connection that has subscribed to them.
     ///
     /// # Errors
     ///

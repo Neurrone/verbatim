@@ -1,4 +1,6 @@
-//! Key names, following NVDA's vocabulary (`nvda/source/vkCodes.py`).
+//! Key names, following NVDA's vocabulary (`docs/parity.md`, "Spoken
+//! vocabulary and key layouts"), each mapped to its virtual-key code as
+//! Microsoft's Virtual-Key Codes reference documents it.
 //!
 //! One table serves both directions: gesture identifiers name keys the NVDA
 //! way (`downarrow`, `pageup`, `numpadinsert`), and the control plane's key

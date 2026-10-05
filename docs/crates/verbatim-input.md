@@ -38,7 +38,7 @@ Public API:
   (every M3 command: object navigation, review-cursor text reading, speak
   time, show tray list) plus `bindings_for(layout) -> Vec<(GestureId,
   ScriptAction)>`, the complete gesture table for a layout, transcribed from
-  `docs/roadmap.md`'s M3 object-navigation bullet; the laptop layout has the
+  `docs/roadmap-done.md`'s M3 object-navigation bullet; the laptop layout has the
   numpad bindings as well, which NVDA binds for every layout. `toggle` —
   `ToggleKey` (Caps Lock, Num Lock, Scroll Lock) and the unbound gesture a
   lock key reaching the operating system is reported as, for its new state
@@ -48,12 +48,13 @@ Public API:
   hook's `GestureMap` from the gestures with `gesture_map_for(bindings)`,
   and keep a separate lookup (the same pairs, or a `HashMap` built from
   them) on the application side to resolve an emitted gesture to its action
-  in the router. The intended activation path, wired in by `verbatim-app`'s
-  reducer-side consumer rather than this crate: read
-  `Settings.keyboard.layout`, map it to this crate's `KeyboardLayout`, call
-  `bindings_for`, and store `gesture_map_for`'s result — rebinding, for
-  example on a layout change, is one atomic store on the existing
-  `SharedGestureMap`, picked up by the hook on its next keystroke.
+  in the router. `verbatim-app` activates a layout this way, though it
+  builds the hook's map itself, with the menu gesture added, rather than
+  through `gesture_map_for`: it reads `Settings.keyboard.layout` once at
+  startup, maps it to this crate's `KeyboardLayout`, and calls
+  `bindings_for` for both the hook's map and the router's lookup. Rebinding
+  at runtime, for example on a layout change, is not implemented; a new
+  layout takes effect on the next start.
 
 Implementation notes, `DecisionMachine::on_key` (the intricate one;
 `docs/parity.md`'s input section is the behavioural record for these

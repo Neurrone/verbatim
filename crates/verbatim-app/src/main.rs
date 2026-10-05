@@ -1,7 +1,7 @@
 //! `verbatim.exe` — the composition root (architecture section 1).
 //!
-//! Startup order: namespace trace IDs, load config, start tracing, replace
-//! any running instance, load locales, bring up the speech pipeline, the
+//! Startup order: refuse to run outside an interactive session, namespace
+//! trace IDs, load config, start tracing, replace any running instance, load locales, bring up the speech pipeline, the
 //! supervisor and its focus listener (decision D13), the reducer and router
 //! threads, the control plane, and the keyboard hook — then run the wxDragon
 //! GUI loop on this, the process main thread, until shutdown is requested from
@@ -279,8 +279,8 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         }),
     )?;
 
-    // First words, and the initial outpost target (the trigger only fires on
-    // foreground changes after this point).
+    // First words, and the initial outpost target (the focus listener only
+    // reports foreground changes after this point).
     manager.speak(Utterance {
         trace_id: TraceId::mint(),
         priority: SpeechPriority::Queued,
@@ -532,9 +532,9 @@ fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
 /// `Starting` placeholder to the status mirror only if this pid is not
 /// already known. Multiple outposts coexist under decision D9, so unlike
 /// M1's single-outpost policy this must never clear existing entries: a
-/// foreground change to a pid Core already has an outpost for re-announces
-/// through that outpost (see `Supervisor::note_foreground`) rather than
-/// starting a new one, and its existing status entry is left alone.
+/// foreground change to a pid Core already has an outpost for is routed to
+/// that outpost by the supervisor rather than starting a new one, and its
+/// existing status entry is left alone.
 fn note_targeted_pid(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, target: Pid) {
     let mut outposts = outposts.lock().expect("outposts lock");
     outposts.entry(target).or_insert(OutpostStatus {
@@ -551,8 +551,8 @@ fn note_targeted_pid(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, target:
 /// real keypress sent immediately after the popup menu takes foreground —
 /// see `Supervisor::ensure_spawned`'s doc comment for the live VM failure
 /// this fixes. Does not touch foreground tracking; that happens when the focus
-/// listener reports Core's window taking foreground (decision D13), delivered
-/// as `OutpostMessage::ForegroundChanged`.
+/// listener reports Core's window taking foreground (decision D13), a fact the
+/// supervisor routes to this outpost, which reports the focus on the window.
 fn warm_own_outpost(
     supervisor: &Arc<Supervisor>,
     outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
@@ -605,9 +605,9 @@ enum ShellCommand {
 /// the live-outpost set. The thread never blocks on a handoff: speech and
 /// control-plane broadcasts are channel sends that never wait, a control
 /// request is answered on a channel with room for its one answer, and every
-/// query gets its outcome through the request table. Writes to an outpost's
-/// pipe still happen here until the supervisor gives each outpost a writer
-/// thread.
+/// query gets its outcome through the request table. Commands for an outpost
+/// are queued on that outpost's writer thread, never written to its pipe
+/// here.
 struct ReducerThread<'a> {
     context: &'a ReducerContext,
     state: SrState,
@@ -1030,8 +1030,9 @@ fn reducer_loop(
     }
 }
 
-/// The router thread body: bound gestures become imperative commands —
-/// GUI commands or direct speech — never reducer inputs.
+/// The router thread body: bound gestures become GUI commands, direct speech,
+/// or, for review and object navigation, [`Input::Command`]s sent to the
+/// reducer thread.
 ///
 /// Multi-press: the double-press variants (Verbatim+F12 twice quickly
 /// speaks the date, Verbatim+F11 twice quickly lists the taskbar) take the
@@ -1148,10 +1149,6 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
     }
 }
 
-/// Speaks the localized current time (`repeat` 0) or date (any higher
-/// count) at Interrupt priority, as a plain text span with no source node.
-/// `repeat` is the number of extra quick presses — the multi-press seam
-/// described on [`router_loop`]; today it always arrives as 0.
 /// Announces a lock key's new state ("caps lock on") 30 milliseconds after
 /// it reached the operating system, as NVDA does: Windows has changed the
 /// state by then.
@@ -1181,6 +1178,10 @@ fn report_toggle_key(manager: &Arc<SpeechManager>, key: verbatim_input::ToggleKe
     });
 }
 
+/// Speaks the localized current time (`repeat` 0) or date (any higher
+/// count) at Interrupt priority, as a plain text span with no source node.
+/// `repeat` is the number of extra quick presses, which `verbatim-input`
+/// counts on each emitted gesture (see [`router_loop`]).
 fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
     let formatted = if repeat == 0 {
         datetime::local_time()
@@ -1201,8 +1202,8 @@ fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
 }
 
 /// The shell surface Verbatim+F11 lists: the system tray on a single press
-/// (`repeat` 0), the taskbar on a double press — the same multi-press seam
-/// as [`speak_time_or_date`]. Pure, and unit tested below.
+/// (`repeat` 0), the taskbar on a double press, counted as for
+/// [`speak_time_or_date`]. Pure, and unit tested below.
 fn shell_list_kind(repeat: u8) -> ShellItemKind {
     if repeat == 0 {
         ShellItemKind::SystemTray
@@ -1337,9 +1338,7 @@ mod tests {
 
     #[test]
     fn a_repeated_press_lists_the_taskbar() {
-        // The multi-press seam: today the router always passes 0; once
-        // verbatim-input's press counting is wired, any repeat selects the
-        // taskbar list.
+        // Any repeat selects the taskbar list.
         assert_eq!(shell_list_kind(1), ShellItemKind::Taskbar);
         assert_eq!(shell_list_kind(3), ShellItemKind::Taskbar);
     }

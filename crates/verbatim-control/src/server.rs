@@ -74,9 +74,9 @@ use crate::protocol::{
 };
 use crate::send_keys;
 
-/// Depth of the per-connection outbound queue. Broadcast frames beyond this
-/// are dropped for that connection (with a `tracing::warn`) rather than
-/// backing up; replies are also sent through this queue but are never
+/// Depth of the per-connection outbound queue. A subscriber whose queue is
+/// full when a broadcast arrives is disconnected (with a `tracing::warn`)
+/// rather than backing up or silently missing frames; replies are also sent through this queue but are never
 /// dropped by application logic (only if the connection is already gone).
 const OUTBOUND_QUEUE_DEPTH: usize = 256;
 
@@ -119,8 +119,9 @@ struct ConnectionEntry {
     speech_subscribed: Arc<AtomicBool>,
 }
 
-/// Live connections, shared between the accept loop (which inserts and
-/// removes entries) and broadcast calls (which fan out to them).
+/// Live connections, shared between [`run_session`] (which inserts and
+/// removes its own entry) and broadcast calls (which fan out to them, and
+/// remove a subscriber that is not keeping up or whose writer is gone).
 type Registry = Arc<Mutex<HashMap<ConnectionId, ConnectionEntry>>>;
 
 /// Live pipe instances, transport-specific and separate from [`Registry`]
@@ -309,16 +310,10 @@ fn dispatch_request(
 
 /// A raw named-pipe instance, closed and disconnected on drop.
 ///
-/// Holds *two* handles to the same pipe instance: `read_handle` (the
-/// original, also used for `ConnectNamedPipe`/`DisconnectNamedPipe`) and
-/// `write_handle` (a duplicate). Read and write happen from different
-/// threads (the connection's reader and writer threads); a synchronous
-/// (non-overlapped) `HANDLE` only supports one in-flight I/O operation at a
-/// time, so issuing a blocking `ReadFile` on one thread and a blocking
-/// `WriteFile` on another concurrently *on the same handle value* can block
-/// one behind the other. Two independent handles to the same instance (via
-/// `DuplicateHandle`) avoid that entirely; disconnecting through either one
-/// tears down the whole instance.
+/// Holds one overlapped handle to the pipe instance, shared by the
+/// connection's reader and writer threads, plus one completion event per
+/// direction; the module documentation explains why overlapped I/O, not a
+/// duplicated handle, keeps a pending read from blocking a write.
 struct RawPipe {
     handle: HANDLE,
     /// Dedicated to `ConnectNamedPipe` (issued once, from the accept

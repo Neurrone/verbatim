@@ -75,7 +75,10 @@ knowing for review:
   when the application holds the foreground, then a focus on its focused
   control. The reducer thread sends a focus-now query at startup (for the
   foreground application), when the attention application's outpost was
-  replaced after a crash or kill, and when the supervisor reports
+  replaced after a crash or kill, when the outpost of the focus's
+  application, if that is not the attention one, ended in a crash or kill
+  (asking the supervisor to start a new one first, since nothing else
+  would), and when the supervisor reports
   `OutpostMessage::ListenerReplaced`; each waits for the outpost's `Ready`
   if it is still starting. When the supervisor reports
   `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
@@ -87,8 +90,8 @@ knowing for review:
   no ready outpost gets an ordinary focus-now query.
   Later outcomes for the same id, and outcomes from any other outpost, are
   dropped. Core makes the outcome itself when a query cannot be sent
-  ("failed", which a navigation sees as `Gone`) and when the outpost ends
-  ("gone"), so an old reply or a timed-out request can never satisfy or
+  ("failed", which a navigation sees as `Unanswered`; only "gone" becomes
+  `FetchResult::Gone`) and when the outpost ends ("gone"), so an old reply or a timed-out request can never satisfy or
   clear a newer one.
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
   ID, fed from three threads across two processes: the reducer thread
@@ -163,15 +166,17 @@ knowing for review:
   the keyboard hook last among input paths (given a callback that maps
   each `KeySpeechEffect` to the speech manager's `SpeechControl`: `Cancel`
   to `cancel`, `TogglePause` to `toggle_pause`), the startup announcement, and
-  finally the GUI loop on the main thread. The gesture router binds three
-  gestures in M3: Verbatim+V pops the menu, Verbatim+F12 speaks the time
+  finally the GUI loop on the main thread. The gesture router handles
+  Verbatim+V, which pops the menu, the lock keys, whose new state it
+  announces, and every gesture in the active layout's bindings table:
+  review and object-navigation scripts become `Input::Command`s for the
+  reducer thread, while Verbatim+F12 speaks the time
   (an Interrupt-priority text-span utterance with no source node), and
   Verbatim+F11 opens the system tray list via
-  `GuiCommand::OpenShellItemList`. The double-press variants — the date,
-  the taskbar list — wait on `verbatim-input`'s multi-press gesture
-  counting (M3 Track D); the seam is explicit: `speak_time_or_date` takes
-  a repeat count and `shell_list_kind` maps one to the listed surface,
-  both called with 0 today, so wiring the real press count into those two
-  calls is the whole integration. When the loop exits — Exit item,
+  `GuiCommand::OpenShellItemList`. A quick second press speaks the date or
+  lists the taskbar instead: `verbatim-input` counts quick presses on each
+  emitted gesture, and the router passes that count to
+  `speak_time_or_date` and to `shell_list_kind`, which maps it to the
+  listed surface. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and lets job objects reclaim the outposts.
