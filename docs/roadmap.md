@@ -18,9 +18,7 @@ and exit-criteria evidence are archived in
   latency stage ledger and UIA remote operations for the focus ancestor
   walk (D15), eSpeak NG as the built-in reference synthesizer (moved
   forward again on 2026-10-04 into the speech-delivery work, as the
-  default synthesizer in the synth host of D18) with
-  `IAudioClient3` low-latency audio and MMCSS (moved up from M8 so the
-  audio half of the budget is measurable from here on), and the attention
+  default synthesizer in the synth host of D18), and the attention
   model replacing the foreground gate (D14), which is what the deferred
   Explorer and Settings scenarios wait on. eSpeak NG has landed: it is
   built from the vendored source in the `third_party/espeak-ng`
