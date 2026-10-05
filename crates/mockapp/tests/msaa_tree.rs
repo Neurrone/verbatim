@@ -373,6 +373,9 @@ fn walk(
     *visited += 1;
 
     assert_eq!(role, expectation.role, "role mismatch for {name:?}");
+    // S_FALSE, a provider's "no value", is a success code, so the call
+    // returns an empty string rather than an error; it reads as absent here,
+    // as it does in verbatim-ia2.
     let value = value.filter(|v| !v.is_empty());
     assert_eq!(
         value.as_deref(),
@@ -520,6 +523,47 @@ fn msaa_client_reads_a_lists_selected_child() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
     assert_eq!(selected.as_deref(), Some("Second"));
+
+    app.send("quit");
+}
+
+/// A live object seen again at its address is the node already issued:
+/// mockapp answers every request with a new COM object, so each sighting
+/// after the first is matched by address, comparing a fresh read of the kept
+/// object's role and identity with the new one's (`docs/parity.md`, "Held
+/// objects"). A renamed object stays the same node; another object is a
+/// different one.
+#[test]
+fn msaa_sightings_of_one_live_object_are_one_node() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-identity");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
+        std::sync::atomic::AtomicU64::new(1),
+    ));
+    let sight = |id_object: i32| {
+        verbatim_ia2::acquire::snapshot_from_event(hwnd, id_object, 0, &registry)
+            .expect("the object is acquired")
+    };
+
+    let first = sight(OBJID_CLIENT.0);
+    assert_eq!(sight(OBJID_CLIENT.0).id, first.id, "seen again, same node");
+
+    app.send("set-name root Renamed");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let renamed = loop {
+        let seen = sight(OBJID_CLIENT.0);
+        if seen.name.as_deref() == Some("Renamed") || std::time::Instant::now() > deadline {
+            break seen;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(renamed.name.as_deref(), Some("Renamed"));
+    assert_eq!(renamed.id, first.id, "a renamed object is the same node");
+
+    // mockapp addresses node `index` as object id `index + 1`.
+    assert_ne!(sight(2).id, first.id, "another object is another node");
 
     app.send("quit");
 }

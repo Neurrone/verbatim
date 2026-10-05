@@ -389,7 +389,12 @@ mod handler {
                 .tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            Ok(guard.nodes[target].name.as_deref().unwrap_or("").into())
+            match guard.nodes[target].name.as_deref() {
+                Some(name) => Ok(name.into()),
+                // S_FALSE, as for the description: a real provider answers
+                // it for an object with no name, distinct from an empty one.
+                None => Err(Error::from_hresult(S_FALSE)),
+            }
         }
 
         fn get_accValue(&self, varchild: &VARIANT) -> WinResult<BSTR> {
@@ -399,7 +404,12 @@ mod handler {
                 .tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            Ok(guard.nodes[target].value.as_deref().unwrap_or("").into())
+            match guard.nodes[target].value.as_deref() {
+                Some(value) => Ok(value.into()),
+                // S_FALSE, as for the description: a real provider answers
+                // it for an object with no value, distinct from an empty one.
+                None => Err(Error::from_hresult(S_FALSE)),
+            }
         }
 
         fn get_accDescription(&self, varchild: &VARIANT) -> WinResult<BSTR> {
