@@ -38,6 +38,10 @@ fn main() -> ExitCode {
     let (from_core, to_core) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
     let mut to_core = BufWriter::new(to_core);
 
+    // Logged before and after building the synthesizer, so a host that
+    // never becomes ready shows in its log where it stopped.
+    tracing::info!(%synth, "synthesizer host starting");
+    let building = std::time::Instant::now();
     let mut driver = match build(&synth) {
         Ok(driver) => driver,
         Err(error) => {
@@ -63,7 +67,7 @@ fn main() -> ExitCode {
     if write_from_host(&mut to_core, &FromHost::Ready(description)).is_err() {
         return ExitCode::FAILURE;
     }
-    tracing::info!(%synth, "synthesizer host ready");
+    tracing::info!(%synth, elapsed_ms = building.elapsed().as_millis(), "synthesizer host ready");
 
     // The reader thread: cancels take effect at once, everything else is
     // served in order on this thread.

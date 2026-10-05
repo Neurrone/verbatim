@@ -20,7 +20,7 @@ use std::fmt::Write as _;
 use std::ops::ControlFlow;
 
 use std::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, info};
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
     IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
@@ -137,10 +137,13 @@ impl OneCoreSynth {
     /// Returns [`SynthError::Unavailable`] when COM or the speech synthesizer
     /// cannot be initialized, or when no voices are installed.
     pub fn new() -> Result<Self, SynthError> {
+        // Each step is logged once, so a start that never finishes shows
+        // in the log which call it stopped in.
         ensure_com()?;
+        info!(target: "verbatim::synth::onecore", "creating the speech synthesizer");
         let synth =
             SpeechSynthesizer::new().map_err(|error| unavailable("create synthesizer", &error))?;
-
+        info!(target: "verbatim::synth::onecore", "enumerating voices");
         let all = SpeechSynthesizer::AllVoices()
             .map_err(|error| unavailable("enumerate voices", &error))?;
         let count = all
