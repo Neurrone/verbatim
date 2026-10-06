@@ -203,7 +203,11 @@ prompt cancelled, nothing changes. In C++ the page asks Rust for the
 page, the tree, and the indication's controls after every change and
 updates only what differs (`SetChoice` and `SetValue`), so a focused
 control is not rebuilt under the user; the tree is rebuilt only when the
-find field changes what it lists, keeping the selected indication. Enter
+find field changes what it lists, keeping the selected indication. The
+rebuild clears the selection through wxWidgets before deleting the items:
+deleting the selected item makes the native tree select another, and
+wxMSW treats that unrequested change as a click and focuses the tree,
+which would take the focus from the find field as the user types. Enter
 on any button activates that button (`KeyAction::ActivateFocused`).
 Every label is created just before its control, so each control is named
 by it; the check boxes carry their names. The dialog title names the

@@ -642,6 +642,11 @@ private:
         const bool filtered = !find_->GetValue().empty();
         rebuilding_ = true;
         tree_->Freeze();
+        // Clear the selection first, through wx. Deleting the selected item
+        // makes the native tree select another one, and wxMSW takes that
+        // selection change for a mouse click and gives the tree the focus,
+        // taking it from the find field the user is typing in.
+        tree_->Unselect();
         tree_->DeleteAllItems();
         items_.clear();
         const wxTreeItemId root = tree_->AddRoot(wxString());
