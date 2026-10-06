@@ -581,6 +581,42 @@ impl Scenario {
         )))
     }
 
+    /// Waits until no window titled with `title_contains` is in the
+    /// foreground: evidence that a dialog closed, for a step that must not
+    /// race the close. A key sent right after the one that closes a dialog
+    /// can otherwise reach the dialog's thread first, since Windows hands a
+    /// thread its posted messages before its pending input. `timeout` only
+    /// bounds failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with the foreground report, if the window is still
+    /// in front when `timeout` runs out, or if the foreground cannot be read.
+    pub fn wait_for_window_to_close(
+        &mut self,
+        title_contains: &str,
+        timeout: Duration,
+    ) -> io::Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let info = self.process_agent.foreground_info()?;
+            let open = info
+                .foreground
+                .as_ref()
+                .is_some_and(|window| window.title.contains(title_contains));
+            if !open {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other(format!(
+                    "the window titled {title_contains:?} stayed in front: {}",
+                    describe_foreground(&info)
+                )));
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
     /// One line describing the foreground window and the visible windows,
     /// for failure messages and the run's artifacts.
     pub fn foreground_report(&mut self) -> String {

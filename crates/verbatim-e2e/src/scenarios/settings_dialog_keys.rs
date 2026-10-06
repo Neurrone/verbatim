@@ -45,6 +45,15 @@ fn trailing_number(text: &str) -> Option<i64> {
 
 /// Opens the Speech settings and Tabs to the rate slider, returning its
 /// value.
+/// Closes the settings dialog with Escape, and waits until it has gone, so
+/// the next gesture cannot reach the GUI before the dialog has seen Escape.
+fn close_dialog(scenario: &mut Scenario) {
+    scenario.send_keys(&["escape"]).expect("sends escape");
+    scenario
+        .wait_for_window_to_close("Verbatim Settings", STEP_TIMEOUT)
+        .expect("the settings dialog closes on Escape");
+}
+
 fn open_at_rate(scenario: &mut Scenario) -> i64 {
     super::open_speech_settings(scenario, STEP_TIMEOUT);
     let mut heard = String::new();
@@ -105,7 +114,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .speech()
         .expect_in_order(&["Cancel", "button"], STEP_TIMEOUT);
-    scenario.send_keys(&["escape"]).expect("sends escape");
+    close_dialog(scenario);
     let applied = open_at_rate(scenario);
     assert_eq!(
         applied,
@@ -125,7 +134,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .send_keys(&["control+s"])
         .expect("sends control+s on the slider");
-    scenario.send_keys(&["escape"]).expect("sends escape");
+    close_dialog(scenario);
     let saved = open_at_rate(scenario);
     assert_eq!(
         saved,
