@@ -1242,10 +1242,10 @@ fn a_line_speaks_a_spelling_error_where_it_starts() {
     assert_eq!(
         answered(&mut state, CaretMotion::NextLine, line.clone(), None),
         vec![
-            UtteranceSegment::text("hello "),
+            UtteranceSegment::text("hello"),
             format(TextFormat::SpellingError),
             UtteranceSegment::text("wrold"),
-            UtteranceSegment::text(" there"),
+            UtteranceSegment::text("there"),
         ]
     );
     // Leaving the error inside a line says nothing, and reading the same
@@ -1253,10 +1253,10 @@ fn a_line_speaks_a_spelling_error_where_it_starts() {
     assert_eq!(
         answered(&mut state, CaretMotion::NextLine, line, None),
         vec![
-            UtteranceSegment::text("hello "),
+            UtteranceSegment::text("hello"),
             format(TextFormat::SpellingError),
             UtteranceSegment::text("wrold"),
-            UtteranceSegment::text(" there"),
+            UtteranceSegment::text("there"),
         ]
     );
 }
@@ -1366,7 +1366,7 @@ fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
         vec![
             format(TextFormat::SpellingError),
             UtteranceSegment::text("Ths"),
-            UtteranceSegment::text(" is"),
+            UtteranceSegment::text("is"),
         ]
     );
 }
@@ -1399,7 +1399,7 @@ fn bold_starts_and_ends_and_a_font_change_is_named() {
         answered(&mut state, CaretMotion::NextLine, line, None),
         vec![
             format(TextFormat::FontName("Calibri".to_owned())),
-            UtteranceSegment::text("plain "),
+            UtteranceSegment::text("plain"),
             format(TextFormat::Bold),
             UtteranceSegment::text("bold"),
         ]

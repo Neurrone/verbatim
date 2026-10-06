@@ -380,9 +380,12 @@ pub(crate) fn formatted_segments(
         }
         let start = range.start.max(spoken.start);
         let end = range.end.min(spoken.end);
-        if start < end {
+        // Each stretch is its own piece of speech, without the white space
+        // around it, which the pieces are spoken apart by anyway.
+        let piece = chunk.text[start.min(end)..end].trim();
+        if !piece.is_empty() {
             segments.push(in_language(
-                SegmentContent::Text(chunk.text[start..end].to_owned()),
+                SegmentContent::Text(piece.to_owned()),
                 language,
             ));
         }
