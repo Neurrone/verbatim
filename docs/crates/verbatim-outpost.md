@@ -544,7 +544,11 @@ Implementation notes:
   UIA an edit field, a document, or a terminal; through MSAA an edit
   control's client area) gets a caret report, queued just after the focus
   is published (`Item::CaretOf`), so the focus's own calls and speech are
-  unchanged, and sent as `CaretMoved`. The worker then follows its caret:
+  unchanged, and sent as `CaretMoved`. So does any other focus whose role
+  is edit field, document, or terminal; when that report finds no text to
+  read (an MSAA object that is not an edit control, a UIA element with no
+  text pattern) or the caret cannot be read, `NoText` is sent instead, and
+  Core speaks the focus's value in place of its line. The worker then follows its caret:
   a second focus-following UIA subscription, moved to the focus when it
   has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as

@@ -42,9 +42,9 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    scenario
-        .speech()
-        .expect_in_order(&["Notepad", "Text editor"], STEP_TIMEOUT);
+    // Notepad's text area, and the line at its caret, wherever Notepad put
+    // the caret on opening.
+    let _ = super::expect_notepad_text(scenario, STEP_TIMEOUT);
     // The caret to the top; the review cursor follows it there.
     scenario
         .send_keys(&["control+home"])

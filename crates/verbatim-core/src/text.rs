@@ -11,16 +11,7 @@
 use std::ops::Range;
 
 use verbatim_model::{Message, SegmentContent, TextChunk, UtteranceSegment};
-use verbatim_text::{Segmenter, WordRules};
-
-/// Characters that end a line: CR, LF, the vertical tab and form feed, the
-/// next-line control, and Unicode's line and paragraph separators.
-fn is_line_break(c: char) -> bool {
-    matches!(
-        c,
-        '\r' | '\n' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
-    )
-}
+use verbatim_text::{Segmenter, WordRules, is_line_break};
 
 /// The text of a line without the line break that ends it. In a terminal
 /// (`grid`) the trailing padding goes too, so the line reads as its text.
@@ -229,6 +220,8 @@ mod tests {
     #[test]
     fn a_line_loses_its_break_and_a_terminal_row_its_padding() {
         assert_eq!(line_content("abc\r\n", false), "abc");
+        assert_eq!(line_content("abc\r", false), "abc");
+        assert_eq!(line_content("abc\u{2029}", false), "abc");
         assert_eq!(line_content("abc  \n", false), "abc  ");
         assert_eq!(line_content("abc  \n", true), "abc");
         assert_eq!(row_width("abc  \r\n"), 5);

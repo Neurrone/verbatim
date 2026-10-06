@@ -148,8 +148,19 @@ verified.
 
   **Different**, still, from the same audit:
   - On focus NVDA reads an edit field's selection or the line at the
-    caret through its text interface; Verbatim, with no text interface
-    yet, speaks the field's whole value.
+    caret through its text interface, in place of its value ("What an
+    object with text says" in [Speech](nvda/speech.md)). **Matched since
+    2026-10-06** for focus, through the text protocol: the name, role, and
+    states are spoken at once, and the line, or "selected" with the
+    selected text, follows as soon as the outpost's caret report arrives;
+    an edit field, document, or terminal with no text interface speaks its
+    value once the outpost says so (`NoText`), after the rest of the
+    announcement rather than between the role and the states.
+    **Different:** a protected field's text is never read on focus, where
+    NVDA reads whatever masked text the control gives; and an empty field
+    has no placeholder to speak. **Not yet:** object navigation and
+    reporting the current object still speak the value, where NVDA reads
+    the text there too.
   - A multi-column list view item (a report view, such as msinfo32's
     right pane) is named by NVDA from its column texts, with no value
     or description; Verbatim keeps MSAA's name and description, since
@@ -1013,6 +1024,13 @@ verified.
   one segment), used by the review cursor over text and by spelling; where
   the application moves the caret by word, the provider's word is spoken.
   The paragraph-style setting is **not yet**.
+- Line breaks. NVDA speaks carriage returns and line feeds inside text as
+  spaces ("Line breaks in spoken text" in [Speech](nvda/speech.md)).
+  Verbatim: **matched since 2026-10-06**, for every kind of line break, at
+  the presentation stage; text Core splits into lines itself (an object's
+  value reviewed as flat text) ends a line at a carriage return and line
+  feed, either alone (Windows 11 Notepad's bare carriage return), or
+  Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
 - Browse mode, quick nav, pass-through rules, virtual-buffer
   equivalent: **not yet (M6)**; references
   [Browse mode](nvda/browse-mode.md), [Virtual buffers](nvda/virtual-buffers.md).

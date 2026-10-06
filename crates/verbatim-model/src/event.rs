@@ -183,14 +183,27 @@ pub enum NormalizedEvent {
     /// sends one when a node with text gains the focus, as soon after the
     /// focus event as it can, and on every later caret or selection change
     /// in the focus, coalesced so a burst sends the latest only. It keeps
-    /// Core's copy of the caret current; it speaks nothing by itself. A
-    /// caret key's speech comes from the reply to Core's own
-    /// [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret) request.
+    /// Core's copy of the caret current. The first one after a focus ends
+    /// the focus announcement with the selection or the caret's line, as
+    /// NVDA reads an object with text in place of its value; any later one
+    /// speaks nothing by itself. A caret key's speech comes from the reply
+    /// to Core's own [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret)
+    /// request.
     CaretMoved {
         /// The node whose caret moved.
         node_id: NodeId,
         /// Where the caret now is.
         caret: CaretReport,
+    },
+    /// A newly focused node whose role may have text (an edit field, a
+    /// document, or a terminal) has no text the outpost can read, or its
+    /// caret could not be read: sent in place of the focus's first
+    /// [`CaretMoved`](Self::CaretMoved). Core speaks the node's value
+    /// instead, as NVDA speaks the value of an object with no text
+    /// interface.
+    NoText {
+        /// The focused node.
+        node_id: NodeId,
     },
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal
@@ -232,6 +245,7 @@ impl NormalizedEvent {
             | NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
+            | NormalizedEvent::NoText { node_id }
             | NormalizedEvent::TextChanged { node_id } => {
                 *node_id = node_id.with_outpost(outpost);
             }

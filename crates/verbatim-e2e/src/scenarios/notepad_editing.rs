@@ -1,6 +1,8 @@
-//! Editing in Notepad (milestone M4 items 3 and 4): the caret by
+//! Editing in Notepad (milestone M4 items 3 and 4): focus on the text
+//! saying the caret's line rather than the whole text; the caret by
 //! character, word, and line; selecting and unselecting with Shift; typing
-//! with character echo; and deleting with Backspace and Delete.
+//! with character echo; and deleting with Backspace and Delete. It holds for
+//! Windows 11 Notepad (UIA) and classic Notepad's edit control alike.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to
 //! Notepad, which moves its caret; Verbatim waits for evidence that it did
@@ -41,9 +43,14 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    scenario
-        .speech()
-        .expect_in_order(&["Notepad", "Text editor"], STEP_TIMEOUT);
+    // Focus on the text area says its name and role, then the line at the
+    // caret, never the whole text. Notepad may have put the caret on any
+    // line, so any of them will do here.
+    let line = super::expect_notepad_text(scenario, STEP_TIMEOUT);
+    assert!(
+        ["alpha beta gamma", "delta epsilon", "blank"].contains(&line.as_str()),
+        "focusing the text area spoke {line:?}, not the line at the caret"
+    );
 
     // Notepad may restore the caret where an earlier session left it, so
     // Control+Home first takes it to the top, speaking the line there.
@@ -54,6 +61,17 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "rightarrow", "l");
     press(scenario, "control+rightarrow", "beta");
     press(scenario, "downarrow", "delta epsilon");
+
+    // Focus leaves for Verbatim's menu and comes back: the text area says
+    // the line the caret is on, the second.
+    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
+    scenario.send_keys(&["escape"]).expect("sends escape");
+    let line = super::expect_notepad_text(scenario, STEP_TIMEOUT);
+    assert_eq!(
+        line, "delta epsilon",
+        "focus returning spoke the wrong text"
+    );
+
     press(scenario, "end", "blank");
 
     // Shift+Home selects back to the start of the line; Shift+Right Arrow

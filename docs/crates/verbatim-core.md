@@ -114,7 +114,17 @@ Implementation notes, `reduce`:
   (`spoken_states`, `negated_states`, and `STATE_ORDER`, with a
   `StateReason` of focus, query, or change). The value is left out for a
   check box, radio button, link, menu item, or application, and a
-  description equal to the name is dropped. The role is left out, as NVDA
+  description equal to the name is dropped. An edit field, document, or
+  terminal leaves its value out too and says its text at the caret instead
+  ("What an object with text says" in `docs/nvda/speech.md`): the state
+  keeps a `FocusText` for it, and the outpost's first `CaretMoved` for the
+  focus speaks the caret's line ("blank" when empty) as a second queued
+  utterance with the focus's validity, or, when text is selected, asks for
+  the selected text (`TextOp::ReadRange` between the reported selection's
+  ends) and speaks "selected" with it, or its count at 512 characters or
+  more. `NoText` in its place speaks the value. The name and role are never
+  held back for it; a caret key or a focus change drops what is still
+  waiting, and a protected field's text and value are never spoken. The role is left out, as NVDA
   leaves it out, when the node has a name or a value and its role is one
   of the roles silent on focus (list item, menu item, tree item, pane,
   static text, unknown); this applies to focus changes, entered

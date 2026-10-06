@@ -121,6 +121,48 @@ after every keystroke would drown both. (`speakObjectProperties` and
 `silentValuesForRoles` in `controlTypes/role.py`; the edit field rule is
 `event_valueChange` on NVDA's editable text classes.)
 
+### What an object with text says
+
+An object with navigable text speaks its text in place of its value. Such
+an object is an edit field, a document, a terminal, or anything else
+marked editable, and only when it has a real text interface: an object
+whose only text is its name and value, read through NVDA's generic
+fallback, does not count, and speaks its value like any other object.
+
+For one of these, the announcement leaves the value out, and after
+everything else it would say (name, role, states, description, shortcut,
+position) it speaks the text at the caret:
+
+- when text is selected, "selected" followed by the selected text, or by
+  its number of characters when there are 512 or more; this order, with
+  "selected" first, warns that typing would replace text the user has not
+  heard being selected;
+- otherwise, the line containing the caret, read as a caret movement would
+  read it, so an empty line says "blank". A control that cannot report its
+  selection reads its first line. When the whole text is empty and the
+  object has a placeholder, the placeholder is spoken too.
+
+For a single-line edit field the line is the whole value, so the field
+says what it would have said with its value, only later in the
+announcement. This applies to focus, to object navigation (which speaks
+with the focus reason), and to reporting the current object or the focus
+on request. It does not apply to a container entered as the focus moves
+into it, or to an object under the mouse, which speak neither value nor
+text. NVDA does no masking of its own here: a protected field's text is
+read through its text interface, which gives the masked characters the
+control shows. (`getObjectSpeech` and `_objectSpeech_calculateAllowedProps`
+in `speech/speech.py`; `_hasNavigableText` on the base NVDA object.)
+
+### Line breaks in spoken text
+
+Before any text reaches the synthesizer, NVDA replaces every carriage
+return, line feed, and null character with a space, after symbol
+processing (`processText` in `speech/speech.py`). Text with line breaks
+in it, such as a selection over two lines or a multi-line value, is
+spoken with a space between one line's last word and the next line's
+first, never as one run-together word. A text made only of spaces
+and line breaks is blank.
+
 ### Capitals when spelling
 
 When NVDA spells, whether spelling a word or line on request or speaking
