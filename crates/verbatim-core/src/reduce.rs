@@ -543,11 +543,9 @@ fn reduce_focus_changed(
     if report.foreground {
         state.foreground = Some(report.node.id);
     }
-    let entered = if report.ancestors_unknown {
-        Vec::new()
-    } else {
-        entered_ancestors(state.focus.as_ref(), window, report.ancestors)
-    };
+    let mut entered = entered_ancestors(state.focus.as_ref(), window, report);
+    let foreground_window =
+        unannounced_foreground_window(report, foreground_changed, window, &mut entered);
     let entering_menu = entered
         .iter()
         .any(|ancestor| matches!(ancestor.role, Role::MenuBar | Role::Menu | Role::MenuItem));
@@ -569,8 +567,37 @@ fn reduce_focus_changed(
         return effects;
     }
 
-    effects.extend(focus_speech(trace_id, report, entered));
+    effects.extend(focus_speech(trace_id, report, foreground_window, entered));
     effects
+}
+
+/// The top-level window to announce with a focus that moved into another
+/// top-level window, the system's foreground window, when no foreground
+/// report announced it: Windows can raise a new window's foreground event
+/// while still refusing it the foreground, and raise none when it gets the
+/// foreground later. NVDA takes the foreground window from the focus's
+/// ancestry then (`eventHandler.doPreGainFocus`) and announces it as an
+/// entered ancestor, so it is the outermost ancestor, which is the
+/// top-level window, whatever its role. It is removed from `entered`, so it
+/// is not spoken twice.
+fn unannounced_foreground_window<'a>(
+    report: &FocusReport<'a>,
+    foreground_changed: bool,
+    window: Option<WindowFacts>,
+    entered: &mut Vec<&'a NodeSnapshot>,
+) -> Option<&'a NodeSnapshot> {
+    if report.foreground
+        || !foreground_changed
+        || !window.is_some_and(|window| window.in_foreground)
+    {
+        return None;
+    }
+    let top = report
+        .ancestors
+        .first()
+        .filter(|top| has_text(top.name.as_deref()))?;
+    entered.retain(|ancestor| ancestor.id != top.id);
+    Some(top)
 }
 
 /// Whether a new focus brings a new foreground window, which cancels
@@ -593,15 +620,28 @@ fn foreground_changed(
         }
 }
 
-/// The speech for a new focus: each entered container as its own
-/// utterance, valid while the focus is inside it, then the focus, valid
-/// while it is the focus.
+/// The speech for a new focus: an unannounced foreground window, then each
+/// entered container as its own utterance, valid while the focus is inside
+/// it, then the focus, valid while it is the focus.
 fn focus_speech(
     trace_id: TraceId,
     report: &FocusReport<'_>,
+    foreground_window: Option<&NodeSnapshot>,
     entered: Vec<&NodeSnapshot>,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
+    if let Some(top) = foreground_window {
+        effects.push(Effect::Speak(Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: node_segments(top, Reason::Focus),
+            source: Some(source_of(top)),
+            validity: Some(FocusValidity {
+                node: top.id,
+                had_focus: false,
+            }),
+        }));
+    }
     for container in entered
         .into_iter()
         .filter(|ancestor| is_presentable_container(ancestor))
@@ -1342,12 +1382,16 @@ fn source_of(node: &NodeSnapshot) -> UtteranceSource {
 ///
 /// Entered menu bars, menus, and menu items are never announced: NVDA
 /// cancels speech and stays silent for them. Only the presentable ones
-/// ([`is_presentable_container`]) are spoken.
+/// ([`is_presentable_container`]) are spoken. None are entered when the
+/// outpost could not read the ancestors in time.
 fn entered_ancestors<'a>(
     previous: Option<&FocusContext>,
     window: Option<WindowFacts>,
-    ancestors: &'a [NodeSnapshot],
+    report: &FocusReport<'a>,
 ) -> Vec<&'a NodeSnapshot> {
+    if report.ancestors_unknown {
+        return Vec::new();
+    }
     let same_window = previous.is_some_and(|previous| {
         matches!((previous.window, window), (Some(old), Some(new)) if old.top_level == new.top_level)
     });
@@ -1364,7 +1408,8 @@ fn entered_ancestors<'a>(
                     || (same_window && old.role == ancestor.role && old.name == ancestor.name)
             })
     };
-    ancestors
+    report
+        .ancestors
         .iter()
         .filter(|ancestor| !already_entered(ancestor))
         .collect()

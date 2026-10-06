@@ -193,9 +193,18 @@ verified.
   window that has no name when focus enters it is not announced
   later, and a foreground change to a nameless window moves
   attention without speaking (a bare "window" says nothing), though it
-  cancels speech, as NVDA's foreground event does.
-  **matched (unverified)**; the Start menu and window-switch scenarios
-  verified the earlier, separate announcement.
+  cancels speech, as NVDA's foreground event does. When a focus moves
+  into another top-level window that is the system's foreground window
+  and no foreground fact announced it, the focus's outermost ancestor,
+  the top-level window, is spoken first, whatever its role: NVDA takes
+  the foreground from the focus's ancestry then
+  (`eventHandler.doPreGainFocus`) and announces it as an entered
+  ancestor. Found live on 2026-10-06 in a File Explorer folder window,
+  whose foreground event Windows raised while still refusing it the
+  foreground (the fact was dropped) and did not raise again; its title
+  was then never spoken, since the window reads as a pane.
+  **matched**; the Start menu, window-switch, and
+  `explorer_folder_window` scenarios verify it.
 - Duplicate focus suppression (same control announced once when two
   paths report it). NVDA: "already the focus" early return, comparing
   the focus object by identity only. Since 2026-10-02 Verbatim compares

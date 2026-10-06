@@ -2815,6 +2815,60 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
 }
 
 #[test]
+fn a_focus_in_a_new_foreground_window_without_a_foreground_fact_announces_the_window() {
+    // The same dropped foreground fact, in a File Explorer folder window:
+    // the focus's outermost ancestor is the window, read as a pane, and it
+    // is announced before the containers and the focus, as NVDA announces
+    // a foreground window it took from the focus's ancestry.
+    let state = switch_to(&SrState::new(), Pid(1));
+    let title = node(
+        5,
+        Role::Pane,
+        Some("Folder - File Explorer"),
+        None,
+        StateSet::new(),
+    );
+    let list = node(6, Role::List, Some("Items View"), None, StateSet::new());
+    let item = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(40), item, vec![title, list]),
+    );
+    let spoken: Vec<String> = speak_effects(&effects)
+        .iter()
+        .map(|utterance| format!("{:?}", utterance.segments))
+        .collect();
+    assert_eq!(spoken.len(), 3, "window, list, item: {spoken:?}");
+    assert!(spoken[0].contains("Folder - File Explorer"), "{spoken:?}");
+    assert!(spoken[1].contains("Items View"), "{spoken:?}");
+    assert!(spoken[2].contains("alpha.txt"), "{spoken:?}");
+}
+
+#[test]
+fn a_window_already_announced_by_its_foreground_fact_is_not_announced_again() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let title = node(
+        5,
+        Role::Pane,
+        Some("Folder - File Explorer"),
+        None,
+        StateSet::new(),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &foreground_in(Pid(2), foreground_window(40), title.clone()),
+    );
+    assert_eq!(speak_effects(&effects).len(), 1, "the foreground fact");
+    let item = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(40), item, vec![title]),
+    );
+    let spoken = speak_effects(&effects);
+    assert_eq!(spoken.len(), 1, "only the item: {spoken:?}");
+}
+
+#[test]
 fn focus_returning_from_a_topmost_popup_is_still_attended() {
     // A context menu is topmost and takes focus without becoming the
     // foreground window, so it must not take attention with it.
