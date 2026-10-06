@@ -2,7 +2,8 @@
 //! instance, following NVDA's algorithm (`nvda/source/nvda.pyw`).
 //!
 //! Two mechanisms cooperate. First, the new process finds the old instance's
-//! hidden main window by title, posts `WM_QUIT` so its GUI loop exits and its
+//! hidden main window by title, checks that the window's process runs
+//! Verbatim's executable, posts `WM_QUIT` so its GUI loop exits and its
 //! normal teardown runs, waits up to four seconds, and falls back to
 //! `TerminateProcess` with a further two-second wait. Second, a named mutex
 //! serializes full startup, so the new instance does not proceed until the
@@ -13,16 +14,21 @@
 
 use std::io;
 
-use windows::Win32::Foundation::{CloseHandle, HWND, WAIT_ABANDONED, WAIT_OBJECT_0, WPARAM};
+use std::path::Path;
+
+use windows::Win32::Foundation::{
+    CloseHandle, HANDLE, HWND, WAIT_ABANDONED, WAIT_OBJECT_0, WPARAM,
+};
 use windows::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess,
+    CreateMutexW, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, TerminateProcess,
     WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChangeWindowMessageFilter, FindWindowW, GetWindowThreadProcessId, MSGFLT_ADD, PostMessageW,
+    ChangeWindowMessageFilter, FindWindowExW, GetWindowThreadProcessId, MSGFLT_ADD, PostMessageW,
     WM_QUIT,
 };
-use windows::core::{HSTRING, PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 
 /// The title of the hidden main frame, the rendezvous point a replacing
 /// instance finds. Deliberately not localized: it must be stable across
@@ -94,45 +100,104 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
 /// Finds a running instance's hidden main window and shuts that instance
 /// down: `WM_QUIT` first, `TerminateProcess` as the fallback. A no-op when no
 /// instance is running.
+///
+/// The title alone is not Verbatim's: Windows matches it without regard to
+/// case, and a File Explorer window on a folder named "verbatim" has it too.
+/// So every top-level window with the title is considered, and only one
+/// whose process runs an executable of this one's file name is acted on.
 fn replace_running_instance() {
     let title = HSTRING::from(WINDOW_TITLE);
-    // wxWidgets registers its own window classes whose names have varied
-    // across versions, so match by title alone and verify the process below.
-    // SAFETY: FindWindowW with borrowed wide strings; the returned handle is
-    // used immediately.
-    let hwnd = unsafe { FindWindowW(PCWSTR::null(), &title) }.unwrap_or(HWND(std::ptr::null_mut()));
-    if hwnd.0.is_null() {
+    let own_name = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(std::ffi::OsStr::to_os_string));
+    let Some(own_name) = own_name else {
         return;
-    }
-
-    let mut pid: u32 = 0;
-    // SAFETY: hwnd came from FindWindowW just above; pid is a valid out
-    // pointer.
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
-    if pid == 0 || pid == std::process::id() {
-        return;
-    }
-    tracing::info!(old_pid = pid, "replacing running Verbatim instance");
-
-    // SAFETY: OpenProcess/PostMessageW/WaitForSingleObject/TerminateProcess
-    // on a process we just identified; the handle is closed on every path.
-    unsafe {
-        let Ok(process) = OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, pid) else {
+    };
+    let mut after: Option<HWND> = None;
+    loop {
+        // SAFETY: FindWindowExW with borrowed wide strings; `after` is a
+        // window it returned on the previous pass (or none), and a window
+        // that has since closed only ends the search early.
+        let found = unsafe { FindWindowExW(None, after, PCWSTR::null(), &title) };
+        let Ok(hwnd) = found else {
             return;
         };
-        let _ = PostMessageW(
-            Some(hwnd),
-            WM_QUIT,
-            WPARAM(0),
-            windows::Win32::Foundation::LPARAM(0),
-        );
-        if WaitForSingleObject(process, GRACEFUL_EXIT_MS) != WAIT_OBJECT_0 {
-            tracing::warn!(old_pid = pid, "old instance ignored WM_QUIT; terminating");
-            let _ = TerminateProcess(process, 1);
-            let _ = WaitForSingleObject(process, TERMINATE_WAIT_MS);
+        if hwnd.0.is_null() {
+            return;
         }
+        if shut_down_if_verbatim(hwnd, &own_name) {
+            return;
+        }
+        after = Some(hwnd);
+    }
+}
+
+/// Shuts down `hwnd`'s process if it is another Verbatim, that is, runs an
+/// executable named `own_name`; returns whether it was one.
+fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
+    let mut pid: u32 = 0;
+    // SAFETY: `hwnd` came from FindWindowExW; `pid` is a valid out pointer.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
+    if pid == 0 || pid == std::process::id() {
+        return false;
+    }
+    // SAFETY: opening a process by id; the handle is closed on every path.
+    let opened = unsafe {
+        OpenProcess(
+            PROCESS_SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            pid,
+        )
+    };
+    let Ok(process) = opened else {
+        return false;
+    };
+    let is_verbatim = image_path(process)
+        .as_deref()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name.eq_ignore_ascii_case(own_name));
+    if is_verbatim {
+        tracing::info!(old_pid = pid, "replacing running Verbatim instance");
+        // SAFETY: posting to a window of the process just identified, and
+        // waiting on and terminating that process through its open handle.
+        unsafe {
+            let _ = PostMessageW(
+                Some(hwnd),
+                WM_QUIT,
+                WPARAM(0),
+                windows::Win32::Foundation::LPARAM(0),
+            );
+            if WaitForSingleObject(process, GRACEFUL_EXIT_MS) != WAIT_OBJECT_0 {
+                tracing::warn!(old_pid = pid, "old instance ignored WM_QUIT; terminating");
+                let _ = TerminateProcess(process, 1);
+                let _ = WaitForSingleObject(process, TERMINATE_WAIT_MS);
+            }
+        }
+    }
+    // SAFETY: `process` is the handle opened above, closed once.
+    unsafe {
         let _ = CloseHandle(process);
     }
+    is_verbatim
+}
+
+/// The full path of `process`'s executable, or `None` if it cannot be read.
+fn image_path(process: HANDLE) -> Option<std::path::PathBuf> {
+    let mut buffer = vec![0u16; 32_768];
+    let mut length = u32::try_from(buffer.len()).ok()?;
+    // SAFETY: `buffer` holds `length` UTF-16 units and outlives the call,
+    // which writes at most that many and updates `length`.
+    unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &raw mut length,
+        )
+    }
+    .ok()?;
+    buffer.truncate(usize::try_from(length).ok()?);
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buffer)))
 }
 
 /// Lets a future lower-integrity replacer's `WM_QUIT` reach this process
