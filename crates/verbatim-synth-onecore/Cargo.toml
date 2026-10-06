@@ -4,6 +4,7 @@ description = "OneCore synth driver via Windows.Media.SpeechSynthesis"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 tracing.workspace = true

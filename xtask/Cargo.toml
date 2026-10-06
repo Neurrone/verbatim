@@ -4,6 +4,7 @@ description = "Workspace automation: cargo xtask ci, cargo xtask vm, cargo xtask
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 # Kept to workspace crates already compiled for other purposes, so the M2

@@ -4,6 +4,7 @@ description = "The functional core: pure reducer, interaction modes, review curs
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 serde.workspace = true

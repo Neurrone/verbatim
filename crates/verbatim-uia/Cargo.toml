@@ -4,6 +4,7 @@ description = "UIA client stack: event registration with cache requests, dedicat
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 tracing.workspace = true

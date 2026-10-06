@@ -4,6 +4,7 @@ description = "Configuration: global settings.toml plus layered profiles from a 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 serde.workspace = true

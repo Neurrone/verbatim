@@ -4,6 +4,7 @@ description = "Contained child processes (job objects, inherited pipes, per-laun
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 tracing.workspace = true

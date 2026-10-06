@@ -4,6 +4,7 @@ description = "Milestone M2 end-to-end suite: drives a real Verbatim and target 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 base64.workspace = true

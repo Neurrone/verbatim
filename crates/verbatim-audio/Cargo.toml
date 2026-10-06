@@ -4,6 +4,7 @@ description = "The audio mixer, the AudioDevice seam, and the silent real-time d
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 rubato.workspace = true

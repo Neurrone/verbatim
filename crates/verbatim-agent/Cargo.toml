@@ -4,6 +4,7 @@ description = "In-guest test agent for the M2 VM harness: process management and
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 base64.workspace = true

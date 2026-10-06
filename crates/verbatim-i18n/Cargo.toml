@@ -4,6 +4,7 @@ description = "Fluent localization: embedded English fallback plus runtime loadi
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 i18n-embed.workspace = true

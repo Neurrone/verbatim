@@ -4,6 +4,7 @@ description = "Normalized accessibility model: Verbatim's own vocabulary of role
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 serde.workspace = true

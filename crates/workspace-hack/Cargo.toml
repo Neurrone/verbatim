@@ -8,6 +8,7 @@ description = "Unifies third-party features across the workspace so every cargo 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 # The parts of the file between the BEGIN HAKARI SECTION and END HAKARI SECTION comments
 # are managed by hakari.

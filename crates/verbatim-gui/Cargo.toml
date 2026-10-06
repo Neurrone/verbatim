@@ -4,6 +4,7 @@ description = "wxDragon settings UI, running on its own thread in Core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 wxdragon.workspace = true
