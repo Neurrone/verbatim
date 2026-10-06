@@ -158,7 +158,7 @@ pub(super) fn window_is_foreground(handle: isize) -> bool {
 /// Whether `handle`'s top-level window is reported hung by the system
 /// (`IsHungAppWindow`). Events from a hung window are dropped before any
 /// read, as NVDA's `_shouldSkipEventForHungWindow` does.
-pub(super) fn window_is_hung(handle: isize) -> bool {
+pub(crate) fn window_is_hung(handle: isize) -> bool {
     let root = top_level_of(handle);
     let target = if root == 0 { handle } else { root };
     // SAFETY: IsHungAppWindow tolerates any handle.
@@ -216,7 +216,7 @@ pub(super) fn main_window_of(target_pid: u32) -> Option<isize> {
 }
 
 /// Whether `handle` is visible.
-fn window_is_visible(handle: isize) -> bool {
+pub(crate) fn window_is_visible(handle: isize) -> bool {
     // SAFETY: IsWindowVisible tolerates any handle.
     unsafe { IsWindowVisible(hwnd(handle)) }.as_bool()
 }
@@ -261,7 +261,7 @@ fn is_another_thread_of_its_application(handle: isize, other: isize) -> bool {
 }
 
 /// The thread and process that own `handle`, zeros for an invalid window.
-fn window_owner(handle: isize) -> (u32, u32) {
+pub(crate) fn window_owner(handle: isize) -> (u32, u32) {
     let mut pid = 0u32;
     // SAFETY: GetWindowThreadProcessId tolerates any handle, returning 0 for
     // an invalid one.
@@ -282,7 +282,7 @@ pub(crate) fn focus_window_of(target_pid: u32) -> Option<isize> {
 }
 
 /// The top-level windows belonging to `target_pid`.
-pub(super) fn top_level_windows(target_pid: u32) -> Vec<isize> {
+pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     struct Search {
         target_pid: u32,
         windows: Vec<isize>,
@@ -290,15 +290,15 @@ pub(super) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
         // SAFETY: `lparam` is the search passed below, alive for the call.
         let search = unsafe { &mut *(lparam.0 as *mut Search) };
-        let mut pid = 0u32;
-        // SAFETY: tolerates any handle.
-        unsafe {
-            GetWindowThreadProcessId(window, Some(&raw mut pid));
-        }
-        if pid == search.target_pid {
-            search.windows.push(window.0 as isize);
-        }
-        BOOL(1)
+        // A panic here would abort the process at the callback's boundary;
+        // caught, it ends the enumeration instead.
+        let visited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (_, pid) = window_owner(window.0 as isize);
+            if pid == search.target_pid {
+                search.windows.push(window.0 as isize);
+            }
+        }));
+        BOOL::from(visited.is_ok())
     }
     let mut search = Search {
         target_pid,

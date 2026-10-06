@@ -35,18 +35,15 @@
 //! pid, supervised by the same machinery.
 
 use std::collections::VecDeque;
-use std::ffi::c_void;
 use std::io::{self, BufReader, Write};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId,
     UIA_SelectionItem_ElementSelectedEventId,
 };
-use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEventCallback, WinEventKind};
 use verbatim_model::{Notification, Pid, TraceId};
@@ -429,12 +426,7 @@ fn forward_msaa_event(
 
 /// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
 fn window_pid(hwnd: isize) -> u32 {
-    let mut pid = 0u32;
-    // SAFETY: GetWindowThreadProcessId tolerates any window handle.
-    unsafe {
-        GetWindowThreadProcessId(HWND(hwnd as *mut c_void), Some(&raw mut pid));
-    }
-    pid
+    crate::outpost::window::window_owner(hwnd).1
 }
 
 /// Runs the focus listener driven by the Core pipes: reads commands from
