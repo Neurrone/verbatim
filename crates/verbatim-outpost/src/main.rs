@@ -22,10 +22,14 @@
 //! - `--attach <pid>`: a dev mode that watches `<pid>` directly and prints
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
+//!
+//! An outpost (the first and third modes) also takes `--classic-uia`, which
+//! turns off UIA remote operations for its whole life (`uia.remote_operations
+//! = false` in `settings.toml`, which the supervisor passes on).
 
 use std::process::ExitCode;
 
-use verbatim_outpost::{run_attach, run_listener, run_pipe};
+use verbatim_outpost::{OutpostOptions, run_attach, run_listener, run_pipe};
 
 fn main() -> ExitCode {
     // Keep this outpost's trace IDs disjoint from Core's and every other
@@ -41,11 +45,12 @@ fn main() -> ExitCode {
             pipe_in,
             pipe_out,
             target_pid,
+            options,
         }) => {
             // SAFETY: the handle values name pipe ends the supervisor created
             // and this process inherited; each is owned by exactly one File.
             let (reader, writer) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
-            match run_pipe(Box::new(reader), Box::new(writer), target_pid) {
+            match run_pipe(Box::new(reader), Box::new(writer), target_pid, options) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("outpost pipe loop ended with error: {error}");
@@ -65,7 +70,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Some(Mode::Attach { pid }) => match run_attach(pid) {
+        Some(Mode::Attach { pid, options }) => match run_attach(pid, options) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("outpost attach mode ended with error: {error}");
@@ -75,9 +80,9 @@ fn main() -> ExitCode {
         None => {
             eprintln!(
                 "verbatim-outpost is spawned by verbatim.exe. Usage:\n  \
-                 verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid>\n  \
+                 verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid> [--classic-uia]\n  \
                  verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle>\n  \
-                 verbatim-outpost --attach <pid>   (dev mode: prints JSON to stdout)"
+                 verbatim-outpost --attach <pid> [--classic-uia]   (dev mode: prints JSON to stdout)"
             );
             ExitCode::FAILURE
         }
@@ -104,6 +109,7 @@ enum Mode {
         pipe_in: usize,
         pipe_out: usize,
         target_pid: u32,
+        options: OutpostOptions,
     },
     Listener {
         pipe_in: usize,
@@ -111,6 +117,7 @@ enum Mode {
     },
     Attach {
         pid: u32,
+        options: OutpostOptions,
     },
 }
 
@@ -122,6 +129,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     let mut target_pid = None;
     let mut attach = None;
     let mut listener = false;
+    let mut options = OutpostOptions::default();
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -135,12 +143,17 @@ fn parse_args(args: &[String]) -> Option<Mode> {
                 index += 1;
                 continue;
             }
+            "--classic-uia" => {
+                options.remote_operations = false;
+                index += 1;
+                continue;
+            }
             _ => {}
         }
         index += 2;
     }
     if let Some(pid) = attach {
-        return Some(Mode::Attach { pid });
+        return Some(Mode::Attach { pid, options });
     }
     if listener {
         return match (pipe_in, pipe_out) {
@@ -153,6 +166,7 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             pipe_in,
             pipe_out,
             target_pid,
+            options,
         }),
         _ => None,
     }

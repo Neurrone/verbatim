@@ -10,17 +10,16 @@
 
 use std::cell::RefCell;
 
+use windows::Win32::Foundation::E_FAIL;
 use windows::Win32::System::Variant::{VARIANT, VT_BSTR};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextPattern, TreeScope_Children, UIA_AutomationIdPropertyId,
     UIA_FontNameAttributeId, UIA_FrameworkIdPropertyId, UIA_TextPatternId,
 };
-use windows::core::{BSTR, HRESULT, Interface};
+use windows::core::{BSTR, HRESULT};
 
-use verbatim_model::CallKind;
-
-use crate::calls::count;
 use crate::client::Uia;
+use crate::element::{ElementExt, attribute_value, visible_ranges};
 
 /// UIA's error for a provider that did not answer within the connection
 /// timeout.
@@ -59,30 +58,21 @@ pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
     with_client(|uia| {
         let cache = uia.base_cache_request()?;
         let window = uia.element_from_handle(hwnd, &cache)?;
-        // SAFETY: plain COM calls on live objects from this thread's client:
-        // find the child whose automation id is "Text Area", ask it for its
+        // Find the child whose automation id is "Text Area", ask it for its
         // text pattern, its visible ranges, and the first range's font.
-        unsafe {
-            let id = VARIANT::from(BSTR::from("Text Area"));
-            let condition = uia
-                .client()
-                .CreatePropertyCondition(UIA_AutomationIdPropertyId, &id)?;
-            count(CallKind::Uia);
-            let text_area = window.FindFirst(TreeScope_Children, &condition)?;
-            count(CallKind::Uia);
-            let pattern: IUIAutomationTextPattern =
-                text_area.GetCurrentPattern(UIA_TextPatternId)?.cast()?;
-            count(CallKind::Uia);
-            let ranges = pattern.GetVisibleRanges()?;
-            if ranges.Length()? != 1 {
-                return Ok(false);
-            }
-            count(CallKind::Uia);
-            let font = ranges
-                .GetElement(0)?
-                .GetAttributeValue(UIA_FontNameAttributeId)?;
-            Ok(font.vt() == VT_BSTR)
-        }
+        let id = VARIANT::from(BSTR::from("Text Area"));
+        let condition = uia.property_condition(UIA_AutomationIdPropertyId, &id)?;
+        let Some(text_area) = window.find_first(TreeScope_Children, &condition)? else {
+            // No match: `FindFirst` answers a null element.
+            return Err(windows::core::Error::from(E_FAIL));
+        };
+        let pattern = text_area.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)?;
+        let ranges = visible_ranges(&pattern)?;
+        let [range] = ranges.as_slice() else {
+            return Ok(false);
+        };
+        let font = attribute_value(range, UIA_FontNameAttributeId)?;
+        Ok(font.vt() == VT_BSTR)
     })
 }
 
@@ -91,13 +81,9 @@ pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
 #[must_use]
 pub fn is_windows_forms(hwnd: isize) -> Option<bool> {
     with_client(|uia| {
-        // SAFETY: plain COM calls on live objects from this thread's client:
-        // a cache request for the framework, then the window's element.
-        unsafe {
-            let cache = uia.client().CreateCacheRequest()?;
-            cache.AddProperty(UIA_FrameworkIdPropertyId)?;
-            let window = uia.element_from_handle(hwnd, &cache)?;
-            Ok(window.CachedFrameworkId()? == "WinForm")
-        }
+        // A cache request for the framework, then the window's element.
+        let cache = uia.cache_request(&[UIA_FrameworkIdPropertyId])?;
+        let window = uia.element_from_handle(hwnd, &cache)?;
+        Ok(window.cached_framework_id().as_deref() == Some("WinForm"))
     })
 }

@@ -32,12 +32,17 @@
 //! - [`map`] — control-type and cached-property mapping into the model.
 //! - [`calls`] — the per-thread count of the cross-process calls this crate
 //!   makes, which the outpost's worker takes around each entry it handles.
+//! - [`ElementExt`] and [`WalkerExt`] — safe wrappers over an element's
+//!   cached and live reads and the tree walker's steps, each holding one
+//!   documented `unsafe` call and counting its cross-process call, so the
+//!   code that reads UIA, here and in the outpost, is safe Rust.
 
 mod cache;
 pub mod calls;
 mod checks;
 mod client;
 mod com;
+mod element;
 mod focus;
 pub mod map;
 mod nearest;
@@ -49,6 +54,7 @@ pub use cache::{CACHED_PROPERTIES, base_cache_request};
 pub use checks::{console_reports_formatting, is_windows_forms};
 pub use client::{AncestorStops, AncestorWalk, Uia, selected_element};
 pub use com::{element_is_gone, init_mta, runtime_id};
+pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::{FocusCallback, FocusRegistration};
 pub use nearest::nearest_window_handle;
 pub use probe::{has_server_side_provider, probe_server_side_provider};

@@ -1,14 +1,18 @@
 //! The focus ancestry: a focused element's ancestors with their cached
 //! properties, read in one round trip by a remote program, or hop by hop
-//! by the classic walk behind the same signature.
+//! by the classic walk behind the same signature, and [`focus_ancestry`],
+//! the one function callers use, which picks between them.
+
+use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement, UIA_HasKeyboardFocusPropertyId,
-    UIA_IsDataValidForFormPropertyId, UIA_ListControlTypeId, UIA_PROPERTY_ID,
+    IUIAutomationElement, UIA_HasKeyboardFocusPropertyId, UIA_IsDataValidForFormPropertyId,
+    UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
     UIA_RuntimeIdPropertyId, UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
 };
 
-use verbatim_uia::Uia;
+use verbatim_uia::map::cached_native_window_handle;
+use verbatim_uia::{ElementExt, Uia, WalkerExt};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::error::Error;
@@ -16,11 +20,11 @@ use crate::instruction::TypeTest;
 use crate::opcode::{Comparison, NavigationDirection};
 use crate::operation::Value;
 
-/// What [`focus_ancestry_remote`] and [`focus_ancestry_classic`] are asked.
+/// What [`focus_ancestry`] and its two implementations are asked.
 #[derive(Clone, Copy)]
 pub struct FocusQuery<'a> {
-    /// The focused element, normally the focus event's sender, which
-    /// arrives with its cache already filled.
+    /// The focused element, with its cache filled: the focus event's
+    /// sender, or the focused element read for it.
     pub element: &'a IUIAutomationElement,
     /// Runtime ids of elements the caller already knows (the previous
     /// focus's ancestors): the walk stops at the first ancestor that has
@@ -31,6 +35,10 @@ pub struct FocusQuery<'a> {
     /// The properties cached on every returned element:
     /// [`verbatim_uia::CACHED_PROPERTIES`] for the snapshot code.
     pub properties: &'a [UIA_PROPERTY_ID],
+    /// When the classic walk stops between hops, reporting the ancestry as
+    /// cut short ([`Ancestry::out_of_time`]). The remote program is one
+    /// call and does not check it.
+    pub deadline: Option<Instant>,
 }
 
 /// The answer to a [`FocusQuery`].
@@ -43,7 +51,7 @@ pub enum FocusAncestry {
     Focused(Ancestry),
 }
 
-/// A focused element's ancestors and selected child.
+/// A focused element's ancestors, selected child, and window.
 #[derive(Debug)]
 pub struct Ancestry {
     /// The raw-view ancestors, nearest first, each with the query's
@@ -55,14 +63,67 @@ pub struct Ancestry {
     pub met_known: Option<usize>,
     /// Whether the walk stopped at the depth limit with ancestors left.
     pub depth_limited: bool,
+    /// Whether the classic walk stopped at the query's deadline with
+    /// ancestors left. Never set by the remote program.
+    pub out_of_time: bool,
     /// For a list or tab control, the first selected child, with the
     /// query's properties cached: what `verbatim_uia::Uia::selected_child`
     /// reports.
     pub selected_child: Option<IUIAutomationElement>,
+    /// The native window handle of the element, or of its nearest raw-view
+    /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
+    /// finds it (NVDA's `getNearestWindowHandle`), looking past where the
+    /// ancestor walk stopped when it has to. `None` when nothing up to the
+    /// top has one, or the classic walk ran out of time first.
+    pub window: Option<isize>,
 }
 
 /// The signature both implementations share, so a caller can hold either.
 pub type FocusAncestryFn = fn(&Uia, &FocusQuery<'_>) -> Result<FocusAncestry, Error>;
+
+/// Which implementation answered a [`focus_ancestry`] call.
+#[derive(Debug)]
+pub enum Path {
+    /// The remote program, in one cross-process round trip.
+    Remote,
+    /// The classic walk, as the caller asked.
+    Classic,
+    /// The classic walk, because the remote program failed with this
+    /// error. [`Error::Import`] means the element is served by a
+    /// client-side proxy, which will not change for its window.
+    Fallback(Error),
+}
+
+/// The focus ancestry, the one function call sites use: the remote program
+/// when `remote` is true, falling back to the classic walk for this call
+/// when remote operations are unavailable or the program fails, and the
+/// classic walk alone when `remote` is false. Says which path answered, and
+/// for a fallback, why, so the caller can stop trying the remote program
+/// for a window whose import failed.
+///
+/// NVDA makes each call site choose instead, asking `remote.isSupported()`
+/// before building a program; here the choice and the fallback live in one
+/// place, and the caller decides only whether to try.
+///
+/// # Errors
+///
+/// The classic walk's [`Error`], when it ran and failed; a failed remote
+/// program is never returned, only reported in [`Path::Fallback`].
+pub fn focus_ancestry(
+    uia: &Uia,
+    query: &FocusQuery<'_>,
+    remote: bool,
+) -> Result<(FocusAncestry, Path), Error> {
+    if !remote {
+        return focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Classic));
+    }
+    match focus_ancestry_remote(uia, query) {
+        Ok(answer) => Ok((answer, Path::Remote)),
+        Err(error) => {
+            focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Fallback(error)))
+        }
+    }
+}
 
 /// The string the remote program makes of a runtime id (its `Stringify`
 /// instruction, verified on Windows 11 26200): the integers in decimal,
@@ -78,19 +139,27 @@ pub fn runtime_id_key(runtime_id: &[i32]) -> String {
 /// its cached control type (read live if it is not cached), as
 /// `wants_selected_child` decides from the mapped role.
 fn wants_selected_child(element: &IUIAutomationElement) -> bool {
-    // SAFETY: `element` is a live element; both reads fail safely.
-    let control_type =
-        unsafe { element.CachedControlType() }.or_else(|_| unsafe { element.CurrentControlType() });
+    let control_type = element
+        .cached_control_type()
+        .map_or_else(|| element.current_control_type(), Ok);
     control_type.is_ok_and(|control_type| {
         control_type == UIA_ListControlTypeId || control_type == UIA_TabControlTypeId
     })
+}
+
+/// The element's own native window handle, from its cache, `None` for an
+/// element that is not a window.
+fn own_window(element: &IUIAutomationElement) -> Option<isize> {
+    Some(cached_native_window_handle(element)).filter(|&hwnd| hwnd != 0)
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
 /// reads the element's `HasKeyboardFocus` live and stops if it is false,
 /// then reads a list's or tab control's selected child, then walks
 /// raw-view parents, filling each one's cache inside the provider, until
-/// the top-level window, a known ancestor, or the depth limit.
+/// the top-level window, a known ancestor, or the depth limit, and finds
+/// the element's nearest window, walking on past where it stopped if no
+/// ancestor read so far has a window handle.
 ///
 /// `uia` is unused; it is in the signature so that this and
 /// [`focus_ancestry_classic`] are interchangeable ([`FocusAncestryFn`]).
@@ -100,6 +169,10 @@ fn wants_selected_child(element: &IUIAutomationElement) -> bool {
 /// Any [`Error`] from running the program; [`Error::Import`] means the
 /// element is served by a client-side proxy, and the classic walk is the
 /// answer for its window.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one program, read top to bottom as it runs"
+)]
 pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
     let mut b = Builder::new();
     let element = b.import_element(query.element);
@@ -138,6 +211,24 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         b.map_insert(known, key, index);
     }
 
+    // The nearest window: the element's own, from its cache, or the first
+    // ancestor's that has one.
+    let window = b.new_int(
+        own_window(query.element)
+            .and_then(|hwnd| i32::try_from(hwnd).ok())
+            .unwrap_or(0),
+    );
+    let window = b.add_to_results(window);
+    let no_window = b.int(0);
+    let read_window = |b: &mut Builder, from: Reg<kind::Element>| {
+        let unset = b.equal(window, no_window);
+        b.if_(unset, |b| {
+            let handle = b.property(from, UIA_NativeWindowHandlePropertyId.0);
+            let is_int = b.is(TypeTest::Int, handle);
+            b.if_(is_int, |b| b.set(window, handle.assume::<kind::Int>()));
+        });
+    };
+
     let ancestors = b.new_array();
     let ancestors = b.add_to_results(ancestors);
     let met_known = b.new_int(-1);
@@ -163,6 +254,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             cache.populate(b, current);
             b.array_append(ancestors, current);
             b.add_assign(count, one);
+            read_window(b, current);
             let runtime_id = b.property(current, UIA_RuntimeIdPropertyId.0);
             let key = b.stringify(runtime_id);
             let is_known = b.map_has_key(known, key);
@@ -171,6 +263,21 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
                 b.set(met_known, index);
                 b.break_loop();
             });
+            let parent = b.navigate(current, NavigationDirection::Parent);
+            b.set(current, parent);
+        },
+    );
+    // A walk that stopped short with no window yet goes on looking, from
+    // where it stopped, without returning what it passes.
+    b.while_(
+        |b| {
+            let unset = b.equal(window, no_window);
+            let null = b.is_null(current);
+            let more = b.not(null);
+            b.and(unset, more)
+        },
+        |b| {
+            read_window(b, current);
             let parent = b.navigate(current, NavigationDirection::Parent);
             b.set(current, parent);
         },
@@ -188,11 +295,14 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             _ => None,
         })
         .collect();
+    let window = outcome.get(window)?;
     Ok(FocusAncestry::Focused(Ancestry {
         ancestors,
         met_known: usize::try_from(outcome.get(met_known)?).ok(),
         depth_limited: outcome.get(depth_limited)?,
+        out_of_time: false,
         selected_child: outcome.get(selected)?,
+        window: (window != 0).then_some(window as isize),
     }))
 }
 
@@ -273,47 +383,63 @@ impl RemoteCache {
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestor_chain` makes. Stops where the remote program
 /// stops: at a known ancestor, at the depth limit, or below the desktop
-/// root.
+/// root; and at the query's deadline. The nearest window comes from the
+/// walked ancestors' caches, or, when the walk stopped before reaching
+/// one, from one more call ([`verbatim_uia::nearest_window_handle`]).
 ///
 /// # Errors
 ///
 /// [`Error::Uia`] when the focus read, the cache request, or the tree
 /// walker fails; a hop that finds no parent ends the walk.
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
-    // SAFETY: `query.element` is a live element; a live property read.
-    if !unsafe { query.element.CurrentHasKeyboardFocus() }?.as_bool() {
+    if !query.element.has_keyboard_focus()? {
         return Ok(FocusAncestry::NotFocused);
     }
-    let client = uia.client();
-    let cache = cache_request(client, query.properties)?;
+    let cache = uia.cache_request(query.properties)?;
     let selected_child = if wants_selected_child(query.element) {
-        // SAFETY: `query.element` is live.
-        unsafe { verbatim_uia::selected_element(query.element, &cache) }
+        verbatim_uia::selected_element(query.element, &cache)
     } else {
         None
     };
-    // SAFETY: `client` is a live IUIAutomation; the root element is the
-    // desktop, served in this process.
-    let root = verbatim_uia::runtime_id(&unsafe { client.GetRootElement() }?);
-    // SAFETY: as above.
-    let walker = unsafe { client.RawViewWalker() }?;
+    // The desktop root is served in this process, so reading it is local.
+    let root = verbatim_uia::runtime_id(&uia.root_element()?);
+    let walker = uia.raw_view_walker()?;
     let mut ancestry = Ancestry {
         ancestors: Vec::new(),
         met_known: None,
         depth_limited: false,
+        out_of_time: false,
         selected_child,
+        window: own_window(query.element),
+    };
+    let out_of_time = || {
+        query
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
     };
     let mut current = query.element.clone();
-    // SAFETY: `current` is the caller's live element or a parent just
-    // built with `cache`; a failed hop is the root.
-    while let Ok(parent) = unsafe { walker.GetParentElementBuildCache(&current, &cache) } {
+    let mut complete = false;
+    loop {
+        if out_of_time() {
+            ancestry.out_of_time = true;
+            break;
+        }
+        // A failed hop is the root.
+        let Ok(parent) = walker.parent(&current, &cache) else {
+            complete = true;
+            break;
+        };
         let runtime_id = verbatim_uia::runtime_id(&parent);
         if runtime_id == root {
+            complete = true;
             break;
         }
         if ancestry.ancestors.len() >= usize::try_from(query.depth_limit).unwrap_or(usize::MAX) {
             ancestry.depth_limited = true;
             break;
+        }
+        if ancestry.window.is_none() {
+            ancestry.window = own_window(&parent);
         }
         ancestry.ancestors.push(parent.clone());
         if let Some(index) = query.known.iter().position(|known| *known == runtime_id) {
@@ -322,21 +448,8 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         }
         current = parent;
     }
-    Ok(FocusAncestry::Focused(ancestry))
-}
-
-/// A cache request for `properties`, built locally.
-fn cache_request(
-    client: &IUIAutomation,
-    properties: &[UIA_PROPERTY_ID],
-) -> windows::core::Result<IUIAutomationCacheRequest> {
-    // SAFETY: `client` is a live IUIAutomation; adding a property takes a
-    // plain id.
-    unsafe {
-        let request = client.CreateCacheRequest()?;
-        for &property in properties {
-            request.AddProperty(property)?;
-        }
-        Ok(request)
+    if ancestry.window.is_none() && !complete && !ancestry.out_of_time {
+        ancestry.window = verbatim_uia::nearest_window_handle(query.element);
     }
+    Ok(FocusAncestry::Focused(ancestry))
 }

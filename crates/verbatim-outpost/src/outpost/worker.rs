@@ -21,6 +21,8 @@
 //! the queue. An abandoned worker that eventually returns publishes nothing,
 //! lowers the count, and exits.
 
+#![forbid(unsafe_code)]
+
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -775,6 +777,7 @@ impl Worker<'_> {
         if kind == WinEventKind::Destroy {
             if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
                 self.context.arbitrator().forget(hwnd);
+                self.context.forget_window(hwnd);
                 // A reused window handle must never inherit these nodes.
                 self.context.msaa_registry.forget_window(hwnd);
             }
@@ -897,19 +900,17 @@ impl Worker<'_> {
         };
         let uia = self.client.uia()?;
         let cache = uia.base_cache_request().ok()?;
-        // SAFETY: `focused` is live, just read.
-        let selected = unsafe { uia.controlled_descendant(&focused, runtime_id, &cache) }
+        let selected = uia
+            .controlled_descendant(&focused, runtime_id, &cache)
             .ok()
             .flatten()?;
         let registry = &self.context.uia_registry;
-        // SAFETY: both elements were built with the base cache request.
-        unsafe {
-            let controller = snapshot_parts_from_cached_element(&focused).runtime_id;
-            Some(NormalizedEvent::ControlledSelection {
-                controller: registry.id_for_element(&controller, &focused),
-                node: snapshot_from_cached_element(&selected, registry),
-            })
-        }
+        // Both elements were built with the base cache request.
+        let controller = snapshot_parts_from_cached_element(&focused).runtime_id;
+        Some(NormalizedEvent::ControlledSelection {
+            controller: registry.id_for_element(&controller, &focused),
+            node: snapshot_from_cached_element(&selected, registry),
+        })
     }
 
     /// A snapshot from a UIA element's cached parts, its id minted by the
@@ -1176,35 +1177,49 @@ impl Worker<'_> {
                 // reported if the follow-up finds its element focused after
                 // all.
                 tracing::debug!("UIA focus held: another element has the keyboard focus");
-                self.resolve_focus_later_held(
-                    &fact.runtime_id,
-                    trace,
-                    1,
-                    Some(Box::new(HeldFocus {
-                        windows: (fact_hwnd, focus_window),
-                        fact: fact.clone(),
-                        observed_at_ms,
-                    })),
-                );
+                self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
                 return;
             }
             LiveFocus::Unresolved => None,
         };
         let element_us = reading.elapsed().as_micros();
-        // The event's own window; else the element's nearest; else, for an
-        // element not resolved, this application's keyboard focus window
-        // when the listener captured the event, which hosts the element
-        // when the event is current but, in an application with several
-        // windows, may be another of its windows when the event is late;
-        // else, for deciding the backend only, this application's focus
-        // window now, which is never reported.
+        let previous = self.focus_chain();
+        // The window the focus is in, known without a call: the event's
+        // own, else the application's keyboard focus window when the
+        // listener captured the event. A remote operation is tried unless
+        // that window's elements cannot be imported into one.
+        let focus_in = [fact_hwnd, focus_window]
+            .into_iter()
+            .find(|&hwnd| hwnd != 0);
+        let enriching = Instant::now();
+        let remote = match self.remote_enrichment(element.as_ref(), &previous, focus_in) {
+            Some(read::RemoteEnrichment::NotFocused) => {
+                // Read live in the same round trip, as `LiveFocus::Elsewhere`
+                // reads it: the focus moved on after the focused element was
+                // read.
+                tracing::debug!("UIA focus held: the element lost the keyboard focus");
+                self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
+                return;
+            }
+            Some(read::RemoteEnrichment::Read { enrichment, window }) => Some((enrichment, window)),
+            None => None,
+        };
+        // The event's own window; else the element's nearest, which a
+        // remote read found with its ancestors; else, for an element not
+        // resolved, this application's keyboard focus window when the
+        // listener captured the event, which hosts the element when the
+        // event is current but, in an application with several windows, may
+        // be another of its windows when the event is late; else, for
+        // deciding the backend only, this application's focus window now,
+        // which is never reported.
         let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            element
-                .as_ref()
-                .and_then(nearest_window_handle)
-                .or((focus_window != 0).then_some(focus_window))
+            match &remote {
+                Some((_, window)) => *window,
+                None => element.as_ref().and_then(nearest_window_handle),
+            }
+            .or((focus_window != 0).then_some(focus_window))
         };
         let judged = reported.or_else(|| focus_window_of(context.target_pid));
         if judged.is_some_and(window_belongs_to_hidden_frame) {
@@ -1235,16 +1250,17 @@ impl Worker<'_> {
             return;
         };
         let node = Self::uia_node(context, fact, Some(&element));
-        let previous = self.focus_chain();
-        let enriching = Instant::now();
-        let enrichment = match self.client.uia() {
-            Some(uia) => match uia.base_cache_request() {
-                Ok(cache) => {
-                    read::uia_enrichment(context, uia, &cache, &element, node.role, &previous)
-                }
-                Err(_) => (None, None),
+        let enrichment = match remote {
+            Some((enrichment, _)) => enrichment,
+            None => match self.client.uia() {
+                Some(uia) => match uia.base_cache_request() {
+                    Ok(cache) => {
+                        read::uia_enrichment(context, uia, &cache, &element, node.role, &previous)
+                    }
+                    Err(_) => (None, None),
+                },
+                None => (None, None),
             },
-            None => (None, None),
         };
         tracing::debug!(
             %trace,
@@ -1265,6 +1281,42 @@ impl Worker<'_> {
         );
     }
 
+    /// [`read::uia_remote_enrichment`] for a focus's element, when there is
+    /// one and a client to read it with.
+    fn remote_enrichment(
+        &mut self,
+        element: Option<&IUIAutomationElement>,
+        previous: &[NodeSnapshot],
+        focus_in: Option<isize>,
+    ) -> Option<read::RemoteEnrichment> {
+        let element = element?;
+        let uia = self.client.uia()?;
+        let cache = uia.base_cache_request().ok()?;
+        read::uia_remote_enrichment(self.context, uia, &cache, element, previous, focus_in)
+    }
+
+    /// Holds back a UIA focus fact whose element does not have the keyboard
+    /// focus now, for a follow-up that reports it if its element is found
+    /// focused after all.
+    fn hold_focus(
+        &self,
+        windows: (isize, isize),
+        fact: &UiaSnapshotFact,
+        trace: TraceId,
+        observed_at_ms: u64,
+    ) {
+        self.resolve_focus_later_held(
+            &fact.runtime_id,
+            trace,
+            1,
+            Some(Box::new(HeldFocus {
+                windows,
+                fact: fact.clone(),
+                observed_at_ms,
+            })),
+        );
+    }
+
     /// The live element for the focus `runtime_id` names, read as the
     /// focused element within [`FOCUS_READ_WAIT`].
     fn live_focus_element(&mut self, runtime_id: &[i32]) -> LiveFocus {
@@ -1277,13 +1329,11 @@ impl Worker<'_> {
         let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache)) else {
             return LiveFocus::Unresolved;
         };
-        // SAFETY: `element` was built with the base cache request.
-        let (found, process) = unsafe {
-            (
-                snapshot_parts_from_cached_element(&element).runtime_id,
-                cached_process_id(&element),
-            )
-        };
+        // `element` was built with the base cache request.
+        let (found, process) = (
+            snapshot_parts_from_cached_element(&element).runtime_id,
+            cached_process_id(&element),
+        );
         if found == runtime_id {
             LiveFocus::Found(element)
         } else if process.is_some_and(|pid| pid != 0 && pid != self.context.target_pid) {
@@ -1363,8 +1413,8 @@ impl Worker<'_> {
             uia.focused_element(&cache).ok()
         });
         let Some(element) = element.filter(|element| {
-            // SAFETY: built with the base cache request.
-            unsafe { snapshot_parts_from_cached_element(element) }.runtime_id == runtime_id
+            // Built with the base cache request.
+            snapshot_parts_from_cached_element(element).runtime_id == runtime_id
         }) else {
             self.resolve_focus_later(runtime_id, trace, attempt + 1);
             return;

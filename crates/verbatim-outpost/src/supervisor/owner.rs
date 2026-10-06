@@ -2,6 +2,8 @@
 //! owns the per-application records and the listener record (outpost
 //! redesign, "The supervisor"). Everything else only reports to it.
 
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{self, BufReader};
@@ -76,6 +78,7 @@ pub(super) struct Child {
 /// What the owner thread starts with.
 pub(super) struct Setup {
     pub(super) exe_path: PathBuf,
+    pub(super) options: crate::OutpostOptions,
     pub(super) events_tx: Sender<OutpostMessage>,
     pub(super) writers: Writers,
     pub(super) own_tx: Sender<OwnerEvent>,
@@ -111,6 +114,8 @@ struct ListenerRecord {
 /// The owner thread's state.
 struct Owner {
     exe_path: PathBuf,
+    /// What every outpost is launched with.
+    options: crate::OutpostOptions,
     events_tx: Sender<OutpostMessage>,
     writers: Writers,
     own_tx: Sender<OwnerEvent>,
@@ -129,6 +134,7 @@ struct Owner {
 pub(super) fn start(setup: Setup) -> io::Result<()> {
     let Setup {
         exe_path,
+        options,
         events_tx,
         writers,
         own_tx,
@@ -136,6 +142,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
     } = setup;
     let mut owner = Owner {
         exe_path,
+        options,
         events_tx,
         writers,
         own_tx,
@@ -281,13 +288,14 @@ impl Owner {
     /// or the end of its pipe.
     fn launch(&self, outpost: OutpostId, role: Role) {
         let exe_path = self.exe_path.clone();
+        let options = self.options;
         let events_tx = self.events_tx.clone();
         let own_tx = self.own_tx.clone();
         let writers = self.writers.clone();
         let spawned = thread::Builder::new()
             .name("verbatim-launch".to_owned())
             .spawn(move || {
-                match launch_child(&exe_path, outpost, role, &events_tx, &writers) {
+                match launch_child(&exe_path, options, outpost, role, &events_tx, &writers) {
                     Ok((child, from_child)) => {
                         let _ = own_tx.send(OwnerEvent::Launched {
                             outpost,
@@ -615,12 +623,13 @@ fn deliver(writer: &WriterHandle, held: HeldFact) {
 /// the child and the pipe its reader will read.
 fn launch_child(
     exe_path: &std::path::Path,
+    options: crate::OutpostOptions,
     outpost: OutpostId,
     role: Role,
     events_tx: &Sender<OutpostMessage>,
     writers: &Writers,
 ) -> io::Result<(Child, File)> {
-    let (launched, pipes) = process::launch(exe_path, role)?;
+    let (launched, pipes) = process::launch(exe_path, role, options)?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     let writer_name = match role {
         Role::Outpost(_) => "verbatim-outpost-writer",

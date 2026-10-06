@@ -3,6 +3,8 @@
 //! when an idle one is retired, when crashes stop respawns, and how facts
 //! that arrive during a spawn are held.
 
+#![forbid(unsafe_code)]
+
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 

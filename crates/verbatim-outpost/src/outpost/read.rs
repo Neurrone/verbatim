@@ -3,6 +3,8 @@
 //! backend owns the window. Every function here may call into the
 //! application and so runs only on the worker, under its deadline.
 
+#![forbid(unsafe_code)]
+
 use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
@@ -11,15 +13,17 @@ use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet,
 };
 use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
-use verbatim_uia::{Uia, probe_server_side_provider};
+use verbatim_uia::{AncestorWalk, ElementExt, Uia, probe_server_side_provider};
+use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use crate::arbitration::{PostProbeCheck, WindowClasses, post_probe_check, window_class_name};
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
 use super::window::{
-    focus_window_of, foreground_window_of, main_window_of, now_ms, top_level_windows,
-    window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame, window_text,
+    desktop_window, focus_window_of, foreground_window_of, main_window_of, now_ms,
+    top_level_windows, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
+    window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -191,8 +195,7 @@ fn window_snapshot(
     if window_uses_uia(context, hwnd) {
         let (uia, cache) = client.uia_and_cache().ok()?;
         let element = uia.element_from_handle(hwnd, &cache).ok()?;
-        // SAFETY: `element` was built with the base cache request.
-        let node = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
+        let node = snapshot_from_cached_element(&element, &context.uia_registry);
         Some((Backend::Uia, node))
     } else {
         // The client area, as NVDA reads a foreground window: a focus event
@@ -250,8 +253,8 @@ pub(super) fn uia_enrichment(
     uia.within(ENRICHMENT_BUDGET, |uia| {
         let ancestors = uia_ancestors(context, uia, cache, element, previous, Some(deadline));
         let selected = if wants_selected_child(role) {
-            // SAFETY: `element` was built with `cache` by the caller.
-            unsafe { uia.selected_child(element, cache, &context.uia_registry) }.unwrap_or(None)
+            uia.selected_child(element, cache, &context.uia_registry)
+                .unwrap_or(None)
         } else {
             None
         };
@@ -275,30 +278,48 @@ fn uia_ancestors(
     previous: &[NodeSnapshot],
     deadline: Option<std::time::Instant>,
 ) -> Option<Vec<NodeSnapshot>> {
-    // SAFETY: GetDesktopWindow has no preconditions.
-    let desktop = unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize;
+    let desktop = desktop_window();
     let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
-    // SAFETY: `element` was built with `cache` by the caller.
-    let Ok((uia_chain, crossed, walked)) = (unsafe {
-        uia.ancestor_chain(
-            element,
-            cache,
-            &context.uia_registry,
-            MAX_ANCESTOR_HOPS,
-            &verbatim_uia::AncestorStops {
-                read_by_other_api: &read_by_msaa,
-                known: &known,
-                deadline,
-            },
-        )
-    }) else {
+    let Ok((uia_chain, crossed, walked)) = uia.ancestor_chain(
+        element,
+        cache,
+        &context.uia_registry,
+        MAX_ANCESTOR_HOPS,
+        &verbatim_uia::AncestorStops {
+            read_by_other_api: &read_by_msaa,
+            known: &known,
+            deadline,
+        },
+    ) else {
         return Some(Vec::new());
     };
+    uia_chain_onward(
+        context,
+        (uia, cache),
+        (uia_chain, crossed, walked),
+        previous,
+        deadline,
+    )
+}
+
+/// A UIA ancestor chain, outermost first, as a walk ended (`walked`),
+/// completed outward: spliced onto `previous` where it met a known
+/// ancestor, or continued through MSAA from the window `crossed` names, as
+/// NVDA switches API when its walk crosses into a window read through
+/// MSAA. `None` when the walk ran out of time.
+fn uia_chain_onward(
+    context: &Context,
+    (uia, cache): (&Uia, &IUIAutomationCacheRequest),
+    (uia_chain, crossed, walked): (Vec<NodeSnapshot>, Option<isize>, AncestorWalk),
+    previous: &[NodeSnapshot],
+    deadline: Option<std::time::Instant>,
+) -> Option<Vec<NodeSnapshot>> {
+    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     match walked {
-        verbatim_uia::AncestorWalk::OutOfTime => return None,
-        verbatim_uia::AncestorWalk::MetKnown(met) => return Some(splice(previous, uia_chain, met)),
-        verbatim_uia::AncestorWalk::Complete => {}
+        AncestorWalk::OutOfTime => return None,
+        AncestorWalk::MetKnown(met) => return Some(splice(previous, uia_chain, met)),
+        AncestorWalk::Complete => {}
     }
     let Some(hwnd) = crossed else {
         return Some(uia_chain);
@@ -326,6 +347,137 @@ fn uia_ancestors(
         "UIA ancestors continued through MSAA"
     );
     chain
+}
+
+/// What reading a focused UIA element's context with a remote operation
+/// found ([`uia_remote_enrichment`]).
+#[expect(
+    clippy::large_enum_variant,
+    reason = "made once per focus and taken apart at once"
+)]
+pub(super) enum RemoteEnrichment {
+    /// The element no longer has the keyboard focus, read live inside the
+    /// provider: the focus it was read for is out of date.
+    NotFocused,
+    /// Its ancestors and selected child, and its nearest window, which the
+    /// same round trip found (NVDA's `getNearestWindowHandle`).
+    Read {
+        /// The ancestors and selected child.
+        enrichment: Enrichment,
+        /// The element's own window or its nearest ancestor's.
+        window: Option<isize>,
+    },
+}
+
+/// A focused UIA element's ancestors, selected child, and nearest window,
+/// in one round trip run inside the application's provider
+/// ([`verbatim_uia_rops::focus_ancestry`]), with the same stops and the
+/// same continuation through MSAA as [`uia_enrichment`]. `None`, having
+/// made no call, when remote operations are off or `window`, the window
+/// the focus is in, is read the classic way: the caller reads it as
+/// before.
+///
+/// A program that fails is answered by the classic walk for this call,
+/// and logged with the instruction that failed and the Rust line that
+/// emitted it; one whose element could not be imported (a client-side
+/// proxy) also has `window` read the classic way from then on.
+pub(super) fn uia_remote_enrichment(
+    context: &Context,
+    uia: &Uia,
+    cache: &IUIAutomationCacheRequest,
+    element: &IUIAutomationElement,
+    previous: &[NodeSnapshot],
+    window: Option<isize>,
+) -> Option<RemoteEnrichment> {
+    if !context.tries_remote(window) {
+        return None;
+    }
+    let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
+    // The previous chain's UIA nodes, by runtime id, for the walk to stop
+    // at; their node ids, in the same order, for splicing.
+    let (known_ids, known): (Vec<NodeId>, Vec<Vec<i32>>) = previous
+        .iter()
+        .filter_map(|node| {
+            let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
+            Some((node.id, runtime_id))
+        })
+        .unzip();
+    let query = FocusQuery {
+        element,
+        known: &known,
+        depth_limit: MAX_ANCESTOR_HOPS,
+        properties: verbatim_uia::CACHED_PROPERTIES,
+        deadline: Some(deadline),
+    };
+    let answer = uia
+        .within(ENRICHMENT_BUDGET, |uia| focus_ancestry(uia, &query, true))
+        .map_err(verbatim_uia_rops::Error::Uia)
+        .and_then(|answer| answer);
+    let (ancestry, path) = match answer {
+        Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
+        Ok((FocusAncestry::NotFocused, _)) => return Some(RemoteEnrichment::NotFocused),
+        Err(error) => {
+            // As the classic walk's failure does: no containers, and the
+            // window found the usual way.
+            tracing::debug!(%error, "the focus ancestry could not be read");
+            return Some(RemoteEnrichment::Read {
+                enrichment: (Some(Vec::new()), None),
+                window: verbatim_uia::nearest_window_handle(element),
+            });
+        }
+    };
+    if let Path::Fallback(error) = &path {
+        tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+        if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
+            context.read_classically(window);
+        }
+    }
+    let registry = &context.uia_registry;
+    let selected = ancestry
+        .selected_child
+        .as_ref()
+        .map(|child| snapshot_from_cached_element(child, registry));
+    let ancestors = if ancestry.out_of_time {
+        None
+    } else {
+        let desktop = desktop_window();
+        let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+        let is_known = |id: NodeId| previous.iter().any(|node| node.id == id);
+        let (chain, crossed, mut walked) = Uia::ancestor_chain_from(
+            &ancestry.ancestors,
+            registry,
+            &verbatim_uia::AncestorStops {
+                read_by_other_api: &read_by_msaa,
+                known: &is_known,
+                deadline: None,
+            },
+        );
+        // The program stops at any known ancestor, while only a reported
+        // one ends the chain: a known ancestor that is not reported (the
+        // previous focus, a list item, say) is still where the previous
+        // chain takes over.
+        if let (AncestorWalk::Complete, None, Some(index)) = (walked, crossed, ancestry.met_known)
+            && let Some(&met) = known_ids.get(index)
+        {
+            walked = AncestorWalk::MetKnown(met);
+        }
+        uia_chain_onward(
+            context,
+            (uia, cache),
+            (chain, crossed, walked),
+            previous,
+            Some(deadline),
+        )
+    };
+    tracing::debug!(
+        ?path,
+        ancestors = ancestry.ancestors.len(),
+        "UIA focus ancestry read"
+    );
+    Some(RemoteEnrichment::Read {
+        enrichment: (ancestors, selected),
+        window: ancestry.window,
+    })
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
@@ -369,8 +521,7 @@ fn msaa_ancestors(
             let Ok(element) = uia.element_from_handle(hwnd, cache) else {
                 return Some(chain);
             };
-            // SAFETY: `element` was just built with `cache`.
-            let top = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
+            let top = snapshot_from_cached_element(&element, &context.uia_registry);
             let top_id = top.id;
             let below: Vec<NodeSnapshot> = std::iter::once(top).chain(chain).collect();
             if known(top_id) {
@@ -427,10 +578,16 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     if window_uses_uia(context, hwnd) {
         let (uia, cache) = client.uia_and_cache().ok()?;
         let element = uia.focused_element(&cache).ok()?;
-        // SAFETY: `element` was built with the base cache request.
-        let node = unsafe { snapshot_from_cached_element(&element, &context.uia_registry) };
+        let node = snapshot_from_cached_element(&element, &context.uia_registry);
+        // A focus that has moved on since the focused element was read is
+        // still this query's answer, read the classic way.
         let (ancestors, selected_child) =
-            uia_enrichment(context, uia, &cache, &element, node.role, &[]);
+            match uia_remote_enrichment(context, uia, &cache, &element, &[], Some(hwnd)) {
+                Some(RemoteEnrichment::Read { enrichment, .. }) => enrichment,
+                Some(RemoteEnrichment::NotFocused) | None => {
+                    uia_enrichment(context, uia, &cache, &element, node.role, &[])
+                }
+            };
         let ancestors = ancestors.unwrap_or_default();
         Some(FocusedControl {
             node,
@@ -485,10 +642,7 @@ fn resolve_uia_element(
 ) -> Result<IUIAutomationElement, ReadError> {
     if let Some(agile) = context.uia_registry.element_of(node_id) {
         if let Ok(element) = agile.resolve() {
-            verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
-            // SAFETY: a dead underlying element fails the call rather than
-            // crashing.
-            match unsafe { element.BuildUpdatedCache(cache) } {
+            match element.build_updated_cache(cache) {
                 Ok(fresh) => return Ok(fresh),
                 Err(error) if !verbatim_uia::element_is_gone(&error) => {
                     return Err(ReadError::Failed(format!("reading the element: {error}")));
@@ -558,8 +712,8 @@ pub(super) fn navigate(
     let (neighbor, from_window) = if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, cache, element) = uia_node(context, client, node_id)?;
         let from_window = verbatim_uia::nearest_window_handle(&element);
-        // SAFETY: `element` was built with `cache`.
-        let neighbor = unsafe { uia.navigate(&element, &cache, &context.uia_registry, kind) }
+        let neighbor = uia
+            .navigate(&element, &cache, &context.uia_registry, kind)
             .map_err(|error| {
                 if verbatim_uia::element_is_gone(&error) {
                     ReadError::Gone
@@ -594,15 +748,13 @@ fn corrected_backend(
         return neighbor;
     };
     if context.uia_registry.runtime_id_of(neighbor.id).is_some() {
-        // SAFETY: the registry's element was built with the base cache
-        // request, which caches the native window handle.
+        // The registry's element was built with the base cache request,
+        // which caches the native window handle.
         let window = context
             .uia_registry
             .element_of(neighbor.id)
             .and_then(|agile| agile.resolve().ok())
-            .map_or(0, |element| unsafe {
-                cached_native_window_handle(&element)
-            });
+            .map_or(0, |element| cached_native_window_handle(&element));
         if window == 0 || window == from_window || window_uses_uia(context, window) {
             return neighbor;
         }
@@ -629,8 +781,8 @@ fn corrected_backend(
         .uia_and_cache()
         .ok()
         .and_then(|(uia, cache)| uia.element_from_handle(window, &cache).ok())
-        // SAFETY: the element was just built with the base cache request.
-        .map_or(neighbor, |element| unsafe {
+        // The element was just built with the base cache request.
+        .map_or(neighbor, |element| {
             snapshot_from_cached_element(&element, &context.uia_registry)
         })
 }
@@ -674,8 +826,8 @@ fn activate_one(
 ) -> Result<Option<ActionName>, ReadError> {
     if context.uia_registry.runtime_id_of(node_id).is_some() {
         let (uia, _cache, element) = uia_node(context, client, node_id)?;
-        // SAFETY: `element` is live.
-        return unsafe { uia.activate(&element) }
+        return uia
+            .activate(&element)
             .map_err(|error| ReadError::Failed(format!("UIA activation failed: {error}")));
     }
     verbatim_ia2::acquire::activate(node_id, &context.msaa_registry).map_err(ReadError::from)
@@ -693,17 +845,15 @@ pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<Dumped
                 "could not fetch the top-level UIA element: {error}"
             ))
         })?;
-        // SAFETY: `element` was built with `cache`.
-        let (root, truncated) = unsafe {
-            uia.walk_tree(
+        let (root, truncated) = uia
+            .walk_tree(
                 &element,
                 &cache,
                 &context.uia_registry,
                 MAX_DUMP_DEPTH,
                 MAX_DUMP_NODES,
             )
-        }
-        .map_err(|error| ReadError::Failed(format!("UIA tree walk failed: {error}")))?;
+            .map_err(|error| ReadError::Failed(format!("UIA tree walk failed: {error}")))?;
         Ok(DumpedTree { root, truncated })
     } else {
         let (root, truncated) = verbatim_ia2::acquire::walk_tree(

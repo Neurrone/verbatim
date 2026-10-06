@@ -16,7 +16,10 @@
 //!   index and source location; an [`Outcome`] converts requested registers
 //!   to Rust values, elements arriving with the cache the program filled.
 //! - Algorithms with a classic implementation behind the same signature:
-//!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`].
+//!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
+//!   [`focus_ancestry`], which call sites use: it runs the remote program
+//!   when asked to, falls back to the classic walk when the program fails,
+//!   and says which path answered.
 //!   `terminal_tail` (the anchor line, the count of lines to the end, and
 //!   the last lines' text) follows with milestone M4's terminals.
 //!
@@ -34,8 +37,8 @@ mod operation;
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use error::{Error, Failure};
 pub use focus::{
-    Ancestry, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
-    focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
+    Ancestry, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED, Path,
+    focus_ancestry, focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
 };
 pub use instruction::{Instruction, OperandId, TypeTest};
 pub use opcode::{

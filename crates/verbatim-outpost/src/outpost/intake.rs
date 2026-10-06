@@ -22,6 +22,8 @@
 //! Intake callbacks only push and return: they never call into the
 //! application and never wait on the worker.
 
+#![forbid(unsafe_code)]
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex, PoisonError};
 

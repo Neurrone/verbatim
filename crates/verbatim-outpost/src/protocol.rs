@@ -7,6 +7,8 @@
 //! and isolated behind [`write_message`] and [`read_message`] so the
 //! encoding can be renegotiated later without touching either end's logic.
 
+#![forbid(unsafe_code)]
+
 use std::io::{self, BufRead, Write};
 
 use serde::de::DeserializeOwned;

@@ -101,7 +101,9 @@ impl Operation {
     /// Runs the program: imports its elements and text ranges, checks that
     /// the provider supports every instruction it uses, executes it, and
     /// returns the requested results. Blocks for one cross-process round
-    /// trip (the support check is answered locally; see the crate guide).
+    /// trip, which counts as one UIA call on this thread
+    /// (`verbatim_uia::calls`); the support check is answered locally (see
+    /// the crate guide).
     ///
     /// # Errors
     ///
@@ -142,6 +144,9 @@ impl Operation {
                 .AddToResults(operand_id(*id))
                 .map_err(Error::Execute)?;
         }
+        // One cross-process round trip, counted as one UIA call
+        // (`docs/performance.md`).
+        verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
         let result = remote.Execute(&self.bytecode).map_err(Error::Execute)?;
         let outcome = Outcome { result };
         let status = Status::from_value(outcome.result.Status().map_err(Error::Execute)?.0);

@@ -32,6 +32,7 @@ mod read;
 pub(crate) mod window;
 mod worker;
 
+use std::collections::HashSet;
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -72,6 +73,31 @@ pub(crate) struct Context {
     tracking: Mutex<Tracking>,
     /// The focus-following UIA property subscription, which the worker moves.
     focus_properties: OnceLock<Registration>,
+    /// Whether UIA reads may use remote operations ([`OutpostOptions`]).
+    remote_operations: bool,
+    /// Windows whose UIA elements could not be imported into a remote
+    /// operation (client-side proxies), read the classic way for the
+    /// window's lifetime, since a window's provider does not change.
+    classic_windows: Mutex<HashSet<isize>>,
+}
+
+/// How an outpost reads its application, fixed for its whole life. The
+/// supervisor passes it on each outpost's command line, from
+/// `settings.toml`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutpostOptions {
+    /// Whether a UIA focus's ancestors are read with a remote operation
+    /// where the window's provider supports one (`uia.remote_operations`
+    /// in `settings.toml`, on by default); off forces the classic walk.
+    pub remote_operations: bool,
+}
+
+impl Default for OutpostOptions {
+    fn default() -> Self {
+        Self {
+            remote_operations: true,
+        }
+    }
 }
 
 impl Context {
@@ -83,6 +109,30 @@ impl Context {
 
     fn tracking(&self) -> MutexGuard<'_, Tracking> {
         self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn classic_windows(&self) -> MutexGuard<'_, HashSet<isize>> {
+        self.classic_windows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether a UIA read for an element of `hwnd` should try a remote
+    /// operation: the setting allows it and no import for the window has
+    /// failed.
+    fn tries_remote(&self, hwnd: Option<isize>) -> bool {
+        self.remote_operations && hwnd.is_none_or(|hwnd| !self.classic_windows().contains(&hwnd))
+    }
+
+    /// Reads `hwnd`'s UIA elements the classic way from now on.
+    fn read_classically(&self, hwnd: isize) {
+        self.classic_windows().insert(hwnd);
+    }
+
+    /// Forgets what was learned about a destroyed window, whose handle may
+    /// be reused.
+    fn forget_window(&self, hwnd: isize) {
+        self.classic_windows().remove(&hwnd);
     }
 
     fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64, timing: EventTiming) {
@@ -104,6 +154,18 @@ pub struct Outpost {
 }
 
 impl Outpost {
+    /// Creates an outpost watching `target_pid` for its whole life, with
+    /// the default [`OutpostOptions`]; see [`Outpost::with_options`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread cannot be spawned, which means the process is out
+    /// of OS thread resources.
+    #[must_use]
+    pub fn new(pipe: Box<dyn Write + Send>, target_pid: u32) -> Self {
+        Self::with_options(pipe, target_pid, OutpostOptions::default())
+    }
+
     /// Creates an outpost watching `target_pid` for its whole life: starts
     /// the writer, the worker, and the watchdog, installs the MSAA hooks and
     /// the focus-following UIA property subscription, and announces
@@ -114,7 +176,11 @@ impl Outpost {
     /// Panics if a thread cannot be spawned, which means the process is out
     /// of OS thread resources.
     #[must_use]
-    pub fn new(pipe: Box<dyn Write + Send>, target_pid: u32) -> Self {
+    pub fn with_options(
+        pipe: Box<dyn Write + Send>,
+        target_pid: u32,
+        options: OutpostOptions,
+    ) -> Self {
         let (outbound, writer) = Outbound::start(pipe);
         let id_counter = Arc::new(AtomicU64::new(1));
         let context = Arc::new(Context {
@@ -127,6 +193,8 @@ impl Outpost {
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             tracking: Mutex::new(Tracking::default()),
             focus_properties: OnceLock::new(),
+            remote_operations: options.remote_operations,
+            classic_windows: Mutex::new(HashSet::new()),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -273,19 +341,12 @@ fn unstamped(query: &Query) -> Query {
 
 /// What a UIA callback captures: the element's cached parts, its cached
 /// window handle, and an agile reference for anything the worker must ask
-/// it. No call reaches the application.
-///
-/// # Safety
-///
-/// `element` must be a cached element from the base cache request.
-unsafe fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
-    // SAFETY: forwarded to the caller's contract; both reads are cached.
-    let (parts, hwnd) = unsafe {
-        (
-            snapshot_parts_from_cached_element(element),
-            cached_native_window_handle(element),
-        )
-    };
+/// it. No call reaches the application: both reads are cached.
+fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
+    let (parts, hwnd) = (
+        snapshot_parts_from_cached_element(element),
+        cached_native_window_handle(element),
+    );
     UiaEvent {
         kind,
         parts: UiaSnapshotFact {
@@ -309,8 +370,8 @@ unsafe fn capture(element: &IUIAutomationElement, kind: UiaKind) -> UiaEvent {
 fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
     let callback_context = Arc::clone(context);
     let callback = Arc::new(move |element: &IUIAutomationElement, property_id: i32| {
-        // SAFETY: the property element carries cached values.
-        let event = unsafe { capture(element, UiaKind::Property(property_id)) };
+        // The property element carries cached values.
+        let event = capture(element, UiaKind::Property(property_id));
         callback_context.push(
             Item::Uia(event),
             TraceId::mint(),
@@ -353,8 +414,9 @@ pub fn run_pipe(
     pipe_in: Box<dyn io::Read + Send>,
     pipe_out: Box<dyn Write + Send>,
     target_pid: u32,
+    options: OutpostOptions,
 ) -> io::Result<()> {
-    let outpost = Outpost::new(pipe_out, target_pid);
+    let outpost = Outpost::with_options(pipe_out, target_pid, options);
     let mut reader = BufReader::new(pipe_in);
     while let Some(command) = read_message::<_, SupervisorToOutpost>(&mut reader)? {
         outpost.handle_command(&command);
@@ -370,8 +432,8 @@ pub fn run_pipe(
 ///
 /// Returns an I/O error only if dev-mode setup fails before the event loop
 /// begins; once running it blocks until the process is terminated.
-pub fn run_attach(target_pid: u32) -> io::Result<()> {
-    let outpost = Outpost::new(Box::new(io::stdout()), target_pid);
+pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
+    let outpost = Outpost::with_options(Box::new(io::stdout()), target_pid, options);
     outpost.handle_command(&SupervisorToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: 0,

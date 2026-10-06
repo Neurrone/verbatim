@@ -84,9 +84,7 @@ fn uia_set_name_raises_a_property_changed_event() {
     for i in 0..count {
         // SAFETY: `i` is within `[0, count)`.
         let child = unsafe { children.GetElement(i) }.expect("GetElement");
-        // SAFETY: `child` was built with the base cache request.
-        let snapshot =
-            unsafe { verbatim_uia::map::snapshot_from_cached_element(&child, &registry) };
+        let snapshot = verbatim_uia::map::snapshot_from_cached_element(&child, &registry);
         if snapshot.name.as_deref() == Some("Renamed") {
             found_renamed = true;
         }
@@ -147,10 +145,7 @@ fn uia_select_raises_a_selection_event() {
         Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element| {
-                // SAFETY: the element was delivered with the registration's own
-                // base cache request, so the mapping reads only cached values.
-                let snapshot =
-                    unsafe { verbatim_uia::map::snapshot_from_cached_element(element, &registry) };
+                let snapshot = verbatim_uia::map::snapshot_from_cached_element(element, &registry);
                 seen_cb
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)

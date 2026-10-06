@@ -339,10 +339,7 @@ fn walk(
     visited: &mut usize,
     tolerate_unmatched: bool,
 ) {
-    // SAFETY: `element` was built with the base cache request (either by
-    // `element_from_handle` for the root or by `FindAllBuildCache` below for
-    // every descendant), so every cached read here is satisfied.
-    let snapshot: NodeSnapshot = unsafe { map::snapshot_from_cached_element(element, registry) };
+    let snapshot: NodeSnapshot = map::snapshot_from_cached_element(element, registry);
     let name = snapshot.name.clone().unwrap_or_default();
     let Some(expectation) = expected.get(name.as_str()) else {
         assert!(

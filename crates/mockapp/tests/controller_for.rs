@@ -44,13 +44,11 @@ fn find(
 }
 
 fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
-    // SAFETY: `element` was built with the base cache request.
-    unsafe { verbatim_uia::map::snapshot_parts_from_cached_element(element) }.runtime_id
+    verbatim_uia::map::snapshot_parts_from_cached_element(element).runtime_id
 }
 
 fn name_of(element: &IUIAutomationElement) -> Option<String> {
-    // SAFETY: as above.
-    unsafe { verbatim_uia::map::snapshot_parts_from_cached_element(element) }.name
+    verbatim_uia::map::snapshot_parts_from_cached_element(element).name
 }
 
 fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
@@ -99,24 +97,23 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
 
     app.send("select result2");
     let result = selected_id("Sound settings");
-    // SAFETY: `search` is live.
-    let found = unsafe { uia.controlled_descendant(&search, &result, &cache) }
+    let found = uia
+        .controlled_descendant(&search, &result, &cache)
         .expect("controlled_descendant")
         .expect("the selected result is inside the list the search box controls");
     assert_eq!(name_of(&found).as_deref(), Some("Sound settings"));
 
-    // SAFETY: as above.
-    let from_other = unsafe { uia.controlled_descendant(&other, &result, &cache) }
+    let from_other = uia
+        .controlled_descendant(&other, &result, &cache)
         .expect("controlled_descendant");
     assert!(
         from_other.is_none(),
         "a box that controls nothing finds nothing"
     );
 
-    // SAFETY: as above.
-    let the_list_itself =
-        unsafe { uia.controlled_descendant(&search, &runtime_id(&results), &cache) }
-            .expect("controlled_descendant");
+    let the_list_itself = uia
+        .controlled_descendant(&search, &runtime_id(&results), &cache)
+        .expect("controlled_descendant");
     assert!(
         the_list_itself.is_none(),
         "the controlled list is not its own descendant"
@@ -124,8 +121,8 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
 
     app.send("select recent1");
     let elsewhere = selected_id("Elsewhere");
-    // SAFETY: as above.
-    let outside = unsafe { uia.controlled_descendant(&search, &elsewhere, &cache) }
+    let outside = uia
+        .controlled_descendant(&search, &elsewhere, &cache)
         .expect("controlled_descendant");
     assert!(
         outside.is_none(),

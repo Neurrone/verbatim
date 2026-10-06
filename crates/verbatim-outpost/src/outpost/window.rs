@@ -140,6 +140,12 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
     }
 }
 
+/// The desktop window's handle.
+pub(super) fn desktop_window() -> isize {
+    // SAFETY: GetDesktopWindow has no preconditions.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize
+}
+
 /// Whether `handle` is still the system's foreground window. A foreground
 /// fact whose window is no longer the foreground is not reported, as NVDA's
 /// `processForegroundWinEvent` drops it; the reducer accepts every foreground

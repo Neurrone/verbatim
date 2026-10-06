@@ -159,12 +159,16 @@ impl Supervisor {
     /// Starts the supervisor: its lifecycle owner thread and the focus
     /// listener. Outpost messages and lifecycle notices go to `events_tx`.
     /// The outpost executable is resolved next to the current executable.
+    /// Every outpost is launched with `options`.
     ///
     /// # Errors
     ///
     /// Returns an error if the current executable path cannot be determined
     /// or the owner thread cannot be started.
-    pub fn new(events_tx: Sender<OutpostMessage>) -> io::Result<Self> {
+    pub fn new(
+        events_tx: Sender<OutpostMessage>,
+        options: crate::OutpostOptions,
+    ) -> io::Result<Self> {
         let exe_path = std::env::current_exe()?
             .parent()
             .ok_or_else(|| io::Error::other("current exe has no parent directory"))?
@@ -175,6 +179,7 @@ impl Supervisor {
         let (owner_tx, owner_rx) = unbounded();
         owner::start(owner::Setup {
             exe_path,
+            options,
             events_tx,
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),

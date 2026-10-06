@@ -10,6 +10,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+verbatim-model.workspace = true
 verbatim-uia.workspace = true
 windows.workspace = true
 windows-collections.workspace = true
