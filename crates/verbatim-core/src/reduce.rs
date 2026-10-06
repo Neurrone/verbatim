@@ -96,6 +96,9 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             say_all::stop(state)
         }
         Input::Settings(settings) => {
+            if state.settings.report_terminal_output && !settings.report_terminal_output {
+                crate::terminal::drop_waiting(state);
+            }
             state.settings = *settings;
             Vec::new()
         }

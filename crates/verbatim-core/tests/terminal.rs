@@ -409,6 +409,25 @@ fn report_new_output_toggles_with_verbatim_5() {
 }
 
 #[test]
+fn turning_report_new_output_off_in_the_settings_drops_what_is_waiting() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=10)));
+    assert!(playback.play_one(&mut state));
+    let mut settings = state.settings();
+    settings.report_terminal_output = false;
+    playback.feed(&mut state, &Input::Settings(settings));
+    // Only what speech already had plays; the rest of the output is gone,
+    // as when Verbatim+5 turns reporting off.
+    // "line 1" played before the change, and speech held the next two.
+    let heard = playback.play_all(&mut state);
+    for waiting in 4..=10 {
+        let line = format!("line {waiting}");
+        assert!(!heard.contains(&line), "{line} was spoken: {heard:?}");
+    }
+}
+
+#[test]
 fn speech_cut_off_drops_the_output_still_waiting() {
     let mut state = terminal();
     let mut playback = Playback::default();
