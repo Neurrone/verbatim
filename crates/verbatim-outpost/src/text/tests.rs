@@ -416,7 +416,55 @@ fn a_changed_line_at_the_same_position_is_evidence() {
 }
 
 #[test]
-fn a_caret_event_is_evidence() {
+fn a_caret_reported_after_the_one_core_knew_is_the_baseline() {
+    // Core asked with the caret it knew; the outpost has since reported a
+    // newer one (a paste's caret, say), and the key has done nothing yet.
+    let mut source = Fake::new("one two", 0);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let known_to_core = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.caret = 4;
+    report(&mut source, &mut anchors);
+    let mut signal = FakeSignal::new();
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch(Some(known_to_core), TextUnit::Character)),
+        &mut signal,
+    ));
+    assert!(!reply.moved, "the change Core had not heard of is not the key's");
+    assert_eq!(signal.waits, 10);
+}
+
+#[test]
+fn a_line_that_changed_away_from_the_caret_or_a_late_event_is_no_evidence() {
+    // The line wrapped anew and the application reported an earlier caret
+    // change late; the caret itself has not moved.
+    let mut source = Fake::new("one two", 4);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.text = "one two three".encode_utf16().collect();
+    let mut signal = FakeSignal::new();
+    signal.events = true;
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch(Some(since), TextUnit::Character)),
+        &mut signal,
+    ));
+    assert!(!reply.moved);
+    assert_eq!(signal.waits, 10, "the wait ran out");
+}
+
+#[test]
+fn a_caret_event_is_evidence_when_core_did_not_know_the_caret() {
     let mut source = Fake::new("only", 0);
     let mut anchors = store();
     let mut signal = FakeSignal::new();

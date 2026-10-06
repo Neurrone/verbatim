@@ -261,6 +261,8 @@ struct Anchor<P> {
 pub struct NodeAnchors<P> {
     anchors: BTreeMap<u64, Anchor<P>>,
     reported: HashMap<(u64, u32), P>,
+    /// The caret the outpost last reported for the node.
+    last_caret: Option<TextPosition>,
 }
 
 impl<P> Default for NodeAnchors<P> {
@@ -268,6 +270,7 @@ impl<P> Default for NodeAnchors<P> {
         Self {
             anchors: BTreeMap::new(),
             reported: HashMap::new(),
+            last_caret: None,
         }
     }
 }
@@ -341,7 +344,9 @@ impl<P: Clone> NodeText<'_, P> {
                 .copied()
                 .filter(|number| !self.held.contains(number))
                 .collect();
-            let NodeAnchors { anchors, reported } = &mut *self.anchors;
+            let NodeAnchors {
+                anchors, reported, ..
+            } = &mut *self.anchors;
             for number in &forgotten {
                 anchors.remove(number);
             }
@@ -600,6 +605,10 @@ fn report_for<S: TextSource>(
         (offset, state.caret.clone()),
         false,
     );
+    anchors.anchors.last_caret = Some(TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    });
     let selection = state.selection.as_ref().map(|(start, end)| Selection {
         start: anchors.position_of(start.clone()),
         end: anchors.position_of(end.clone()),
@@ -642,6 +651,20 @@ fn text_at_caret<S: TextSource>(
         .unwrap_or_default())
 }
 
+/// The characters (grapheme clusters) just before and at byte `offset` of a
+/// line, either empty at the line's ends.
+fn beside(line: &str, offset: usize) -> (String, String) {
+    let offset = floor_boundary(line, offset);
+    let before = verbatim_text::graphemes(&line[..offset])
+        .pop()
+        .map(|range| line[range].to_owned())
+        .unwrap_or_default();
+    let at = verbatim_text::grapheme_at(line, offset)
+        .map(|range| line[range].to_owned())
+        .unwrap_or_default();
+    (before, at)
+}
+
 /// The longest a caret key's wait for evidence lasts.
 fn wait_length(wait: CaretWait) -> Duration {
     match wait {
@@ -659,9 +682,13 @@ fn await_caret<S: TextSource>(
     signal: &mut dyn CaretSignal,
 ) -> TextResult<TextReply> {
     let deadline = signal.now() + wait_length(watch.wait);
-    // Where Core last knew the caret, and the selection before the key; a
-    // position whose anchor was forgotten is no evidence either way.
-    let since = match watch.since {
+    // Where the caret was known to be before the key: the caret this
+    // outpost last reported, which Core may not have had when it asked
+    // (a caret event handled just before the request, from an earlier key
+    // or a paste), else where Core knew it. A position whose anchor was
+    // forgotten is no evidence either way.
+    let baseline = anchors.anchors.last_caret.or(watch.since);
+    let since = match baseline {
         Some(position) => anchors.resolve(source, position)?,
         None => None,
     };
@@ -677,21 +704,25 @@ fn await_caret<S: TextSource>(
         }
         None => None,
     };
-    // The line Core last knew the caret on, and the caret's offset in it. A
+    // The characters either side of the caret where Core last knew it. A
     // provider's positions follow edits (a deleted character takes the
     // position Core knew with it), and the application may have handled the
-    // key before this wait began, so the caret's line and offset changing
-    // from what Core knew is evidence too.
-    let known = watch.since.and_then(|position| {
+    // key before this wait began, so those characters changing is evidence
+    // too. The rest of the line is not compared: a line that wraps anew
+    // changes with no key at all.
+    let known = baseline.and_then(|position| {
         anchors
             .anchor_text(position.anchor)
-            .map(|text| (text, position.offset))
+            .map(|text| beside(&text, position.offset as usize))
     });
     let (state, moved, line) = loop {
         signal.reading();
         let state = source.caret()?;
         let mut line = None;
-        let mut moved = signal.caret_event();
+        // A caret event alone is evidence only when Core did not know where
+        // the caret was: otherwise it may be the application's late report
+        // of something earlier, and the caret is compared instead.
+        let mut moved = since.is_none() && signal.caret_event();
         if !moved && let Some(since) = &since {
             moved = source.compare(&state.caret, since)? != Ordering::Equal;
         }
@@ -701,8 +732,8 @@ fn await_caret<S: TextSource>(
         if !moved && (known.is_some() || watch.compare.is_some()) {
             let (unit, offset) = caret_line(source, &state)?;
             let (text, mapped, _) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &[offset]);
-            if let Some((known_text, known_offset)) = &known {
-                moved = text != **known_text || mapped[0] != *known_offset as usize;
+            if let Some(known) = &known {
+                moved = beside(&text, mapped[0]) != *known;
             }
             if !moved && let Some(compare) = &watch.compare {
                 moved = text_at_caret(source, &state, watch.unit, (&text, mapped[0]))? != *compare;
