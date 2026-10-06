@@ -435,7 +435,10 @@ fn a_caret_reported_after_the_one_core_knew_is_the_baseline() {
         &TextOp::AwaitCaret(watch(Some(known_to_core), TextUnit::Character)),
         &mut signal,
     ));
-    assert!(!reply.moved, "the change Core had not heard of is not the key's");
+    assert!(
+        !reply.moved,
+        "the change Core had not heard of is not the key's"
+    );
     assert_eq!(signal.waits, 10);
 }
 
