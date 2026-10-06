@@ -59,6 +59,14 @@ pub trait ElementExt {
         unsafe { variant_i32(&value) }
     }
 
+    /// A cached integer property, `None` when it was not cached, the element
+    /// does not support it, or UIA only supplies the property's default.
+    fn cached_i32_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<i32> {
+        let value = self.cached_value_ignoring_default(property)?;
+        // SAFETY: `value` is a VARIANT UIA returned, owned here.
+        unsafe { variant_i32(&value) }
+    }
+
     /// A cached boolean property, `false` when it was not cached or is not a
     /// boolean.
     fn cached_bool(&self, property: UIA_PROPERTY_ID) -> bool {

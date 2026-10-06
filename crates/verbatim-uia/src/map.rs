@@ -24,19 +24,19 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
-    UIA_IsValuePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_ListControlTypeId,
-    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
-    UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId,
-    UIA_ScrollBarControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId,
-    UIA_SizeOfSetPropertyId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-    UIA_SplitButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
-    UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
-    UIA_ThumbControlTypeId, UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId,
-    UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId, UIA_TreeControlTypeId,
-    UIA_TreeItemControlTypeId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
-    UIA_WindowControlTypeId,
+    UIA_IsValuePatternAvailablePropertyId, UIA_LegacyIAccessibleStatePropertyId,
+    UIA_LevelPropertyId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
+    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_ProgressBarControlTypeId,
+    UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId, UIA_ScrollBarControlTypeId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId, UIA_SizeOfSetPropertyId,
+    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+    UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ThumbControlTypeId,
+    UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId,
+    UIA_ToolTipControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
+    UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
 };
 
 use crate::element::ElementExt;
@@ -167,7 +167,13 @@ struct RawUiaStates {
     /// `IsDataValidForForm`, `None` when unsupported, which counts as valid.
     data_valid: Option<bool>,
     value_read_only: bool,
+    /// The element's MSAA state bits through UIA's `LegacyIAccessible`
+    /// pattern, `None` when unsupported or only UIA's default.
+    legacy_state: Option<i32>,
 }
+
+/// MSAA's `STATE_SYSTEM_CHECKED` bit, as `LegacyIAccessibleState` reports it.
+const LEGACY_STATE_CHECKED: i32 = 0x10;
 
 /// Pure mapping from raw cached UIA state inputs to a normalized [`StateSet`].
 /// Toggle and expand values are honored only when their pattern is available,
@@ -240,6 +246,18 @@ fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
     if raw.value_read_only {
         states.insert(State::ReadOnly);
     }
+    // A menu item that UIA's patterns do not make checkable can still say
+    // it is checked through its legacy MSAA state, as Windows Forms menu
+    // items do; NVDA 2027.1 reads it there for a menu item.
+    if role == Role::MenuItem
+        && !states.contains(State::Checkable)
+        && raw
+            .legacy_state
+            .is_some_and(|bits| bits & LEGACY_STATE_CHECKED != 0)
+    {
+        states.insert(State::Checkable);
+        states.insert(State::Checked);
+    }
     states
 }
 
@@ -267,6 +285,7 @@ fn states_from_cached(element: &IUIAutomationElement, role: Role) -> StateSet {
         // property's default of true where the pattern is missing.
         value_read_only: element.cached_bool(UIA_IsValuePatternAvailablePropertyId)
             && element.cached_optional_bool(UIA_ValueIsReadOnlyPropertyId) == Some(true),
+        legacy_state: element.cached_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId),
     };
     states_from_uia(&raw, role)
 }
@@ -898,6 +917,37 @@ mod tests {
             ..RawUiaStates::default()
         };
         assert!(!states_from_uia(&unsupported, Role::EditableText).contains(State::InvalidEntry));
+    }
+
+    #[test]
+    fn a_menu_item_checked_only_in_its_legacy_state_is_checked() {
+        let legacy_checked = RawUiaStates {
+            enabled: true,
+            legacy_state: Some(LEGACY_STATE_CHECKED),
+            ..RawUiaStates::default()
+        };
+        let states = states_from_uia(&legacy_checked, Role::MenuItem);
+        assert!(states.contains(State::Checkable));
+        assert!(states.contains(State::Checked));
+
+        // Only a menu item reads its legacy state.
+        assert!(!states_from_uia(&legacy_checked, Role::Button).contains(State::Checked));
+        // An unchecked legacy state adds nothing.
+        let unchecked = RawUiaStates {
+            legacy_state: Some(0),
+            ..legacy_checked
+        };
+        assert!(!states_from_uia(&unchecked, Role::MenuItem).contains(State::Checkable));
+        // A menu item with the Toggle pattern is checkable through it, and
+        // its legacy state is not consulted.
+        let toggled_off = RawUiaStates {
+            toggle_available: true,
+            toggle_state: Some(0),
+            ..legacy_checked
+        };
+        let states = states_from_uia(&toggled_off, Role::MenuItem);
+        assert!(states.contains(State::Checkable));
+        assert!(!states.contains(State::Checked));
     }
 
     #[test]
