@@ -15,8 +15,10 @@
 //!   and maps a failure to an [`Error`] carrying the failing instruction's
 //!   index and source location; an [`Outcome`] converts requested registers
 //!   to Rust values, elements arriving with the cache the program filled.
-//! - Algorithms with a classic implementation behind the same signature,
-//!   still to come.
+//! - Algorithms with a classic implementation behind the same signature:
+//!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`].
+//!   `terminal_tail` (the anchor line, the count of lines to the end, and
+//!   the last lines' text) follows with milestone M4's terminals.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
@@ -24,12 +26,17 @@
 
 mod builder;
 mod error;
+mod focus;
 mod instruction;
 mod opcode;
 mod operation;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use error::{Error, Failure};
+pub use focus::{
+    Ancestry, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
+    focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
+};
 pub use instruction::{Instruction, OperandId, TypeTest};
 pub use opcode::{
     Comparison, NavigationDirection, Opcode, PointProperty, RectProperty, Status,
