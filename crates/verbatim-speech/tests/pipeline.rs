@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
-use verbatim_audio::{Mixer, PcmFormat, SilentDevice};
+use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
 use verbatim_model::{
     FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechPriority, TraceId, Utterance,
     UtteranceEnding, UtteranceId, UtteranceSegment,
@@ -80,11 +80,36 @@ impl Recorder {
 }
 
 /// A synth whose `speak` announces its start and then streams quiet tone
-/// until the test signals it to finish or the pipeline cancels it. Text
-/// "fail" fails at once.
+/// until the test signals it to finish or the pipeline cancels it, and
+/// announces its return. Text "fail" fails at once.
 struct ControlSynth {
     started: Sender<String>,
     finish: Receiver<()>,
+    returned: Sender<String>,
+}
+
+impl ControlSynth {
+    /// Streams tone for `text` until told to finish or cancelled.
+    fn stream(&self, text: &str, sink: &mut dyn SynthSink) -> Result<(), SynthError> {
+        if text == "fail" {
+            return Err(SynthError::Synthesis("asked to fail".to_owned()));
+        }
+        let chunk = [1_000i16; 16];
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        loop {
+            match self.finish.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => return Ok(()),
+                Err(TryRecvError::Empty) => {}
+            }
+            if let ControlFlow::Break(()) = sink.push_pcm(FORMAT, &chunk) {
+                return Ok(());
+            }
+            if Instant::now() > deadline {
+                return Err(SynthError::Synthesis("control synth timed out".to_owned()));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 }
 
 impl SynthDriver for ControlSynth {
@@ -119,24 +144,9 @@ impl SynthDriver for ControlSynth {
     ) -> Result<(), SynthError> {
         let text = sequence.text();
         self.started.send(text.clone()).unwrap();
-        if text == "fail" {
-            return Err(SynthError::Synthesis("asked to fail".to_owned()));
-        }
-        let chunk = [1_000i16; 16];
-        let deadline = Instant::now() + STEP_TIMEOUT;
-        loop {
-            match self.finish.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => return Ok(()),
-                Err(TryRecvError::Empty) => {}
-            }
-            if let ControlFlow::Break(()) = sink.push_pcm(FORMAT, &chunk) {
-                return Ok(());
-            }
-            if Instant::now() > deadline {
-                return Err(SynthError::Synthesis("control synth timed out".to_owned()));
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        let result = self.stream(&text, sink);
+        let _ = self.returned.send(text);
+        result
     }
 }
 
@@ -163,11 +173,18 @@ struct ControlHarness {
     recorder: Arc<Recorder>,
     started: Receiver<String>,
     finish: Sender<()>,
+    /// The text of each utterance the synth has returned from speaking.
+    returned: Receiver<String>,
+    /// The mixer the manager plays through, for a test to play other audio
+    /// alongside its speech.
+    mixer: Arc<Mixer>,
 }
 
 fn control_manager() -> ControlHarness {
     let (started_tx, started_rx) = unbounded::<String>();
     let (finish_tx, finish_rx) = unbounded::<()>();
+    let (returned_tx, returned_rx) = unbounded::<String>();
+    let mixer = mixer();
 
     let mut registry = SynthRegistry::new();
     registry.register(
@@ -177,6 +194,7 @@ fn control_manager() -> ControlHarness {
             Ok(Box::new(ControlSynth {
                 started: started_tx.clone(),
                 finish: finish_rx.clone(),
+                returned: returned_tx.clone(),
             }) as Box<dyn SynthDriver>)
         }),
     );
@@ -186,7 +204,7 @@ fn control_manager() -> ControlHarness {
         registry,
         initial_synth: SynthId::new("control"),
         saved_settings: Box::new(|_| Vec::new()),
-        mixer: mixer(),
+        mixer: Arc::clone(&mixer),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: None,
     })
@@ -197,6 +215,8 @@ fn control_manager() -> ControlHarness {
         recorder,
         started: started_rx,
         finish: finish_tx,
+        returned: returned_rx,
+        mixer,
     }
 }
 
@@ -522,7 +542,17 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     assert_eq!(recv_started(&harness.started), "held");
     harness.manager.control().toggle_pause();
     harness.finish.send(()).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        harness
+            .returned
+            .recv_timeout(STEP_TIMEOUT)
+            .expect("synth returned"),
+        "held"
+    );
+    // The evidence that "held" would have ended by now were it not paused:
+    // 100 ms of audio on another source of the same mixer has played to
+    // the end, and the mixer mixes every source into the same frames.
+    play_to_the_end(&harness.mixer, Duration::from_millis(100));
     assert_eq!(harness.recorder.ending_of(held), None, "held while paused");
     harness.manager.control().toggle_pause();
     harness.recorder.endings(1);
@@ -545,6 +575,33 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     assert_eq!(
         harness.recorder.ending_of(next),
         Some(UtteranceEnding::Completed)
+    );
+}
+
+/// Plays `length` of quiet tone through a source of its own on `mixer` and
+/// waits until it has all played.
+fn play_to_the_end(mixer: &Mixer, length: Duration) {
+    let (ended_tx, ended_rx) = unbounded::<UtteranceEnding>();
+    let source = mixer.add_source(Arc::new(move |event| {
+        if let PlaybackEvent::Ended { ending, .. } = event {
+            let _ = ended_tx.send(ending);
+        }
+    }));
+    let probe = UtteranceId(u64::MAX);
+    source.register(probe, TraceId::mint());
+    let frames = usize::try_from(length.as_millis()).unwrap() * FORMAT.sample_rate as usize / 1_000;
+    assert!(
+        source
+            .write(probe, FORMAT, &vec![1_000i16; frames])
+            .is_continue(),
+        "the probe's audio is accepted"
+    );
+    source.finish(probe);
+    assert_eq!(
+        ended_rx
+            .recv_timeout(STEP_TIMEOUT)
+            .expect("the probe ended"),
+        UtteranceEnding::Completed
     );
 }
 
