@@ -74,7 +74,12 @@ Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
   problem found is logged, the speech manager's theme handle is set, and
   the reducer is sent `Input::Fetches` with what the theme wants fetched.
   It runs at startup and whenever the settings dialog's Theme panel
-  changes the theme or its options. A sound that is missing (a run
+  changes the theme or its options: `AppThemeHost` is the GUI's
+  `ThemeHost`, over the configuration store (the themes and sounds
+  folders, the configured theme, and saving the choice in the base
+  settings' `[theme]`) and the speech manager (activating a theme, its
+  options alone through the theme handle, and playing and speaking
+  previews). A sound that is missing (a run
   without the `sounds` folder) is spoken instead, so nothing is lost.
 - `Effect::PlayEarcon` plays through `SpeechManager::play_earcon`. The
   shell produces three events of its own: the start sound with the

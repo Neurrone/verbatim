@@ -11,12 +11,17 @@ crossbeam-channel.workspace = true
 cxx.workspace = true
 tracing.workspace = true
 windows.workspace = true
+verbatim-audio.workspace = true
+verbatim-config.workspace = true
 verbatim-i18n.workspace = true
 verbatim-input-windows.workspace = true
 verbatim-model.workspace = true
 verbatim-speech.workspace = true
 verbatim-uia.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+hound.workspace = true
 
 [build-dependencies]
 cmake = "0.1"

@@ -372,6 +372,223 @@ pub mod messages {
     pub fn select_synth_label() -> String {
         fl!(loader(), "select-synth-label")
     }
+
+    /// Name of the Theme settings category.
+    #[must_use]
+    pub fn settings_category_theme() -> String {
+        fl!(loader(), "settings-category-theme")
+    }
+
+    /// The fixed labels of the Theme page, in the order of
+    /// [`ThemeLabels`]' fields.
+    #[must_use]
+    pub fn theme_labels() -> ThemeLabels {
+        let loader = loader();
+        ThemeLabels {
+            theme: fl!(loader, "theme-label"),
+            description: fl!(loader, "theme-description-label"),
+            sound_volume: fl!(loader, "theme-sound-volume"),
+            sounds_during_say_all: fl!(loader, "theme-sounds-during-say-all"),
+            speak_sounded: fl!(loader, "theme-speak-sounded"),
+            find: fl!(loader, "theme-find"),
+            indications: fl!(loader, "theme-indications"),
+            report_as: fl!(loader, "theme-report-as"),
+            sound: fl!(loader, "theme-sound"),
+            words: fl!(loader, "theme-words"),
+            voice: fl!(loader, "theme-voice"),
+            preview: fl!(loader, "theme-preview"),
+            reset: fl!(loader, "theme-reset"),
+            new_theme: fl!(loader, "theme-new"),
+            rename: fl!(loader, "theme-rename"),
+            import: fl!(loader, "theme-import"),
+            export: fl!(loader, "theme-export"),
+            remove: fl!(loader, "theme-remove"),
+            sound_none: fl!(loader, "theme-sound-none"),
+            sound_browse: fl!(loader, "theme-sound-browse"),
+            voice_default: fl!(loader, "theme-voice-default"),
+            problems: fl!(loader, "theme-problems"),
+            no_problems: fl!(loader, "theme-no-problems"),
+            new_title: fl!(loader, "theme-new-title"),
+            rename_title: fl!(loader, "theme-rename-title"),
+            import_title: fl!(loader, "theme-import-title"),
+            package_filter: fl!(loader, "theme-package-filter"),
+            sound_file_title: fl!(loader, "theme-sound-file-title"),
+            sound_file_filter: fl!(loader, "theme-sound-file-filter"),
+            remove_title: fl!(loader, "theme-remove-title"),
+            error_title: fl!(loader, "theme-error-title"),
+        }
+    }
+
+    /// The Theme page's fixed labels, titles, and choices, resolved.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ThemeLabels {
+        /// The theme list's label.
+        pub theme: String,
+        /// The description field's label.
+        pub description: String,
+        /// The sound volume slider's label.
+        pub sound_volume: String,
+        /// The "play sounds during say all" check box.
+        pub sounds_during_say_all: String,
+        /// The "also speak indications that play a sound" check box.
+        pub speak_sounded: String,
+        /// The find field's label.
+        pub find: String,
+        /// The indications tree's label.
+        pub indications: String,
+        /// The "report as" choice's label.
+        pub report_as: String,
+        /// The sound choice's label.
+        pub sound: String,
+        /// The words field's label.
+        pub words: String,
+        /// The voice choice's label.
+        pub voice: String,
+        /// The Preview button.
+        pub preview: String,
+        /// The Reset button.
+        pub reset: String,
+        /// The New Theme button.
+        pub new_theme: String,
+        /// The Rename button.
+        pub rename: String,
+        /// The Import button.
+        pub import: String,
+        /// The Export button.
+        pub export: String,
+        /// The Remove button.
+        pub remove: String,
+        /// The sound choice's "none".
+        pub sound_none: String,
+        /// The sound choice's "Browse...".
+        pub sound_browse: String,
+        /// The voice choice's "default".
+        pub voice_default: String,
+        /// The heading of the problems in the description.
+        pub problems: String,
+        /// The description's line when a theme has no problems.
+        pub no_problems: String,
+        /// The New Theme name prompt's title.
+        pub new_title: String,
+        /// The Rename prompt's title.
+        pub rename_title: String,
+        /// The Import file dialog's title.
+        pub import_title: String,
+        /// The file dialogs' filter for theme packages.
+        pub package_filter: String,
+        /// The sound file dialog's title.
+        pub sound_file_title: String,
+        /// The sound file dialog's filter.
+        pub sound_file_filter: String,
+        /// The Remove confirmation's title.
+        pub remove_title: String,
+        /// The title of a message reporting a failed theme operation.
+        pub error_title: String,
+    }
+
+    /// A tone in the sound choice: "tone, 220 hertz, 150 milliseconds".
+    #[must_use]
+    pub fn theme_sound_tone(frequency: u32, duration: u32) -> String {
+        fl!(
+            loader(),
+            "theme-sound-tone",
+            frequency = frequency,
+            duration = duration
+        )
+    }
+
+    /// How an indication is reported, with its sound: "sound
+    /// (textError.wav)".
+    #[must_use]
+    pub fn theme_setting_with_sound(presentation: &str, sound: &str) -> String {
+        fl!(
+            loader(),
+            "theme-setting-with-sound",
+            presentation = presentation,
+            sound = sound
+        )
+    }
+
+    /// An indication in the tree: "link: speech and sound", and ", changed"
+    /// after it when it differs from the default theme.
+    #[must_use]
+    pub fn theme_indication_summary(indication: &str, setting: &str, changed: bool) -> String {
+        let loader = loader();
+        let summary = fl!(
+            loader,
+            "theme-indication-summary",
+            indication = indication,
+            setting = setting
+        );
+        if changed {
+            fl!(loader, "theme-indication-changed", summary = summary)
+        } else {
+            summary
+        }
+    }
+
+    /// The description field's line naming the theme's author.
+    #[must_use]
+    pub fn theme_author(author: &str) -> String {
+        fl!(loader(), "theme-author", author = author)
+    }
+
+    /// The words of a preview: the sample name, a sample description, a
+    /// font, a size, and a color, in that order.
+    #[must_use]
+    pub fn theme_preview_samples() -> [String; 5] {
+        let loader = loader();
+        [
+            fl!(loader, "theme-preview-sample"),
+            fl!(loader, "theme-preview-description"),
+            fl!(loader, "theme-preview-font"),
+            fl!(loader, "theme-preview-font-size"),
+            fl!(loader, "theme-preview-color"),
+        ]
+    }
+
+    /// The New Theme prompt, for a theme based on `name`.
+    #[must_use]
+    pub fn theme_new_prompt(name: &str) -> String {
+        fl!(loader(), "theme-new-prompt", name = name)
+    }
+
+    /// The prompt asking for a new theme when a change is made to the
+    /// built-in theme `name`.
+    #[must_use]
+    pub fn theme_copy_prompt(name: &str) -> String {
+        fl!(loader(), "theme-copy-prompt", name = name)
+    }
+
+    /// The name suggested for a new theme based on `name`.
+    #[must_use]
+    pub fn theme_copy_name(name: &str) -> String {
+        fl!(loader(), "theme-copy-name", name = name)
+    }
+
+    /// The Rename prompt for the theme `name`.
+    #[must_use]
+    pub fn theme_rename_prompt(name: &str) -> String {
+        fl!(loader(), "theme-rename-prompt", name = name)
+    }
+
+    /// The Export file dialog's title for the theme `name`.
+    #[must_use]
+    pub fn theme_export_title(name: &str) -> String {
+        fl!(loader(), "theme-export-title", name = name)
+    }
+
+    /// The Remove confirmation for the theme `name`.
+    #[must_use]
+    pub fn theme_remove_question(name: &str) -> String {
+        fl!(loader(), "theme-remove-question", name = name)
+    }
+
+    /// Why the theme `name` cannot be removed: the configuration uses it.
+    #[must_use]
+    pub fn theme_in_use(name: &str) -> String {
+        fl!(loader(), "theme-in-use", name = name)
+    }
 }
 
 /// The localized wording of a fixed reader message — a navigation edge and

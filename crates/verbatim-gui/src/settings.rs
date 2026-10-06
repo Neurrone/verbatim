@@ -12,17 +12,26 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost, SynthChoice, 
 use crate::bridge::ffi;
 use crate::plan::{ControlPlan, accessible_name, plan_for};
 
-/// The settings dialog's categories and buttons. Speech is the only
-/// category so far; the dialog is written over the list, so adding one is
-/// a matter of adding it here and a page for its kind in C++.
+/// The settings dialog's categories and buttons: Speech, then Theme. The
+/// dialog is written over the list, so adding a category is a matter of
+/// adding it here and a page for its kind in C++.
 pub(crate) fn dialog() -> ffi::SettingsDialog {
-    let speech = messages::settings_category_speech();
+    let category = |name: String, kind| ffi::Category {
+        title: messages::settings_title_with_category(&name),
+        name,
+        kind,
+    };
     ffi::SettingsDialog {
-        categories: vec![ffi::Category {
-            title: messages::settings_title_with_category(&speech),
-            name: speech,
-            kind: ffi::CategoryKind::Speech,
-        }],
+        categories: vec![
+            category(
+                messages::settings_category_speech(),
+                ffi::CategoryKind::Speech,
+            ),
+            category(
+                messages::settings_category_theme(),
+                ffi::CategoryKind::Theme,
+            ),
+        ],
         categories_label: messages::settings_categories_label(),
         ok: messages::button_ok(),
         cancel: messages::button_cancel(),
@@ -379,14 +388,16 @@ mod tests {
     }
 
     #[test]
-    fn the_dialog_opens_on_speech() {
+    fn the_dialog_opens_on_speech_and_lists_theme_after_it() {
         let dialog = dialog();
-        assert_eq!(dialog.categories.len(), 1);
-        assert_eq!(dialog.categories[0].kind, ffi::CategoryKind::Speech);
-        assert!(
-            dialog.categories[0]
-                .title
-                .contains(&dialog.categories[0].name)
-        );
+        let kinds: Vec<_> = dialog
+            .categories
+            .iter()
+            .map(|category| category.kind)
+            .collect();
+        assert_eq!(kinds, [ffi::CategoryKind::Speech, ffi::CategoryKind::Theme]);
+        for category in &dialog.categories {
+            assert!(category.title.contains(&category.name));
+        }
     }
 }

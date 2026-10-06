@@ -1,13 +1,19 @@
-//! Runs the settings dialog against an in-memory mock speech host so the GUI
-//! can be inspected by hand (and read by Verbatim itself over UIA).
+//! Runs the settings dialog against an in-memory mock speech host, and a
+//! theme host over a temporary themes folder and the repository's sounds,
+//! so the GUI can be inspected by hand (and read by Verbatim itself over
+//! UIA).
 //!
 //! This opens real windows, so it is not run by `cargo test`; the lead session
 //! runs it manually. On launch it posts `OpenSettings` so the dialog appears
 //! immediately.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use verbatim_gui::{GuiCommand, GuiEvent, run_gui};
+use verbatim_audio::Sound;
+use verbatim_config::themes::LoadedTheme;
+use verbatim_gui::{GuiCommand, GuiEvent, ThemeHost, run_gui};
+use verbatim_model::{Earcon, Theme, ThemeOptions, Utterance};
 use verbatim_speech::{
     SettingDescriptor, SettingId, SettingValue, SpeechSettingsHost, SynthChoice, SynthError,
     SynthId,
@@ -133,8 +139,56 @@ impl SpeechSettingsHost for MockHost {
     }
 }
 
+/// A theme host that keeps its themes in a temporary folder and prints what
+/// it is asked to do instead of speaking.
+struct MockThemeHost {
+    themes_dir: PathBuf,
+}
+
+impl ThemeHost for MockThemeHost {
+    fn themes_dir(&self) -> PathBuf {
+        self.themes_dir.clone()
+    }
+
+    fn sounds_dir(&self) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sounds")
+    }
+
+    fn configured(&self) -> (String, ThemeOptions) {
+        (Theme::DEFAULT_ID.to_owned(), ThemeOptions::default())
+    }
+
+    fn activate(&self, theme: &LoadedTheme, options: ThemeOptions) {
+        println!("theme {} active with {options:?}", theme.theme.id);
+    }
+
+    fn set_options(&self, options: ThemeOptions) {
+        println!("theme options {options:?}");
+    }
+
+    fn persist(&self, id: &str, options: ThemeOptions) -> Result<(), String> {
+        println!("theme {id} saved with {options:?}");
+        Ok(())
+    }
+
+    fn play(&self, sound: &Sound, gain: f32) {
+        println!("play a sound of {:?} at {gain}", sound.duration());
+    }
+
+    fn speak(&self, utterance: Utterance) {
+        println!("speak {:?}", utterance.segments);
+    }
+
+    fn play_earcon(&self, earcon: Earcon) {
+        println!("event {earcon:?}");
+    }
+}
+
 fn main() {
     let host: Arc<dyn SpeechSettingsHost> = Arc::new(MockHost::new());
+    let theme_host: Arc<dyn ThemeHost> = Arc::new(MockThemeHost {
+        themes_dir: std::env::temp_dir().join("verbatim-settings-preview-themes"),
+    });
     let (events_tx, events_rx) = crossbeam_channel::unbounded::<GuiEvent>();
 
     // Drain GuiEvents on a background thread; on QuitRequested, ask the GUI to
@@ -154,7 +208,7 @@ fn main() {
         }
     });
 
-    run_gui(host, events_tx, move |handle| {
+    run_gui(host, theme_host, events_tx, move |handle| {
         *handle_slot.lock().unwrap() = Some(handle.clone());
         handle.send(GuiCommand::OpenSettings);
     })

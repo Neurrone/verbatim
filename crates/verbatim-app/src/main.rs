@@ -364,8 +364,13 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
+    let theme_host: Arc<dyn verbatim_gui::ThemeHost> = Arc::new(themes::AppThemeHost {
+        store: Arc::clone(&store),
+        manager: Arc::clone(&manager),
+        commands: command_tx.clone(),
+    });
     let handle_slot = Arc::clone(&gui_handle);
-    run_gui(host_for_gui, gui_event_tx, move |handle| {
+    run_gui(host_for_gui, theme_host, gui_event_tx, move |handle| {
         let _ = handle_slot.set(handle);
     })?;
 

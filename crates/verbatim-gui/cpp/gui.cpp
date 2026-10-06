@@ -21,13 +21,18 @@
 // which would read it in the ANSI code page.
 
 #include <wx/wx.h>
+#include <wx/filedlg.h>
 #include <wx/listctrl.h>
 #include <wx/taskbar.h>
+#include <wx/textdlg.h>
+#include <wx/treectrl.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <map>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "verbatim-gui/cpp/gui.h"
@@ -38,6 +43,16 @@ namespace {
 
 wxString Text(const rust::String& text) {
     return wxString::FromUTF8(text.data(), text.size());
+}
+
+// Text for Rust: UTF-8, kept alive by the caller while Rust reads it.
+std::string Utf8(const wxString& text) {
+    const wxScopedCharBuffer utf8 = text.utf8_str();
+    return std::string(utf8.data(), utf8.length());
+}
+
+rust::Str Str(const std::string& utf8) {
+    return rust::Str(utf8.data(), utf8.size());
 }
 
 // Menu item ids, above wxWidgets' own range so they never collide with it.
@@ -281,6 +296,462 @@ private:
     wxPanel* controls_ = nullptr;
 };
 
+// Puts `items` in `choice` and selects `selection` (-1 for none), touching
+// the widget only where it differs, so a focused choice keeps its place and
+// is not announced again.
+void SetChoice(wxChoice* choice, const rust::Vec<rust::String>& items, std::int32_t selection) {
+    bool same = choice->GetCount() == items.size();
+    for (std::size_t index = 0; same && index < items.size(); ++index) {
+        same = choice->GetString(static_cast<unsigned int>(index)) == Text(items[index]);
+    }
+    if (!same) {
+        choice->Freeze();
+        choice->Clear();
+        for (const rust::String& item : items) {
+            choice->Append(Text(item));
+        }
+        choice->Thaw();
+    }
+    const int wanted = selection >= 0 ? selection : wxNOT_FOUND;
+    if (choice->GetSelection() != wanted) {
+        choice->SetSelection(wanted);
+    }
+}
+
+// Sets a text field's value without raising a change event, when it differs.
+void SetValue(wxTextCtrl* text, const rust::String& value) {
+    const wxString wanted = Text(value);
+    if (text->GetValue() != wanted) {
+        text->ChangeValue(wanted);
+    }
+}
+
+// A tree item's indication, by its index in the catalogue; -1 for a
+// category.
+class IndicationData : public wxTreeItemData {
+public:
+    explicit IndicationData(std::int64_t indication) : indication_(indication) {}
+    std::int64_t indication() const { return indication_; }
+
+private:
+    std::int64_t indication_;
+};
+
+// The Theme page (phase6-design.md, "The settings dialog"): the theme list,
+// its description, the settings that go with it, the indications tree with
+// a find field, the selected indication's controls, and the theme buttons.
+// Rust holds the state (crates/verbatim-gui/src/theme_panel.rs); after every
+// change this asks it for the page again and updates what differs.
+class ThemePanel : public wxPanel {
+public:
+    ThemePanel(wxWindow* parent, wxWindow* dialog) : wxPanel(parent), dialog_(dialog) {
+        page_ = g_shell->core.theme_page();
+        auto* sizer = new wxBoxSizer(wxVERTICAL);
+
+        // Each label is made just before its control, so the control is
+        // named by it and the tab order follows the page from top to bottom.
+        auto* top = new wxBoxSizer(wxHORIZONTAL);
+        top->Add(new wxStaticText(this, wxID_ANY, Text(page_.theme_label)), 0,
+                 wxALIGN_CENTER_VERTICAL | wxALL, 3);
+        theme_ = new wxChoice(this, wxID_ANY);
+        top->Add(theme_, 1, wxEXPAND | wxALL, 3);
+        sizer->Add(top, 0, wxEXPAND);
+
+        sizer->Add(new wxStaticText(this, wxID_ANY, Text(page_.description_label)), 0,
+                   wxLEFT | wxTOP, 3);
+        description_ = new wxTextCtrl(this, wxID_ANY, wxString(), wxDefaultPosition,
+                                      wxSize(-1, 60), wxTE_MULTILINE | wxTE_READONLY);
+        sizer->Add(description_, 0, wxEXPAND | wxALL, 3);
+
+        auto* options = new wxBoxSizer(wxHORIZONTAL);
+        options->Add(new wxStaticText(this, wxID_ANY, Text(page_.volume_label)), 0,
+                     wxALIGN_CENTER_VERTICAL | wxALL, 3);
+        volume_ = new wxSlider(this, wxID_ANY, page_.volume, 0, 100);
+        volume_->SetLineSize(5);
+        volume_->SetPageSize(10);
+        options->Add(volume_, 1, wxEXPAND | wxALL, 3);
+        say_all_ = new wxCheckBox(this, wxID_ANY, Text(page_.say_all_label));
+        // A check box has no separate label to be named by.
+        say_all_->SetName(Text(page_.say_all_name));
+        options->Add(say_all_, 0, wxALIGN_CENTER_VERTICAL | wxALL, 3);
+        speak_sounded_ = new wxCheckBox(this, wxID_ANY, Text(page_.speak_sounded_label));
+        speak_sounded_->SetName(Text(page_.speak_sounded_name));
+        options->Add(speak_sounded_, 0, wxALIGN_CENTER_VERTICAL | wxALL, 3);
+        sizer->Add(options, 0, wxEXPAND);
+
+        auto* body = new wxBoxSizer(wxHORIZONTAL);
+        auto* left = new wxBoxSizer(wxVERTICAL);
+        left->Add(new wxStaticText(this, wxID_ANY, Text(page_.find_label)), 0, wxLEFT | wxTOP, 3);
+        find_ = new wxTextCtrl(this, wxID_ANY);
+        left->Add(find_, 0, wxEXPAND | wxALL, 3);
+        left->Add(new wxStaticText(this, wxID_ANY, Text(page_.indications_label)), 0,
+                  wxLEFT | wxTOP, 3);
+        tree_ = new wxTreeCtrl(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 160),
+                               wxTR_HIDE_ROOT | wxTR_HAS_BUTTONS | wxTR_LINES_AT_ROOT |
+                                   wxTR_SINGLE);
+        left->Add(tree_, 1, wxEXPAND | wxALL, 3);
+        body->Add(left, 1, wxEXPAND);
+
+        auto* right = new wxBoxSizer(wxVERTICAL);
+        right->Add(new wxStaticText(this, wxID_ANY, Text(page_.report_label)), 0,
+                   wxLEFT | wxTOP, 3);
+        report_ = new wxChoice(this, wxID_ANY);
+        right->Add(report_, 0, wxEXPAND | wxALL, 3);
+        right->Add(new wxStaticText(this, wxID_ANY, Text(page_.sound_label)), 0, wxLEFT | wxTOP,
+                   3);
+        sound_ = new wxChoice(this, wxID_ANY);
+        right->Add(sound_, 0, wxEXPAND | wxALL, 3);
+        right->Add(new wxStaticText(this, wxID_ANY, Text(page_.words_label)), 0, wxLEFT | wxTOP,
+                   3);
+        words_ = new wxTextCtrl(this, wxID_ANY);
+        right->Add(words_, 0, wxEXPAND | wxALL, 3);
+        right->Add(new wxStaticText(this, wxID_ANY, Text(page_.voice_label)), 0, wxLEFT | wxTOP,
+                   3);
+        voice_ = new wxChoice(this, wxID_ANY);
+        right->Add(voice_, 0, wxEXPAND | wxALL, 3);
+        auto* indication_buttons = new wxBoxSizer(wxHORIZONTAL);
+        preview_ = new wxButton(this, wxID_ANY, Text(page_.preview));
+        reset_ = new wxButton(this, wxID_ANY, Text(page_.reset));
+        indication_buttons->Add(preview_, 0, wxALL, 3);
+        indication_buttons->Add(reset_, 0, wxALL, 3);
+        right->Add(indication_buttons, 0);
+        body->Add(right, 1, wxEXPAND);
+        sizer->Add(body, 1, wxEXPAND);
+
+        auto* theme_buttons = new wxBoxSizer(wxHORIZONTAL);
+        new_ = new wxButton(this, wxID_ANY, Text(page_.new_theme));
+        rename_ = new wxButton(this, wxID_ANY, Text(page_.rename));
+        import_ = new wxButton(this, wxID_ANY, Text(page_.import_label));
+        export_ = new wxButton(this, wxID_ANY, Text(page_.export_label));
+        remove_ = new wxButton(this, wxID_ANY, Text(page_.remove));
+        for (wxButton* button : {new_, rename_, import_, export_, remove_}) {
+            theme_buttons->Add(button, 0, wxALL, 3);
+        }
+        sizer->Add(theme_buttons, 0);
+        SetSizer(sizer);
+
+        Wire();
+        RebuildTree();
+        RefreshAll();
+    }
+
+    wxChoice* sound() const { return sound_; }
+
+    // Space on the sound choice: plays the sound it shows.
+    void PlaySound() { g_shell->core.play_indication_sound(); }
+
+private:
+    // Connects every control to what Rust does with it.
+    void Wire() {
+        theme_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) {
+            const int selection = theme_->GetSelection();
+            if (selection != wxNOT_FOUND) {
+                g_shell->core.theme_chosen(static_cast<std::size_t>(selection));
+                RefreshAll();
+            }
+        });
+        volume_->Bind(wxEVT_SLIDER,
+                      [this](wxCommandEvent&) { g_shell->core.volume_changed(volume_->GetValue()); });
+        say_all_->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event) {
+            g_shell->core.say_all_changed(event.IsChecked());
+        });
+        speak_sounded_->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event) {
+            g_shell->core.speak_sounded_changed(event.IsChecked());
+        });
+        find_->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+            const std::string text = Utf8(find_->GetValue());
+            g_shell->core.theme_filter_changed(Str(text));
+            RebuildTree();
+        });
+        tree_->Bind(wxEVT_TREE_SEL_CHANGED, [this](wxTreeEvent& event) {
+            if (!rebuilding_) {
+                SelectIndication(event.GetItem());
+            }
+        });
+        report_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) {
+            const int selection = report_->GetSelection();
+            if (selection != wxNOT_FOUND) {
+                Edit(g_shell->core.report_changed(static_cast<std::size_t>(selection)));
+            }
+        });
+        sound_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) {
+            const int selection = sound_->GetSelection();
+            if (selection == wxNOT_FOUND) {
+                return;
+            }
+            if (selection == sound_browse_) {
+                BrowseSound();
+            } else {
+                Edit(g_shell->core.sound_changed(static_cast<std::size_t>(selection)));
+            }
+        });
+        words_->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+            const std::string text = Utf8(words_->GetValue());
+            Edit(g_shell->core.words_changed(Str(text)));
+        });
+        voice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) {
+            const int selection = voice_->GetSelection();
+            if (selection != wxNOT_FOUND) {
+                Edit(g_shell->core.voice_changed(static_cast<std::size_t>(selection)));
+            }
+        });
+        preview_->Bind(wxEVT_BUTTON, [](wxCommandEvent&) { g_shell->core.preview_indication(); });
+        reset_->Bind(wxEVT_BUTTON,
+                     [this](wxCommandEvent&) { Edit(g_shell->core.reset_indication()); });
+        new_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            std::string name;
+            if (AskName(page_.prompts.new_prompt, page_.prompts.new_title, page_.prompts.new_name,
+                        name)) {
+                Report(g_shell->core.new_theme(Str(name)));
+            }
+        });
+        rename_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            std::string name;
+            if (AskName(page_.prompts.rename_prompt, page_.prompts.rename_title,
+                        page_.prompts.name, name)) {
+                Report(g_shell->core.rename_theme(Str(name)));
+            }
+        });
+        import_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            std::string path;
+            if (AskFile(page_.prompts.import_title, rust::String(), page_.prompts.package_filter,
+                        wxFD_OPEN | wxFD_FILE_MUST_EXIST, path)) {
+                Report(g_shell->core.import_theme(Str(path)));
+            }
+        });
+        export_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            std::string path;
+            if (AskFile(page_.prompts.export_title, page_.prompts.export_file,
+                        page_.prompts.package_filter, wxFD_SAVE | wxFD_OVERWRITE_PROMPT, path)) {
+                Report(g_shell->core.export_theme(Str(path)));
+            }
+        });
+        remove_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            // A native message box, which shutdown cannot end early: it
+            // only checks for shutdown once the box has closed.
+            wxMessageDialog confirm(dialog_, Text(page_.prompts.remove_question),
+                                    Text(page_.prompts.remove_title),
+                                    wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+            const int answer = confirm.ShowModal();
+            if (g_shell->shutting_down) {
+                return;
+            }
+            if (answer == wxID_YES) {
+                Report(g_shell->core.remove_theme());
+            }
+        });
+    }
+
+    // Asks for a name in a modal prompt starting with `initial`. False when
+    // it was cancelled, or Verbatim is shutting down.
+    bool AskName(const rust::String& prompt, const rust::String& title,
+                 const rust::String& initial, std::string& name) {
+        wxTextEntryDialog ask(dialog_, Text(prompt), Text(title), Text(initial));
+        g_shell->modal = &ask;
+        const int answer = ask.ShowModal();
+        g_shell->modal = nullptr;
+        if (g_shell->shutting_down || answer != wxID_OK) {
+            return false;
+        }
+        name = Utf8(ask.GetValue());
+        return true;
+    }
+
+    // Asks for a file in the system's file dialog. False when it was
+    // cancelled, or Verbatim is shutting down.
+    bool AskFile(const rust::String& title, const rust::String& file, const rust::String& filter,
+                 long style, std::string& path) {
+        wxFileDialog ask(dialog_, Text(title), wxString(), Text(file), Text(filter), style);
+        const int answer = ask.ShowModal();
+        if (g_shell->shutting_down || answer != wxID_OK) {
+            return false;
+        }
+        path = Utf8(ask.GetPath());
+        return true;
+    }
+
+    // Shows why an operation failed, if it did, then the page as it now is.
+    void Report(const rust::String& error) {
+        if (!error.empty()) {
+            wxMessageDialog message(dialog_, Text(error), Text(page_.prompts.error_title),
+                                    wxOK | wxICON_ERROR);
+            message.ShowModal();
+            if (g_shell->shutting_down) {
+                return;
+            }
+        }
+        RefreshAll();
+    }
+
+    // Carries out what became of a change to an indication: asks for a new
+    // theme's name when the change is to the built-in theme, then reports.
+    void Edit(ThemeEdit edit) {
+        if (edit.needs_name) {
+            std::string name;
+            const bool accepted = AskName(edit.prompt, edit.prompt_title, edit.suggested_name, name);
+            if (g_shell->shutting_down) {
+                return;
+            }
+            edit = g_shell->core.theme_named(Str(name), accepted);
+        }
+        Report(edit.error);
+    }
+
+    void BrowseSound() {
+        std::string path;
+        if (AskFile(page_.prompts.sound_title, rust::String(), page_.prompts.sound_filter,
+                    wxFD_OPEN | wxFD_FILE_MUST_EXIST, path)) {
+            Edit(g_shell->core.sound_browsed(Str(path)));
+        } else if (!g_shell->shutting_down) {
+            RefreshControls();
+        }
+    }
+
+    void SelectIndication(const wxTreeItemId& item) {
+        std::int64_t indication = -1;
+        if (item.IsOk()) {
+            if (const auto* data = dynamic_cast<IndicationData*>(tree_->GetItemData(item))) {
+                indication = data->indication();
+            }
+        }
+        g_shell->core.indication_selected(indication);
+        RefreshControls();
+    }
+
+    // Builds the tree afresh, as the find field filters it, keeping the
+    // selected indication selected when it is still listed.
+    void RebuildTree() {
+        std::int64_t selected = -1;
+        const wxTreeItemId current = tree_->GetSelection();
+        if (current.IsOk()) {
+            if (const auto* data = dynamic_cast<IndicationData*>(tree_->GetItemData(current))) {
+                selected = data->indication();
+            }
+        }
+        const rust::Vec<ThemeTreeCategory> categories = g_shell->core.theme_tree();
+        const bool filtered = !find_->GetValue().empty();
+        rebuilding_ = true;
+        tree_->Freeze();
+        tree_->DeleteAllItems();
+        items_.clear();
+        const wxTreeItemId root = tree_->AddRoot(wxString());
+        wxTreeItemId reselect;
+        for (const ThemeTreeCategory& category : categories) {
+            const wxTreeItemId parent =
+                tree_->AppendItem(root, Text(category.label), -1, -1, new IndicationData(-1));
+            for (const ThemeTreeItem& item : category.items) {
+                const auto indication = static_cast<std::int64_t>(item.indication);
+                const wxTreeItemId id = tree_->AppendItem(parent, Text(item.label), -1, -1,
+                                                          new IndicationData(indication));
+                items_[indication] = id;
+                if (indication == selected) {
+                    reselect = id;
+                }
+            }
+            if (filtered) {
+                tree_->Expand(parent);
+            }
+        }
+        if (reselect.IsOk()) {
+            tree_->SelectItem(reselect);
+            tree_->EnsureVisible(reselect);
+        }
+        tree_->Thaw();
+        rebuilding_ = false;
+        SelectIndication(tree_->GetSelection());
+    }
+
+    // Updates the tree's labels after a change, rebuilding it only when the
+    // find field now lists other indications.
+    void RefreshTree() {
+        const rust::Vec<ThemeTreeCategory> categories = g_shell->core.theme_tree();
+        std::size_t count = 0;
+        bool same = true;
+        for (const ThemeTreeCategory& category : categories) {
+            for (const ThemeTreeItem& item : category.items) {
+                ++count;
+                same = same && items_.count(static_cast<std::int64_t>(item.indication)) == 1;
+            }
+        }
+        if (!same || count != items_.size()) {
+            RebuildTree();
+            return;
+        }
+        for (const ThemeTreeCategory& category : categories) {
+            for (const ThemeTreeItem& item : category.items) {
+                const wxTreeItemId id = items_[static_cast<std::int64_t>(item.indication)];
+                const wxString label = Text(item.label);
+                if (tree_->GetItemText(id) != label) {
+                    tree_->SetItemText(id, label);
+                }
+            }
+        }
+    }
+
+    // The page, the tree's labels, and the indication's controls as Rust
+    // now has them.
+    void RefreshAll() {
+        page_ = g_shell->core.theme_page();
+        SetChoice(theme_, page_.themes, page_.selected);
+        SetValue(description_, page_.description);
+        if (volume_->GetValue() != page_.volume) {
+            volume_->SetValue(page_.volume);
+        }
+        if (say_all_->GetValue() != page_.say_all) {
+            say_all_->SetValue(page_.say_all);
+        }
+        if (speak_sounded_->GetValue() != page_.speak_sounded) {
+            speak_sounded_->SetValue(page_.speak_sounded);
+        }
+        rename_->Enable(page_.can_rename);
+        export_->Enable(page_.can_rename);
+        remove_->Enable(page_.can_remove);
+        RefreshTree();
+        RefreshControls();
+    }
+
+    void RefreshControls() {
+        const IndicationControls controls = g_shell->core.indication_controls();
+        SetChoice(report_, controls.report_options, controls.report);
+        report_->Enable(controls.report_enabled);
+        SetChoice(sound_, controls.sound_options, controls.sound);
+        sound_->Enable(controls.sound_enabled);
+        sound_browse_ = controls.sound_browse;
+        SetValue(words_, controls.words);
+        words_->Enable(controls.words_enabled);
+        SetChoice(voice_, controls.voice_options, controls.voice);
+        voice_->Enable(controls.voice_enabled);
+        preview_->Enable(controls.preview_enabled);
+        reset_->Enable(controls.reset_enabled);
+    }
+
+    wxWindow* dialog_;
+    ThemePage page_;
+    wxChoice* theme_ = nullptr;
+    wxTextCtrl* description_ = nullptr;
+    wxSlider* volume_ = nullptr;
+    wxCheckBox* say_all_ = nullptr;
+    wxCheckBox* speak_sounded_ = nullptr;
+    wxTextCtrl* find_ = nullptr;
+    wxTreeCtrl* tree_ = nullptr;
+    wxChoice* report_ = nullptr;
+    wxChoice* sound_ = nullptr;
+    wxTextCtrl* words_ = nullptr;
+    wxChoice* voice_ = nullptr;
+    wxButton* preview_ = nullptr;
+    wxButton* reset_ = nullptr;
+    wxButton* new_ = nullptr;
+    wxButton* rename_ = nullptr;
+    wxButton* import_ = nullptr;
+    wxButton* export_ = nullptr;
+    wxButton* remove_ = nullptr;
+    std::int32_t sound_browse_ = -1;
+    // The tree item of each listed indication, by its catalogue index.
+    std::map<std::int64_t, wxTreeItemId> items_;
+    // Set while the tree is rebuilt, whose selection events are its own.
+    bool rebuilding_ = false;
+};
+
 // The settings dialog, after NVDA's MultiCategorySettingsDialog: a category
 // list on the left swaps the category's page on the right, which is built
 // the first time it is shown; OK, Cancel, and Apply sit along the bottom.
@@ -291,7 +762,7 @@ public:
     SettingsDialogWindow(wxWindow* parent, const SettingsDialog& model)
         : wxDialog(parent, wxID_ANY,
                    model.categories.empty() ? wxString() : Text(model.categories[0].title),
-                   wxDefaultPosition, wxSize(800, 480),
+                   wxDefaultPosition, wxSize(880, 620),
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER) {
         SetMinSize(wxSize(520, 360));
         for (const Category& category : model.categories) {
@@ -403,6 +874,10 @@ private:
             speech_ = new SpeechPanel(container_, this);
             return speech_;
         }
+        if (kind == CategoryKind::Theme) {
+            theme_ = new ThemePanel(container_, this);
+            return theme_;
+        }
         return new wxPanel(container_);
     }
 
@@ -421,6 +896,12 @@ private:
         }
         if (speech_ != nullptr && focus == speech_->name()) {
             return SettingsFocus::SynthesizerName;
+        }
+        if (theme_ != nullptr && focus == theme_->sound()) {
+            return SettingsFocus::SoundChoice;
+        }
+        if (dynamic_cast<const wxButton*>(focus) != nullptr) {
+            return SettingsFocus::OtherButton;
         }
         return SettingsFocus::Other;
     }
@@ -446,6 +927,9 @@ private:
         case 'S':
             key = SettingsKey::S;
             break;
+        case WXK_SPACE:
+            key = SettingsKey::Space;
+            break;
         default:
             break;
         }
@@ -465,6 +949,12 @@ private:
             ClickButton(apply_);
         } else if (action == SettingsKeyAction::ChangeSynthesizer && speech_ != nullptr) {
             ClickButton(speech_->change());
+        } else if (action == SettingsKeyAction::ActivateFocused) {
+            if (auto* button = dynamic_cast<wxButton*>(focus)) {
+                ClickButton(button);
+            }
+        } else if (action == SettingsKeyAction::PlaySound && theme_ != nullptr) {
+            theme_->PlaySound();
         } else {
             event.Skip();
         }
@@ -479,6 +969,7 @@ private:
     wxButton* cancel_ = nullptr;
     wxButton* apply_ = nullptr;
     SpeechPanel* speech_ = nullptr;
+    ThemePanel* theme_ = nullptr;
 };
 
 // A list dialog: a label over a single-selection list, a row of buttons,
