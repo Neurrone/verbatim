@@ -886,6 +886,24 @@ impl ControlServer {
         })
     }
 
+    /// Whether any connection is subscribed via [`Request::SubscribeEvents`],
+    /// so a caller can skip copying an event nobody will receive.
+    #[must_use]
+    pub fn has_event_subscribers(&self) -> bool {
+        any_subscribed(&self.registry, |entry| {
+            entry.events_subscribed.load(Ordering::Relaxed)
+        })
+    }
+
+    /// Whether any connection is subscribed via [`Request::SubscribeSpeech`],
+    /// so a caller can skip copying an utterance's text nobody will receive.
+    #[must_use]
+    pub fn has_speech_subscribers(&self) -> bool {
+        any_subscribed(&self.registry, |entry| {
+            entry.speech_subscribed.load(Ordering::Relaxed)
+        })
+    }
+
     /// Fans a normalized accessibility event out to every connection
     /// subscribed via [`Request::SubscribeEvents`].
     pub fn broadcast_event(
@@ -993,6 +1011,15 @@ impl ControlServer {
             registry.remove(&conn_id);
         }
     }
+}
+
+/// Whether any live connection in `registry` passes `subscribed`.
+fn any_subscribed(registry: &Registry, subscribed: impl Fn(&ConnectionEntry) -> bool) -> bool {
+    registry
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .any(subscribed)
 }
 
 impl Drop for ControlServer {
@@ -1154,6 +1181,12 @@ mod tests {
                 payload: ReplyPayload::Ok,
             }
         );
+        assert!(any_subscribed(&registry, |entry| entry
+            .events_subscribed
+            .load(Ordering::Relaxed)));
+        assert!(!any_subscribed(&registry, |entry| entry
+            .speech_subscribed
+            .load(Ordering::Relaxed)));
 
         // The session registered itself under connection id 1; broadcast
         // against the registry directly, the same call

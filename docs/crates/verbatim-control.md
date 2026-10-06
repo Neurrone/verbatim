@@ -60,8 +60,10 @@ Public API:
 - `ControlServer` — `start(handlers)` on the well-known pipe name,
   `start_on(name, handlers)` for tests; `broadcast_event(..)`,
   `broadcast_speech(..)`, `broadcast_speech_started(..)`, and
-  `broadcast_speech_ended(..)` fan frames out to subscribed connections; drop
-  stops accepting and disconnects every client.
+  `broadcast_speech_ended(..)` fan frames out to subscribed connections;
+  `has_event_subscribers()` and `has_speech_subscribers()` let a caller
+  skip copying an event or an utterance's text when nobody is subscribed;
+  drop stops accepting and disconnects every client.
 - `send_keys` (public, used by the server's `SendKeys` handler and by the
   agent's request of the same name) — `parse_combo` and `parse_all`
   (validating every entry against the shared key-name vocabulary before

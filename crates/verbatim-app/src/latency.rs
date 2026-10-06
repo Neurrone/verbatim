@@ -302,7 +302,11 @@ impl SpeechEvents for LatencyLedger {
             }
             entry.event_observed_at_ms
         });
-        if let Some(server) = self.server.get() {
+        // The text is copied for the control plane only when some connection
+        // is subscribed to speech.
+        if let Some(server) = self.server.get()
+            && server.has_speech_subscribers()
+        {
             server.broadcast_speech(
                 utterance,
                 trace_id,

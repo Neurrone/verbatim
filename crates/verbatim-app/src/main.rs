@@ -803,7 +803,11 @@ impl ReducerThread<'_> {
                     .ledger
                     .event_observed(trace_id, first_observed_ms);
                 self.context.ledger.event_received(trace_id, timing);
-                if let Some(server) = self.context.server_slot.get() {
+                // The event is copied for the control plane only when some
+                // connection is subscribed to events.
+                if let Some(server) = self.context.server_slot.get()
+                    && server.has_event_subscribers()
+                {
                     server.broadcast_event(trace_id, source, backend, window, event.clone());
                 }
                 self.apply(Input::Event {

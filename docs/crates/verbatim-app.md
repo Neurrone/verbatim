@@ -55,7 +55,8 @@ knowing for review:
   gets `Input::OutpostEnded`, then a "gone" outcome for each of that
   outpost's outstanding queries. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the
-  reducer, the latency ledger, and the control plane's event subscribers;
+  reducer, the latency ledger, and the control plane's event subscribers
+  (copied for the control plane only while one is subscribed);
   replies go through the request table. The thread never waits on a
   handoff: speech and control-plane sends never block, and a command for an
   outpost is queued on that outpost's writer, failing at once if the queue
