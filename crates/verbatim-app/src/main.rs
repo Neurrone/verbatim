@@ -867,9 +867,8 @@ impl ReducerThread<'_> {
             | Input::Command { trace_id, .. } => *trace_id,
             _ => TraceId::mint(),
         };
-        let (next, effects) = reduce(&self.state, &input);
+        let effects = reduce(&mut self.state, &input);
         self.context.ledger.reduced(trace_id);
-        self.state = next;
         {
             let mut recorder = self
                 .context

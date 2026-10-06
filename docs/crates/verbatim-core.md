@@ -1,12 +1,13 @@
 # verbatim-core
 
-The pure reducer (architecture section 2), the flight recorder, and its
+The deterministic reducer (architecture section 2), the flight recorder, and its
 on-disk dump format.
 
 Public API:
 
-- `reduce(state, input)` — the frozen signature: pure, no I/O, no clocks;
-  returns the next state and the effects to execute.
+- `reduce(&mut state, &input)` — deterministic, no I/O, no clocks;
+  advances the state in place, without copying it, and returns the
+  effects to execute.
 - `SrState` — `new()`; `focused()`, the live focus and its application;
   `attention()`, the application holding attention; and `held_nodes()`,
   every node id the state refers to grouped by the outpost that issued it.

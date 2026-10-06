@@ -55,9 +55,7 @@ pub fn replay(initial: &SrState, inputs: &[Input]) -> Vec<Vec<Effect>> {
     let mut state = initial.clone();
     let mut all_effects = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let (next_state, effects) = reduce(&state, input);
-        state = next_state;
-        all_effects.push(effects);
+        all_effects.push(reduce(&mut state, input));
     }
     all_effects
 }

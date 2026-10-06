@@ -1,10 +1,11 @@
 //! The functional core (architecture section 2).
 //!
-//! Interaction logic lives here as a pure reducer mapping a state and an
-//! input to a new state and a list of effects; the imperative shell executes
-//! the effects. Determinism is the point: a recorded triple of initial
-//! state, input sequence, and fetch replies replays to identical effects,
-//! which is what turns field bugs into unit tests.
+//! Interaction logic lives here as a deterministic reducer that advances a
+//! state in place by one input and returns a list of effects; the
+//! imperative shell executes the effects. Determinism is the point: a
+//! recorded triple of initial state, input sequence, and fetch replies
+//! replays to identical effects, which is what turns field bugs into unit
+//! tests.
 //!
 //! M0 shipped the flight-recorder skeleton and M1 the reducer; M2 adds
 //! [`dump`], the on-disk format that turns a live flight-recorder ring into

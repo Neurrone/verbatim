@@ -2,8 +2,7 @@
 //!
 //! [`SrState`] is the state threaded through [`crate::reduce`]: the focus,
 //! the attention record, the navigator, and the one object-navigation query
-//! still in flight. It is cheap to clone; the reducer never mutates a
-//! caller's state in place, it produces a new one.
+//! still in flight. The reducer changes it in place, one input at a time.
 
 use std::collections::{BTreeMap, BTreeSet};
 

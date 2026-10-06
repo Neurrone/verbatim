@@ -113,12 +113,11 @@ fn regenerate_fixture() {
     let mut state = SrState::new();
     let mut recorded = Vec::new();
     for input in scripted_inputs() {
-        let (next, effects) = reduce(&state, &input);
+        let effects = reduce(&mut state, &input);
         recorded.push(RecordedInput {
             input,
             effect_count: effects.len(),
         });
-        state = next;
     }
 
     let mut buffer = Vec::new();

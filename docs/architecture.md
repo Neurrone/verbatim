@@ -550,10 +550,12 @@ optimization.
 
 ## 2. Functional core, imperative shell
 
-The interaction logic is a pure reducer living in `verbatim-core`:
+The interaction logic is a deterministic reducer living in `verbatim-core`,
+which changes the state in place rather than copying it, so a step costs
+nothing for the parts of the state it does not touch:
 
 ```rust
-fn reduce(state: &SrState, input: Input) -> (SrState, Vec<Effect>)
+fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect>
 ```
 
 - `SrState`: focus context, review cursor, active modes (focus/browse/scan),

@@ -22,7 +22,9 @@ fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
     if let Input::Event { source, event, .. } = &mut input {
         event.assign_outpost(outpost_of(*source));
     }
-    verbatim_core::reduce(state, &input)
+    let mut next = state.clone();
+    let effects = verbatim_core::reduce(&mut next, &input);
+    (next, effects)
 }
 
 fn node(
@@ -780,10 +782,9 @@ fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
 
     let mut live_effects = Vec::new();
     for input in &script {
-        let (next, effects) = verbatim_core::reduce(&state, input);
+        let effects = verbatim_core::reduce(&mut state, input);
         recorder.record_input(input.clone(), effects.len());
         live_effects.push(effects);
-        state = next;
     }
 
     let dumped = recorder.dump_inputs();
@@ -2581,7 +2582,9 @@ fn reduce_from(state: &SrState, input: &Input, outpost: OutpostId) -> (SrState, 
     if let Input::Event { event, .. } = &mut input {
         event.assign_outpost(outpost);
     }
-    verbatim_core::reduce(state, &input)
+    let mut next = state.clone();
+    let effects = verbatim_core::reduce(&mut next, &input);
+    (next, effects)
 }
 
 fn ended(outpost: OutpostId) -> Input {

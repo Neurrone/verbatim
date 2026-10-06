@@ -27,15 +27,16 @@ use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrStat
 /// acceptance").
 const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
 
-/// Advances `state` by one `input`, returning the new state and the effects
-/// the imperative shell must execute.
+/// Advances `state` by one `input`, changing it in place, and returns the
+/// effects the imperative shell must execute.
 ///
-/// Pure: no I/O, no clocks, no randomness, and no mutation of `state` itself
-/// — the returned `SrState` is a new value.
+/// Deterministic: no I/O, no clocks, and no randomness, so the same state
+/// and input always produce the same new state and effects. The state is
+/// changed in place rather than copied, so a step costs nothing for the
+/// parts of the state it does not touch (architecture section 2).
 #[must_use]
-pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
-    let mut next = state.clone();
-    let effects = match input {
+pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    match input {
         Input::Event {
             trace_id,
             observed_at_ms,
@@ -43,29 +44,22 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
             window,
             event,
             ..
-        } => reduce_event(
-            &mut next,
-            *trace_id,
-            *observed_at_ms,
-            *source,
-            *window,
-            event,
-        ),
+        } => reduce_event(state, *trace_id, *observed_at_ms, *source, *window, event),
         Input::FetchCompleted {
             trace_id,
             query_id,
             kind,
             result,
-        } => reduce_navigate_completed(&mut next, *trace_id, *query_id, *kind, result),
+        } => reduce_navigate_completed(state, *trace_id, *query_id, *kind, result),
         Input::OutpostEnded { outpost } => {
-            outpost_ended(&mut next, *outpost);
+            outpost_ended(state, *outpost);
             Vec::new()
         }
         Input::Command {
             trace_id,
             command,
             repeat,
-        } => reduce_command(&mut next, *trace_id, *command, *repeat),
+        } => reduce_command(state, *trace_id, *command, *repeat),
         Input::ActivationCompleted {
             trace_id,
             activated,
@@ -76,8 +70,7 @@ pub fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
         // variants added by later milestones, until each grows a real
         // policy.
         _ => Vec::new(),
-    };
-    (next, effects)
+    }
 }
 
 /// How an event relates to the attention record (`docs/parity.md`, "Event
