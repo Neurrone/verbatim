@@ -361,6 +361,13 @@ pub mod messages {
         fl!(loader(), "tray-list-right-click")
     }
 
+    /// Spoken when the tray icon or taskbar button `name`, chosen in the
+    /// list dialog, is no longer there to click.
+    #[must_use]
+    pub fn tray_list_gone(name: &str) -> String {
+        fl!(loader(), "tray-list-gone", name = name)
+    }
+
     /// Title of the Select Synthesizer dialog.
     #[must_use]
     pub fn select_synth_title() -> String {
@@ -1360,6 +1367,10 @@ mod tests {
             "Left &Double Click"
         );
         assert_eq!(messages::tray_list_right_click(), "&Right Click");
+        assert_eq!(
+            messages::tray_list_gone("Volume"),
+            "Volume is no longer there"
+        );
     }
 
     #[test]

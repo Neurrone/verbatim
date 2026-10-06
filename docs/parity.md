@@ -1267,6 +1267,16 @@ verified.
   or Apply, as NVDA's do, where the Speech and Theme pages apply live
   (`terminal_settings_page` verifies that an applied change reaches
   Core).
+- The system tray and taskbar list (Verbatim+F11, the systrayList
+  add-on's dialog). NVDA's add-on clicks the center of the rectangle it
+  recorded for the chosen icon when it made the list, so an icon that
+  moved since, as tray icons do when another is added or removed, leaves
+  a different icon, or none, under the click. Verbatim: **different**,
+  deliberately, since 2026-10-07: a click enumerates the tray or taskbar
+  again, finds the chosen item by its UIA runtime id, or else by a name
+  no other item has, and clicks it where it is now; an item that cannot
+  be found is not clicked, and Verbatim says "is no longer there" after
+  its name (`verbatim-gui`'s `tray_list` and `shell_items`).
 - Logging and the log viewer. NVDA: [Logging](nvda/logging.md).
   Verbatim: **not yet (M9)** — tracing exists (flight recorder,
   latency ledger); user-facing logging is unbuilt.

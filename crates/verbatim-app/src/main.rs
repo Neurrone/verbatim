@@ -292,9 +292,10 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let (gui_event_tx, gui_event_rx) = unbounded::<GuiEvent>();
     {
         let gui_handle = Arc::clone(&gui_handle);
+        let manager = Arc::clone(&manager);
         thread::Builder::new()
             .name("verbatim-gui-events".to_owned())
-            .spawn(move || gui_event_loop(&gui_event_rx, &gui_handle))?;
+            .spawn(move || gui_event_loop(&gui_event_rx, &gui_handle, &manager))?;
     }
 
     // The gesture map shared by the hook and the control plane's validation.
@@ -1527,12 +1528,33 @@ fn shell_list_kind(repeat: u8) -> ShellItemKind {
 }
 
 /// The GUI event thread body: the Exit item asks the app to shut down; the
-/// app tells the GUI to tear down, which ends the main thread's loop.
-fn gui_event_loop(gui_event_rx: &Receiver<GuiEvent>, gui_handle: &Arc<OnceLock<GuiHandle>>) {
+/// app tells the GUI to tear down, which ends the main thread's loop. A
+/// shell item that was gone when the list dialog would have clicked it is
+/// spoken.
+fn gui_event_loop(
+    gui_event_rx: &Receiver<GuiEvent>,
+    gui_handle: &Arc<OnceLock<GuiHandle>>,
+    manager: &SpeechManager,
+) {
     while let Ok(event) = gui_event_rx.recv() {
-        let GuiEvent::QuitRequested = event;
-        tracing::info!("quit requested");
-        request_shutdown(gui_handle);
+        match event {
+            GuiEvent::QuitRequested => {
+                tracing::info!("quit requested");
+                request_shutdown(gui_handle);
+            }
+            GuiEvent::ShellItemGone(name) => {
+                manager.speak(Utterance {
+                    trace_id: TraceId::mint(),
+                    priority: SpeechPriority::Queued,
+                    segments: vec![UtteranceSegment::text(
+                        verbatim_i18n::messages::tray_list_gone(&name),
+                    )],
+                    source: None,
+                    say_all: false,
+                    validity: None,
+                });
+            }
+        }
     }
 }
 
