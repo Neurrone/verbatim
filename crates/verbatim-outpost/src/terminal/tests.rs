@@ -21,6 +21,10 @@ struct Sim {
     capacity: usize,
     anchor: Option<usize>,
     comparable: bool,
+    /// How many of the next reads the text moves under.
+    unsettled: usize,
+    /// Whether the text moving under them scrolls it.
+    scrolling: bool,
 }
 
 fn padded(text: &str) -> String {
@@ -34,6 +38,8 @@ impl Sim {
             capacity,
             anchor: None,
             comparable: true,
+            unsettled: 0,
+            scrolling: false,
         };
         sim.push(rows);
         sim
@@ -63,9 +69,17 @@ impl Sim {
         self.rows.get(index).cloned().unwrap_or_default()
     }
 
+    /// Whether this read settles, counting down the unsettled reads.
+    fn settles(&mut self) -> bool {
+        let settled = self.unsettled == 0;
+        self.unsettled = self.unsettled.saturating_sub(1);
+        settled
+    }
+
     /// The reads after the line at `from`: the count to the last line, the
-    /// last lines, and the line above them; the anchor moves to the last.
-    fn tail(&mut self, from: usize, count_from: bool, wanted: u32) -> (u32, Vec<String>, String) {
+    /// last lines, and the last line and the one before it; the anchor
+    /// moves to the last, unless the read does not settle.
+    fn tail(&mut self, from: usize, count_from: bool, wanted: u32, settled: bool) -> TailText {
         let rows = self.rows.len();
         let last = rows.saturating_sub(1);
         let count = if count_from {
@@ -74,16 +88,32 @@ impl Sim {
             rows
         };
         let reading = count.min(usize::try_from(wanted).unwrap_or(usize::MAX));
-        let first = rows - reading;
-        let lines = self.rows[first..].to_vec();
-        let above = if reading > 0 && first > 0 {
-            self.row(first - 1)
-        } else {
-            String::new()
-        };
-        self.anchor = Some(last);
-        self.comparable = true;
-        (u32::try_from(count).unwrap_or(u32::MAX), lines, above)
+        let lines = self.rows[rows - reading..]
+            .iter()
+            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
+            .collect();
+        let before_last = last
+            .checked_sub(1)
+            .map(|row| self.row(row))
+            .unwrap_or_default();
+        let scrolled = !settled && self.scrolling;
+        if settled || scrolled {
+            self.anchor = Some(last);
+            self.comparable = true;
+        }
+        TailText {
+            found: Found::Afresh,
+            line: String::new(),
+            previous: String::new(),
+            found_line: String::new(),
+            count: u32::try_from(count).unwrap_or(u32::MAX),
+            rows: u32::try_from(reading).unwrap_or(u32::MAX),
+            lines,
+            last_line: self.row(last),
+            before_last,
+            settled,
+            scrolled,
+        }
     }
 }
 
@@ -112,33 +142,30 @@ impl TailSource for Sim {
                         .checked_sub(1)
                         .map(|row| self.row(row))
                         .unwrap_or_default();
-                    self.row(row) == memory.line && above == memory.previous
+                    let tells = !memory.previous.trim().is_empty();
+                    (tells || self.row(row) == memory.line) && above == memory.previous
                 })
                 .map_or((Found::NotFound, anchor), |(shift, row)| {
                     (Found::Moved(u32::try_from(shift).unwrap_or(0)), row)
                 })
         };
-        let (count, lines, above) = self.tail(at, true, wanted);
+        let settled = self.settles();
+        let found_line = match found {
+            Found::NotFound => String::new(),
+            _ => self.row(at),
+        };
         Ok(Some(TailText {
             found,
             line,
             previous,
-            count,
-            lines,
-            above,
+            found_line,
+            ..self.tail(at, true, wanted, settled)
         }))
     }
 
     fn fresh(&mut self, wanted: u32) -> Result<TailText, ()> {
-        let (count, lines, above) = self.tail(0, false, wanted);
-        Ok(TailText {
-            found: Found::Afresh,
-            line: String::new(),
-            previous: String::new(),
-            count,
-            lines,
-            above,
-        })
+        let settled = self.settles();
+        Ok(self.tail(0, false, wanted, settled))
     }
 }
 
@@ -175,7 +202,8 @@ fn lines(texts: &[&str]) -> Vec<String> {
 
 #[test]
 fn appended_lines_are_read_and_a_prompt_that_grew_speaks_what_it_gained() {
-    let mut reader = Reader::new(Sim::new(100, &["welcome", "ready>"]));
+    // The prompt's own trailing space reads as padding: it is uncertain.
+    let mut reader = Reader::new(Sim::new(100, &["welcome", "ready> "]));
     reader.sim.rewrite_last("ready> echo hi");
     let output = reader.read();
     assert_eq!(
@@ -184,6 +212,7 @@ fn appended_lines_are_read_and_a_prompt_that_grew_speaks_what_it_gained() {
             text: " echo hi".to_owned(),
             line: "ready> echo hi".to_owned(),
             appended: true,
+            uncertain: 1,
         })
     );
     assert_eq!(output.lines, Vec::<String>::new());
@@ -193,6 +222,109 @@ fn appended_lines_are_read_and_a_prompt_that_grew_speaks_what_it_gained() {
     assert_eq!(output.changed, None);
     assert_eq!(output.skipped, None);
     assert_eq!(output.lines, lines(&["hi", "ready>"]));
+}
+
+#[test]
+fn a_read_the_text_moved_under_is_set_aside_for_the_next() {
+    let mut reader = Reader::new(Sim::new(100, &["ready>"]));
+    reader.sim.push(&["one", "two"]);
+    reader.sim.unsettled = 1;
+    assert!(reader.read().is_empty());
+    reader.sim.push(&["three"]);
+    assert_eq!(reader.read().lines, lines(&["one", "two", "three"]));
+}
+
+#[test]
+fn a_read_the_text_scrolled_under_skips_lines_and_starts_again_from_there() {
+    let mut reader = Reader::new(Sim::new(4, &["ready>"]));
+    reader.sim.push(&["one", "two", "three", "four", "five"]);
+    reader.sim.unsettled = 1;
+    reader.sim.scrolling = true;
+    let output = reader.read();
+    assert_eq!(output.skipped, Some(Skipped::Uncounted));
+    assert_eq!(output.lines, Vec::<String>::new());
+    // What follows is read from where that read ended.
+    reader.sim.push(&["six"]);
+    assert_eq!(reader.read().lines, lines(&["six"]));
+}
+
+#[test]
+fn a_half_written_last_line_is_found_grown_when_the_text_moved() {
+    let mut reader = Reader::new(Sim::new(5, &["one", "two", "three", "fo"]));
+    reader.sim.rewrite_last("four");
+    reader.sim.push(&["five", "six"]);
+    let output = reader.read();
+    assert_eq!(
+        output.changed.map(|change| change.text),
+        Some("ur".to_owned())
+    );
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, lines(&["five", "six"]));
+}
+
+#[test]
+fn screens_compared_after_more_output_find_the_last_line_grown() {
+    let memory = Memory {
+        previous: padded("b"),
+        line: padded("fo"),
+        screen: lines(&["a", "b", "fo"]),
+    };
+    let rows = ["a", "b", "four", "c"].map(padded);
+    let tail = TailText {
+        found: Found::Afresh,
+        line: String::new(),
+        previous: String::new(),
+        found_line: String::new(),
+        count: 4,
+        rows: 4,
+        lines: rows
+            .iter()
+            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
+            .collect(),
+        last_line: rows[3].clone(),
+        before_last: rows[2].clone(),
+        settled: true,
+        scrolled: false,
+    };
+    let (output, _) = after_fresh(Some(&memory), &tail, 5);
+    assert_eq!(
+        output.changed.map(|change| change.text),
+        Some("ur".to_owned())
+    );
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, lines(&["c"]));
+}
+
+#[test]
+fn a_blank_last_line_alone_does_not_tie_two_screens() {
+    // Both screens end with the cursor's blank line; nothing else of the
+    // old one is left, and the text holds more than was read.
+    let memory = Memory {
+        previous: padded("two"),
+        line: padded(""),
+        screen: lines(&["one", "two", ""]),
+    };
+    let rows = ["six", "seven", ""].map(padded);
+    let tail = TailText {
+        found: Found::Afresh,
+        line: String::new(),
+        previous: String::new(),
+        found_line: String::new(),
+        count: 100,
+        rows: 3,
+        lines: rows
+            .iter()
+            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
+            .collect(),
+        last_line: rows[2].clone(),
+        before_last: rows[1].clone(),
+        settled: true,
+        scrolled: false,
+    };
+    let (output, _) = after_fresh(Some(&memory), &tail, 5);
+    assert_eq!(output.changed, None);
+    assert_eq!(output.skipped, Some(Skipped::Uncounted));
+    assert_eq!(output.lines, lines(&["six", "seven"]));
 }
 
 #[test]
@@ -220,6 +352,7 @@ fn a_line_rewritten_in_place_speaks_from_the_word_that_changed() {
             text: "50% done".to_owned(),
             line: "progress 50% done".to_owned(),
             appended: false,
+            uncertain: 0,
         })
     );
     // Backspace shortens the line: nothing is spoken for it.

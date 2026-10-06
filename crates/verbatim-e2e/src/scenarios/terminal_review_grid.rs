@@ -79,8 +79,8 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    terminal::expect_prompt_read(scenario);
+pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
+    terminal::expect_prompt_read(scenario, state);
     terminal::run_command(scenario, r".\grid.ps1");
     let mut printed: Vec<&str> = TABLE.iter().map(|(row, _)| *row).collect();
     printed.push(PROMPT);

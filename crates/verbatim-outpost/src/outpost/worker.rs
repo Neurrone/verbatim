@@ -1464,21 +1464,29 @@ impl Worker<'_> {
             None => None,
         };
         // The event's own window; else the element's nearest, which a
-        // remote read found with its ancestors; else, for an element not
+        // remote read found with its ancestors, or, when the provider could
+        // not tell it, the classic walk finds; else, for an element not
         // resolved, this application's keyboard focus window when the
         // listener captured the event, which hosts the element when the
         // event is current but, in an application with several windows, may
         // be another of its windows when the event is late; else, for
         // deciding the backend only, this application's focus window now,
         // which is never reported.
+        //
+        // The console host's provider answers no native window handle for
+        // its window inside a remote operation (only the client side's
+        // window proxy supplies it), and its window is not this process's
+        // by `GetWindowThreadProcessId`, which names the console's client
+        // instead, so for its text area only the classic walk finds the
+        // window.
         let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            match &remote {
-                Some((_, window)) => *window,
-                None => element.as_ref().and_then(nearest_window_handle),
-            }
-            .or((focus_window != 0).then_some(focus_window))
+            remote
+                .as_ref()
+                .and_then(|(_, window)| *window)
+                .or_else(|| element.as_ref().and_then(nearest_window_handle))
+                .or((focus_window != 0).then_some(focus_window))
         };
         let judged = reported.or_else(|| focus_window_of(context.target_pid));
         if judged.is_some_and(window_belongs_to_hidden_frame) {

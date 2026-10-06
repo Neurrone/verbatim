@@ -248,33 +248,57 @@ trims:
 
 - `found`: `AtAnchor` when the line before the anchor still holds what it
   held (the anchor's own line may have changed in place, and the caller
-  compares it); `Moved(n)` when the line pair was found `n` lines up, the
-  text having scrolled beneath the anchor (a full scrollback discards its
-  oldest lines while a range keeps its row); `NotFound`; or `Afresh`.
+  compares it); `Moved(n)` when the anchor's line was found `n` lines up,
+  the text having scrolled beneath the anchor (a full scrollback discards
+  its oldest lines while a range keeps its row); `NotFound`; or `Afresh`.
 - `line` and `previous`: the anchor's line and the line before it, read at
-  the anchor.
+  the anchor; `found_line`: the line where the anchor's line was found, as
+  it is now.
 - `count`: the lines after the anchor's line (where it was found) to the
   end of the text; afresh, every line.
-- `lines`: the last of them, oldest first, up to the number asked for, and
-  `above`, the line just above the first of them.
+- `rows`: how many of the last lines were read, up to the number asked
+  for; `lines`: their text, read in one call and split at its line breaks,
+  oldest first, so a line the terminal wrapped across rows is one line;
+  `last_line` and `before_last`: the last line and the one before it, each
+  read as a line, the next fingerprint.
 - `last`: the last line's range, the next anchor.
+- `settled`: whether the text held still while it was read, and
+  `scrolled`: whether, if not, the line above where it started changed,
+  the text having scrolled beneath the ranges.
 
 The program reads the anchor's line and the one before it. When the one
 before it differs from the fingerprint, it walks up a line at a time,
-reading each line once, until a line equal to the fingerprint's line (as
-read, or with the line feed or carriage return and line feed a last line
-gains once more text follows it) sits under a line equal to the
-fingerprint's previous one. The strings compare inside the provider (an
-`Equal` comparison on two strings, verified against mockapp). The last
-line is the one holding the text's last character (the document range
-collapsed to its end, moved back one character, expanded to a line);
-the count is a `Move` by a million lines from the found line, less one
-when the move ended past the last line's start, as the terminals' moves
-do at the end of the text and mockapp's do not, so both read the same.
-The last lines are read upward from the last line. Nothing in it reads
-more than the lines asked for, so a read's cost does not grow with the
-scrollback.
+reading each line once, until it finds a line under a line equal to the
+fingerprint's previous one. When that previous line is not blank, the
+line under it is the anchor's line whatever it holds now, as at the
+anchor itself: the last line read is often the one output was still being
+written to (the cursor's line, blank or half written), complete by the
+next read. Under a blank line the line must also equal the fingerprint's
+line (as read, or with the line feed or carriage return and line feed a
+last line gains once more text follows it). The strings compare inside
+the provider (an `Equal` comparison on two strings, verified against
+mockapp). The count is a `Move` by a million lines from the found line,
+and the last line is found from where that walk stopped: the line there,
+or, when the walk stopped past the final line break, the one before; less
+one when the walk ended past the last line's start, as the terminals'
+moves do at the end of the text and mockapp's do not, so both read the
+same. Finding the last line from the walk itself keeps the count and the
+last line in agreement however the text grows meanwhile. The last lines
+are read with one `GetText` from the start of the first of them to the
+end of the last. Nothing in it reads more than the lines asked for, so a
+read's cost does not grow with the scrollback or with the lines read.
 
+A read is settled when the line above where it started reads at the end
+as it did when the start was found (with no anchor, the text's first line,
+read before and after), and the one read of the last lines ends with the
+last line and the one before it as each was read on its own, line breaks
+aside (Windows Terminal ends each line's text with one; the console host
+gives a line without it but separates lines with one in a longer range).
+Live, a flood filling Windows Terminal's or the console host's full
+scrollback moves the text beneath every range between two calls, so lines
+read one call at a time came back twice or out of order; the outpost sets
+an unsettled read aside, and the text change that disturbed it causes the
+next read.
 The classic implementation makes the same calls one at a time, through
 `verbatim-uia`'s text wrappers, so each is counted. A range from before
 a terminal switched to or from its alternate screen fails to compare

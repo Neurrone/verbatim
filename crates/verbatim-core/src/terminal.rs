@@ -20,7 +20,9 @@
 //!   rewritten quickly is spoken once.
 //! - Typing held for the terminal (the password rule, in `editing`) is
 //!   echoed when the terminal shows it at the end of the line, and that
-//!   text is not spoken again as output. When the terminal shows something
+//!   text is not spoken again as output. White space the line may have had
+//!   already (a prompt's trailing space, which the outpost cannot tell from
+//!   padding) is matched only as far as the typing starts with it. When the terminal shows something
 //!   else (a password prompt's asterisks), what was held is never spoken.
 //! - Anything that cuts speech off (a key, a focus change, an interrupting
 //!   utterance) drops the output still waiting, as a key press does in
@@ -133,6 +135,13 @@ fn typing_shown(state: &mut SrState, trace_id: TraceId, change: &mut LineChange)
         let held = std::mem::take(&mut state.held_typing);
         return editing::echo(state, trace_id, &held);
     }
+    let typing = if state.held_typing.is_empty() {
+        &state.terminal.echoed_typing
+    } else {
+        &state.held_typing
+    };
+    let already = already_there(change, typing);
+    change.text.drain(..already);
     let echoed = common_prefix(&state.terminal.echoed_typing, &change.text);
     if echoed > 0 {
         state.terminal.echoed_typing.drain(..echoed);
@@ -148,6 +157,27 @@ fn typing_shown(state: &mut SrState, trace_id: TraceId, change: &mut LineChange)
         state.held_typing.clear();
     }
     editing::echo(state, trace_id, &held)
+}
+
+/// The length in bytes of the white space at the start of a grown line's
+/// `change` that was on the line already, as far as `typing` tells: the
+/// uncertain white space (a prompt's trailing space, which the outpost
+/// cannot tell from padding) beyond what the typing itself starts with.
+/// Without typing, nothing is taken away.
+fn already_there(change: &LineChange, typing: &str) -> usize {
+    if typing.is_empty() {
+        return 0;
+    }
+    let typed_space = typing.len() - typing.trim_start().len();
+    let uncertain = change.uncertain.min(change.text.len());
+    let mut already = 0;
+    for character in change.text.chars() {
+        if uncertain.saturating_sub(already) <= typed_space || !character.is_whitespace() {
+            break;
+        }
+        already += character.len_utf8();
+    }
+    already
 }
 
 /// Notes characters typed into a terminal and echoed at once, so the

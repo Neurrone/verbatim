@@ -82,7 +82,10 @@ Public API:
   `run_directory` is the agent-side folder harness files go in, next to
   Verbatim's executable; `write_agent_file` writes a file there, and
   `wait_for_agent_file` waits for a file to appear and returns it, the
-  evidence a script reached the point that writes it; `launch_titled`
+  evidence a script reached the point that writes it; `subscribe_events`
+  opens one more control-plane connection subscribed to the normalized
+  events Core receives, for evidence no speech shows (a caret report);
+  `launch_titled`
   starts a program whose window carries that title and tracks it to be
   closed by the title at cleanup, terminated if it will not close only
   when the launch asked for that (never for `wt.exe`, whose window may
@@ -308,8 +311,13 @@ The terminal scenarios, also in the Text group, share a setup
 never by class or program, so the user's own terminals are never touched,
 and `WindowsTerminal.exe` and `conhost.exe` are never ended by name.
 Windows Terminal opens with `wt.exe -w new --size 120,30 new-tab --title
-<title> --suppressApplicationTitle`; the console host with `conhost.exe`,
-the shell setting its size with `mode con cols=120 lines=30`. A scenario
+<title> --suppressApplicationTitle`; the console host with `conhost.exe`
+and the shell's command line (the agent starts it with no standard
+handles, without which the console host opens a window of its own
+whatever the default terminal setting), the shell setting its window to
+120 by 30 with `mode con cols=120 lines=30` and its scrollback to 9,001
+lines, Windows Terminal's default, since `mode con` leaves it at 30. A
+scenario
 that prefers Windows Terminal asks the agent to start `wt.exe` and, when
 that fails because Windows Terminal is not installed, prints so and uses
 the console host; nothing depends on the machine's name, so the same
@@ -318,11 +326,21 @@ console host. The shell is Windows PowerShell, started with `-NoProfile
 -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`; the start script
 removes `PSReadLine`, moves to the scenario's folder, sets the title, and
 sets the prompt `ready> `, which writes a file the first time it runs, the
-evidence the shell waits for input. The scripts a scenario runs are
-written into that folder before the window opens. Every body first reads
-the prompt line with numpad 8 and hears "ready>", so typing starts only
-once Verbatim reads the terminal. Commands are typed with `type_text` and
-Enter pressed with `send_keys`.
+evidence the shell waits for input; then it waits for a go file before the
+shell shows its first prompt. The scripts a scenario runs are written into
+that folder before the window opens. Every body starts with
+`expect_prompt_read`: it hears the terminal's focus announcement out
+(by then the outpost has read where the terminal's text ends), writes the
+go file, hears the prompt "ready>" in full as new output, waits for Core
+to receive the caret on the prompt (through an event subscription of its
+own, `Scenario::subscribe_events`, since the console host reports its
+caret some time after its text and the review cursor follows the caret),
+and then reads the prompt line with numpad 8, hearing exactly "ready>".
+Commands are typed with `type_text` and Enter pressed with `send_keys`;
+`run_command_after_echo` presses Enter only once the echo of the
+command's last word has been heard, so the terminal has shown the command
+line and running it adds only the command's output (typing not yet shown
+when Enter is pressed is dropped, and the line is then read as output).
 
 `windows_terminal_commands` (in the console host, saying so, where Windows
 Terminal is not installed) and `conhost_commands` type `echo hello`,
@@ -356,10 +374,15 @@ flood, Verbatim+5 sent while a flood line plays must be answered with
 throughout, and nothing about the flood follows it. The third flood, with
 output reporting off, must speak nothing but its command's echo; Verbatim+5
 then says "report new output on", and `echo back` is answered with "back"
-and "ready>". The wall-time ratio, the first flood's time over the third's
-by the script's own stopwatch, is how much reporting the output slows the
-terminal down; it is printed, saved as `wall-time-ratio.txt` with the
-scenario's artifacts, and must be under two, the M4 exit criterion.
+and "ready>". A fourth flood, with output reported and no key pressed, is
+heard out to "ready>". The wall-time ratio, the fourth flood's time over
+the third's by the script's own stopwatch, both into a full scrollback, is
+how much reporting the output slows the terminal down; it is printed,
+saved as `wall-time-ratio.txt` with the scenario's artifacts, and must be
+under two, the M4 exit criterion. The first flood is not the measure: it
+starts with an empty scrollback, and in the console host a flood that
+fills the scrollback while it is read took about twice as long as one
+into a full scrollback, output reported or not.
 NVDA's report-title command, which the design names for the responsiveness
 check, is not bound in Verbatim, so the check uses the Verbatim+5 toggle,
 a reducer command with known text.

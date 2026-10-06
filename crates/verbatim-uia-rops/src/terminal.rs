@@ -63,6 +63,22 @@ impl Fingerprint<'_> {
             format!("{line}\r\n"),
         ]
     }
+
+    /// Whether the line before the anchor's is enough to find the anchor's
+    /// line by, whatever that line holds now: when it is not blank, as at
+    /// the anchor itself. The last line read is often the one output is
+    /// still being written to (the cursor's line, blank or half written),
+    /// which is complete by the next read; under a blank line, a changed
+    /// line matches too easily to trust.
+    fn previous_tells(&self) -> bool {
+        !self.previous.trim().is_empty()
+    }
+
+    /// Whether `text`, a line read now under a line that matches the
+    /// fingerprint's line before, is the anchor's line.
+    fn matches(&self, text: &str) -> bool {
+        self.previous_tells() || self.line_forms().iter().any(|form| form == text)
+    }
 }
 
 /// Where a [`TailQuery`] starts.
@@ -122,17 +138,61 @@ pub struct Tail {
     /// The text of the line before the anchor, read at the anchor; empty at
     /// the top of the text or with no anchor.
     pub previous: String,
+    /// The text of the line where the fingerprint was found, as it is now,
+    /// which may have grown since it was read; `line` when it was found at
+    /// the anchor, empty when it was not found.
+    pub found_line: String,
     /// How many lines follow the anchor's line to the end of the text; with
     /// no anchor, how many lines the text has.
     pub count: u32,
-    /// The text of the last lines, oldest first: as many as `count` up to
-    /// the query's `lines_wanted`.
+    /// How many of the last lines were read: as many as `count` up to the
+    /// query's `lines_wanted`.
+    pub rows: u32,
+    /// The text of the last `rows` lines, read in one call, oldest first,
+    /// each without its line break. A line the terminal wrapped across
+    /// rows is one line here, so there can be fewer than `rows`.
     pub lines: Vec<String>,
-    /// The text of the line just above the first of `lines`, empty when
-    /// there is none or no line was read.
-    pub above: String,
+    /// The text of the last line, read as a line.
+    pub last_line: String,
+    /// The text of the line before the last, read as a line; empty at the
+    /// top of the text.
+    pub before_last: String,
     /// The last line's range, whose start is the next read's anchor.
     pub last: IUIAutomationTextRange,
+    /// Whether the text held still while it was read ([`is_settled`]);
+    /// when it did not, the lines and the count may mix two moments.
+    pub settled: bool,
+    /// Whether the text above where the read started moved while it was
+    /// read: a full scrollback scrolled beneath the ranges, so text went by
+    /// that the read did not see, rather than only the last lines being
+    /// written to.
+    pub scrolled: bool,
+}
+
+impl Tail {
+    /// A tail from where the fingerprint was found, the anchor's line and
+    /// the one before it, what was read below, and the last line's range.
+    fn new(
+        found: Found,
+        (line, previous, found_line): (String, String, String),
+        end: TailEnd,
+        last: IUIAutomationTextRange,
+    ) -> Self {
+        Self {
+            found,
+            line,
+            previous,
+            found_line,
+            count: end.count,
+            rows: end.rows,
+            lines: end.lines,
+            last_line: end.last_line,
+            before_last: end.before_last,
+            last,
+            settled: end.settled,
+            scrolled: end.scrolled,
+        }
+    }
 }
 
 /// The signature both implementations share.
@@ -219,27 +279,52 @@ impl Constants {
 
 /// Emits the end of the program shared by both starts, from the line
 /// `from`: the last line, the count of lines after `from`'s line to it
-/// (`count`), and the last lines' text.
+/// (`count`), the last lines' text in one read, and the last line and the
+/// one before it, each read as a line.
 fn emit_tail(
     b: &mut Builder,
     c: &Constants,
     from: Reg<kind::TextRange>,
-    count_lines_from: bool,
+    found_under: Option<Reg<kind::Str>>,
     wanted: u32,
 ) -> TailRegisters {
-    // The last line: the one holding the text's last character.
-    let document = b.text_range_clone(from);
-    b.text_range_expand_to_enclosing_unit(document, c.document);
-    let last = b.text_range_clone(document);
-    b.text_range_move_endpoint_by_range(last, c.start, document, c.end);
-    let _ = b.text_range_move_endpoint_by_unit(last, c.start, c.character, c.back);
-    b.text_range_expand_to_enclosing_unit(last, c.line);
-    let last = b.add_to_results(last);
+    let count_lines_from = found_under.is_some();
+    // The guard: the line above `from`'s, as it was when `from` was found
+    // (`found_under`), and again at the end, which scrolling changes; above
+    // an anchor at the top there is none. With no anchor, the guard is the
+    // text's first line itself, read now, there being none above it.
+    let guard = c.collapsed(b, from);
+    let up = b.text_range_move(guard, c.line, c.back);
+    let has_guard = b.not_equal(up, c.zero);
+    let guard_before = if let Some(text) = found_under {
+        text
+    } else {
+        let yes = b.bool(true);
+        b.set(has_guard, yes);
+        c.line_text(b, guard)
+    };
+    let guard_before = b.add_to_results(guard_before);
 
     // Lines from `from`'s line to the last: moving on by lines lands on the
     // last line's start, or past it at the text's end.
+    let document = b.text_range_clone(from);
+    b.text_range_expand_to_enclosing_unit(document, c.document);
     let walker = c.collapsed(b, if count_lines_from { from } else { document });
     let moved = b.text_range_move(walker, c.line, c.far);
+
+    // The last line: the one where the walk stopped, or, stopped past the
+    // final line break, the one before; found from the walk itself, so the
+    // count and the last line agree however the text grows meanwhile.
+    let last = b.text_range_clone(walker);
+    b.text_range_expand_to_enclosing_unit(last, c.line);
+    let empty = b.text_range_compare_endpoints(last, c.start, last, c.end);
+    let empty = b.equal(empty, c.zero);
+    b.if_(empty, |b| {
+        let _ = b.text_range_move_endpoint_by_unit(last, c.start, c.character, c.back);
+        b.text_range_expand_to_enclosing_unit(last, c.line);
+    });
+    let last = b.add_to_results(last);
+
     let count = b.new_int(0);
     b.set(count, moved);
     let order = b.text_range_compare_endpoints(walker, c.start, last, c.start);
@@ -251,47 +336,62 @@ fn emit_tail(
     }
     let count = b.add_to_results(count);
 
-    // The last lines' text, newest first, and the line above them.
+    // The last lines, as many as are counted up to the number wanted, in
+    // one read, which the provider answers at one moment; and the last
+    // line and the one before it, each read as a line: the next read's
+    // fingerprint.
     let wanted = b.int(i32::try_from(wanted).unwrap_or(i32::MAX));
     let reading = b.new_int(0);
     b.set(reading, count);
     let more = b.compare(reading, wanted, Comparison::GreaterThan);
     b.if_(more, |b| b.set(reading, wanted));
-    let lines = b.new_array();
-    let lines = b.add_to_results(lines);
-    let above = b.new_string("");
-    let above = b.add_to_results(above);
-    let row = b.text_range_clone(last);
-    let read = b.new_int(0);
-    let at_top = b.new_bool(false);
-    b.while_(
-        |b| b.compare(read, reading, Comparison::LessThan),
-        |b| {
-            let text = b.text_range_get_text(row, c.all);
-            b.array_append(lines, text);
-            b.add_assign(read, c.one);
-            let up = b.text_range_move(row, c.line, c.back);
-            let top = b.equal(up, c.zero);
-            b.if_(top, |b| {
-                let yes = b.bool(true);
-                b.set(at_top, yes);
-                b.break_loop();
-            });
-            b.text_range_expand_to_enclosing_unit(row, c.line);
-        },
-    );
-    let some = b.compare(read, c.zero, Comparison::GreaterThan);
-    let below_top = b.not(at_top);
-    let wanted_above = b.and(some, below_top);
-    b.if_(wanted_above, |b| {
-        let text = b.text_range_get_text(row, c.all);
-        b.set(above, text);
+    let block = b.new_string("");
+    let block = b.add_to_results(block);
+    let rows = b.new_int(0);
+    let rows = b.add_to_results(rows);
+    let last_line = b.new_string("");
+    let last_line = b.add_to_results(last_line);
+    let before_last = b.new_string("");
+    let before_last = b.add_to_results(before_last);
+    let some = b.compare(reading, c.zero, Comparison::GreaterThan);
+    b.if_(some, |b| {
+        let text = b.text_range_get_text(last, c.all);
+        b.set(last_line, text);
+        let before = c.collapsed(b, last);
+        let up = b.text_range_move(before, c.line, c.back);
+        let has_before = b.not_equal(up, c.zero);
+        b.if_(has_before, |b| {
+            let text = c.line_text(b, before);
+            b.set(before_last, text);
+        });
+
+        // Up from the last line by one line fewer than are read.
+        let back = b.new_int(1);
+        b.subtract_assign(back, reading);
+        let first = c.collapsed(b, last);
+        let went = b.text_range_move(first, c.line, back);
+        b.set(rows, c.one);
+        b.subtract_assign(rows, went);
+        b.text_range_move_endpoint_by_range(first, c.end, last, c.end);
+        let text = b.text_range_get_text(first, c.all);
+        b.set(block, text);
+    });
+
+    let guard_after = b.new_string("");
+    let guard_after = b.add_to_results(guard_after);
+    b.if_(has_guard, |b| {
+        let text = c.line_text(b, guard);
+        b.set(guard_after, text);
     });
     TailRegisters {
         last,
         count,
-        lines,
-        above,
+        rows,
+        block,
+        last_line,
+        before_last,
+        guard_before,
+        guard_after,
     }
 }
 
@@ -299,8 +399,91 @@ fn emit_tail(
 struct TailRegisters {
     last: Reg<kind::TextRange>,
     count: Reg<kind::Int>,
-    lines: Reg<kind::Array>,
-    above: Reg<kind::Str>,
+    rows: Reg<kind::Int>,
+    block: Reg<kind::Str>,
+    last_line: Reg<kind::Str>,
+    before_last: Reg<kind::Str>,
+    guard_before: Reg<kind::Str>,
+    guard_after: Reg<kind::Str>,
+}
+
+/// The text a tail read found below where it started, however it was read.
+struct TailEnd {
+    count: u32,
+    rows: u32,
+    lines: Vec<String>,
+    last_line: String,
+    before_last: String,
+    settled: bool,
+    scrolled: bool,
+}
+
+impl TailRegisters {
+    /// The read's results, the block split into its lines.
+    fn end(&self, outcome: &Outcome) -> Result<TailEnd, Error> {
+        let rows = count_of(outcome.get(self.rows)?);
+        let block = string_of(outcome, self.block)?;
+        let last_line = string_of(outcome, self.last_line)?;
+        let before_last = string_of(outcome, self.before_last)?;
+        let guard_before = string_of(outcome, self.guard_before)?;
+        let guard_after = string_of(outcome, self.guard_after)?;
+        let settled = is_settled(
+            &guard_before,
+            &guard_after,
+            rows,
+            &block,
+            [before_last.as_str(), last_line.as_str()],
+        );
+        Ok(TailEnd {
+            count: count_of(outcome.get(self.count)?),
+            rows,
+            lines: split_lines(&block, rows),
+            last_line,
+            before_last,
+            settled,
+            scrolled: guard_before != guard_after,
+        })
+    }
+}
+
+/// The lines of `block`, the text of `rows` lines read in one call, each
+/// without its line break. A line wrapped across rows is one line; the
+/// break after the last line, where the provider gives one, ends it rather
+/// than starting another.
+fn split_lines(block: &str, rows: u32) -> Vec<String> {
+    if rows == 0 {
+        return Vec::new();
+    }
+    let body = block.strip_suffix('\n').unwrap_or(block);
+    body.split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
+        .collect()
+}
+
+/// Whether a read settled: `guard` read the same before and after, and the
+/// `rows` lines read in one call, `block`, end with the last line and the
+/// one before it as each was read on its own (`fingerprint`, the one before
+/// first), line breaks aside (Windows Terminal ends each line's text with
+/// one, the console host gives a line without it but separates lines with
+/// one in a longer range). Text written while a read is under way (output
+/// scrolling a full scrollback beneath its ranges, or a line rewritten in
+/// place) makes the reads a mixture of two moments; the change that did it
+/// raises a text change of its own, and the read that follows it settles.
+fn is_settled(
+    guard_before: &str,
+    guard_after: &str,
+    rows: u32,
+    block: &str,
+    [before_last, last_line]: [&str; 2],
+) -> bool {
+    let text =
+        |line: &str| -> String { line.chars().filter(|c| !matches!(c, '\r' | '\n')).collect() };
+    let ending = match rows {
+        0 => String::new(),
+        1 => text(last_line),
+        _ => text(before_last) + &text(last_line),
+    };
+    guard_before == guard_after && text(block).ends_with(&ending)
 }
 
 /// The tail in one cross-process round trip: a program that reads the
@@ -320,19 +503,16 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
     match query.start {
         TailStart::Document(range) => {
             let document = b.import_text_range(range);
-            let tail = emit_tail(&mut b, &c, document, false, query.lines_wanted);
+            let tail = emit_tail(&mut b, &c, document, None, query.lines_wanted);
             let outcome = b.finish().execute()?;
-            Ok(Tail {
-                found: Found::Afresh,
-                line: String::new(),
-                previous: String::new(),
-                count: count_of(outcome.get(tail.count)?),
-                lines: texts(outcome.get(tail.lines)?),
-                above: string_of(&outcome, tail.above)?,
-                last: outcome
+            Ok(Tail::new(
+                Found::Afresh,
+                (String::new(), String::new(), String::new()),
+                tail.end(&outcome)?,
+                outcome
                     .get(tail.last)?
                     .ok_or(Error::MissingResult(tail.last.id()))?,
-            })
+            ))
         }
         TailStart::Anchor { range, fingerprint } => {
             let anchor = b.import_text_range(range);
@@ -352,13 +532,22 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
 
             let found = b.new_int(-1);
             let found = b.add_to_results(found);
+            let found_line = b.new_string("");
+            let found_line = b.add_to_results(found_line);
             let position = b.text_range_clone(at);
+            // The line above `position`, as it was when found.
+            let position_under = b.new_string("");
+            b.set(position_under, previous);
             let fingerprint_line = fingerprint.line_forms().map(|form| b.string(&form));
+            let previous_tells = fingerprint.previous_tells();
             let fingerprint_previous = b.string(fingerprint.previous);
             let in_place = b.equal(previous, fingerprint_previous);
             b.if_else(
                 in_place,
-                |b| b.set(found, c.zero),
+                |b| {
+                    b.set(found, c.zero);
+                    b.set(found_line, line);
+                },
                 |b| {
                     emit_search(
                         b,
@@ -368,32 +557,42 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                             has_previous,
                             previous,
                             line: fingerprint_line,
+                            previous_tells,
                             before: fingerprint_previous,
                             limit: query.search_lines,
                             found,
+                            found_line,
                             position,
+                            position_under,
                         },
                     );
                 },
             );
-            let tail = emit_tail(&mut b, &c, position, true, query.lines_wanted);
+            let tail = emit_tail(
+                &mut b,
+                &c,
+                position,
+                Some(position_under),
+                query.lines_wanted,
+            );
             let outcome = b.finish().execute()?;
             let found = match outcome.get(found)? {
                 0 => Found::AtAnchor,
                 shift if shift > 0 => Found::Moved(count_of(shift)),
                 _ => Found::NotFound,
             };
-            Ok(Tail {
+            Ok(Tail::new(
                 found,
-                line: string_of(&outcome, line)?,
-                previous: string_of(&outcome, previous)?,
-                count: count_of(outcome.get(tail.count)?),
-                lines: texts(outcome.get(tail.lines)?),
-                above: string_of(&outcome, tail.above)?,
-                last: outcome
+                (
+                    string_of(&outcome, line)?,
+                    string_of(&outcome, previous)?,
+                    string_of(&outcome, found_line)?,
+                ),
+                tail.end(&outcome)?,
+                outcome
                     .get(tail.last)?
                     .ok_or(Error::MissingResult(tail.last.id()))?,
-            })
+            ))
         }
     }
 }
@@ -408,14 +607,21 @@ struct Search {
     previous: Reg<kind::Str>,
     /// The fingerprint's line.
     line: [Reg<kind::Str>; 3],
+    /// Whether the line before is enough to find the line by
+    /// ([`Fingerprint::previous_tells`]).
+    previous_tells: bool,
     /// The fingerprint's line before it.
     before: Reg<kind::Str>,
     /// How many lines up to search.
     limit: u32,
     /// Set to how far up the fingerprint was found.
     found: Reg<kind::Int>,
+    /// Set to the text of the line where it was found.
+    found_line: Reg<kind::Str>,
     /// Set to the line where it was found.
     position: Reg<kind::TextRange>,
+    /// Set to the text of the line above it.
+    position_under: Reg<kind::Str>,
 }
 
 /// Emits the search upward from the line before the anchor for the line
@@ -444,12 +650,19 @@ fn emit_search(b: &mut Builder, c: &Constants, search: &Search) {
                 let is_broken = b.equal(text, with_break);
                 let is_line = b.or(is_line, is_fed);
                 let is_line = b.or(is_line, is_broken);
+                let is_line = if search.previous_tells {
+                    b.bool(true)
+                } else {
+                    is_line
+                };
                 let is_before = b.equal(above, search.before);
                 let both = b.and(is_line, is_before);
                 b.if_(both, |b| {
                     let found = b.add(shift, c.zero);
                     b.set(search.found, found);
+                    b.set(search.found_line, text);
                     b.set(search.position, here);
+                    b.set(search.position_under, above);
                     b.break_loop();
                 });
                 let top = b.not(moved);
@@ -475,20 +688,6 @@ fn count_of(value: i32) -> u32 {
     u32::try_from(value).unwrap_or(0)
 }
 
-/// The strings of a program's array of lines, newest first, put oldest
-/// first.
-fn texts(values: Vec<Value>) -> Vec<String> {
-    let mut lines: Vec<String> = values
-        .into_iter()
-        .map(|value| match value {
-            Value::String(text) => text,
-            _ => String::new(),
-        })
-        .collect();
-    lines.reverse();
-    lines
-}
-
 /// A copy of `range` collapsed to its start. Two calls.
 fn collapsed(range: &IUIAutomationTextRange) -> Result<IUIAutomationTextRange, Error> {
     let copy = range.clone_range()?;
@@ -503,21 +702,32 @@ fn line_text(range: &IUIAutomationTextRange) -> Result<String, Error> {
     Ok(String::from_utf16_lossy(&copy.text(-1)?))
 }
 
-/// The classic implementation's tail, from the line `from`: what
-/// [`emit_tail`] emits, call by call.
+/// The classic implementation's tail, from the line `from`, with the last
+/// line's range: what [`emit_tail`] emits, call by call.
 fn classic_tail(
     from: &IUIAutomationTextRange,
-    count_lines_from: bool,
+    found_under: Option<&str>,
     wanted: u32,
-) -> Result<(IUIAutomationTextRange, u32, Vec<String>, String), Error> {
+) -> Result<(TailEnd, IUIAutomationTextRange), Error> {
+    let count_lines_from = found_under.is_some();
+    // With no anchor the guard is the text's first line itself, there
+    // being none above it; above an anchor at the top there is none.
+    let guard = collapsed(from)?;
+    let has_guard = guard.move_by(TextUnit_Line, -1)? != 0 || found_under.is_none();
+    let guard_before = match found_under {
+        Some(text) => text.to_owned(),
+        None => line_text(&guard)?,
+    };
     let document = from.clone_range()?;
     document.expand(TextUnit_Document)?;
-    let last = document.clone_range()?;
-    last.move_endpoint_to(Endpoint::Start, &document, Endpoint::End)?;
-    last.move_endpoint_by_unit(Endpoint::Start, TextUnit_Character, -1)?;
-    last.expand(TextUnit_Line)?;
     let walker = collapsed(if count_lines_from { from } else { &document })?;
     let moved = walker.move_by(TextUnit_Line, FAR)?;
+    let last = walker.clone_range()?;
+    last.expand(TextUnit_Line)?;
+    if last.compare_endpoints(Endpoint::Start, &last, Endpoint::End)? == 0 {
+        last.move_endpoint_by_unit(Endpoint::Start, TextUnit_Character, -1)?;
+        last.expand(TextUnit_Line)?;
+    }
     let mut count = moved;
     if walker.compare_endpoints(Endpoint::Start, &last, Endpoint::Start)? > 0 {
         count -= 1;
@@ -527,24 +737,51 @@ fn classic_tail(
     }
     let count = count_of(count);
     let reading = count.min(wanted);
-    let row = last.clone_range()?;
-    let mut lines = Vec::new();
-    let mut at_top = false;
-    while lines.len() < usize::try_from(reading).unwrap_or(usize::MAX) {
-        lines.push(String::from_utf16_lossy(&row.text(-1)?));
-        if row.move_by(TextUnit_Line, -1)? == 0 {
-            at_top = true;
-            break;
-        }
-        row.expand(TextUnit_Line)?;
-    }
-    let above = if !lines.is_empty() && !at_top {
-        String::from_utf16_lossy(&row.text(-1)?)
+    let (rows, block, last_line, before_last) = if reading == 0 {
+        (0, String::new(), String::new(), String::new())
+    } else {
+        let last_line = String::from_utf16_lossy(&last.text(-1)?);
+        let before = collapsed(&last)?;
+        let before_last = if before.move_by(TextUnit_Line, -1)? == 0 {
+            String::new()
+        } else {
+            line_text(&before)?
+        };
+        let first = collapsed(&last)?;
+        let back = 1 - i32::try_from(reading).unwrap_or(i32::MAX);
+        let went = first.move_by(TextUnit_Line, back)?;
+        first.move_endpoint_to(Endpoint::End, &last, Endpoint::End)?;
+        (
+            count_of(1 - went),
+            String::from_utf16_lossy(&first.text(-1)?),
+            last_line,
+            before_last,
+        )
+    };
+    let guard_after = if has_guard {
+        line_text(&guard)?
     } else {
         String::new()
     };
-    lines.reverse();
-    Ok((last, count, lines, above))
+    let settled = is_settled(
+        &guard_before,
+        &guard_after,
+        rows,
+        &block,
+        [before_last.as_str(), last_line.as_str()],
+    );
+    Ok((
+        TailEnd {
+            count,
+            rows,
+            lines: split_lines(&block, rows),
+            last_line,
+            before_last,
+            settled,
+            scrolled: guard_before != guard_after,
+        },
+        last,
+    ))
 }
 
 /// The tail the classic way, the fallback and the reference: the same
@@ -558,16 +795,13 @@ fn classic_tail(
 pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, Error> {
     match query.start {
         TailStart::Document(range) => {
-            let (last, count, lines, above) = classic_tail(range, false, query.lines_wanted)?;
-            Ok(Tail {
-                found: Found::Afresh,
-                line: String::new(),
-                previous: String::new(),
-                count,
-                lines,
-                above,
+            let (end, last) = classic_tail(range, None, query.lines_wanted)?;
+            Ok(Tail::new(
+                Found::Afresh,
+                (String::new(), String::new(), String::new()),
+                end,
                 last,
-            })
+            ))
         }
         TailStart::Anchor { range, fingerprint } => {
             let at = collapsed(range)?;
@@ -580,9 +814,12 @@ pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, 
                 String::new()
             };
             let mut found = Found::NotFound;
+            let mut found_line = String::new();
             let mut position = at.clone_range()?;
+            let mut position_under = previous.clone();
             if previous == fingerprint.previous {
                 found = Found::AtAnchor;
+                found_line.clone_from(&line);
             } else if has_previous {
                 let row = above.clone_range()?;
                 let mut text = previous.clone();
@@ -594,9 +831,11 @@ pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, 
                     } else {
                         String::new()
                     };
-                    if fingerprint.line_forms().contains(&text) && up == fingerprint.previous {
+                    if fingerprint.matches(&text) && up == fingerprint.previous {
                         found = Found::Moved(shift);
+                        found_line = text;
                         position = here;
+                        position_under = up;
                         break;
                     }
                     if !moved {
@@ -605,16 +844,35 @@ pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, 
                     text = up;
                 }
             }
-            let (last, count, lines, above) = classic_tail(&position, true, query.lines_wanted)?;
-            Ok(Tail {
-                found,
-                line,
-                previous,
-                count,
-                lines,
-                above,
-                last,
-            })
+            let (end, last) = classic_tail(&position, Some(&position_under), query.lines_wanted)?;
+            Ok(Tail::new(found, (line, previous, found_line), end, last))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_settled, split_lines};
+
+    #[test]
+    fn a_read_settles_only_when_the_text_held_still() {
+        let wt = ["one\r\n", "two\r\n"];
+        assert!(is_settled("top", "top", 3, "zero\r\none\r\ntwo\r\n", wt));
+        assert!(is_settled("top", "top", 0, "", wt));
+        // The console host's lines come without their line breaks.
+        assert!(is_settled("top", "top", 2, "one\r\ntwo", ["one", "two"]));
+        // Scrolled beneath the guard.
+        assert!(!is_settled("top", "next", 2, "one\r\ntwo\r\n", wt));
+        // The lines read on their own are not where the single read ends.
+        assert!(!is_settled("top", "top", 2, "two\r\nthree\r\n", wt));
+    }
+
+    #[test]
+    fn a_block_splits_into_its_lines_wrapped_ones_whole() {
+        assert_eq!(split_lines("a  \r\nb  \r\n", 2), ["a  ", "b  "]);
+        assert_eq!(split_lines("a  \r\nb  ", 2), ["a  ", "b  "]);
+        assert_eq!(split_lines("xxxyy \r\nb  \r\n", 3), ["xxxyy ", "b  "]);
+        assert_eq!(split_lines("", 1), [""]);
+        assert_eq!(split_lines("", 0), Vec::<String>::new());
     }
 }

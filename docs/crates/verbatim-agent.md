@@ -63,8 +63,8 @@ Public API:
   `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
-  `LaunchProcess` inherits the launched child's stdio (uncaptured) by
-  default; its `stderr_to` field, an `Option<String>` defaulted via
+  `LaunchProcess` gives the launched child no standard handles by
+  default, as a program a user starts has none; its `stderr_to` field, an `Option<String>` defaulted via
   `serde(default)` so an older client that omits it on the wire still
   deserializes, names a path the agent creates (truncating any existing
   content) and redirects both the child's stdout and stderr into, so a
@@ -84,9 +84,21 @@ Public API:
   with a diagnosis printed instead of a downstream mystery.
 
 Implementation notes: process management (private `process` module)
-launches via `std::process::Command`, inheriting the agent's own
-interactive session and stdio (never captured) — the reason this exists
-at all rather than something reachable over WinRM or PowerShell Direct.
+launches via `CreateProcessW`, inheriting the agent's own interactive
+session — the reason this exists at all rather than something reachable
+over WinRM or PowerShell Direct — but not its standard handles: those of
+an agent started with its output redirected to a log made the console
+host, started explicitly as `conhost.exe`, take them as a pseudoconsole's
+input and output, open no window, and exit. The command line is quoted
+by the C runtime's rules, and an environment override is set over the
+agent's own environment. Before the child runs, it is allowed to take the
+foreground (`AllowSetForegroundWindow`, after the Control tap that lets
+the agent set the foreground itself when the foreground lock is in
+force), as a program a user starts may: a console window opened under
+the lock raised its focus events while refused the foreground, and when
+the harness then brought it forward no new event said so, so Verbatim,
+which dropped the refused window's events as NVDA does, never announced
+it.
 Lookup and termination act on raw pids via `OpenProcess`,
 `TerminateProcess`, and `GetExitCodeProcess`, so a test can manage a
 process it did not itself spawn. The agent also keeps the handle of every

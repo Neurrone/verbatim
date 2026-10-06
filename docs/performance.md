@@ -420,9 +420,14 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   document range and a second program); so does a terminal's first read
   when it gains the focus, the baseline (2 calls). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
-  call per provider method: 22 for the baseline of a six-line text, 25 for
-  a grown prompt, 32 for an output line and a new prompt. The provider's
-  own work is the same either way, and pinned too: 9 clones, 6 line
-  expansions, 5 reads, 4 moves, and 8 other range calls for the output
-  line.
+  call per provider method: 34 for the baseline of a six-line text, 30 for
+  a grown prompt, 43 for an output line and a new prompt. The provider's
+  own work is the same either way, and pinned too: 13 clones, 6 line
+  expansions, 6 reads, 5 moves, and 13 other range calls for the output
+  line. The lines spoken are read in one call, however many there are, so
+  the cost does not grow with them. Of these calls, the line above where
+  the read started, read again at the end, and the last line and the one
+  before it, compared with the end of that one read, tell whether the
+  text moved while it was read (a full scrollback scrolling beneath the
+  ranges during a flood), when the read is set aside for the next.
 - Target: 1.

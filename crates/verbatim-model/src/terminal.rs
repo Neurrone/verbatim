@@ -54,6 +54,15 @@ pub struct LineChange {
     /// Whether the line only grew at its end, so `text` is exactly the
     /// characters added, which may be the user's own typing showing.
     pub appended: bool,
+    /// For a line that grew, the length in bytes of the white space at the
+    /// start of `text` that may have been on the line already. Lines are
+    /// compared without their trailing white space, which cannot be told
+    /// from the terminal's padding, so a line's own trailing space (the
+    /// space ending a prompt) comes back as if added once text follows it.
+    /// Core matches typing after the part of it the typing does not start
+    /// with.
+    #[serde(default)]
+    pub uncertain: usize,
 }
 
 /// How many lines went by unread.

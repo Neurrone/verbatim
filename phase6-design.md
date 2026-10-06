@@ -1706,3 +1706,31 @@ open:
   own elapsed time with output reported, divided by its time with output
   reporting off, both measured by the script in the same window, since the
   suite has no calibration of trace stages yet.
+
+What the first live runs against Windows Terminal and the console host
+found, on 2026-10-06, and what changed:
+
+- The console host is read through UIA on Windows 11: its provider reports
+  text formatting, as arbitration checks. Its text area's focus comes from
+  the host's process, while `GetWindowThreadProcessId` names the console's
+  client as the window's owner, and inside a remote operation its provider
+  gives no native window handle, so the outpost finds the window by the
+  classic walk.
+- The agent gave its own standard handles to every program it started;
+  `conhost.exe` takes inherited handles as a pseudoconsole's and opens no
+  window. The agent now starts programs with none, and lets each take the
+  foreground, as a user's launch would.
+- A prompt's trailing space cannot be told from padding, so what a line
+  gained can start with white space that was already there;
+  `LineChange::uncertain` says how much, and Core matches typing after it.
+- Ranges keep their rows while a full scrollback scrolls beneath them,
+  between any two calls. Lines are therefore read in one call, a read is
+  checked to have held still and set aside when it did not (when the text
+  scrolled beneath it, saying lines were skipped and starting again from
+  it), the last line is found from the walk that counts, and a
+  half-written last line is found again grown.
+- The console scenarios set the scrollback to 9,001 lines, since `mode
+  con` cuts it to 30. The wall-time ratio is measured on a fourth flood
+  against the third, both into a full scrollback: a flood filling an
+  empty one while it is read is slower in the console host whether its
+  output is reported or not.

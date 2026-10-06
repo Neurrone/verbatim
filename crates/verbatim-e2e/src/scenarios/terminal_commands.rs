@@ -72,8 +72,8 @@ pub(crate) fn speak_passwords(settings: &mut Settings) {
 
 /// Steps 1 and 2: `echo hello` with its echo and output, then the password
 /// prompt.
-fn echo_then_password_prompt(scenario: &mut Scenario) {
-    terminal::expect_prompt_read(scenario);
+fn echo_then_password_prompt(scenario: &mut Scenario, state: &ScenarioState) {
+    terminal::expect_prompt_read(scenario, state);
     terminal::type_with_echo(scenario, "echo hello");
     scenario
         .speech()
@@ -84,8 +84,8 @@ fn echo_then_password_prompt(scenario: &mut Scenario) {
         .expect_in_order(&["Password:"], STEP_TIMEOUT);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    echo_then_password_prompt(scenario);
+pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
+    echo_then_password_prompt(scenario, state);
     terminal::run_command(scenario, SECRET);
     let heard = terminal::listen_until(scenario, "done", STEP_TIMEOUT, false);
     let typed = ["s", "e", "c", "r", "t"];
@@ -102,8 +102,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.speech().expect_exactly(&[PROMPT], STEP_TIMEOUT);
 }
 
-pub(crate) fn body_spoken_password(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    echo_then_password_prompt(scenario);
+pub(crate) fn body_spoken_password(scenario: &mut Scenario, state: &mut ScenarioState) {
+    echo_then_password_prompt(scenario, state);
     scenario.type_text(SECRET).expect("types the password");
     scenario
         .speech()

@@ -617,6 +617,13 @@ behavior is generic, keyed by the control, never the window's title: a
 UIA element of class `TermControl` (Windows Terminal) or `WPFTermControl`
 (the terminal embedded in Visual Studio), or a focus in a
 `ConsoleWindowClass` window (the console host), is `Role::Terminal`.
+The console host's text area is read through UIA, as NVDA reads it on
+current Windows (its provider reports text formatting, which arbitration
+checks). Its focus comes from the host's own process, while
+`GetWindowThreadProcessId` names the console's client as the window's
+owner, and inside a remote operation the host's provider gives no native
+window handle for the window; the classic walk to the nearest window
+finds it.
 
 - The worker keeps, per terminal node, a `Terminal`: an anchor (a range at
   the start of the last line read) and a `Memory` (that line's text and
@@ -638,14 +645,35 @@ UIA element of class `TermControl` (Windows Terminal) or `WPFTermControl`
   rewritten: from the start of the word where it first differs; shorter:
   nothing), and the lines after it, all of them up to the read limit, or
   the last ones with the rest counted (`Skipped::Count`). A rewrite under
-  a blank line is not trusted, since a blank line matches too easily.
+  a blank line is not trusted, since a blank line matches too easily. The
+  anchor's line found above the anchor (`Found::Moved`) is compared the
+  same way, since the last line read is often the one output was still
+  being written to. A line that grew reports, as `LineChange::uncertain`,
+  how much of the white space it gained it already had at the same place:
+  its padding, or its own trailing spaces, which cannot be told apart, so
+  Core matches typing after a prompt's trailing space.
+- A read the text changed under (`settled` false: the line above where it
+  started read differently at its end, or the one read of its lines did
+  not end with the last line and the one before it read on their own)
+  finds nothing and keeps the memory and the anchor, and the text change
+  that disturbed it causes the next read. When the text scrolled beneath
+  the read (`scrolled`: the line above where it started changed), lines
+  went by unread instead: the read says "skipped lines" without a count
+  (`Skipped::Uncounted`) and remembers its own last lines and last line
+  as the anchor, so the next read starts from there. Live, a flood in
+  Windows Terminal's full scrollback kept every read from settling until
+  it ended; kept back at an anchor from before it, a second, identical
+  flood's end matched the first's and nothing was spoken. Before reads
+  were checked at all, lines read one by one during such a flood came
+  back twice or out of order.
 - When the fingerprint is not found, the anchor no longer compares with
   the text (a full-screen program switched screens), or the anchored read
   found nothing new after the anchor (a full-screen program redrawing a
   line above it), the terminal is read afresh from the end of its
   document, and `after_fresh` compares the lines read with the screen
-  last seen: when the old screen's end reappears at the new one's start,
-  the lines after it; otherwise the lines that differ in place, preceded
+  last seen: when the old screen's end reappears at the new one's start
+  (its last line as it was or grown since), what that line gained and the
+  lines after it; otherwise the lines that differ in place, preceded
   by `Skipped::Uncounted` ("skipped lines") when no line kept its place
   and the text holds more lines than were read (the scrollback overflowed
   past the search). A redraw with the same text finds nothing, and

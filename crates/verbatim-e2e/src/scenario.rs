@@ -395,6 +395,24 @@ impl Scenario {
         }
     }
 
+    /// Opens one more connection to Verbatim's control plane, subscribed to
+    /// the normalized events Core receives: for a scenario that waits for
+    /// evidence no speech shows, such as a terminal's caret reaching its
+    /// prompt. Events from before the call are not on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent cannot be reached, the tunnel cannot
+    /// be opened, or the subscription is refused.
+    pub fn subscribe_events(&mut self) -> io::Result<ControlClient> {
+        let agent_addr =
+            endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
+        let mut events =
+            AgentClient::connect(&agent_addr).and_then(AgentClient::open_control_tunnel)?;
+        ok_or_error(events.request(Request::SubscribeEvents)?)?;
+        Ok(events)
+    }
+
     /// The primary control-plane connection: status, gestures, keys,
     /// latency, tree dumps, and quit.
     pub fn control(&mut self) -> &mut ControlClient {

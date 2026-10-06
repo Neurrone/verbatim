@@ -256,8 +256,10 @@ the contract the Windows side implements.
   really changed. A `TerminalOutput` (`terminal.rs`) is what the outpost's
   diff found, in the order it is spoken: `changed`, the last line read
   changed in place (a `LineChange`: the `text` to speak, the whole `line`
-  as it now is, and whether it was `appended` to, so `text` is exactly the
-  characters added); `skipped`, lines that went by unread (`Skipped::Count`
+  as it now is, whether it was `appended` to, so `text` is exactly the
+  characters added, and, for a line that grew, how many `uncertain` bytes
+  of white space at the start of `text` the line may already have had,
+  its padding or its own trailing spaces); `skipped`, lines that went by unread (`Skipped::Count`
   or `Skipped::Uncounted` when the scrollback overflowed past the anchor
   and the count is lost; `plus` adds two); and `lines`, the newest lines
   without padding, an empty string for a blank line, each at most
