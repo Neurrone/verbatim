@@ -258,6 +258,25 @@ impl AgentClient {
         }
     }
 
+    /// Injects real OS key strokes on the guest, each a plus-joined
+    /// combination such as `shift+tab`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when a key name is
+    /// unknown, in which case nothing was sent.
+    pub fn send_keys(&mut self, keys: &[String]) -> io::Result<()> {
+        match self.request(Request::SendKeys {
+            keys: keys.to_vec(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::KeysSent,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("SendKeys", &other)),
+        }
+    }
+
     /// Asks whether `pid` is still running on the guest.
     ///
     /// # Errors

@@ -17,5 +17,5 @@
 
 pub mod client;
 pub mod protocol;
-mod send_keys;
+pub mod send_keys;
 pub mod server;

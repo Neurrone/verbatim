@@ -258,9 +258,25 @@ fn dispatch(id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
+        Request::SendKeys { keys } => send_keys(id, &keys),
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
+    }
+}
+
+/// Answers [`Request::SendKeys`], injecting nothing unless every key name
+/// parses.
+fn send_keys(id: u64, keys: &[String]) -> Frame {
+    match verbatim_control::send_keys::parse_all(keys)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
+        .and_then(|combos| verbatim_control::send_keys::inject(&combos))
+    {
+        Ok(()) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::KeysSent,
+        },
+        Err(error) => error_frame(id, &error),
     }
 }
 

@@ -13,6 +13,9 @@
 //! `demo` records one end-to-end scenario on this machine as a video for
 //! the repository's `videos` folder. See `xtask/src/demo.rs`.
 //!
+//! `nvda` builds the NVDA transcript add-on and captures what NVDA speaks
+//! (`docs/nvda-transcript.md`). See `xtask/src/nvda.rs`.
+//!
 //! `park` moves this Remote Desktop session onto the machine's console, so a
 //! local end-to-end run keeps working with no RDP client connected. See
 //! `xtask/src/park.rs`.
@@ -23,6 +26,7 @@ use std::process::{Command, ExitCode};
 use std::str;
 
 mod demo;
+mod nvda;
 mod park;
 mod vm;
 
@@ -55,6 +59,7 @@ fn main() -> ExitCode {
         Some("vm") => vm::run(&args[1..]),
         Some("park") => park::run(),
         Some("demo") => demo::run(&args[1..]),
+        Some("nvda") => nvda::run(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
@@ -64,6 +69,9 @@ fn main() -> ExitCode {
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
             eprintln!(
                 "  demo  record one scenario on this machine as a video in videos/ (cargo xtask demo <scenario> [--name <name>])"
+            );
+            eprintln!(
+                "  nvda  build the NVDA transcript add-on, or capture what NVDA speaks; run `cargo xtask nvda` alone for its verbs"
             );
             eprintln!(
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"

@@ -62,11 +62,14 @@ Public API:
   `broadcast_speech(..)`, `broadcast_speech_started(..)`, and
   `broadcast_speech_ended(..)` fan frames out to subscribed connections; drop
   stops accepting and disconnects every client.
-- `send_keys` (a private module, used by the server's `SendKeys`
-  handler) — `parse_combo` and `parse_all` (validating every entry
-  against the shared key-name vocabulary before anything is injected) and
-  `inject`, which synthesizes the modifier-down, key, modifier-up sequence
-  via `SendInput` with correct extended-key flags.
+- `send_keys` (public, used by the server's `SendKeys` handler and by the
+  agent's request of the same name) — `parse_combo` and `parse_all`
+  (validating every entry against the shared key-name vocabulary before
+  anything is injected) and `inject`, which synthesizes the modifier-down,
+  key, modifier-up sequence via `SendInput` with correct extended-key
+  flags. The modifier position accepts Control, Shift, Alt, either Windows
+  key, and the screen-reader modifiers Insert, numpad Insert, and Caps
+  Lock, so an NVDA command such as `insert+t` can be pressed.
 
 Implementation notes, the server: the pipe is created with a security
 descriptor restricting access to the owning user and with remote clients

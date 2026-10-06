@@ -16,8 +16,19 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 /// Modifier names recognized in the all-but-last position of a plus-joined
 /// `SendKeys` entry such as `shift+tab`. These are exactly the names
 /// [`verbatim_input::keys::vk_from_name`] also resolves, so parsing only
-/// needs to check membership before resolving the virtual key.
-const MODIFIER_NAMES: &[&str] = &["control", "shift", "alt", "leftwindows", "rightwindows"];
+/// needs to check membership before resolving the virtual key. The last
+/// three are screen-reader modifiers, held to press an NVDA key such as
+/// `insert+t` when the agent drives NVDA (`docs/nvda-transcript.md`).
+const MODIFIER_NAMES: &[&str] = &[
+    "control",
+    "shift",
+    "alt",
+    "leftwindows",
+    "rightwindows",
+    "insert",
+    "numpadinsert",
+    "capslock",
+];
 
 /// One parsed `SendKeys` entry: zero or more modifiers held down for the
 /// duration of one key press.
@@ -100,6 +111,10 @@ fn keybd_input(key: KeyName, key_up: bool) -> INPUT {
 /// than requested (the OS blocked injection, e.g. a secure desktop is
 /// active).
 ///
+/// # Panics
+///
+/// Never in practice: only if the size of `INPUT` did not fit in an `i32`.
+///
 /// # Safety-adjacent notes
 ///
 /// This calls the Win32 `SendInput` API, which affects whatever
@@ -165,6 +180,14 @@ mod tests {
             ]
         );
         assert_eq!(combo.key, vk_from_name("delete").unwrap());
+    }
+
+    #[test]
+    fn screen_reader_modifiers_are_accepted() {
+        let combo = parse_combo("insert+t").expect("parses");
+        assert_eq!(combo.modifiers, vec![vk_from_name("insert").unwrap()]);
+        assert!(parse_combo("capslock+t").is_ok());
+        assert!(parse_combo("numpadinsert+numpad5").is_ok());
     }
 
     #[test]

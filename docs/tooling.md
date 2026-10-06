@@ -638,6 +638,12 @@ the probed locations.
 The `cargo xtask vm` verbs and the golden-image rebuild live in
 [the VM harness guide](vm.md).
 
+## Recording what NVDA says
+
+Install `nvda-addon/verbatimTranscript.nvda-addon` into NVDA and run
+`cargo xtask nvda capture` with the keys to press;
+[the NVDA transcript guide](nvda-transcript.md) has the details.
+
 ## Troubleshooting
 
 **The agent is unreachable after a checkpoint restore, but perfectly

@@ -22,9 +22,10 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ListFiles`]; version 3 added [`Request::ForegroundInfo`],
 /// [`Request::CloseWindows`], [`Request::WriteFile`], and
 /// `BringToForeground`'s title filter; version 4 added
-/// [`Request::ReadFileChunk`]. A test run against an older agent is
-/// refused at `Hello` instead of losing its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 4;
+/// [`Request::ReadFileChunk`]; version 5 added [`Request::SendKeys`]. A
+/// test run against an older agent is refused at `Hello` instead of losing
+/// its connection mid-run.
+pub const AGENT_PROTOCOL_VERSION: u32 = 5;
 
 /// The default TCP port the agent listens on.
 ///
@@ -179,6 +180,17 @@ pub enum Request {
         /// Path to the directory, agent-local.
         path: String,
     },
+    /// Synthesizes real OS keyboard input with `SendInput`, in the key-name
+    /// vocabulary of the control plane's `SendKeys`, whose parser and
+    /// injection this reuses. Exists so a screen reader other than Verbatim
+    /// (NVDA, for a transcript) can be driven with no Verbatim running.
+    /// Every name is validated before any key is sent. Answered by
+    /// [`ReplyPayload::KeysSent`].
+    SendKeys {
+        /// Key strokes in order, each a plus-joined combination such as
+        /// `shift+tab`.
+        keys: Vec<String>,
+    },
     /// Asks the agent to stop speaking this protocol on this connection and
     /// instead relay raw bytes to and from Verbatim's control-plane named
     /// pipe. After the reply to this request, the connection is a raw
@@ -265,6 +277,8 @@ pub enum ReplyPayload {
         /// The file names, without the directory.
         names: Vec<String>,
     },
+    /// Answer to [`Request::SendKeys`]: every key was injected.
+    KeysSent,
     /// Answer to [`Request::OpenControlTunnel`]: the agent successfully
     /// opened Verbatim's control-plane pipe and is ready to relay bytes.
     /// A failure to open that pipe is reported as a [`Frame::Error`]

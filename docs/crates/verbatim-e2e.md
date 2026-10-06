@@ -17,6 +17,7 @@ Public API:
 - `AgentClient` — a typed host-side client for `verbatim_agent::protocol`:
   connects over TCP, completes the agent's `Hello` handshake, and exposes
   `launch_process`, `kill_process`, `process_status`, `session_info`,
+  `send_keys` (real key strokes through the agent's `SendKeys`),
   `read_file`, `copy_file` (a file of any size on the agent's machine,
   read in chunks with the agent's `ReadFileChunk` request and written to a
   path on this machine), and `open_control_tunnel` as plain methods.

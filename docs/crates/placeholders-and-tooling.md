@@ -22,4 +22,9 @@
   machine's console through a scheduled task that
   `vm/scripts/Register-VerbatimParkTask.ps1` registers once, then checks
   that the console desktop is unlocked with an uncloaked foreground
-  window, so a local end-to-end run works with no RDP client connected.
+  window, so a local end-to-end run works with no RDP client connected. `cargo xtask nvda` (`xtask/src/nvda.rs`) packs `nvda-addon/src` into
+  the committed `nvda-addon/verbatimTranscript.nvda-addon` (a stored zip
+  with fixed dates and LF line endings, so the bytes depend only on the
+  source; a unit test fails when the committed file is stale) and
+  `capture` presses keys through the agent and prints what NVDA speaks;
+  see [the NVDA transcript guide](../nvda-transcript.md).

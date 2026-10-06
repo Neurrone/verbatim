@@ -46,7 +46,11 @@ Public API:
   modules), `ReadFileChunk` (up to 8 MiB of a file of any size from a
   given offset, answered like `ReadFile` and empty past the end, so a
   client can copy a file too large for `ReadFile`, such as a scenario's
-  video; protocol version 4), `OpenControlTunnel`. `KillOutcome` makes
+  video; protocol version 4), `SendKeys` (real OS key strokes through
+  `verbatim_control::send_keys`, every name validated before any key is
+  sent, so NVDA can be driven with no Verbatim running, for
+  [the NVDA transcript](../nvda-transcript.md); protocol version 5),
+  `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` inherits the launched child's stdio (uncaptured) by

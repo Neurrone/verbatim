@@ -31,7 +31,9 @@ the NVDA reference for the behavior is in [docs/nvda](nvda/readme.md).
 **Running and debugging things.** [The tooling guide](tooling.md)
 covers `verbatim-inspect`, `mockapp`, the end-to-end suite, and the
 troubleshooting traps; [the VM harness guide](vm.md) covers every
-`cargo xtask vm` verb and rebuilding the golden image.
+`cargo xtask vm` verb and rebuilding the golden image;
+[the NVDA transcript guide](nvda-transcript.md) covers recording what
+NVDA says, to decide what Verbatim should say.
 
 ## The full map
 
@@ -54,5 +56,7 @@ troubleshooting traps; [the VM harness guide](vm.md) covers every
   concurrency vocabulary Verbatim uses.
 - [Tooling](tooling.md) and [the VM harness](vm.md) — driving the
   project day to day.
+- [The NVDA transcript](nvda-transcript.md) — the NVDA add-on and
+  `cargo xtask nvda capture`, for recording what NVDA says in a scenario.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary, each term
   linked to its defining document.
