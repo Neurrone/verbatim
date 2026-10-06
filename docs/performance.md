@@ -169,7 +169,7 @@ added. The MSAA operations run through a real outpost.
   focused element, its nearest window (`NormalizeElementBuildCache`, since
   the focus fact carries no window of its own for an element that is not a
   window), and one ancestor hop, which meets the group the previous focus
-  was in. The two measured calls cost mockapp 93 provider calls.
+  was in. The two measured calls cost mockapp 95 provider calls.
 - Target: 1, with remote operations. Phase 6 step 2's exit criterion is
   at most 2, asserted exactly.
 
@@ -182,7 +182,7 @@ added. The MSAA operations run through a real outpost.
   focused-element read: the focused element, its nearest window, the
   probe, and four ancestor hops (the group, the window, the desktop's root
   element, and a hop that finds no parent above the desktop and ends the
-  walk). The measured calls cost mockapp 156 provider calls.
+  walk). The measured calls cost mockapp 160 provider calls.
 - Target: 1 UIA call and 1 window message. The walk could also stop at the
   desktop's root element, which is known locally, instead of asking for its
   parent; that would save one call today, before remote operations.
@@ -197,7 +197,7 @@ The focus lands on the list itself, and its selected item is read with it.
   focused element, its nearest window, one ancestor hop (the window, known
   from the previous focus), and the selected item in three calls (the
   `Selection` pattern, `GetCurrentSelection`, and `BuildUpdatedCache` on the
-  first item). The measured calls cost mockapp 139 provider calls.
+  first item). The measured calls cost mockapp 143 provider calls.
 - Target: 1.
 
 ### Arrowing through a list, UIA
@@ -207,7 +207,7 @@ The focus moves from one list item to the next.
 - Minimum: 1 UIA call, as for any steady-state focus change.
 - Today: 2 UIA calls measured, 3 with the focused-element read: the
   focused element, its nearest window, and one ancestor hop, which meets
-  the list. The same as a steady-state focus change, 93 provider calls.
+  the list. The same as a steady-state focus change, 95 provider calls.
 - Target: 1.
 
 ### An object navigation step, UIA
@@ -220,7 +220,7 @@ Next sibling and parent, from a node the outpost holds.
   proves it still answers (`BuildUpdatedCache`), its nearest window, for
   correcting the neighbor's backend, and the step. A neighbor with no
   window of its own needs no further call for the correction. They cost
-  mockapp 137 provider calls for the next sibling and 138 for the parent.
+  mockapp 141 provider calls for the next sibling and 142 for the parent.
 - Target: 1. The refresh is not needed to take the step, which itself
   fails when the element is gone, and the nearest window can be read in
   the same program as the step.

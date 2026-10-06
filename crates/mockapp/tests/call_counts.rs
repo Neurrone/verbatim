@@ -573,7 +573,7 @@ fn uia_focus_changes_cost_exactly() {
         &[
             ("WM_GETOBJECT", 4),
             ("ProviderOptions", 44),
-            ("GetPatternProvider", 18),
+            ("GetPatternProvider", 22),
             ("GetPropertyValue", 51),
             ("HostRawElementProvider", 15),
             ("Navigate", 12),
@@ -599,7 +599,7 @@ fn uia_focus_changes_cost_exactly() {
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 27),
-            ("GetPatternProvider", 9),
+            ("GetPatternProvider", 11),
             ("GetPropertyValue", 29),
             ("HostRawElementProvider", 10),
             ("Navigate", 7),
@@ -630,7 +630,7 @@ fn uia_focus_changes_cost_exactly() {
         &[
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 30),
-            ("GetPatternProvider", 20),
+            ("GetPatternProvider", 24),
             ("GetPropertyValue", 49),
             ("HostRawElementProvider", 14),
             ("Navigate", 7),
@@ -655,7 +655,7 @@ fn uia_focus_changes_cost_exactly() {
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 27),
-            ("GetPatternProvider", 9),
+            ("GetPatternProvider", 11),
             ("GetPropertyValue", 29),
             ("HostRawElementProvider", 10),
             ("Navigate", 7),
@@ -691,7 +691,7 @@ fn uia_navigation_steps_cost_exactly() {
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 31),
-            ("GetPatternProvider", 18),
+            ("GetPatternProvider", 22),
             ("GetPropertyValue", 51),
             ("HostRawElementProvider", 13),
             ("Navigate", 7),
@@ -712,7 +712,7 @@ fn uia_navigation_steps_cost_exactly() {
         &[
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 32),
-            ("GetPatternProvider", 18),
+            ("GetPatternProvider", 22),
             ("GetPropertyValue", 51),
             ("HostRawElementProvider", 13),
             ("Navigate", 7),
