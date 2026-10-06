@@ -128,14 +128,25 @@ impl std::error::Error for GuiError {}
 /// `settings_host` backs the settings dialog; `events` carries
 /// [`GuiEvent`]s out to the app.
 ///
+/// The GUI runs at most once per process: wxWidgets keeps one application
+/// in process-wide state and does not support starting again after it
+/// ends, so a second call fails.
+///
 /// # Errors
 ///
-/// Returns [`GuiError`] if wxWidgets fails to initialize.
+/// Returns [`GuiError`] if wxWidgets fails to initialize, or if the GUI has
+/// already run in this process.
 pub fn run_gui(
     settings_host: Arc<dyn SpeechSettingsHost>,
     events: Sender<GuiEvent>,
     on_ready: impl FnOnce(GuiHandle) + Send + 'static,
 ) -> Result<(), GuiError> {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return Err(GuiError(
+            "the GUI has already run in this process".to_owned(),
+        ));
+    }
     let (sender, receiver) = unbounded();
     let core = GuiCore {
         host: settings_host,
