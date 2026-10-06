@@ -22,6 +22,7 @@ verbatim-agent.workspace = true
 verbatim-config.workspace = true
 verbatim-control.workspace = true
 verbatim-e2e.workspace = true
+verbatim-model.workspace = true
 workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
 
 [lints]

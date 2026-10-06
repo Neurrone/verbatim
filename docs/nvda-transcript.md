@@ -60,6 +60,12 @@ A step is a key to press, or one of these:
   the Verbatim running on this machine through its control pipe, so
   Verbatim's own commands can be used without pressing a modifier key
   NVDA also uses.
+- `--type <text>` types the text through the agent's `TypeText`, as the
+  terminal scenarios type their commands.
+
+A key step can also name several keys joined by commas, such as
+`numpad8,numpad8`, pressed in one batch, so that both screen readers
+count it as a double press.
 
 Steps run one at a time, in order. After each one, the capture waits until
 NVDA has queued no new speech for one second, which is the settling rule
@@ -83,6 +89,13 @@ The options are:
   settled, by default 1000.
 - `--timeout-ms <ms>`, the longest wait after any one key, by default
   10000.
+- `--verbatim`, to record the Verbatim running on this machine instead,
+  through its control pipe, with NVDA closed. The same steps then give
+  Verbatim's transcript in the same form: each utterance as it is queued,
+  and a line for each one cut off before it was heard in full. Run
+  Verbatim with test audio and eSpeak NG, as the end-to-end suite does,
+  and NVDA with eSpeak NG too, so that the two are compared under the same
+  settings.
 
 To record NVDA reading Verbatim's own GUI, run Verbatim with test audio so
 that it is silent (see the test-audio section of the tooling guide), open

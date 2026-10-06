@@ -2125,6 +2125,7 @@ dependencies = [
  "verbatim-config",
  "verbatim-control",
  "verbatim-e2e",
+ "verbatim-model",
  "workspace-hack",
 ]
 

@@ -13,20 +13,26 @@
 //! `capture` drives the NVDA running in the agent's session: it runs each
 //! step through the agent (a key pressed through real OS input, a program
 //! launched, or a window brought to the foreground), waits for NVDA's
-//! speech to settle, and prints what NVDA queued for speech after it.
+//! speech to settle, and prints what NVDA queued for speech after it. With
+//! `--verbatim`, it prints what the Verbatim running on this machine queued
+//! instead, read from its control pipe, so the same steps give two
+//! transcripts that can be compared line by line.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_e2e::agent_client::AgentClient;
+use verbatim_model::UtteranceEnding;
 
 /// The add-on's source directory, relative to the workspace root.
 const SOURCE_DIR: &str = "nvda-addon/src";
@@ -50,9 +56,11 @@ pub fn run(args: &[String]) -> ExitCode {
             eprintln!("verbs:");
             eprintln!("  build    write {PACKAGE} from {SOURCE_DIR}");
             eprintln!(
-                "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] <step>...: \
-                 run each step through the agent and print what NVDA speaks after it; a step \
-                 is a key, --launch <program> [--arg <arg>]..., --front <image>[=<title>], or                  --gesture <id> (sent to the local Verbatim)"
+                "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] [--verbatim] \
+                 <step>...: run each step through the agent and print what NVDA (or, with \
+                 --verbatim, the local Verbatim) speaks after it; a step is a key, --launch \
+                 <program> [--arg <arg>]..., --front <image>[=<title>], or --gesture <id> (sent \
+                 to the local Verbatim)"
             );
             return ExitCode::from(2);
         }
@@ -192,7 +200,8 @@ fn crc32(data: &[u8]) -> u32 {
 /// One thing `capture` does, in the order given, before waiting for NVDA's
 /// speech to settle and printing it.
 enum Step {
-    /// Press a key combination through the agent.
+    /// Press a key combination through the agent, or several joined by
+    /// commas in one batch, so `numpad8,numpad8` is a double press.
     Key(String),
     /// Start a program through the agent, in its session.
     Launch { program: String, args: Vec<String> },
@@ -206,6 +215,9 @@ enum Step {
     /// this machine through its control pipe, so Verbatim's own commands
     /// can be used without pressing a modifier key NVDA also uses.
     Gesture(String),
+    /// Type text through the agent, each character mapped with the
+    /// foreground window's keyboard layout.
+    Type(String),
 }
 
 impl Step {
@@ -213,6 +225,7 @@ impl Step {
         match self {
             Self::Key(key) => key.clone(),
             Self::Gesture(identifier) => format!("gesture {identifier}"),
+            Self::Type(text) => format!("type {text:?}"),
             Self::Launch { program, args } => format!("launch {program} {}", args.join(" ")),
             Self::Front { image, title } => match title {
                 Some(title) => format!("front {image} \"{title}\""),
@@ -224,6 +237,8 @@ impl Step {
 
 struct CaptureOptions {
     agent: String,
+    /// Record the local Verbatim's speech rather than NVDA's.
+    verbatim: bool,
     quiet: Duration,
     timeout: Duration,
     steps: Vec<Step>,
@@ -232,6 +247,7 @@ struct CaptureOptions {
 fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
     let mut options = CaptureOptions {
         agent: format!("127.0.0.1:{}", verbatim_agent::protocol::DEFAULT_PORT),
+        verbatim: false,
         quiet: Duration::from_secs(1),
         timeout: Duration::from_secs(10),
         steps: Vec::new(),
@@ -249,6 +265,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
         };
         match arg.as_str() {
             "--agent" => options.agent.clone_from(value()?),
+            "--verbatim" => options.verbatim = true,
             "--quiet-ms" => options.quiet = millis(value()?)?,
             "--timeout-ms" => options.timeout = millis(value()?)?,
             "--launch" => options.steps.push(Step::Launch {
@@ -263,6 +280,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
                 }
             }
             "--gesture" => options.steps.push(Step::Gesture(value()?.clone())),
+            "--type" => options.steps.push(Step::Type(value()?.clone())),
             "--front" => {
                 let target = value()?;
                 let (image, title) = match target.split_once('=') {
@@ -335,26 +353,156 @@ impl Transcript {
     }
 }
 
+/// Where `capture` reads speech from.
+enum Source {
+    /// NVDA's transcript add-on: the connection, the last sequence number
+    /// read, and the moment the add-on's clock started.
+    Nvda {
+        transcript: Transcript,
+        last_seq: u64,
+        started: Instant,
+    },
+    /// The local Verbatim's speech subscription, read on a thread of its
+    /// own, and each queued utterance's text, to name one cut off.
+    Verbatim {
+        frames: Receiver<io::Result<Frame>>,
+        texts: HashMap<u64, String>,
+    },
+}
+
+impl Source {
+    fn nvda(agent: &mut AgentClient) -> io::Result<Self> {
+        let session_id = agent.session_info()?.session_id;
+        let port = u16::try_from(u32::from(PORT_BASE) + session_id)
+            .map_err(|_| io::Error::other(format!("session id {session_id} is out of range")))?;
+        let (transcript, hello) = Transcript::connect(port)?;
+        let started = Instant::now();
+        println!(
+            "NVDA {} in session {}",
+            hello["nvda_version"]
+                .as_str()
+                .unwrap_or("(unknown version)"),
+            hello["session_id"]
+        );
+        Ok(Self::Nvda {
+            transcript,
+            last_seq: 0,
+            started,
+        })
+    }
+
+    fn verbatim() -> io::Result<Self> {
+        let mut control = ControlClient::connect_pipe()?;
+        verbatim_control::client::ok_or_error(control.request(Request::SubscribeSpeech)?)?;
+        let (sender, frames) = mpsc::channel();
+        thread::spawn(move || {
+            loop {
+                let frame = control.next_frame();
+                let failed = frame.is_err();
+                if sender.send(frame).is_err() || failed {
+                    return;
+                }
+            }
+        });
+        println!("Verbatim on its control pipe");
+        Ok(Self::Verbatim {
+            frames,
+            texts: HashMap::new(),
+        })
+    }
+
+    /// Milliseconds on the clock this source stamps its entries with.
+    fn now_ms(&self) -> i64 {
+        match self {
+            Self::Nvda { started, .. } => {
+                i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)
+            }
+            Self::Verbatim { .. } => epoch_ms(),
+        }
+    }
+
+    /// The entries recorded since the last call, each with its time on
+    /// this source's clock and its line.
+    fn poll(&mut self) -> io::Result<Vec<(i64, String)>> {
+        match self {
+            Self::Nvda {
+                transcript,
+                last_seq,
+                ..
+            } => {
+                let entries = transcript.entries_after(*last_seq)?;
+                Ok(entries
+                    .into_iter()
+                    .map(|entry| {
+                        *last_seq = entry["seq"].as_u64().unwrap_or(*last_seq);
+                        (entry["ms"].as_i64().unwrap_or(0), describe(&entry["event"]))
+                    })
+                    .collect())
+            }
+            Self::Verbatim { frames, texts } => {
+                let mut lines = Vec::new();
+                while let Ok(frame) = frames.try_recv() {
+                    match frame? {
+                        Frame::Speech {
+                            utterance,
+                            text,
+                            queued_at_ms,
+                            ..
+                        } => {
+                            texts.insert(utterance.0, text.clone());
+                            lines.push((millis(queued_at_ms), format!("[{utterance}] {text}")));
+                        }
+                        Frame::SpeechEnded { utterance, ending } => {
+                            let text = texts.remove(&utterance.0).unwrap_or_default();
+                            let how = match ending {
+                                UtteranceEnding::Completed => continue,
+                                UtteranceEnding::Cancelled => "cancelled".to_owned(),
+                                UtteranceEnding::Failed(why) => format!("failed ({why})"),
+                            };
+                            lines.push((epoch_ms(), format!("{how} [{utterance}] {text}")));
+                        }
+                        Frame::Sound { indication, at_ms } => {
+                            lines.push((millis(at_ms), format!("sound: {indication}")));
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(lines)
+            }
+        }
+    }
+}
+
+/// Milliseconds since the Unix epoch, the clock Verbatim's frames carry.
+fn epoch_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| millis_of(since.as_millis()))
+}
+
+fn millis(ms: u64) -> i64 {
+    i64::try_from(ms).unwrap_or(i64::MAX)
+}
+
+fn millis_of(ms: u128) -> i64 {
+    i64::try_from(ms).unwrap_or(i64::MAX)
+}
+
 fn capture(args: &[String]) -> io::Result<()> {
     let options = parse_capture_args(args)?;
     let mut agent = AgentClient::connect(options.agent.as_str())?;
-    let session_id = agent.session_info()?.session_id;
-    let port = u16::try_from(u32::from(PORT_BASE) + session_id)
-        .map_err(|_| io::Error::other(format!("session id {session_id} is out of range")))?;
-    let (mut transcript, hello) = Transcript::connect(port)?;
-    let started = Instant::now();
-    println!(
-        "NVDA {} in session {}",
-        hello["nvda_version"]
-            .as_str()
-            .unwrap_or("(unknown version)"),
-        hello["session_id"]
-    );
-    let mut last_seq = 0;
+    let mut source = if options.verbatim {
+        Source::verbatim()?
+    } else {
+        Source::nvda(&mut agent)?
+    };
     for step in &options.steps {
-        let sent_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+        let sent_ms = source.now_ms();
         match step {
-            Step::Key(key) => agent.send_keys(std::slice::from_ref(key))?,
+            Step::Key(keys) => {
+                let keys: Vec<String> = keys.split(',').map(str::to_owned).collect();
+                agent.send_keys(&keys)?;
+            }
             Step::Launch { program, args } => {
                 agent.launch_process(program, args, None, &[], None)?;
             }
@@ -364,20 +512,19 @@ fn capture(args: &[String]) -> io::Result<()> {
                 }
             }
             Step::Gesture(identifier) => send_gesture(identifier)?,
+            Step::Type(text) => agent.type_text(text)?,
         }
         println!("> {}", step.label());
         let mut last_activity = Instant::now();
         let deadline = last_activity + options.timeout;
         loop {
             thread::sleep(POLL_INTERVAL);
-            let entries = transcript.entries_after(last_seq)?;
+            let entries = source.poll()?;
             if !entries.is_empty() {
                 last_activity = Instant::now();
             }
-            for entry in entries {
-                last_seq = entry["seq"].as_u64().unwrap_or(last_seq);
-                let offset = entry["ms"].as_i64().unwrap_or(0) - sent_ms;
-                println!("  {offset:+} ms  {}", describe(&entry["event"]));
+            for (ms, line) in entries {
+                println!("  {:+} ms  {line}", ms - sent_ms);
             }
             let now = Instant::now();
             if now.duration_since(last_activity) >= options.quiet {
