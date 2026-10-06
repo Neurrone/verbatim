@@ -728,6 +728,70 @@ fn states_changed_disabled_appearing_announces_unavailable() {
 }
 
 #[test]
+fn a_button_disabled_after_the_focus_left_it_is_silent() {
+    // The Reset button hands the focus to the tree, then is disabled; its
+    // state change arrives before the tree's focus event. It no longer
+    // reports itself focused, so "unavailable" is not spoken, nor is any
+    // further change before the focus event.
+    let source = Pid(1);
+    let node_id = NodeId::new(28);
+    let focusable = StateSet::new().with(State::Focusable);
+    let button = node(
+        28,
+        Role::Button,
+        Some("Reset"),
+        None,
+        focusable.with(State::Focused),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, button),
+    );
+
+    let disabled = StateSet::new().with(State::Disabled);
+    let (state, effects) = reduce(
+        &state,
+        &states_changed_input(TraceId::mint(), source, node_id, disabled),
+    );
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+    assert_eq!(state.focused().map(|(_, n)| n.states), Some(disabled));
+
+    let (_, effects) = reduce(
+        &state,
+        &states_changed_input(TraceId::mint(), source, node_id, focusable),
+    );
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+}
+
+#[test]
+fn a_button_disabled_while_still_focused_says_unavailable() {
+    let source = Pid(1);
+    let node_id = NodeId::new(29);
+    let focused = StateSet::new().with(State::Focusable).with(State::Focused);
+    let button = node(29, Role::Button, Some("Reset"), None, focused);
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, button),
+    );
+
+    let (_, effects) = reduce(
+        &state,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            node_id,
+            focused.with(State::Disabled),
+        ),
+    );
+    assert_eq!(
+        speak_effects(&effects)[0].segments,
+        vec![UtteranceSegment::new(SegmentContent::State(
+            State::Disabled
+        ))]
+    );
+}
+
+#[test]
 fn states_changed_identical_set_is_silent() {
     let source = Pid(1);
     let node_id = NodeId::new(23);

@@ -297,7 +297,12 @@ Implementation notes, `reduce`:
 - A states change on the focused node is diffed against the stored
   snapshot: the gained states are spoken, and of the lost ones those
   spoken by their absence, so unchecking says "not checked" and leaving
-  half checked without becoming checked says it too.
+  half checked without becoming checked says it too. A focus that
+  reported itself focused when it became the focus
+  (`FocusContext::reported_focused`) and whose new state set no longer
+  includes focused has lost the focus before the next focus event
+  arrived: its states are kept but nothing is spoken (`docs/parity.md`,
+  "State changes after the focus has left").
 - Outpost replacement (`docs/parity.md`, "Recovery after an outpost is
   replaced"): node ids carry the outpost incarnation that issued them, so an
   id from a replaced outpost never names a node in its successor. On

@@ -576,6 +576,7 @@ fn reduce_focus_changed(
         ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
+        reported_focused: report.node.states.contains(State::Focused),
     };
 
     if let Some(focus) = state.focus.as_ref() {
@@ -594,6 +595,7 @@ fn reduce_focus_changed(
                 let mut kept = focus.clone();
                 kept.snapshot = new_focus.snapshot;
                 kept.ancestors = new_focus.ancestors;
+                kept.reported_focused |= new_focus.reported_focused;
                 state.focus = Some(kept);
                 return Vec::new();
             }
@@ -1519,6 +1521,18 @@ fn reduce_states_changed(
     let role = focus.snapshot.role;
     let utterance_source = source_of(&focus.snapshot);
     focus.snapshot.states = new_states;
+    // NVDA speaks a state change only while the changed object is its
+    // focus, which a focus event changes when NVDA handles it, in the order
+    // the events came (`docs/nvda/events.md`, "The focus gate"). An outpost
+    // can deliver the state change of the control the focus has just left
+    // before the slower focus event for the control it went to, such as a
+    // button disabled once the focus has moved off it. The object's own
+    // states tell: one that reported itself focused and no longer does has
+    // lost the focus, and NVDA, having handled the focus event first, would
+    // not speak its change.
+    if focus.reported_focused && !new_states.contains(State::Focused) {
+        return Vec::new();
+    }
 
     let gained = StateSet::from_iter(
         new_states

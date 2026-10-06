@@ -201,6 +201,21 @@ speech. Features that need otherwise (progress bars, live text) get it
 by overriding these handlers in their behavior mixins
 ([Object model](object-model.md)), not by loosening the gate.
 
+The gate compares with the focus as it is when the event runs, and
+NVDA's focus changes only when a focus event runs (`doPreGainFocus`
+above). Events run one at a time in the order they were queued, and
+winevents keep their order through the limiter too, so whether a state
+change of the control the focus is leaving is spoken depends on order
+alone. When the application disables a button after moving the focus
+off it, the focus event comes first, the button is no longer the focus
+when its state change runs, and nothing is said. When it disables the
+button first, the state change runs while the button is still the
+focus, and "unavailable" is spoken before the next control. NVDA never
+looks at the changed object's own focused state for this. (The identity
+test against `api.getFocusObject` in the base `event_stateChange`; the
+generic winevent path in `IAccessibleHandler` hands an event for the
+object NVDA last queued as the focus to that same focus object.)
+
 Two default handlers also *cancel* in-flight speech:
 `event_focusEntered` cancels speech and returns without announcing
 when the entered container is a menu bar, popup menu, or menu item,

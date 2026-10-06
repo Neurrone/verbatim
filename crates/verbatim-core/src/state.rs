@@ -49,6 +49,12 @@ pub(crate) struct FocusContext {
     /// focus can be taken silently (`docs/parity.md`, "Recovery after an
     /// outpost is replaced"), but the ids name nothing any more.
     pub(crate) alive: bool,
+    /// The focused node reported itself focused when it became the focus,
+    /// so a later state set without the focused state means the focus has
+    /// left it before the next focus event arrived (`docs/parity.md`,
+    /// "State changes after the focus has left").
+    #[serde(default)]
+    pub(crate) reported_focused: bool,
 }
 
 /// The application and window of the most recent foreground change (decision
