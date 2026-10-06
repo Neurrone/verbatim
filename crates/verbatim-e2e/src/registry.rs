@@ -94,10 +94,10 @@ use crate::scenario::Scenario;
 use crate::scenarios::{
     explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
     notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor, notepad_say_all,
-    object_navigation_in_settings, rapid_tabbing_in_settings, settings_dialog_keys,
-    settings_system_page, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree, terminal_commands, terminal_flood, terminal_review_grid,
-    terminal_settings_page, theme_panel,
+    notepad_spelling_errors, object_navigation_in_settings, rapid_tabbing_in_settings,
+    settings_dialog_keys, settings_system_page, start_menu_search, switch_to_onecore,
+    synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_flood,
+    terminal_review_grid, terminal_settings_page, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -344,6 +344,15 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_spelling_errors",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: notepad_spelling_errors::setup,
+        body: notepad_spelling_errors::body,
+        teardown: notepad_spelling_errors::teardown,
     },
     ScenarioDef {
         name: "theme_panel",

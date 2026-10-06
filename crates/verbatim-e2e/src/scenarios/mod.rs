@@ -16,6 +16,7 @@ pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod notepad_editing;
 pub(crate) mod notepad_review_cursor;
 pub(crate) mod notepad_say_all;
+pub(crate) mod notepad_spelling_errors;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod rapid_tabbing_in_settings;
 pub(crate) mod settings_dialog_keys;
