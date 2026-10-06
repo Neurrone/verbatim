@@ -28,7 +28,6 @@ use std::mem::ManuallyDrop;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::SAFEARRAY;
-use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayPutElement};
 use windows::Win32::System::Variant::{
     VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4, VT_UNKNOWN,
 };
@@ -446,16 +445,8 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
 /// or null when it cannot be built. `SafeArrayPutElement` takes its own
 /// reference.
 fn range_array(range: &ITextRangeProvider) -> *mut SAFEARRAY {
-    // SAFETY: a one-element `VT_UNKNOWN` vector, filled at index 0.
-    unsafe {
-        let array = SafeArrayCreateVector(VT_UNKNOWN, 0, 1);
-        if array.is_null() {
-            return array;
-        }
-        let index = 0i32;
-        let _ = SafeArrayPutElement(array, &raw const index, range.as_raw());
-        array
-    }
+    // SAFETY: the range's interface pointer, for a `VT_UNKNOWN` vector.
+    unsafe { super::props::filled_vector(VT_UNKNOWN, &[range.as_raw().cast_const()]) }
 }
 
 /// Whether the provider at `index` serves the text pattern: it has text.

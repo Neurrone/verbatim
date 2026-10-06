@@ -255,8 +255,9 @@ mod props {
     use verbatim_model::State;
     use windows::Win32::Foundation::{HWND, VARIANT_FALSE, VARIANT_TRUE};
     use windows::Win32::System::Com::SAFEARRAY;
-    use windows::Win32::System::Ole::SafeArrayCreateVector;
-    use windows::Win32::System::Ole::SafeArrayPutElement;
+    use windows::Win32::System::Ole::{
+        SafeArrayCreateVector, SafeArrayDestroy, SafeArrayPutElement,
+    };
     use windows::Win32::System::Variant::{
         VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_BOOL, VT_BSTR, VT_I4,
         VT_UNKNOWN,
@@ -332,32 +333,60 @@ mod props {
         }
     }
 
+    /// A vector of `vt` elements holding `elements`, null when it cannot be
+    /// created or an element cannot be put, in which case the array is
+    /// destroyed rather than leaked or answered partly filled.
+    ///
+    /// # Safety
+    ///
+    /// Each pointer must be what `SafeArrayPutElement` takes for `vt`: an
+    /// interface pointer for `VT_UNKNOWN`, or a pointer to the value for a
+    /// value type; it is copied (or its interface referenced) by the call.
+    pub(super) unsafe fn filled_vector(
+        vt: VARENUM,
+        elements: &[*const std::ffi::c_void],
+    ) -> *mut SAFEARRAY {
+        let Ok(count) = u32::try_from(elements.len()) else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: creates a new vector, owned here until returned.
+        let array = unsafe { SafeArrayCreateVector(vt, 0, count) };
+        if array.is_null() {
+            return array;
+        }
+        for (index, &element) in (0i32..).zip(elements) {
+            // SAFETY: `index` is within the vector's bounds, and `element`
+            // is what the call takes for `vt` (the caller's guarantee).
+            let put = unsafe { SafeArrayPutElement(array, &raw const index, element) };
+            if put.is_err() {
+                // SAFETY: the array was created above and is not returned.
+                let _ = unsafe { SafeArrayDestroy(array) };
+                return std::ptr::null_mut();
+            }
+        }
+        array
+    }
+
     /// A one-element array of `element`, as UIA reads an element-array
     /// property such as `ControllerFor`.
     fn element_array_variant(element: &IRawElementProviderSimple) -> VARIANT {
-        // SAFETY: a one-element `VT_UNKNOWN` vector, filled at index 0;
-        // `SafeArrayPutElement` takes its own reference to the provider, and
-        // the returned VARIANT owns the array.
-        unsafe {
-            let array = SafeArrayCreateVector(VT_UNKNOWN, 0, 1);
-            if array.is_null() {
-                return empty_variant();
-            }
-            let index = 0i32;
-            if SafeArrayPutElement(array, &raw const index, element.as_raw()).is_err() {
-                return empty_variant();
-            }
-            VARIANT {
-                Anonymous: VARIANT_0 {
-                    Anonymous: ManuallyDrop::new(VARIANT_0_0 {
-                        vt: VARENUM(VT_ARRAY.0 | VT_UNKNOWN.0),
-                        wReserved1: 0,
-                        wReserved2: 0,
-                        wReserved3: 0,
-                        Anonymous: VARIANT_0_0_0 { parray: array },
-                    }),
-                },
-            }
+        // SAFETY: the provider's interface pointer, for a `VT_UNKNOWN`
+        // vector; `SafeArrayPutElement` takes its own reference to it.
+        let array = unsafe { filled_vector(VT_UNKNOWN, &[element.as_raw().cast_const()]) };
+        if array.is_null() {
+            return empty_variant();
+        }
+        // The returned VARIANT owns the array.
+        VARIANT {
+            Anonymous: VARIANT_0 {
+                Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                    vt: VARENUM(VT_ARRAY.0 | VT_UNKNOWN.0),
+                    wReserved1: 0,
+                    wReserved2: 0,
+                    wReserved3: 0,
+                    Anonymous: VARIANT_0_0_0 { parray: array },
+                }),
+            },
         }
     }
 
@@ -437,19 +466,13 @@ mod props {
     /// A `VT_UNKNOWN` vector of `providers`, or null when it cannot be
     /// built. `SafeArrayPutElement` takes its own reference to each.
     fn provider_array(providers: &[IRawElementProviderSimple]) -> *mut SAFEARRAY {
-        let count = u32::try_from(providers.len()).unwrap_or(0);
-        // SAFETY: a `VT_UNKNOWN` vector of `count` elements, filled by index
-        // within its bounds.
-        unsafe {
-            let array = SafeArrayCreateVector(VT_UNKNOWN, 0, count);
-            if array.is_null() {
-                return array;
-            }
-            for (index, provider) in (0i32..).zip(providers) {
-                let _ = SafeArrayPutElement(array, &raw const index, provider.as_raw());
-            }
-            array
-        }
+        let elements: Vec<_> = providers
+            .iter()
+            .map(|provider| provider.as_raw().cast_const())
+            .collect();
+        // SAFETY: the providers' interface pointers, for a `VT_UNKNOWN`
+        // vector; they stay alive across the call.
+        unsafe { filled_vector(VT_UNKNOWN, &elements) }
     }
 
     pub(super) fn get_property_value(
@@ -618,22 +641,17 @@ mod props {
             // contract for that case.
             return Ok(std::ptr::null_mut());
         }
-        // SAFETY: a freshly created two-element i32 SAFEARRAY, filled by
-        // index within bounds; ownership passes to the caller, matching
+        let marker = i32::try_from(UiaAppendRuntimeId).unwrap_or(0);
+        let unique = i32::try_from(index).unwrap_or(0);
+        let elements = [(&raw const marker).cast(), (&raw const unique).cast()];
+        // SAFETY: pointers to two live `i32`s, for a `VT_I4` vector;
+        // ownership of the array passes to the caller, matching
         // `GetRuntimeId`'s documented contract.
-        unsafe {
-            let array = SafeArrayCreateVector(VT_I4, 0, 2);
-            if array.is_null() {
-                return Err(Error::empty());
-            }
-            let marker = i32::try_from(UiaAppendRuntimeId).unwrap_or(0);
-            let unique = i32::try_from(index).unwrap_or(0);
-            let zero: i32 = 0;
-            let one: i32 = 1;
-            let _ = SafeArrayPutElement(array, &raw const zero, (&raw const marker).cast());
-            let _ = SafeArrayPutElement(array, &raw const one, (&raw const unique).cast());
-            Ok(array)
+        let array = unsafe { filled_vector(VT_I4, &elements) };
+        if array.is_null() {
+            return Err(Error::empty());
         }
+        Ok(array)
     }
 
     pub(super) fn get_focus(
