@@ -2339,7 +2339,9 @@ dependencies = [
 name = "verbatim-gui"
 version = "0.1.0"
 dependencies = [
+ "cmake",
  "crossbeam-channel",
+ "sha2",
  "tracing",
  "verbatim-i18n",
  "verbatim-input-windows",

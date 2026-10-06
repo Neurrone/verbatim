@@ -27,6 +27,16 @@ jobs:
       # rust-toolchain.toml pins the toolchain, installed on the first cargo
       # invocation; everything builds for the runner's own architecture.
       - uses: Swatinem/rust-cache@v2
+      # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
+      # goes to a fixed directory per version and architecture; caching it
+      # spares every run the build. The key follows the recipe file.
+      - name: Point the wxWidgets build at a cached directory
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
+      - uses: actions/cache@v4
+        with:
+          path: ~/verbatim-wx
+          key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
       # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari.
       - uses: taiki-e/install-action@v2
         with:
@@ -51,6 +61,16 @@ jobs:
             Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
           }
       - uses: Swatinem/rust-cache@v2
+      # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
+      # goes to a fixed directory per version and architecture; caching it
+      # spares every run the build. The key follows the recipe file.
+      - name: Point the wxWidgets build at a cached directory
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
+      - uses: actions/cache@v4
+        with:
+          path: ~/verbatim-wx
+          key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
       # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari.
       - uses: taiki-e/install-action@v2
         with:
@@ -73,6 +93,16 @@ jobs:
       - name: Fetch eSpeak NG's source
         run: git submodule update --init --depth 1 third_party/espeak-ng
       - uses: Swatinem/rust-cache@v2
+      # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
+      # goes to a fixed directory per version and architecture; caching it
+      # spares every run the build. The key follows the recipe file.
+      - name: Point the wxWidgets build at a cached directory
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
+      - uses: actions/cache@v4
+        with:
+          path: ~/verbatim-wx
+          key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
       - name: Locate libclang for wxDragon's bindgen
         shell: pwsh
         run: |

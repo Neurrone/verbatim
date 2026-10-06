@@ -18,5 +18,9 @@ verbatim-speech.workspace = true
 verbatim-uia.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[build-dependencies]
+cmake = "0.1"
+sha2 = "0.11"
+
 [lints]
 workspace = true
