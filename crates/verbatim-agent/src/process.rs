@@ -8,9 +8,11 @@
 //!
 //! Lookups and termination operate on raw OS pids, so a caller can query
 //! or kill a process this agent did not itself spawn. The agent also keeps
-//! the handle of every child it launched until [`status`] reports that
-//! child's exit: without a handle, an exited process's object, and with it
-//! the exit code, is gone the moment it exits.
+//! the handle of every child it launched for as long as it keeps the
+//! child's entry: without a handle, an exited process's object, and with it
+//! the exit code, is gone the moment it exits, and the held handle keeps
+//! the pid from being reused, so a kill of that pid never reaches another
+//! process.
 //!
 //! Each child [`launch`] starts runs in a job object of its own, created
 //! suspended and assigned before its first instruction, so everything it
@@ -38,10 +40,10 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::Win32::System::Threading::{
     CREATE_SUSPENDED, GetExitCodeProcess, OpenProcess, OpenThread, PROCESS_ACCESS_RIGHTS,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
-    TerminateProcess,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    QueryFullProcessImageNameW, ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess,
 };
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 
 use crate::protocol::{KillOutcome, ProcessState};
 
@@ -98,11 +100,8 @@ pub fn launch(
     // for.
     let now = Instant::now();
     launched.retain(|_, entry| {
-        let finished = !job_has_processes(&entry.job)
-            && entry
-                .child
-                .as_ref()
-                .is_none_or(|child| already_exited(HANDLE(child.as_raw_handle())));
+        let finished =
+            !job_has_processes(&entry.job) && already_exited(HANDLE(entry.child.as_raw_handle()));
         if !finished {
             return true;
         }
@@ -112,7 +111,7 @@ pub fn launch(
     launched.insert(
         pid,
         Launched {
-            child: Some(child),
+            child,
             job,
             finished_at: None,
         },
@@ -122,8 +121,8 @@ pub fn launch(
 
 /// A child [`launch`] started.
 struct Launched {
-    /// Its handle, until [`status`] has reported its exit.
-    child: Option<Child>,
+    /// Its handle, kept with the entry.
+    child: Child,
     /// The job holding it and everything it started.
     job: OwnedHandle,
     /// When a later launch first found the child exited and its job empty.
@@ -211,8 +210,8 @@ fn job_has_processes(job: &OwnedHandle) -> bool {
 /// the code can be read.
 ///
 /// A child [`launch`] started is answered from its kept handle, so its exit
-/// code is reported however long ago it exited; the first report of its
-/// exit releases the handle.
+/// code is reported for as long as the entry is kept (a later launch drops
+/// entries finished more than five minutes earlier).
 ///
 /// A pid that cannot be opened at all — already exited and its process
 /// object gone, or one that never named a live process — is reported as
@@ -226,17 +225,11 @@ fn job_has_processes(job: &OwnedHandle) -> bool {
 /// be read.
 pub fn status(pid: u32) -> io::Result<ProcessState> {
     {
-        let mut launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(entry) = launched.get_mut(&pid)
-            && let Some(child) = &entry.child
-        {
+        let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = launched.get(&pid) {
             // The same reading as for any other process: `TerminateProcess`
             // sets the exit code before the process is signalled.
-            let state = read_exit_code(HANDLE(child.as_raw_handle()))?;
-            if state != ProcessState::Running {
-                entry.child = None;
-            }
-            return Ok(state);
+            return read_exit_code(HANDLE(entry.child.as_raw_handle()));
         }
     }
     let Some(handle) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
@@ -265,19 +258,25 @@ pub fn status(pid: u32) -> io::Result<ProcessState> {
 /// `TerminateProcess` itself fails for a reason other than the exit race
 /// above.
 pub fn kill(pid: u32) -> io::Result<KillOutcome> {
+    kill_as(pid, None)
+}
+
+/// [`kill`], except that a pid this agent did not launch is terminated only
+/// when it still runs an executable of the file name `image`, if given.
+fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     {
         let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
-        // Only while the child's handle is held: it keeps the pid from being
-        // reused, so the entry is certainly this process's.
-        if let Some(entry) = launched.get(&pid)
-            && let Some(child) = &entry.child
-            && job_has_processes(&entry.job)
-        {
+        // The entry's held handle keeps the pid from being reused, so the
+        // entry is certainly this process's, and the pid is never opened
+        // afresh while it exists.
+        if let Some(entry) = launched.get(&pid) {
             // A child this agent launched: end it and everything it started.
-            let running = !already_exited(HANDLE(child.as_raw_handle()));
-            // SAFETY: the job handle stays open while the lock is held.
-            unsafe { TerminateJobObject(HANDLE(entry.job.as_raw_handle()), 1) }
-                .map_err(io::Error::other)?;
+            let running = !already_exited(HANDLE(entry.child.as_raw_handle()));
+            if job_has_processes(&entry.job) {
+                // SAFETY: the job handle stays open while the lock is held.
+                unsafe { TerminateJobObject(HANDLE(entry.job.as_raw_handle()), 1) }
+                    .map_err(io::Error::other)?;
+            }
             return Ok(if running {
                 KillOutcome::Terminated
             } else {
@@ -285,10 +284,24 @@ pub fn kill(pid: u32) -> io::Result<KillOutcome> {
             });
         }
     }
+    kill_opened(pid, image)
+}
+
+/// Terminates `pid`, which this agent did not launch, opening it afresh;
+/// when `image` is given, only if the opened process still runs an
+/// executable of that file name, so a pid reused since it was looked up
+/// is left alone.
+fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     let Some(handle) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION)
     else {
         return Ok(KillOutcome::AlreadyExited);
     };
+    if let Some(image) = image
+        && !image_file_name(handle).is_some_and(|name| name.eq_ignore_ascii_case(image))
+    {
+        close(handle);
+        return Ok(KillOutcome::AlreadyExited);
+    }
     if already_exited(handle) {
         close(handle);
         return Ok(KillOutcome::AlreadyExited);
@@ -332,7 +345,9 @@ pub fn kill(pid: u32) -> io::Result<KillOutcome> {
 pub fn kill_by_name(name: &str) -> io::Result<u32> {
     let mut terminated = 0u32;
     for pid in matching_pids(name)? {
-        match kill(pid) {
+        // Checked again once opened: the pid may have been reused since
+        // the snapshot.
+        match kill_as(pid, Some(name)) {
             Ok(KillOutcome::Terminated) => terminated += 1,
             Ok(KillOutcome::AlreadyExited) => {}
             Err(error) => {
@@ -382,6 +397,26 @@ fn exe_file_name(buffer: &[u16]) -> String {
         .position(|&unit| unit == 0)
         .unwrap_or(buffer.len());
     String::from_utf16_lossy(&buffer[..len])
+}
+
+/// The file name of the executable an open process handle's process runs,
+/// `None` when it cannot be read.
+fn image_file_name(handle: HANDLE) -> Option<String> {
+    let mut buffer = [0u16; 1024];
+    let mut length = u32::try_from(buffer.len()).ok()?;
+    // SAFETY: `handle` is open with query access; the buffer outlives the
+    // call, which writes at most `length` units and updates it.
+    unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &raw mut length,
+        )
+    }
+    .ok()?;
+    let path = String::from_utf16_lossy(buffer.get(..usize::try_from(length).ok()?)?);
+    Some(path.rsplit('\\').next().unwrap_or(&path).to_owned())
 }
 
 /// Whether an already-open process handle's process has exited, used to
