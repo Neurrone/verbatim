@@ -858,12 +858,15 @@ impl Worker<'_> {
     ) {
         let mut node = node;
         // The console host's text area is a terminal, known by its window
-        // (Windows Terminal's control is known by its UIA class).
+        // (Windows Terminal's control is known by its UIA class). Its name,
+        // "Text Area", is not localized, so it is dropped, as NVDA's console
+        // class drops it, and the focus says "terminal".
         if backend == Backend::Uia
             && matches!(node.role, Role::EditableText | Role::Document)
             && window.is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS)
         {
             node.role = Role::Terminal;
+            node.name = None;
         }
         let role = node.role;
         let text_node = (!foreground).then(|| node.clone());

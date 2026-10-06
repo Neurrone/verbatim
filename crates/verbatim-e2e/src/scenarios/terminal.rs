@@ -312,9 +312,15 @@ pub(crate) fn expect_prompt_read(scenario: &mut Scenario, state: &ScenarioState)
     let ScenarioState::Window { directory, .. } = state else {
         panic!("a terminal scenario's setup opens a terminal window");
     };
-    scenario
+    let focused = scenario
         .speech()
-        .expect_in_order(&[FOCUSED_TERMINAL], STEP_TIMEOUT);
+        .expect_in_order_capturing(&[FOCUSED_TERMINAL], STEP_TIMEOUT);
+    // The console host names its text area "Text Area", in English only;
+    // NVDA drops the name, and so does Verbatim.
+    assert!(
+        !focused.contains("Text Area"),
+        "the terminal was announced as {focused:?}"
+    );
     scenario.speech().wait_until_quiet(STEP_TIMEOUT);
     let mut events = scenario
         .subscribe_events()
