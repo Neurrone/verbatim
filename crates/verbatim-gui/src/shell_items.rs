@@ -79,9 +79,11 @@ const MAX_NODES: usize = 1024;
 /// `deliver` runs on the guard thread, not the GUI thread, with
 /// `Some(items)` on success (possibly empty) or `None` when enumeration
 /// failed or exceeded its deadline (both already logged); it is invoked
-/// exactly once, unless the guard thread cannot be started (logged).
-/// Callable from any thread.
-pub fn request_shell_items<F>(kind: ShellItemKind, deliver: F)
+/// exactly once when this returns true. False means the guard thread could
+/// not be started (logged), and `deliver` will never run. Callable from any
+/// thread.
+#[must_use]
+pub fn request_shell_items<F>(kind: ShellItemKind, deliver: F) -> bool
 where
     F: FnOnce(Option<Vec<ShellItem>>) + Send + 'static,
 {
@@ -90,7 +92,9 @@ where
         .spawn(move || deliver(enumerate_with_deadline(kind)));
     if let Err(error) = guard {
         tracing::warn!(%error, "could not spawn the shell enumeration guard thread");
+        return false;
     }
+    true
 }
 
 /// Runs [`enumerate`] on its own worker thread and waits up to
