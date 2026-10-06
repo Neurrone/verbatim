@@ -14,12 +14,13 @@
 //! and the display is kept on while it reads.
 
 use verbatim_model::{
-    Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, UtteranceSegment,
+    Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit,
+    TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_text::Segmenter;
 
-use crate::editing::{is_grid, speak};
+use crate::editing::is_grid;
 use crate::state::{ReviewText, SayAll, SrState};
 use crate::text;
 
@@ -163,7 +164,16 @@ pub(crate) fn reply(state: &mut SrState, trace_id: TraceId, reply: TextReply) ->
             &chunk.text[range.clone()],
             chunk.language_at(range.start),
         ));
-        effects.push(speak(trace_id, segments));
+        // Read by say-all, so the theme's "play sounds during say all"
+        // setting applies to it.
+        effects.push(Effect::Speak(Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: None,
+            validity: None,
+            say_all: true,
+        }));
         if let Some(say_all) = state.say_all.as_mut() {
             say_all.queued.push_back((mark, position));
         }

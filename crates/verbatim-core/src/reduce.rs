@@ -289,6 +289,7 @@ fn reduce_activation_completed(
         priority: SpeechPriority::Queued,
         segments: vec![segment],
         source: None,
+        say_all: false,
         validity: None,
     })]
 }
@@ -429,6 +430,7 @@ fn reduce_background(trace_id: TraceId, event: &NormalizedEvent) -> Vec<Effect> 
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(text.clone())],
         source: None,
+        say_all: false,
         validity: None,
     })]
 }
@@ -699,6 +701,7 @@ fn focus_speech(
             priority: SpeechPriority::Queued,
             segments: node_segments(top, Reason::Focus),
             source: Some(source_of(top)),
+            say_all: false,
             validity: Some(FocusValidity {
                 node: top.id,
                 had_focus: false,
@@ -718,6 +721,7 @@ fn focus_speech(
             priority: SpeechPriority::Queued,
             segments,
             source: Some(source_of(container)),
+            say_all: false,
             validity: Some(FocusValidity {
                 node: container.id,
                 had_focus: false,
@@ -735,6 +739,7 @@ fn focus_speech(
         priority: SpeechPriority::Queued,
         segments,
         source: Some(source_of(report.node)),
+        say_all: false,
         validity: Some(FocusValidity {
             node: report.node.id,
             had_focus: true,
@@ -854,6 +859,7 @@ fn reduce_name_changed(
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::label(text.clone())],
         source: Some(source_of(&focus.snapshot)),
+        say_all: false,
         validity: None,
     })]
 }
@@ -898,6 +904,7 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
         priority,
         segments: vec![UtteranceSegment::text(text.clone())],
         source: None,
+        say_all: false,
         validity: None,
     })]
 }
@@ -1025,6 +1032,7 @@ fn navigator_command(
                 Message::NoNavigatorObject,
             ))],
             source: None,
+            say_all: false,
             validity: None,
         })];
     };
@@ -1089,6 +1097,7 @@ fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Ef
                 priority: SpeechPriority::Queued,
                 segments,
                 source: Some(source_of(&navigator.object)),
+                say_all: false,
                 validity: None,
             })]
         }
@@ -1289,6 +1298,7 @@ pub(crate) fn flat_review_command(
         priority: SpeechPriority::Queued,
         segments,
         source: None,
+        say_all: false,
         validity: None,
     })]
 }
@@ -1339,6 +1349,7 @@ fn reduce_selection_changed(
         priority: SpeechPriority::Queued,
         segments: node_segments(node, Reason::Focus),
         source: Some(source_of(node)),
+        say_all: false,
         validity: None,
     })]
 }
@@ -1400,6 +1411,7 @@ fn reduce_value_changed(
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::value(text)],
         source: Some(source_of(&focus.snapshot)),
+        say_all: false,
         validity: None,
     })]
 }
@@ -1458,6 +1470,7 @@ fn reduce_states_changed(
         priority: SpeechPriority::Queued,
         segments,
         source: Some(utterance_source),
+        say_all: false,
         validity: None,
     })]
 }
@@ -1530,6 +1543,7 @@ fn reduce_navigate_completed(
                 priority: SpeechPriority::Queued,
                 segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
                 source: None,
+                say_all: false,
                 validity: None,
             })]
         }
@@ -1775,6 +1789,7 @@ fn announce_node(
         priority,
         segments: node_segments(node, reason),
         source: Some(source_of(node)),
+        say_all: false,
         validity: None,
     }
 }

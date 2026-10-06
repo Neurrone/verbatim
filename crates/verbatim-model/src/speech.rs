@@ -325,6 +325,12 @@ pub struct Utterance {
     /// cancel ends early.
     #[serde(default)]
     pub validity: Option<FocusValidity>,
+    /// Whether say-all is reading this utterance, so the theme's "play
+    /// sounds during say all" setting decides whether its indications play
+    /// their sounds or are spoken instead (`phase6-design.md`, "The
+    /// settings dialog"). `false` for every other utterance.
+    #[serde(default)]
+    pub say_all: bool,
 }
 
 /// What focus speech is about, for dropping it once the focus has moved on

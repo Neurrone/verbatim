@@ -121,7 +121,10 @@ Public API:
   span with nothing to say (a state never announced) plays nothing
   either. An indication set to sound alone whose sound is unavailable is
   spoken instead, and so is one whose sound plays when
-  `ThemeOptions::speak_sounded_indications` is on. Replacement words
+  `ThemeOptions::speak_sounded_indications` is on. In an utterance say-all
+  reads (`Utterance::say_all`) with `ThemeOptions::sounds_during_say_all`
+  off, no indication plays its sound, so one set to sound alone is spoken
+  instead. Replacement words
   replace a role's or state's name, and come before what carries content
   of its own (a description, a position, a font); a voice style with a
   pitch change speaks the words between two pitch items. A capital letter

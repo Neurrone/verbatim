@@ -160,6 +160,7 @@ fn utterance(text: &str, priority: SpeechPriority) -> Utterance {
         priority,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        say_all: false,
         validity: None,
     }
 }
@@ -363,6 +364,7 @@ fn renders_tokens_through_capture_synth() {
             UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
         ],
         source: None,
+        say_all: false,
         validity: None,
     });
 
@@ -402,6 +404,7 @@ fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact(
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
         source: None,
+        say_all: false,
         validity: None,
     });
 
@@ -484,6 +487,7 @@ fn settings_host_get_set_commit_revert() {
 
 fn about(text: &str, node: u64, had_focus: bool) -> Utterance {
     Utterance {
+        say_all: false,
         validity: Some(FocusValidity {
             node: NodeId::new(node),
             had_focus,

@@ -72,6 +72,7 @@ fn speak(manager: &Arc<SpeechManager>, text: String) {
         priority: SpeechPriority::Interrupt,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        say_all: false,
         validity: None,
     });
 }

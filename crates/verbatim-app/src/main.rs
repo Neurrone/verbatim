@@ -338,6 +338,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
         source: None,
+        say_all: false,
         validity: None,
     });
     // Ask the foreground application for its current focus: its outpost is
@@ -1321,6 +1322,7 @@ fn report_toggle_key(manager: &SpeechManager, key: verbatim_input::ToggleKey) {
             verbatim_i18n::messages::toggle_key_state(id, on),
         )],
         source: None,
+        say_all: false,
         validity: None,
     });
 }
@@ -1344,6 +1346,7 @@ fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
         priority: SpeechPriority::Interrupt,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        say_all: false,
         validity: None,
     });
 }

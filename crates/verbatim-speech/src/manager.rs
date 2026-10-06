@@ -393,6 +393,7 @@ impl SpeechManager {
                 priority: SpeechPriority::Queued,
                 segments: vec![UtteranceSegment::text(words)],
                 source: None,
+                say_all: false,
                 validity: None,
             });
         }

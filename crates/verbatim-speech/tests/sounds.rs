@@ -173,6 +173,7 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
             UtteranceSegment::text("wrold"),
         ],
         source: None,
+        say_all: false,
         validity: None,
     });
 
