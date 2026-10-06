@@ -5,11 +5,13 @@
 //! still in flight. The reducer changes it in place, one input at a time.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{NodeId, NodeSnapshot, OutpostId, Pid, QueryId, WindowFacts, WindowHandle};
 
 /// The focused node and what the reducer knows about where it sits.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FocusContext {
     /// The application the focus belongs to.
     pub(crate) source: Pid,
@@ -23,7 +25,16 @@ pub(crate) struct FocusContext {
     /// against these and the focus itself to announce only newly entered
     /// containers (NVDA's focus-ancestry behavior); empty when the outpost's
     /// walk found nothing or timed out.
-    pub(crate) ancestors: Vec<NodeSnapshot>,
+    ///
+    /// The chain is the part of the state that grows with the application,
+    /// so it is shared rather than owned: cloning the state, as the flight
+    /// recorder does at each checkpoint, copies a pointer, not the chain.
+    /// A focus change replaces the whole chain, never edits it.
+    #[serde(
+        serialize_with = "serialize_shared",
+        deserialize_with = "deserialize_shared"
+    )]
+    pub(crate) ancestors: Arc<[NodeSnapshot]>,
     /// The most recently announced selected item within the focused
     /// container — seeded by the focus event's own `selected_child`, then
     /// advanced by each announced `SelectionChanged` — so a selection event
@@ -40,7 +51,7 @@ pub(crate) struct FocusContext {
 /// D14 as amended by the outpost redesign): the reducer's stand-in for the
 /// system's foreground window, which is what NVDA classifies events against.
 /// Every event other than a foreground change is classified against it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Attention {
     pub(crate) source: Pid,
     pub(crate) window: Option<WindowFacts>,
@@ -50,7 +61,7 @@ pub(crate) struct Attention {
 /// object-navigation commands walk, independent of keyboard focus. It
 /// follows focus by default (every focus change resets it), and the
 /// "to focus" command snaps it back.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Navigator {
     pub(crate) object: NodeSnapshot,
     /// The review cursor's character offset into the object's review text
@@ -60,14 +71,20 @@ pub(crate) struct Navigator {
 
 /// The most recently issued object-navigation query whose completion has not
 /// landed yet, and the node it navigates from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PendingNavigation {
     pub(crate) query_id: QueryId,
     pub(crate) from: NodeId,
 }
 
 /// Reducer state: focus, attention, navigator, and the latest navigation.
-#[derive(Clone, Debug, Default)]
+///
+/// Small control state is held in plain fields; anything that grows with
+/// the application is held behind `Arc`, so a clone of the whole state
+/// costs the same however large the application is. The flight recorder
+/// relies on that to snapshot the state at each checkpoint, and serializes
+/// the snapshot into a dump, so a recorded window replays from its start.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
     pub(crate) focus: Option<FocusContext>,
     pub(crate) attention: Option<Attention>,
@@ -154,7 +171,7 @@ impl SrState {
         };
         if let Some(focus) = self.focus.as_ref().filter(|focus| focus.alive) {
             insert(focus.snapshot.id);
-            for ancestor in &focus.ancestors {
+            for ancestor in focus.ancestors.iter() {
                 insert(ancestor.id);
             }
             if let Some(selected) = focus.last_selection {
@@ -183,4 +200,19 @@ impl SrState {
         self.next_query_id += 1;
         QueryId(id)
     }
+}
+
+/// Serializes a shared slice as a plain sequence.
+fn serialize_shared<S: Serializer>(
+    items: &Arc<[NodeSnapshot]>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    items[..].serialize(serializer)
+}
+
+/// Deserializes a plain sequence into a shared slice.
+fn deserialize_shared<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Arc<[NodeSnapshot]>, D::Error> {
+    Vec::<NodeSnapshot>::deserialize(deserializer).map(Arc::from)
 }

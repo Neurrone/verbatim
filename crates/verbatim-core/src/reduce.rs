@@ -11,6 +11,8 @@
 //! announcements", written from the NVDA behavior documented in
 //! `docs/nvda/events.md`.
 
+use std::sync::Arc;
+
 use verbatim_model::{
     ActionName, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
     Notification, NotificationProcessing, OutpostId, Pid, PropertyChange, Query, QueryId,
@@ -452,10 +454,10 @@ fn reduce_focus_changed(
         state
             .focus
             .as_ref()
-            .map(|focus| focus.ancestors.clone())
+            .map(|focus| Arc::clone(&focus.ancestors))
             .unwrap_or_default()
     } else {
-        report.ancestors.to_vec()
+        Arc::from(report.ancestors)
     };
     // A focus that arrives with no window facts was accepted only because
     // it came from the attended application (`window_is_attended` has
