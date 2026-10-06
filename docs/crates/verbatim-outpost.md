@@ -149,7 +149,17 @@ Public API:
     ordinary messages, which wait in a bounded queue.
   `run_pipe` is the production mode over inherited pipe handles; `run_attach`
   watches a pid directly, asks for its focus, and prints outbound messages as
-  JSON lines to stdout, the standalone dev mode.
+  JSON lines to stdout, the standalone dev mode. Both take an
+  `OutpostOptions`, fixed for the outpost's life, whose one field,
+  `remote_operations`, says whether a UIA focus's ancestry may be read
+  with a remote operation (`Outpost::with_options`; `Outpost::new` uses
+  the default, on). The worker and its reads (`worker.rs`, `read.rs`), the
+  intake, the writer, the protocol, and the supervisor's owner, policy, and
+  writer modules forbid `unsafe` code: every UIA and MSAA read goes through
+  the backend crates' safe wrappers, and what remains `unsafe` in the crate
+  is window-manager calls (`outpost/window.rs`, arbitration's class
+  reads), the event thread's message loop, process creation, and the
+  inherited pipe handles.
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global
@@ -254,7 +264,10 @@ Implementation notes:
   instruction. Core holds the only job handle, so kernel teardown of Core,
   however it dies, kills every outpost. A per-application outpost's command
   line carries `--target-pid`, fixing the watched application for its whole
-  life; the listener's carries `--listener` and no pid.
+  life, and `--classic-uia` when `uia.remote_operations` is off in
+  `settings.toml` (`Supervisor::new` takes the `OutpostOptions` every
+  outpost is launched with, which `verbatim-app` reads from the setting at
+  startup); the listener's carries `--listener` and no pid.
   Each child is spawned with `STARTF_USESTDHANDLES` and an inheritable,
   append-mode file handle as its standard error (and output), so the outpost's
   and listener's own `tracing` output — which otherwise had no subscriber and
@@ -360,9 +373,12 @@ Implementation notes:
   `ancestors_unknown`, and a queued `Item::ResolveFocus` follow-up (up to
   three attempts, while the focus is unchanged) finds the element and
   moves the focus-following subscription to it. When the focused element
-  read is in another application, the fact is out of date and dropped;
-  another element of this application can be a stand-in from an
-  application still starting, so it is treated as unresolved. For an
+  read is in another application, the fact is out of date and dropped.
+  When it is another element of this application, the focus has most
+  likely moved on (NVDA 2027.1 drops a focus event whose element no longer
+  has the keyboard focus), but an application still starting can answer
+  with a stand-in, so the fact is held back and reported only if a
+  follow-up finds its element focused after all. For an
   element with no window of its own the listener also sends the keyboard
   focus window it found when it captured the event (`focus_window`, the
   foreground thread's focus window when it belongs to the element's
@@ -376,13 +392,35 @@ Implementation notes:
   against this application's own focus window. An MSAA focus fact is
   read with NVDA's child-0-on-a-list redirect (`snapshot_from_focus_event`) and accepted
   only when the object or an ancestor has the focused state.
-- Ancestors (`read::uia_enrichment`, `read::msaa_enrichment`): the walk
-  stops at the first ancestor in the previous focus's chain (the tracking
-  state's `chain`) and splices the rest of that chain in, as NVDA does;
-  the remainder is read within `ENRICHMENT_BUDGET`, two seconds (UIA calls
-  inside it wait no longer than that), after which the ancestors are
-  reported unknown. Object navigation's ancestor query reads the whole
-  chain.
+- Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
+  `read::msaa_enrichment`): the walk stops at the first ancestor in the
+  previous focus's chain (the tracking state's `chain`) and splices the
+  rest of that chain in, as NVDA does; the remainder is read within
+  `ENRICHMENT_BUDGET`, two seconds (UIA calls inside it wait no longer
+  than that), after which the ancestors are reported unknown. Object
+  navigation's ancestor query reads the whole chain.
+- A UIA focus's ancestry, by default, is one remote operation
+  (`verbatim_uia_rops::focus_ancestry`, called by
+  `read::uia_remote_enrichment` right after the focused element is read):
+  one `Execute` checks the element's `HasKeyboardFocus` live, reads a list's
+  or tab control's selected child, walks the raw-view parents with the
+  base cache filled inside the provider until it meets a runtime id of the
+  previous chain, and finds the element's nearest window, so the
+  `NormalizeElement` call for the window is not made either. The parents
+  become the chain through `Uia::ancestor_chain_from`, with the same
+  presentable filter, the same stop at a window read through MSAA and the
+  same continuation through MSAA from there, and the same splice; the
+  program also stops at a known ancestor that is not reported (the
+  previous focus itself, say), and the splice is made there. An element
+  the program finds no longer focused holds the fact back as above. With
+  remote operations off (`--classic-uia`), or for a window whose element
+  could not be imported into a program (a client-side proxy, marked in the
+  context for the window's lifetime and forgotten when it is destroyed),
+  the per-hop walk (`read::uia_enrichment`) is used, as before. A program
+  that fails otherwise is answered by the classic walk for that call and
+  logged with the failing instruction's source line. The focus-now query
+  reads its focus the same way. A steady-state UIA focus change costs two
+  UIA calls, the focused element and the `Execute` (`docs/performance.md`).
 - Focus candidates: the intake keeps the three newest focus facts from
   each backend (`Planned::Focus`), and the worker handles them newest
   first, each under its own deadline, until one is reported, as NVDA's
@@ -400,8 +438,8 @@ Implementation notes:
   a focus observed since then, Core asks the foreground application's
   outpost for its focus (`Query::FocusNow`).
 - Window destruction: an `EVENT_OBJECT_DESTROY` for a window drops its kept
-  arbitration verdict and its MSAA nodes, so a reused handle is probed
-  afresh and never inherits them.
+  arbitration verdict, its mark as read without remote operations, and its
+  MSAA nodes, so a reused handle is probed afresh and never inherits them.
 - Held objects (outpost redesign, "Held objects"): both registries keep
   every node the outpost reports, with the live UIA element or MSAA object
   behind it where it has one.

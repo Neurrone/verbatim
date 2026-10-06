@@ -123,7 +123,11 @@ verified.
     name is dropped ("When values and descriptions are spoken" in
     [Speech](nvda/speech.md)).
   - UIA: a selected radio button is checked, not selected; a
-    toggleable list or menu item is checkable; password, required,
+    toggleable list or menu item is checkable; a menu item that no
+    pattern makes checkable is checkable and checked when its legacy
+    MSAA state (`LegacyIAccessibleState`) has the checked bit, as NVDA
+    2027.1 reads Windows Forms menu items (**matched since
+    2026-10-06**); password, required,
     invalid entry, and read-only states are read (`ValueIsReadOnly`
     and `IsDataValidForForm` ignoring their defaults, as NVDA reads
     them); a control with only a `RangeValue` pattern has that value,
@@ -676,12 +680,18 @@ verified.
   - A UIA focus is built from the event: its name, role, value, and
     states come from the properties the event delivered, as NVDA builds
     the focus object from the event's sender and serves its reads from
-    the sender's cache. **Different, to be fixed in phase 6:** Verbatim
-    accepts the focus only when the delivered properties say the element
-    has the keyboard focus, whereas NVDA reads that one property live
-    (`currentHasKeyboardFocus` in `shouldAllowUIAFocusEvent`, since
-    NVDA commit `3ca80a5fa`), because a stale cached value let
-    intermediate focus events through ([The UIA client](nvda/uia.md)).
+    the sender's cache. The focus is accepted only when the element has
+    the keyboard focus read live, as NVDA reads `currentHasKeyboardFocus`
+    in `shouldAllowUIAFocusEvent` (since NVDA commit `3ca80a5fa`), because
+    a stale cached value let intermediate focus events through ([The UIA
+    client](nvda/uia.md)) (**matched since 2026-10-06**). Verbatim first
+    requires the delivered properties to say so; the outpost then reads
+    the focused element live and holds back a fact whose element is not
+    the one focused, reporting it only if a follow-up finds it focused
+    after all; and the remote operation that reads the ancestors reads
+    `HasKeyboardFocus` live again in the same round trip, holding the fact
+    back the same way when it is false. With remote operations off, the
+    focused-element read is the live check.
     Until 2026-10-03 Verbatim's outpost read the focused element live,
     took the focus from that read, and dropped the focus when the read
     failed; under a busy application the read blocked

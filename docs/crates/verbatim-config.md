@@ -9,8 +9,8 @@ name in `profiles` is a legitimate user profile.
 Public API:
 
 - `Settings` — the `settings.toml` schema: `locale`, `log_filter`,
-  `verbatim_keys`, `keyboard` (all global; profiles cannot carry them), and
-  `speech` (the base profile's section).
+  `verbatim_keys`, `keyboard`, `uia` (all global; profiles cannot carry
+  them), and `speech` (the base profile's section).
 - `VerbatimKeys` — which keys act as the Verbatim modifier (`caps_lock`,
   `insert`, `numpad_insert`) plus `share_modifier`, which passes the
   modifier's own transitions down the hook chain for a screen reader
@@ -21,6 +21,13 @@ Public API:
   work. `verbatim-input`'s `bindings_for` consumes the resolved layout
   through its own decoupled layout enum (the app maps one to the other),
   the same pattern `DecisionConfig` already follows for `VerbatimKeys`.
+- `UiaConfig` — the `uia` section, developer settings for the UIA client:
+  `remote_operations` (on by default) lets outposts read a UIA focus's
+  ancestry with one remote operation inside the application's provider;
+  `remote_operations = false` forces the classic walk, one round trip per
+  ancestor, for diagnosing a provider and for before-and-after
+  measurements. Read once at startup: `verbatim-app` hands it to the
+  supervisor, which passes `--classic-uia` to each outpost when it is off.
 - `SpeechConfig`, `ConfigValue` — active synthesizer plus per-synthesizer
   setting values, keyed by synth id then setting id so switching synths
   never loses the other synth's values.
