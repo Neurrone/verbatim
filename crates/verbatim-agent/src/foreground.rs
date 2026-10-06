@@ -92,7 +92,7 @@ pub fn bring_to_foreground(
                 eprintln!("verbatim-agent: {image_name} is already the foreground window");
                 return Ok(true);
             }
-            force_foreground(window);
+            force_foreground(window, &pids);
             if holds_foreground(window) {
                 eprintln!(
                     "verbatim-agent: {image_name} brought to the foreground{}",
@@ -247,11 +247,20 @@ fn nudge_foreground_lock() {
 
 /// Brings `window` to the foreground: directly after the nudge, else while
 /// attached to the current foreground thread's input queue, detaching at
-/// once.
-fn force_foreground(window: HWND) {
+/// once. Nothing is done when `window` no longer belongs to one of `pids`:
+/// it was destroyed since it was found, and its handle may now name an
+/// unrelated window.
+fn force_foreground(window: HWND, pids: &[u32]) {
+    let mut owner = 0u32;
+    // SAFETY: tolerates any handle, writing 0 for an invalid one.
+    unsafe { GetWindowThreadProcessId(window, Some(&raw mut owner)) };
+    if !pids.contains(&owner) {
+        return;
+    }
     nudge_foreground_lock();
-    // SAFETY: every call below tolerates a stale handle; the attachment is
-    // undone before returning.
+    // SAFETY: every call below tolerates a stale handle, and the window's
+    // owner was checked just above; the attachment is undone before
+    // returning.
     unsafe {
         let _ = ShowWindow(window, SW_SHOW);
         let _ = BringWindowToTop(window);

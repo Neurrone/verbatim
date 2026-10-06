@@ -55,16 +55,22 @@ pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
             .collect()
     };
     for window in matching() {
-        // SAFETY: PostMessageW tolerates a window that has since gone.
+        // Checked again just before the close: a window destroyed since the
+        // enumeration could have its handle reused by an unrelated one.
+        if !window_text(window).contains(title_contains) {
+            continue;
+        }
+        // SAFETY: PostMessageW carries no pointer and tolerates a window
+        // that has since gone; the title was checked just above.
         unsafe {
             let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
     let deadline = Instant::now() + timeout;
     loop {
-        // SAFETY: IsWindow tolerates any handle.
         let remaining = matching()
             .into_iter()
+            // SAFETY: IsWindow tolerates any handle.
             .filter(|&window| unsafe { IsWindow(Some(window)) }.as_bool())
             .count();
         if remaining == 0 || Instant::now() >= deadline {
