@@ -134,9 +134,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // says so.
     press(scenario, &["enter"], &["button: speech"]);
 
-    // The new theme is removed, which selects the default theme again.
+    // The new theme is removed, which selects the default theme again. The
+    // confirmation is announced by its title and focused button; Verbatim
+    // does not yet read a dialog's text on entering it (`docs/parity.md`).
     tab_to(scenario, &["Remove", "button"]);
-    press(scenario, &["enter"], &["Remove the theme"]);
+    press(scenario, &["enter"], &["Remove Theme", "No"]);
     press(scenario, &["y"], &["Default"]);
 
     scenario.send_keys(&["escape"]).expect("sends escape");
