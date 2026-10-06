@@ -9,10 +9,12 @@
 //! pressed". Which state the switch starts in depends on the machine, so
 //! the scenario asserts that each press announces the opposite state.
 //!
-//! Where focus lands when the page opens depends on the machine too: here
-//! it lands on the switch, while on GitHub's hosted runner it stayed in
-//! the Settings search box. So the scenario presses Tab until it hears
-//! the switch, up to a limit.
+//! What opens depends on the machine too. Here the page opens with focus
+//! on the switch. On GitHub's hosted runner, the Settings app's first,
+//! cold start opened its System page instead, ignoring the page asked
+//! for, with focus in its search box. So when the switch is not heard,
+//! the scenario asks for the page again, which the running app honors,
+//! and then presses Tab until it hears the switch, up to a limit.
 
 use std::io;
 use std::time::Duration;
@@ -20,6 +22,8 @@ use std::time::Duration;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
+/// The Settings page the scenario opens.
+const PAGE: &str = "ms-settings:clipboard";
 const STEP_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long to listen for the switch after each Tab.
 const TAB_TIMEOUT: Duration = Duration::from_secs(3);
@@ -28,7 +32,7 @@ const TAB_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_TABS: usize = 15;
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    scenario.open_settings_page("ms-settings:clipboard")?;
+    scenario.open_settings_page(PAGE)?;
     Ok(ScenarioState::None)
 }
 
@@ -45,6 +49,14 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let mut heard = scenario
         .speech()
         .heard_within("Clipboard history", STEP_TIMEOUT);
+    if heard.is_none() {
+        scenario
+            .open_settings_page(PAGE)
+            .expect("asks the running Settings app for the page again");
+        heard = scenario
+            .speech()
+            .heard_within("Clipboard history", STEP_TIMEOUT);
+    }
     let mut tabs = 0;
     while heard.is_none() && tabs < MAX_TABS {
         scenario.send_keys(&["tab"]).expect("sends tab");
