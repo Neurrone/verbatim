@@ -44,6 +44,7 @@ const PLATFORM_NEUTRAL_CRATES: &[&str] = &[
     "verbatim-i18n",
     "verbatim-input",
     "verbatim-audio",
+    "verbatim-text",
 ];
 
 /// The crates through which Verbatim reaches the Windows API. Third-party

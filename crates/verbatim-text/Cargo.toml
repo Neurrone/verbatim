@@ -1,0 +1,16 @@
+[package]
+name = "verbatim-text"
+description = "Platform-neutral text segmentation: characters as grapheme clusters, words and sentences by Unicode's rules with dictionaries, terminal cell widths"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+icu_segmenter.workspace = true
+jieba-rs.workspace = true
+unicode-width.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[lints]
+workspace = true

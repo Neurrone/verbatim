@@ -28,6 +28,8 @@ commit updated only the changed crate's own guide.
   key names, and gesture tables.
 - [verbatim-input-windows](verbatim-input-windows.md) — the keyboard hook
   thread.
+- [verbatim-text](verbatim-text.md) — text segmentation: characters,
+  words, and sentences by Unicode's rules, and terminal cell widths.
 - [verbatim-audio](verbatim-audio.md) — the mixer, the AudioDevice seam,
   and the silent device (D5, D17).
 - [verbatim-audio-wasapi](verbatim-audio-wasapi.md) — the WASAPI device.

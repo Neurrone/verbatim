@@ -1,0 +1,38 @@
+# verbatim-text
+
+Platform-neutral text segmentation for the text model of milestone M4
+(`phase6-design.md`, "Internationalization in the text model"). Original
+code over ICU4X's segmenters, jieba, and `unicode-width`; it never touches a
+Windows API, and `cargo xtask ci` checks that it does not.
+
+## What it provides
+
+- `graphemes` and `grapheme_at`: characters as grapheme clusters, so an
+  emoji sequence, a letter with combining accents, a Hangul syllable, or an
+  Indic conjunct is one character, and a surrogate pair is never split.
+- `Segmenter::words` and `Segmenter::word_at`: words by Unicode's word rules
+  with ICU's dictionaries for scripts written without spaces (Japanese,
+  Thai, Lao, Khmer, Burmese), or by jieba's dictionary for Chinese, as NVDA
+  uses cppjieba. The segments cover the whole text, punctuation and
+  whitespace included, and a run of spaces and tabs is one segment, so any
+  position in it belongs to the same word.
+- `WordRules::for_text`: which word rules a text takes, from its language
+  tag when the provider gives one, and otherwise from its characters (Han
+  without kana is Chinese; Japanese mixes kanji with kana).
+- `Segmenter::sentences`: sentences by Unicode's sentence rules.
+- `cell_width`: how many terminal cells text takes, two for wide East Asian
+  characters and none for combining marks.
+- `trim_padding`: a terminal line without its trailing padding, whatever
+  whitespace characters it is made of.
+
+## Units
+
+Every offset is a byte offset into the UTF-8 string given. A provider's
+own units (UTF-16 code units, UIA text ranges, MSAA character offsets) are
+converted in the outpost, so this crate never sees them.
+
+## Cost
+
+ICU4X's compiled data is built into the binary. The jieba dictionary is
+loaded the first time Chinese text is segmented and kept for the life of
+the process.

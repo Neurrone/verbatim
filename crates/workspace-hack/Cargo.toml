@@ -15,9 +15,14 @@ license.workspace = true
 
 ### BEGIN HAKARI SECTION
 [dependencies]
+crc32fast = { version = "1" }
 i18n-embed = { version = "0.16", features = ["filesystem-assets", "fluent-system"] }
+icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
+icu_provider = { version = "2", default-features = false, features = ["alloc", "baked"] }
+litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
+potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "meta", "std", "unicode-perl", "unicode-word-boundary"] }
 regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode-perl"] }
 rust-embed = { version = "8", default-features = false, features = ["debug-embed"] }
@@ -25,18 +30,27 @@ rust-embed-utils = { version = "8", default-features = false, features = ["debug
 serde = { version = "1", features = ["derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 smallvec = { version = "1", default-features = false, features = ["const_generics"] }
+stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
 tinystr = { version = "0.8", features = ["zerovec"] }
 tracing-core = { version = "0.1" }
 unic-langid = { version = "0.9", features = ["serde"] }
 unic-langid-impl = { version = "0.9", default-features = false, features = ["serde"] }
-yoke = { version = "0.8", default-features = false, features = ["derive"] }
-zerofrom = { version = "0.1", default-features = false, features = ["derive"] }
+writeable = { version = "0.6", default-features = false, features = ["alloc"] }
+yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
+zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
+zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 
 [build-dependencies]
+cc = { version = "1", default-features = false, features = ["parallel"] }
+crc32fast = { version = "1" }
 i18n-embed = { version = "0.16", features = ["filesystem-assets", "fluent-system"] }
+icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
+icu_provider = { version = "2", default-features = false, features = ["alloc", "baked"] }
+litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
+potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "meta", "std", "unicode-perl", "unicode-word-boundary"] }
@@ -46,12 +60,16 @@ rust-embed-utils = { version = "8", default-features = false, features = ["debug
 serde = { version = "1", features = ["derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 smallvec = { version = "1", default-features = false, features = ["const_generics"] }
-syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tinystr = { version = "0.8", features = ["zerovec"] }
 unic-langid = { version = "0.9", features = ["serde"] }
 unic-langid-impl = { version = "0.9", default-features = false, features = ["serde"] }
-yoke = { version = "0.8", default-features = false, features = ["derive"] }
-zerofrom = { version = "0.1", default-features = false, features = ["derive"] }
+writeable = { version = "0.6", default-features = false, features = ["alloc"] }
+yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
+zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
+zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
