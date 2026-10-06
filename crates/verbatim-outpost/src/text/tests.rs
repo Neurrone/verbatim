@@ -195,6 +195,8 @@ struct FakeSignal {
     now: Instant,
     events: bool,
     waits: usize,
+    /// How many waits had passed each time the wait said it ended.
+    awaited: Vec<usize>,
 }
 
 impl FakeSignal {
@@ -203,6 +205,7 @@ impl FakeSignal {
             now: Instant::now(),
             events: false,
             waits: 0,
+            awaited: Vec::new(),
         }
     }
 }
@@ -223,6 +226,10 @@ impl CaretSignal for FakeSignal {
 
     fn now_ms(&mut self) -> u64 {
         WAITED_AT
+    }
+
+    fn awaited(&mut self) {
+        self.awaited.push(self.waits);
     }
 }
 
@@ -384,6 +391,7 @@ fn a_caret_moved_late_is_found_by_polling() {
     ));
     assert!(reply.moved);
     assert_eq!(signal.waits, 2);
+    assert_eq!(signal.awaited, [2], "the wait ends once, after its polls");
     assert_eq!(reply.caret.line.text, "two");
     assert_eq!(reply.unit, None, "a line is the caret's line");
 }
@@ -406,6 +414,7 @@ fn with_no_evidence_the_wait_runs_out_and_reports_the_caret_anyway() {
     ));
     assert!(!reply.moved);
     assert_eq!(signal.waits, 10, "100 ms in 10 ms polls");
+    assert_eq!(signal.awaited, [10], "the wait ends once, at its deadline");
     assert_eq!(reply.caret.line.text, "only");
     assert_eq!(reply.unit.expect("the character").text, "", "the end");
 }

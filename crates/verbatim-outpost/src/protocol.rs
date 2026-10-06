@@ -31,6 +31,9 @@ pub struct EventTiming {
     pub relayed_at_us: u64,
     /// When the outpost's worker took it from its queue.
     pub dequeued_at_us: u64,
+    /// When a caret key's wait for evidence ended, with evidence or at its
+    /// deadline (`TextOp::AwaitCaret`); 0 for anything else.
+    pub awaited_at_us: u64,
     /// When the outpost sent the resulting event to Core.
     pub published_at_us: u64,
     /// The cross-process calls the outpost's worker made between taking the
@@ -38,6 +41,9 @@ pub struct EventTiming {
     /// (`docs/performance.md`). Zero from the listener, which makes none, and
     /// from an older peer.
     pub calls: CallCounts,
+    /// The part of `calls` a caret key's wait for evidence made, before
+    /// `awaited_at_us`.
+    pub awaited_calls: CallCounts,
 }
 
 /// Microseconds since the Unix epoch, the clock [`EventTiming`] and the

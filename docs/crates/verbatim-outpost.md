@@ -34,7 +34,10 @@ Public API:
   observed, relayed to the outpost by Core, taken from the outpost's queue,
   and published to Core, and for a WinEvent how long before it was observed
   Windows raised it, and the cross-process calls the worker made for it
-  (`calls`, a `CallCounts`); the listener's `FocusFact`, Core's
+  (`calls`, a `CallCounts`). A caret key's reply also says when its wait
+  for evidence ended (`awaited_at_us`) and how many of its calls the wait
+  made (`awaited_calls`, a part of `calls`), which the worker learns from
+  the wait's `CaretSignal::awaited`; the listener's `FocusFact`, Core's
   `DeliverFact`, and the outpost's `Event` and `Reply` carry it, and Core's
   latency ledger reads it.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every

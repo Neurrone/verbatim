@@ -19,12 +19,15 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, TerminalOutput, TextOp, TextReply};
+use verbatim_model::{
+    CallCounts, CaretReport, NodeId, NodeSnapshot, Role, TerminalOutput, TextOp, TextReply,
+};
 use verbatim_uia::ElementExt;
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia_rops::Path;
 
 use crate::arbitration::{normalize_class_name, window_class_name};
+use crate::protocol::now_us;
 use crate::text::edit::EditText;
 use crate::text::uia::UiaText;
 use crate::text::{self, CaretSignal, TextError};
@@ -63,6 +66,18 @@ struct Signal<'a> {
     context: &'a Context,
     node_id: NodeId,
     since: u64,
+    awaited: Option<Awaited>,
+}
+
+/// When a caret key's wait for evidence ended, in microseconds since the
+/// Unix epoch, and the cross-process calls it made, taken from the
+/// worker's count; the worker adds them back into the reply's total.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Awaited {
+    /// When the wait ended.
+    pub(super) at_us: u64,
+    /// The calls the wait made.
+    pub(super) calls: CallCounts,
 }
 
 impl CaretSignal for Signal<'_> {
@@ -89,6 +104,13 @@ impl CaretSignal for Signal<'_> {
 
     fn reading(&mut self) {
         self.context.caret_read(self.node_id);
+    }
+
+    fn awaited(&mut self) {
+        self.awaited = Some(Awaited {
+            at_us: now_us(),
+            calls: super::worker::take_calls(),
+        });
     }
 }
 
@@ -200,17 +222,24 @@ pub(super) fn may_have_text(context: &Context, node: &NodeSnapshot) -> bool {
 }
 
 /// Answers one of Core's text requests.
-pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextReply {
+/// Also returns when a caret key's wait for evidence ended and the calls
+/// it made, for the latency log.
+pub(super) fn answer(
+    context: &Context,
+    node_id: NodeId,
+    op: &TextOp,
+) -> (TextReply, Option<Awaited>) {
     let source = match source(context, node_id) {
         Ok(source) => source,
-        Err(reply) => return reply,
+        Err(reply) => return (reply, None),
     };
     let mut signal = Signal {
         context,
         node_id,
         since: context.caret_events.count(),
+        awaited: None,
     };
-    match source {
+    let reply = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
             text::perform(
@@ -229,7 +258,8 @@ pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextRep
                 &mut signal,
             )
         }
-    }
+    };
+    (reply, signal.awaited)
 }
 
 /// The caret of `node_id`, for a `CaretMoved` event; `None` when the node

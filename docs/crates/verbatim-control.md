@@ -43,11 +43,12 @@ Public API:
   M2) with the path Core wrote its flight recorder's contents to.
   A `LatencyRecord` carries a timeline's three times and, since protocol
   version 1, its `stages`: one `LatencyStage` per stage it has passed, in
-  pipeline order, each with its `LatencyStageKind` (Windows, listener to
-  outpost, outpost queue, outpost read, to Core, reducer, to speech,
-  synthesis, leading silence, mixer and device; `label` names each as the
-  latency log does), its time in microseconds, and, for the outpost read,
-  the cross-process calls made in it. Version 1 only adds fields, which a
+  pipeline order, each with its `LatencyStageKind` (Windows, hook to Core,
+  listener to outpost, Core to outpost, outpost queue, caret wait, outpost
+  read, to Core, reducer, to speech, synthesis, leading silence, mixer and
+  device; `label` names each as the latency log does), its time in
+  microseconds, and, for the caret wait and the outpost read, the
+  cross-process calls made in it. Version 1 only adds fields, which a
   version 0 peer ignores and reads as empty, so the server answers every
   client in the same vocabulary.
 - `client` — the control-plane client, promoted here from

@@ -190,7 +190,13 @@ knowing for review:
   line when its audio starts (see `docs/tooling.md`), the outpost read
   with its count of cross-process calls. A query reply the worker answered
   feeds it the same way as an event, so a navigation keypress's trace has
-  its outpost stages and calls too. `recent` returns each timeline's
+  its outpost stages and calls too. A caret key's trace starts when the
+  keyboard hook saw the key (`key_pressed`, from the hook's
+  `pressed_at_us`, sent with the key as `ShellCommand::CaretKey`), and the
+  ledger keeps the reducer's handling of the key (`requested`, any
+  reduction before an outpost answered) apart from its handling of the
+  answer, so the line names the hook to Core, Core to outpost, and caret
+  wait stages as well. `recent` returns each timeline's
   stages and calls in its `LatencyRecord`. It mirrors
   each utterance's milestones to speech subscribers as a `Speech` frame at
   queue time, a `SpeechStarted` frame when its first frame plays, and a

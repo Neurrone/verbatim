@@ -330,21 +330,26 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
         }),
         Box::new(move |report| {
-            let input = match report {
+            let command = match report {
                 KeyReport::Observed {
                     gesture,
-                    pressed_at_ms,
+                    pressed_at_us,
                 } => match caret_keys.get(&gesture.gesture) {
-                    Some(&key) => Input::CaretKey {
-                        trace_id: gesture.trace_id,
-                        key,
-                        pressed_at_ms,
+                    Some(&key) => ShellCommand::CaretKey {
+                        input: Box::new(Input::CaretKey {
+                            trace_id: gesture.trace_id,
+                            key,
+                            pressed_at_ms: pressed_at_us / 1_000,
+                        }),
+                        pressed_at_us,
                     },
                     None => return,
                 },
-                KeyReport::Typed { trace_id, text } => Input::CharacterTyped { trace_id, text },
+                KeyReport::Typed { trace_id, text } => {
+                    ShellCommand::Input(Box::new(Input::CharacterTyped { trace_id, text }))
+                }
             };
-            let _ = reports_tx.send(ShellCommand::Input(Box::new(input)));
+            let _ = reports_tx.send(command);
         }),
     )?;
 
@@ -724,6 +729,13 @@ struct ReducerContext {
 /// reached), or a control-plane tree dump, answered on the given channel.
 pub(crate) enum ShellCommand {
     Input(Box<Input>),
+    /// A caret key the hook passed, an `Input::CaretKey`, with when the hook
+    /// saw it in microseconds since the Unix epoch, where its latency line
+    /// starts.
+    CaretKey {
+        input: Box<Input>,
+        pressed_at_us: u64,
+    },
     DumpTree(DumpTicket, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
     /// withdraw the dump if its outpost has not started it.
@@ -995,6 +1007,15 @@ impl ReducerThread<'_> {
     fn on_command(&mut self, command: ShellCommand) {
         match command {
             ShellCommand::Input(input) => self.apply(*input),
+            ShellCommand::CaretKey {
+                input,
+                pressed_at_us,
+            } => {
+                if let Input::CaretKey { trace_id, .. } = &*input {
+                    self.context.ledger.key_pressed(*trace_id, pressed_at_us);
+                }
+                self.apply(*input);
+            }
             ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),

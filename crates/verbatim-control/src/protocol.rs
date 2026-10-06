@@ -252,8 +252,8 @@ pub struct LatencyRecord {
     /// When the first audio buffer reached the device.
     pub audio_started_at_ms: Option<u64>,
     /// How long each stage the timeline passed took, in pipeline order,
-    /// with the cross-process calls made in it for the stage that makes them
-    /// (the outpost's read). A stage the timeline did not pass, or has not
+    /// with the cross-process calls made in it for the stages that make them
+    /// (a caret key's wait for evidence, and the outpost's read). A stage the timeline did not pass, or has not
     /// reached yet, is left out. Empty from a v0 peer.
     #[serde(default)]
     pub stages: Vec<LatencyStage>,
@@ -266,8 +266,9 @@ pub struct LatencyStage {
     pub kind: LatencyStageKind,
     /// How long it took, in microseconds.
     pub duration_us: u64,
-    /// The cross-process calls made in it, by kind, for the stage that makes
-    /// them; `None` for every other stage.
+    /// The cross-process calls made in it, by kind, for the stages that make
+    /// them (the caret wait and the outpost read); `None` for every other
+    /// stage.
     pub calls: Option<CallCounts>,
 }
 
@@ -280,12 +281,21 @@ pub enum LatencyStageKind {
     /// From Windows raising the event to the listener or outpost observing
     /// it; only `WinEvents` carry the time they were raised.
     Windows,
+    /// From the keyboard hook seeing a caret key to the reducer having
+    /// handled it and asked the outpost for the caret.
+    HookToCore,
     /// From the listener observing a focus to its outpost receiving it.
     ListenerToOutpost,
+    /// From the reducer asking an outpost (a caret key's wait, a command's
+    /// query) to the outpost receiving the request.
+    CoreToOutpost,
     /// Waiting in the outpost's queue.
     OutpostQueue,
+    /// A caret key's wait for evidence that the key did something, polling
+    /// the caret, until the evidence or the wait's deadline.
+    CaretWait,
     /// The outpost's worker reading the application: the stage that makes
-    /// cross-process calls.
+    /// cross-process calls (after the caret wait, for a caret key).
     OutpostRead,
     /// From the outpost publishing to Core receiving it.
     ToCore,
@@ -308,8 +318,11 @@ impl LatencyStageKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Windows => "Windows",
+            Self::HookToCore => "hook to Core",
             Self::ListenerToOutpost => "listener to outpost",
+            Self::CoreToOutpost => "Core to outpost",
             Self::OutpostQueue => "outpost queue",
+            Self::CaretWait => "caret wait",
             Self::OutpostRead => "outpost read",
             Self::ToCore => "to Core",
             Self::Reducer => "reducer",

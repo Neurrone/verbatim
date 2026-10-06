@@ -258,6 +258,11 @@ pub trait CaretSignal {
     /// The caret is about to be read: a caret event observed before now
     /// changed nothing the read will not see.
     fn reading(&mut self) {}
+
+    /// The wait has ended, with evidence or at its deadline, and the reads
+    /// for the reply follow: where the latency log divides the caret wait
+    /// from the read.
+    fn awaited(&mut self) {}
 }
 
 /// An anchor's position and the text of the chunk it started.
@@ -779,6 +784,7 @@ fn await_caret<S: TextSource>(
         }
         signal.wait(CARET_POLL.min(deadline - now));
     };
+    signal.awaited();
     let caret = report_for(source, anchors, (&state, read_at_ms), line)?;
     let unit = unit_at_caret(source, anchors, &state, &caret.line, watch.unit)?;
     let selection_changes = match &previous {
