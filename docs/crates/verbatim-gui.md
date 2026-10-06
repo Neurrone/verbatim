@@ -20,7 +20,8 @@ Public API:
   calling thread (the app calls it from the process main thread); once the
   frame and tray exist, `on_ready` hands out the `GuiHandle`. It returns
   when the loop ends: after `Shutdown`, or when a replacing instance posts
-  `WM_QUIT` to the hidden frame's thread.
+  `WM_QUIT` to the hidden frame's thread. It runs once per process; a
+  second call fails, since wxWidgets cannot start again after it ends.
 - `shell_items` — system tray and taskbar item enumeration for the
   systrayList replica: `request_shell_items(kind, deliver)` enumerates on
   a short-lived worker thread and hands `deliver` the outcome on its guard

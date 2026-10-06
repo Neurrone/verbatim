@@ -15,7 +15,8 @@ Public API:
   element the focus names in its ControllerFor relation), plus the M3
   node-relative operations `ancestor_chain`, `navigate`, and `activate`
   described below, and the local helpers `cache_request(properties)`,
-  `raw_view_walker`, `root_element`, and `property_condition`. Every one of
+  `raw_view_walker`, `control_view_walker`, `root_element`, and
+  `property_condition`. Every one of
   them is safe to call. The coclass is `CUIAutomation8`, not the
   older `CUIAutomation`: only the former's objects implement the newer
   client interfaces, and querying `IUIAutomation5` (the notification-event
@@ -222,7 +223,12 @@ Public API:
   (`NormalizeElementBuildCache` against a tree walker whose condition
   excludes every element without a native window handle). If `element`
   already has a window handle the call still works, since `NormalizeElement`
-  degenerates to returning the starting element unchanged. Like the probe
+  degenerates to returning the starting element unchanged. Its walker, and
+  the client behind the console and Windows Forms checks above, are kept
+  per thread; `release_thread_state()` drops them, and a thread that used
+  them calls it before it exits, since a thread-local destructor runs under
+  the loader lock, where COM work must not run. The outpost's worker does.
+  Like the probe
   above, this sends a cross-process COM call and can block on a hung
   application; unlike the probe, it is documented as callable from UIA
   event-callback threads specifically because each outpost watches a single
@@ -258,7 +264,10 @@ Public API:
   needs Windows to reuse the same window handle value meanwhile; NVDA, which
   compares elements by runtime id and keeps its navigator indefinitely, has
   the same exposure, and `take_touched` reports the nodes issued or looked up
-  since the last call. `init_mta()`, role and state mapping in
+  since the last call. `init_mta()` joins the multithreaded apartment,
+  failing on a thread already in a single-threaded one; each call adds an
+  initialization that is never undone, since the MTA is pinned for the
+  process's life. Role and state mapping in
   `map`, plus `map`'s total `notification_kind_from_uia` and
   `notification_processing_from_uia` tables for the notification payload.
 
