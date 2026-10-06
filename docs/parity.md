@@ -128,6 +128,29 @@ verified.
     UIA's multi-line state is dropped, as NVDA drops it): **matched since
     2026-10-07**, found by comparing transcripts with NVDA in a Windows
     Forms text box and Verbatim's own read-only description field.
+  - Found by NVDA transcripts of Verbatim's settings dialog on
+    2026-10-07, tabbing through the Speech, Theme, and Terminal pages,
+    and **not yet** matched: NVDA announces the group box a control sits
+    in when the focus enters it ("Synthesizer grouping" before the
+    Change button), which Verbatim does not, since a Win32 group box is
+    the control's sibling rather than its parent and NVDA finds it by
+    position; Control+Tab to another category makes Verbatim announce
+    the dialog again under its new title, because the dialog is read as
+    a different node after the title changes, where NVDA, seeing the same
+    object, does not; and NVDA says "Verbatim", the menu's owner window,
+    before "Context menu". The Terminal page's "Lines spoken in full"
+    and "Last lines to speak" sliders read 29 for the setting's 30 in
+    both screen readers: a standard trackbar's MSAA value is its position
+    as a percentage of its range, which is 1 to 100 there. Every other
+    control on the three pages reads the same in both, apart from the
+    states and tree levels above.
+  - Found by NVDA transcripts in Windows 11 Notepad on 2026-10-07 and
+    **not yet** matched: opening a file in a Notepad already running,
+    NVDA announces the window again as its title changes to the file's
+    ("editing dot txt - Notepad"), where Verbatim announces only the text
+    area; and closing a tab makes NVDA announce the tab that takes its
+    place ("... tab selected 131 of 131") before the text area, where
+    Verbatim announces only the text area.
   - Values and descriptions: an edit field or document no longer
     speaks the whole field after every keystroke; an unchanged value is
     not repeated; a check box, radio button, link, menu item, or
@@ -690,7 +713,13 @@ verified.
   always lands on column 10. Elsewhere the column is counted in characters
   (grapheme clusters): a shorter line puts the cursor on its last
   character, and the column is remembered, so the next longer line returns
-  to it, as editors do with their caret.
+  to it, as editors do with their caret. An NVDA transcript on 2026-10-07
+  confirmed the difference: from the second column of a table in
+  Notepad, NVDA's next line and current character say each row's first
+  letter ("A", "F", "B") where Verbatim says the column's ("3", "g",
+  "1"). The rest of the review commands (line, word, and character,
+  spelling and descriptions on repeated presses, top and bottom, and the
+  edge messages) read the same in both, on both layouts.
 - Select then copy from the review cursor (Verbatim+F9, Verbatim+Shift+F9,
   Verbatim+F10 once to select and twice to copy). NVDA: the same keys and
   messages ("Start marked", "No start marker set", "The start marker must
@@ -878,7 +907,11 @@ verified.
   reading goes by line, and terminals read by line; a standard edit
   control's sentence read is its line, which Core splits. The display is
   kept on through `SetThreadExecutionState`. Skim reading is **not
-  offered**.
+  offered**. **Verified** against NVDA transcripts on 2026-10-07: in
+  Windows 11 Notepad both read one line per utterance, and in a Windows
+  Forms text box (a standard edit control) both read one sentence per
+  utterance; NVDA also queues an empty utterance for the empty line after
+  the text's final line break, which Verbatim leaves out.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.
@@ -1112,7 +1145,19 @@ verified.
   first differs, and a rewrite while the earlier version is still waiting
   replaces it. Verbatim+5 toggles "Report new output", on NVDA's key for
   its "report dynamic content changes" toggle, saying "report new output
-  on" and "off".
+  on" and "off". NVDA transcripts on 2026-10-07 showed how NVDA reads the
+  terminal scenarios' flood of 10,000 numbered lines: in Windows
+  Terminal it queued 690 of them, in 53 runs from line 323 to line
+  10,000, as its monitor diffed whatever text was current, and all of
+  them stayed queued until a key; in the console host its reading slowed
+  the output itself, queuing a few lines at a time, and was still
+  speaking the flood after the window closed. At a password prompt NVDA
+  echoed each typed character of the password (its typed-character echo
+  covers terminals), where Verbatim speaks the asterisks the console
+  shows. Commands, their output, the prompt, and the review cursor over
+  the output read the same in both, in both terminals, apart from symbol
+  names in flowing text ("ready greater" for the prompt `ready>`), which
+  wait for symbol processing (M8).
 - Word and character segmentation (Uniscribe grapheme clusters and
   word stops) and the three-way paragraph-style setting. NVDA:
   [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched
@@ -1128,6 +1173,20 @@ verified.
   value reviewed as flat text) ends a line at a carriage return and line
   feed, either alone (Windows 11 Notepad's bare carriage return), or
   Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
+- A line break spoken on its own. NVDA names the line-break character a
+  unit lands on: End at the end of a line says "carriage return" in
+  Windows 11 Notepad and in a standard edit control, the review cursor's
+  end of line and next character there say "carriage return" in Notepad
+  and "line feed" in a standard edit control, and Backspace over a line
+  break says what it deleted (NVDA transcripts, 2026-10-07). Verbatim
+  says "blank" for a caret or review position on a line break, keeps the
+  review cursor's end of line on the line's last character, and says
+  nothing for a Backspace over a line break (see the caret entry above).
+  **Different, awaiting a decision**: Verbatim's choice is written into
+  `verbatim-core` but was never recorded against NVDA. A related detail:
+  in a standard edit control NVDA's review bottom (Shift+Numpad 9) is the
+  last line with text, while Verbatim's, like NVDA's in Notepad, is the
+  empty line after a final line break.
 - Browse mode, quick nav, pass-through rules, virtual-buffer
   equivalent: **not yet (M6)**; references
   [Browse mode](nvda/browse-mode.md), [Virtual buffers](nvda/virtual-buffers.md).
