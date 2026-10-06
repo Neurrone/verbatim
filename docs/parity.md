@@ -1127,6 +1127,19 @@ verified.
   through one key hook on the dialog, as NVDA's do
   (`settings_dialog_keys` verifies Cancel, Apply, Control+S, and
   Control+Tab).
+- The terminal settings. NVDA: no page of their own; "Speak passwords in
+  all enhanced terminals" and the choice between diffing and Windows
+  Terminal's notifications are in the Advanced panel, behind its warning,
+  and NVDA's "Report dynamic content changes", which Verbatim+5 matches,
+  is in Object Presentation. Verbatim: **different** by decision
+  (`phase6-design.md`, "M4: text, editing, and terminals", Questions): a
+  Terminal page in the settings dialog, after Theme, with "Report new
+  output", the flood policy's two limits ("Lines spoken in full" and
+  "Last lines to speak", 1 to 100, sliders), which NVDA has no equivalent
+  of, and "Speak passwords typed in terminals". Its changes wait for OK
+  or Apply, as NVDA's do, where the Speech and Theme pages apply live
+  (`terminal_settings_page` verifies that an applied change reaches
+  Core).
 - Logging and the log viewer. NVDA: [Logging](nvda/logging.md).
   Verbatim: **not yet (M9)** — tracing exists (flight recorder,
   latency ledger); user-facing logging is unbuilt.

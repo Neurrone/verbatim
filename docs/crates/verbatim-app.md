@@ -23,10 +23,16 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 "The text protocol"):
 
 - The reader settings (`settings.toml`'s `[reader]` section) are the
-  reducer's first input, `Input::Settings`. They change only by the
-  reducer's own toggle keys, whose `Effect::SettingsChanged` is saved to
-  `settings.toml` through the config store; no other part of the shell
-  edits them yet.
+  reducer's first input, `Input::Settings`. They change by the reducer's
+  own toggle keys, whose `Effect::SettingsChanged` is saved to
+  `settings.toml` through the config store, and by the settings dialog's
+  Terminal page: `terminal_settings::AppTerminalHost` is the GUI's
+  `TerminalHost`, reading the settings from the config store and sending
+  an applied `TerminalChange` to the reducer thread
+  (`ShellCommand::TerminalSettings`). There it is merged into the
+  reducer's own settings (`SrState::settings`), so a toggle key pressed
+  meanwhile is kept, given to the reducer as `Input::Settings`, and
+  saved.
 - The hook's gesture map observes the caret keys
   (`GestureMap::with_observed(caret_bindings())`): they reach the
   application, and each one the hook reports becomes `Input::CaretKey`
