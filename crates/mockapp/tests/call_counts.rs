@@ -920,14 +920,16 @@ impl CaretSignal for AlreadyMoved {
 /// with `text_reads::answer` once it has the node's text: the caret is
 /// reported (Core's knowledge), mockapp's caret moves one character on, as
 /// Right Arrow moves it, and the wait for evidence finds it at once and
-/// reports the line and the character there. Returns the calls and hits of
-/// the answer alone.
+/// reports the line and the character there. Then the caret moves on again
+/// and is reported alone, as the worker reports it for a caret event, after
+/// a typed character above all, with `text_reads::report_caret`. Returns
+/// the calls and hits of the answer, and of the report.
 fn measure_caret_move<S: TextSource>(
     app: &mut common::MockApp,
     hwnd: HWND,
     source: &mut S,
     take: fn() -> CallCounts,
-) -> Cost {
+) -> (Cost, Cost) {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(app, hwnd, "caret doc 0");
@@ -955,10 +957,21 @@ fn measure_caret_move<S: TextSource>(
     };
     assert!(reply.moved);
     assert_eq!(reply.unit.expect("the character").text, "l");
-    Cost {
+    let answer = Cost {
         calls,
         hits: common::read_hits(hwnd),
-    }
+    };
+
+    common::apply(app, hwnd, "caret doc 2");
+    let _ = take();
+    let (report, _) = caret_report(source, &mut anchors).expect("the caret");
+    let calls = take();
+    assert_eq!(report.line.offset, 2);
+    let report = Cost {
+        calls,
+        hits: common::read_hits(hwnd),
+    };
+    (answer, report)
 }
 
 fn caret_moves_cost_exactly() {
@@ -969,15 +982,29 @@ fn caret_moves_cost_exactly() {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut source = uia_notes(hwnd);
-    let cost = measure_caret_move(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
+    let (answer, report) =
+        measure_caret_move(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
     ratchet.check(
         "UIA caret move",
-        &cost,
+        &answer,
         calls(9, 0, 0),
         &[
             ("ITextProvider::GetSelection", 1),
             ("Clone", 2),
             ("CompareEndpoints", 2),
+            ("ExpandToEnclosingUnit", 1),
+            ("GetText", 2),
+            ("MoveEndpointByRange", 1),
+        ],
+    );
+    ratchet.check(
+        "UIA caret report",
+        &report,
+        calls(8, 0, 0),
+        &[
+            ("ITextProvider::GetSelection", 1),
+            ("Clone", 2),
+            ("CompareEndpoints", 1),
             ("ExpandToEnclosingUnit", 1),
             ("GetText", 2),
             ("MoveEndpointByRange", 1),
@@ -999,8 +1026,10 @@ fn caret_moves_cost_exactly() {
     }
     .expect("mockapp's edit control");
     let mut source = EditText::new(edit.0 as isize, 0);
-    let cost = measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
-    ratchet.check("Edit control caret move", &cost, calls(0, 0, 5), &[]);
+    let (answer, report) =
+        measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
+    ratchet.check("Edit control caret move", &answer, calls(0, 0, 5), &[]);
+    ratchet.check("Edit control caret report", &report, calls(0, 0, 5), &[]);
     app.send("quit");
 
     ratchet.finish();
