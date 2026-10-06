@@ -191,6 +191,7 @@ fn long_line(anchor: u64, offset: u32) -> TextChunk {
         first: false,
         last: false,
         truncated: false,
+        formats: Vec::new(),
     }
 }
 

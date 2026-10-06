@@ -1659,8 +1659,8 @@ left them open:
   outpost's watchdog abandons a query, until the outpost answers again.
 - The outposts skip what is off in their UIA reads and remote focus walk
   and in their MSAA reads; the UIA event subscriptions' cache requests
-  are fixed when registered and still ask for everything. Nothing reads
-  text formatting yet.
+  are fixed when registered and still ask for everything. Text formatting
+  is read only for the indications that are on (item 7, below).
 - On the Theme page, changes to indications are held until Apply or OK
   saves them, and Cancel drops them; file operations (New, Rename,
   Import, Export, Remove, and Browse for a sound) act on the themes
@@ -1672,6 +1672,34 @@ left them open:
   the theme's settings above and the theme buttons below; the tab order
   follows the design's list.
 
+
+Choices the run made for item 7 and the caret's remote operation, where
+the design left them open (2026-10-07):
+
+- The caret is read by one entry point, `verbatim_uia_rops::caret_read`,
+  remote or classic with the fallback of the focus walk. Every read of a
+  caret key's wait is the whole read (the caret, the evidence, the line,
+  the unit, and the formatting), one round trip remotely, so a wait that
+  finds nothing costs one round trip per read and the read that finds
+  evidence is the answer. The classic reads do the same work call by
+  call. A run that failed because the provider is gone or timed out is
+  not repeated classically.
+- Formatting is read for what is spoken: the line after a focus, and a
+  caret key's character, word, or line; not a paragraph or a page (NVDA
+  reads no spelling errors when moving by paragraph), not the report
+  after a typed character, and not yet for review commands or say-all.
+- Bold, italic, and underline are one new indication, "font attributes"
+  (`font-attributes`), off by default as NVDA's font attributes setting
+  is; strikethrough is not read.
+- Colors are named in the outpost, by NVDA's hue, saturation, and
+  brightness names, in English.
+- The standard edit controls report no formatting: their message for it
+  (`EM_GETCHARFORMAT`) reports the selection's format, so reading a
+  character's means moving the selection, three messages and a visible
+  change per stretch, as NVDA does; not cheap, so left out.
+- Where NVDA's default and the default theme differ: NVDA reports
+  spelling errors by speech alone by default; the default theme also
+  plays the error sound. Recorded in `docs/parity.md` for a decision.
 
 Choices the run made for item 9, terminals, where the design left them
 open:

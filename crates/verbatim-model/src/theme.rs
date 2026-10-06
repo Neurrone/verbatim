@@ -113,6 +113,9 @@ pub enum Indication {
     FontSize,
     /// The color of text; id `color`.
     Color,
+    /// Bold, italic, and underlined text, NVDA's font attributes; id
+    /// `font-attributes`.
+    FontAttributes,
     /// A capital letter spoken on its own: speech raises its pitch, a sound
     /// plays a tone; id `capital`.
     Capital,
@@ -143,7 +146,7 @@ pub enum Indication {
 
 /// The fixed ids of the indications that carry no role or state, in
 /// catalogue order (which is category order).
-const FIXED: [(Indication, &str); 21] = [
+const FIXED: [(Indication, &str); 22] = [
     (Indication::Description, "description"),
     (Indication::Shortcut, "shortcut"),
     (Indication::Position, "position"),
@@ -153,6 +156,7 @@ const FIXED: [(Indication, &str); 21] = [
     (Indication::FontName, "font-name"),
     (Indication::FontSize, "font-size"),
     (Indication::Color, "color"),
+    (Indication::FontAttributes, "font-attributes"),
     (Indication::Capital, "capital"),
     (Indication::Blank, "blank"),
     (Indication::SkippedLines, "skipped-lines"),
@@ -198,6 +202,7 @@ impl Indication {
             | Self::FontName
             | Self::FontSize
             | Self::Color
+            | Self::FontAttributes
             | Self::Capital => IndicationCategory::TextFormatting,
             Self::Blank | Self::SkippedLines => IndicationCategory::Structure,
             Self::AppNotResponding
@@ -283,6 +288,12 @@ impl Indication {
                 TextFormat::FontName(_) => Self::FontName,
                 TextFormat::FontSize(_) => Self::FontSize,
                 TextFormat::Color(_) => Self::Color,
+                TextFormat::Bold
+                | TextFormat::NotBold
+                | TextFormat::Italic
+                | TextFormat::NotItalic
+                | TextFormat::Underline
+                | TextFormat::NotUnderline => Self::FontAttributes,
             },
             _ => return None,
         })
@@ -322,7 +333,9 @@ impl Indication {
         };
         let (report, sound) = match self {
             Self::SpellingError => (Presentation::SpeechAndSound, file("textError.wav")),
-            Self::FontName | Self::FontSize | Self::Color => (Presentation::Off, None),
+            Self::FontName | Self::FontSize | Self::Color | Self::FontAttributes => {
+                (Presentation::Off, None)
+            }
             Self::Capital => (Presentation::Speech, tone(1_760, 40)),
             Self::SkippedLines => (Presentation::SpeechAndSound, tone(330, 80)),
             Self::AppNotResponding => (Presentation::Sound, tone(220, 150)),
@@ -639,6 +652,7 @@ impl Theme {
             grammar_errors: on(Indication::GrammarError),
             font: on(Indication::FontName) || on(Indication::FontSize),
             color: on(Indication::Color),
+            font_attributes: on(Indication::FontAttributes),
         }
     }
 
@@ -813,6 +827,8 @@ pub struct Fetches {
     pub font: bool,
     /// Color of text.
     pub color: bool,
+    /// Bold, italic, and underline of text.
+    pub font_attributes: bool,
 }
 
 impl Default for Fetches {
@@ -827,6 +843,7 @@ impl Default for Fetches {
             grammar_errors: true,
             font: true,
             color: true,
+            font_attributes: true,
         }
     }
 }
@@ -906,7 +923,7 @@ mod tests {
         }
         assert_eq!(
             catalogue.len(),
-            Role::ALL.len() + SPOKEN_STATES.len() + NEGATED_STATES.len() + 21
+            Role::ALL.len() + SPOKEN_STATES.len() + NEGATED_STATES.len() + 22
         );
     }
 

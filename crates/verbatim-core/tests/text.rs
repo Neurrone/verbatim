@@ -1,7 +1,7 @@
 //! Scripted-input tests for milestone M4's text handling in the reducer:
 //! caret keys and the selection, typed character and word echo, the
-//! review cursor over text, and say-all, each driven through the text
-//! protocol with scripted outpost replies.
+//! review cursor over text, say-all, and formatting spoken as it changes,
+//! each driven through the text protocol with scripted outpost replies.
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
@@ -12,6 +12,7 @@ use verbatim_model::{
     TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
     UtteranceSegment,
 };
+use verbatim_model::{FormatRun, TextAttributes, TextFormat};
 
 const OUTPOST: OutpostId = OutpostId(1);
 
@@ -67,6 +68,7 @@ fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
         first: false,
         last: false,
         truncated: false,
+        formats: Vec::new(),
     }
 }
 
@@ -1192,4 +1194,228 @@ fn a_protected_field_never_says_its_text() {
         &event(NormalizedEvent::NoText { node_id: id(5) }),
     );
     assert_eq!(spoken(&effects), []);
+}
+
+/// `chunk` with formatting: each stretch a byte range, a spelling error or
+/// not.
+fn with_errors(mut chunk: TextChunk, stretches: &[(u32, u32, bool)]) -> TextChunk {
+    chunk.formats = stretches
+        .iter()
+        .map(|&(start, end, spelling_error)| FormatRun {
+            start,
+            end,
+            attributes: TextAttributes {
+                spelling_error,
+                ..TextAttributes::default()
+            },
+        })
+        .collect();
+    chunk
+}
+
+fn format(format: TextFormat) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Format(format))
+}
+
+/// Answers a caret key with `line`, and with `unit` at the caret.
+fn answered(
+    state: &mut SrState,
+    motion: CaretMotion,
+    line: TextChunk,
+    unit: Option<TextChunk>,
+) -> Vec<UtteranceSegment> {
+    let effects = reduce(state, &key(motion, false));
+    spoken(&reduce(
+        state,
+        &completed(request_of(&effects), caret_reply(true, line, unit)),
+    ))
+}
+
+#[test]
+fn a_line_speaks_a_spelling_error_where_it_starts() {
+    let mut state = editing("first\n", 0);
+    let text = "hello wrold there\n";
+    let line = with_errors(
+        line(text, 101, 0),
+        &[(0, 6, false), (6, 11, true), (11, 18, false)],
+    );
+    assert_eq!(
+        answered(&mut state, CaretMotion::NextLine, line.clone(), None),
+        vec![
+            UtteranceSegment::text("hello "),
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("wrold"),
+            UtteranceSegment::text(" there"),
+        ]
+    );
+    // Leaving the error inside a line says nothing, and reading the same
+    // line again starts out of the error, as the last stretch left it.
+    assert_eq!(
+        answered(&mut state, CaretMotion::NextLine, line, None),
+        vec![
+            UtteranceSegment::text("hello "),
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("wrold"),
+            UtteranceSegment::text(" there"),
+        ]
+    );
+}
+
+#[test]
+fn characters_report_entering_and_leaving_an_error() {
+    let text = "ab cd\n";
+    let mut state = editing(text, 0);
+    let character = |text: &str, error: bool| {
+        let length = u32::try_from(text.len()).expect("short");
+        with_errors(
+            TextChunk {
+                unit: TextUnit::Character,
+                ..line(text, 200, 0)
+            },
+            &[(0, length, error)],
+        )
+    };
+    let at = |offset| line(text, 100, offset);
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextCharacter,
+            at(1),
+            Some(character("b", true))
+        ),
+        vec![format(TextFormat::SpellingError), self::character("b")]
+    );
+    // Within the error, the character alone.
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::PreviousCharacter,
+            at(0),
+            Some(character("a", true))
+        ),
+        vec![self::character("a")]
+    );
+    // Out of it, said, as a character is extra detail.
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextCharacter,
+            at(2),
+            Some(character(" ", false))
+        ),
+        vec![format(TextFormat::NotSpellingError), self::character(" ")]
+    );
+}
+
+#[test]
+fn a_word_carries_the_change_its_trailing_space_makes() {
+    let mut state = editing("tset of it\n", 0);
+    let word = |text: &str, stretches: &[(u32, u32, bool)]| {
+        with_errors(
+            TextChunk {
+                unit: TextUnit::Word,
+                ..line(text, 200, 0)
+            },
+            stretches,
+        )
+    };
+    let at = |offset| line("tset of it\n", 100, offset);
+    // The misspelt word, then its space, out of the error.
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextWord,
+            at(0),
+            Some(word("tset ", &[(0, 4, true), (4, 5, false)]))
+        ),
+        vec![
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("tset"),
+            format(TextFormat::NotSpellingError),
+        ]
+    );
+    // The next word, already out of it, says only itself.
+    assert_eq!(
+        answered(
+            &mut state,
+            CaretMotion::NextWord,
+            at(5),
+            Some(word("of ", &[(0, 3, false)]))
+        ),
+        vec![UtteranceSegment::text("of")]
+    );
+}
+
+#[test]
+fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "Ths is\r");
+    let line = with_errors(line("Ths is\r", 100, 0), &[(0, 3, true), (3, 7, false)]);
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::CaretMoved {
+            node_id: id(5),
+            caret: CaretReport {
+                line,
+                selection: None,
+            },
+        }),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("Ths"),
+            UtteranceSegment::text(" is"),
+        ]
+    );
+}
+
+#[test]
+fn bold_starts_and_ends_and_a_font_change_is_named() {
+    let mut state = editing("first\n", 0);
+    let mut line = line("plain bold\n", 101, 0);
+    line.formats = vec![
+        FormatRun {
+            start: 0,
+            end: 6,
+            attributes: TextAttributes {
+                bold: Some(false),
+                font_name: Some("Calibri".to_owned()),
+                ..TextAttributes::default()
+            },
+        },
+        FormatRun {
+            start: 6,
+            end: 11,
+            attributes: TextAttributes {
+                bold: Some(true),
+                font_name: Some("Calibri".to_owned()),
+                ..TextAttributes::default()
+            },
+        },
+    ];
+    assert_eq!(
+        answered(&mut state, CaretMotion::NextLine, line, None),
+        vec![
+            format(TextFormat::FontName("Calibri".to_owned())),
+            UtteranceSegment::text("plain "),
+            format(TextFormat::Bold),
+            UtteranceSegment::text("bold"),
+        ]
+    );
+    let mut next = self::line("next\n", 102, 0);
+    next.formats = vec![FormatRun {
+        start: 0,
+        end: 5,
+        attributes: TextAttributes {
+            bold: Some(false),
+            font_name: Some("Calibri".to_owned()),
+            ..TextAttributes::default()
+        },
+    }];
+    assert_eq!(
+        answered(&mut state, CaretMotion::NextLine, next, None),
+        vec![format(TextFormat::NotBold), UtteranceSegment::text("next")]
+    );
 }

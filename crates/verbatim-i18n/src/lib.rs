@@ -970,6 +970,7 @@ pub fn indication_name(indication: verbatim_model::Indication) -> String {
         Indication::FontName => i18n_embed_fl::fl!(loader, "indication-font-name"),
         Indication::FontSize => i18n_embed_fl::fl!(loader, "indication-font-size"),
         Indication::Color => i18n_embed_fl::fl!(loader, "indication-color"),
+        Indication::FontAttributes => i18n_embed_fl::fl!(loader, "indication-font-attributes"),
         Indication::Capital => i18n_embed_fl::fl!(loader, "indication-capital"),
         Indication::Blank => i18n_embed_fl::fl!(loader, "indication-blank"),
         Indication::SkippedLines => i18n_embed_fl::fl!(loader, "indication-skipped-lines"),
@@ -1011,8 +1012,9 @@ pub fn presentation_name(presentation: verbatim_model::Presentation) -> String {
 }
 
 /// The spoken words for a formatting span (`SegmentContent::Format`):
-/// NVDA's "spelling error" and "out of spelling error", and a font name,
-/// size, or color as the application words it.
+/// NVDA's "spelling error" and "out of spelling error", "bold" and "no
+/// bold" and the other font attributes, and a font name, size, or color as
+/// the application words it.
 #[must_use]
 pub fn format_text(format: &verbatim_model::TextFormat) -> String {
     use verbatim_model::TextFormat;
@@ -1022,6 +1024,12 @@ pub fn format_text(format: &verbatim_model::TextFormat) -> String {
         TextFormat::NotSpellingError => i18n_embed_fl::fl!(loader, "format-not-spelling-error"),
         TextFormat::GrammarError => i18n_embed_fl::fl!(loader, "format-grammar-error"),
         TextFormat::NotGrammarError => i18n_embed_fl::fl!(loader, "format-not-grammar-error"),
+        TextFormat::Bold => i18n_embed_fl::fl!(loader, "format-bold"),
+        TextFormat::NotBold => i18n_embed_fl::fl!(loader, "format-not-bold"),
+        TextFormat::Italic => i18n_embed_fl::fl!(loader, "format-italic"),
+        TextFormat::NotItalic => i18n_embed_fl::fl!(loader, "format-not-italic"),
+        TextFormat::Underline => i18n_embed_fl::fl!(loader, "format-underline"),
+        TextFormat::NotUnderline => i18n_embed_fl::fl!(loader, "format-not-underline"),
         TextFormat::FontName(text) | TextFormat::FontSize(text) | TextFormat::Color(text) => {
             text.clone()
         }
@@ -1317,6 +1325,8 @@ mod tests {
             format_text(&TextFormat::NotSpellingError),
             "out of spelling error"
         );
+        assert_eq!(format_text(&TextFormat::NotBold), "no bold");
+        assert_eq!(format_text(&TextFormat::Underline), "underlined");
         assert_eq!(earcon_text(Earcon::Progress(40)), "40 percent");
         assert_eq!(phrase_text(&Phrase::SkippedLines(1)), "skipped 1 line");
         assert_eq!(phrase_text(&Phrase::SkippedLines(120)), "skipped 120 lines");

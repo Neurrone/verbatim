@@ -475,5 +475,7 @@ start), a stop at a known ancestor, and the depth limit, with the same
 nearest window; that an element that lost the focus returns early; and
 the stalled and exited provider findings above.
 `crates/mockapp/tests/call_counts.rs` pins the calls and provider hits of
-a UIA focus through `focus_ancestry` as the outpost makes it, remotely and
-classically.
+a UIA focus through `focus_ancestry` as the outpost makes it, and of caret
+moves, caret reports, and a caret wait through `caret_read`, remotely and
+classically; `crates/mockapp/tests/text.rs` checks that the two caret
+reads agree, formatting included.

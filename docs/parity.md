@@ -898,9 +898,11 @@ verified.
   tone, used when a theme reports capitals by sound, is 1760 Hz for 40
   ms. In the default theme a spelling error is reported by speech and
   sound: where an error starts the sound plays and then "spelling error"
-  is spoken (NVDA's own default for `reportSpellingErrors2` is to be
-  checked against NVDA when the shell is wired); where the error ends only the words "out of spelling error" are
-  spoken. Line indentation tones are **not yet**: indentation is not
+  is spoken; where the error ends only the words "out of spelling error"
+  are spoken. NVDA's own default, read from `config/configSpec.py` on
+  2026-10-07, is speech alone (`reportSpellingErrors2` defaults to 1, the
+  speech flag), so the default theme's sound is a **difference** still to
+  be decided. Line indentation tones are **not yet**: indentation is not
   reported yet. Which events produce earcons (start and exit, browse and
   focus mode, suggestions, progress bars, logged errors) is the shell's
   and later milestones' to wire; the reducer emits none of them yet.
@@ -911,9 +913,23 @@ verified.
   reporting](nvda/document-formatting.md)). Verbatim: **different**, by
   design: each is an indication in the theme, off, speech, sound, or
   speech and sound, with NVDA's defaults in the default theme (font name,
-  size, and color off; descriptions, positions, and shortcuts spoken). An
-  indication set to off is also not fetched where the reducer decides
-  what is fetched. **Unverified**.
+  size, color, and font attributes off; descriptions, positions, and
+  shortcuts spoken). An indication set to off is also not fetched where
+  the reducer decides what is fetched. **Unverified**.
+- Formatting while the caret moves (milestone M4 item 7). NVDA: the
+  formatting last spoken is kept per object, and a unit read speaks only
+  what changed, at its start and where it changes inside it, an error's
+  end only for a character or a word ([Document formatting
+  reporting](nvda/document-formatting.md), "The cache, attribute by
+  attribute"). Verbatim: **matched** for caret keys and a focus's first
+  line, through UIA, with spelling and grammar errors, font name and size,
+  color, bold, italic, and underline; NVDA's other formatting (styles,
+  alignment, indentation, links, comments, and the rest) is **not yet**,
+  nor is formatting while reviewing or reading with say-all. The standard
+  edit controls report no formatting (NVDA moves their selection to read
+  each character's, which Verbatim does not do). Colors are named in
+  English only. **Verified** live for spelling errors in Windows 11
+  Notepad.
 - Synth isolation. NVDA: in-process drivers (crash = NVDA crash),
   one out-of-process precedent ([Synth drivers](nvda/synth-drivers.md)).
   Verbatim: **different (D6)** — native synth host out of process

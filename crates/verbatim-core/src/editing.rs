@@ -14,14 +14,21 @@
 //! speaks what became selected or unselected instead. A newer key, or a
 //! focus change, supersedes a key still waiting, so speech never lags
 //! behind fast typing and a focus announcement wins over a caret line.
+//!
+//! Formatting (milestone M4 item 7) is spoken as it changes, as NVDA
+//! speaks it (`docs/nvda/document-formatting.md`): the outpost sends the
+//! formatting of the text a caret key or a focus speaks, and only what
+//! differs from the formatting last reported in that node is said, a
+//! spelling error where it starts, and for a character or a word also where
+//! it ends.
 
 use std::sync::Arc;
 
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, FocusValidity,
     NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, SelectionChange,
-    SelectionText, SpeechPriority, State, TextOp, TextPoint, TextReply, TextRequest, TextUnit,
-    TraceId, TypingEcho, Utterance, UtteranceSegment,
+    SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint, TextReply,
+    TextRequest, TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 
 use crate::state::{CaretContext, FocusText, PendingCaret, ReviewPosition, ReviewText, SrState};
@@ -213,7 +220,13 @@ pub(crate) fn caret_reply(
                 Some(deleted) if moved => deleted_segments(deleted, pending.key.motion),
                 _ => Vec::new(),
             },
-            motion => unit_segments(&caret, unit.as_ref(), motion.unit(), grid),
+            motion => {
+                let mut reported = reported_format(state, pending.node);
+                let segments =
+                    unit_segments(&caret, unit.as_ref(), (motion.unit(), grid), &mut reported);
+                state.reported_format = Some((pending.node, reported));
+                segments
+            }
         }
     };
     update_caret(state, pending.node, caret);
@@ -233,26 +246,76 @@ fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment>
     }
 }
 
+/// The formatting last reported in `node`'s text, NVDA's per-object cache:
+/// nothing yet for a node other than the one last spoken in.
+fn reported_format(state: &SrState, node: NodeId) -> TextAttributes {
+    state
+        .reported_format
+        .as_ref()
+        .filter(|(reported, _)| *reported == node)
+        .map(|(_, attributes)| attributes.clone())
+        .unwrap_or_default()
+}
+
+/// The speech for a chunk's content with the formatting the outpost sent
+/// for it, as [`text::formatted_segments`] makes it: the whole content
+/// without its line break (and in a terminal its padding) carries the
+/// formatting, and only the content without surrounding white space is
+/// spoken for a word. `None` when the chunk has no formatting.
+fn formatted(
+    chunk: &TextChunk,
+    grid: bool,
+    how: text::Spoken,
+    reported: &mut TextAttributes,
+) -> Option<Vec<UtteranceSegment>> {
+    let content = text::chunk_content(chunk, grid);
+    let spoken = if how == text::Spoken::Word {
+        let start = content.len() - content.trim_start().len();
+        start..content.trim_end().len().max(start)
+    } else {
+        0..content.len()
+    };
+    text::formatted_segments(
+        chunk,
+        (0..content.len(), spoken),
+        how,
+        reported,
+        chunk.language_at(0),
+    )
+}
+
 /// The speech for the unit at the caret after a caret key: the character,
 /// the provider's word or paragraph when it sent one, and the line
 /// otherwise. A word that is a single character is spoken by its name
-/// ([`text::word_segments`]).
+/// ([`text::word_segments`]). Formatting the outpost sent with the text is
+/// spoken as it changes from `reported`, which it then updates.
 fn unit_segments(
     caret: &CaretReport,
-    unit_chunk: Option<&verbatim_model::TextChunk>,
-    unit: TextUnit,
-    grid: bool,
+    unit_chunk: Option<&TextChunk>,
+    (unit, grid): (TextUnit, bool),
+    reported: &mut TextAttributes,
 ) -> Vec<UtteranceSegment> {
     let line = &caret.line;
     let content = text::line_content(&line.text, grid);
     let offset = line.offset as usize;
     match (unit, unit_chunk) {
-        (TextUnit::Character, _) => {
+        (TextUnit::Character, chunk) => {
+            if let Some(segments) =
+                chunk.and_then(|chunk| formatted(chunk, grid, text::Spoken::Character, reported))
+            {
+                return segments;
+            }
             let character = text::grapheme_at(content, offset).map(|range| &content[range]);
             text::character_segments(character, line.language_at(offset))
         }
-        (TextUnit::Line, _) | (_, None) => text::text_segments(content, line.language_at(0)),
+        (TextUnit::Line, _) | (_, None) => formatted(line, grid, text::Spoken::Text, reported)
+            .unwrap_or_else(|| text::text_segments(content, line.language_at(0))),
         (unit, Some(chunk)) => {
+            if unit == TextUnit::Word
+                && let Some(segments) = formatted(chunk, grid, text::Spoken::Word, reported)
+            {
+                return segments;
+            }
             let read = text::chunk_content(chunk, grid).trim();
             if unit == TextUnit::Word {
                 text::word_segments(read, chunk.language_at(0))
@@ -323,6 +386,8 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: CaretReport
 /// back for it. A protected field leaves its value out and never has its
 /// text read.
 pub(crate) fn await_focus_text(state: &mut SrState, node: &NodeSnapshot) {
+    // A new focus is a new object, whose formatting has not been reported.
+    state.reported_format = None;
     if may_have_text(node.role) && !node.states.contains(State::Protected) {
         state.focus_text = Some(FocusText {
             node: node.id,
@@ -369,7 +434,7 @@ pub(crate) fn focus_caret(state: &mut SrState, trace_id: TraceId, node: NodeId) 
 /// when there are 512 or more. With no selected text after all, or no
 /// answer, the caret's line is spoken instead.
 pub(crate) fn focus_selection(
-    state: &SrState,
+    state: &mut SrState,
     trace_id: TraceId,
     node: NodeId,
     reply: TextReply,
@@ -417,8 +482,9 @@ pub(crate) fn focus_value(state: &mut SrState, trace_id: TraceId, node: NodeId) 
 }
 
 /// Speaks the caret's line of the focus `node`, "blank" when it has nothing
-/// to read.
-fn focus_line(state: &SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
+/// to read, with the formatting at its start and wherever it changes, as a
+/// change from none reported yet.
+fn focus_line(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
     let Some(caret) = state.caret.as_ref().filter(|caret| caret.node == node) else {
         return Vec::new();
     };
@@ -426,10 +492,15 @@ fn focus_line(state: &SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
         .focus
         .as_ref()
         .is_some_and(|focus| is_grid(focus.snapshot.role));
-    let segments = text::text_segments(
-        text::line_content(&caret.line.text, grid),
-        caret.line.language_at(0),
-    );
+    let mut reported = reported_format(state, node);
+    let segments =
+        formatted(&caret.line, grid, text::Spoken::Text, &mut reported).unwrap_or_else(|| {
+            text::text_segments(
+                text::line_content(&caret.line.text, grid),
+                caret.line.language_at(0),
+            )
+        });
+    state.reported_format = Some((node, reported));
     focus_speech(state, trace_id, node, segments)
 }
 

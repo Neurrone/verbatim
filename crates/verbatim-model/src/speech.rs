@@ -146,6 +146,18 @@ pub enum TextFormat {
     FontSize(String),
     /// The text from here is this color, as the application words it.
     Color(String),
+    /// Bold text starts here.
+    Bold,
+    /// Bold text ends here.
+    NotBold,
+    /// Italic text starts here.
+    Italic,
+    /// Italic text ends here.
+    NotItalic,
+    /// Underlined text starts here.
+    Underline,
+    /// Underlined text ends here.
+    NotUnderline,
 }
 
 /// An index mark the reducer places in an utterance
