@@ -1252,11 +1252,11 @@ Four kinds of check, and videos:
 Step 1:
 
 - Scenarios: `explorer_folder_window` (open a folder, arrow through its
-  items, open a subfolder and go back), `settings_toggle` (open a page of
+  items, open a subfolder and go back), `settings_system_page` (replaced `settings_toggle` on 2026-10-06: read-only, and the same on GitHub's Windows Server runner; open a page of
   the Settings app, Tab to a toggle, switch it, hear the new state), and
   `start_menu_search` extended to type a query and arrow through the
   results.
-- Videos: `explorer-folder-window`, `settings-toggle`, and
+- Videos: `explorer-folder-window`, `settings-system-page`, and
   `start-menu-search` re-recorded.
 
 Step 2:

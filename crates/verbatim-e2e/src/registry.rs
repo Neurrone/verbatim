@@ -80,7 +80,7 @@ use crate::scenario::Scenario;
 use crate::scenarios::{
     explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
     notepad_and_verbatim_menu, object_navigation_in_settings, rapid_tabbing_in_settings,
-    settings_dialog_keys, settings_toggle, start_menu_search, switch_to_onecore,
+    settings_dialog_keys, settings_system_page, start_menu_search, switch_to_onecore,
     synth_host_crash_recovery, system_information_tree,
 };
 
@@ -264,12 +264,12 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: settings_dialog_keys::teardown,
     },
     ScenarioDef {
-        name: "settings_toggle",
+        name: "settings_system_page",
         group: Group::Shell,
         target_images: &["SystemSettings.exe"],
-        setup: settings_toggle::setup,
-        body: settings_toggle::body,
-        teardown: settings_toggle::teardown,
+        setup: settings_system_page::setup,
+        body: settings_system_page::body,
+        teardown: settings_system_page::teardown,
     },
     ScenarioDef {
         name: "system_information_tree",
@@ -429,9 +429,7 @@ fn run(def: &ScenarioDef) {
     // playing when the scenario's applications close.
     let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         (def.body)(&mut scenario, &mut state);
-        scenario
-            .speech()
-            .wait_until_quiet(Duration::ZERO, QUIET_TIMEOUT);
+        scenario.speech().wait_until_quiet(QUIET_TIMEOUT);
     }));
     let teardown_outcome =
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)));

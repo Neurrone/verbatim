@@ -63,10 +63,10 @@ first, so only the scenario's own windows appear.
   arrows move through a subfolder and three files, each with its
   position, and Enter and Backspace go into the subfolder and back. It
   demonstrates reading File Explorer.
-- `settings-toggle.mp4`, from `settings_toggle`: the Settings app opens
-  on the Clipboard page, and its Clipboard history switch is turned on
-  and off, each state announced. It demonstrates reading the Settings
-  app's switches.
+- `settings-system-page.mp4`, from `settings_system_page`: the Settings
+  app opens on its System page, and Tab and the arrows move through its
+  list of settings, each announced with its position. It demonstrates
+  reading the Settings app.
 - `start-menu-search.mp4`, from `start_menu_search`: the Start menu opens
   and its search box is announced. It demonstrates reading the Windows
   shell.

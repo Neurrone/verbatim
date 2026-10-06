@@ -55,10 +55,12 @@ Public API:
   scenario kills the synthesizer host. It then
   launches Verbatim through the agent, waits for its
   control plane to answer over the agent's tunnel, opens a *second*,
-  dedicated tunnel connection for speech collection, and pauses briefly
-  (`GUI_SETTLE_DELAY`) for the GUI thread's gesture handle to exist before
-  returning — see `docs/tooling.md`'s troubleshooting section for what
-  happens to a gesture sent before that pause. `control()` and `speech()`
+  dedicated tunnel connection for speech collection, and waits until
+  Verbatim's status reports it ready (`StatusInfo::ready`: the GUI can act
+  on gestures, the focus listener is running, and the outpost reading
+  Verbatim's own windows is ready) before returning. No scenario waits a
+  fixed time: every wait is for a condition, with a deadline that only
+  bounds a failure. `control()` and `speech()`
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
   `open_document`, `open_folder`, `open_settings_page`, `kill_target`,
   `process_status`, `quit_verbatim`, and `report_latency` drive the
@@ -109,10 +111,10 @@ Public API:
   the matched utterance's ending and fail unless it completed, so a
   passing assertion means the speech was heard in full and the next input
   cannot cut it off. Utterances queued while an assertion waits are kept
-  for the next assertion. `wait_until_quiet(quiet_for, timeout)` waits
-  until every utterance queued so far has ended and nothing has been
-  queued or ended for `quiet_for`, and panics with the timeline if that
-  does not happen within `timeout`.
+  for the next assertion. `wait_until_quiet(timeout)` waits until every
+  utterance queued so far has ended, never for a stretch of silence, and
+  panics with the timeline if that does not happen within `timeout`.
+  `last_heard` gives the last utterance queued so far.
 - `timeline` — the scenario's shared log of injected gestures and keys
   and of speech: each utterance at queue time, its audio start, and its
   ending, rendered as `completed`, `cancelled`, or `failed` with the

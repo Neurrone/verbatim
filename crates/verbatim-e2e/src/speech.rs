@@ -358,8 +358,9 @@ impl SpeechCollector {
         self.expect_heard(&utterance);
     }
 
-    /// Waits until every utterance queued so far has ended and nothing new
-    /// has been queued or ended for `quiet_for`. Frames already waiting on
+    /// Waits until every utterance queued so far has ended. It never waits
+    /// for a stretch of silence: a fixed wait would slow every passing run
+    /// and still guess at when speech is over. Frames already waiting on
     /// the connection are read before deciding, so speech queued just
     /// before the call is not overlooked. Everything spoken up to then is
     /// consumed: no later assertion can be satisfied by it.
@@ -368,7 +369,7 @@ impl SpeechCollector {
     ///
     /// Panics with the full timeline if speech has not gone quiet within
     /// `timeout`, or if the speech connection fails outright.
-    pub fn wait_until_quiet(&mut self, quiet_for: Duration, timeout: Duration) {
+    pub fn wait_until_quiet(&mut self, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         loop {
             match self.read_aside() {
@@ -383,7 +384,7 @@ underlying error: {error}",
                 ),
             }
             // Nothing more is waiting on the connection.
-            if self.unended.is_empty() && self.last_activity.elapsed() >= quiet_for {
+            if self.unended.is_empty() {
                 self.pending.clear();
                 return;
             }
@@ -400,25 +401,10 @@ underlying error: {error}",
         }
     }
 
-    /// The text of the first utterance containing `matcher` heard within
-    /// `timeout`, or `None` when none was, for a scenario that searches by
-    /// pressing keys until it hears what it is looking for. Utterances that
-    /// do not match are consumed.
-    ///
-    /// # Panics
-    ///
-    /// Panics with the timeline so far if the speech connection fails
-    /// outright.
-    pub fn heard_within(&mut self, matcher: &str, timeout: Duration) -> Option<String> {
-        match self.advance_through(&[matcher], timeout) {
-            (_, Some(error), _) => panic!(
-                "speech connection failed while listening for {matcher:?}; timeline so far:
-{}
-underlying error: {error}",
-                self.timeline.render()
-            ),
-            (_, None, utterance) => utterance.map(|utterance| utterance.text),
-        }
+    /// The text of the last utterance queued so far, if any.
+    #[must_use]
+    pub fn last_heard(&self) -> Option<String> {
+        self.timeline.utterances().pop()
     }
 
     /// Shared loop behind the `expect_*` methods: reads utterances until
@@ -605,7 +591,7 @@ mod tests {
     fn quiet_means_every_queued_utterance_has_ended() {
         let (mut speech, _) = collector(vec![queued(1, "first"), queued(2, "second")]);
         let result = catch_unwind(AssertUnwindSafe(|| {
-            speech.wait_until_quiet(Duration::ZERO, SHORT);
+            speech.wait_until_quiet(SHORT);
         }));
         assert!(result.is_err(), "two utterances never ended");
 
@@ -613,7 +599,7 @@ mod tests {
             queued(1, "first"),
             ended(1, UtteranceEnding::Cancelled),
         ]);
-        speech.wait_until_quiet(Duration::ZERO, SHORT);
+        speech.wait_until_quiet(SHORT);
     }
 
     #[test]

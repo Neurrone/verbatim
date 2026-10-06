@@ -211,12 +211,7 @@ fn minimize_all_windows(agent: &mut AgentClient) {
     if let Err(error) = minimized {
         eprintln!("could not minimize the desktop's windows before recording: {error}");
     }
-    // The minimize animation finishes before the capture starts.
-    thread::sleep(MINIMIZE_SETTLE);
 }
-
-/// How long windows take to finish minimizing.
-const MINIMIZE_SETTLE: Duration = Duration::from_millis(500);
 
 /// ffmpeg's arguments capturing the desktop into fragmented MP4 at
 /// `output`: playable however it is ended. A hard stop loses only the

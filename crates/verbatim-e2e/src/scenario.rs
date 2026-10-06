@@ -127,30 +127,26 @@ pub fn is_audible() -> bool {
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Interval between control-tunnel readiness polls.
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// How long [`Scenario::quit_verbatim`] waits for the process to actually
 /// exit after `Quit` is acknowledged (or the connection closed in its
 /// place).
 const QUIT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Extra settle time [`Scenario::launch`] waits after the control plane
-/// answers, before returning.
+/// How long [`Scenario::launch`] waits for Verbatim to report itself
+/// ready after the control plane answers.
 ///
-/// The control server starts (and so the tunnel answers) before
-/// `verbatim-app`'s `run` finishes wiring the keyboard hook, speaks the
-/// startup announcement, and hands `run_gui`'s `on_ready` callback its
-/// `GuiHandle` — the handle the gesture router needs to act on anything.
-/// A `SendGesture` that arrives before that handle exists is not queued;
-/// `verbatim-app`'s router logs and silently drops it (confirmed live: the
-/// control plane still answers `Ok`, since routing is fire-and-forget, but
-/// nothing happens). There is no control-plane signal this crate can poll
-/// for "the GUI is ready" without changing `verbatim-app` (outside this
-/// crate's scope), so this fixed pause is the pragmatic mitigation: wx's
-/// remaining setup at that point is a handful of cheap window creations,
-/// not I/O, so it is comfortably done well within this window even on a
-/// slow CI runner.
-const GUI_SETTLE_DELAY: Duration = Duration::from_secs(1);
+/// The control server starts, and so the tunnel answers, before
+/// `verbatim-app` hands the gesture router its `GuiHandle`, and before the
+/// focus listener and the outpost reading Verbatim's own windows are
+/// ready; a gesture or key sent before then can go unheard. Verbatim
+/// reports when all three are ready in its status (`StatusInfo::ready`),
+/// which launch waits for; this only bounds a failure.
+const GUI_READY_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How often launch asks whether the GUI is ready.
+const GUI_READY_POLL: Duration = Duration::from_millis(10);
 
 /// Enforces one live Verbatim instance at a time within this process.
 ///
@@ -349,10 +345,16 @@ impl Scenario {
             }
         };
 
-        // See GUI_SETTLE_DELAY's doc comment: the control plane answering
-        // does not yet mean the GUI thread has installed its gesture
-        // handle.
-        thread::sleep(GUI_SETTLE_DELAY);
+        // The control plane answering does not yet mean Verbatim can act on
+        // input; wait until it says it can.
+        let mut control = control;
+        if let Err(error) = wait_for_gui(&mut control) {
+            let _ = process_agent.kill_process(verbatim_pid);
+            if let Some(recording) = &mut recording {
+                recording.stop(&mut process_agent);
+            }
+            return Err(error);
+        }
 
         Ok(Self {
             _lock: lock,
@@ -1227,6 +1229,28 @@ fn config_error(error: &verbatim_config::ConfigError) -> io::Error {
 
 /// The synthesizer every run selects.
 const ESPEAK_ID: &str = "espeak";
+
+/// Waits until Verbatim reports itself ready
+/// ([`GUI_READY_TIMEOUT`]).
+fn wait_for_gui(control: &mut ControlClient) -> io::Result<()> {
+    let deadline = Instant::now() + GUI_READY_TIMEOUT;
+    loop {
+        if let Frame::Reply {
+            payload: ReplyPayload::Status(status),
+            ..
+        } = control.request(Request::Status)?
+            && status.ready
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::other(format!(
+                "Verbatim did not report itself ready within {GUI_READY_TIMEOUT:?}"
+            )));
+        }
+        thread::sleep(GUI_READY_POLL);
+    }
+}
 
 /// The image (executable file) name [`Scenario::launch_target`] records
 /// for later cleanup: just the file name component of `command`, matching

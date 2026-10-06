@@ -79,9 +79,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .send_keys(&["enter"])
         .expect("sends enter on Cancel");
-    scenario
-        .speech()
-        .wait_until_quiet(Duration::from_millis(500), STEP_TIMEOUT);
     let reopened = open_at_rate(scenario);
     assert_eq!(
         reopened, rate,
@@ -102,9 +99,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .speech()
         .expect_in_order(&["Cancel", "button"], STEP_TIMEOUT);
     scenario.send_keys(&["escape"]).expect("sends escape");
-    scenario
-        .speech()
-        .wait_until_quiet(Duration::from_millis(500), STEP_TIMEOUT);
     let applied = open_at_rate(scenario);
     assert_eq!(
         applied,

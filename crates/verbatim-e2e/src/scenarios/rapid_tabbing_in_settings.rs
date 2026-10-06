@@ -31,14 +31,6 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 /// How many Tab presses the burst makes before coming back.
 const TABS: usize = 6;
 
-/// How long the speech stream must stay quiet after the burst before the
-/// final check, so nothing the burst caused is mistaken for its answer.
-const SETTLE: Duration = Duration::from_secs(3);
-
-/// The longest the burst's speech may take to go quiet: every utterance it
-/// queued ended and nothing new for [`SETTLE`].
-const SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
-
 #[allow(
     clippy::unnecessary_wraps,
     reason = "must match ScenarioDef::setup's fn-pointer signature"
@@ -57,9 +49,12 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .collect();
     scenario.send_keys(&burst).expect("sends the burst");
 
-    // Let whatever the burst caused finish: every utterance ended, and
-    // nothing new queued for the settle time.
-    scenario.speech().wait_until_quiet(SETTLE, SETTLE_TIMEOUT);
+    // The burst ends back on the category item, whose focus announcement
+    // ("Speech 1 of 1") says the last of its focus events has been read,
+    // so the report below answers for the control that really has focus.
+    scenario
+        .speech()
+        .expect_in_order(&["Speech", "1 of 1"], STEP_TIMEOUT);
 
     // The navigator follows focus, so reporting it names the control that
     // really has focus: the category item the burst returned to.

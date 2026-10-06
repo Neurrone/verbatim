@@ -765,10 +765,11 @@ and the visible windows when it cannot, as NVDA's system tests do.
 
 **A gesture sent immediately after launch can silently do nothing.** The
 control server starts (and so a tunnel connection succeeds) before
-`verbatim-app`'s GUI thread finishes wiring its gesture handle; a
-`SendGesture` that arrives in that narrow window is logged and dropped by
-the router, not queued, even though the control plane still answers `Ok`.
-`Scenario::launch` covers this with a fixed one-second settle delay after
-its own connection succeeds; a hand-rolled script driving a freshly
-launched Verbatim through `verbatim-inspect` should pause briefly after
-launch for the same reason, especially on a slow CI runner.
+`verbatim-app`'s GUI thread finishes wiring its gesture handle, and
+before the focus listener and the outpost reading Verbatim's own windows
+are ready; a `SendGesture` that arrives then is dropped by the router, or
+its menu is never seen, even though the control plane still answers `Ok`.
+Verbatim's status reports when all of these are ready (`ready` in
+`StatusInfo`); `Scenario::launch` waits for it, and a hand-rolled script
+should poll `Status` for it the same way rather than pausing for a fixed
+time.
