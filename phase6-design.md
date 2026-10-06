@@ -569,7 +569,7 @@ first sounds.
   and progress tones, plus short recorded sounds stored as WAV files in
   the repository and decoded once at startup. Sounds are resampled to the
   mixer's format when it opens.
-- **Settings.** The "Audio theme" and "Indications" panels, below.
+- **Settings.** The Theme panel, below.
 - **First sounds in this milestone**: the terminal's "skipped N lines"
   cue, the application-not-responding cue (already defined), spelling and
   grammar errors while reading text (from M4's formatting spans), a
@@ -589,9 +589,9 @@ GPL), and are installed beside the program. The platform-neutral code
 only loads files from that directory, so a macOS build would use the same
 sounds. Generated tones cover beeps and progress tones.
 
-### Audio themes
+### Research: how others expose sounds
 
-Dickson asked for the abstraction behind earcons to be a theme. Research
+Research
 of 2026-10-06 covered JAWS's Speech and Sounds Manager, NVDA's Audio
 Themes and Unspoken add-ons, Earcons and Speech Rules, Emacspeak,
 VoiceOver, and Narrator.
@@ -619,151 +619,135 @@ What the others do:
   Narrator has one checkbox, "play sounds instead of announcements", for
   five cues.
 
-Proposed for Verbatim:
+### Themes: one model for verbosity, speech, and sounds
 
-- **Name.** "Audio theme" in the interface and documentation (agreed
-  2026-10-06), since
-  "theme" alone reads as a visual theme in Windows and "sound scheme" is
-  Windows' own name for system sounds; `Theme` in code.
-- **What a theme maps.** Semantic keys from D12's spans and from events,
-  never patterns over text: a role (with qualifiers such as heading
-  level), a state and its negation, a text attribute (each attribute on
-  its own, so bold and underline do not need a rule for the pair),
-  structure (entering or leaving a list or table, blank line, skipped
-  lines), and a fixed list of event cues (browse or focus mode, not
-  responding, error, suggestions, progress, start, exit).
-- **What a key maps to.** A record, not a choice of one behavior: a sound
-  (a file, with gain), the speech (the default words, replacement words,
-  or nothing), and a voice style (relative pitch, rate, and volume, as in
-  Emacspeak, defined in the theme rather than per voice). A sound can
-  accompany the words or replace them, which removes JAWS's conflict.
-### Indications: verbosity and audio themes as one model
+Revised 2026-10-06 with Dickson. A theme is a complete collection of
+indications and their settings: for every kind of thing Verbatim can
+report, whether it is reported, and if so how, with the sounds, words,
+and voice styles that go with it. It is not audio-only: it decides what
+is spoken for a user who wants speech alone, and braille joins it in
+M15. So the name is not "audio theme". Proposed: "theme", the name D12
+already uses, since the concept now covers all presentation; the
+collision with Windows' visual themes matters less once it is not about
+sound. ("Scheme", JAWS's word, is the alternative.)
 
-Proposed 2026-10-06 at Dickson's suggestion: whether something is
-reported and how it is reported are one setting, not two systems.
+NVDA's precedent: "Report spelling errors" takes speech, sound, both, or
+off (and braille, as a flag set, `reportSpellingErrors2` with
+`ReportSpellingErrors` in `config/configFlags.py`), and "line
+indentation" takes speech, tones, both, or off (`reportLineIndentation`).
+Its other verbosity settings are on-or-off checkboxes. Verbatim
+generalizes this to every indication.
 
-NVDA already does this for two items. "Report spelling errors" takes
-speech, sound, both, or off (and braille, as a flag set,
-`reportSpellingErrors2` with `ReportSpellingErrors` in
-`config/configFlags.py`), and "line indentation" takes speech, tones,
-both, or off (`reportLineIndentation`). Its other verbosity settings are
-on-or-off checkboxes. VoiceOver's verbosity items each take speak, change
-pitch, or play a tone. Verbatim generalizes this to every indication.
-
-The model has three parts:
+The parts:
 
 - **The indication catalogue**, defined in code: every kind of thing
-  Verbatim can report, each with a stable id and a category. Roles
-  ("link", "heading level 2"), states and their negations ("checked",
-  "not checked"), properties (description, position "3 of 7", shortcut
-  key), text attributes (spelling error, bold, font change), structure
+  Verbatim can report, with a stable id and a category. Roles ("link",
+  "heading level 2"), states and their negations ("checked", "not
+  checked"), properties (description, position "3 of 7", shortcut key),
+  text attributes (spelling error, bold, font change), structure
   (entering a list, leaving a table, blank line, indentation, skipped
   lines), and events (browse or focus mode, not responding, error,
-  progress). It grows with the features: this milestone has what
-  Verbatim reports today plus M4's text and terminal indications.
-- **The audio theme**, an installed package that says how each indication
-  sounds: its sound file and gain, replacement words if any, a voice
-  style if any, and a suggested way of reporting it. The plain theme has
-  no sounds and suggests speech for everything, which reproduces today's
-  speech exactly.
-- **The user's settings**, stored in the configuration: the chosen theme,
-  sound volume, and, for any indication the user has changed, how it is
-  reported and any change to its sound, words, or voice style.
+  progress, suggestions). It grows with the features: this milestone has
+  what Verbatim reports today plus M4's text and terminal indications.
+- **A theme**: for each indication in the catalogue, how it is reported
+  (off, speech, sound, or speech and sound; braille joins the set in
+  M15), the sound and its gain, replacement words if any, and a voice
+  style if any; plus the theme's own name, description, base theme, and
+  overall gain. A theme may leave indications out and name a base theme
+  it falls back to; the chain ends at the built-in default theme, so
+  every indication always has a setting.
+- **The default theme** uses speech and sounds, matching NVDA's defaults:
+  everything is spoken as NVDA speaks it, and sounds play where NVDA
+  plays them by default (the browse and focus mode sounds, suggestions
+  appearing and disappearing, errors, start and exit), plus Verbatim's
+  own cues (application not responding, skipped terminal lines). A theme
+  without sounds is added when braille arrives.
 
-How each indication is reported is a set of outputs: speech, sound, and,
-once braille exists (M15), braille. So the choices are off, speech only,
-sound only, or speech and sound. Off is the only choice that removes
-information: an indication set to sound only whose theme has no sound for
-it is spoken instead, so switching theme can never silently drop
-something. The value for an indication is resolved from the active
-profile's settings, then the base settings, then the theme's suggestion,
-then the built-in default, which is speech, as in NVDA.
+How "sound only" without a sound works: a theme says both how an
+indication is reported and which sound it uses, so a theme that sets an
+indication to sound only names its sound. The gap appears only when the
+two come apart: the sound file is missing or cannot be decoded, a base
+theme's sound was removed, or the user chooses sound only for an
+indication that has no sound. Loading a theme reports these as problems
+(listed in the theme panel and the log), and at playback an indication
+whose sound is unavailable is spoken instead, so information is never
+dropped by accident. Off remains the only way to remove an indication.
 
-Where it applies in the pipeline: the reducer keeps putting every fact it
-has into the utterance as typed spans (D12), and the presentation stage
-at the end of the speech pipeline turns each span into words, a sound,
-both, or nothing. The reducer consults the setting in one case, to skip
-fetching information that is set to off, such as descriptions, so off
-also saves the cross-process cost. Sounds for spans are placed in the
-speech stream and cancelled with it; sounds for events play at once
-(see "Earcons").
+Where it applies in the pipeline: the reducer keeps putting every fact
+into the utterance as typed spans (D12), and the presentation stage at
+the end of the speech pipeline turns each span into words, a sound, both,
+or nothing, as the active theme says. The reducer consults the theme in
+one case, to skip fetching information that is set to off, such as
+descriptions, so off also saves the cross-process call (agreed
+2026-10-06). Sounds for spans are placed in the speech stream and
+cancelled with it; sounds for events play at once (see "Earcons").
 
-### Configuration profiles
+### Themes and configuration profiles
 
-Profiles exist in `verbatim-config` as sparse overlays on the base
-settings (`settings.toml` plus files in `profiles`), resolved most
-specific first; activating them, manually or by application, is M8's
-work. Everything above is ordinary profile data:
+The division: a theme says how things are presented; a profile says
+which theme applies, along with everything else a profile can change.
 
-- The chosen audio theme, sound volume, the say-all and learning-mode
-  checkboxes, and every per-indication change can differ per profile.
-  A profile for a terminal-heavy application could choose a theme with
-  more sounds; a proofreading profile could set bold and font changes to
-  speech.
-- A profile holds only what it changes. An indication the profile does
-  not mention falls through to the base settings, then to the theme.
-- The settings dialog edits the active profile, as NVDA's does, and says
-  which one in its title. Until M8, that is always the base.
-- Themes themselves are not stored in profiles; they are installed
-  packages that profiles refer to by id.
-
-One mechanism for user changes, not two: a change to an indication's
-sound, words, or voice is stored as a setting like its reporting choice,
-so there is no separate "modified theme" layer. Export writes the theme
-with the active settings' changes applied as a new theme to share.
+- Profiles exist in `verbatim-config` as sparse overlays on the base
+  settings; activating them, by hand or per application, is M8's work.
+- The base settings name the theme in use. A profile may name a
+  different one, such as a proofreading theme for a word processor or a
+  quieter theme for a terminal; a profile that names none uses the base
+  settings' theme. Sound volume and the say-all and learning checkboxes
+  are ordinary settings that a profile may also change.
+- Profiles do not hold per-indication settings. To present something
+  differently in one application, the user makes a theme for it (usually
+  "New based on" the current one, changing a few indications) and
+  selects it in that application's profile. That keeps one place to look
+  for how something is presented: the theme.
+- Editing a theme changes that theme everywhere it is used. The built-in
+  themes cannot be changed in place; editing one asks for a name and
+  creates a new theme based on it, explicitly rather than JAWS's silent
+  "modified" copy. User themes are edited in place.
+- Themes are packages in the user's themes folder, referred to by id from
+  the settings and profiles.
 
 ### The settings dialog
 
-Two panels in the settings dialog's category list.
+One "Theme" panel in the settings dialog's category list, replacing the
+two panels proposed earlier:
 
-**The "Audio theme" panel:**
-
-1. "Audio theme", a combo box listing the installed themes, the plain
-   theme first. Moving through the list applies each theme at once, so
-   the next thing spoken uses it, and Cancel restores the theme the
-   dialog opened with.
-2. "Description", a read-only text field: the theme's author and
-   description.
-3. "Sound volume", a slider from 0 to 100, relative to speech. Moving it
-   plays a short sample at the new volume.
+1. "Theme", a combo box listing the installed themes, the default first.
+   Moving through the list applies each theme at once, so the next thing
+   spoken uses it; Cancel restores the theme the dialog opened with. The
+   dialog title names the profile being edited, as NVDA's does, and the
+   choice is saved to that profile.
+2. "Description", a read-only text field: the theme's author,
+   description, and any problems found loading it (a missing sound).
+3. "Sound volume", a slider from 0 to 100, relative to speech; moving it
+   plays a short sample.
 4. "Play sounds during say all", a checkbox, on by default.
 5. "Also speak indications that play a sound", a checkbox, off by
-   default: JAWS's training mode, for learning a theme's sounds; every
-   indication set to sound only is also spoken.
-6. Buttons: "Import theme..." opens a file dialog for a shared theme
-   file and installs it; "Export theme..." saves the current theme with
-   the active settings' changes as a new theme file; "Remove theme"
-   uninstalls the selected theme after a confirmation, and is
-   unavailable for the plain theme.
-
-**The "Indications" panel**, where verbosity and sounds meet:
-
-1. "Find", an edit field that filters the tree below to indications
-   whose names contain the text.
-2. "Indications", a tree view. Top-level items are the categories (Roles,
-   States, Properties, Text formatting, Structure, Events); their
-   children are the indications. Each indication's name summarizes its
-   current setting, such as "Link: speech and sound" or "Checked: sound
-   (check.wav)" or "Description: off", so arrowing through the tree reads
-   the whole configuration. A changed indication's name ends with
-   "changed".
-3. Below the tree, the controls for the selected indication:
+   default: JAWS's training mode, for learning a theme's sounds.
+6. "Indications", a tree view of the selected theme. Top-level items are
+   the categories (Roles, States, Properties, Text formatting, Structure,
+   Events); their children are the indications. Each indication's name
+   summarizes its setting, such as "Link: speech and sound", "Checked:
+   sound (check.wav)", or "Description: off", so arrowing through the
+   tree reads the whole theme; an indication that differs from the base
+   theme ends with "changed". A "Find" field above the tree filters it.
+7. Below the tree, the selected indication's settings:
    - "Report as", a combo box: off, speech, sound, speech and sound.
-   - "Sound", a combo box: none, each sound the theme provides, and
-     "Browse..." for a sound file. Space on the combo box plays the
+   - "Sound", a combo box: none, each sound in the theme, and "Browse..."
+     to add a sound file to the theme. Space on the combo box plays the
      selected sound.
-   - "Words", an edit field: the words spoken for the indication, empty
-     for the default words.
+   - "Words", an edit field: the words spoken, empty for the default.
    - "Voice", a combo box: default, or one of the theme's voice styles.
-   - "Preview", a button that speaks a sample through the current
-     settings, such as a link inside a sentence, so the sound is heard in
-     context.
-   - "Reset", a button that returns the indication to the theme's
+   - "Preview", a button that speaks a sample through the theme, such as
+     a link inside a sentence, so the sound is heard in context.
+   - "Reset", a button that returns the indication to the base theme's
      setting.
-   Controls that do not apply are disabled: with "Report as" set to off
-   or speech, "Sound" is disabled; with sound only, "Words" and "Voice"
-   are disabled.
-4. "Reset all to theme", a button, after a confirmation.
+   Controls that do not apply are disabled: with "Report as" off or
+   speech, "Sound" is disabled; with sound only, "Words" and "Voice" are
+   disabled. Changing a built-in theme's indication first asks for a name
+   for the new theme, as above.
+8. Buttons: "New theme based on this...", "Rename...", "Import...",
+   "Export...", and "Remove" (with a confirmation; unavailable for the
+   built-in themes and for a theme a profile still uses).
 
 Changes apply at once and Cancel reverts them, like the Speech panel.
 Enter activates OK, except on a button, which activates the button, as
@@ -771,16 +755,24 @@ the GUI port's key routing does everywhere.
 
 Today's NVDA-style checkboxes (report descriptions, report position
 information, and the M4 formatting settings) are not separate settings:
-they are indications on this panel. The Speech panel keeps the
+they are indications in the theme. The Speech panel keeps the
 synthesizer and voice settings.
+
+### Packaging
+
+A theme is a directory: a TOML manifest (id, name, author, description,
+version, base, gain, voice styles, and the indications it sets) and its
+sound files. It is shared as that directory zipped. Import installs one;
+Export writes one. The built-in themes ship in the top-level `sounds/`
+and `themes/` directories, shared by every platform.
 
 ### Scope
 
 This milestone: the catalogue for what Verbatim reports plus M4's
-additions, the plain theme and one theme with NVDA's sounds, both panels
-as described including Import and Export, and the resolution through
-profiles (with only the base active until M8). M11 keeps voice styling
-beyond simple relative pitch, rate, and volume, and themes provided by
+additions, the default theme with NVDA's sounds, the Theme panel as
+described including new, import, and export, and the theme named by the
+base settings and, once M8 activates them, by profiles. M11 keeps voice
+styling beyond relative pitch, rate, and volume, and themes provided by
 extensions.
 
 ## Core's state
