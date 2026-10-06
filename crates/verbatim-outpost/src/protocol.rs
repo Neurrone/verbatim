@@ -316,6 +316,12 @@ pub enum SupervisorToOutpost {
         /// Echoed in the matching pong.
         seq: u64,
     },
+    /// The details the active theme wants read for each node
+    /// (`SrState::fetches` in `verbatim-core`): a detail whose indication
+    /// is off is not read, which saves its cross-process call. Sent when an
+    /// outpost starts and whenever the theme in use changes; everything is
+    /// read until the first arrives.
+    Fetches(verbatim_model::Fetches),
     /// The nodes from this outpost that Core still holds (outpost redesign,
     /// "Held objects"), as the numbers the outpost issued, and the position
     /// of the last message from this outpost that Core has handled

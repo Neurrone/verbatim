@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use windows::Win32::UI::Accessibility::IAccessible;
 use windows::core::AgileReference;
 
-use verbatim_model::{NodeId, Role};
+use verbatim_model::{Fetches, NodeId, Role};
 
 /// The MSAA address of one accessible: its window handle, object id, and child
 /// id (`CHILDID_SELF` is zero).
@@ -85,6 +85,8 @@ pub(crate) enum Found {
 pub struct NodeIdRegistry {
     counter: Arc<AtomicU64>,
     inner: Arc<Mutex<Inner>>,
+    /// What a node read includes; every read goes through the registry.
+    fetches: Arc<Mutex<Fetches>>,
 }
 
 #[derive(Default)]
@@ -104,7 +106,22 @@ impl NodeIdRegistry {
         Self {
             counter,
             inner: Arc::new(Mutex::new(Inner::default())),
+            fetches: Arc::new(Mutex::new(Fetches::default())),
         }
+    }
+
+    /// The details a node read through this registry includes, as the
+    /// active theme wants them (`Fetches`): a detail whose indication is
+    /// off is not read, which saves its cross-process call. Every detail
+    /// until [`set_fetches`](Self::set_fetches) says otherwise.
+    #[must_use]
+    pub fn fetches(&self) -> Fetches {
+        *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Changes the details nodes read from now on include.
+    pub fn set_fetches(&self, fetches: Fetches) {
+        *self.fetches.lock().unwrap_or_else(PoisonError::into_inner) = fetches;
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {

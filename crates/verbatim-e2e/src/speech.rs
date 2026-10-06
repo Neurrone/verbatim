@@ -18,6 +18,11 @@
 //! the next input the scenario injects cannot cut it off.
 //! [`SpeechCollector::wait_until_quiet`] waits for every utterance to end,
 //! which every scenario does before its teardown.
+//!
+//! Sounds are matched like words. A sound in the speech stream is named in
+//! its utterance's text (`sound: spelling-error`); a sound played at once
+//! for an event arrives as a [`Frame::Sound`] and is matched as an
+//! utterance of its own, `sound: exit`, heard as soon as it is read.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
@@ -80,6 +85,10 @@ pub struct SpeechCollector {
     started: BTreeSet<UtteranceId>,
     /// When the last utterance was queued or ended.
     last_activity: Instant,
+    /// The id the next sound played at once is matched under: they count
+    /// down from the top of the id space, which the pipeline's own ids,
+    /// counting up from 1, never reach.
+    next_sound: u64,
 }
 
 impl SpeechCollector {
@@ -115,6 +124,7 @@ impl SpeechCollector {
             unended: BTreeSet::new(),
             started: BTreeSet::new(),
             last_activity: Instant::now(),
+            next_sound: u64::MAX,
         }
     }
 
@@ -146,6 +156,21 @@ impl SpeechCollector {
                 self.endings.insert(utterance, ending);
                 self.last_activity = Instant::now();
                 None
+            }
+            // A sound played at once for an event is matched like an
+            // utterance, as `sound:` and its indication's id, the way a
+            // sound in an utterance's text reads. It has no ending of its
+            // own to wait for, so it counts as heard at once.
+            Frame::Sound { indication, .. } => {
+                let text = format!("sound: {indication}");
+                let utterance = UtteranceId(self.next_sound);
+                self.next_sound -= 1;
+                self.timeline.push_utterance(&text);
+                self.texts.insert(utterance, text.clone());
+                self.started.insert(utterance);
+                self.endings.insert(utterance, UtteranceEnding::Completed);
+                self.last_activity = Instant::now();
+                Some(Utterance { utterance, text })
             }
             _ => None,
         }
@@ -704,6 +729,20 @@ mod tests {
             queued(1, "first"),
             ended(1, UtteranceEnding::Cancelled),
         ]);
+        speech.wait_until_quiet(SHORT);
+    }
+
+    #[test]
+    fn a_sound_played_at_once_is_matched_like_speech() {
+        let (mut speech, _) = collector(vec![
+            queued(1, "before"),
+            ended(1, UtteranceEnding::Completed),
+            Frame::Sound {
+                indication: "exit".to_owned(),
+                at_ms: 0,
+            },
+        ]);
+        speech.expect_in_order(&["before", "sound: exit"], SHORT);
         speech.wait_until_quiet(SHORT);
     }
 

@@ -169,12 +169,12 @@ impl ActiveTheme {
     /// the sound is available, and whether it is spoken. An indication set
     /// to sound alone whose sound is unavailable is spoken instead, and so
     /// is one whose sound plays when the settings ask for sounded
-    /// indications to be spoken too.
-    fn decide(&self, indication: Indication) -> Decision<'_> {
+    /// indications to be spoken too. With `sounds` false (say-all reading
+    /// while "play sounds during say all" is off), no sound plays, so an
+    /// indication set to sound alone is spoken instead.
+    fn decide(&self, indication: Indication, sounds: bool) -> Decision<'_> {
         let setting = self.setting(indication);
-        let sound = setting
-            .report
-            .sounds()
+        let sound = (sounds && setting.report.sounds())
             .then_some(setting.sound.as_ref())
             .flatten()
             .and_then(|source| Some((source, self.sounds.get(source)?)));
@@ -223,7 +223,7 @@ impl ActiveTheme {
     /// to. A progress tone rises in pitch with the percentage.
     pub(crate) fn earcon(&self, earcon: Earcon) -> (Option<(Arc<Sound>, f32)>, Option<String>) {
         let indication = Indication::of_earcon(earcon);
-        let decision = self.decide(indication);
+        let decision = self.decide(indication, true);
         let sound = decision
             .sound
             .and_then(|(source, sound)| match (earcon, source) {
@@ -329,7 +329,10 @@ impl Presenter for ThemePresenter {
     /// if any.
     fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
         let active = self.themes.get();
-        let mut out = Output::default();
+        let mut out = Output {
+            sounds: !utterance.say_all || active.options().sounds_during_say_all,
+            ..Output::default()
+        };
         for segment in &utterance.segments {
             let language = segment.language.as_deref();
             if let Some(capital) = capital_of(&segment.content, language) {
@@ -364,6 +367,9 @@ impl Presenter for ThemePresenter {
 struct Output {
     items: Vec<SpeechItem>,
     parts: Vec<String>,
+    /// Whether indications may play their sounds: not while say-all reads
+    /// with "play sounds during say all" off.
+    sounds: bool,
 }
 
 impl Output {
@@ -411,7 +417,7 @@ impl Output {
         let Some(own) = spoken_form(content, language) else {
             return;
         };
-        let decision = active.decide(indication);
+        let decision = active.decide(indication, self.sounds);
         // An error's sound marks where it starts, not where it ends.
         let ending = matches!(
             content,
@@ -438,7 +444,7 @@ impl Output {
     /// if any), preceded by its sound when it plays one, and as it is
     /// otherwise. The letter itself is content, so it is always spoken.
     fn capital(&mut self, active: &ActiveTheme, letter: String) {
-        let decision = active.decide(Indication::Capital);
+        let decision = active.decide(Indication::Capital, self.sounds);
         if let Some((_, sound)) = decision.sound {
             self.sound(Indication::Capital, sound, decision.gain);
         }
@@ -593,6 +599,7 @@ mod tests {
             priority: SpeechPriority::Queued,
             segments,
             source: None,
+            say_all: false,
             validity: None,
         }
     }
@@ -822,6 +829,39 @@ mod tests {
         assert_eq!(
             shape(&sequence),
             ["the spelling error wrold out of spelling error turns"]
+        );
+    }
+
+    #[test]
+    fn say_all_plays_sounds_only_when_the_option_allows() {
+        let mut theme = Theme::new("sounded", "Sounded");
+        theme.indications.insert(
+            Indication::SpellingError,
+            setting(Presentation::Sound, Some("textError.wav")),
+        );
+        let read_by_say_all = Utterance {
+            say_all: true,
+            ..misspelled()
+        };
+        let allowed = presenter_of(theme.clone(), ThemeOptions::default());
+        assert_eq!(
+            shape(&allowed.flatten(&read_by_say_all, UtteranceId(1))),
+            ["the", "sound: spelling-error", "wrold turns"]
+        );
+        let options = ThemeOptions {
+            sounds_during_say_all: false,
+            ..ThemeOptions::default()
+        };
+        let silenced = presenter_of(theme, options);
+        assert_eq!(
+            shape(&silenced.flatten(&read_by_say_all, UtteranceId(1))),
+            ["the spelling error wrold out of spelling error turns"],
+            "with sounds off during say-all, a sounded indication is spoken"
+        );
+        assert_eq!(
+            shape(&silenced.flatten(&misspelled(), UtteranceId(1))),
+            ["the", "sound: spelling-error", "wrold turns"],
+            "outside say-all the sound still plays"
         );
     }
 

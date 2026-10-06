@@ -128,7 +128,9 @@ Public API:
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
   position without a pipeline change. Focus speech also carries a
-  `validity`, which is `None` on every other utterance.
+  `validity`, which is `None` on every other utterance. `say_all` marks
+  an utterance say-all reads, so the theme's "play sounds during say all"
+  setting applies to it; it is `false` on every other utterance.
 - `FocusValidity` and `FocusNow` — what focus speech is about, for
   dropping it once the focus has moved on (`docs/nvda/speech.md`,
   "Cancellation"). A `FocusValidity` names the node the speech announces

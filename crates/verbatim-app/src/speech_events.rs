@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
-use verbatim_model::{Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId};
+use verbatim_model::{Indication, Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_speech::{IndexMark, SpeechEvents};
 
 use crate::ShellCommand;
@@ -60,6 +60,10 @@ impl SpeechEvents for ShellSpeechEvents {
         {
             tracing::debug!("the reducer thread is gone; a mark is dropped");
         }
+    }
+
+    fn sound_played(&self, indication: Indication, at: Instant) {
+        self.ledger.sound_played(indication, at);
     }
 
     fn utterance_ended(

@@ -62,6 +62,13 @@ Public API:
   source, mixed over speech and never cancelled by it (a progress tone
   rising with the percentage), and its words, when the theme speaks it or
   its sound is unavailable, are queued as an utterance.
+  `play_earcon_to_end(earcon, timeout)` does the same and waits, at most
+  `timeout`, until the event has been heard: its sound plays over an
+  utterance of silence as long as it is on the events' source, whose
+  ending says the sound has played to its end, and its words, if any, are
+  spoken to their end; Verbatim plays its exit sound this way before it
+  exits. Every ending passes the manager's own waiters on its way to the
+  configured observer.
   `play_sound(sound, gain)` plays any sound at once on the same source,
   for the settings dialog to let a sound be heard.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
@@ -121,7 +128,10 @@ Public API:
   span with nothing to say (a state never announced) plays nothing
   either. An indication set to sound alone whose sound is unavailable is
   spoken instead, and so is one whose sound plays when
-  `ThemeOptions::speak_sounded_indications` is on. Replacement words
+  `ThemeOptions::speak_sounded_indications` is on. In an utterance say-all
+  reads (`Utterance::say_all`) with `ThemeOptions::sounds_during_say_all`
+  off, no indication plays its sound, so one set to sound alone is spoken
+  instead. Replacement words
   replace a role's or state's name, and come before what carries content
   of its own (a description, a position, a font); a voice style with a
   pitch change speaks the words between two pitch items. A capital letter

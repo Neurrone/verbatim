@@ -801,7 +801,9 @@ fn the_next_word_past_the_line_moves_to_the_next_line_first_word() {
     assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
 }
 
-/// The index mark and text of each say-all utterance among `effects`.
+/// The index mark and text of each say-all utterance among `effects`, each
+/// checked to be marked as read by say-all, so the theme's "play sounds
+/// during say all" setting applies to it.
 fn say_all_pieces(effects: &[Effect]) -> Vec<(SpeechMark, String)> {
     effects
         .iter()
@@ -809,6 +811,7 @@ fn say_all_pieces(effects: &[Effect]) -> Vec<(SpeechMark, String)> {
             Effect::Speak(utterance) => match utterance.segments.as_slice() {
                 [mark, text] => match (&mark.content, &text.content) {
                     (SegmentContent::Mark(mark), SegmentContent::Text(text)) => {
+                        assert!(utterance.say_all, "{utterance:?} is read by say-all");
                         Some((*mark, text.clone()))
                     }
                     _ => None,

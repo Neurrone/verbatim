@@ -25,6 +25,59 @@ button-apply = &Apply
 
 speech-synthesizer-group = Synthesizer
 speech-change-synth = C&hange...
+
+## The Theme settings page (phase6-design.md, "The settings dialog"). The
+## dialog's own Categories and Apply take C and A, so the page avoids them.
+
+settings-category-theme = Theme
+theme-label = &Theme:
+theme-description-label = &Description:
+theme-sound-volume = Sound vol&ume:
+theme-sounds-during-say-all = Play sounds during say a&ll
+theme-speak-sounded = Also &speak indications that play a sound
+theme-find = &Find:
+theme-indications = &Indications:
+theme-report-as = &Report as:
+theme-sound = S&ound:
+theme-words = &Words:
+theme-voice = &Voice:
+theme-preview = &Preview
+theme-reset = R&eset
+theme-new = &New theme based on this...
+theme-rename = Rena&me...
+theme-import = Import...
+theme-export = E&xport...
+theme-remove = Remove
+theme-sound-none = none
+theme-sound-browse = Browse...
+theme-sound-tone = tone, { $frequency } hertz, { $duration } milliseconds
+theme-voice-default = default
+theme-setting-with-sound = { $presentation } ({ $sound })
+theme-indication-summary = { $indication }: { $setting }
+theme-indication-changed = { $summary }, changed
+theme-author = Author: { $author }
+theme-problems = Problems:
+theme-no-problems = No problems found.
+theme-preview-sample = Sample
+theme-preview-description = a sample description
+theme-preview-font = Arial
+theme-preview-font-size = 12 point
+theme-preview-color = dark red
+theme-new-title = New Theme
+theme-new-prompt = Name of the new theme, based on { $name }:
+theme-copy-prompt = { $name } is built in and cannot be changed. Name of the new theme, based on it, to make the change in:
+theme-copy-name = { $name } copy
+theme-rename-title = Rename Theme
+theme-rename-prompt = New name for { $name }:
+theme-import-title = Import a Theme
+theme-export-title = Export { $name }
+theme-package-filter = Theme packages (*.zip)|*.zip
+theme-sound-file-title = Add a Sound
+theme-sound-file-filter = Sound files (*.wav)|*.wav
+theme-remove-title = Remove Theme
+theme-remove-question = Remove the theme { $name }? This cannot be undone.
+theme-error-title = Theme
+theme-in-use = The configuration uses { $name }, so it cannot be removed.
 select-synth-title = Select Synthesizer
 select-synth-label = &Synthesizer:
 

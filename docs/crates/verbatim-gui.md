@@ -16,8 +16,8 @@ Public API:
 - `GuiHandle::send(command)` — cloneable, callable from any thread;
   sends the command down the GUI's own channel and wakes the event loop,
   which drains the channel on the GUI thread.
-- `run_gui(settings_host, events, on_ready)` — runs the event loop on the
-  calling thread (the app calls it from the process main thread); once the
+- `run_gui(settings_host, theme_host, events, on_ready)` — runs the event
+  loop on the calling thread (the app calls it from the process main thread); once the
   frame and tray exist, `on_ready` hands out the `GuiHandle`. It returns
   when the loop ends: after `Shutdown`, or when a replacing instance posts
   `WM_QUIT` to the hidden frame's thread. It runs once per process; a
@@ -38,6 +38,13 @@ Public API:
   watchdog's discipline, kept local and simple for a one-shot query) and
   the request just logs and presents nothing.
 - `ControlPlan` — re-exported from the pure `plan` module described below.
+- `ThemeHost` (trait) — what the Theme page needs from the app: the themes
+  and sounds folders, the theme the configuration names with its options
+  (`configured`), `activate` (make a theme the one speech presents with,
+  live, and tell the reducer what it wants fetched), `set_options`,
+  `persist` (save the choice), and `play`, `speak`, and `play_earcon` for
+  previews. The app implements it over its configuration store and speech
+  manager.
 
 The private modules:
 
@@ -48,11 +55,14 @@ The private modules:
   menu, open, raise, and focus a dialog, read a window's native handle,
   and shut down. C++ calls methods of the opaque `GuiCore` when the user
   acts: a menu choice, a tray click, a setting change, commit, revert, the
-  Select Synthesizer choice, a list dialog button, a dialog closing; and
-  two pure functions, the key router and category cycling. Pages cross as
-  shared structs Rust fills and C++ only reads: `SettingsDialog` and its
-  `Category` list, `SpeechPage` and its `SettingControl`s,
-  `SynthesizerPicker`, and `ListDialog`. Every string crosses resolved, so
+  Select Synthesizer choice, a list dialog button, a dialog closing, every
+  control of the Theme page; and two pure functions, the key router and
+  category cycling. Pages cross as shared structs Rust fills and C++ only
+  reads: `SettingsDialog` and its `Category` list, `SpeechPage` and its
+  `SettingControl`s, `SynthesizerPicker`, `ListDialog`, and for the Theme
+  page `ThemePage` (with its `ThemePrompts`), `ThemeTreeCategory` and
+  `ThemeTreeItem`, `IndicationControls`, and `ThemeEdit`, what became of a
+  change to an indication. Every string crosses resolved, so
   C++ never sees a Fluent message id; text is UTF-8 and C++ converts it
   explicitly, keeping its own narrow literals ASCII.
 - `GuiCore` (in `lib.rs`) — the GUI's Rust half. It lives on `run_gui`'s
@@ -68,7 +78,7 @@ The private modules:
   only once neither the menu nor an open dialog needs it as its visible
   owner.
 - `settings` — the settings dialog's model, pure apart from reading the
-  host: the categories (Speech only, so far), the Speech page generated
+  host: the categories (Speech, then Theme), the Speech page generated
   from the host's descriptors through `plan`, `SpeechControls`, which turns
   a change reported by control index into a setting value (changes from a
   replaced set of controls, identified by a generation number, are
@@ -77,6 +87,10 @@ The private modules:
   rebuilt.
 - `keys` — what a key does in the settings dialog (`route_key`, from the
   key and the focused control, with tests).
+- `theme_panel` — the Theme page's model (`ThemePanel`), described below,
+  pure apart from the theme files (through `verbatim_config::themes`) and
+  its `ThemeHost`; unit tested against a fake host over temporary
+  folders.
 - `list_dialog` — the reusable list dialog component (M3): a title, a
   static label above a single-selection list box around 550 by 250, and a
   configurable row of buttons plus an automatic Cancel. Callers describe
@@ -152,6 +166,50 @@ generated controls are destroyed and rebuilt from a fresh page. The
 dialog has no check list box; one added later needs its own accessible,
 and must not notify on toggle itself, since wxWidgets 3.3.2 and later
 already do.
+
+The Theme page (milestone M4, `phase6-design.md`, "The settings dialog").
+From top to bottom, which is also the tab order: "Theme", a combo box of
+the installed themes, the built-in default first (moving through it
+applies each theme at once); "Description", a read-only multi-line field
+with the theme's description, author, and the problems found loading it;
+"Sound volume", a slider from 0 to 100 that plays a short tone as it
+moves; the "Play sounds during say all" and "Also speak indications that
+play a sound" check boxes; "Find", a field filtering the tree; and
+"Indications", a tree of the six categories, each item named with its
+setting ("link: speech", "spelling error: speech and sound
+(textError.wav)", and ", changed" after it when it differs from the
+default theme). Beside the tree are the selected indication's "Report as"
+(off, speech, sound, speech and sound), "Sound" (none, its tone if it has
+one, every WAV file in the theme's folder and the shared sounds, and
+"Browse..." to copy a file into the theme), "Words", and "Voice" (default
+or one of the theme's voice styles), and the Preview and Reset buttons.
+"Sound" is disabled unless the indication plays a sound, and "Words" and
+"Voice" unless it is spoken. Choosing a sound plays it, and Space on the
+sound choice plays it again. Preview speaks a sample with the indication
+in it through the theme (a sample object with the role, state, or
+property, misspelled sample text, a capital letter), or reports the event
+itself for an event. Along the bottom: "New theme based on this...",
+"Rename...", "Import...", "Export...", and "Remove" (asking first, and
+disabled for the built-in theme and for the theme the configuration
+uses).
+
+Every change applies at once through the host; OK and Apply save the
+changed themes and persist the choice and its settings, and Cancel
+restores the theme and settings last applied. File operations act on the
+themes folder at once, and Export writes the theme as saved. A change to
+an indication of the built-in theme asks for a name (a `ThemeEdit` with
+`needs_name`), makes a new theme based on it, and is made there; with the
+prompt cancelled, nothing changes. In C++ the page asks Rust for the
+page, the tree, and the indication's controls after every change and
+updates only what differs (`SetChoice` and `SetValue`), so a focused
+control is not rebuilt under the user; the tree is rebuilt only when the
+find field changes what it lists, keeping the selected indication. Enter
+on any button activates that button (`KeyAction::ActivateFocused`).
+Every label is created just before its control, so each control is named
+by it; the check boxes carry their names. The dialog title names the
+category, not a profile, since profiles are not activated until M8. A
+failed file operation is reported in a message box with
+`verbatim-config`'s error text, which is English.
 
 The systrayList replica (M3): `OpenShellItemList` focuses the existing
 dialog when one is open, drops the request when an enumeration is already

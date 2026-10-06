@@ -59,6 +59,7 @@ fn speaks_test_through_wasapi() {
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text("test")],
         source: None,
+        say_all: false,
         validity: None,
     });
 

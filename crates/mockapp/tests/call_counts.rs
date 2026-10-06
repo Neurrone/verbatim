@@ -40,7 +40,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Instant;
 
 use verbatim_model::{
-    CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, QueryKind, Role, TraceId, TreeNode,
+    CallCounts, CallKind, Fetches, NodeId, NodeSnapshot, NormalizedEvent, QueryKind, Role, TraceId,
+    TreeNode,
 };
 use verbatim_model::{CaretWait, CaretWatch, TextOp, TextPosition, TextReply, TextUnit};
 use verbatim_outpost::Outpost;
@@ -378,6 +379,38 @@ fn msaa_navigation_steps_cost_exactly() {
             ("get_accState", 1),
             ("get_accKeyboardShortcut", 1),
             ("accLocation", 1),
+        ],
+    );
+
+    // A theme reporting descriptions and shortcuts as off: the outpost no
+    // longer asks for them, and saves their calls.
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::Fetches(Fetches {
+            description: false,
+            shortcut: false,
+            ..Fetches::default()
+        }));
+    common::reset_hits(hwnd);
+    let (second, calls_made) = outpost.navigate(first.id, QueryKind::NextSibling);
+    assert_eq!(second.name.as_deref(), Some("Second"));
+    assert_eq!(second.details.description, None);
+    let cost = Cost {
+        calls: calls_made,
+        hits: common::read_hits(hwnd),
+    };
+    ratchet.check(
+        "MSAA next sibling, descriptions and shortcuts off",
+        &cost,
+        calls(0, 8, 0),
+        &[
+            ("accParent", 1),
+            ("get_accName", 1),
+            ("get_accValue", 1),
+            ("get_accRole", 1),
+            ("get_accState", 1),
+            ("accLocation", 1),
+            ("accNavigate", 1),
         ],
     );
 

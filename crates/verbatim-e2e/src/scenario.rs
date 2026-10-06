@@ -1277,19 +1277,26 @@ fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
             fs::copy(&source, &destination)?;
         }
     }
-    copy_dir_into_stage(&source_dir.join(ESPEAK_DATA), &stage_dir.join(ESPEAK_DATA))
+    copy_dir_into_stage(&source_dir.join(ESPEAK_DATA), &stage_dir.join(ESPEAK_DATA))?;
+    copy_dir_into_stage(&source_dir.join(SOUNDS), &stage_dir.join(SOUNDS))
 }
 
 /// eSpeak NG's data directory, which the synthesizer host reads next to
 /// itself; the eSpeak NG crate's build puts it next to the executables.
 const ESPEAK_DATA: &str = "espeak-ng-data";
 
+/// The shared sounds the default theme plays, which Verbatim reads next to
+/// itself; `verbatim-app`'s build puts them next to the executables. A run
+/// without them would speak each sound's indication instead, so scenarios
+/// asserting sounds need them staged.
+const SOUNDS: &str = "sounds";
+
 /// Copies a directory tree into the stage, file by file, skipping files
 /// that already match.
 fn copy_dir_into_stage(source: &Path, destination: &Path) -> io::Result<()> {
     if !source.is_dir() {
         return Err(io::Error::other(format!(
-            "{} not found; building verbatim-synth-host builds it",
+            "{} not found; building verbatim-synth-host builds eSpeak NG's data, and building verbatim-app copies the sounds",
             source.display()
         )));
     }
@@ -1500,8 +1507,14 @@ mod tests {
             b"voice",
         )
         .expect("seed an eSpeak NG data file");
+        fs::create_dir_all(source_dir.join(SOUNDS)).expect("seed the sounds folder");
+        fs::write(source_dir.join(SOUNDS).join("exit.wav"), b"sound").expect("seed a sound");
 
         copy_into_stage(&source_dir, &stage_dir).expect("first copy");
+        assert_eq!(
+            fs::read(stage_dir.join(SOUNDS).join("exit.wav")).expect("read the staged sound"),
+            b"sound"
+        );
         assert_eq!(
             fs::read(stage_dir.join("verbatim.exe")).expect("read staged verbatim.exe"),
             b"verbatim v1"

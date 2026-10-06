@@ -94,6 +94,176 @@ pub(crate) mod ffi {
     enum CategoryKind {
         /// The Speech page: the synthesizer and its settings.
         Speech,
+        /// The Theme page: the theme in use and its indications.
+        Theme,
+    }
+
+    /// The Theme page: its labels, the themes, the selected theme's
+    /// description, and the settings that go with it. Rebuilt after every
+    /// change; C++ updates only the widgets whose contents differ.
+    struct ThemePage {
+        /// The theme list's label, with its mnemonic.
+        theme_label: String,
+        /// The installed themes' names, the built-in default first.
+        themes: Vec<String>,
+        /// The selected theme's index.
+        selected: i32,
+        /// The description field's label.
+        description_label: String,
+        /// The selected theme's description, author, and problems.
+        description: String,
+        /// The sound volume slider's label.
+        volume_label: String,
+        /// The sound volume, 0 to 100.
+        volume: i32,
+        /// The "play sounds during say all" check box's label.
+        say_all_label: String,
+        /// Its accessible name, the label without its mnemonic.
+        say_all_name: String,
+        /// Whether it is checked.
+        say_all: bool,
+        /// The "also speak indications that play a sound" check box's label.
+        speak_sounded_label: String,
+        /// Its accessible name.
+        speak_sounded_name: String,
+        /// Whether it is checked.
+        speak_sounded: bool,
+        /// The find field's label.
+        find_label: String,
+        /// The indications tree's label.
+        indications_label: String,
+        /// The labels of the selected indication's controls: report as,
+        /// sound, words, voice.
+        report_label: String,
+        /// The sound choice's label.
+        sound_label: String,
+        /// The words field's label.
+        words_label: String,
+        /// The voice choice's label.
+        voice_label: String,
+        /// The Preview button.
+        preview: String,
+        /// The Reset button.
+        reset: String,
+        /// The New Theme button.
+        new_theme: String,
+        /// The Rename button.
+        rename: String,
+        /// The Import button.
+        import_label: String,
+        /// The Export button.
+        export_label: String,
+        /// The Remove button.
+        remove: String,
+        /// Whether the selected theme can be renamed and exported: not the
+        /// built-in one.
+        can_rename: bool,
+        /// Whether the selected theme can be removed: not the built-in
+        /// one, and not the one the configuration uses.
+        can_remove: bool,
+        /// The prompts and file dialogs the page's buttons open.
+        prompts: ThemePrompts,
+    }
+
+    /// The titles, prompts, and filters of the dialogs the Theme page
+    /// opens, resolved for the selected theme.
+    struct ThemePrompts {
+        /// The New Theme prompt's title.
+        new_title: String,
+        /// The New Theme prompt.
+        new_prompt: String,
+        /// The name it suggests.
+        new_name: String,
+        /// The Rename prompt's title.
+        rename_title: String,
+        /// The Rename prompt.
+        rename_prompt: String,
+        /// The selected theme's name, which the Rename prompt starts with.
+        name: String,
+        /// The Import file dialog's title.
+        import_title: String,
+        /// The Export file dialog's title.
+        export_title: String,
+        /// The file name the Export file dialog suggests.
+        export_file: String,
+        /// The wildcard for theme packages.
+        package_filter: String,
+        /// The Browse sound file dialog's title.
+        sound_title: String,
+        /// The wildcard for sound files.
+        sound_filter: String,
+        /// The Remove confirmation's title.
+        remove_title: String,
+        /// The Remove confirmation's question.
+        remove_question: String,
+        /// The title of a message reporting a failed operation.
+        error_title: String,
+    }
+
+    /// One category of the indications tree.
+    struct ThemeTreeCategory {
+        /// The category's name.
+        label: String,
+        /// Its indications that match the find field, in catalogue order.
+        items: Vec<ThemeTreeItem>,
+    }
+
+    /// One indication in the tree.
+    struct ThemeTreeItem {
+        /// Its name and setting: "link: speech and sound", and ", changed"
+        /// when it differs from the default theme.
+        label: String,
+        /// Its index in the catalogue, which identifies it to Rust.
+        indication: usize,
+    }
+
+    /// The selected indication's controls.
+    struct IndicationControls {
+        /// The "report as" options: off, speech, sound, speech and sound.
+        report_options: Vec<String>,
+        /// The selected option, or -1 with no indication selected.
+        report: i32,
+        /// Whether the choice is enabled.
+        report_enabled: bool,
+        /// The sound options: none, a tone, each sound file, Browse.
+        sound_options: Vec<String>,
+        /// The selected sound, or -1.
+        sound: i32,
+        /// The index of "Browse...", which asks for a file instead of
+        /// choosing one.
+        sound_browse: i32,
+        /// Whether the sound choice is enabled.
+        sound_enabled: bool,
+        /// The replacement words, empty for the default.
+        words: String,
+        /// Whether the words field is enabled.
+        words_enabled: bool,
+        /// The voice options: default, then each voice style.
+        voice_options: Vec<String>,
+        /// The selected voice, or -1.
+        voice: i32,
+        /// Whether the voice choice is enabled.
+        voice_enabled: bool,
+        /// Whether Preview is enabled.
+        preview_enabled: bool,
+        /// Whether Reset is enabled.
+        reset_enabled: bool,
+    }
+
+    /// What became of a change to an indication.
+    struct ThemeEdit {
+        /// The selected theme is built in, so the change waits for a name
+        /// for a new theme to make it in: C++ asks for one and answers with
+        /// `theme_named`.
+        needs_name: bool,
+        /// The name prompt's title.
+        prompt_title: String,
+        /// The name prompt.
+        prompt: String,
+        /// The name it suggests.
+        suggested_name: String,
+        /// Why the change failed, or empty.
+        error: String,
     }
 
     /// The Speech page: the synthesizer group and the controls generated
@@ -200,6 +370,8 @@ pub(crate) mod ffi {
         Tab,
         /// The S key.
         S,
+        /// The space bar.
+        Space,
         /// Any other key.
         Other,
     }
@@ -217,6 +389,10 @@ pub(crate) mod ffi {
         ChangeSynthesizer,
         /// The read-only field naming the synthesizer.
         SynthesizerName,
+        /// The Theme page's sound choice.
+        SoundChoice,
+        /// Any other button, such as the Theme page's.
+        OtherButton,
         /// Any other control.
         Other,
     }
@@ -238,6 +414,10 @@ pub(crate) mod ffi {
         Apply,
         /// Activate the Change button.
         ChangeSynthesizer,
+        /// Activate the focused button.
+        ActivateFocused,
+        /// Play the sound the Theme page's sound choice shows.
+        PlaySound,
     }
 
     extern "Rust" {
@@ -272,6 +452,60 @@ pub(crate) mod ffi {
         /// The user chose a synthesizer; true when the active one changed,
         /// so the Speech page's controls must be rebuilt.
         fn choose_synthesizer(self: &GuiCore, index: usize) -> bool;
+
+        /// The Theme page, built afresh from the theme panel's state.
+        fn theme_page(self: &GuiCore) -> ThemePage;
+        /// The indications tree, filtered by the find field.
+        fn theme_tree(self: &GuiCore) -> Vec<ThemeTreeCategory>;
+        /// The selected indication's controls.
+        fn indication_controls(self: &GuiCore) -> IndicationControls;
+        /// A theme was chosen in the list: it applies at once.
+        fn theme_chosen(self: &GuiCore, index: usize);
+        /// The find field changed.
+        fn theme_filter_changed(self: &GuiCore, text: &str);
+        /// An indication was selected in the tree, by its catalogue index,
+        /// or a category or nothing (-1).
+        fn indication_selected(self: &GuiCore, indication: i64);
+        /// "Report as" changed.
+        fn report_changed(self: &GuiCore, option: usize) -> ThemeEdit;
+        /// The sound choice changed to an option other than Browse.
+        fn sound_changed(self: &GuiCore, option: usize) -> ThemeEdit;
+        /// A sound file was chosen through Browse.
+        fn sound_browsed(self: &GuiCore, path: &str) -> ThemeEdit;
+        /// The words field changed.
+        fn words_changed(self: &GuiCore, text: &str) -> ThemeEdit;
+        /// The voice choice changed.
+        fn voice_changed(self: &GuiCore, option: usize) -> ThemeEdit;
+        /// Reset: the indication goes back to the default theme's setting.
+        fn reset_indication(self: &GuiCore) -> ThemeEdit;
+        /// The answer to a `ThemeEdit`'s name prompt: the change waiting
+        /// for it is made in a new theme of that name, or dropped when the
+        /// prompt was cancelled.
+        fn theme_named(self: &GuiCore, name: &str, accepted: bool) -> ThemeEdit;
+        /// Preview: a sample of the indication, through the theme.
+        fn preview_indication(self: &GuiCore);
+        /// Space on the sound choice: plays the sound it shows.
+        fn play_indication_sound(self: &GuiCore);
+        /// The sound volume slider moved.
+        fn volume_changed(self: &GuiCore, volume: i32);
+        /// The "play sounds during say all" check box was toggled.
+        fn say_all_changed(self: &GuiCore, checked: bool);
+        /// The "also speak indications that play a sound" check box was
+        /// toggled.
+        fn speak_sounded_changed(self: &GuiCore, checked: bool);
+        /// New theme based on the selected one, named `name`. Returns why
+        /// it failed, or an empty string.
+        fn new_theme(self: &GuiCore, name: &str) -> String;
+        /// Renames the selected theme. Returns why it failed, or empty.
+        fn rename_theme(self: &GuiCore, name: &str) -> String;
+        /// Installs the theme package at `path`. Returns why it failed, or
+        /// empty.
+        fn import_theme(self: &GuiCore, path: &str) -> String;
+        /// Writes the selected theme as a package at `path`. Returns why it
+        /// failed, or empty.
+        fn export_theme(self: &GuiCore, path: &str) -> String;
+        /// Removes the selected theme. Returns why it failed, or empty.
+        fn remove_theme(self: &GuiCore) -> String;
 
         /// A list dialog button was activated with an item selected; true
         /// when the dialog should close.

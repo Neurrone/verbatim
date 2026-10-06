@@ -1631,3 +1631,28 @@ In this order, since later parts build on earlier ones:
     terminal flood scenario showing bounded latency and no hang, the
     remote-operations count, and the flood wall-time ratio under two.
 
+Choices the run made for item 8 on the Windows side, where the design
+left them open:
+
+- With "play sounds during say all" off, an indication say-all reads
+  plays no sound and is spoken instead, so nothing is lost.
+- The exit sound is waited for at most two seconds; a replacing instance
+  waits four for the old one to go.
+- The error sound plays for every error logged, as in NVDA's test
+  versions; "application not responding" plays once per stall, when the
+  outpost's watchdog abandons a query, until the outpost answers again.
+- The outposts skip what is off in their UIA reads and remote focus walk
+  and in their MSAA reads; the UIA event subscriptions' cache requests
+  are fixed when registered and still ask for everything. Nothing reads
+  text formatting yet.
+- On the Theme page, changes to indications are held until Apply or OK
+  saves them, and Cancel drops them; file operations (New, Rename,
+  Import, Export, Remove, and Browse for a sound) act on the themes
+  folder at once, and Export writes the theme as saved. Remove is also
+  unavailable for the theme the base settings use. The dialog title
+  names the category rather than a profile until M8 activates profiles.
+- The Theme page's controls are laid out with the find field and tree on
+  the left and the selected indication's controls on the right, between
+  the theme's settings above and the theme buttons below; the tab order
+  follows the design's list.
+

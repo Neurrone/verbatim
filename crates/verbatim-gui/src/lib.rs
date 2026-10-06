@@ -30,6 +30,7 @@ mod list_dialog;
 mod plan;
 mod settings;
 pub mod shell_items;
+mod theme_panel;
 mod tray_list;
 
 use std::cell::RefCell;
@@ -42,11 +43,13 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
 pub use shell_items::ShellItemKind;
+pub use theme_panel::ThemeHost;
 
 use bridge::ffi;
 use lifecycle::{Frame, Lifecycle, OpenSettings, OpenShellList};
 use list_dialog::{ButtonVerdict, ListDialogButtons};
 use settings::{ControlChange, SpeechControls};
+use theme_panel::ThemePanel;
 
 /// A command posted to the GUI thread from anywhere in the app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,8 +128,9 @@ impl std::error::Error for GuiError {}
 /// can begin posting commands; `on_ready` runs on the GUI thread during
 /// initialization, so it should hand the handle off rather than block.
 ///
-/// `settings_host` backs the settings dialog; `events` carries
-/// [`GuiEvent`]s out to the app.
+/// `settings_host` backs the settings dialog's Speech page and
+/// `theme_host` its Theme page; `events` carries [`GuiEvent`]s out to the
+/// app.
 ///
 /// The GUI runs at most once per process: wxWidgets keeps one application
 /// in process-wide state and does not support starting again after it
@@ -138,6 +142,7 @@ impl std::error::Error for GuiError {}
 /// already run in this process.
 pub fn run_gui(
     settings_host: Arc<dyn SpeechSettingsHost>,
+    theme_host: Arc<dyn ThemeHost>,
     events: Sender<GuiEvent>,
     on_ready: impl FnOnce(GuiHandle) + Send + 'static,
 ) -> Result<(), GuiError> {
@@ -150,6 +155,8 @@ pub fn run_gui(
     let (sender, receiver) = unbounded();
     let core = GuiCore {
         host: settings_host,
+        theme_host,
+        theme: RefCell::new(None),
         events,
         handle: GuiHandle { sender },
         receiver,
@@ -185,6 +192,11 @@ type OnReady = Box<dyn FnOnce(GuiHandle) + Send>;
 /// `RefCell` borrow is ever held across a call into C++.
 pub(crate) struct GuiCore {
     host: Arc<dyn SpeechSettingsHost>,
+    /// What the Theme page reads and changes.
+    theme_host: Arc<dyn ThemeHost>,
+    /// The Theme page's state while the settings dialog is open and the
+    /// page has been shown.
+    theme: RefCell<Option<ThemePanel>>,
     events: Sender<GuiEvent>,
     /// The GUI's own handle, for work it hands to other threads.
     handle: GuiHandle,
@@ -374,7 +386,10 @@ impl GuiCore {
 
     fn dialog_closed(&self, dialog: ffi::DialogKind) {
         let which = match dialog {
-            ffi::DialogKind::Settings => lifecycle::Dialog::Settings,
+            ffi::DialogKind::Settings => {
+                self.theme.borrow_mut().take();
+                lifecycle::Dialog::Settings
+            }
             ffi::DialogKind::ShellList => {
                 self.list_buttons.borrow_mut().take();
                 lifecycle::Dialog::ShellList
@@ -422,10 +437,120 @@ impl GuiCore {
         if let Err(error) = self.host.commit() {
             tracing::warn!(%error, "could not save the settings");
         }
+        if let Some(theme) = self.theme.borrow_mut().as_mut() {
+            let failures = theme.apply();
+            if !failures.is_empty() {
+                tracing::warn!(failures, "could not save the theme settings");
+            }
+        }
     }
 
     fn revert_settings(&self) {
         self.host.revert();
+        if let Some(theme) = self.theme.borrow_mut().as_mut() {
+            theme.cancel();
+        }
+    }
+
+    /// Runs `act` on the Theme page's state, opening it from the
+    /// configuration the first time the page is used.
+    fn with_theme<R>(&self, act: impl FnOnce(&mut ThemePanel) -> R) -> R {
+        let mut theme = self.theme.borrow_mut();
+        let panel = theme.get_or_insert_with(|| ThemePanel::open(Arc::clone(&self.theme_host)));
+        act(panel)
+    }
+
+    fn theme_page(&self) -> ffi::ThemePage {
+        self.with_theme(|theme| theme.page())
+    }
+
+    fn theme_tree(&self) -> Vec<ffi::ThemeTreeCategory> {
+        self.with_theme(|theme| theme.tree())
+    }
+
+    fn indication_controls(&self) -> ffi::IndicationControls {
+        self.with_theme(|theme| theme.controls())
+    }
+
+    fn theme_chosen(&self, index: usize) {
+        self.with_theme(|theme| theme.choose(index));
+    }
+
+    fn theme_filter_changed(&self, text: &str) {
+        self.with_theme(|theme| theme.set_filter(text));
+    }
+
+    fn indication_selected(&self, indication: i64) {
+        let index = usize::try_from(indication).ok();
+        self.with_theme(|theme| theme.select(index));
+    }
+
+    fn report_changed(&self, option: usize) -> ffi::ThemeEdit {
+        self.with_theme(|theme| theme.set_report(option))
+    }
+
+    fn sound_changed(&self, option: usize) -> ffi::ThemeEdit {
+        self.with_theme(|theme| theme.set_sound(option))
+    }
+
+    fn sound_browsed(&self, path: &str) -> ffi::ThemeEdit {
+        self.with_theme(|theme| theme.add_sound(std::path::Path::new(path)))
+    }
+
+    fn words_changed(&self, text: &str) -> ffi::ThemeEdit {
+        self.with_theme(|theme| theme.set_words(text))
+    }
+
+    fn voice_changed(&self, option: usize) -> ffi::ThemeEdit {
+        self.with_theme(|theme| theme.set_voice(option))
+    }
+
+    fn reset_indication(&self) -> ffi::ThemeEdit {
+        self.with_theme(ThemePanel::reset)
+    }
+
+    fn theme_named(&self, name: &str, accepted: bool) -> ffi::ThemeEdit {
+        self.with_theme(|theme| theme.named(name, accepted))
+    }
+
+    fn preview_indication(&self) {
+        self.with_theme(|theme| theme.preview());
+    }
+
+    fn play_indication_sound(&self) {
+        self.with_theme(|theme| theme.play_sound());
+    }
+
+    fn volume_changed(&self, volume: i32) {
+        self.with_theme(|theme| theme.set_volume(volume));
+    }
+
+    fn say_all_changed(&self, checked: bool) {
+        self.with_theme(|theme| theme.set_say_all(checked));
+    }
+
+    fn speak_sounded_changed(&self, checked: bool) {
+        self.with_theme(|theme| theme.set_speak_sounded(checked));
+    }
+
+    fn new_theme(&self, name: &str) -> String {
+        self.with_theme(|theme| theme.new_theme(name))
+    }
+
+    fn rename_theme(&self, name: &str) -> String {
+        self.with_theme(|theme| theme.rename(name))
+    }
+
+    fn import_theme(&self, path: &str) -> String {
+        self.with_theme(|theme| theme.import(std::path::Path::new(path)))
+    }
+
+    fn export_theme(&self, path: &str) -> String {
+        self.with_theme(|theme| theme.export(std::path::Path::new(path)))
+    }
+
+    fn remove_theme(&self) -> String {
+        self.with_theme(ThemePanel::remove)
     }
 
     fn synthesizer_picker(&self) -> ffi::SynthesizerPicker {
@@ -472,6 +597,7 @@ fn route_settings_key(
         ffi::SettingsKey::Enter => Key::Enter,
         ffi::SettingsKey::Tab => Key::Tab,
         ffi::SettingsKey::S => Key::S,
+        ffi::SettingsKey::Space => Key::Space,
         _ => Key::Other,
     };
     let focused = match focus {
@@ -482,6 +608,8 @@ fn route_settings_key(
             FocusedControl::Button(DialogButton::ChangeSynthesizer)
         }
         ffi::SettingsFocus::SynthesizerName => FocusedControl::SynthesizerName,
+        ffi::SettingsFocus::SoundChoice => FocusedControl::SoundChoice,
+        ffi::SettingsFocus::OtherButton => FocusedControl::OtherButton,
         _ => FocusedControl::Other,
     };
     match keys::route_key(
@@ -501,6 +629,8 @@ fn route_settings_key(
         KeyAction::Activate(DialogButton::ChangeSynthesizer) => {
             ffi::SettingsKeyAction::ChangeSynthesizer
         }
+        KeyAction::ActivateFocused => ffi::SettingsKeyAction::ActivateFocused,
+        KeyAction::PlaySound => ffi::SettingsKeyAction::PlaySound,
     }
 }
 
@@ -540,6 +670,14 @@ mod tests {
         assert_eq!(
             route_settings_key(Key::Tab, false, false, Focus::Other),
             Action::PassThrough
+        );
+        assert_eq!(
+            route_settings_key(Key::Enter, false, false, Focus::OtherButton),
+            Action::ActivateFocused
+        );
+        assert_eq!(
+            route_settings_key(Key::Space, false, false, Focus::SoundChoice),
+            Action::PlaySound
         );
     }
 }

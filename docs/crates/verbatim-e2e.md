@@ -32,9 +32,11 @@ Public API:
   and `verbatim-synth-host` (once per test binary, skipped when
   `VERBATIM_E2E_VERBATIM_EXE` names a build to stage instead), then
   copies `verbatim.exe`, `verbatim-outpost.exe`,
-  `verbatim-synth-host.exe`, and eSpeak NG's `espeak-ng-data` directory
-  into `target/e2e-stage` (staging fails if the data directory is
-  missing, which building `verbatim-synth-host` creates) and writes
+  `verbatim-synth-host.exe`, eSpeak NG's `espeak-ng-data` directory, and
+  the default theme's `sounds` directory
+  into `target/e2e-stage` (staging fails if either directory is
+  missing; building `verbatim-synth-host` creates the first and building
+  `verbatim-app` the second) and writes
   `Settings::for_e2e`'s fixed `settings.toml` there; in remote mode
   `cargo xtask vm deploy` has already staged the guest side. Every run
   selects eSpeak NG, the default synthesizer, which is built with
@@ -113,7 +115,10 @@ Public API:
   speech connection and never sending a request on it after subscribing,
   so no frame is discarded. Every utterance Verbatim queues arrives as a
   `Speech` frame and later ends with exactly one `SpeechEnded` frame
-  (decision D17). The `expect_*` assertions (`expect_in_order`,
+  (decision D17). Sounds are matched like words: a sound in the speech
+  stream is named in its utterance's text (`sound: spelling-error`), and
+  a sound played at once for an event arrives as a `Sound` frame, matched
+  as an utterance of its own (`sound: exit`) that counts as heard at once. The `expect_*` assertions (`expect_in_order`,
   `expect_in_order_capturing`, `expect_change_capturing`,
   `expect_captured`) match queued text, then wait up to 30 seconds for
   the matched utterance's ending and fail unless it completed, so a

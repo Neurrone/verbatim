@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
-use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
+use verbatim_model::{Indication, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_outpost::protocol::{EventTiming, now_us};
 use verbatim_speech::SpeechEvents;
 
@@ -405,6 +405,17 @@ impl SpeechEvents for LatencyLedger {
 
     fn audio_to_mixer(&self, utterance: UtteranceId, trace_id: TraceId, _at: std::time::Instant) {
         self.speech_stage(utterance, trace_id, |stages| &mut stages.audio_to_mixer);
+    }
+
+    fn sound_played(&self, indication: Indication, _at: std::time::Instant) {
+        // Reported to speech subscribers as `sound:` and the indication's
+        // id, as a sound in an utterance's text reads, so the end-to-end
+        // suite asserts an event's sound as it asserts words.
+        if let Some(server) = self.server.get()
+            && server.has_speech_subscribers()
+        {
+            server.broadcast_sound(indication.id(), now_ms());
+        }
     }
 
     fn utterance_ended(

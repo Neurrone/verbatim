@@ -5,8 +5,8 @@
 //! `\\.\pipe\verbatim-control`. Clients send [`RequestEnvelope`]s; the
 //! server answers every request with a [`Frame::Reply`] or [`Frame::Error`]
 //! carrying the request's id, and pushes [`Frame::Event`] frames, and
-//! [`Frame::Speech`], [`Frame::SpeechStarted`], and [`Frame::SpeechEnded`]
-//! frames, to connections that subscribed.
+//! [`Frame::Speech`], [`Frame::SpeechStarted`], [`Frame::SpeechEnded`], and
+//! [`Frame::Sound`] frames, to connections that subscribed.
 
 use std::io::{self, BufRead, Write};
 
@@ -151,6 +151,17 @@ pub enum Frame {
         utterance: UtteranceId,
         /// How it ended.
         ending: UtteranceEnding,
+    },
+    /// A sound played at once for an event, outside any utterance
+    /// (subscription frame, sent to speech subscribers): the exit sound,
+    /// for instance. A sound in the speech stream is named in its
+    /// utterance's [`Frame::Speech`] text instead.
+    Sound {
+        /// The id of the indication the sound reports, such as `exit`; it
+        /// reads as `sound: exit`, as a sound in an utterance's text does.
+        indication: String,
+        /// Milliseconds since the Unix epoch when it started playing.
+        at_ms: u64,
     },
 }
 

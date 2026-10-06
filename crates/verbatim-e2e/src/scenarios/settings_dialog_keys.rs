@@ -13,9 +13,10 @@
 //! Escape, reopen, and hear the applied rate. Then, on the rate slider,
 //! change the rate and press Control+S, close with Escape, reopen, and hear
 //! that rate kept; press Control+Tab on the slider and hear the category
-//! list take focus (Speech is the only category, so cycling lands on it
-//! again); Tab into the page and press Control+Shift+Tab on the Change
-//! button, and hear the category list again.
+//! list take focus on the next category, Theme, and Control+Shift+Tab
+//! there return to Speech; Tab into the page and press Control+Shift+Tab
+//! on the Change button, and hear the category list again, wrapped round
+//! to Theme.
 
 use std::io;
 use std::time::Duration;
@@ -143,17 +144,23 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         rate - 2
     );
 
-    // Control+Tab on the slider moves to the next category, which with
-    // Speech alone is Speech again, and puts focus on the category list.
+    // Control+Tab on the slider moves to the next category, Theme, and puts
+    // focus on the category list; Control+Shift+Tab there goes back to
+    // Speech.
     scenario
         .send_keys(&["control+tab"])
         .expect("sends control+tab on the slider");
     scenario
         .speech()
-        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
+        .expect_in_order(&["Categories: list", "Theme"], STEP_TIMEOUT);
+    scenario
+        .send_keys(&["control+shift+tab"])
+        .expect("sends control+shift+tab on the category list");
+    scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
 
-    // Control+Shift+Tab does the same from the Change button, the first
-    // control of the page.
+    // Control+Shift+Tab from the Change button, the first control of the
+    // Speech page, moves to the previous category, wrapping to the last,
+    // Theme.
     scenario.send_keys(&["tab"]).expect("sends tab");
     scenario
         .speech()
@@ -163,7 +170,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends control+shift+tab on the Change button");
     scenario
         .speech()
-        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
+        .expect_in_order(&["Categories: list", "Theme"], STEP_TIMEOUT);
     scenario.send_keys(&["escape"]).expect("sends escape");
 }
 

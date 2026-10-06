@@ -37,12 +37,12 @@
 //! holds the speech where it is until it is called again or speech is
 //! cancelled.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ops::ControlFlow;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use tracing::{info, trace, warn};
@@ -227,6 +227,8 @@ pub struct SpeechManager {
     /// The mixer source events' sounds play on at once.
     earcons: Source,
     events: Option<Arc<dyn SpeechEvents>>,
+    /// Utterances someone waits to end ([`play_earcon_to_end`](Self::play_earcon_to_end)).
+    waiters: Arc<Waiters>,
     initial_state: DriverState,
     /// The synthesizer the configuration asked for, which a fallback at
     /// startup may not be.
@@ -259,9 +261,16 @@ impl SpeechManager {
         } = config;
         let themes = ThemeHandle::default();
         let theme = theme.unwrap_or_else(|| Box::new(ThemePresenter::new(themes.clone())));
+        // Every ending passes through the waiters on its way to the
+        // observer, so a caller can wait for an utterance to be heard.
+        let waiters = Arc::new(Waiters::default());
+        let events: Option<Arc<dyn SpeechEvents>> = Some(Arc::new(Observer {
+            inner: events,
+            waiters: Arc::clone(&waiters),
+        }));
         let (queue_tx, queue_rx) = unbounded::<QueueEvent>();
         let source = mixer.add_source(playback_listener(events.clone(), queue_tx.clone()));
-        let earcons = mixer.add_source(Arc::new(|_| {}));
+        let earcons = earcons_source(&mixer, &waiters);
 
         let (synth_tx, synth_rx) = unbounded::<SynthCommand>();
         let (startup_tx, startup_rx) = bounded::<Result<StartupInfo, SynthError>>(1);
@@ -340,6 +349,7 @@ impl SpeechManager {
             themes,
             earcons,
             events,
+            waiters,
             initial_state,
             configured,
             choices,
@@ -353,12 +363,21 @@ impl SpeechManager {
     ///
     /// Non-blocking: the utterance is handed to the queue thread and this
     /// returns at once.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "most speech is spoken without following its utterance"
+    )]
     pub fn speak(&self, utterance: Utterance) -> UtteranceId {
-        let id = UtteranceId(NEXT_UTTERANCE.fetch_add(1, Ordering::Relaxed));
+        let id = mint_utterance();
+        self.speak_as(id, utterance);
+        id
+    }
+
+    /// Enqueues `utterance` under an id already minted.
+    fn speak_as(&self, id: UtteranceId, utterance: Utterance) {
         let _ = self
             .queue_tx
             .send(QueueEvent::Speak(id, Box::new(utterance)));
-        id
     }
 
     /// The handle on the active theme, which the settings dialog switches
@@ -388,14 +407,65 @@ impl SpeechManager {
             }
         }
         if let Some(words) = words {
-            self.speak(Utterance {
-                trace_id: TraceId::mint(),
-                priority: SpeechPriority::Queued,
-                segments: vec![UtteranceSegment::text(words)],
-                source: None,
-                validity: None,
-            });
+            self.speak(earcon_words(words));
         }
+    }
+
+    /// Reports an event as [`play_earcon`](Self::play_earcon) does, and
+    /// waits until it has been heard: its sound has played to its end and
+    /// its words, if the theme speaks it, have been spoken. For the exit
+    /// sound, which must be heard before Verbatim exits. Returns `false`
+    /// when `timeout` passed first, which bounds the wait however the audio
+    /// device behaves.
+    pub fn play_earcon_to_end(&self, earcon: Earcon, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let (sound, words) = self.themes.get().earcon(earcon);
+        let (ended_tx, ended_rx) = unbounded::<UtteranceId>();
+        let mut waiting = Vec::new();
+        if let Some((sound, gain)) = sound {
+            // The sound plays over an utterance of silence as long as it
+            // is, on the events' source, so that utterance's ending says
+            // the sound has played to its end.
+            let id = mint_utterance();
+            self.waiters.wait_for(id, ended_tx.clone());
+            waiting.push(id);
+            self.earcons.register(id, TraceId::mint());
+            let placed = self.earcons.sound(id, &sound, gain);
+            let format = sound.format();
+            let frames = sound.duration().as_micros() * u128::from(format.sample_rate) / 1_000_000;
+            let samples = usize::try_from(frames)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(usize::from(format.channels));
+            let _ = self.earcons.write(id, format, &vec![0; samples]);
+            self.earcons.finish(id);
+            match placed {
+                Ok(()) => {
+                    if let Some(events) = &self.events {
+                        events.sound_played(Indication::of_earcon(earcon), Instant::now());
+                    }
+                }
+                Err(error) => {
+                    warn!(target: "verbatim::speech", ?earcon, %error, "playing an earcon failed");
+                }
+            }
+        }
+        if let Some(words) = words {
+            let id = mint_utterance();
+            self.waiters.wait_for(id, ended_tx);
+            waiting.push(id);
+            self.speak_as(id, earcon_words(words));
+        }
+        let mut heard = true;
+        for _ in 0..waiting.len() {
+            if ended_rx.recv_deadline(deadline).is_err() {
+                heard = false;
+                break;
+            }
+        }
+        for id in waiting {
+            self.waiters.forget(id);
+        }
+        heard
     }
 
     /// Plays `sound` at once at `gain` (1.0 for as recorded), on the
@@ -432,6 +502,139 @@ impl SpeechManager {
             self.initial_state.choice.id == self.configured,
             persist,
         )
+    }
+}
+
+/// Adds the source events' sounds play on at once, whose utterances (the
+/// silence under a sound someone waits for) end through the [`Waiters`].
+fn earcons_source(mixer: &Mixer, waiters: &Arc<Waiters>) -> Source {
+    let waiters = Arc::clone(waiters);
+    mixer.add_source(Arc::new(move |event| {
+        if let PlaybackEvent::Ended { utterance, .. } = event {
+            waiters.ended(utterance);
+        }
+    }))
+}
+
+/// Mints a new utterance id, process-wide.
+fn mint_utterance() -> UtteranceId {
+    UtteranceId(NEXT_UTTERANCE.fetch_add(1, Ordering::Relaxed))
+}
+
+/// The utterance speaking an event's words.
+fn earcon_words(words: String) -> Utterance {
+    Utterance {
+        trace_id: TraceId::mint(),
+        priority: SpeechPriority::Queued,
+        segments: vec![UtteranceSegment::text(words)],
+        source: None,
+        say_all: false,
+        validity: None,
+    }
+}
+
+/// Utterances someone waits to end, each with where to say it has.
+#[derive(Default)]
+struct Waiters(Mutex<HashMap<UtteranceId, Sender<UtteranceId>>>);
+
+impl Waiters {
+    /// Says on `ended` when `utterance` ends.
+    fn wait_for(&self, utterance: UtteranceId, ended: Sender<UtteranceId>) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(utterance, ended);
+    }
+
+    /// Stops waiting for `utterance`.
+    fn forget(&self, utterance: UtteranceId) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&utterance);
+    }
+
+    /// `utterance` has ended: tells whoever waits for it. Cheap, as the
+    /// audio thread calls it.
+    fn ended(&self, utterance: UtteranceId) {
+        let waiter = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&utterance);
+        if let Some(waiter) = waiter {
+            let _ = waiter.send(utterance);
+        }
+    }
+}
+
+/// The observer the pipeline reports to: the configured one, with every
+/// ending also passed to the [`Waiters`].
+struct Observer {
+    inner: Option<Arc<dyn SpeechEvents>>,
+    waiters: Arc<Waiters>,
+}
+
+impl SpeechEvents for Observer {
+    fn utterance_queued(&self, utterance: UtteranceId, trace_id: TraceId, text: &str, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.utterance_queued(utterance, trace_id, text, at);
+        }
+    }
+
+    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.audio_started(utterance, trace_id, at);
+        }
+    }
+
+    fn synthesis_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.synthesis_started(utterance, trace_id, at);
+        }
+    }
+
+    fn synthesizer_audio(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.synthesizer_audio(utterance, trace_id, at);
+        }
+    }
+
+    fn audio_to_mixer(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.audio_to_mixer(utterance, trace_id, at);
+        }
+    }
+
+    fn mark_reached(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        mark: IndexMark,
+        at: Instant,
+    ) {
+        if let Some(inner) = &self.inner {
+            inner.mark_reached(utterance, trace_id, mark, at);
+        }
+    }
+
+    fn sound_played(&self, indication: Indication, at: Instant) {
+        if let Some(inner) = &self.inner {
+            inner.sound_played(indication, at);
+        }
+    }
+
+    fn utterance_ended(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        ending: &UtteranceEnding,
+        at: Instant,
+    ) {
+        if let Some(inner) = &self.inner {
+            inner.utterance_ended(utterance, trace_id, ending, at);
+        }
+        self.waiters.ended(utterance);
     }
 }
 

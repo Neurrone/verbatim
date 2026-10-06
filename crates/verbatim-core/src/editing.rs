@@ -71,6 +71,7 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
         priority: SpeechPriority::Queued,
         segments,
         source: None,
+        say_all: false,
         validity: None,
     })
 }

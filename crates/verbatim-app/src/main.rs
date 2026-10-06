@@ -9,12 +9,14 @@
 
 mod clipboard;
 mod datetime;
+mod error_sound;
 mod flight_dump;
 mod latency;
 mod live;
 mod requests;
 mod single_instance;
 mod speech_events;
+mod themes;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -38,7 +40,7 @@ use verbatim_input::{
 };
 use verbatim_input_windows::{InputHook, KeyReport};
 use verbatim_model::{
-    CaretKey, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
+    CaretKey, Earcon, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
     TextRequest, TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
@@ -203,6 +205,17 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         commands: command_tx.clone(),
     });
     let manager = build_speech_manager(&store, speech_events)?;
+    // Errors logged from here on play the error sound, through the reducer
+    // thread.
+    error_sound::report_to(command_tx.clone());
+
+    // The theme the configuration names presents speech and decides what
+    // the reducer fetches; the theme panel switches it.
+    {
+        let store = store.lock().unwrap_or_else(PoisonError::into_inner);
+        let (loaded, options) = themes::configured(&store);
+        themes::activate(&manager, &command_tx, &loaded, &store.sounds_dir(), options);
+    }
 
     // Settings host: the GUI's live handle; commit persists to the base
     // profile through the config store.
@@ -331,13 +344,15 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         }),
     )?;
 
-    // First words, and the initial outpost target (the focus listener only
-    // reports foreground changes after this point).
+    // The start sound and first words, and the initial outpost target (the
+    // focus listener only reports foreground changes after this point).
+    manager.play_earcon(Earcon::Start);
     manager.speak(Utterance {
         trace_id: TraceId::mint(),
         priority: SpeechPriority::Queued,
         segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
         source: None,
+        say_all: false,
         validity: None,
     });
     // Ask the foreground application for its current focus: its outpost is
@@ -349,17 +364,34 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
+    let theme_host: Arc<dyn verbatim_gui::ThemeHost> = Arc::new(themes::AppThemeHost {
+        store: Arc::clone(&store),
+        manager: Arc::clone(&manager),
+        commands: command_tx.clone(),
+    });
     let handle_slot = Arc::clone(&gui_handle);
-    run_gui(host_for_gui, gui_event_tx, move |handle| {
+    run_gui(host_for_gui, theme_host, gui_event_tx, move |handle| {
         let _ = handle_slot.set(handle);
     })?;
 
     // The wx loop has exited (Exit menu item, control-plane quit, or a
-    // replacing instance's WM_QUIT). The keyboard hook stops when `_hook`
+    // replacing instance's WM_QUIT). The exit sound is heard before
+    // Verbatim goes, within a bound. The keyboard hook stops when `_hook`
     // drops; job objects kill the outposts and the focus listener when the
     // process exits.
+    if !manager.play_earcon_to_end(Earcon::Exit, EXIT_SOUND_TIMEOUT) {
+        tracing::warn!(
+            timeout = ?EXIT_SOUND_TIMEOUT,
+            "the exit sound was not heard in time; exiting anyway"
+        );
+    }
     Ok(())
 }
+
+/// The longest Verbatim waits for its exit sound to be heard before it
+/// exits: NVDA's exit sound plays for about half a second, and a replacing
+/// instance waits four seconds for this one to go.
+const EXIT_SOUND_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Names a WAV file to record everything Verbatim plays into.
 const RECORD_AUDIO_ENV: &str = "VERBATIM_RECORD_AUDIO";
@@ -399,14 +431,21 @@ fn load_config(exe_dir: &std::path::Path) -> ConfigStore {
 }
 
 /// Installs the process-wide tracing subscriber; `RUST_LOG` wins over the
-/// configured filter, which wins over plain `info`.
+/// configured filter, which wins over plain `info`. Every error logged
+/// also plays the error sound ([`error_sound`]).
 fn init_tracing(configured: Option<&str>) {
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     let filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(configured.unwrap_or("info")))
         .unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .finish()
+        .with(error_sound::ErrorSoundLayer)
+        .init();
 }
 
 /// Loads the configured locale from the `locale` folder next to the
@@ -688,6 +727,9 @@ pub(crate) enum ShellCommand {
     /// Ask this application for its current focus: at startup, for the
     /// foreground application.
     FocusNow(Pid),
+    /// Report an event as the theme says, such as the error sound for an
+    /// error logged on another thread.
+    PlayEarcon(Earcon),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -726,6 +768,7 @@ impl ReducerThread<'_> {
                 target_pid,
             } => {
                 self.live.started(outpost, target_pid);
+                self.send_fetches();
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -879,6 +922,8 @@ impl ReducerThread<'_> {
                 // observed. That is `observed_at_ms` except for a foreground
                 // change, which is ordered by when its window became the
                 // foreground, later than Windows raised it.
+                // An event read is the outpost's application answering.
+                self.live.answered(outpost);
                 let first_observed_ms = match timing.observed_at_us {
                     0 => observed_at_ms,
                     us => us / 1000,
@@ -949,12 +994,25 @@ impl ReducerThread<'_> {
             ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
+            ShellCommand::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
         }
     }
 
     /// Delivers a query's outcome through the request table, applying the
     /// reducer input it produces, if any.
     fn finish(&mut self, id: RequestId, outpost: OutpostId, outcome: QueryOutcome) {
+        // A query the outpost's watchdog abandoned passed its deadline in
+        // a cross-process call: the application is not responding, which
+        // is reported once per stall.
+        match outcome {
+            QueryOutcome::Abandoned => {
+                if self.live.query_abandoned(outpost) {
+                    self.context.manager.play_earcon(Earcon::AppNotResponding);
+                }
+            }
+            QueryOutcome::Done(_) | QueryOutcome::Gone => self.live.answered(outpost),
+            _ => {}
+        }
         for input in self.requests.finish(id, outpost, outcome) {
             self.apply(input);
         }
@@ -1007,6 +1065,7 @@ impl ReducerThread<'_> {
             self.context.supervisor.note_views(views.0, views.1.clone());
             self.views = views;
         }
+        self.send_fetches();
         for (outpost, live) in self.live.iter_mut() {
             let nodes: BTreeSet<u64> = held
                 .get(outpost)
@@ -1028,6 +1087,29 @@ impl ReducerThread<'_> {
                     live.position,
                 );
                 live.held_sent = (nodes, outpost_anchors, live.position);
+            }
+        }
+    }
+
+    /// Tells each live outpost the details the active theme wants read
+    /// (`SrState::fetches`), when they differ from what it was last told:
+    /// a detail whose indication is off is not read at all. A new outpost
+    /// is told at once, before it reports anything.
+    fn send_fetches(&mut self) {
+        let fetches = self.state.fetches();
+        for (outpost, live) in self.live.iter_mut() {
+            if live.fetches_sent == Some(fetches) {
+                continue;
+            }
+            match self
+                .context
+                .supervisor
+                .send_to_outpost(*outpost, SupervisorToOutpost::Fetches(fetches))
+            {
+                Ok(()) => live.fetches_sent = Some(fetches),
+                // A full queue is retried after the next input; a closed
+                // one belongs to an outpost that is ending.
+                Err(error) => tracing::debug!(%error, %outpost, "the fetches were not sent yet"),
             }
         }
     }
@@ -1076,6 +1158,7 @@ impl ReducerThread<'_> {
             Effect::SettingsChanged(settings) => {
                 save_reader_settings(&self.context.store, settings);
             }
+            Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
             _ => {}
         }
     }
@@ -1319,6 +1402,7 @@ fn report_toggle_key(manager: &SpeechManager, key: verbatim_input::ToggleKey) {
             verbatim_i18n::messages::toggle_key_state(id, on),
         )],
         source: None,
+        say_all: false,
         validity: None,
     });
 }
@@ -1342,6 +1426,7 @@ fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
         priority: SpeechPriority::Interrupt,
         segments: vec![UtteranceSegment::text(text)],
         source: None,
+        say_all: false,
         validity: None,
     });
 }

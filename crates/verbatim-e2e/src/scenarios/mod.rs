@@ -24,6 +24,7 @@ pub(crate) mod start_menu_search;
 pub(crate) mod switch_to_onecore;
 pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
+pub(crate) mod theme_panel;
 
 /// Waits for Notepad's window, then its text area, then the text the text
 /// area's announcement ends with, and returns that text once heard in full.

@@ -14,6 +14,8 @@
 //! - Enter on the synthesizer's name opens the Select Synthesizer dialog,
 //!   as its Change button does.
 //! - Enter anywhere else activates OK.
+//! - Space on the Theme page's sound choice plays the sound it shows
+//!   (`phase6-design.md`, "The settings dialog").
 //! - Every other key is left to the focused control.
 
 /// A key the router distinguishes.
@@ -25,6 +27,8 @@ pub enum Key {
     Tab,
     /// The S key.
     S,
+    /// The space bar.
+    Space,
     /// Any other key.
     Other,
 }
@@ -60,6 +64,11 @@ pub enum FocusedControl {
     Button(DialogButton),
     /// The read-only field naming the current synthesizer.
     SynthesizerName,
+    /// The Theme page's sound choice.
+    SoundChoice,
+    /// A button other than the dialog's own, such as the Theme page's
+    /// Preview.
+    OtherButton,
     /// Any other control: the category list, a slider, a combo box.
     Other,
 }
@@ -75,6 +84,10 @@ pub enum KeyAction {
     },
     /// Activate a button, as clicking it would.
     Activate(DialogButton),
+    /// Activate the focused button, one that is not the dialog's own.
+    ActivateFocused,
+    /// Play the sound the Theme page's sound choice shows.
+    PlaySound,
     /// Let the focused control handle the key.
     PassThrough,
 }
@@ -90,8 +103,14 @@ pub fn route_key(press: KeyPress, focused: FocusedControl) -> KeyAction {
         Key::Enter if !press.control => match focused {
             FocusedControl::Button(button) => KeyAction::Activate(button),
             FocusedControl::SynthesizerName => KeyAction::Activate(DialogButton::ChangeSynthesizer),
-            FocusedControl::Other => KeyAction::Activate(DialogButton::Ok),
+            FocusedControl::OtherButton => KeyAction::ActivateFocused,
+            FocusedControl::SoundChoice | FocusedControl::Other => {
+                KeyAction::Activate(DialogButton::Ok)
+            }
         },
+        Key::Space if !press.control && focused == FocusedControl::SoundChoice => {
+            KeyAction::PlaySound
+        }
         _ => KeyAction::PassThrough,
     }
 }
@@ -136,6 +155,31 @@ mod tests {
         assert_eq!(
             route_key(press(Key::Enter), FocusedControl::SynthesizerName),
             KeyAction::Activate(DialogButton::ChangeSynthesizer)
+        );
+    }
+
+    #[test]
+    fn enter_on_another_button_activates_that_button() {
+        assert_eq!(
+            route_key(press(Key::Enter), FocusedControl::OtherButton),
+            KeyAction::ActivateFocused
+        );
+    }
+
+    #[test]
+    fn space_on_the_sound_choice_plays_the_sound() {
+        assert_eq!(
+            route_key(press(Key::Space), FocusedControl::SoundChoice),
+            KeyAction::PlaySound
+        );
+        assert_eq!(
+            route_key(press(Key::Space), FocusedControl::Other),
+            KeyAction::PassThrough,
+            "space elsewhere is the control's own"
+        );
+        assert_eq!(
+            route_key(press(Key::Enter), FocusedControl::SoundChoice),
+            KeyAction::Activate(DialogButton::Ok)
         );
     }
 

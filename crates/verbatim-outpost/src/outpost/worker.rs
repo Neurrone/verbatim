@@ -1096,7 +1096,7 @@ impl Worker<'_> {
             },
         };
         let uia = self.client.uia()?;
-        let cache = uia.base_cache_request().ok()?;
+        let cache = self.context.uia_cache(uia).ok()?;
         let selected = uia
             .controlled_descendant(&focused, runtime_id, &cache)
             .ok()
@@ -1480,7 +1480,7 @@ impl Worker<'_> {
         let Some(uia) = self.client.uia() else {
             return (None, None);
         };
-        match uia.base_cache_request() {
+        match self.context.uia_cache(uia) {
             Ok(cache) => read::uia_enrichment(self.context, uia, &cache, element, role, previous),
             Err(_) => (None, None),
         }
@@ -1496,7 +1496,7 @@ impl Worker<'_> {
     ) -> Option<read::RemoteEnrichment> {
         let element = element?;
         let uia = self.client.uia()?;
-        let cache = uia.base_cache_request().ok()?;
+        let cache = self.context.uia_cache(uia).ok()?;
         read::uia_remote_enrichment(self.context, uia, &cache, element, previous, focus_in)
     }
 
@@ -1528,7 +1528,7 @@ impl Worker<'_> {
         let Some(uia) = self.client.uia() else {
             return LiveFocus::Unresolved;
         };
-        let Ok(cache) = uia.base_cache_request() else {
+        let Ok(cache) = self.context.uia_cache(uia) else {
             return LiveFocus::Unresolved;
         };
         let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache)) else {
@@ -1614,7 +1614,7 @@ impl Worker<'_> {
             return;
         }
         let element = self.client.uia().and_then(|uia| {
-            let cache = uia.base_cache_request().ok()?;
+            let cache = self.context.uia_cache(uia).ok()?;
             uia.focused_element(&cache).ok()
         });
         let Some(element) = element.filter(|element| {

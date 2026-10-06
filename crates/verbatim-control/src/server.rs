@@ -962,6 +962,14 @@ impl ControlServer {
         });
     }
 
+    /// Fans a [`Frame::Sound`] out to every speech subscriber.
+    pub fn broadcast_sound(&self, indication: String, at_ms: u64) {
+        let frame = Frame::Sound { indication, at_ms };
+        self.fan_out(&frame, |entry| {
+            entry.speech_subscribed.load(Ordering::Relaxed)
+        });
+    }
+
     fn fan_out(&self, frame: &Frame, subscribed: impl Fn(&ConnectionEntry) -> bool) {
         let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
         let mut dead: Vec<ConnectionId> = Vec::new();

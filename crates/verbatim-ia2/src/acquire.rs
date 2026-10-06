@@ -1045,20 +1045,34 @@ fn read_snapshot(
         .state()
         .map(|s| states_from_msaa(s.cast_unsigned()))
         .unwrap_or_default();
-    let description = non_empty(acc.description());
-    let keyboard_shortcut = non_empty(acc.keyboard_shortcut());
+    // A detail the active theme reports as off is not read at all, saving
+    // its cross-process call (`NodeIdRegistry::fetches`).
+    let fetches = registry.fetches();
+    let description = fetches
+        .description
+        .then(|| non_empty(acc.description()))
+        .flatten();
+    let keyboard_shortcut = fetches
+        .shortcut
+        .then(|| non_empty(acc.keyboard_shortcut()))
+        .flatten();
     let rect = acc.location();
     // See this function's doc comment: a tree item's accValue is really
     // its 0-based level, not a value.
     // The edit field of a combo box takes the combo box's label, so it
     // has none of its own when the combo box is labelled, as in NVDA.
     let name = name.filter(|_| role != Role::EditableText || !in_labelled_combo_box(acc));
-    let (position_in_set, set_size) = position_of(key.0, acc.child(), role);
+    let (position_in_set, set_size) = if fetches.position {
+        position_of(key.0, acc.child(), role)
+    } else {
+        (None, None)
+    };
     let (value, level) = if role == Role::TreeItem {
         let level = raw_value
             .as_deref()
             .and_then(|v| v.parse::<u32>().ok())
-            .map(|v| v + 1);
+            .map(|v| v + 1)
+            .filter(|_| fetches.level);
         (None, level)
     } else {
         (raw_value, None)

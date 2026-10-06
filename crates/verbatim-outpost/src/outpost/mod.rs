@@ -40,15 +40,16 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
+    IUIAutomationCacheRequest, IUIAutomationElement, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId,
 };
 use windows::core::AgileReference;
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEventCallback};
-use verbatim_model::{Backend, NodeId, Pid, TraceId};
+use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
-    FOCUS_PROPERTIES, NodeIdRegistry as UiaRegistry, Registration, Scope, Subscription,
+    FOCUS_PROPERTIES, NodeIdRegistry as UiaRegistry, Registration, Scope, Subscription, Uia,
 };
 
 use crate::arbitration::Arbitrator;
@@ -101,6 +102,12 @@ pub(crate) struct Context {
     /// in microseconds: a caret event observed before it changes nothing
     /// the read did not see.
     caret_read: Mutex<Option<(u64, u64)>>,
+    /// The details the active theme wants read for each node
+    /// ([`SupervisorToOutpost::Fetches`]); everything until Core says
+    /// otherwise. UIA reads leave the properties of the others out of
+    /// their cache requests; MSAA reads skip their calls, through the MSAA
+    /// registry, which holds the same.
+    fetches: Mutex<Fetches>,
 }
 
 /// How an outpost reads its application, fixed for its whole life. The
@@ -156,6 +163,16 @@ impl Context {
     }
 
     /// Records that the worker is reading `node`'s caret now.
+    /// The details the active theme wants read for each node.
+    fn fetches(&self) -> Fetches {
+        *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The UIA cache request for the details the active theme wants.
+    fn uia_cache(&self, uia: &Uia) -> windows::core::Result<IUIAutomationCacheRequest> {
+        uia.cache_request_for(self.fetches())
+    }
+
     fn caret_read(&self, node: NodeId) {
         *self
             .caret_read
@@ -261,6 +278,7 @@ impl Outpost {
             edit_anchors: Mutex::new(Anchors::new(anchor_counter)),
             patterns: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(None),
+            fetches: Mutex::new(Fetches::default()),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -380,6 +398,13 @@ impl Outpost {
                     seq: *seq,
                     parked_count: context.watch.abandoned(),
                 });
+            }
+            SupervisorToOutpost::Fetches(fetches) => {
+                *context
+                    .fetches
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = *fetches;
+                context.msaa_registry.set_fetches(*fetches);
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,

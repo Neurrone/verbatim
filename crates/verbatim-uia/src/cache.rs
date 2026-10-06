@@ -15,10 +15,13 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
     UIA_IsValuePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
-    UIA_RangeValueValuePropertyId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
-    UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
+    UIA_ProcessIdPropertyId, UIA_RangeValueValuePropertyId, UIA_SelectionItemIsSelectedPropertyId,
+    UIA_SizeOfSetPropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId,
+    UIA_ValueValuePropertyId,
 };
+
+use verbatim_model::Fetches;
 
 /// The properties prefetched for every event and query. Kept in one place
 /// so the focus handler, property-change handler, and worker all cache the
@@ -107,6 +110,56 @@ pub fn base_cache_request(
     cache_request(client, CACHED_PROPERTIES)
 }
 
+/// The properties prefetched when only the details `fetches` names are
+/// wanted: [`CACHED_PROPERTIES`], in its order, without those feeding a
+/// detail the active theme reports as off (`FullDescription` and
+/// `HelpText` for the description, `AccessKey` and `AcceleratorKey` for
+/// the shortcut, `PositionInSet` and `SizeOfSet` for the position, and
+/// `Level`), so the provider is not asked for them. A property left out
+/// reads as unsupported.
+#[must_use]
+pub fn cached_properties(fetches: Fetches) -> Vec<UIA_PROPERTY_ID> {
+    let off: Vec<UIA_PROPERTY_ID> = [
+        (
+            fetches.description,
+            &[UIA_FullDescriptionPropertyId, UIA_HelpTextPropertyId][..],
+        ),
+        (
+            fetches.shortcut,
+            &[UIA_AccessKeyPropertyId, UIA_AcceleratorKeyPropertyId][..],
+        ),
+        (
+            fetches.position,
+            &[UIA_PositionInSetPropertyId, UIA_SizeOfSetPropertyId][..],
+        ),
+        (fetches.level, &[UIA_LevelPropertyId][..]),
+    ]
+    .into_iter()
+    .filter(|(wanted, _)| !wanted)
+    .flat_map(|(_, properties)| properties.iter().copied())
+    .collect();
+    CACHED_PROPERTIES
+        .iter()
+        .copied()
+        .filter(|property| !off.contains(property))
+        .collect()
+}
+
+/// Builds the cache request for the details `fetches` names: the base
+/// cache request without the properties of details that are off
+/// ([`cached_properties`]).
+///
+/// # Errors
+///
+/// Returns the COM error if the client cannot create or populate the cache
+/// request.
+pub fn cache_request_for(
+    client: &IUIAutomation,
+    fetches: Fetches,
+) -> windows::core::Result<IUIAutomationCacheRequest> {
+    cache_request(client, &cached_properties(fetches))
+}
+
 /// Builds a cache request for exactly `properties`. Local.
 ///
 /// # Errors
@@ -125,4 +178,40 @@ pub(crate) fn cache_request(
         unsafe { request.AddProperty(property) }?;
     }
     Ok(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_detail_wanted_caches_the_base_properties_in_order() {
+        assert_eq!(cached_properties(Fetches::default()), CACHED_PROPERTIES);
+    }
+
+    #[test]
+    fn a_detail_that_is_off_leaves_out_only_its_own_properties() {
+        let fetches = Fetches {
+            description: false,
+            position: false,
+            ..Fetches::default()
+        };
+        let properties = cached_properties(fetches);
+        for left_out in [
+            UIA_FullDescriptionPropertyId,
+            UIA_HelpTextPropertyId,
+            UIA_PositionInSetPropertyId,
+            UIA_SizeOfSetPropertyId,
+        ] {
+            assert!(!properties.contains(&left_out), "{left_out:?}");
+        }
+        assert_eq!(properties.len(), CACHED_PROPERTIES.len() - 4);
+        for kept in [
+            UIA_AccessKeyPropertyId,
+            UIA_LevelPropertyId,
+            UIA_NamePropertyId,
+        ] {
+            assert!(properties.contains(&kept), "{kept:?}");
+        }
+    }
 }
