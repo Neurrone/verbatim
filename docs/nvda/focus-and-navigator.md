@@ -33,7 +33,9 @@ and nothing else, except the follow-focus coupling.
 
 `source/globalCommands.py`, the `script_navigatorObject_*` family:
 current (report; repeated presses spell and copy the name and the value
-joined by a space), parent, next,
+joined by a space, or for an object with a real text interface the name
+and its selected text or caret line, as "What an object with text says" in
+[Speech](speech.md) explains), parent, next,
 previous, firstChild, toFocus (navigator snaps to focus, after saying
 "Move to focus"),
 moveFocus (focus snaps to navigator; second press moves the caret to

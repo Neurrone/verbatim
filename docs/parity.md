@@ -158,9 +158,14 @@ verified.
     announcement rather than between the role and the states.
     **Different:** a protected field's text is never read on focus, where
     NVDA reads whatever masked text the control gives; and an empty field
-    has no placeholder to speak. **Not yet:** object navigation and
-    reporting the current object still speak the value, where NVDA reads
-    the text there too.
+    has no placeholder to speak. Object navigation, to-focus, and
+    reporting the current object read the text the same way, **matched
+    since 2026-10-07**, whether or not the object has the focus: the
+    selected text, else the line at the caret, else the first line of a
+    control that reports no caret, and the value when it has no text
+    interface. **Not yet:** reporting the current object a second and
+    third time still spells and copies the name and value, where NVDA
+    spells and copies the name and the same text.
   - A multi-column list view item (a report view, such as msinfo32's
     right pane) is named by NVDA from its column texts, with no value
     or description; Verbatim keeps MSAA's name and description, since
@@ -473,6 +478,21 @@ verified.
   [Speech](nvda/speech.md). Verbatim: **matched since 2026-10-02**
   against NVDA's source (the audit above); needs a live NVDA
   comparison across roles.
+- State changes after the focus has left. NVDA speaks a state change
+  only while the changed object is its focus, and its focus changes when
+  it handles the focus event, in the order the events came ("The focus
+  gate" in [Event handling](nvda/events.md)): the state change of a
+  control the focus has already left, raised after the focus event for
+  the next control, is silent. Verbatim's outposts can deliver that state
+  change before the focus event, which takes longer to read, so Core
+  still holds the old control as the focus when it arrives; it spoke the
+  Theme page's Reset button's "unavailable" after Reset had handed the
+  focus to the indications tree and been disabled. Verbatim: **matched
+  since 2026-10-07** by the changed object's own states: a focus that
+  reported itself focused when it became the focus, and whose new state
+  set no longer includes focused, has lost the focus, and its change is
+  not spoken (its states are still kept). A control that never reports
+  the focused state is unaffected. Unverified live.
 - Selection announcements (focused list's selected child; changes
   while focus stays on container; combo box exclusion). NVDA:
   selection events. Verbatim: **different, deliberately** (the roadmap's

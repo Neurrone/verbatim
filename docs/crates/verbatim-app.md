@@ -5,7 +5,13 @@ shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
 Win32 clipboard interaction and the localized spoken confirmation (NVDA's
 "Copied to clipboard:" with the text, after reading the clipboard back, or
 "Unable to copy"), and every copying gesture routes through it — the
-report-object triple-press is the first caller. The gesture router also
+report-object triple-press is the first caller. It writes on the reducer
+thread, which runs no message loop, so it opens the clipboard with a
+message-only window made for that one write and destroyed after it
+(`SetClipboardData` fails on a clipboard opened with no owner window, and
+a window kept on a thread that pumps no messages would leave another
+application's `EmptyClipboard` waiting), and frees its global memory
+whenever the clipboard did not take it. The gesture router also
 announces a lock key's new state ("caps lock on") 30 ms after the keyboard
 hook reports it reached the operating system, waiting for its channel
 with a deadline rather than starting a thread per key. The reducer thread selects on both the outpost stream and a
