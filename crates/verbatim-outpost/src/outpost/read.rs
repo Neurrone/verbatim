@@ -575,6 +575,92 @@ pub(super) fn msaa_enrichment(
     (ancestors, selected)
 }
 
+/// How long gathering a dialog's own text through UI Automation waits for
+/// the application at each call: the text is worth a short wait, but the
+/// focus it is announced with must not be held back long.
+const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The dialog this outpost last gathered text for in a foreground report,
+/// and the text: the focus that follows it into the dialog reuses it rather
+/// than reading the dialog again.
+pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
+
+/// Gives every dialog among `nodes` that is not among `previous`, the last
+/// focus's chain, and has no description of its own, its own text as its
+/// description (`docs/nvda/object-model.md`, "A dialog's own text"), while
+/// descriptions are read at all. A dialog the focus stays inside is not read
+/// again: the chain the focus is reported with keeps the text it was given.
+///
+/// `memo` is taken: a dialog it names is given its text without reading it
+/// again. With `remember`, the last text read is kept in it for the next
+/// report, which is how a foreground report hands its dialog to the focus
+/// inside it.
+pub(super) fn describe_dialogs<'a>(
+    context: &Context,
+    client: &mut Client,
+    nodes: impl IntoIterator<Item = &'a mut NodeSnapshot>,
+    (previous, memo, remember): (&[NodeSnapshot], &mut DialogMemo, bool),
+) {
+    let mut remembered = memo.take();
+    if !context.fetches().description {
+        return;
+    }
+    for node in nodes {
+        if !crate::dialog_text::is_dialog(node.role)
+            || node
+                .details
+                .description
+                .as_deref()
+                .is_some_and(|description| !description.trim().is_empty())
+            || previous.iter().any(|known| known.id == node.id)
+        {
+            continue;
+        }
+        let text = match &remembered {
+            Some((id, text)) if *id == node.id => text.clone(),
+            _ => {
+                let started = std::time::Instant::now();
+                let text = dialog_text_of(context, client, node);
+                tracing::debug!(
+                    found = text.is_some(),
+                    elapsed_us = started.elapsed().as_micros(),
+                    "a dialog's text gathered"
+                );
+                text
+            }
+        };
+        // A dialog that is both the foreground window and the focus's
+        // ancestor in one report is read once.
+        remembered = Some((node.id, text.clone()));
+        node.details.description = text;
+    }
+    if remember {
+        *memo = remembered;
+    }
+}
+
+/// The own text of the dialog `node`, through the backend that reported it;
+/// `None` when it has none or cannot be read.
+fn dialog_text_of(context: &Context, client: &mut Client, node: &NodeSnapshot) -> Option<String> {
+    use crate::dialog_text::{UiaObject, dialog_text};
+    match node.backend {
+        Backend::Msaa => {
+            verbatim_ia2::dialog::DialogObject::of_node(node.id, &context.msaa_registry)
+                .and_then(|dialog| dialog_text(&dialog))
+        }
+        Backend::Uia => {
+            let element = context.uia_registry.element_of(node.id)?.resolve().ok()?;
+            let properties = verbatim_uia::cached_properties(context.fetches());
+            let uia = client.uia()?;
+            uia.within(DIALOG_TEXT_WAIT, |uia| {
+                dialog_text(&UiaObject::new(uia, &properties, element))
+            })
+            .ok()
+            .flatten()
+        }
+    }
+}
+
 /// The application's focused control with its ancestors, selected child,
 /// and window, through the focus window's backend. `None` when the keyboard
 /// focus is not in this application, or is on Core's hidden frame.

@@ -36,6 +36,8 @@ const STATE_SYSTEM_FOCUSABLE: u32 = 0x0010_0000;
 const STATE_SYSTEM_SELECTABLE: u32 = 0x0020_0000;
 const STATE_SYSTEM_PROTECTED: u32 = 0x2000_0000;
 const STATE_SYSTEM_HASPOPUP: u32 = 0x4000_0000;
+/// Invisible, which the model has no state for; the dialog text reads it.
+pub(crate) const STATE_SYSTEM_INVISIBLE: u32 = 0x0000_8000;
 
 /// Maps an MSAA `ROLE_SYSTEM_*` value to a normalized [`Role`], as NVDA's
 /// MSAA role table does. Unmapped roles become [`Role::Unknown`].

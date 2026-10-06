@@ -147,6 +147,58 @@ The inventory, because parity work will meet every one:
 - `FocusableUnfocusableContainer` — the workaround mixin for
   containers that take focus but shouldn't present it.
 
+### A dialog's own text
+
+A dialog's description, in NVDA, is the dialog's own text, unless the
+dialog supplies a description of its own that is not blank. Because it is
+the description, it is spoken wherever a description is: after the
+dialog's name, role, and states, whether the dialog is announced as the
+focus, as the foreground window, or as a container the focus entered, and
+only while object descriptions are reported. A message box therefore says
+its title, "dialog", and its question, and then its focused button. (`Dialog`
+in `NVDAObjects/behaviors.py`, its `_get_description` and `getDialogText`.)
+
+What counts as a dialog: through MSAA, any object whose role is dialog,
+alert, or property page, and the client area of a Windows Installer dialog
+(window class `MsiDialogCloseClass`); through UI Automation, an element that
+says it is a dialog (`IsDialog`), or a window element whose class is one of
+NVDA's dialog classes (`#32770`, `NUIDialog`, the UAC dialog's host, and the
+shell's dialog and flyout classes). Web dialogs have a variant of their own,
+not covered here.
+
+The text is gathered from the dialog's children, in order:
+
+- A child that is invisible or unavailable is skipped, with everything
+  inside it.
+- A child that is a pane, panel, property page, option pane, window,
+  grouping, paragraph, section, text frame, or of unknown role is a
+  container: the gathering goes on inside it, and what it finds there is
+  added as one piece. A container that is itself a dialog, such as a
+  property page, gives no text when a child of it that would otherwise be
+  considered has the focus, and the dialog it sits in then gives no text
+  either. This keeps a property page's text from being read twice, by the
+  dialog and by the page, while the focus is inside the page.
+- Of the other children, only static texts, labels, links, and read-only
+  edit fields that are not multi-line give text.
+- A text right after a grouping, or right after a graphic that is right
+  after a grouping, is skipped: it is taken to be the grouping's
+  description.
+- A named text whose next sibling has the same name is skipped as that
+  sibling's label, unless the sibling is a graphic, static text, separator,
+  window, pane, or button.
+- A static text, label, or link gives its name, value, and description,
+  joined by spaces, leaving out any that are empty or blank. A read-only
+  edit field gives its name and then its text; when its text is empty or
+  blank, it gives its name, value, and description, as a static text does.
+
+The pieces are joined by line breaks, which speech turns into spaces
+([Speech](speech.md), "Line breaks in spoken text"). Through MSAA, a child
+that is a window object stands for that window's client area, read through
+whichever API NVDA uses for the window, so a dialog's buttons and texts in
+windows of their own are seen with their own roles rather than as windows.
+The text is gathered each time the description is asked for, which is each
+time the dialog is announced.
+
 The design fact that matters: these are *mixins keyed by role and
 context, not per-app code* — NVDA's per-app modules mostly just
 attach or tune them. A normalized-model equivalent needs a home for

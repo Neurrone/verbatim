@@ -260,7 +260,9 @@ scripted focus event is raised with `NotifyWinEvent`, so this test too
 needs no real keyboard focus.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
-over `tests/fixtures/counts.json` it measures each ledger operation on each
+over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a
+message box: a dialog holding a question and two buttons) for a dialog's
+own text, it measures each ledger operation on each
 backend and asserts exactly how many cross-process calls the client side
 made, by kind, and how many calls mockapp's providers answered, by method.
 The MSAA operations (a focus change cold and in the steady state, a focus

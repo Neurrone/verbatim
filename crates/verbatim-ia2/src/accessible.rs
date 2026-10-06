@@ -301,14 +301,15 @@ impl Accessible {
     }
 
     /// The window that owns the object (`WindowFromAccessibleObject`), or
-    /// `None` when the call fails.
+    /// `None` when the call fails or finds no window, as it does for an
+    /// object none of whose ancestors says which window it is in.
     pub(crate) fn window(&self) -> Option<isize> {
         let mut hwnd = HWND::default();
         count(CallKind::Msaa);
         // SAFETY: a live interface and a local out-parameter, read only on
         // success.
         unsafe { WindowFromAccessibleObject(&self.object, Some(&raw mut hwnd)) }.ok()?;
-        Some(hwnd.0 as isize)
+        (!hwnd.0.is_null()).then_some(hwnd.0 as isize)
     }
 
     /// The object's MSAA identity string for this child id

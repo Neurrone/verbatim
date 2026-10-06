@@ -35,6 +35,19 @@ Public API:
   announces second. Callbacks are delivered on the installing thread's
   message loop and must never make blocking calls into the target.
   `WinEventKind` names the event; drop unhooks.
+- `dialog` — `DialogObject`, the objects a dialog's own text is gathered
+  from (`docs/nvda/object-model.md`, "A dialog's own text"; the gathering
+  is `verbatim-outpost`'s `dialog_text`). `DialogObject::of_node(node,
+  registry)` is the kept object behind a dialog this outpost reported;
+  `children()` reads its children in order (`accChildCount` and
+  `AccessibleChildren`), standing in a window's client area for each child
+  that is the window object of another window, as NVDA does, and knowing a
+  hidden or disabled window from `IsWindowVisible` and `IsWindowEnabled`
+  without acquiring its client area; `role`, `states` (with multi-line from
+  an edit control's window style), `invisible`, `name`, `value`, and
+  `description` each read their property the first time they are asked,
+  and the first three keep it, since the gathering looks at a child's
+  neighbors too.
 - `edit` (milestone M4) — the standard Win32 edit and rich edit controls'
   text through their window messages, ported from NVDA's `EditTextInfo`
   (this crate is GPL like NVDA). `edit_api_version(normalized_class)`
@@ -169,6 +182,10 @@ Public API:
   `IAccessible` with the child id it is read at, and each of its methods
   holds one `IAccessible` or `oleacc` call and counts it as one MSAA call,
   so a caller never counts anything itself:
+  - `window` (`WindowFromAccessibleObject`) answers `None` when the call
+    fails or finds no window, which it does for an object none of whose
+    ancestors names its window (mockapp's); callers then keep the window
+    they are in, rather than an address in window 0.
   - `from_event` (`AccessibleObjectFromEvent`) and `client_of_window`
     (`AccessibleObjectFromWindow` for `OBJID_CLIENT`) acquire one;
     `new`, `with_child`, and `child` build and inspect one without a call.

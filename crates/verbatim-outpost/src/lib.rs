@@ -11,13 +11,16 @@
 //! the Core-side piece (the lifecycle owner, launches, writers, fact routing,
 //! crash and hang handling, and retirement), wired into `verbatim-app`.
 //! [`arbitration`] holds the per-window backend arbitration the outpost
-//! uses. [`text`] is the outpost's side of the text protocol (milestone M4):
+//! uses. [`dialog_text`] gathers a dialog's own text, such as a message
+//! box's question, which the outpost reports as the dialog's description.
+//! [`text`] is the outpost's side of the text protocol (milestone M4):
 //! reading, waiting for the caret, and selecting in a node's text, over
 //! UIA's text pattern and the Win32 edit controls' messages. [`terminal`]
 //! finds a terminal's new output by an anchored diff of its text
 //! (milestone M4 item 9).
 
 pub mod arbitration;
+pub mod dialog_text;
 mod event_thread;
 pub mod listener;
 pub mod outpost;

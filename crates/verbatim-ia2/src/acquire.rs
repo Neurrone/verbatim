@@ -68,7 +68,7 @@ fn disconnected(error: &windows::core::Error) -> bool {
 ///
 /// Also returns whether the object was acquired at its address, which a
 /// neighbor addressed by child id on the same object inherits.
-fn locate(
+pub(crate) fn locate(
     node: NodeId,
     registry: &NodeIdRegistry,
 ) -> Result<(Accessible, MsaaKey, bool), AcquireError> {

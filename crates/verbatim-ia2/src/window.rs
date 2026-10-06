@@ -22,6 +22,7 @@ use windows::Win32::UI::Controls::{
     CCM_GETVERSION, LVM_GETITEMCOUNT, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM,
     TVM_MAPHTREEITEMTOACCID,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
     GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowLongPtrW,
@@ -47,6 +48,13 @@ pub(crate) fn exists(hwnd: isize) -> bool {
 pub(crate) fn is_visible(hwnd: isize) -> bool {
     // SAFETY: IsWindowVisible tolerates any handle.
     unsafe { IsWindowVisible(handle(hwnd)) }.as_bool()
+}
+
+/// Whether `hwnd` is an enabled window; false for one that names no
+/// window.
+pub(crate) fn is_enabled(hwnd: isize) -> bool {
+    // SAFETY: IsWindowEnabled tolerates any handle.
+    unsafe { IsWindowEnabled(handle(hwnd)) }.as_bool()
 }
 
 /// Whether `child` is a window inside `parent`.

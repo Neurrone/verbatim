@@ -23,6 +23,8 @@
 //! - [`calls`] — the per-thread count of the cross-process calls
 //!   [`acquire`] makes, which the outpost's worker takes around each entry
 //!   it handles.
+//! - [`dialog`] — the objects a dialog's own text is gathered from, read
+//!   as the gathering asks for each property.
 //! - [`edit`] — the standard Win32 edit and rich edit controls' text,
 //!   through their window messages (milestone M4), as NVDA's
 //!   `EditTextInfo` reads them.
@@ -39,6 +41,7 @@ mod accessible;
 pub mod acquire;
 pub mod calls;
 mod com;
+pub mod dialog;
 pub mod edit;
 mod hook;
 pub mod map;

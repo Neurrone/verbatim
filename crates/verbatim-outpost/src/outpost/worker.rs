@@ -45,8 +45,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
-    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
-    UiaSnapshotFact, now_us,
+    DeliveredFact, EventTiming, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
+    QueryResult, UiaSnapshotFact, now_us,
 };
 
 use super::Context;
@@ -252,6 +252,9 @@ pub(super) struct Tracking {
     /// How many focuses (not foreground changes) this outpost has reported,
     /// so the worker can tell when a focus candidate was reported.
     reported: u64,
+    /// The dialog the last foreground report gathered text for, which the
+    /// focus that follows it reuses.
+    dialog: read::DialogMemo,
 }
 
 impl Tracking {
@@ -846,7 +849,7 @@ impl Worker<'_> {
         reason = "a focus report has this many parts"
     )]
     fn emit_focus(
-        &self,
+        &mut self,
         trace: TraceId,
         observed_at_ms: u64,
         backend: Backend,
@@ -857,6 +860,7 @@ impl Worker<'_> {
         (ancestors, selected_child): read::Enrichment,
     ) {
         let mut node = node;
+        let mut ancestors = ancestors;
         // The console host's text area is a terminal, known by its window
         // (Windows Terminal's control is known by its UIA class). Its name,
         // "Text Area", is not localized, so it is dropped, as NVDA's console
@@ -868,6 +872,20 @@ impl Worker<'_> {
             node.role = Role::Terminal;
             node.name = None;
         }
+        // A dialog the focus has newly entered, or one in front, says its
+        // own text as its description.
+        let previous = self.focus_chain();
+        let mut memo = self.context.tracking().dialog.take();
+        read::describe_dialogs(
+            self.context,
+            self.client,
+            ancestors
+                .iter_mut()
+                .flatten()
+                .chain(std::iter::once(&mut node)),
+            (&previous, &mut memo, foreground),
+        );
+        self.context.tracking().dialog = memo;
         let role = node.role;
         let text_node = (!foreground).then(|| node.clone());
         tracing::debug!(
@@ -1799,7 +1817,24 @@ impl Worker<'_> {
         let started = std::time::Instant::now();
         let mut awaited = None;
         let result = match query {
-            Query::FocusNow => Ok(QueryResult::Focus(read::focus_now(context, client))),
+            Query::FocusNow => {
+                let mut answer = read::focus_now(context, client);
+                let previous = context.tracking().chain.clone();
+                let window = answer.window.iter_mut().map(|(window, _)| window);
+                let focus = answer.focus.iter_mut().flat_map(|focus| {
+                    let FocusedControl {
+                        node, ancestors, ..
+                    } = focus;
+                    ancestors.iter_mut().chain(std::iter::once(node))
+                });
+                read::describe_dialogs(
+                    context,
+                    client,
+                    window.chain(focus),
+                    (&previous, &mut None, false),
+                );
+                Ok(QueryResult::Focus(answer))
+            }
             Query::Navigate { node_id, kind } => {
                 read::navigate(context, client, *node_id, *kind).map(QueryResult::Navigated)
             }

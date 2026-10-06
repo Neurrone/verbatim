@@ -45,6 +45,7 @@ use verbatim_model::{
 };
 use verbatim_model::{CaretWait, CaretWatch, TextOp, TextPosition, TextReply, TextUnit, Theme};
 use verbatim_outpost::Outpost;
+use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
     SupervisorToOutpost, read_message,
@@ -68,6 +69,12 @@ const SECOND: usize = 3;
 const LIST: usize = 4;
 const ITEM_ONE: usize = 5;
 const ITEM_TWO: usize = 6;
+
+/// The dialog fixture's first button, by its index in mockapp's tree.
+const YES: usize = 3;
+
+/// The question the dialog fixture's message box asks.
+const QUESTION: &str = "Remove the theme Mine? This cannot be undone.";
 
 /// Calls by kind, in the order `CallCounts` lists them.
 fn calls(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
@@ -184,6 +191,37 @@ impl OutpostUnderTest {
         })
     }
 
+    /// [`msaa_focus`](Self::msaa_focus), returning the focus's ancestors
+    /// too.
+    fn msaa_focus_in_context(
+        &self,
+        hwnd: HWND,
+        index: usize,
+    ) -> (NodeSnapshot, Vec<NodeSnapshot>, CallCounts) {
+        self.outpost
+            .handle_command(&SupervisorToOutpost::DeliverFact {
+                trace_id: TraceId::mint(),
+                observed_at_ms: 0,
+                timing: EventTiming::default(),
+                fact: DeliveredFact::MsaaFocus {
+                    hwnd: hwnd.0 as isize,
+                    id_object: i32::try_from(index + 1).expect("a small index"),
+                    id_child: 0,
+                },
+            });
+        self.wait_for(|message| match message {
+            OutpostToSupervisor::Event {
+                event:
+                    NormalizedEvent::FocusChanged {
+                        node, ancestors, ..
+                    },
+                timing,
+                ..
+            } => Some((node, ancestors, timing.calls)),
+            _ => None,
+        })
+    }
+
     /// Asks the outpost for one object-navigation step, as Core would, and
     /// returns the neighbor and the calls it made.
     fn navigate(&mut self, node_id: NodeId, kind: QueryKind) -> (NodeSnapshot, CallCounts) {
@@ -243,7 +281,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        calls(0, 30, 2),
+        calls(0, 30, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -322,6 +360,97 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
+    ratchet.finish();
+    app.send("quit");
+}
+
+/// The description the dialog among `ancestors` was reported with.
+fn dialog_description(ancestors: &[NodeSnapshot]) -> Option<&str> {
+    ancestors
+        .iter()
+        .find(|ancestor| ancestor.role == Role::Dialog)
+        .expect("the dialog is an ancestor")
+        .details
+        .description
+        .as_deref()
+}
+
+/// A focus entering a message box gathers its text
+/// (`verbatim_outpost::dialog_text`): the dialog's children, each child's
+/// role and states, and the question's name, value, and description, on top
+/// of a cold focus's calls. A focus moving within it is not measured:
+/// mockapp answers every `accParent` with a new COM object, so the dialog
+/// reached from the next button is a new node to the outpost, where a real
+/// dialog is the node it reported before and is not read again.
+fn msaa_dialog_text_costs_exactly() {
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-dialog");
+    let mut app = common::spawn("dialog.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut ratchet = Ratchet::default();
+
+    common::apply(&mut app, hwnd, "set-focus yes");
+    let (node, ancestors, made) = outpost.msaa_focus_in_context(hwnd, YES);
+    assert_eq!(node.name.as_deref(), Some("Yes"));
+    assert_eq!(dialog_description(&ancestors), Some(QUESTION));
+    let cost = Cost {
+        calls: made,
+        hits: common::read_hits(hwnd),
+    };
+    ratchet.check(
+        "MSAA focus into a message box",
+        &cost,
+        calls(0, 44, 1),
+        &[
+            ("WM_GETOBJECT", 2),
+            ("accParent", 17),
+            ("accChildCount", 2),
+            ("get_accChild", 4),
+            ("get_accName", 4),
+            ("get_accValue", 4),
+            ("get_accDescription", 4),
+            ("get_accRole", 7),
+            ("get_accState", 6),
+            ("get_accKeyboardShortcut", 3),
+            ("accLocation", 3),
+        ],
+    );
+
+    ratchet.finish();
+    app.send("quit");
+}
+
+/// A UIA message box's text, gathered as the outpost's worker gathers it
+/// for a dialog the focus newly entered (`describe_dialogs` in
+/// `verbatim-outpost`'s `read.rs`): one call reads the dialog's children
+/// with their properties cached.
+fn uia_dialog_text_costs_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-dialog");
+    let mut app = common::spawn("dialog.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+    let dialog = under_test.element("Remove Theme").clone();
+    let (text, cost) = under_test.measure(hwnd, |under_test| {
+        dialog_text(&UiaObject::new(&under_test.uia, CACHED_PROPERTIES, dialog))
+    });
+    assert_eq!(text.as_deref(), Some(QUESTION));
+    ratchet.check(
+        "UIA message box text",
+        &cost,
+        calls(1, 0, 0),
+        &[
+            ("ProviderOptions", 29),
+            ("GetPatternProvider", 44),
+            ("GetPropertyValue", 92),
+            ("HostRawElementProvider", 13),
+            ("Navigate", 9),
+            ("GetRuntimeId", 8),
+            ("BoundingRectangle", 4),
+            ("FragmentRoot", 9),
+        ],
+    );
     ratchet.finish();
     app.send("quit");
 }
@@ -1294,6 +1423,14 @@ fn main() {
         (
             "msaa_navigation_steps_cost_exactly",
             msaa_navigation_steps_cost_exactly,
+        ),
+        (
+            "msaa_dialog_text_costs_exactly",
+            msaa_dialog_text_costs_exactly,
+        ),
+        (
+            "uia_dialog_text_costs_exactly",
+            uia_dialog_text_costs_exactly,
         ),
         (
             "uia_focus_changes_cost_exactly_remote",
