@@ -8,7 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::speech::Utterance;
+use crate::settings::ReaderSettings;
+use crate::speech::{SpeechMark, Utterance};
+use crate::text::{CaretKey, CaretReport, TextReply, TextRequest};
 use crate::tree::{Backend, NodeSnapshot, StateSet};
 use crate::{NodeId, OutpostId, TraceId};
 
@@ -175,6 +177,29 @@ pub enum NormalizedEvent {
         /// The alerting object.
         node: NodeSnapshot,
     },
+    /// The caret or the selection moved in a node with text (UIA's text
+    /// selection changed event, an edit control's caret event), carrying
+    /// the line at the caret and the selection (milestone M4). The outpost
+    /// sends one when a node with text gains the focus, as soon after the
+    /// focus event as it can, and on every later caret or selection change
+    /// in the focus, coalesced so a burst sends the latest only. It keeps
+    /// Core's copy of the caret current; it speaks nothing by itself. A
+    /// caret key's speech comes from the reply to Core's own
+    /// [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret) request.
+    CaretMoved {
+        /// The node whose caret moved.
+        node_id: NodeId,
+        /// Where the caret now is.
+        caret: CaretReport,
+    },
+    /// The text of a node changed (UIA's text changed event, an edit
+    /// control's change notification). Characters typed into a terminal
+    /// wait for this before they are spoken, so a password prompt that
+    /// shows nothing speaks nothing (`phase6-design.md`, M4 item 4).
+    TextChanged {
+        /// The node whose text changed.
+        node_id: NodeId,
+    },
 }
 
 impl NormalizedEvent {
@@ -205,7 +230,9 @@ impl NormalizedEvent {
             }
             NormalizedEvent::PropertyChanged { node_id, .. }
             | NormalizedEvent::ValueChanged { node_id, .. }
-            | NormalizedEvent::Notification { node_id, .. } => {
+            | NormalizedEvent::Notification { node_id, .. }
+            | NormalizedEvent::CaretMoved { node_id, .. }
+            | NormalizedEvent::TextChanged { node_id } => {
                 *node_id = node_id.with_outpost(outpost);
             }
         }
@@ -401,6 +428,51 @@ pub enum Input {
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.
     Tick,
+    /// A text request the reducer made ([`Effect::Text`]) was answered.
+    TextCompleted {
+        /// Trace ID of the input that caused the request.
+        trace_id: TraceId,
+        /// The request this answers.
+        query_id: QueryId,
+        /// The answer.
+        reply: TextReply,
+    },
+    /// A caret key was pressed and passed to the application, which moves
+    /// the caret itself (milestone M4). The keyboard hook reports it as it
+    /// passes it on; the reducer waits for evidence of what it did and
+    /// speaks the result when the focus has text.
+    CaretKey {
+        /// Trace ID minted when the key was observed.
+        trace_id: TraceId,
+        /// Which key.
+        key: CaretKey,
+    },
+    /// Text was typed into the focused application: one character, or
+    /// several at once when an input method commits a composition (one key
+    /// press need not be one character). Sourced on the platform side,
+    /// from the keyboard hook's translation of a key to text or from the
+    /// application's own text-edit events; the reducer echoes it by the
+    /// typing echo settings.
+    CharacterTyped {
+        /// Trace ID minted when the typing was observed.
+        trace_id: TraceId,
+        /// The text typed, a tab as a tab character and Enter as a carriage
+        /// return.
+        text: String,
+    },
+    /// Playback reached an index mark the reducer placed in an utterance
+    /// ([`crate::SegmentContent::Mark`]), reported by the speech pipeline
+    /// when the device has played the audio before it.
+    MarkReached {
+        /// The mark.
+        mark: SpeechMark,
+    },
+    /// Speech was cut off outside the reducer: a key press cancelled it, as
+    /// the keyboard hook does for nearly every key. Say-all stops here, as
+    /// NVDA's stops on any key.
+    SpeechCancelled,
+    /// The reader settings, at startup and whenever the user changes them.
+    Settings(ReaderSettings),
 }
 
 /// The name of an action an activation performed, which NVDA speaks after
@@ -441,7 +513,8 @@ pub enum ReviewCommand {
     ReviewTop,
     /// Move the review cursor to the previous line.
     ReviewPreviousLine,
-    /// Report the review cursor's current line.
+    /// Report the review cursor's current line: spelled on a second press,
+    /// spelled with character descriptions on a third.
     ReviewCurrentLine,
     /// Move the review cursor to the next line.
     ReviewNextLine,
@@ -463,6 +536,36 @@ pub enum ReviewCommand {
     ReviewEndOfLine,
     /// Move the review cursor to the last line of the navigator object.
     ReviewBottom,
+    /// Move the review cursor to the previous page, where the text has
+    /// pages.
+    ReviewPreviousPage,
+    /// Move the review cursor to the next page.
+    ReviewNextPage,
+    /// Move the review cursor to the first character of the selection.
+    ReviewSelectionStart,
+    /// Move the review cursor to the last character of the selection.
+    ReviewSelectionEnd,
+    /// Read from the review cursor to the end, moving it as speech goes.
+    SayAllFromReview,
+    /// Read from the caret to the end, moving the caret as speech goes.
+    SayAllFromCaret,
+    /// Mark the review cursor's position as the start of a select then copy.
+    SetStartMarker,
+    /// Move the review cursor to the start marker.
+    MoveToStartMarker,
+    /// Select from the start marker to the review cursor; on a second press,
+    /// copy that text to the clipboard.
+    SelectThenCopy,
+    /// Toggle whether the review cursor follows the caret.
+    ToggleFollowCaret,
+    /// Cycle the "Speak typed characters" setting.
+    ToggleTypedCharacters,
+    /// Cycle the "Speak typed words" setting.
+    ToggleTypedWords,
+    /// Report where the caret is on the screen.
+    ReportCaretLocation,
+    /// Report where the review cursor is on the screen.
+    ReportReviewLocation,
 }
 
 /// A non-speech sound the reducer can ask for, named semantically so
@@ -509,4 +612,14 @@ pub enum Effect {
     /// stays pure — it never touches the clipboard itself — so the
     /// report-object triple-press emits this rather than doing the copy.
     CopyToClipboard(String),
+    /// Ask an outpost to read or act on a node's text; the answer re-enters
+    /// as [`Input::TextCompleted`] (milestone M4).
+    Text(TextRequest),
+    /// Keep the display on (true) while say-all reads, or let it turn off
+    /// again (false), NVDA's "Prevent display from turning off during say
+    /// all". Every true is followed by a false when say-all ends.
+    KeepDisplayOn(bool),
+    /// The reducer changed a reader setting itself, by a toggle key; the
+    /// shell saves the new settings.
+    SettingsChanged(ReaderSettings),
 }

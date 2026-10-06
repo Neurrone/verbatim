@@ -99,6 +99,69 @@ pub enum SegmentContent {
     /// single character: a theme speaks it at a raised pitch, as NVDA does
     /// (`docs/nvda/speech.md`, "Capitals when spelling").
     SpelledCapital(String),
+    /// One character spoken on its own, as caret and review movement by
+    /// character and spelling speak it: by its name from the character
+    /// table of the segment's language when it has one ("comma",
+    /// "space"), raised in pitch when it is a capital letter, and as itself
+    /// otherwise.
+    Character(String),
+    /// One character's description from the character table of the
+    /// segment's language ("Alpha" for a), spoken when the current
+    /// character is asked for twice or a word is spelled with
+    /// descriptions; a character with no description is spoken as
+    /// [`Character`](Self::Character) is.
+    CharacterDescription(String),
+    /// A point in the utterance to report when playback reaches it, which
+    /// say-all moves its position by (`docs/nvda/speech.md`, "Say-all").
+    /// Says nothing.
+    Mark(SpeechMark),
+    /// A reader message with values in it, rendered to its localized
+    /// wording ("selected hello").
+    Phrase(Phrase),
+}
+
+/// An index mark the reducer places in an utterance
+/// ([`SegmentContent::Mark`]); the speech pipeline reports it back when
+/// playback reaches it, as `Input::MarkReached`. The reducer numbers its
+/// marks in increasing order and never reuses a number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SpeechMark(pub u64);
+
+/// Text named in a selection announcement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelectionText {
+    /// Text, spoken as it is.
+    Text(String),
+    /// A single character, spoken by its name as
+    /// [`SegmentContent::Character`] is.
+    Character(String),
+    /// Too much text to speak (512 characters or more, as NVDA counts):
+    /// spoken as the number of characters.
+    Characters(u32),
+}
+
+/// A reader message with values in it, named by
+/// [`SegmentContent::Phrase`] and worded at the presentation stage, like
+/// [`Message`]. Wording matches NVDA's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Phrase {
+    /// Text became selected: NVDA's "selected hello".
+    Selected(SelectionText),
+    /// Text stopped being selected: NVDA's "unselected hello".
+    Unselected(SelectionText),
+    /// A text position's place on the screen: NVDA's "Positioned at 10,
+    /// 20".
+    Positioned {
+        /// Screen x, in pixels.
+        x: i32,
+        /// Screen y, in pixels.
+        y: i32,
+    },
+    /// The "Speak typed characters" setting's new value, after its toggle.
+    SpeakTypedCharacters(crate::TypingEcho),
+    /// The "Speak typed words" setting's new value, after its toggle.
+    SpeakTypedWords(crate::TypingEcho),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.
@@ -136,6 +199,24 @@ pub enum Message {
     Invoke,
     /// A space, spelled — NVDA's symbol name "space".
     Space,
+    /// The select-then-copy start marker was set — NVDA's "Start marked".
+    StartMarked,
+    /// Select then copy with no start marker — NVDA's "No start marker set".
+    NoStartMarker,
+    /// Select then copy with the start marker in another object — NVDA's
+    /// "The start marker must reside within the same object".
+    StartMarkerElsewhere,
+    /// The review cursor now follows the caret — NVDA's "caret moves review
+    /// cursor".
+    CaretMovesReview,
+    /// The review cursor no longer follows the caret — NVDA's "caret
+    /// doesn't move review cursor".
+    CaretDoesNotMoveReview,
+    /// The text cannot do what was asked (no page unit, no selection, no
+    /// screen position) — NVDA's "Not supported in this document".
+    NotSupported,
+    /// A command that needs a caret found none — NVDA's "No caret".
+    NoCaret,
 }
 
 /// One segment of an utterance, with an optional language override.
