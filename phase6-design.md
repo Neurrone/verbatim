@@ -1060,14 +1060,22 @@ that probe.
 The crate stays Windows-specific (GPL tier), so porting from NVDA's
 Python framework is allowed. Three layers:
 
-1. **The program builder.** A typed builder that emits bytecode: each
-   register has a Rust type for what it holds (element, text range,
-   integer, boolean, string, array, string map, cache request), so a
-   program that compares an element with an integer does not compile.
-   Structured blocks (`if`, `while`) compute the jump offsets, which the
-   bytecode counts in instructions. Only the opcodes Verbatim uses are
-   implemented, each with a unit test of its exact bytes against the
-   reference layout. Building a program costs microseconds, so programs
+1. **The program builder.** NVDA's framework
+   (`source/UIAHandler/_remoteOps/`, about 4,300 lines of Python) has
+   three parts: the instruction table (about 100 opcodes), typed remote
+   values with methods (element, text range, string, integer, boolean,
+   array, string map, cache request) and structured control flow (if,
+   while, for each, try and catch) that compute jump offsets, and a local
+   emulator of the program machine used for its tests. Verbatim ports the
+   first two whole, since terminals, text attribute runs, and M6's buffer
+   fetches will use most of them: every opcode in the table with a unit
+   test of its exact bytes, and a typed builder in which each register
+   has a Rust type for what it holds, so a program that compares an
+   element with an integer does not compile. It does not port the
+   emulator, since its tests run against mockapp's real provider, nor the
+   Python operator overloading; a failing instruction is mapped back to
+   the Rust line that emitted it with `#[track_caller]`, as NVDA maps it
+   to the Python line. Building a program costs microseconds, so programs
    are built per call, with that call's values as literals.
 2. **Execution.** `Operation` imports the elements or text ranges, runs
    the program, maps the status to a Rust error (with the failing
@@ -1092,11 +1100,29 @@ Python framework is allowed. Three layers:
    tests: against mockapp, both implementations must return the same
    ancestors with the same properties.
 
+Why some elements cannot run programs: UIA has two kinds of provider.
+A native one runs inside the application (Windows Terminal's text
+control, WinUI, Office). For an application or control with no native
+UIA, only MSAA or plain Win32, UIA builds a proxy provider inside the
+client, that is inside Verbatim's own outpost, which translates each UIA
+request into MSAA calls to the application. A remote program runs in the
+provider's process, and for a client-side proxy that is the outpost
+itself, so there is nothing to run remotely and the import fails
+(E_UNEXPECTED). Windows Terminal's caption buttons are such elements:
+standard window-frame controls that UIA proxies, though the terminal's
+text is native. Verbatim's arbitration already sends windows without a
+native provider to the MSAA outpost path, so this affects only proxied
+parts of windows read through UIA: window frames, and Win32 child windows
+inside otherwise native applications.
+
 Fallback, so a failure costs one attempt, not one per event:
 
-- An import that fails (a client-side proxy) marks the window as not
-  supporting remote programs, for the window's lifetime, like the
-  arbitration verdicts, and the classic implementation runs.
+- Whether a window's provider is native is already known: arbitration
+  probes it (`UiaHasServerSideProvider`) and keeps the verdict for the
+  window's lifetime. A window without a native provider uses the classic
+  implementation without trying. An import that fails anyway marks the
+  window the same way, for its lifetime, since a window's provider does
+  not change.
 - An `Execute` that fails runs the classic implementation for that call
   and is logged with the instruction index; repeated failures for one
   window mark it like a failed import.
