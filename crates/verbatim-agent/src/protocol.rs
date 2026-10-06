@@ -137,8 +137,9 @@ pub enum Request {
         /// How long to wait for them to close, in milliseconds.
         timeout_ms: u64,
     },
-    /// Writes a small file, creating or replacing it: a test's own document
-    /// for an application to open, named so its window can be told apart.
+    /// Writes a small file, creating or replacing it and any missing parent
+    /// directories: a test's own document for an application to open, or a
+    /// folder of files, named so its window can be told apart.
     /// Answered by [`ReplyPayload::FileWritten`].
     WriteFile {
         /// Path to the file, agent-local.

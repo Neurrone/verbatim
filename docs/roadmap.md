@@ -93,6 +93,13 @@ continuously alongside every later milestone.
   the same throughout, only the source improves underneath.
 - Interaction-before-full-render E2E on a very large page.
 - Scan-mode generalization: the same projection over an ordinary app.
+- Start-menu search results: the results are a Chromium (WebView2)
+  document inside the search host, which NVDA reads through IA2
+  (`appModules/searchui.py`, `StartChromiumObj`); once IA2 lands,
+  `start_menu_search` is extended to type a query and arrow through the
+  results (NVDA's reading, captured on 2026-10-06: "Notepad, App, Press
+  right to view options 1 of 5" after the first letter, each result with
+  its position as the arrows move).
 - From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): Alt+Up and
   Alt+Down collapse or expand the control at the caret, or move by
   sentence, depending on the control (`browseMode.py`); focusing a

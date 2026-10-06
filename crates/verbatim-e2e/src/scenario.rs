@@ -490,6 +490,72 @@ impl Scenario {
         Ok(pid)
     }
 
+    /// Opens a harness folder in File Explorer: writes `files` (paths
+    /// relative to the folder, empty contents) into a folder named
+    /// [`DOCUMENT_MARKER`] plus `name` next to Verbatim's executable, opens
+    /// it, and brings the window titled with that name to the foreground.
+    /// The window is closed by its title at cleanup, never by image name,
+    /// since `explorer.exe` is also the shell. Returns the folder's name,
+    /// which is the window's title.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the window does not take the
+    /// foreground.
+    pub fn open_folder(&mut self, name: &str, files: &[&str]) -> io::Result<String> {
+        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let directory = Path::new(&self.stderr_log_path)
+            .parent()
+            .and_then(Path::to_str)
+            .ok_or_else(|| io::Error::other("no directory for the harness folder"))?;
+        let folder = format!("{directory}\\{marker}");
+        for file in files {
+            self.process_agent
+                .write_file(&format!("{folder}\\{file}"), b"")?;
+        }
+        let pid = self.process_agent.launch_process(
+            "explorer.exe",
+            std::slice::from_ref(&folder),
+            None,
+            &[],
+            None,
+        )?;
+        self.launched.push(Launched {
+            pid,
+            image: "explorer.exe".to_owned(),
+            marker: Some(marker.clone()),
+        });
+        self.require_window_in_front("explorer.exe", Some(&marker))?;
+        Ok(marker)
+    }
+
+    /// Opens a page of the Settings app by its `ms-settings:` URI and brings
+    /// the Settings window to the foreground. The Settings app is a single
+    /// instance, so the scenario lists `SystemSettings.exe` among its target
+    /// images and it is ended by image name at cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the window does not take the
+    /// foreground.
+    pub fn open_settings_page(&mut self, uri: &str) -> io::Result<()> {
+        let pid = self.process_agent.launch_process(
+            "explorer.exe",
+            &[uri.to_owned()],
+            None,
+            &[],
+            None,
+        )?;
+        // The launching explorer.exe hands the URI to the Settings app and
+        // exits; only SystemSettings.exe is swept at cleanup.
+        self.launched.push(Launched {
+            pid,
+            image: "SystemSettings.exe".to_owned(),
+            marker: None,
+        });
+        self.require_window_in_front("ApplicationFrameHost.exe", Some("Settings"))
+    }
+
     /// Brings `image`'s window, titled with `title_contains` when given, to
     /// the foreground, failing with the foreground report when it does not
     /// get there.

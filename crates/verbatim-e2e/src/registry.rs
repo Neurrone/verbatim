@@ -78,9 +78,10 @@ use verbatim_control::protocol::LatencyRecord;
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
-    lock_key_announcements, menu_and_settings_dialog, notepad_and_verbatim_menu,
-    object_navigation_in_settings, rapid_tabbing_in_settings, start_menu_search, switch_to_onecore,
-    synth_host_crash_recovery, system_information_tree,
+    explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
+    notepad_and_verbatim_menu, object_navigation_in_settings, rapid_tabbing_in_settings,
+    settings_toggle, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
+    system_information_tree,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -136,6 +137,9 @@ pub enum ScenarioState {
     /// The pid of a target application `setup` launched via
     /// [`Scenario::launch_target`], for `teardown` to kill.
     TargetPid(u32),
+    /// The title of a window `setup` opened, such as a harness folder's
+    /// ([`Scenario::open_folder`]), for the body to listen for.
+    Title(String),
 }
 
 /// One named, grouped scenario. See this module's own doc comment for the
@@ -242,6 +246,22 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: start_menu_search::setup,
         body: start_menu_search::body,
         teardown: start_menu_search::teardown,
+    },
+    ScenarioDef {
+        name: "explorer_folder_window",
+        group: Group::Shell,
+        target_images: &[],
+        setup: explorer_folder_window::setup,
+        body: explorer_folder_window::body,
+        teardown: explorer_folder_window::teardown,
+    },
+    ScenarioDef {
+        name: "settings_toggle",
+        group: Group::Shell,
+        target_images: &["SystemSettings.exe"],
+        setup: settings_toggle::setup,
+        body: settings_toggle::body,
+        teardown: settings_toggle::teardown,
     },
     ScenarioDef {
         name: "system_information_tree",

@@ -40,7 +40,8 @@ Public API:
   (the foreground window and the visible top-level windows, each with its
   title, class, program, and whether it is cloaked), `CloseWindows` (an
   ordinary close request to every visible window whose title contains some
-  text, then a wait for them to go), `WriteFile` (a small file, such as the
+  text, then a wait for them to go), `WriteFile` (a small file, creating any missing parent directories,
+  such as the
   document a test opens Notepad on), and `BringToForeground`'s optional
   title filter (protocol version 3; all from the `desktop` and `files`
   modules), `ReadFileChunk` (up to 8 MiB of a file of any size from a

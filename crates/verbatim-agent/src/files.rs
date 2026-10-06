@@ -44,7 +44,9 @@ pub fn read_chunk_base64(path: &str, offset: u64) -> io::Result<String> {
     Ok(STANDARD.encode(bytes))
 }
 
-/// Writes `data_base64`, decoded, to `path`, creating or replacing it.
+/// Writes `data_base64`, decoded, to `path`, creating or replacing it, and
+/// creating any missing parent directories, so a test can lay out a folder
+/// of files.
 ///
 /// # Errors
 ///
@@ -59,6 +61,9 @@ pub fn write_base64(path: &str, data_base64: &str) -> io::Result<()> {
             "{} bytes is over the {MAX_READ_FILE_BYTES}-byte WriteFile limit",
             bytes.len()
         )));
+    }
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, bytes)
 }

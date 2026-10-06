@@ -60,12 +60,18 @@ Public API:
   returning — see `docs/tooling.md`'s troubleshooting section for what
   happens to a gesture sent before that pause. `control()` and `speech()`
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
-  `open_document`, `kill_target`, `process_status`, `quit_verbatim`, and
-  `report_latency` drive the running instance. `open_document` opens an
-  application such as Notepad on an empty file whose name holds
-  `DOCUMENT_MARKER`, brings the window with that title forward, and closes
-  it by title at cleanup, so the user's own Notepad windows are never
-  touched; `establish_baseline` makes sure an uncloaked window holds the
+  `open_document`, `open_folder`, `open_settings_page`, `kill_target`,
+  `process_status`, `quit_verbatim`, and `report_latency` drive the
+  running instance. `open_document` opens an application such as Notepad
+  on an empty file whose name holds `DOCUMENT_MARKER`, brings the window
+  with that title forward, and closes it by title at cleanup, so the
+  user's own Notepad windows are never touched; `open_folder` does the
+  same for a File Explorer window on a folder of empty files it writes,
+  never sweeping `explorer.exe`, which is also the shell, and returns the
+  window's title for the body (`ScenarioState::Title`);
+  `open_settings_page` opens a page of the Settings app by its
+  `ms-settings:` URI, and the scenario lists `SystemSettings.exe` among
+  its target images; `establish_baseline` makes sure an uncloaked window holds the
   foreground before every scenario's setup, and `foreground_report`
   describes the foreground for failure messages and the run's
   `foreground.txt`. A launched window that does not take the foreground
