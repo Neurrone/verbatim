@@ -54,7 +54,10 @@
 //!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
 //!   to Windows `OneCore` voices and back, and
 //!   [`lock_key_announcements`](crate::scenarios::lock_key_announcements),
-//!   a lock key's new state spoken.
+//!   a lock key's new state spoken, and
+//!   [`theme_panel`](crate::scenarios::theme_panel), the settings dialog's
+//!   Theme page, where a role changed to a sound is then heard as that
+//!   sound.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
@@ -82,7 +85,7 @@ use crate::scenarios::{
     notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor, notepad_say_all,
     object_navigation_in_settings, rapid_tabbing_in_settings, settings_dialog_keys,
     settings_system_page, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree,
+    system_information_tree, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -300,6 +303,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
+    },
+    ScenarioDef {
+        name: "theme_panel",
+        group: Group::Speech,
+        target_images: &[],
+        setup: theme_panel::setup,
+        body: theme_panel::body,
+        teardown: theme_panel::teardown,
     },
     ScenarioDef {
         name: "system_information_tree",

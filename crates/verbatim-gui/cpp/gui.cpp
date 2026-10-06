@@ -326,6 +326,16 @@ void SetValue(wxTextCtrl* text, const rust::String& value) {
     }
 }
 
+// Enables or disables `window`. A control disabled while it has the focus
+// hands the focus to `fallback` first, so the focus never rests on a control
+// that cannot be used (Reset, once it has reset, for instance).
+void EnableKeepingFocus(wxWindow* window, bool enabled, wxWindow* fallback) {
+    if (!enabled && wxWindow::FindFocus() == window) {
+        fallback->SetFocus();
+    }
+    window->Enable(enabled);
+}
+
 // A tree item's indication, by its index in the catalogue; -1 for a
 // category.
 class IndicationData : public wxTreeItemData {
@@ -639,12 +649,17 @@ private:
         for (const ThemeTreeCategory& category : categories) {
             const wxTreeItemId parent =
                 tree_->AppendItem(root, Text(category.label), -1, -1, new IndicationData(-1));
+            // With nothing else to select, the first category is, so the
+            // tree always has a selection to announce when it gets focus.
+            if (!reselect.IsOk()) {
+                reselect = parent;
+            }
             for (const ThemeTreeItem& item : category.items) {
                 const auto indication = static_cast<std::int64_t>(item.indication);
                 const wxTreeItemId id = tree_->AppendItem(parent, Text(item.label), -1, -1,
                                                           new IndicationData(indication));
                 items_[indication] = id;
-                if (indication == selected) {
+                if (indication == selected && selected >= 0) {
                     reselect = id;
                 }
             }
@@ -703,9 +718,9 @@ private:
         if (speak_sounded_->GetValue() != page_.speak_sounded) {
             speak_sounded_->SetValue(page_.speak_sounded);
         }
-        rename_->Enable(page_.can_rename);
-        export_->Enable(page_.can_rename);
-        remove_->Enable(page_.can_remove);
+        EnableKeepingFocus(rename_, page_.can_rename, theme_);
+        EnableKeepingFocus(export_, page_.can_rename, theme_);
+        EnableKeepingFocus(remove_, page_.can_remove, theme_);
         RefreshTree();
         RefreshControls();
     }
@@ -713,16 +728,16 @@ private:
     void RefreshControls() {
         const IndicationControls controls = g_shell->core.indication_controls();
         SetChoice(report_, controls.report_options, controls.report);
-        report_->Enable(controls.report_enabled);
+        EnableKeepingFocus(report_, controls.report_enabled, tree_);
         SetChoice(sound_, controls.sound_options, controls.sound);
-        sound_->Enable(controls.sound_enabled);
+        EnableKeepingFocus(sound_, controls.sound_enabled, tree_);
         sound_browse_ = controls.sound_browse;
         SetValue(words_, controls.words);
-        words_->Enable(controls.words_enabled);
+        EnableKeepingFocus(words_, controls.words_enabled, tree_);
         SetChoice(voice_, controls.voice_options, controls.voice);
-        voice_->Enable(controls.voice_enabled);
-        preview_->Enable(controls.preview_enabled);
-        reset_->Enable(controls.reset_enabled);
+        EnableKeepingFocus(voice_, controls.voice_enabled, tree_);
+        EnableKeepingFocus(preview_, controls.preview_enabled, tree_);
+        EnableKeepingFocus(reset_, controls.reset_enabled, tree_);
     }
 
     wxWindow* dialog_;

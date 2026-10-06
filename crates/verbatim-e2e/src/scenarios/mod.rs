@@ -24,6 +24,7 @@ pub(crate) mod start_menu_search;
 pub(crate) mod switch_to_onecore;
 pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
+pub(crate) mod theme_panel;
 
 /// Opens the Verbatim menu with Verbatim+V and waits for the popup to be
 /// announced before returning, so the caller's very next arrow key lands
