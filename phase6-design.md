@@ -1138,7 +1138,8 @@ not needed; the outpost imports the event's sender. Then:
 - Option B: the program reads `HasKeyboardFocus` first and returns early
   if it is false, so the whole focus change is one round trip.
 
-Option B is proposed: it meets the target with one round trip to spare.
+Option B was agreed on 2026-10-06: it meets the target with one round
+trip to spare.
 
 The program reads raw-view parents, which is the view the classic walk
 uses (`RawViewWalker` in `verbatim-uia`'s client), so the two return the
@@ -1154,12 +1155,6 @@ Microsoft's `microsoft-ui-uiautomation` library; it uses the API in
 Windows directly, as NVDA now does. `docs/nvda/uia-remote-ops.md` links
 to a `docs/RemoteOperations.md` in that repository which does not exist.
 
-### Questions for Dickson
-
-- The typed builder covering only the opcodes used, grown as needed,
-  rather than a port of NVDA's whole framework: agreed?
-- Option B, folding the live focus check into the program: agreed?
-- Fallback marking per window for its lifetime: agreed?
 
 ## The autonomous run
 
@@ -1171,6 +1166,148 @@ takeover allowed), compares with NVDA through the transcript tool where
 NVDA has the behavior, and reports at the end. Where the design leaves a
 choice open, the run takes the reading the design most directly
 supports, records it here, and lists it in the final report.
+
+### How the run is verified
+
+Four kinds of check, and videos:
+
+- **Unit tests**, in `cargo xtask ci` and so in GitHub Actions: pure logic
+  in the crate that owns it, mostly reducer tests in
+  `crates/verbatim-core/tests/reduce.rs` driven by inputs and asserting
+  effects.
+- **Cross-process tests against mockapp**, also in CI: a real outpost in
+  the test process against mockapp's real UIA and MSAA providers, in the
+  shape of `crates/mockapp/tests/slow_application.rs`. Exact call counts
+  and provider hits are asserted here.
+- **End-to-end scenarios**, run locally through the agent with a real
+  Verbatim and real applications. Each new behavior gets a scenario; the
+  whole suite must pass three consecutive runs at the end of each step.
+- **NVDA comparison**: where NVDA has the behavior, the scenario's keys are
+  captured with the transcript tool first, and the scenario's assertions
+  are written from the capture; a deliberate difference is recorded in
+  `docs/parity.md`.
+- **Videos**: `cargo xtask demo <scenario>` records a scenario, so every
+  video is also a passing test. Videos showing the settings dialog are
+  re-recorded after the GUI port.
+
+Step 1:
+
+- Scenarios: `explorer_folder_window` (open a folder, arrow through its
+  items, open a subfolder and go back), `settings_toggle` (open a page of
+  the Settings app, Tab to a toggle, switch it, hear the new state), and
+  `start_menu_search` extended to type a query and arrow through the
+  results.
+- Videos: `explorer-folder-window`, `settings-toggle`, and
+  `start-menu-search` re-recorded.
+
+Step 2:
+
+- Unit: the counting-allocator test (a focus event and a navigation step
+  allocate the same bytes against a small and a large state, and a
+  snapshot's cost does not grow with the state; M4 adds a caret move and
+  a terminal line); the flight recorder and latency ledger stay within
+  their byte bounds when fed large texts; replay from a snapshot gives
+  the recorded effects; the existing reducer tests pass unchanged after
+  the change to `&mut SrState`; the exact bytes of every remote operations
+  instruction; status mapping; `verbatim-inspect latency`'s output.
+- mockapp: exact client calls and provider hits for each operation in the
+  ledger on each backend (UIA focus cold and steady, into a list, MSAA
+  focus, an object navigation step); the remote and classic
+  `focus_ancestry` return identical ancestors and properties on several
+  trees (deep, a list with a selected item, stopping at a known
+  ancestor); a focus event whose element no longer has focus is dropped;
+  a stalled provider (mockapp's `stall`) times out the remote call or,
+  if it does not, the finding changes the design before anything builds
+  on it; a UIA menu item reports its legacy checked state; and the
+  headline assertion, one round trip for a steady-state UIA focus
+  change.
+- End-to-end: every scenario saves its calibration and the stage ratios
+  with its artifacts; the existing suite passes, which shows the remote
+  walk did not change what is spoken.
+- Videos: none; this step changes nothing audible.
+
+Step 3:
+
+- Unit: the key routing (Enter on Cancel cancels, Enter on Apply applies,
+  Enter elsewhere is OK, Enter on the synthesizer name opens Change,
+  Control+Tab and Control+S work from any control), the dialog
+  lifecycle, and the settings model.
+- Build: the wxWidgets build in CI on x64 and ARM64.
+- End-to-end: the existing GUI scenarios unchanged, plus
+  `settings_dialog_keys` (change the rate, Tab to Cancel, press Enter,
+  reopen, the rate is unchanged; Control+S applies; Control+Tab from
+  inside the Speech panel) and `tray_list` (the tray and taskbar list
+  dialog, which no scenario covers today).
+- NVDA comparison: NVDA's reading of the menu and settings dialog before
+  and after the port.
+- Videos: `settings-dialog-keys`, and the existing settings videos
+  re-recorded (`tabbing-through-settings`, `rapid-tabbing-in-settings`,
+  `object-navigation-in-settings`, `switch-to-onecore`,
+  `notepad-and-verbatim-menu`).
+
+M4:
+
+- Unit, text crate: grapheme clusters (an emoji sequence, combining
+  accents, Hangul, an Indic conjunct, surrogate pairs), words (English
+  with punctuation, the whitespace-run rule, Chinese through `jieba-rs`,
+  Thai through ICU4X), sentences, cell widths, and trailing padding
+  trimmed by White_Space.
+- Unit, reducer: what is spoken for each caret key (line, word,
+  character, Home, End, Backspace, Delete); "selected" and "unselected";
+  character and word echo; the password rule; every review command,
+  including the column kept in a grid and in ordinary text, and
+  Verbatim+F9 and F10; say-all chunks and continuation after an index
+  mark; the flood backlog (output under 30 lines whole across several
+  batches, "skipped N lines" and the last 30 beyond, newer output never
+  cancelling older); Verbatim+5; theme resolution (profile, base, theme,
+  default), a missing sound spoken instead, off skipping the fetch; the
+  presentation stage's words and sound items.
+- Unit, outpost: the anchored diff on simulated buffers (appended lines,
+  a line rewritten in place, the scrollback full and shifting, the screen
+  cleared, the alternate screen, padding).
+- Unit, audio and speech: an immediate sound mixed over speech; a sound
+  in the speech stream starting at its place and cancelled with its
+  utterance; a theme package loaded from TOML with a missing sound
+  reported.
+- mockapp, which grows a UIA text provider and a Win32 edit control
+  fixture: lines, words, and characters read; caret events; an
+  unsupported unit reported; movement stopping at the document's ends;
+  remote and classic `terminal_tail` agreeing; exact counts for typed
+  character echo, arrowing through text, and a terminal output line.
+- End-to-end, each compared with NVDA where NVDA has the behavior:
+  - `notepad_editing`: typing with character and word echo, arrowing by
+    character, word, and line, selecting with Shift, deleting.
+  - `notepad_review_cursor`: review by line, word, and character; the
+    column kept through a text table; Verbatim+F9 and F10 copying a range,
+    checked by pasting it.
+  - `notepad_say_all`: say-all by sentence, interrupted by a key, the
+    caret left where speech stopped.
+  - `spelling_error_sound`: a misspelled word read in Notepad plays the
+    spelling sound at its place in the speech.
+  - `windows_terminal_commands` and `conhost_commands`: commands and their
+    output, typed echo, and a `Read-Host -AsSecureString` prompt whose
+    typing is never spoken.
+  - `terminal_flood`: ten thousand lines give "skipped N lines" and the
+    last 30, Verbatim+5 silences and restores output, Verbatim stays
+    responsive, and the wall-time ratio is reported.
+  - `terminal_review_grid`: the review cursor down a column of a text
+    table in a terminal, through shorter lines.
+  - `theme_panel`: described under videos.
+- Videos:
+  - `notepad-editing`, `notepad-review-cursor` (including copying with
+    Verbatim+F9 and F10), and `notepad-say-all`.
+  - `windows-terminal` and `conhost`: commands, output, and the silent
+    password prompt.
+  - `terminal-flood` and `terminal-review-grid`.
+  - `sounds-in-use`: the default theme's sounds in their places, such as
+    the spelling sound while reading and the skipped-lines sound.
+  - `theme-panel`: open the settings dialog and the Theme panel; arrow
+    through the theme list hearing the preview; in the indications tree,
+    two or three entries from each category (a role, a state, a property,
+    a text format, a structure item, an event); on one of them, go through
+    its controls: change "Report as", play a sound from the Sound list,
+    press Preview, press Reset; then Cancel, and hear that nothing
+    changed.
 
 ### Step 1: NVDA as the reference
 
