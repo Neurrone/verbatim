@@ -40,6 +40,17 @@ pub(crate) fn row_width(text: &str) -> usize {
     verbatim_text::cell_width(text.trim_end_matches(is_line_break))
 }
 
+/// `offset` as a character boundary of `text`: at most its length, and
+/// moved back to the start of a character it falls inside. An outpost
+/// promises boundaries; this keeps a broken promise from panicking Core.
+pub(crate) fn boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
 /// Whether `text` has nothing to read: empty, or only whitespace.
 pub(crate) fn is_blank(text: &str) -> bool {
     text.trim().is_empty()
@@ -70,7 +81,7 @@ pub(crate) fn next_grapheme(content: &str, offset: usize) -> Option<Range<usize>
 /// The column of `offset` in `content`: terminal cells before it in a
 /// terminal (`grid`), grapheme clusters before it elsewhere.
 pub(crate) fn column_of(content: &str, offset: usize, grid: bool) -> usize {
-    let before = &content[..offset.min(content.len())];
+    let before = &content[..boundary(content, offset)];
     if grid {
         verbatim_text::cell_width(before)
     } else {
@@ -221,6 +232,13 @@ mod tests {
         assert_eq!(line_content("abc  \n", false), "abc  ");
         assert_eq!(line_content("abc  \n", true), "abc");
         assert_eq!(row_width("abc  \r\n"), 5);
+    }
+
+    #[test]
+    fn an_offset_inside_a_character_moves_back_to_its_start() {
+        assert_eq!(boundary("a中b", 2), 1);
+        assert_eq!(boundary("a中b", 4), 4);
+        assert_eq!(boundary("ab", 9), 2);
     }
 
     #[test]

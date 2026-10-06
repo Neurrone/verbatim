@@ -110,7 +110,7 @@ pub(crate) fn run(
 /// A review position on `line` at byte `offset`, its column worked out.
 fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition {
     let content = text::line_content(&line.text, grid);
-    let offset = offset.min(content.len());
+    let offset = text::boundary(content, offset);
     ReviewPosition {
         line: Arc::clone(line),
         offset,
@@ -687,7 +687,7 @@ fn land(
         }
         LandingPlace::Point => position_at(&line, line.offset as usize, grid),
         LandingPlace::BeforePoint => {
-            let offset = (line.offset as usize).min(content.len());
+            let offset = text::boundary(content, line.offset as usize);
             let before =
                 text::previous_grapheme(content, offset).map_or(offset, |range| range.start);
             position_at(&line, before, grid)

@@ -139,7 +139,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey) -> Vec<Effect> {
 /// line's start, where what goes is the line break, and for other keys.
 fn deleted_text(caret: &CaretContext, motion: CaretMotion, grid: bool) -> Option<String> {
     let content = text::line_content(&caret.line.text, grid);
-    let offset = (caret.line.offset as usize).min(content.len());
+    let offset = text::boundary(content, caret.line.offset as usize);
     match motion {
         CaretMotion::Backspace => {
             text::previous_grapheme(content, offset).map(|range| content[range].to_owned())
@@ -291,7 +291,7 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: CaretReport
     {
         let grid = is_grid(navigator.object.role);
         let content = text::line_content(&line.text, grid);
-        let offset = (line.offset as usize).min(content.len());
+        let offset = text::boundary(content, line.offset as usize);
         navigator.text = ReviewText::At(ReviewPosition {
             line: Arc::clone(&line),
             offset,

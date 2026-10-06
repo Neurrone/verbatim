@@ -193,7 +193,7 @@ fn pieces(
     grid: bool,
 ) -> Vec<std::ops::Range<usize>> {
     let content = text::line_content(&chunk.text, grid);
-    let from = from.min(content.len());
+    let from = text::boundary(content, from);
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     if by_sentence {
         ranges.extend(
