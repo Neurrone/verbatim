@@ -44,6 +44,9 @@ toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unic-langid = "0.9"
+# Theme packages, a theme directory zipped (phase6-design.md, "Packaging"):
+# reading and writing deflated archives with a pure-Rust deflate.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Workspace crates.
 mockapp = { path = "crates/mockapp" }

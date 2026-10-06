@@ -27,7 +27,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-pub use verbatim_model::{ReaderSettings, SayAllUnit, TypingEcho};
+pub use verbatim_model::{ReaderSettings, SayAllUnit, ThemeOptions, TypingEcho};
+
+mod package;
+pub mod themes;
 
 /// Which keys act as the Verbatim modifier (NVDA's `NVDAModifierKeys`). The
 /// default adds Caps Lock to NVDA's two Insert keys, a deliberate
@@ -193,6 +196,46 @@ pub struct SpeechConfig {
     pub synth_settings: BTreeMap<String, BTreeMap<String, ConfigValue>>,
 }
 
+/// The theme in use and the settings that go with it, the `[theme]`
+/// section of `settings.toml` (`phase6-design.md`, "Themes and
+/// configuration profiles"): the id of a theme in the `themes` folder, or
+/// `default` for the built-in default theme, plus the sound volume and the
+/// say-all and learning checkboxes, which are ordinary settings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    /// The theme's id.
+    pub id: String,
+    /// Sound volume, say-all sounds, and speaking sounded indications.
+    #[serde(flatten)]
+    pub options: ThemeOptions,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            id: verbatim_model::Theme::DEFAULT_ID.to_owned(),
+            options: ThemeOptions::default(),
+        }
+    }
+}
+
+/// A profile's theme section: whatever it sets overrides the base, and
+/// what it leaves unset comes from the base. A profile that names no theme
+/// uses the base settings' theme.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProfileTheme {
+    /// The theme's id.
+    pub id: Option<String>,
+    /// The volume of sounds relative to speech, from 0 to 100.
+    pub sound_volume: Option<u8>,
+    /// Whether sounds play during say-all.
+    pub sounds_during_say_all: Option<bool>,
+    /// Whether indications reported by sound alone are spoken as well.
+    pub speak_sounded_indications: Option<bool>,
+}
+
 /// The contents of `settings.toml`: global settings plus the base profile's
 /// sections.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -220,6 +263,8 @@ pub struct Settings {
     /// ([`ReaderSettings`]). The base profile's only, until profiles grow
     /// them (M8).
     pub reader: ReaderSettings,
+    /// The base profile's theme and the settings that go with it.
+    pub theme: ThemeConfig,
 }
 
 /// One named profile — the contents of one file in the `profiles` folder.
@@ -232,6 +277,8 @@ pub struct Settings {
 pub struct Profile {
     /// Speech configuration carried by this profile.
     pub speech: SpeechConfig,
+    /// The theme this profile uses, and the settings that go with it.
+    pub theme: ProfileTheme,
 }
 
 /// A resolved, read-only view over the active overlays and the base, most
@@ -242,6 +289,8 @@ pub struct ActiveConfig<'a> {
     overlays: &'a [Profile],
     /// The base profile's speech section, from `settings.toml`.
     base: &'a SpeechConfig,
+    /// The base profile's theme section, from `settings.toml`.
+    base_theme: &'a ThemeConfig,
 }
 
 impl ActiveConfig<'_> {
@@ -266,6 +315,36 @@ impl ActiveConfig<'_> {
     pub fn synth_setting(&self, synth_id: &str, setting_id: &str) -> Option<&ConfigValue> {
         self.speech_layers()
             .find_map(|speech| speech.synth_settings.get(synth_id)?.get(setting_id))
+    }
+
+    /// The id of the theme in use: the most specific layer's that names
+    /// one, and otherwise the base settings' (`default` unless changed).
+    #[must_use]
+    pub fn theme_id(&self) -> &str {
+        self.overlays
+            .iter()
+            .find_map(|profile| profile.theme.id.as_deref())
+            .unwrap_or(&self.base_theme.id)
+    }
+
+    /// The settings that go with the theme, each from the most specific
+    /// layer that sets it.
+    #[must_use]
+    pub fn theme_options(&self) -> ThemeOptions {
+        let base = self.base_theme.options;
+        let themes = || self.overlays.iter().map(|profile| &profile.theme);
+        ThemeOptions {
+            sound_volume: themes()
+                .find_map(|theme| theme.sound_volume)
+                .unwrap_or(base.sound_volume)
+                .min(100),
+            sounds_during_say_all: themes()
+                .find_map(|theme| theme.sounds_during_say_all)
+                .unwrap_or(base.sounds_during_say_all),
+            speak_sounded_indications: themes()
+                .find_map(|theme| theme.speak_sounded_indications)
+                .unwrap_or(base.speak_sounded_indications),
+        }
     }
 
     /// All persisted setting values for a synthesizer, resolved across
@@ -333,6 +412,12 @@ impl ConfigStore {
     pub const SETTINGS_FILE: &'static str = "settings.toml";
     /// Folder name of the named-profiles folder next to the executable.
     pub const PROFILES_DIR: &'static str = "profiles";
+    /// Folder name of the user's themes folder next to the executable: one
+    /// directory per theme, named by its id ([`themes`]).
+    pub const THEMES_DIR: &'static str = "themes";
+    /// Folder name of the shared sounds next to the executable, which the
+    /// built-in default theme plays and any theme may name.
+    pub const SOUNDS_DIR: &'static str = "sounds";
 
     /// Loads configuration rooted at `root` (the folder containing
     /// `verbatim.exe`). A missing settings file loads as defaults; it is
@@ -371,12 +456,26 @@ impl ConfigStore {
         ActiveConfig {
             overlays: &self.overlays,
             base: &self.settings.speech,
+            base_theme: &self.settings.theme,
         }
     }
 
+    /// The user's themes folder.
+    #[must_use]
+    pub fn themes_dir(&self) -> PathBuf {
+        self.root.join(Self::THEMES_DIR)
+    }
+
+    /// The shared sounds folder.
+    #[must_use]
+    pub fn sounds_dir(&self) -> PathBuf {
+        self.root.join(Self::SOUNDS_DIR)
+    }
+
     /// Writes any missing pieces of the on-disk layout with current values —
-    /// `settings.toml` and an empty `profiles` folder — so users can find
-    /// and edit them without first changing a setting through the GUI.
+    /// `settings.toml` and empty `profiles` and `themes` folders — so users
+    /// can find and edit them without first changing a setting through the
+    /// GUI.
     /// Existing files, including corrupt ones, are never touched.
     ///
     /// # Errors
@@ -388,6 +487,8 @@ impl ConfigStore {
         }
         let profiles_dir = self.root.join(Self::PROFILES_DIR);
         fs::create_dir_all(&profiles_dir).map_err(|error| ConfigError::Io(profiles_dir, error))?;
+        let themes_dir = self.themes_dir();
+        fs::create_dir_all(&themes_dir).map_err(|error| ConfigError::Io(themes_dir, error))?;
         Ok(())
     }
 
@@ -498,6 +599,7 @@ mod tests {
         store.ensure_files_exist().expect("creates files");
         assert!(root.join(ConfigStore::SETTINGS_FILE).is_file());
         assert!(root.join(ConfigStore::PROFILES_DIR).is_dir());
+        assert!(root.join(ConfigStore::THEMES_DIR).is_dir());
 
         // A hand-edited file survives the next startup's ensure call.
         fs::write(
@@ -630,6 +732,7 @@ mod tests {
         let active = ActiveConfig {
             overlays: &overlays,
             base: &settings.speech,
+            base_theme: &settings.theme,
         };
         assert_eq!(active.synthesizer(), Some("onecore"));
         assert_eq!(
@@ -640,5 +743,64 @@ mod tests {
         let resolved = active.synth_settings("onecore");
         assert_eq!(resolved.get("pitch"), Some(&ConfigValue::Integer(50)));
         assert_eq!(resolved.get("rate"), Some(&ConfigValue::Integer(90)));
+    }
+
+    #[test]
+    fn the_theme_resolves_from_the_profile_then_the_base_then_the_default() {
+        let mut settings = Settings::default();
+        let none: Vec<Profile> = Vec::new();
+        let active = ActiveConfig {
+            overlays: &none,
+            base: &settings.speech,
+            base_theme: &settings.theme,
+        };
+        assert_eq!(active.theme_id(), "default", "nothing chosen");
+        assert_eq!(active.theme_options(), ThemeOptions::default());
+
+        settings.theme.id = "calm".to_owned();
+        settings.theme.options.sound_volume = 70;
+        let silent = Profile::default();
+        let proofreading: Profile =
+            toml::from_str("[theme]\nid = \"proofreading\"\nspeak_sounded_indications = true\n")
+                .expect("parses");
+        let overlays = vec![silent.clone()];
+        let active = ActiveConfig {
+            overlays: &overlays,
+            base: &settings.speech,
+            base_theme: &settings.theme,
+        };
+        assert_eq!(
+            active.theme_id(),
+            "calm",
+            "a profile naming none uses the base's"
+        );
+        assert_eq!(active.theme_options().sound_volume, 70);
+
+        let overlays = vec![proofreading, silent];
+        let active = ActiveConfig {
+            overlays: &overlays,
+            base: &settings.speech,
+            base_theme: &settings.theme,
+        };
+        assert_eq!(active.theme_id(), "proofreading");
+        let options = active.theme_options();
+        assert!(options.speak_sounded_indications);
+        assert_eq!(
+            options.sound_volume, 70,
+            "the base's, which the profile leaves"
+        );
+    }
+
+    #[test]
+    fn the_theme_section_round_trips_through_toml() {
+        let mut settings = Settings::default();
+        settings.theme.id = "calm".to_owned();
+        settings.theme.options.sounds_during_say_all = false;
+        let text = toml::to_string_pretty(&settings).expect("serializes");
+        assert!(text.contains("[theme]\nid = \"calm\""), "{text}");
+        let back: Settings = toml::from_str(&text).expect("parses");
+        assert_eq!(back.theme, settings.theme);
+        let old: Settings = toml::from_str("locale = \"de\"\n").expect("an older file parses");
+        assert_eq!(old.theme, ThemeConfig::default());
     }
 }
