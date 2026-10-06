@@ -84,6 +84,18 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
                 guard.nodes[index].selection = (start.min(length), end.min(length));
             }
         }
+        Command::SetText(id, text) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(index) = guard.index_of(&id) {
+                let text: Vec<u16> = text.encode_utf16().collect();
+                let length = text.len();
+                let (start, end) = guard.nodes[index].selection;
+                guard.nodes[index].selection = (start.min(length), end.min(length));
+                guard.nodes[index].text = Some(text);
+            }
+        }
         // Handled by the window thread before dispatch.
         Command::Stall(_) | Command::Quit => {}
     }

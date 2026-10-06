@@ -1656,3 +1656,39 @@ left them open:
   the theme's settings above and the theme buttons below; the tab order
   follows the design's list.
 
+
+Choices the run made for item 9, terminals, where the design left them
+open:
+
+- The anchor's fingerprint counts as found in place when the line before
+  the anchor is unchanged; the anchor's own line is then compared with
+  what it held. A rewrite of that line under a blank line is not trusted,
+  and the screen is read afresh instead. The upward search covers 256
+  lines, and a line that was the text's last matches with the line break
+  it gains once more text follows.
+- A line rewritten in place speaks from the start of the word where it
+  first differs, not only the changed characters, so "progress 50%" says
+  "50%"; a line that only got shorter speaks nothing.
+- A read that finds nothing new after the anchor also reads the screen
+  afresh and compares it line by line, so a full-screen program's redraw
+  of a line above the anchor is spoken. "skipped lines" without a count is
+  said when no line of the fresh screen kept its place and the text holds
+  more lines than were read.
+- Typed characters held for a terminal are echoed when the terminal shows
+  them at the end of its line, and that text is not spoken again as
+  output (in place of NVDA's rule dropping any one-character change). A
+  line that grew by something else drops the held typing unspoken, so a
+  password prompt's asterisks are spoken but the password never is.
+- The backlog is kept in Core: two utterances of output are handed to
+  speech ahead of playback, each starting with an index mark, and the rest
+  wait in Core's state, where the "30 and 30" limits trim them. Anything
+  that cuts speech off drops the backlog.
+- Both limits are kept between 1 and 100, and an outpost reads at most as
+  many lines per change as the larger keeps.
+- Verbatim+5 says "report new output on" and "report new output off".
+- The terminal end-to-end scenarios have no report-title command to press
+  during the flood (Verbatim has none yet), so the responsiveness check
+  presses Verbatim+5. The flood's wall-time ratio is the flood script's
+  own elapsed time with output reported, divided by its time with output
+  reporting off, both measured by the script in the same window, since the
+  suite has no calibration of trace stages yet.

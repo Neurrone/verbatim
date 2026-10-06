@@ -307,6 +307,23 @@ fn spawn_worker(context: Arc<Context>, generation: u64) {
         .expect("spawn a worker");
 }
 
+/// The activity id of Windows Terminal's output notifications, each a piece
+/// of what a program wrote.
+const TERMINAL_OUTPUT_ACTIVITY: &str = "TerminalTextOutput";
+
+/// Whether a UIA notification is a terminal's output notification, which
+/// the generic notification handling ignores: the outpost finds a
+/// terminal's output by diffing its text, and speaking the notifications
+/// too would speak every line twice (`phase6-design.md`, "Why notifications
+/// exist, and what went wrong with them"). Only a terminal's own are
+/// ignored, keyed by the control, as NVDA's terminal overlays ignore them.
+fn is_terminal_output_notification(
+    role: Role,
+    notification: &verbatim_model::Notification,
+) -> bool {
+    role == Role::Terminal && notification.activity_id.as_deref() == Some(TERMINAL_OUTPUT_ACTIVITY)
+}
+
 /// Why the watchdog abandons a worker at `now`, if it does: the entry it
 /// started at `started`, concerning `window` (0 for none), has passed its
 /// `deadline`, or has waited [`MOVED_ON_GRACE`] and `moved_on` says the user
@@ -695,6 +712,43 @@ impl Worker<'_> {
         };
         let window = self.context.tracking().window;
         self.emit(trace, observed_at_ms, backend, window, event);
+        if after_focus && self.focused_terminal(node_id) {
+            // Where the terminal's text ends now: what it held before the
+            // focus arrived is not new output.
+            if let Some(uia) = self.client.uia() {
+                let _ = text_reads::terminal_output(self.context, uia, node_id, true);
+            }
+        }
+    }
+
+    /// Whether `node_id` is the focus and a terminal read through UIA, whose
+    /// new output the outpost finds by diffing its text.
+    fn focused_terminal(&self, node_id: NodeId) -> bool {
+        self.context.uia_registry.runtime_id_of(node_id).is_some()
+            && self.is_focus(node_id)
+            && self.context.tracking().role == Some(Role::Terminal)
+    }
+
+    /// Reports a focused terminal's new output, when its text really
+    /// changed: a redraw with the same text sends nothing.
+    fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+        let Some(uia) = self.client.uia() else {
+            return;
+        };
+        let Some(output) = text_reads::terminal_output(self.context, uia, node_id, false) else {
+            return;
+        };
+        if output.is_empty() {
+            return;
+        }
+        let window = self.context.tracking().window;
+        self.emit(
+            trace,
+            observed_at_ms,
+            Backend::Uia,
+            window,
+            NormalizedEvent::TerminalOutput { node_id, output },
+        );
     }
 
     /// Asks for the caret of a newly reported focus that may have text, or
@@ -1004,6 +1058,11 @@ impl Worker<'_> {
         {
             return; // MSAA owns this window.
         }
+        if let UiaKind::Notification(notification) = &event.kind
+            && is_terminal_output_notification(event.parts.role, notification)
+        {
+            return; // The diff of the terminal's text reports it.
+        }
         if matches!(event.kind, UiaKind::Selection)
             && let Some(selection) = self.controlled_selection(&event.parts.runtime_id)
         {
@@ -1029,6 +1088,10 @@ impl Worker<'_> {
                     .uia_registry
                     .existing_id(&event.parts.runtime_id)
                 {
+                    if self.focused_terminal(node_id) {
+                        self.terminal_output(node_id, trace, observed_at_ms);
+                        return;
+                    }
                     self.emit(
                         trace,
                         observed_at_ms,
@@ -1770,6 +1833,30 @@ impl Worker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_terminals_output_notifications_are_ignored() {
+        let notification = |activity: &str| verbatim_model::Notification {
+            kind: verbatim_model::NotificationKind::ActionCompleted,
+            processing: verbatim_model::NotificationProcessing::All,
+            display_string: Some("hello".to_owned()),
+            activity_id: Some(activity.to_owned()),
+        };
+        assert!(is_terminal_output_notification(
+            Role::Terminal,
+            &notification("TerminalTextOutput")
+        ));
+        // Another of a terminal's notifications, or another control's with
+        // the same activity id, is spoken as usual.
+        assert!(!is_terminal_output_notification(
+            Role::Terminal,
+            &notification("Windows.Shell.SnapComponent.SnapHotKeyResults")
+        ));
+        assert!(!is_terminal_output_notification(
+            Role::EditableText,
+            &notification("TerminalTextOutput")
+        ));
+    }
 
     #[test]
     fn a_returning_abandoned_worker_never_publishes_and_lowers_the_count() {

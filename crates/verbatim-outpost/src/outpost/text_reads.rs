@@ -19,9 +19,10 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, TextOp, TextReply};
+use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, TerminalOutput, TextOp, TextReply};
 use verbatim_uia::ElementExt;
 use verbatim_uia::map::is_terminal_class;
+use verbatim_uia_rops::Path;
 
 use crate::arbitration::{normalize_class_name, window_class_name};
 use crate::text::edit::EditText;
@@ -266,15 +267,57 @@ pub(super) fn report_caret(context: &Context, node_id: NodeId) -> Option<CaretRe
     }
 }
 
+/// Reads what is new in the focused terminal `node_id`'s text
+/// (`crate::terminal`), or, for `baseline`, only notes where its text ends
+/// now: a focus arriving, whose earlier output is not new to the user.
+/// `None` when it has no text pattern, is gone, or could not be read.
+pub(super) fn terminal_output(
+    context: &Context,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    baseline: bool,
+) -> Option<TerminalOutput> {
+    let Ok(source) = uia_source(context, node_id) else {
+        return None;
+    };
+    let window = context.tracking().window();
+    let remote = context.tries_remote(window);
+    let wanted = u32::from(context.terminal_lines());
+    let mut terminals = context.terminals();
+    let terminal = terminals.entry(node_id.number()).or_default();
+    let read = crate::terminal::read(uia, source.pattern(), terminal, wanted, remote, baseline);
+    drop(terminals);
+    match read {
+        Ok((output, paths)) => {
+            for path in paths {
+                if let Path::Fallback(error) = &path {
+                    tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+                    if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
+                        context.read_classically(window);
+                    }
+                }
+            }
+            Some(output)
+        }
+        Err(TextError::Gone) => None,
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal's text could not be read");
+            None
+        }
+    }
+}
+
 /// Forgets what was kept for released nodes.
 pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>) {
     let released: Vec<u64> = released.into_iter().collect();
     let mut patterns = context.patterns();
     let mut uia = context.uia_anchors();
     let mut edit = context.edit_anchors();
+    let mut terminals = context.terminals();
     for node in released {
         patterns.remove(&node);
         uia.forget_node(node);
         edit.forget_node(node);
+        terminals.remove(&node);
     }
 }

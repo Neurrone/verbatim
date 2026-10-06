@@ -92,6 +92,13 @@ impl UiaText {
         }
     }
 
+    /// The text pattern, for reads outside the text protocol (a terminal's
+    /// new output, `crate::terminal`).
+    #[must_use]
+    pub fn pattern(&self) -> &IUIAutomationTextPattern {
+        &self.pattern
+    }
+
     /// A copy of `at`'s range whose start is the position.
     fn starting_at(at: &UiaPos) -> TextResult<IUIAutomationTextRange> {
         let range = at.range()?.clone_range().map_err(failed)?;

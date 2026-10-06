@@ -404,6 +404,15 @@ impl SrState {
         self.fetches
     }
 
+    /// How many of a change's newest lines an outpost reads from a terminal
+    /// (milestone M4 item 9): as many as the flood policy's limits can keep
+    /// (`ReaderSettings::terminal_read_lines`). Like
+    /// [`fetches`](Self::fetches), a view the shell gives every outpost.
+    #[must_use]
+    pub fn terminal_read_lines(&self) -> u16 {
+        self.settings.terminal_read_lines()
+    }
+
     /// The application the focus belongs to; `None` before any focus.
     #[must_use]
     pub fn focus_source(&self) -> Option<Pid> {

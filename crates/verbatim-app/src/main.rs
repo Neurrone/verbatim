@@ -1097,23 +1097,40 @@ impl ReducerThread<'_> {
 
     /// Tells each live outpost the details the active theme wants read
     /// (`SrState::fetches`), when they differ from what it was last told:
-    /// a detail whose indication is off is not read at all. A new outpost
-    /// is told at once, before it reports anything.
+    /// a detail whose indication is off is not read at all; and how many
+    /// lines a terminal read takes (`SrState::terminal_read_lines`). A new
+    /// outpost is told at once, before it reports anything.
     fn send_fetches(&mut self) {
         let fetches = self.state.fetches();
+        let terminal_lines = self.state.terminal_read_lines();
         for (outpost, live) in self.live.iter_mut() {
-            if live.fetches_sent == Some(fetches) {
-                continue;
+            if live.fetches_sent != Some(fetches) {
+                match self
+                    .context
+                    .supervisor
+                    .send_to_outpost(*outpost, SupervisorToOutpost::Fetches(fetches))
+                {
+                    Ok(()) => live.fetches_sent = Some(fetches),
+                    // A full queue is retried after the next input; a closed
+                    // one belongs to an outpost that is ending.
+                    Err(error) => {
+                        tracing::debug!(%error, %outpost, "the fetches were not sent yet");
+                    }
+                }
             }
-            match self
-                .context
-                .supervisor
-                .send_to_outpost(*outpost, SupervisorToOutpost::Fetches(fetches))
-            {
-                Ok(()) => live.fetches_sent = Some(fetches),
-                // A full queue is retried after the next input; a closed
-                // one belongs to an outpost that is ending.
-                Err(error) => tracing::debug!(%error, %outpost, "the fetches were not sent yet"),
+            // Likewise how many lines a terminal read takes, from the flood
+            // policy's limits.
+            if live.terminal_lines_sent != Some(terminal_lines) {
+                match self
+                    .context
+                    .supervisor
+                    .send_to_outpost(*outpost, SupervisorToOutpost::TerminalLines(terminal_lines))
+                {
+                    Ok(()) => live.terminal_lines_sent = Some(terminal_lines),
+                    Err(error) => {
+                        tracing::debug!(%error, %outpost, "the terminal lines were not sent yet");
+                    }
+                }
             }
         }
     }

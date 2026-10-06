@@ -607,3 +607,68 @@ Implementation notes:
   replies grew the message enum well past the lifecycle notices, and boxing
   keeps every channel send small. `Supervisor::send_nodes_held` queues a
   `NodesHeld` list for one incarnation.
+
+## Terminals (milestone M4 item 9)
+
+The `terminal` module (public, so mockapp's tests drive it as the worker
+does) finds a focused terminal's new output by an anchored diff of its
+text (`phase6-design.md`, "How the outpost finds new lines"). Terminal
+behavior is generic, keyed by the control, never the window's title: a
+UIA element of class `TermControl` (Windows Terminal) or `WPFTermControl`
+(the terminal embedded in Visual Studio), or a focus in a
+`ConsoleWindowClass` window (the console host), is `Role::Terminal`.
+
+- The worker keeps, per terminal node, a `Terminal`: an anchor (a range at
+  the start of the last line read) and a `Memory` (that line's text and
+  the line before it, the fingerprint, and the last lines read without
+  padding, the screen as last seen). It is forgotten when the node is
+  released.
+- When a terminal gains the focus, after its caret report, the worker reads
+  it afresh as a baseline, which speaks nothing: output from before the
+  focus arrived is not new.
+- A `Text_TextChanged` event for the focus, when it is a terminal, runs
+  `terminal::read` in place of reporting `TextChanged` (events that arrive
+  while a read is in progress are coalesced by the intake into one more
+  read, one waiting entry per element). It is one remote program
+  (`verbatim_uia_rops::terminal_tail`), with the classic fallback behind
+  the same entry point; a window whose elements cannot be imported is read
+  classically from then on, as for the focus ancestry. `after_anchor`
+  turns the read into a `TerminalOutput`: the anchor's line compared
+  character by character with what it held (grown: the text added;
+  rewritten: from the start of the word where it first differs; shorter:
+  nothing), and the lines after it, all of them up to the read limit, or
+  the last ones with the rest counted (`Skipped::Count`). A rewrite under
+  a blank line is not trusted, since a blank line matches too easily.
+- When the fingerprint is not found, the anchor no longer compares with
+  the text (a full-screen program switched screens), or the anchored read
+  found nothing new after the anchor (a full-screen program redrawing a
+  line above it), the terminal is read afresh from the end of its
+  document, and `after_fresh` compares the lines read with the screen
+  last seen: when the old screen's end reappears at the new one's start,
+  the lines after it; otherwise the lines that differ in place, preceded
+  by `Skipped::Uncounted` ("skipped lines") when no line kept its place
+  and the text holds more lines than were read (the scrollback overflowed
+  past the search). A redraw with the same text finds nothing, and
+  nothing is sent.
+- Lines lose their trailing padding, every trailing character with
+  Unicode's `White_Space` property (`verbatim_text::trim_padding`), and are
+  cut to `MAX_TERMINAL_LINE_BYTES`.
+- `TerminalOutput` is sent only when something changed, as
+  `NormalizedEvent::TerminalOutput`.
+- How many of the newest lines a read takes comes from Core,
+  `SupervisorToOutpost::TerminalLines` (`SrState::terminal_read_lines`, as
+  many as the flood policy's limits keep, 30 by default), sent when an
+  outpost starts and whenever it changes, beside `Fetches`.
+- Windows Terminal's UIA notifications with the activity id
+  `TerminalTextOutput` from a terminal control are ignored by the
+  notification handling (`is_terminal_output_notification`), as NVDA's
+  terminal overlays ignore them, or every line would be spoken twice; a
+  terminal's other notifications, and other controls' with that activity
+  id, are reported as usual.
+- The unit tests (`terminal/tests.rs`) run `read_new`, the logic the UIA
+  read goes through, over simulated padded rows behind the `TailSource`
+  trait: appended lines and a grown prompt, more output than a read takes,
+  a line rewritten in place and shortened, a redraw with the same text, a
+  full scrollback shifting beneath the anchor, a shift past the search, a
+  cleared screen, the alternate screen and a redraw inside it, and padding
+  of any `White_Space`.

@@ -87,6 +87,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
                 crate::edit::select(edit, start, end);
             }
         }
+        Command::SetText(..) => {
+            eprintln!("mockapp: set-text is not supported on the msaa backend");
+        }
         // Handled by the window thread before dispatch.
         Command::Stall(_) | Command::Quit => {}
     }

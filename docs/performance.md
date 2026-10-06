@@ -404,5 +404,25 @@ The same caret key in a standard edit control, read through its messages.
 
 ### A terminal output line
 
-Milestone M4's terminal work adds it; its minimum, count, and target join
-the ledger, and its measurement the ratchet, when that is built.
+A focused terminal's text changed, and the outpost finds what is new
+(`docs/crates/verbatim-outpost.md`, "Terminals"): the anchor's line and
+the line before it checked against what they held, the lines to the end
+counted, and only the lines spoken read. Measured against mockapp's text
+provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
+`set-text` command rewrites the text as a terminal's buffer changes.
+
+- Minimum: 1 UIA call, one remote operations program
+  (`verbatim_uia_rops::terminal_tail`), whatever the size of the
+  scrollback and however many lines it reads.
+- Today: 1 UIA call for a read that finds new output, a prompt that grew
+  or a command's output line. A read that finds nothing new after the
+  anchor reads the screen afresh to compare it line by line, 2 more (the
+  document range and a second program); so does a terminal's first read
+  when it gains the focus, the baseline (2 calls). Classically, with
+  `uia.remote_operations` off or a provider that cannot run programs, one
+  call per provider method: 22 for the baseline of a six-line text, 25 for
+  a grown prompt, 32 for an output line and a new prompt. The provider's
+  own work is the same either way, and pinned too: 9 clones, 6 line
+  expansions, 5 reads, 4 moves, and 8 other range calls for the output
+  line.
+- Target: 1.
