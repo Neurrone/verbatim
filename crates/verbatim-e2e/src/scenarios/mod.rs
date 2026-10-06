@@ -28,6 +28,7 @@ pub(crate) mod terminal;
 pub(crate) mod terminal_commands;
 pub(crate) mod terminal_flood;
 pub(crate) mod terminal_review_grid;
+pub(crate) mod terminal_settings_page;
 pub(crate) mod theme_panel;
 
 /// Waits for Notepad's window, then its text area, then the text the text

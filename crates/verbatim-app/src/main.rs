@@ -16,6 +16,7 @@ mod live;
 mod requests;
 mod single_instance;
 mod speech_events;
+mod terminal_settings;
 mod themes;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -378,10 +379,21 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         manager: Arc::clone(&manager),
         commands: command_tx.clone(),
     });
+    let terminal_host: Arc<dyn verbatim_gui::TerminalHost> =
+        Arc::new(terminal_settings::AppTerminalHost {
+            store: Arc::clone(&store),
+            commands: command_tx.clone(),
+        });
     let handle_slot = Arc::clone(&gui_handle);
-    run_gui(host_for_gui, theme_host, gui_event_tx, move |handle| {
-        let _ = handle_slot.set(handle);
-    })?;
+    run_gui(
+        host_for_gui,
+        theme_host,
+        terminal_host,
+        gui_event_tx,
+        move |handle| {
+            let _ = handle_slot.set(handle);
+        },
+    )?;
 
     // The wx loop has exited (Exit menu item, control-plane quit, or a
     // replacing instance's WM_QUIT). The exit sound is heard before
@@ -633,7 +645,8 @@ fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
 }
 
 /// Saves reader settings the reducer changed with a toggle key
-/// (`Effect::SettingsChanged`) into the base profile.
+/// (`Effect::SettingsChanged`), or the settings dialog's Terminal page
+/// changed, into the base profile.
 fn save_reader_settings(store: &Mutex<ConfigStore>, settings: ReaderSettings) {
     let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
     store.settings_mut().reader = settings;
@@ -746,6 +759,9 @@ pub(crate) enum ShellCommand {
     /// Report an event as the theme says, such as the error sound for an
     /// error logged on another thread.
     PlayEarcon(Earcon),
+    /// The settings dialog's Terminal page applied a change: merge it into
+    /// the reducer's reader settings, give it them, and save them.
+    TerminalSettings(verbatim_gui::TerminalChange),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -1020,7 +1036,18 @@ impl ReducerThread<'_> {
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
             ShellCommand::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
+            ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
         }
+    }
+
+    /// Merges a change from the settings dialog's Terminal page into the
+    /// reader settings the reducer has now, toggle keys included, so none
+    /// is undone; gives the reducer the result, and saves it.
+    fn change_terminal_settings(&mut self, change: verbatim_gui::TerminalChange) {
+        let mut settings = self.state.settings();
+        change.apply_to(&mut settings);
+        self.apply(Input::Settings(settings));
+        save_reader_settings(&self.context.store, settings);
     }
 
     /// Delivers a query's outcome through the request table, applying the

@@ -486,6 +486,37 @@ pub mod messages {
         pub error_title: String,
     }
 
+    /// Name of the Terminal settings category.
+    #[must_use]
+    pub fn settings_category_terminal() -> String {
+        fl!(loader(), "settings-category-terminal")
+    }
+
+    /// The labels of the Terminal page's controls.
+    #[must_use]
+    pub fn terminal_labels() -> TerminalLabels {
+        let loader = loader();
+        TerminalLabels {
+            report_output: fl!(loader, "terminal-report-output"),
+            full_lines: fl!(loader, "terminal-full-lines"),
+            last_lines: fl!(loader, "terminal-last-lines"),
+            speak_passwords: fl!(loader, "terminal-speak-passwords"),
+        }
+    }
+
+    /// The Terminal page's labels, resolved, each with its mnemonic.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct TerminalLabels {
+        /// The "Report new output" check box.
+        pub report_output: String,
+        /// The "Lines spoken in full" slider's label.
+        pub full_lines: String,
+        /// The "Last lines to speak" slider's label.
+        pub last_lines: String,
+        /// The check box for speaking passwords typed in terminals.
+        pub speak_passwords: String,
+    }
+
     /// A tone in the sound choice: "tone, 220 hertz, 150 milliseconds".
     #[must_use]
     pub fn theme_sound_tone(frequency: u32, duration: u32) -> String {

@@ -30,6 +30,7 @@ mod list_dialog;
 mod plan;
 mod settings;
 pub mod shell_items;
+mod terminal_panel;
 mod theme_panel;
 mod tray_list;
 
@@ -43,12 +44,14 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
 pub use shell_items::ShellItemKind;
+pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
 
 use bridge::ffi;
 use lifecycle::{Frame, Lifecycle, OpenSettings, OpenShellList};
 use list_dialog::{ButtonVerdict, ListDialogButtons};
 use settings::{ControlChange, SpeechControls};
+use terminal_panel::TerminalPanel;
 use theme_panel::ThemePanel;
 
 /// A command posted to the GUI thread from anywhere in the app.
@@ -128,9 +131,9 @@ impl std::error::Error for GuiError {}
 /// can begin posting commands; `on_ready` runs on the GUI thread during
 /// initialization, so it should hand the handle off rather than block.
 ///
-/// `settings_host` backs the settings dialog's Speech page and
-/// `theme_host` its Theme page; `events` carries [`GuiEvent`]s out to the
-/// app.
+/// `settings_host` backs the settings dialog's Speech page,
+/// `theme_host` its Theme page, and `terminal_host` its Terminal page;
+/// `events` carries [`GuiEvent`]s out to the app.
 ///
 /// The GUI runs at most once per process: wxWidgets keeps one application
 /// in process-wide state and does not support starting again after it
@@ -143,6 +146,7 @@ impl std::error::Error for GuiError {}
 pub fn run_gui(
     settings_host: Arc<dyn SpeechSettingsHost>,
     theme_host: Arc<dyn ThemeHost>,
+    terminal_host: Arc<dyn TerminalHost>,
     events: Sender<GuiEvent>,
     on_ready: impl FnOnce(GuiHandle) + Send + 'static,
 ) -> Result<(), GuiError> {
@@ -157,6 +161,8 @@ pub fn run_gui(
         host: settings_host,
         theme_host,
         theme: RefCell::new(None),
+        terminal_host,
+        terminal: RefCell::new(None),
         events,
         handle: GuiHandle { sender },
         receiver,
@@ -197,6 +203,11 @@ pub(crate) struct GuiCore {
     /// The Theme page's state while the settings dialog is open and the
     /// page has been shown.
     theme: RefCell<Option<ThemePanel>>,
+    /// What the Terminal page reads and changes.
+    terminal_host: Arc<dyn TerminalHost>,
+    /// The Terminal page's state while the settings dialog is open and the
+    /// page has been shown.
+    terminal: RefCell<Option<TerminalPanel>>,
     events: Sender<GuiEvent>,
     /// The GUI's own handle, for work it hands to other threads.
     handle: GuiHandle,
@@ -394,6 +405,7 @@ impl GuiCore {
         let which = match dialog {
             ffi::DialogKind::Settings => {
                 self.theme.borrow_mut().take();
+                self.terminal.borrow_mut().take();
                 lifecycle::Dialog::Settings
             }
             ffi::DialogKind::ShellList => {
@@ -449,12 +461,18 @@ impl GuiCore {
                 tracing::warn!(failures, "could not save the theme settings");
             }
         }
+        if let Some(terminal) = self.terminal.borrow_mut().as_mut() {
+            terminal.apply();
+        }
     }
 
     fn revert_settings(&self) {
         self.host.revert();
         if let Some(theme) = self.theme.borrow_mut().as_mut() {
             theme.cancel();
+        }
+        if let Some(terminal) = self.terminal.borrow_mut().as_mut() {
+            terminal.cancel();
         }
     }
 
@@ -557,6 +575,35 @@ impl GuiCore {
 
     fn remove_theme(&self) -> String {
         self.with_theme(ThemePanel::remove)
+    }
+
+    /// Runs `act` on the Terminal page's state, opening it from the reader
+    /// settings as they are now the first time the page is used.
+    fn with_terminal<R>(&self, act: impl FnOnce(&mut TerminalPanel) -> R) -> R {
+        let mut terminal = self.terminal.borrow_mut();
+        let panel =
+            terminal.get_or_insert_with(|| TerminalPanel::open(Arc::clone(&self.terminal_host)));
+        act(panel)
+    }
+
+    fn terminal_page(&self) -> ffi::TerminalPage {
+        self.with_terminal(|terminal| terminal.page())
+    }
+
+    fn terminal_report_output_changed(&self, checked: bool) {
+        self.with_terminal(|terminal| terminal.set_report_output(checked));
+    }
+
+    fn terminal_full_lines_changed(&self, value: i32) {
+        self.with_terminal(|terminal| terminal.set_full_lines(value));
+    }
+
+    fn terminal_last_lines_changed(&self, value: i32) {
+        self.with_terminal(|terminal| terminal.set_last_lines(value));
+    }
+
+    fn terminal_speak_passwords_changed(&self, checked: bool) {
+        self.with_terminal(|terminal| terminal.set_speak_passwords(checked));
     }
 
     fn synthesizer_picker(&self) -> ffi::SynthesizerPicker {

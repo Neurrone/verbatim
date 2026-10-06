@@ -78,6 +78,15 @@ theme-remove-title = Remove Theme
 theme-remove-question = Remove the theme { $name }? This cannot be undone.
 theme-error-title = Theme
 theme-in-use = The configuration uses { $name }, so it cannot be removed.
+
+## The Terminal settings page (phase6-design.md, "M4: text, editing, and
+## terminals", Questions). The dialog's own Categories and Apply take C and A.
+
+settings-category-terminal = Terminal
+terminal-report-output = Report &new output
+terminal-full-lines = &Lines spoken in full:
+terminal-last-lines = Last lines to s&peak:
+terminal-speak-passwords = Speak passwords typed in &terminals
 select-synth-title = Select Synthesizer
 select-synth-label = &Synthesizer:
 

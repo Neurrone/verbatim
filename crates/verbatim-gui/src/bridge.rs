@@ -96,6 +96,36 @@ pub(crate) mod ffi {
         Speech,
         /// The Theme page: the theme in use and its indications.
         Theme,
+        /// The Terminal page: new output and its limits, and passwords.
+        Terminal,
+    }
+
+    /// The Terminal page: its labels and the settings as they are now.
+    struct TerminalPage {
+        /// The "Report new output" check box's label, with its mnemonic.
+        report_output_label: String,
+        /// Its accessible name, the label without its mnemonic.
+        report_output_name: String,
+        /// Whether it is checked.
+        report_output: bool,
+        /// The "Lines spoken in full" slider's label.
+        full_lines_label: String,
+        /// Its value.
+        full_lines: i32,
+        /// The "Last lines to speak" slider's label.
+        last_lines_label: String,
+        /// Its value.
+        last_lines: i32,
+        /// Both sliders' minimum.
+        min_lines: i32,
+        /// Both sliders' maximum.
+        max_lines: i32,
+        /// The check box for speaking passwords typed in terminals.
+        speak_passwords_label: String,
+        /// Its accessible name.
+        speak_passwords_name: String,
+        /// Whether it is checked.
+        speak_passwords: bool,
     }
 
     /// The Theme page: its labels, the themes, the selected theme's
@@ -506,6 +536,18 @@ pub(crate) mod ffi {
         fn export_theme(self: &GuiCore, path: &str) -> String;
         /// Removes the selected theme. Returns why it failed, or empty.
         fn remove_theme(self: &GuiCore) -> String;
+
+        /// The Terminal page, as its state has it.
+        fn terminal_page(self: &GuiCore) -> TerminalPage;
+        /// "Report new output" was toggled.
+        fn terminal_report_output_changed(self: &GuiCore, checked: bool);
+        /// "Lines spoken in full" moved.
+        fn terminal_full_lines_changed(self: &GuiCore, value: i32);
+        /// "Last lines to speak" moved.
+        fn terminal_last_lines_changed(self: &GuiCore, value: i32);
+        /// The check box for speaking passwords typed in terminals was
+        /// toggled.
+        fn terminal_speak_passwords_changed(self: &GuiCore, checked: bool);
 
         /// A list dialog button was activated with an item selected; true
         /// when the dialog should close.

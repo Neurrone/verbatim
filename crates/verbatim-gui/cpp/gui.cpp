@@ -772,11 +772,74 @@ private:
     bool rebuilding_ = false;
 };
 
+// The Terminal page (phase6-design.md, "M4: text, editing, and terminals",
+// Questions): "Report new output", the two line limits as sliders, and
+// speaking passwords typed in terminals, top to bottom, which is also the
+// tab order. Rust holds the state (crates/verbatim-gui/src/terminal_panel.rs),
+// which keeps each change until Apply or OK.
+class TerminalPanel : public wxPanel {
+public:
+    explicit TerminalPanel(wxWindow* parent) : wxPanel(parent) {
+        const TerminalPage page = g_shell->core.terminal_page();
+        auto* sizer = new wxBoxSizer(wxVERTICAL);
+
+        report_output_ = new wxCheckBox(this, wxID_ANY, Text(page.report_output_label));
+        report_output_->SetValue(page.report_output);
+        // A check box has no separate label to be named by.
+        report_output_->SetName(Text(page.report_output_name));
+        sizer->Add(report_output_, 0, wxALL, 3);
+
+        // Each label is made just before its slider, so the slider is named
+        // by it. The sliders' range is the limits' range.
+        sizer->Add(new wxStaticText(this, wxID_ANY, Text(page.full_lines_label)), 0,
+                   wxLEFT | wxTOP, 3);
+        full_lines_ =
+            new wxSlider(this, wxID_ANY, page.full_lines, page.min_lines, page.max_lines);
+        full_lines_->SetLineSize(1);
+        full_lines_->SetPageSize(10);
+        sizer->Add(full_lines_, 0, wxEXPAND | wxALL, 3);
+
+        sizer->Add(new wxStaticText(this, wxID_ANY, Text(page.last_lines_label)), 0,
+                   wxLEFT | wxTOP, 3);
+        last_lines_ =
+            new wxSlider(this, wxID_ANY, page.last_lines, page.min_lines, page.max_lines);
+        last_lines_->SetLineSize(1);
+        last_lines_->SetPageSize(10);
+        sizer->Add(last_lines_, 0, wxEXPAND | wxALL, 3);
+
+        speak_passwords_ = new wxCheckBox(this, wxID_ANY, Text(page.speak_passwords_label));
+        speak_passwords_->SetValue(page.speak_passwords);
+        speak_passwords_->SetName(Text(page.speak_passwords_name));
+        sizer->Add(speak_passwords_, 0, wxALL, 3);
+        SetSizer(sizer);
+
+        report_output_->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event) {
+            g_shell->core.terminal_report_output_changed(event.IsChecked());
+        });
+        full_lines_->Bind(wxEVT_SLIDER, [this](wxCommandEvent&) {
+            g_shell->core.terminal_full_lines_changed(full_lines_->GetValue());
+        });
+        last_lines_->Bind(wxEVT_SLIDER, [this](wxCommandEvent&) {
+            g_shell->core.terminal_last_lines_changed(last_lines_->GetValue());
+        });
+        speak_passwords_->Bind(wxEVT_CHECKBOX, [](wxCommandEvent& event) {
+            g_shell->core.terminal_speak_passwords_changed(event.IsChecked());
+        });
+    }
+
+private:
+    wxCheckBox* report_output_ = nullptr;
+    wxSlider* full_lines_ = nullptr;
+    wxSlider* last_lines_ = nullptr;
+    wxCheckBox* speak_passwords_ = nullptr;
+};
+
 // The settings dialog, after NVDA's MultiCategorySettingsDialog: a category
 // list on the left swaps the category's page on the right, which is built
 // the first time it is shown; OK, Cancel, and Apply sit along the bottom.
-// Settings apply live as they change: OK and Apply keep them, Cancel undoes
-// them.
+// The Speech and Theme pages apply settings live as they change: OK and
+// Apply keep them, Cancel undoes them. The Terminal page's wait for OK or
+// Apply, and Cancel drops them.
 class SettingsDialogWindow : public wxDialog {
 public:
     SettingsDialogWindow(wxWindow* parent, const SettingsDialog& model)
@@ -897,6 +960,9 @@ private:
         if (kind == CategoryKind::Theme) {
             theme_ = new ThemePanel(container_, this);
             return theme_;
+        }
+        if (kind == CategoryKind::Terminal) {
+            return new TerminalPanel(container_);
         }
         return new wxPanel(container_);
     }

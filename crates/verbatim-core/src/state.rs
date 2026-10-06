@@ -404,6 +404,15 @@ impl SrState {
         self.fetches
     }
 
+    /// The reader settings as the reducer has them now: the last
+    /// `Input::Settings`, with the toggle keys' changes since. The shell
+    /// merges a change from the settings dialog into these, so a toggle key
+    /// pressed meanwhile is not undone.
+    #[must_use]
+    pub fn settings(&self) -> ReaderSettings {
+        self.settings
+    }
+
     /// How many of a change's newest lines an outpost reads from a terminal
     /// (milestone M4 item 9): as many as the flood policy's limits can keep
     /// (`ReaderSettings::terminal_read_lines`). Like

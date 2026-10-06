@@ -1,6 +1,6 @@
-//! Runs the settings dialog against an in-memory mock speech host, and a
+//! Runs the settings dialog against an in-memory mock speech host, a
 //! theme host over a temporary themes folder and the repository's sounds,
-//! so the GUI can be inspected by hand (and read by Verbatim itself over
+//! and a terminal host holding the reader settings in memory, so the GUI can be inspected by hand (and read by Verbatim itself over
 //! UIA).
 //!
 //! This opens real windows, so it is not run by `cargo test`; the lead session
@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use verbatim_audio::Sound;
 use verbatim_config::themes::LoadedTheme;
-use verbatim_gui::{GuiCommand, GuiEvent, ThemeHost, run_gui};
-use verbatim_model::{Earcon, Theme, ThemeOptions, Utterance};
+use verbatim_gui::{GuiCommand, GuiEvent, TerminalChange, TerminalHost, ThemeHost, run_gui};
+use verbatim_model::{Earcon, ReaderSettings, Theme, ThemeOptions, Utterance};
 use verbatim_speech::{
     SettingDescriptor, SettingId, SettingValue, SpeechSettingsHost, SynthChoice, SynthError,
     SynthId,
@@ -184,10 +184,30 @@ impl ThemeHost for MockThemeHost {
     }
 }
 
+/// A terminal host holding the reader settings in memory and printing
+/// each change.
+struct MockTerminalHost {
+    settings: Mutex<ReaderSettings>,
+}
+
+impl TerminalHost for MockTerminalHost {
+    fn reader_settings(&self) -> ReaderSettings {
+        *self.settings.lock().unwrap()
+    }
+
+    fn change(&self, change: TerminalChange) {
+        println!("terminal settings {change:?}");
+        change.apply_to(&mut self.settings.lock().unwrap());
+    }
+}
+
 fn main() {
     let host: Arc<dyn SpeechSettingsHost> = Arc::new(MockHost::new());
     let theme_host: Arc<dyn ThemeHost> = Arc::new(MockThemeHost {
         themes_dir: std::env::temp_dir().join("verbatim-settings-preview-themes"),
+    });
+    let terminal_host: Arc<dyn TerminalHost> = Arc::new(MockTerminalHost {
+        settings: Mutex::new(ReaderSettings::default()),
     });
     let (events_tx, events_rx) = crossbeam_channel::unbounded::<GuiEvent>();
 
@@ -208,7 +228,7 @@ fn main() {
         }
     });
 
-    run_gui(host, theme_host, events_tx, move |handle| {
+    run_gui(host, theme_host, terminal_host, events_tx, move |handle| {
         *handle_slot.lock().unwrap() = Some(handle.clone());
         handle.send(GuiCommand::OpenSettings);
     })

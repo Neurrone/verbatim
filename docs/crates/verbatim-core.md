@@ -23,7 +23,10 @@ Public API:
   detail whose indication is off, such as descriptions, is never fetched
   (`phase6-design.md`, "Themes: one model for verbosity, speech, and
   sounds"). It is the one place the reducer consults the theme; how
-  everything else is presented is the speech pipeline's.
+  everything else is presented is the speech pipeline's. `settings()`
+  returns the reader settings as the reducer has them, toggle keys
+  included, which the shell merges the settings dialog's Terminal page
+  changes into.
 - `FlightRecorder<T, S>` — a window of recent entries bounded both by
   count and by estimated bytes, kept with a checkpoint of type `S` taken
   just before its oldest entry, so the window always replays from its
