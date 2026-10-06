@@ -45,6 +45,4 @@ We are using GitHub actions for CI.
 
 The end-to-end suite also runs without a VM, against this machine, by pointing it at a locally running `verbatim-agent`. It launches a real Verbatim and injects real keystrokes, so it takes over the desktop while it runs and does nothing useful on a locked one; `docs/tooling.md` has the details.
 
-The wxDragon GUI dependency uses bindgen. `cargo xtask ci` probes known Visual Studio and LLVM install paths for `libclang.dll` automatically; when invoking cargo directly on targets that build `verbatim-gui`, set `LIBCLANG_PATH` yourself if `libclang.dll` is not on `PATH`. On this machine, use:
-
-`$env:LIBCLANG_PATH='C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin'`
+The GUI's wxWidgets is built from source by `verbatim-gui`'s build script the first time anything builds that crate: it downloads the pinned release, builds static libraries with CMake (Ninja on x64), and keeps them in `target/wxwidgets`, or under `VERBATIM_WX_DIR` when that is set, so later builds reuse them. Nothing has to be set up by hand beyond CMake and the Visual Studio C++ tools.

@@ -24,9 +24,15 @@ The `nvda` submodule is reference material and stays optional; the
 command above fetches only eSpeak NG. Building eSpeak NG also needs CMake
 on `PATH` (Visual Studio's own copy, or a standalone install); the
 `cmake` crate drives eSpeak NG's CMake build with Visual Studio's
-generator. Building `verbatim-app` additionally needs `libclang.dll` for
-wxDragon's bindgen, as `CLAUDE.md` describes. GitHub Actions fetches the
-eSpeak NG submodule in every job.
+generator. The first build of `verbatim-gui` (and so of `verbatim-app`)
+also builds static wxWidgets 3.3.3 for the GUI: it downloads the release's
+source archive, checks its hash, and builds wxWidgets' base and core
+libraries with CMake, using Ninja on x64 when it is on `PATH`. That takes
+about a minute and a half on the development machine and happens once per
+architecture: the result is kept in `target/wxwidgets`, or under
+`VERBATIM_WX_DIR` when that is set, and reused by every later build
+(`docs/crates/verbatim-gui.md` has the details). GitHub Actions fetches the
+eSpeak NG submodule in every job and caches the wxWidgets build.
 
 `cargo xtask ci` also needs `cargo-hakari`, which checks the workspace-hack
 crate described next:
@@ -363,9 +369,8 @@ Concretely, in this runner-direct mode, `Scenario::launch` first runs
 once per test binary, so
 a run can never stage an executable older than the source under test
 (`cargo test -p verbatim-e2e` alone builds only this crate and its
-libraries, not Verbatim's executables). That build needs `LIBCLANG_PATH`
-like any direct build of `verbatim-app`, and is a no-op when nothing
-changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`,
+libraries, not Verbatim's executables). That build is a no-op when
+nothing changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`,
 `verbatim-synth-host.exe`, and the `espeak-ng-data` directory into
 `target/e2e-stage` under the workspace root (skipping a copy when the
 destination already matches byte-for-byte, file by file for the data
@@ -633,17 +638,6 @@ History: until October 2026 a VM run could be recorded only with
 the guest. An RDP session hid that device, so recording and listening
 were mutually exclusive. VB-CABLE and `--record` are retired; the dead
 ends of that design are recorded in `docs/roadmap-done.md`.
-
-`cargo xtask vm test` needs `LIBCLANG_PATH` for wxDragon's bindgen, exactly
-as `cargo xtask ci` does (see this repository's `CLAUDE.md`) — building
-`verbatim-app` pulls in `verbatim-gui`. Unlike a plain `cargo build`, `vm
-test` (through `xtask::vm::deploy::build`) now probes for it itself, reusing
-`cargo xtask ci`'s own candidate list, and sets it on the build's
-environment automatically when found; it prints which directory it used, or
-a note that it found none and is relying on `LIBCLANG_PATH` or `PATH`
-already being set. Nothing needs to be exported by hand on a machine where
-Visual Studio's bundled LLVM or a standalone LLVM install lives in one of
-the probed locations.
 
 ## The VM harness
 

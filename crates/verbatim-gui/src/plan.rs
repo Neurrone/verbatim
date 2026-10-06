@@ -2,8 +2,8 @@
 //!
 //! Everything here is pure: it maps the frozen `verbatim-speech` descriptor
 //! model onto a description of the controls the GUI should build, and it
-//! carries the small bits of bookkeeping (category cycling, the settings
-//! dialog singleton guard) that are easy to get wrong and worth testing
+//! carries the small bits of bookkeeping (category cycling, the list
+//! dialog's first selection) that are easy to get wrong and worth testing
 //! without a display. The widget code in [`crate::dialog`] consumes these
 //! plans; it never re-derives them.
 
@@ -182,54 +182,6 @@ pub fn initial_list_selection(item_count: usize) -> Option<usize> {
     (item_count > 0).then_some(0)
 }
 
-/// The singleton guard for the modeless settings dialog.
-///
-/// A second request to open settings must focus the existing window rather
-/// than spawn a duplicate, mirroring NVDA. This models the decision purely so
-/// it is testable; the widget code holds the real dialog handle alongside it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DialogGuard {
-    open: bool,
-}
-
-/// What opening the settings dialog should do, per the singleton rule.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OpenAction {
-    /// No dialog exists; create and show one.
-    Create,
-    /// A dialog already exists; raise and focus it.
-    FocusExisting,
-}
-
-impl DialogGuard {
-    /// A guard with no dialog open yet.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Records an open request and reports what the caller should do.
-    pub fn request_open(&mut self) -> OpenAction {
-        if self.open {
-            OpenAction::FocusExisting
-        } else {
-            self.open = true;
-            OpenAction::Create
-        }
-    }
-
-    /// Records that the dialog has closed, so the next request creates a new one.
-    pub fn closed(&mut self) {
-        self.open = false;
-    }
-
-    /// Whether a dialog is currently considered open.
-    #[must_use]
-    pub fn is_open(&self) -> bool {
-        self.open
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,25 +322,6 @@ mod tests {
             initial_list_selection(0),
             None,
             "an empty list has nothing to select"
-        );
-    }
-
-    #[test]
-    fn dialog_guard_enforces_a_single_instance() {
-        let mut guard = DialogGuard::new();
-        assert!(!guard.is_open());
-        assert_eq!(guard.request_open(), OpenAction::Create);
-        assert!(guard.is_open());
-        assert_eq!(
-            guard.request_open(),
-            OpenAction::FocusExisting,
-            "a second request while open focuses the existing dialog"
-        );
-        guard.closed();
-        assert_eq!(
-            guard.request_open(),
-            OpenAction::Create,
-            "after closing, the next request creates a fresh dialog"
         );
     }
 }

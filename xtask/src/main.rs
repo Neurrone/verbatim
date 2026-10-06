@@ -21,7 +21,6 @@
 //! `xtask/src/park.rs`.
 
 use std::env;
-use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::str;
 
@@ -83,14 +82,6 @@ fn main() -> ExitCode {
 }
 
 fn ci() -> ExitCode {
-    let libclang = find_libclang();
-    match &libclang {
-        Some(dir) => println!("xtask ci: using libclang from {}", dir.display()),
-        None => println!(
-            "xtask ci: libclang not found in known locations; relying on LIBCLANG_PATH or PATH"
-        ),
-    }
-
     println!("xtask ci: platform-neutral dependency check");
     if let Err(error) = check_platform_neutral_deps() {
         eprintln!("xtask ci: step failed: platform-neutral dependency check\n{error}");
@@ -130,9 +121,6 @@ fn ci() -> ExitCode {
         println!("xtask ci: {name}");
         let mut command = Command::new(env!("CARGO"));
         command.args(*cargo_args);
-        if let Some(dir) = &libclang {
-            command.env("LIBCLANG_PATH", dir);
-        }
         match command.status() {
             Ok(status) if status.success() => {}
             Ok(status) => {
@@ -190,44 +178,4 @@ fn check_platform_neutral_deps() -> Result<(), String> {
             offences.join("\n  ")
         ))
     }
-}
-
-/// Locates a libclang directory for wxDragon's bindgen when the environment
-/// does not already provide one, checking Visual Studio's bundled LLVM and a
-/// standalone LLVM install (the layout on GitHub-hosted Windows runners).
-///
-/// `pub(crate)` rather than private: `xtask::vm::deploy::build_binaries`
-/// reuses this exact probe before its own plain `cargo build`, which
-/// otherwise fails to build `verbatim-gui`'s wxDragon dependency whenever
-/// `LIBCLANG_PATH` is not already set in the caller's environment — this
-/// `ci` path is the only other place in this binary that needs it, so one
-/// shared probe stays in lockstep rather than two copies drifting apart.
-pub(crate) fn find_libclang() -> Option<PathBuf> {
-    /// The Visual Studio installations to look in, newest first.
-    const VISUAL_STUDIO: &[&str] = &[
-        r"18\Community",
-        r"2022\Community",
-        r"2022\Professional",
-        r"2022\Enterprise",
-    ];
-    /// Visual Studio's LLVM folder for the host's architecture: bindgen
-    /// loads `libclang.dll` into the build script, which runs on the host.
-    const LLVM_ARCH: &str = if cfg!(target_arch = "aarch64") {
-        "ARM64"
-    } else {
-        "x64"
-    };
-
-    if let Some(dir) = env::var_os("LIBCLANG_PATH") {
-        return Some(PathBuf::from(dir));
-    }
-    VISUAL_STUDIO
-        .iter()
-        .map(|edition| {
-            PathBuf::from(format!(
-                r"C:\Program Files\Microsoft Visual Studio\{edition}\VC\Tools\Llvm\{LLVM_ARCH}\bin"
-            ))
-        })
-        .chain(std::iter::once(PathBuf::from(r"C:\Program Files\LLVM\bin")))
-        .find(|dir| dir.join("libclang.dll").exists())
 }

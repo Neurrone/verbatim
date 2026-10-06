@@ -8,8 +8,8 @@
 //! driven from the keyboard. NVDA solves this by making its main frame visible
 //! and foreground around every popup, then restoring.
 //!
-//! wxdragon binds no `SetForegroundWindow`, so we reach the native `HWND`
-//! through `WxWidget::get_handle` and call Win32 directly.
+//! The C++ layer hands over the native window handles of the hidden frame
+//! and the dialogs, and the foreground is taken here through Win32.
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -25,13 +25,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow,
 };
 
-/// The native window handle behind a wxWidgets window, if it has one.
-pub(crate) fn hwnd_of(handle: *mut c_void) -> Option<HWND> {
-    if handle.is_null() {
-        None
-    } else {
-        Some(HWND(handle))
-    }
+/// The native window handle the C++ layer reported as an integer, or
+/// `None` for 0, the window not existing.
+pub(crate) fn hwnd_of(handle: usize) -> Option<HWND> {
+    (handle != 0).then(|| HWND(std::ptr::with_exposed_provenance_mut::<c_void>(handle)))
 }
 
 /// Injects a bare `VK_CONTROL` down-then-up tap, satisfying Windows'

@@ -1,14 +1,21 @@
 //! The settings dialog's keys (audit item 7, decided with Dickson on
 //! 2026-10-06; `crates/verbatim-gui/src/keys.rs`): Enter on a focused
 //! button activates that button, so Enter on Cancel cancels and Enter on
-//! Apply applies and keeps the dialog open. NVDA's own settings dialogs
-//! send every Enter to OK; Verbatim's difference is recorded in
-//! `docs/parity.md`.
+//! Apply applies and keeps the dialog open; Control+S applies and
+//! Control+Tab and Control+Shift+Tab change category from any control,
+//! the Speech page's own controls included, since one key hook on the
+//! dialog sees every key. NVDA's own settings dialogs send every Enter to
+//! OK; Verbatim's difference is recorded in `docs/parity.md`.
 //!
 //! The walk: open the Speech settings, change the rate, Tab to Cancel and
 //! press Enter, reopen, and hear the rate unchanged; change it again, Tab
 //! to Apply and press Enter, hear that focus stays on Apply, close with
-//! Escape, reopen, and hear the applied rate.
+//! Escape, reopen, and hear the applied rate. Then, on the rate slider,
+//! change the rate and press Control+S, close with Escape, reopen, and hear
+//! that rate kept; press Control+Tab on the slider and hear the category
+//! list take focus (Speech is the only category, so cycling lands on it
+//! again); Tab into the page and press Control+Shift+Tab on the Change
+//! button, and hear the category list again.
 
 use std::io;
 use std::time::Duration;
@@ -106,6 +113,48 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "Enter on Apply should have kept the rate at {}",
         rate - 1
     );
+
+    // Control+S on the rate slider, inside the Speech page, applies: the
+    // Cancel that Escape then sends reverts to the applied rate, not past
+    // it.
+    scenario.send_keys(&["uparrow"]).expect("sends uparrow");
+    let lowered_again = (rate - 2).to_string();
+    scenario
+        .speech()
+        .expect_in_order(&[&lowered_again], STEP_TIMEOUT);
+    scenario
+        .send_keys(&["control+s"])
+        .expect("sends control+s on the slider");
+    scenario.send_keys(&["escape"]).expect("sends escape");
+    let saved = open_at_rate(scenario);
+    assert_eq!(
+        saved,
+        rate - 2,
+        "Control+S on the rate slider should have kept the rate at {}",
+        rate - 2
+    );
+
+    // Control+Tab on the slider moves to the next category, which with
+    // Speech alone is Speech again, and puts focus on the category list.
+    scenario
+        .send_keys(&["control+tab"])
+        .expect("sends control+tab on the slider");
+    scenario
+        .speech()
+        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
+
+    // Control+Shift+Tab does the same from the Change button, the first
+    // control of the page.
+    scenario.send_keys(&["tab"]).expect("sends tab");
+    scenario
+        .speech()
+        .expect_in_order(&["Change", "button"], STEP_TIMEOUT);
+    scenario
+        .send_keys(&["control+shift+tab"])
+        .expect("sends control+shift+tab on the Change button");
+    scenario
+        .speech()
+        .expect_in_order(&["Categories: list", "Speech"], STEP_TIMEOUT);
     scenario.send_keys(&["escape"]).expect("sends escape");
 }
 

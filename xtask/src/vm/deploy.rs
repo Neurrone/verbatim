@@ -419,22 +419,8 @@ fn parse_guest_hashes(output: &str) -> HashMap<String, String> {
         .collect()
 }
 
-/// `verbatim-app` pulls in `verbatim-gui`, whose wxDragon dependency needs
-/// `libclang.dll` for bindgen at build time (`CLAUDE.md`'s Coding Standards
-/// section). `cargo xtask ci` probes for it automatically; this plain
-/// `cargo build` needs the same probe, or it fails outright whenever
-/// `LIBCLANG_PATH` is not already set in the caller's shell — reusing
-/// `crate::find_libclang` rather than duplicating the candidate list keeps
-/// the two probes in lockstep.
+/// Builds Verbatim, its child processes, and the agent (debug profile).
 fn build_binaries(repo_root: &Path) -> VmResult<()> {
-    let libclang = crate::find_libclang();
-    match &libclang {
-        Some(dir) => println!("xtask vm deploy: using libclang from {}", dir.display()),
-        None => println!(
-            "xtask vm deploy: libclang not found in known locations; relying on LIBCLANG_PATH or PATH"
-        ),
-    }
-
     let mut command = Command::new(env!("CARGO"));
     command
         .args([
@@ -449,9 +435,6 @@ fn build_binaries(repo_root: &Path) -> VmResult<()> {
             "verbatim-synth-host",
         ])
         .current_dir(repo_root);
-    if let Some(dir) = &libclang {
-        command.env("LIBCLANG_PATH", dir);
-    }
     let status = command
         .status()
         .map_err(|error| format!("failed to launch cargo build: {error}"))?;

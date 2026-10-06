@@ -57,9 +57,8 @@ arguments for the full verb list printed from the source of truth.
   where nothing changed since the last deploy. Use this on its own when you
   want to push a fresh build into an already-running guest without touching
   checkpoints at all.
-- `test` builds the current source first, before touching the VM at all
-  (needs `LIBCLANG_PATH`, set automatically when found — see "Hearing and
-  recording a run" in the tooling guide), then starts the guest if it is
+- `test` builds the current source first, before touching the VM at all,
+  then starts the guest if it is
   not running and waits for its agent, stages and copies that build onto it
   (always selecting eSpeak NG, the same synthesizer every runner-direct
   run uses), discovers the guest's IP address, runs

@@ -8,7 +8,7 @@ See the [roadmap](docs/roadmap.md).
 
 ## Goals
 
-- **Rust core on modern Windows**: Rewrite the screen reader core in Rust, targeting Windows 11 x64 and ARM as equal first-class platforms, with wxWidgets (via wxDragon) for a GUI that is itself accessible.
+- **Rust core on modern Windows**: Rewrite the screen reader core in Rust, targeting Windows 11 x64 and ARM as equal first-class platforms, with wxWidgets (through a small C++ layer) for a GUI that is itself accessible.
 - **Responsiveness above all**: Never block on the foreground application. Use per-application "outposts" (or a comparable isolation mechanism) so a hung app can't hang Verbatim, and target low event-to-speech latency even on low-end hardware.
 - **Functional core, imperative shell**: Model core logic as a reducer over the in-memory accessibility tree — events in, updated tree plus effects out (further API calls, speech, sounds, braille) — to make the logic highly testable.
 - **Better UIA handling**: Fix pain points like terminal output floods, evaluate UIA Remote Operations for batched queries, and consider multiple UIA threads for responsiveness.

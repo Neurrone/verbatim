@@ -14,8 +14,6 @@
 use std::mem::size_of;
 use std::rc::Rc;
 
-use wxdragon::prelude::*;
-
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput,
@@ -25,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 use verbatim_i18n::messages;
 use verbatim_model::Rect;
 
-use crate::list_dialog::{ButtonVerdict, ListDialogButton, ListDialogSpec, show_list_dialog};
+use crate::list_dialog::{ButtonVerdict, ListDialogButton, ListDialogSpec};
 use crate::shell_items::{ShellItem, ShellItemKind, center_of};
 
 /// The mouse action one of the dialog's click buttons injects.
@@ -39,18 +37,12 @@ enum ClickAction {
     Right,
 }
 
-/// Builds the tray or taskbar list dialog over the enumerated `items` and
-/// returns its handle; the caller shows it and records the singleton.
+/// Describes the tray or taskbar list dialog over the enumerated `items`.
 ///
 /// Each click button's callback clicks the selected item (by its index into
-/// `items`, the list dialog's opaque payload key) and then closes the
-/// dialog through [`crate::close_shell_list`], the roadmap's ordering.
-/// GUI thread only.
-pub(crate) fn build_shell_list_dialog(
-    parent: Frame,
-    kind: ShellItemKind,
-    items: Vec<ShellItem>,
-) -> Dialog {
+/// `items`, the list dialog's opaque payload key) and then asks for the
+/// dialog to close, the roadmap's ordering.
+pub(crate) fn shell_list_dialog(kind: ShellItemKind, items: Vec<ShellItem>) -> ListDialogSpec {
     let (title, label) = match kind {
         ShellItemKind::SystemTray => (messages::tray_list_title(), messages::tray_list_label()),
         ShellItemKind::Taskbar => (
@@ -60,8 +52,8 @@ pub(crate) fn build_shell_list_dialog(
     };
     let names = items.iter().map(|item| item.name.clone()).collect();
     let items = Rc::new(items);
-    let action_button = |label_key: &str, action: ClickAction| ListDialogButton {
-        label_key: label_key.to_owned(),
+    let action_button = |label: String, action: ClickAction| ListDialogButton {
+        label,
         on_activate: {
             let items = Rc::clone(&items);
             Rc::new(move |index| {
@@ -72,18 +64,20 @@ pub(crate) fn build_shell_list_dialog(
             })
         },
     };
-    let spec = ListDialogSpec {
+    ListDialogSpec {
         title,
         label,
         items: names,
         buttons: vec![
-            action_button("tray-list-left-click", ClickAction::Left),
-            action_button("tray-list-left-double-click", ClickAction::DoubleLeft),
-            action_button("tray-list-right-click", ClickAction::Right),
+            action_button(messages::tray_list_left_click(), ClickAction::Left),
+            action_button(
+                messages::tray_list_left_double_click(),
+                ClickAction::DoubleLeft,
+            ),
+            action_button(messages::tray_list_right_click(), ClickAction::Right),
         ],
         default_button: 0,
-    };
-    show_list_dialog(parent, spec, Rc::new(crate::close_shell_list))
+    }
 }
 
 /// Moves the pointer to the center of `rect` and injects the mouse events

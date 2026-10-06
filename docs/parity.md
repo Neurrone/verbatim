@@ -940,9 +940,11 @@ verified.
   2026-10-06): Enter on a focused button activates that button, so Enter
   on Cancel cancels and Enter on Apply applies and keeps the dialog
   open; Enter on the synthesizer's name opens Change; Enter elsewhere is
-  OK (`verbatim-gui`'s `keys` module; `settings_dialog_keys` verifies
-  Cancel and Apply). Control+S and Control+Tab still work only on the
-  dialog and its buttons until the GUI port's dialog-wide key hook.
+  OK (`verbatim-gui`'s `keys` module). Control+S, Control+Tab, and
+  Control+Shift+Tab work from every control, the Speech page's included,
+  through one key hook on the dialog, as NVDA's do
+  (`settings_dialog_keys` verifies Cancel, Apply, Control+S, and
+  Control+Tab).
 - Logging and the log viewer. NVDA: [Logging](nvda/logging.md).
   Verbatim: **not yet (M9)** — tracing exists (flight recorder,
   latency ledger); user-facing logging is unbuilt.

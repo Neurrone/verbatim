@@ -1,49 +1,52 @@
 //! GUI (architecture section 11, decision D4).
 //!
-//! The Verbatim menu and settings UI, built on wxWidgets via wxDragon. It runs
-//! on the process main thread inside Core: [`run_gui`] takes over that thread
-//! with wxWidgets' event loop and hands the rest of the app a [`GuiHandle`]
-//! (through the `on_ready` callback) for posting commands back in. wxWidgets
-//! accessibility is proven in exactly this role — NVDA's own GUI is wxPython —
-//! and the M1 prototype's defining test is Verbatim reading this GUI through a
-//! real outpost over ordinary UIA, with no self-voicing side channel.
+//! The Verbatim menu and settings UI, built on wxWidgets through a small C++
+//! layer (`cpp/gui.cpp`) that this crate's build script compiles and links
+//! against static wxWidgets. Rust keeps all the logic; the C++ layer only
+//! builds and wires widgets (see the `bridge` module). It runs on the process main
+//! thread inside Core: [`run_gui`] takes over that thread with wxWidgets'
+//! event loop and hands the rest of the app a [`GuiHandle`] (through the
+//! `on_ready` callback) for posting commands back in. wxWidgets
+//! accessibility is proven in exactly this role — NVDA's own GUI is wxPython
+//! — and the M1 prototype's defining test is Verbatim reading this GUI
+//! through a real outpost over ordinary UIA, with no self-voicing side
+//! channel.
 //!
 //! Threading model. wxWidgets objects are not thread-safe and live only on the
-//! GUI thread. Any thread may call [`GuiHandle::send`]; it enqueues a
-//! [`GuiCommand`] and wakes the GUI thread, which drains the queue and acts on
-//! it against the thread-local widget state. Outbound, the Exit menu item does
-//! not tear down the process itself — it sends [`GuiEvent::QuitRequested`] and
-//! lets the app orchestrate shutdown, which comes back as
-//! [`GuiCommand::Shutdown`].
+//! GUI thread. Any thread may call [`GuiHandle::send`]; it sends a
+//! [`GuiCommand`] down the GUI's channel and wakes the GUI thread, which
+//! drains the channel and acts on each message. What a request means for the
+//! menu, the dialogs, and the hidden frame is decided by the pure `lifecycle`
+//! state machine. Outbound, the Exit menu item does not tear down the process
+//! itself — it sends [`GuiEvent::QuitRequested`] and lets the app orchestrate
+//! shutdown, which comes back as [`GuiCommand::Shutdown`].
 
-mod dialog;
+mod bridge;
 mod foreground;
 mod hidden_frame;
 mod keys;
-pub mod list_dialog;
+mod lifecycle;
+mod list_dialog;
 mod plan;
+mod settings;
 pub mod shell_items;
 mod tray_list;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
-use wxdragon::prelude::*;
-
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use verbatim_i18n::messages;
-use verbatim_speech::SpeechSettingsHost;
+use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
-pub use plan::{ControlPlan, DialogGuard, OpenAction};
+pub use plan::ControlPlan;
 pub use shell_items::ShellItemKind;
 
-/// Menu item ids for the tray menu, based above the standard id range so they
-/// never collide with wxWidgets' own ids.
-const ID_MENU_SETTINGS: i32 = ID_HIGHEST + 1001;
-const ID_MENU_EXIT: i32 = ID_HIGHEST + 1002;
+use bridge::ffi;
+use lifecycle::{Frame, Lifecycle, OpenSettings, OpenShellList};
+use list_dialog::{ButtonVerdict, ListDialogButtons};
+use settings::{ControlChange, SpeechControls};
 
 /// A command posted to the GUI thread from anywhere in the app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,20 +71,38 @@ pub enum GuiEvent {
     QuitRequested,
 }
 
+/// A message for the GUI thread: a command from the app, or the outcome of
+/// work the GUI started on another thread.
+enum GuiMessage {
+    /// A command from the app.
+    Command(GuiCommand),
+    /// A shell item enumeration finished: `None` when it failed or ran out
+    /// of time (already logged).
+    ShellItems(ShellItemKind, Option<Vec<shell_items::ShellItem>>),
+}
+
 /// A thread-safe handle for posting [`GuiCommand`]s to the GUI thread.
 ///
 /// Cloneable and `Send`/`Sync`: hand copies to whatever threads need to drive
-/// the GUI. Every [`send`](GuiHandle::send) enqueues the command and wakes the
-/// GUI thread's idle loop.
+/// the GUI. Every [`send`](GuiHandle::send) sends the command down the GUI's
+/// channel and wakes the GUI thread.
 #[derive(Clone)]
 pub struct GuiHandle {
-    _private: (),
+    sender: Sender<GuiMessage>,
 }
 
 impl GuiHandle {
     /// Posts a command to the GUI thread. Safe to call from any thread.
     pub fn send(&self, command: GuiCommand) {
-        post_command(command);
+        self.post(GuiMessage::Command(command));
+    }
+
+    /// Sends a message and wakes the GUI thread to drain it. Once the GUI
+    /// has ended, the message is dropped and the wake does nothing.
+    fn post(&self, message: GuiMessage) {
+        if self.sender.send(message).is_ok() {
+            ffi::wake_event_loop();
+        }
     }
 }
 
@@ -109,439 +130,405 @@ impl std::error::Error for GuiError {}
 ///
 /// # Errors
 ///
-/// Returns [`GuiError`] if wxWidgets fails to initialize or the event loop
-/// exits abnormally.
+/// Returns [`GuiError`] if wxWidgets fails to initialize.
 pub fn run_gui(
     settings_host: Arc<dyn SpeechSettingsHost>,
     events: Sender<GuiEvent>,
     on_ready: impl FnOnce(GuiHandle) + Send + 'static,
 ) -> Result<(), GuiError> {
-    wxdragon::main(move |app| {
-        init(app, settings_host, events);
-        on_ready(GuiHandle { _private: () });
-    })
-    .map_err(|error| GuiError(error.to_string()))
+    let (sender, receiver) = unbounded();
+    let core = GuiCore {
+        host: settings_host,
+        events,
+        handle: GuiHandle { sender },
+        receiver,
+        on_ready: RefCell::new(Some(Box::new(on_ready))),
+        lifecycle: RefCell::new(Lifecycle::new()),
+        speech: RefCell::new(SpeechControls::default()),
+        list_buttons: RefCell::new(None),
+    };
+    // The hidden main frame doubles as the dialog parent and the
+    // single-instance rendezvous window, found by this title. It is never
+    // shown except around popups and never appears in the taskbar.
+    let text = ffi::ShellText {
+        title: messages::tray_tooltip(),
+        tooltip: messages::tray_tooltip(),
+        settings_item: messages::menu_settings(),
+        exit_item: messages::menu_exit(),
+    };
+    match ffi::run_event_loop(&core, &text) {
+        -1 => Err(GuiError("wxWidgets could not start".to_owned())),
+        _ => Ok(()),
+    }
 }
 
-/// The GUI thread's widget state. Not `Send`: it lives only in the GUI
-/// thread's [`GUI`] thread-local.
-struct GuiState {
-    frame: Frame,
-    tray: TaskBarIcon,
-    /// The shared tray menu. Moved out of here for the duration of a popup (see
-    /// [`show_menu`]) so the nested menu loop can re-enter this state.
-    menu: Option<Menu>,
+/// The callback `run_gui` hands the GUI handle to once the GUI is up.
+type OnReady = Box<dyn FnOnce(GuiHandle) + Send>;
+
+/// The GUI's Rust half: the state behind the widgets, and the methods the
+/// C++ layer calls when the user acts.
+///
+/// It lives on `run_gui`'s stack for the whole event loop and is used only
+/// on the GUI thread. Every method takes `&self`, because a call into C++
+/// can run a nested event loop that calls back in; for the same reason no
+/// `RefCell` borrow is ever held across a call into C++.
+pub(crate) struct GuiCore {
     host: Arc<dyn SpeechSettingsHost>,
     events: Sender<GuiEvent>,
-    settings: Option<Dialog>,
-    /// The open shell item list dialog (singleton, like `settings`).
-    shell_list: Option<Dialog>,
-    /// Whether a shell item enumeration is in flight; a second request
-    /// while one is pending is dropped rather than queued.
-    shell_list_pending: bool,
+    /// The GUI's own handle, for work it hands to other threads.
+    handle: GuiHandle,
+    /// The GUI's end of its channel.
+    receiver: Receiver<GuiMessage>,
+    on_ready: RefCell<Option<OnReady>>,
+    lifecycle: RefCell<Lifecycle>,
+    /// The Speech page's current controls.
+    speech: RefCell<SpeechControls>,
+    /// The open list dialog's button callbacks.
+    list_buttons: RefCell<Option<ListDialogButtons>>,
 }
 
-thread_local! {
-    static GUI: RefCell<Option<GuiState>> = const { RefCell::new(None) };
-}
-
-/// Whether shutdown has been commanded.
-///
-/// Deliberately not a field of [`GuiState`]: `shutdown` sets this and then
-/// calls `frame.close(true)`, which synchronously re-enters the frame's
-/// close handler (wxWidgets' `Close` always invokes it; `force` only
-/// controls whether the handler may veto) on the same call stack, and that
-/// handler reads this flag through [`gui_is_shutting_down`]. Routing the
-/// read through the `GUI` thread-local's `RefCell`, as before, collided
-/// with `shutdown`'s own borrow and panicked with "already mutably
-/// borrowed" on every clean quit. A plain atomic has no borrow to collide
-/// with, so it is the honest type for a flag that must be legible from a
-/// reentrant context.
-static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
-
-/// Builds the hidden frame, tray icon, and shared menu, then stores them in the
-/// GUI thread-local. Runs once, on the GUI thread, during initialization.
-fn init(app: App, host: Arc<dyn SpeechSettingsHost>, events: Sender<GuiEvent>) {
-    // We control the loop lifetime explicitly (Shutdown), so deleting a dialog
-    // or the hidden frame must not end the loop on its own.
-    app.set_exit_on_frame_delete(false);
-    SHUTTING_DOWN.store(false, Ordering::SeqCst);
-
-    // The hidden main frame doubles as the dialog parent and the single-instance
-    // rendezvous window (found later by its title). It is never shown and never
-    // appears in the taskbar.
-    let frame = Frame::builder()
-        .with_title(&messages::tray_tooltip())
-        .with_size(Size {
-            width: 1,
-            height: 1,
-        })
-        .with_style(FrameStyle::Default | FrameStyle::NoTaskbar)
-        .build();
-    // Mark the frame so every outpost can recognize and suppress announcing
-    // it (decision D9); see `hidden_frame`'s module doc.
-    if let Some(hwnd) = foreground::hwnd_of(frame.get_handle()) {
-        hidden_frame::mark(hwnd);
-    }
-    frame.on_close(move |event| {
-        // Closing the hidden window hides it; only a commanded Shutdown lets it
-        // be destroyed.
-        if gui_is_shutting_down() {
-            event.skip(true);
-        } else {
-            frame.hide();
-            event.skip(false);
+impl GuiCore {
+    /// The frame, tray icon, and menu exist: marks the frame and hands the
+    /// app its handle.
+    fn ready(&self) {
+        // Mark the frame so every outpost can recognize and suppress
+        // announcing it (decision D9); see `hidden_frame`'s module doc.
+        if let Some(hwnd) = foreground::hwnd_of(ffi::frame_handle()) {
+            hidden_frame::mark(hwnd);
         }
-    });
-
-    // One menu object, shared as the tray's popup and popped on ShowMenu.
-    let mut menu = Menu::builder()
-        .append_item(ID_MENU_SETTINGS, &messages::menu_settings(), "")
-        .append_separator()
-        .append_item(ID_MENU_EXIT, &messages::menu_exit(), "")
-        .build();
-    frame.on_menu(|event| dispatch_menu(event.get_id()));
-
-    let tray = TaskBarIcon::builder().build();
-    // A blank 16x16 icon: M1 has no bundled artwork, and the tray icon's
-    // appearance is not what the milestone validates.
-    if let Some(icon) = Bitmap::from_rgba(&[0u8; 16 * 16 * 4], 16, 16) {
-        tray.set_icon(&icon, &messages::tray_tooltip());
-    }
-    tray.set_popup_menu(&mut menu);
-    tray.on_menu(|event| dispatch_menu(event.get_id()));
-    #[cfg(target_os = "windows")]
-    tray.on_left_down(|_| dispatch(GuiCommand::ShowMenu));
-
-    GUI.with(|cell| {
-        *cell.borrow_mut() = Some(GuiState {
-            frame,
-            tray,
-            menu: Some(menu),
-            host,
-            events,
-            settings: None,
-            shell_list: None,
-            shell_list_pending: false,
-        });
-    });
-}
-
-/// Whether shutdown has been commanded. Safe to call from a reentrant
-/// context (see [`SHUTTING_DOWN`]'s doc comment), including from inside a
-/// borrow of [`GUI`].
-fn gui_is_shutting_down() -> bool {
-    SHUTTING_DOWN.load(Ordering::SeqCst)
-}
-
-/// Routes a tray/menu item id to its command.
-fn dispatch_menu(id: i32) {
-    match id {
-        ID_MENU_SETTINGS => dispatch(GuiCommand::OpenSettings),
-        ID_MENU_EXIT => {
-            GUI.with(|cell| {
-                if let Some(state) = cell.borrow().as_ref() {
-                    let _ = state.events.send(GuiEvent::QuitRequested);
-                }
-            });
-        }
-        _ => {}
-    }
-}
-
-/// The global queue of commands awaiting the GUI thread. `GuiCommand` is a
-/// trivial `Send` enum, so the widget state it eventually touches stays on the
-/// GUI thread while only the command crosses the boundary.
-fn pending() -> &'static Mutex<VecDeque<GuiCommand>> {
-    static PENDING: OnceLock<Mutex<VecDeque<GuiCommand>>> = OnceLock::new();
-    PENDING.get_or_init(|| Mutex::new(VecDeque::new()))
-}
-
-/// Enqueues a command and wakes the GUI thread to drain it. Callable from any
-/// thread.
-fn post_command(command: GuiCommand) {
-    if let Ok(mut queue) = pending().lock() {
-        queue.push_back(command);
-    }
-    wxdragon::call_after(Box::new(drain_commands));
-    wxdragon::wake_up_idle();
-}
-
-/// Drains and dispatches all queued commands. Runs on the GUI thread.
-fn drain_commands() {
-    loop {
-        let next = pending()
-            .lock()
-            .ok()
-            .and_then(|mut queue| queue.pop_front());
-        match next {
-            Some(command) => dispatch(command),
-            None => break,
+        let on_ready = self.on_ready.borrow_mut().take();
+        if let Some(on_ready) = on_ready {
+            on_ready(self.handle.clone());
         }
     }
-}
 
-/// Acts on one command against the GUI thread-local state.
-fn dispatch(command: GuiCommand) {
-    match command {
-        GuiCommand::ShowMenu => show_menu(),
-        GuiCommand::OpenSettings => open_settings(),
-        GuiCommand::OpenShellItemList(kind) => open_shell_item_list(kind),
-        GuiCommand::Shutdown => shutdown(),
-    }
-}
-
-/// Prepares for a popup, NVDA's `prePopup`: make the frame visible and take the
-/// foreground.
-///
-/// A menu or dialog popped from a hidden, background window gets neither the
-/// foreground nor keyboard focus — Windows raises no foreground event, so
-/// Verbatim's own supervisor never targets our process and never reads the
-/// popup. Showing the (1x1) frame and forcing it foreground fixes both.
-fn pre_popup(frame: Frame) {
-    frame.show(true);
-    frame.raise();
-    if let Some(hwnd) = foreground::hwnd_of(frame.get_handle()) {
-        foreground::force_foreground(hwnd);
-    }
-}
-
-/// Cleans up after a popup, NVDA's `postPopup`: hide the frame again so we keep
-/// no visible window, and let the foreground fall back to the previous app.
-///
-/// Skipped while any owned dialog (settings or the shell item list) is
-/// open: hiding an owner can take its owned windows with it.
-/// [`close_settings`] and [`close_shell_list`] hide the frame once the
-/// last dialog is gone.
-fn post_popup(frame: Frame, dialog_open: bool) {
-    if !dialog_open {
-        frame.hide();
-    }
-}
-
-/// Pops the Verbatim menu at screen centre.
-fn show_menu() {
-    // The menu must leave the thread-local before the popup: `popup_menu` runs a
-    // nested event loop that dispatches the menu selection, and that handler
-    // re-enters the thread-local (to open settings). Holding the borrow across
-    // the popup would panic.
-    let Some((frame, mut menu)) = GUI.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let state = borrow.as_mut()?;
-        Some((state.frame, state.menu.take()?))
-    }) else {
-        return;
-    };
-
-    // wxdragon exposes no display-metrics call, so centring the frame and
-    // reading its position stands in for the screen centre.
-    frame.center_on_screen();
-    let position = frame.get_position();
-    pre_popup(frame);
-    // Info, not debug: whether the popup actually showed is the first fact
-    // needed when diagnosing a menu that opened silently or not at all
-    // (the cold-guest first-launch investigation), and it fires only on an
-    // explicit user gesture, so it cannot flood the log.
-    let shown = frame.popup_menu(&mut menu, Some(position));
-    tracing::info!(
-        shown,
-        x = position.x,
-        y = position.y,
-        "popped the Verbatim menu"
-    );
-
-    GUI.with(|cell| {
-        if let Some(state) = cell.borrow_mut().as_mut() {
-            state.menu = Some(menu);
-            post_popup(
-                frame,
-                state.settings.is_some() || state.shell_list.is_some(),
-            );
-        }
-    });
-}
-
-/// Opens the settings dialog, or focuses the existing one (singleton guard).
-///
-/// Reads out what it needs and drops the borrow before calling into wx, on
-/// the same principle as [`show_menu`] and [`shutdown`]: none of
-/// `pre_popup`, `build_settings_dialog`, `dialog.show`, or
-/// `focus_foreground` re-enter `GUI` today, but holding the borrow across
-/// calls into wx is exactly the shape that panicked in `shutdown` once one
-/// of them did.
-fn open_settings() {
-    let Some((frame, existing, host)) = GUI.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .map(|state| (state.frame, state.settings, state.host.clone()))
-    }) else {
-        return;
-    };
-
-    if let Some(existing) = existing
-        && existing.is_valid()
-    {
-        focus_foreground(existing);
-        return;
-    }
-
-    // Take the foreground before the dialog exists, so the process already
-    // owns it when the dialog asks for it.
-    pre_popup(frame);
-    let dialog = dialog::build_settings_dialog(frame, &host);
-    dialog.show(true);
-    focus_foreground(dialog);
-
-    GUI.with(|cell| {
-        if let Some(state) = cell.borrow_mut().as_mut() {
-            state.settings = Some(dialog);
-        }
-    });
-}
-
-/// Opens the shell item list dialog for `kind`: focuses the existing one
-/// when open (singleton, mirroring [`open_settings`]), otherwise starts an
-/// enumeration on a worker thread and presents the list when the results
-/// arrive. The GUI thread never blocks on the shell — see
-/// [`shell_items`]' module documentation for the threading and deadline
-/// story.
-fn open_shell_item_list(kind: ShellItemKind) {
-    let Some((existing, pending)) = GUI.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .map(|state| (state.shell_list, state.shell_list_pending))
-    }) else {
-        return;
-    };
-    if let Some(existing) = existing
-        && existing.is_valid()
-    {
-        focus_foreground(existing);
-        return;
-    }
-    if pending {
-        tracing::debug!("a shell item enumeration is already in flight; request dropped");
-        return;
-    }
-    GUI.with(|cell| {
-        if let Some(state) = cell.borrow_mut().as_mut() {
-            state.shell_list_pending = true;
-        }
-    });
-    shell_items::request_shell_items(kind, move |items| present_shell_item_list(kind, items));
-}
-
-/// Presents an enumeration outcome: clears the pending flag, then builds
-/// and shows the dialog on success. A failed or timed-out enumeration
-/// (already logged by the worker) presents nothing. Runs on the GUI thread
-/// via the call-after queue.
-fn present_shell_item_list(kind: ShellItemKind, items: Option<Vec<shell_items::ShellItem>>) {
-    let Some(frame) = GUI.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let state = borrow.as_mut()?;
-        state.shell_list_pending = false;
-        Some(state.frame)
-    }) else {
-        return;
-    };
-    if gui_is_shutting_down() {
-        return;
-    }
-    let Some(items) = items else {
-        return;
-    };
-
-    // Same discipline as open_settings: take the foreground before the
-    // dialog exists, so the process already owns it when the dialog asks.
-    pre_popup(frame);
-    let dialog = tray_list::build_shell_list_dialog(frame, kind, items);
-    dialog.show(true);
-    focus_foreground(dialog);
-    GUI.with(|cell| {
-        if let Some(state) = cell.borrow_mut().as_mut() {
-            state.shell_list = Some(dialog);
-        }
-    });
-}
-
-/// Raises a dialog, takes the foreground for it, and focuses it, so its controls
-/// are read as they gain focus.
-fn focus_foreground(dialog: Dialog) {
-    dialog.raise();
-    if let Some(hwnd) = foreground::hwnd_of(dialog.get_handle()) {
-        foreground::force_foreground(hwnd);
-    }
-    dialog.set_focus();
-}
-
-/// Tears down the tray and settings dialog and exits the event loop.
-///
-/// Takes what it needs out of the thread-local and drops the borrow before
-/// calling into wx, matching [`show_menu`]'s discipline: `frame.close`
-/// below synchronously re-enters the close handler registered in [`init`]
-/// on this same call stack (see [`SHUTTING_DOWN`]'s doc comment), and
-/// holding a borrow of `GUI` across that call is exactly what used to
-/// panic here on every clean quit.
-fn shutdown() {
-    SHUTTING_DOWN.store(true, Ordering::SeqCst);
-    let torn_down = GUI.with(|cell| {
-        cell.borrow_mut().as_mut().map(|state| {
-            state.tray.remove_icon();
-            (state.frame, state.settings.take(), state.shell_list.take())
-        })
-    });
-    if let Some((frame, settings, shell_list)) = torn_down {
-        for dialog in [settings, shell_list].into_iter().flatten() {
-            if dialog.is_valid() {
-                dialog.destroy();
+    /// Acts on every message waiting in the channel.
+    fn drain(&self) {
+        while let Ok(message) = self.receiver.try_recv() {
+            match message {
+                GuiMessage::Command(command) => self.dispatch(command),
+                GuiMessage::ShellItems(kind, items) => self.present_shell_items(kind, items),
             }
         }
-        if let Some(hwnd) = foreground::hwnd_of(frame.get_handle()) {
+    }
+
+    /// Acts on one command.
+    fn dispatch(&self, command: GuiCommand) {
+        match command {
+            GuiCommand::ShowMenu => self.show_menu(),
+            GuiCommand::OpenSettings => self.open_settings(),
+            GuiCommand::OpenShellItemList(kind) => self.open_shell_item_list(kind),
+            GuiCommand::Shutdown => self.shut_down(),
+        }
+    }
+
+    fn tray_clicked(&self) {
+        self.show_menu();
+    }
+
+    fn menu_chosen(&self, choice: ffi::MenuChoice) {
+        match choice {
+            ffi::MenuChoice::Settings => self.open_settings(),
+            ffi::MenuChoice::Exit => {
+                let _ = self.events.send(GuiEvent::QuitRequested);
+            }
+            _ => {}
+        }
+    }
+
+    /// Prepares for a popup, NVDA's `prePopup`: make the frame visible and
+    /// take the foreground.
+    ///
+    /// A menu or dialog popped from a hidden, background window gets neither
+    /// the foreground nor keyboard focus — Windows raises no foreground
+    /// event, so Verbatim's own supervisor never targets our process and
+    /// never reads the popup. Showing the (1x1) frame and forcing it
+    /// foreground fixes both.
+    fn pre_popup() {
+        ffi::show_frame();
+        if let Some(hwnd) = foreground::hwnd_of(ffi::frame_handle()) {
+            foreground::force_foreground(hwnd);
+        }
+    }
+
+    /// Cleans up after a popup, NVDA's `postPopup`: hide the frame again so
+    /// we keep no visible window and the foreground falls back to the
+    /// previous application — unless the lifecycle says a dialog still
+    /// needs the frame as its visible owner.
+    fn post_popup(after: Frame) {
+        if after == Frame::Hide {
+            ffi::hide_frame();
+        }
+    }
+
+    /// Pops the Verbatim menu at screen centre.
+    fn show_menu(&self) {
+        let pop = self.lifecycle.borrow_mut().request_menu();
+        if !pop {
+            return;
+        }
+        let at = ffi::centre_frame();
+        let (x, y) = (at.x, at.y);
+        Self::pre_popup();
+        // The menu's nested loop dispatches the chosen item (which may open
+        // settings) before this returns.
+        let shown = ffi::popup_menu(at);
+        // Info, not debug: whether the popup actually showed is the first
+        // fact needed when diagnosing a menu that opened silently or not at
+        // all, and it fires only on an explicit user gesture, so it cannot
+        // flood the log.
+        tracing::info!(shown, x, y, "popped the Verbatim menu");
+        let after = self.lifecycle.borrow_mut().menu_closed();
+        Self::post_popup(after);
+    }
+
+    /// Opens the settings dialog, or focuses the existing one.
+    fn open_settings(&self) {
+        let action = self.lifecycle.borrow_mut().request_settings();
+        match action {
+            OpenSettings::Ignore => {}
+            OpenSettings::FocusExisting => Self::focus_foreground(ffi::DialogKind::Settings),
+            OpenSettings::Create => {
+                // Take the foreground before the dialog exists, so the
+                // process already owns it when the dialog asks for it.
+                Self::pre_popup();
+                ffi::open_settings_dialog(&settings::dialog());
+                Self::focus_foreground(ffi::DialogKind::Settings);
+            }
+        }
+    }
+
+    /// Opens the shell item list dialog for `kind`: focuses the existing
+    /// one when open, otherwise starts an enumeration on a worker thread
+    /// whose outcome comes back through the GUI's channel. The GUI thread
+    /// never blocks on the shell — see [`shell_items`]' module
+    /// documentation for the threading and deadline story.
+    fn open_shell_item_list(&self, kind: ShellItemKind) {
+        let action = self.lifecycle.borrow_mut().request_shell_list();
+        match action {
+            OpenShellList::Ignore => {
+                tracing::debug!("a shell item enumeration is already in flight; request dropped");
+            }
+            OpenShellList::FocusExisting => Self::focus_foreground(ffi::DialogKind::ShellList),
+            OpenShellList::Enumerate => {
+                let handle = self.handle.clone();
+                shell_items::request_shell_items(kind, move |items| {
+                    handle.post(GuiMessage::ShellItems(kind, items));
+                });
+            }
+        }
+    }
+
+    /// Presents an enumeration outcome when the lifecycle says to. A failed
+    /// or timed-out enumeration (already logged by the worker) presents
+    /// nothing.
+    fn present_shell_items(&self, kind: ShellItemKind, items: Option<Vec<shell_items::ShellItem>>) {
+        let present = self
+            .lifecycle
+            .borrow_mut()
+            .shell_items_arrived(items.is_some());
+        let (true, Some(items)) = (present, items) else {
+            return;
+        };
+        let (model, buttons) = tray_list::shell_list_dialog(kind, items).split();
+        *self.list_buttons.borrow_mut() = Some(buttons);
+        // Same discipline as settings: take the foreground before the
+        // dialog exists, so the process already owns it when the dialog
+        // asks.
+        Self::pre_popup();
+        ffi::open_list_dialog(&model);
+        Self::focus_foreground(ffi::DialogKind::ShellList);
+    }
+
+    /// Raises a dialog, takes the foreground for it, and focuses it, so its
+    /// controls are read as they gain focus.
+    fn focus_foreground(dialog: ffi::DialogKind) {
+        ffi::raise_dialog(dialog);
+        if let Some(hwnd) = foreground::hwnd_of(ffi::dialog_handle(dialog)) {
+            foreground::force_foreground(hwnd);
+        }
+        ffi::focus_dialog(dialog);
+    }
+
+    /// Tears down the tray, the dialogs, and the frame, and ends the event
+    /// loop.
+    fn shut_down(&self) {
+        self.lifecycle.borrow_mut().shut_down();
+        self.list_buttons.borrow_mut().take();
+        if let Some(hwnd) = foreground::hwnd_of(ffi::frame_handle()) {
             hidden_frame::unmark(hwnd);
         }
-        frame.close(true);
+        ffi::shut_down();
     }
-    if let Some(app) = wxdragon::get_app_instance() {
-        app.exit_main_loop();
+
+    fn dialog_closed(&self, dialog: ffi::DialogKind) {
+        let which = match dialog {
+            ffi::DialogKind::Settings => lifecycle::Dialog::Settings,
+            ffi::DialogKind::ShellList => {
+                self.list_buttons.borrow_mut().take();
+                lifecycle::Dialog::ShellList
+            }
+            _ => return,
+        };
+        let after = self.lifecycle.borrow_mut().closed(which);
+        Self::post_popup(after);
+    }
+
+    fn speech_page(&self) -> ffi::SpeechPage {
+        self.speech.borrow_mut().rebuild(self.host.as_ref())
+    }
+
+    /// Applies a change to one of the Speech page's controls live.
+    fn apply_change(&self, generation: u32, control: usize, change: ControlChange) {
+        let setting = self
+            .speech
+            .borrow()
+            .setting_for(generation, control, change);
+        if let Some((id, value)) = setting {
+            self.set_setting(&id, value);
+        }
+    }
+
+    fn set_setting(&self, id: &SettingId, value: SettingValue) {
+        if let Err(error) = self.host.set_setting(id, value) {
+            tracing::warn!(%error, setting = %id, "could not apply a setting");
+        }
+    }
+
+    fn slider_changed(&self, generation: u32, control: usize, value: i32) {
+        self.apply_change(generation, control, ControlChange::Number(value));
+    }
+
+    fn choice_changed(&self, generation: u32, control: usize, option: usize) {
+        self.apply_change(generation, control, ControlChange::Option(option));
+    }
+
+    fn toggle_changed(&self, generation: u32, control: usize, checked: bool) {
+        self.apply_change(generation, control, ControlChange::Toggle(checked));
+    }
+
+    fn commit_settings(&self) {
+        if let Err(error) = self.host.commit() {
+            tracing::warn!(%error, "could not save the settings");
+        }
+    }
+
+    fn revert_settings(&self) {
+        self.host.revert();
+    }
+
+    fn synthesizer_picker(&self) -> ffi::SynthesizerPicker {
+        settings::synthesizer_picker(self.host.as_ref())
+    }
+
+    fn choose_synthesizer(&self, index: usize) -> bool {
+        let synthesizers = self.host.synthesizers();
+        let active = self.host.active_synthesizer().id;
+        let Some(chosen) = settings::synthesizer_to_switch_to(&synthesizers, &active, index) else {
+            return false;
+        };
+        match self.host.set_active_synthesizer(&chosen) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "failed to switch synthesizer; keeping the current one");
+                false
+            }
+        }
+    }
+
+    fn list_button(&self, button: usize, item: usize) -> bool {
+        // The callback is taken out of the borrow before it runs.
+        let callback = self
+            .list_buttons
+            .borrow()
+            .as_ref()
+            .and_then(|buttons| buttons.callback(button));
+        callback.is_some_and(|callback| callback(item) == ButtonVerdict::Close)
     }
 }
 
-/// Closes the settings dialog and clears the singleton so the next open builds
-/// a fresh one. Called by the dialog's own OK, Cancel, and Enter/Escape paths.
-///
-/// With the dialog gone, the deferred `postPopup` hide happens here — unless
-/// the shell item list dialog is still open and needs the frame as its
-/// visible owner; then [`close_shell_list`] hides it later.
-pub(crate) fn close_settings(dialog: Dialog) {
-    let after = GUI.with(|cell| {
-        cell.borrow_mut().as_mut().map(|state| {
-            state.settings = None;
-            (state.frame, state.shell_list.is_some())
-        })
-    });
-    dialog.destroy();
-    if let Some((frame, shell_list_open)) = after
-        && !shell_list_open
-    {
-        frame.hide();
+/// What a key does in the settings dialog: the bridge's form of
+/// [`keys::route_key`].
+fn route_settings_key(
+    key: ffi::SettingsKey,
+    control: bool,
+    shift: bool,
+    focus: ffi::SettingsFocus,
+) -> ffi::SettingsKeyAction {
+    use keys::{DialogButton, FocusedControl, Key, KeyAction, KeyPress};
+
+    let key = match key {
+        ffi::SettingsKey::Enter => Key::Enter,
+        ffi::SettingsKey::Tab => Key::Tab,
+        ffi::SettingsKey::S => Key::S,
+        _ => Key::Other,
+    };
+    let focused = match focus {
+        ffi::SettingsFocus::Ok => FocusedControl::Button(DialogButton::Ok),
+        ffi::SettingsFocus::Cancel => FocusedControl::Button(DialogButton::Cancel),
+        ffi::SettingsFocus::Apply => FocusedControl::Button(DialogButton::Apply),
+        ffi::SettingsFocus::ChangeSynthesizer => {
+            FocusedControl::Button(DialogButton::ChangeSynthesizer)
+        }
+        ffi::SettingsFocus::SynthesizerName => FocusedControl::SynthesizerName,
+        _ => FocusedControl::Other,
+    };
+    match keys::route_key(
+        KeyPress {
+            key,
+            control,
+            shift,
+        },
+        focused,
+    ) {
+        KeyAction::PassThrough => ffi::SettingsKeyAction::PassThrough,
+        KeyAction::CycleCategory { forward: true } => ffi::SettingsKeyAction::NextCategory,
+        KeyAction::CycleCategory { forward: false } => ffi::SettingsKeyAction::PreviousCategory,
+        KeyAction::Activate(DialogButton::Ok) => ffi::SettingsKeyAction::Ok,
+        KeyAction::Activate(DialogButton::Cancel) => ffi::SettingsKeyAction::Cancel,
+        KeyAction::Activate(DialogButton::Apply) => ffi::SettingsKeyAction::Apply,
+        KeyAction::Activate(DialogButton::ChangeSynthesizer) => {
+            ffi::SettingsKeyAction::ChangeSynthesizer
+        }
     }
 }
 
-/// Closes the shell item list dialog and clears its singleton: the shared
-/// dismissal path for Cancel, Escape, window close, and every click button.
-/// The deferred `postPopup` hide happens here on the same terms as
-/// [`close_settings`], deferring to the settings dialog when it is open.
-pub(crate) fn close_shell_list(dialog: Dialog) {
-    let after = GUI.with(|cell| {
-        cell.borrow_mut().as_mut().map(|state| {
-            state.shell_list = None;
-            (state.frame, state.settings.is_some())
-        })
-    });
-    dialog.destroy();
-    if let Some((frame, settings_open)) = after
-        && !settings_open
-    {
-        frame.hide();
+/// The category after `current` among `count`, wrapping: the bridge's form
+/// of [`plan::cycle_index`].
+fn next_category(current: usize, count: usize, forward: bool) -> usize {
+    plan::cycle_index(current, count, forward)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bridge_routes_keys_as_the_router_does() {
+        use ffi::{SettingsFocus as Focus, SettingsKey as Key, SettingsKeyAction as Action};
+        assert_eq!(
+            route_settings_key(Key::Enter, false, false, Focus::Cancel),
+            Action::Cancel
+        );
+        assert_eq!(
+            route_settings_key(Key::Enter, false, false, Focus::SynthesizerName),
+            Action::ChangeSynthesizer
+        );
+        assert_eq!(
+            route_settings_key(Key::Enter, false, false, Focus::Other),
+            Action::Ok
+        );
+        assert_eq!(
+            route_settings_key(Key::S, true, false, Focus::Other),
+            Action::Apply
+        );
+        assert_eq!(
+            route_settings_key(Key::Tab, true, true, Focus::Other),
+            Action::PreviousCategory
+        );
+        assert_eq!(
+            route_settings_key(Key::Tab, false, false, Focus::Other),
+            Action::PassThrough
+        );
     }
 }
