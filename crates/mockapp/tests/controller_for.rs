@@ -17,7 +17,7 @@ mod harness;
 
 use std::sync::{Arc, Mutex};
 
-use verbatim_uia::{Registration, Scope, Subscription, Uia};
+use verbatim_uia::{ElementExt, Registration, Scope, Subscription, Uia};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationElement, TreeScope_Descendants, UIA_NamePropertyId,
@@ -32,15 +32,12 @@ fn find(
     name: &str,
     cache: &IUIAutomationCacheRequest,
 ) -> IUIAutomationElement {
-    // SAFETY: a name condition and a cached search under a live element.
-    unsafe {
-        let condition = uia
-            .client()
-            .CreatePropertyCondition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
-            .expect("name condition");
-        root.FindFirstBuildCache(TreeScope_Descendants, &condition, cache)
-            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
-    }
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
+        .expect("name condition");
+    root.find_first_build_cache(TreeScope_Descendants, &condition, cache)
+        .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
+        .unwrap_or_else(|| panic!("no element named {name:?}"))
 }
 
 fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {

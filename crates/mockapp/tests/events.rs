@@ -78,12 +78,8 @@ fn uia_set_name_raises_a_property_changed_event() {
     .expect("FindAllBuildCache");
     let registry =
         verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    // SAFETY: `children` is the array just returned above.
-    let count = unsafe { children.Length() }.unwrap_or(0);
     let mut found_renamed = false;
-    for i in 0..count {
-        // SAFETY: `i` is within `[0, count)`.
-        let child = unsafe { children.GetElement(i) }.expect("GetElement");
+    for child in verbatim_uia::elements_of(&children) {
         let snapshot = verbatim_uia::map::snapshot_from_cached_element(&child, &registry);
         if snapshot.name.as_deref() == Some("Renamed") {
             found_renamed = true;
