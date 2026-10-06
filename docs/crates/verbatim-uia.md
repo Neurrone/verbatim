@@ -88,6 +88,12 @@ Public API:
   Invoke and no name otherwise, as NVDA names them; each fetched live since
   activation is an infrequent user action, not something the cache
   prefetches.
+- `cached_properties(fetches)` and `cache_request_for(client, fetches)`
+  (also `Uia::cache_request_for`) — the base set without the properties of
+  the details the active theme reports as off (`FullDescription` and
+  `HelpText`, `AccessKey` and `AcceleratorKey`, `PositionInSet` and
+  `SizeOfSet`, and `Level`), in the same order; with every detail wanted
+  it is exactly `CACHED_PROPERTIES`.
 - `base_cache_request(client)` — the property set prefetched with every
   event and fetch: name, control type, value, process id, native window
   handle, enabled, focus states, toggle, expand-collapse, and

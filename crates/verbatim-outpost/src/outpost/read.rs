@@ -98,11 +98,16 @@ impl Client {
         self.uia.as_ref()
     }
 
-    fn uia_and_cache(&mut self) -> Result<(&Uia, IUIAutomationCacheRequest), ReadError> {
+    /// The UIA client and a cache request for the details the active theme
+    /// wants read.
+    fn uia_and_cache(
+        &mut self,
+        context: &Context,
+    ) -> Result<(&Uia, IUIAutomationCacheRequest), ReadError> {
         let uia = self
             .uia()
             .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
-        let cache = uia.base_cache_request().map_err(|error| {
+        let cache = context.uia_cache(uia).map_err(|error| {
             ReadError::Failed(format!("could not build a cache request: {error}"))
         })?;
         Ok((uia, cache))
@@ -195,7 +200,7 @@ fn window_snapshot(
         return Some((Backend::Msaa, node));
     }
     if window_uses_uia(context, hwnd) {
-        let (uia, cache) = client.uia_and_cache().ok()?;
+        let (uia, cache) = client.uia_and_cache(context).ok()?;
         let element = uia.element_from_handle(hwnd, &cache).ok()?;
         let node = snapshot_from_cached_element(&element, &context.uia_registry);
         Some((Backend::Uia, node))
@@ -404,11 +409,12 @@ pub(super) fn uia_remote_enrichment(
             Some((node.id, runtime_id))
         })
         .unzip();
+    let properties = verbatim_uia::cached_properties(context.fetches());
     let query = FocusQuery {
         element,
         known: &known,
         depth_limit: MAX_ANCESTOR_HOPS,
-        properties: verbatim_uia::CACHED_PROPERTIES,
+        properties: &properties,
         deadline: Some(deadline),
     };
     let answer = uia
@@ -552,7 +558,7 @@ pub(super) fn msaa_enrichment(
     // ancestor. A dialog is still announced, by its client area's dialog
     // role.
     let deadline = std::time::Instant::now() + ENRICHMENT_BUDGET;
-    let ancestors = match client.uia_and_cache() {
+    let ancestors = match client.uia_and_cache(context) {
         // A UIA read in the walk waits no longer than the budget.
         Ok((uia, cache)) => uia
             .within(ENRICHMENT_BUDGET, |uia| {
@@ -578,7 +584,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         return None;
     }
     if window_uses_uia(context, hwnd) {
-        let (uia, cache) = client.uia_and_cache().ok()?;
+        let (uia, cache) = client.uia_and_cache(context).ok()?;
         let element = uia.focused_element(&cache).ok()?;
         let node = with_legacy_checked_state(
             &element,
@@ -685,7 +691,7 @@ fn uia_node<'a>(
     client: &'a mut Client,
     node_id: NodeId,
 ) -> Result<(&'a Uia, IUIAutomationCacheRequest, IUIAutomationElement), ReadError> {
-    let (uia, cache) = client.uia_and_cache()?;
+    let (uia, cache) = client.uia_and_cache(context)?;
     let element = resolve_uia_element(context, uia, &cache, node_id)?;
     Ok((uia, cache, element))
 }
@@ -795,7 +801,7 @@ fn corrected_backend(
         return neighbor;
     }
     client
-        .uia_and_cache()
+        .uia_and_cache(context)
         .ok()
         .and_then(|(uia, cache)| uia.element_from_handle(window, &cache).ok())
         // The element was just built with the base cache request.
@@ -856,7 +862,7 @@ pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<Dumped
         ReadError::Failed("the target application has no top-level window".to_owned())
     })?;
     if window_uses_uia(context, hwnd) {
-        let (uia, cache) = client.uia_and_cache()?;
+        let (uia, cache) = client.uia_and_cache(context)?;
         let element = uia.element_from_handle(hwnd, &cache).map_err(|error| {
             ReadError::Failed(format!(
                 "could not fetch the top-level UIA element: {error}"

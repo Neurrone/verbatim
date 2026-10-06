@@ -765,6 +765,7 @@ impl ReducerThread<'_> {
                 target_pid,
             } => {
                 self.live.started(outpost, target_pid);
+                self.send_fetches();
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -1061,6 +1062,7 @@ impl ReducerThread<'_> {
             self.context.supervisor.note_views(views.0, views.1.clone());
             self.views = views;
         }
+        self.send_fetches();
         for (outpost, live) in self.live.iter_mut() {
             let nodes: BTreeSet<u64> = held
                 .get(outpost)
@@ -1082,6 +1084,29 @@ impl ReducerThread<'_> {
                     live.position,
                 );
                 live.held_sent = (nodes, outpost_anchors, live.position);
+            }
+        }
+    }
+
+    /// Tells each live outpost the details the active theme wants read
+    /// (`SrState::fetches`), when they differ from what it was last told:
+    /// a detail whose indication is off is not read at all. A new outpost
+    /// is told at once, before it reports anything.
+    fn send_fetches(&mut self) {
+        let fetches = self.state.fetches();
+        for (outpost, live) in self.live.iter_mut() {
+            if live.fetches_sent == Some(fetches) {
+                continue;
+            }
+            match self
+                .context
+                .supervisor
+                .send_to_outpost(*outpost, SupervisorToOutpost::Fetches(fetches))
+            {
+                Ok(()) => live.fetches_sent = Some(fetches),
+                // A full queue is retried after the next input; a closed
+                // one belongs to an outpost that is ending.
+                Err(error) => tracing::debug!(%error, %outpost, "the fetches were not sent yet"),
             }
         }
     }

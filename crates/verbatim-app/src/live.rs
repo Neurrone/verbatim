@@ -1,7 +1,8 @@
 //! The outpost incarnations the reducer thread treats as live (outpost
 //! redesign, "The app shell"): started and not yet ended, with the
-//! application each watches, whether it is ready, and the bookkeeping for
-//! the nodes held in it.
+//! application each watches, whether it is ready, the bookkeeping for the
+//! nodes held in it and the details it was told to read, and whether its
+//! application has stopped responding.
 //!
 //! This is the one owner of the rule that a message from an outpost that
 //! has ended never reaches the reducer, even when it arrives after its
@@ -11,7 +12,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use verbatim_model::{OutpostId, Pid};
+use verbatim_model::{Fetches, OutpostId, Pid};
 
 /// A live outpost incarnation.
 pub(crate) struct Live {
@@ -27,6 +28,8 @@ pub(crate) struct Live {
     /// Whether its last query passed its deadline with no answer since:
     /// the application is not responding.
     stalled: bool,
+    /// The details to read last sent to it, `None` before the first.
+    pub(crate) fetches_sent: Option<Fetches>,
 }
 
 /// The live outpost incarnations, by outpost id.
@@ -46,6 +49,7 @@ impl LiveOutposts {
                 position: 0,
                 held_sent: (BTreeSet::new(), BTreeSet::new(), 0),
                 stalled: false,
+                fetches_sent: None,
             },
         );
     }

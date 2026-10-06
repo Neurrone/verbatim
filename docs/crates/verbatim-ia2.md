@@ -195,7 +195,11 @@ Public API:
   (`LVM_GETITEMCOUNT`, `TVM_GETNEXTITEM`, and the two child-id mapping
   messages), each counted as a window message; it offers only messages
   whose parameters are plain integers.
-- `NodeIdRegistry` — the nodes the outpost has issued, each with its
+- `NodeIdRegistry` — also carries the details a read includes
+  (`fetches` and `set_fetches`, a `verbatim_model::Fetches`, everything by
+  default): a snapshot skips `accDescription`, `accKeyboardShortcut`, the
+  list and tree position reads, and a tree item's level when the active
+  theme reports them as off. And the nodes the outpost has issued, each with its
   address (window handle, object id, and child id), the role read when it
   was issued, and the accessible object it was read from, kept as an agile
   reference; it shares the outpost-wide counter with the UIA registry. It

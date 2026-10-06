@@ -333,7 +333,9 @@ window, `WindowFromAccessibleObject`).
   (`accParent` in place of `accNavigate`).
 - Today: 10 each. mockapp answered 9 provider calls for the next sibling
   and 15 for the parent, 8 of them `accParent` from
-  `WindowFromAccessibleObject`'s walk.
+  `WindowFromAccessibleObject`'s walk. With a theme reporting descriptions
+  and shortcuts as off, a next sibling is 8 calls: neither property is
+  read (milestone M4, themes).
 - Target: 10 each.
 
 ### An interrupt

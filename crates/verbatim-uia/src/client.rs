@@ -100,6 +100,19 @@ impl Uia {
         base_cache_request(&self.client)
     }
 
+    /// Builds the cache request for the details `fetches` names, bound to
+    /// this client ([`crate::cache_request_for`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the cache request cannot be built.
+    pub fn cache_request_for(
+        &self,
+        fetches: verbatim_model::Fetches,
+    ) -> windows::core::Result<IUIAutomationCacheRequest> {
+        crate::cache::cache_request_for(&self.client, fetches)
+    }
+
     /// Builds a cache request for exactly `properties`. Local.
     ///
     /// # Errors

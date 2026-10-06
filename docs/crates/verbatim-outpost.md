@@ -480,6 +480,22 @@ Implementation notes:
   for a released node answers `Gone`. Core's writer replaces a waiting
   list with a newer one and lets it past a full queue; the intake queue
   likewise keeps only the newest and never limits it.
+- What to read (milestone M4, `phase6-design.md`, "Themes: one model for
+  verbosity, speech, and sounds"). `SupervisorToOutpost::Fetches` carries
+  the details the active theme wants read for each node
+  (`SrState::fetches`); the app sends it to each outpost as it starts and
+  again whenever the theme in use changes, and the reader applies it at
+  once. Until it arrives, everything is read. A detail whose indication is
+  off is not read: UIA reads in the worker build their cache requests, and
+  the remote focus walk its property list, from
+  `verbatim_uia::cached_properties`, which leaves out the description's,
+  shortcut's, position's, and level's properties when those are off; MSAA
+  reads skip `accDescription` and `accKeyboardShortcut` and the list and
+  tree position reads through the MSAA registry, which holds the same
+  setting. The cache requests of the UIA event subscriptions are fixed when
+  they are registered and still ask for everything; the presentation stage
+  drops what is off either way. The outpost reads no text formatting yet,
+  so the formatting details change nothing here.
 - Text (milestone M4, `text` and the worker's `text_reads`). A `Query::Text`
   is answered `QueryResult::Text` with whatever the protocol answers,
   `NoText` and `Gone` among them, so Core hands every answer to the reducer
