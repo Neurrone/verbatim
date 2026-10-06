@@ -662,10 +662,7 @@ fn states_changed_as_the_focus_leaves_an_item_is_silent() {
         None,
         selectable.with(State::Focused).with(State::Selected),
     );
-    let (state, _) = reduce(
-        &SrState::new(),
-        &focus_event(TraceId::mint(), source, item),
-    );
+    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
 
     let left = states_changed_input(TraceId::mint(), source, node_id, selectable);
     let (_, effects) = reduce(&state, &left);
@@ -688,10 +685,7 @@ fn states_changed_unselecting_the_focused_item_announces_not_selected() {
         None,
         focused.with(State::Selected),
     );
-    let (state, _) = reduce(
-        &SrState::new(),
-        &focus_event(TraceId::mint(), source, item),
-    );
+    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
 
     let unselected = states_changed_input(TraceId::mint(), source, node_id, focused);
     let (_, effects) = reduce(&state, &unselected);
