@@ -286,7 +286,7 @@ fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> 
 /// The cross-process calls this thread has made through either backend
 /// since the last take, resetting the count. Only the worker calls into the
 /// application, so on the worker this is what the entry in hand has made.
-fn take_calls() -> CallCounts {
+pub(super) fn take_calls() -> CallCounts {
     verbatim_uia::calls::take() + verbatim_ia2::calls::take()
 }
 
@@ -1786,6 +1786,7 @@ impl Worker<'_> {
         let context = self.context;
         let client = &mut *self.client;
         let started = std::time::Instant::now();
+        let mut awaited = None;
         let result = match query {
             Query::FocusNow => Ok(QueryResult::Focus(read::focus_now(context, client))),
             Query::Navigate { node_id, kind } => {
@@ -1799,7 +1800,9 @@ impl Worker<'_> {
             }
             Query::DumpTree => read::dump_tree(context, client).map(QueryResult::Tree),
             Query::Text { node_id, op } => {
-                Ok(QueryResult::Text(text_reads::answer(context, *node_id, op)))
+                let (reply, wait) = text_reads::answer(context, *node_id, op);
+                awaited = wait;
+                Ok(QueryResult::Text(reply))
             }
         };
         let outcome = match result {
@@ -1822,7 +1825,9 @@ impl Worker<'_> {
                 outcome,
                 timing: EventTiming {
                     published_at_us: now_us(),
-                    calls: take_calls(),
+                    awaited_at_us: awaited.map_or(0, |awaited| awaited.at_us),
+                    awaited_calls: awaited.map(|awaited| awaited.calls).unwrap_or_default(),
+                    calls: awaited.map(|awaited| awaited.calls).unwrap_or_default() + take_calls(),
                     ..self.timing
                 },
             },

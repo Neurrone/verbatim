@@ -95,7 +95,10 @@ worker thread, the only thread that calls into the application, so the
 worker's count is exactly the calls its current entry has made. The worker
 takes the count when it publishes an event or a query reply and sends it
 in the message's timing; Core's latency ledger keeps it with the trace, and
-`verbatim-inspect latency` prints it with the outpost read stage.
+`verbatim-inspect latency` prints it with the outpost read stage. For a
+caret key, the calls its wait for evidence made are taken when the wait
+ends and printed with the caret wait stage instead; the message's total
+still holds them, so the counts this ledger pins are unchanged.
 
 ## Cold and steady state
 

@@ -20,7 +20,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use verbatim_control::client::{Client, ok_or_error};
 use verbatim_control::protocol::{
-    Frame, LatencyRecord, LatencyStage, OutpostState, ReplyPayload, Request, StatusInfo,
+    Frame, LatencyRecord, LatencyStage, LatencyStageKind, OutpostState, ReplyPayload, Request,
+    StatusInfo,
 };
 use verbatim_model::{CallCounts, NodeSnapshot, NormalizedEvent, PropertyChange, TreeNode};
 
@@ -333,21 +334,24 @@ fn print_latency_record(record: &LatencyRecord) {
     }
 }
 
-/// One stage of a latency timeline as a line: its time and, for the stage
-/// that makes cross-process calls, how many it made and its time as a
-/// ratio to the floor (`docs/performance.md`, "The floor and the ratio").
-/// The floor is the operation's minimum call count times the cost of one
-/// call measured against the same application; only the end-to-end suite
-/// measures that cost, so here the ratio is reported as needing it.
+/// One stage of a latency timeline as a line: its time and, for the stages
+/// that make cross-process calls, how many they made; for the outpost read,
+/// also its time as a ratio to the floor (`docs/performance.md`, "The floor
+/// and the ratio"). The floor is the operation's minimum call count times
+/// the cost of one call measured against the same application; only the
+/// end-to-end suite measures that cost, so here the ratio is reported as
+/// needing it. A caret key's wait for evidence has no floor: it lasts until
+/// the application shows what the key did.
 fn stage_line(stage: &LatencyStage) -> String {
     // Microseconds fit an f64 exactly at any stage length that matters.
     let ms = f64::from(u32::try_from(stage.duration_us).unwrap_or(u32::MAX)) / 1_000.0;
     let line = format!("{}: {ms:.1} ms", stage.kind.label());
     match stage.calls {
-        Some(calls) => format!(
+        Some(calls) if stage.kind == LatencyStageKind::OutpostRead => format!(
             "{line}, {}; ratio to floor unknown: the floor needs calibration",
             describe_calls(calls)
         ),
+        Some(calls) => format!("{line}, {}", describe_calls(calls)),
         None => line,
     }
 }
@@ -423,8 +427,6 @@ fn quit(client: &mut Client) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_control::protocol::LatencyStageKind;
-
     use super::*;
 
     #[test]
@@ -454,5 +456,19 @@ mod tests {
             ..read
         };
         assert!(stage_line(&none).starts_with("outpost read: 7.0 ms, 0 calls; "));
+        let wait = LatencyStage {
+            kind: LatencyStageKind::CaretWait,
+            duration_us: 100_000,
+            calls: Some(CallCounts {
+                uia: 60,
+                msaa: 0,
+                window_messages: 0,
+            }),
+        };
+        assert_eq!(
+            stage_line(&wait),
+            "caret wait: 100.0 ms, 60 calls: 60 UIA",
+            "a wait has no floor"
+        );
     }
 }

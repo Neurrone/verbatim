@@ -8,7 +8,10 @@
 //! `verbatim::latency` target, when its audio starts: how long each stage
 //! took, from Windows raising the event to the audio engine taking the first
 //! sample, in milliseconds, with the cross-process calls the outpost's read
-//! made (`docs/performance.md`). Time spent waiting behind earlier speech is
+//! made (`docs/performance.md`). A caret key's line starts when the keyboard
+//! hook saw the key, and divides the outpost's work into the wait for
+//! evidence that the key did something and the read after it. Time spent
+//! waiting behind earlier speech is
 //! reported but not counted, since it is not latency but the queue doing its
 //! job. The same stages and counts travel to `verbatim-inspect latency` in
 //! each record.
@@ -19,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
-use verbatim_model::{Indication, TraceId, UtteranceEnding, UtteranceId};
+use verbatim_model::{CallCounts, Indication, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_outpost::protocol::{EventTiming, now_us};
 use verbatim_speech::SpeechEvents;
 
@@ -49,8 +52,14 @@ struct Entry {
 /// first utterance.
 #[derive(Default)]
 struct Stages {
+    /// When the keyboard hook saw the caret key behind the trace.
+    key_pressed: Option<u64>,
+    /// When the reducer first handled the trace's input before any outpost
+    /// answered for it: a caret key, or a command, which may ask an outpost.
+    requested: Option<u64>,
     event: Option<EventTiming>,
     core_received: Option<u64>,
+    /// When the reducer handled what an outpost sent for the trace.
     reduced: Option<u64>,
     utterance: Option<UtteranceId>,
     text: String,
@@ -75,60 +84,107 @@ fn us_to_ms(us: u64) -> f64 {
     f64::from(u32::try_from(us).unwrap_or(u32::MAX)) / 1_000.0
 }
 
+/// The calls in `total` that are not in `part`, by kind.
+fn calls_besides(total: CallCounts, part: CallCounts) -> CallCounts {
+    CallCounts {
+        uia: total.uia.saturating_sub(part.uia),
+        msaa: total.msaa.saturating_sub(part.msaa),
+        window_messages: total.window_messages.saturating_sub(part.window_messages),
+    }
+}
+
 impl Stages {
     /// How long each stage the announcement has passed took, in pipeline
-    /// order, with the outpost read's cross-process calls.
+    /// order, with the cross-process calls of the caret wait and the
+    /// outpost read.
     fn breakdown(&self) -> Vec<LatencyStage> {
         let event = self.event.unwrap_or_default();
         let at = |us: u64| (us != 0).then_some(us);
         let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
         let observed = at(event.observed_at_us);
-        let received_by_outpost = at(event.relayed_at_us).or(observed);
+        let relayed = at(event.relayed_at_us);
+        let received_by_outpost = relayed.or(observed);
+        let dequeued = at(event.dequeued_at_us);
+        let awaited = at(event.awaited_at_us);
+        let read_calls = calls_besides(event.calls, event.awaited_calls);
         [
             (
                 LatencyStageKind::Windows,
                 event.raised_ms_ago.map(|ms| u64::from(ms) * 1_000),
+                None,
+            ),
+            (
+                LatencyStageKind::HookToCore,
+                span(self.key_pressed, self.requested),
+                None,
             ),
             (
                 LatencyStageKind::ListenerToOutpost,
-                span(observed, at(event.relayed_at_us)),
+                span(observed, relayed),
+                None,
+            ),
+            // A request Core made, not an event it relayed from the
+            // listener, which the stage before covers.
+            (
+                LatencyStageKind::CoreToOutpost,
+                observed
+                    .is_none()
+                    .then(|| span(self.requested, relayed))
+                    .flatten(),
+                None,
             ),
             (
                 LatencyStageKind::OutpostQueue,
-                span(received_by_outpost, at(event.dequeued_at_us)),
+                span(received_by_outpost, dequeued),
+                None,
+            ),
+            (
+                LatencyStageKind::CaretWait,
+                span(dequeued, awaited),
+                Some(event.awaited_calls),
             ),
             (
                 LatencyStageKind::OutpostRead,
-                span(at(event.dequeued_at_us), at(event.published_at_us)),
+                span(awaited.or(dequeued), at(event.published_at_us)),
+                Some(read_calls),
             ),
             (
                 LatencyStageKind::ToCore,
                 span(at(event.published_at_us), self.core_received),
+                None,
             ),
             (
                 LatencyStageKind::Reducer,
                 span(self.core_received, self.reduced),
+                None,
             ),
-            (LatencyStageKind::ToSpeech, span(self.reduced, self.queued)),
+            (
+                LatencyStageKind::ToSpeech,
+                span(self.reduced.or(self.requested), self.queued),
+                None,
+            ),
             (
                 LatencyStageKind::Synthesis,
                 span(self.synthesis_started, self.synthesizer_audio),
+                None,
             ),
             (
                 LatencyStageKind::LeadingSilence,
                 span(self.synthesizer_audio, self.audio_to_mixer),
+                None,
             ),
             (
                 LatencyStageKind::MixerAndDevice,
                 span(self.audio_to_mixer, self.audio_started),
+                None,
             ),
         ]
         .into_iter()
-        .filter_map(|(kind, duration_us)| {
+        .filter_map(|(kind, duration_us, calls)| {
             Some(LatencyStage {
                 kind,
                 duration_us: duration_us?,
-                calls: (kind == LatencyStageKind::OutpostRead).then_some(event.calls),
+                calls,
             })
         })
         .collect()
@@ -142,7 +198,14 @@ impl Stages {
         let ms = |from: u64, to: u64| us_to_ms(to.saturating_sub(from));
         let observed = (event.observed_at_us != 0).then_some(event.observed_at_us);
         let windows = event.raised_ms_ago.map_or(0.0, f64::from);
-        let start = observed.or(self.core_received).unwrap_or(queued);
+        // The trace's first point: the caret key, the event, the request
+        // Core made, or the outpost's message reaching Core.
+        let start = self
+            .key_pressed
+            .or(observed)
+            .or(self.requested)
+            .or(self.core_received)
+            .unwrap_or(queued);
         let event_side = ms(start, queued) + windows;
         let started = self.synthesis_started.unwrap_or(queued);
         let waited = ms(queued, started);
@@ -227,6 +290,15 @@ impl LatencyLedger {
         }
     }
 
+    /// Records when the keyboard hook saw the caret key behind `trace_id`,
+    /// in microseconds since the Unix epoch: where its timeline starts.
+    pub fn key_pressed(&self, trace_id: TraceId, at_us: u64) {
+        self.update(trace_id, |entry| {
+            entry.event_observed_at_ms = Some(at_us / 1_000);
+            entry.stages.key_pressed = Some(at_us);
+        });
+    }
+
     /// Records when an OS event behind `trace_id` was first observed.
     pub fn event_observed(&self, trace_id: TraceId, at_ms: u64) {
         self.update(trace_id, |entry| {
@@ -245,11 +317,19 @@ impl LatencyLedger {
         });
     }
 
-    /// Records that the reducer has handled the input behind `trace_id`.
+    /// Records that the reducer has handled the input behind `trace_id`:
+    /// what an outpost sent for it, once Core has received that, and
+    /// otherwise the trace's own input (a caret key or a command), which
+    /// may ask an outpost.
     pub fn reduced(&self, trace_id: TraceId) {
         let now = now_us();
         self.update(trace_id, |entry| {
-            entry.stages.reduced.get_or_insert(now);
+            let stages = &mut entry.stages;
+            if stages.core_received.is_some() {
+                stages.reduced.get_or_insert(now);
+            } else {
+                stages.requested.get_or_insert(now);
+            }
         });
     }
 
@@ -539,6 +619,8 @@ mod tests {
     #[test]
     fn the_latency_line_names_each_stage_and_leaves_out_the_wait() {
         let stages = Stages {
+            key_pressed: None,
+            requested: None,
             event: Some(EventTiming {
                 raised_ms_ago: Some(1),
                 observed_at_us: 1_000,
@@ -619,6 +701,105 @@ mod tests {
         };
         let line = stages.line().expect("spoken");
         assert!(line.contains("outpost read 7.0 (4 calls)"), "{line}");
+    }
+
+    #[test]
+    fn a_caret_keys_line_starts_at_the_hook_and_divides_the_wait_from_the_read() {
+        let stages = Stages {
+            key_pressed: Some(1_000),
+            requested: Some(1_400),
+            event: Some(EventTiming {
+                relayed_at_us: 1_600,
+                dequeued_at_us: 1_700,
+                awaited_at_us: 101_700,
+                published_at_us: 103_700,
+                calls: CallCounts {
+                    uia: 69,
+                    msaa: 0,
+                    window_messages: 0,
+                },
+                awaited_calls: CallCounts {
+                    uia: 60,
+                    msaa: 0,
+                    window_messages: 0,
+                },
+                ..EventTiming::default()
+            }),
+            core_received: Some(104_000),
+            reduced: Some(104_100),
+            utterance: Some(UtteranceId(1)),
+            text: "alpha beta gamma".to_owned(),
+            queued: Some(104_500),
+            synthesis_started: Some(104_500),
+            synthesizer_audio: Some(105_500),
+            audio_to_mixer: Some(105_600),
+            audio_started: Some(106_500),
+        };
+        let kinds: Vec<_> = stages.breakdown().iter().map(|stage| stage.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                LatencyStageKind::HookToCore,
+                LatencyStageKind::CoreToOutpost,
+                LatencyStageKind::OutpostQueue,
+                LatencyStageKind::CaretWait,
+                LatencyStageKind::OutpostRead,
+                LatencyStageKind::ToCore,
+                LatencyStageKind::Reducer,
+                LatencyStageKind::ToSpeech,
+                LatencyStageKind::Synthesis,
+                LatencyStageKind::LeadingSilence,
+                LatencyStageKind::MixerAndDevice,
+            ]
+        );
+        let line = stages.line().expect("spoken");
+        assert!(
+            line.starts_with(
+                "105.5 ms for \"alpha beta gamma\": 103.5 ms to speech and 2.0 ms to sound"
+            ),
+            "{line}"
+        );
+        assert!(
+            line.contains(
+                "Event: hook to Core 0.4, Core to outpost 0.2, outpost queue 0.1, \
+                 caret wait 100.0 (60 calls), outpost read 2.0 (9 calls), to Core 0.3, \
+                 reducer 0.1, to speech 0.4."
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn the_ledger_splits_a_caret_keys_request_from_its_answer() {
+        let ledger = ledger();
+        let trace = TraceId::mint();
+        ledger.key_pressed(trace, 5_000_000);
+        ledger.reduced(trace);
+        ledger.event_received(
+            trace,
+            EventTiming {
+                relayed_at_us: now_us(),
+                dequeued_at_us: now_us(),
+                published_at_us: now_us(),
+                ..EventTiming::default()
+            },
+        );
+        ledger.reduced(trace);
+        let record = &ledger.recent(1)[0];
+        assert_eq!(record.event_observed_at_ms, 5_000, "it starts at the hook");
+        let kinds: Vec<_> = record.stages.iter().map(|stage| stage.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                LatencyStageKind::HookToCore,
+                LatencyStageKind::CoreToOutpost,
+                LatencyStageKind::OutpostQueue,
+                LatencyStageKind::OutpostRead,
+                LatencyStageKind::ToCore,
+                LatencyStageKind::Reducer,
+            ],
+            "the request's reduction and the answer's are separate stages"
+        );
     }
 
     #[test]

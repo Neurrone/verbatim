@@ -174,12 +174,22 @@ which is reported separately. The stages, in milliseconds:
 
 - Windows: how long before the hook saw it Windows raised the event
   (whole milliseconds, and only for WinEvents).
+- Hook to Core: for a caret key, from the keyboard hook seeing the key to
+  the reducer having handled it and asked the outpost for the caret.
 - Listener to outpost: from the listener observing the event, through
   Core, to the application's outpost, for focus the listener sees.
+- Core to outpost: from the reducer asking the outpost (a caret key's
+  wait, a command's query) to the outpost receiving the request.
 - Outpost queue: waiting for the outpost's worker, behind the
   application's other events.
-- Outpost read: the worker's cross-process UIA and MSAA calls, with how
-  many it made when it made any (`docs/performance.md` says what counts).
+- Caret wait: for a caret key, the outpost waiting for evidence that the
+  key did something, polling the caret every 10 ms until it moves or the
+  wait's 100 ms (300 ms in a terminal) run out, with the calls the polls
+  made. A key that moves nothing, such as Control+Home with the caret
+  already at the top, waits the full time, as NVDA does.
+- Outpost read: the worker's cross-process UIA and MSAA calls and window
+  messages, after the caret wait for a caret key, with how many it made
+  when it made any (`docs/performance.md` says what counts).
 - To Core, reducer, to speech: the pipe to Core, the reducer, and the
   hand-off to the speech manager.
 - Synthesis: from synthesis starting to the synthesizer's first audio,
@@ -189,7 +199,13 @@ which is reported separately. The stages, in milliseconds:
 
 A stage is left out when the announcement did not pass it; speech from a
 read Core asked for (the focus after a menu closes, at startup) has no
-outpost stages. For the synthesizer host's own split between the pipe and
+outpost stages. A caret key's line starts when the keyboard hook saw the
+key, so its total covers everything from the key to the first sample; the
+caret's report in a standard edit control, read through window messages,
+has the same stages as one read through UIA. A caret event with no key
+behind it (typing, a paste, a mouse click) is not spoken, as in NVDA,
+so it has no line; the report of the caret when a text field gains the
+focus is part of the focus's own trace. For the synthesizer host's own split between the pipe and
 synthesis, set `RUST_LOG=info,verbatim::stage=trace`: the host then logs
 `host request` and `host audio` with each trace id.
 - `dump-tree` asks the outpost for the foreground application's
