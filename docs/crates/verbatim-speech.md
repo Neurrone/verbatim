@@ -62,6 +62,8 @@ Public API:
   source, mixed over speech and never cancelled by it (a progress tone
   rising with the percentage), and its words, when the theme speaks it or
   its sound is unavailable, are queued as an utterance.
+  `play_sound(sound, gain)` plays any sound at once on the same source,
+  for the settings dialog to let a sound be heard.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
   any thread without blocking, which the keyboard hook and the reducer's
   effects use: `cancel()` cancels current and queued speech and ends a

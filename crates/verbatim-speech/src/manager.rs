@@ -46,7 +46,7 @@ use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use tracing::{info, trace, warn};
-use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, Source};
+use verbatim_audio::{AudioError, Mixer, PcmFormat, PlaybackEvent, Sound, Source};
 use verbatim_model::{
     Earcon, FocusNow, FocusValidity, Indication, SpeechPriority, TraceId, Utterance,
     UtteranceEnding, UtteranceId, UtteranceSegment,
@@ -396,6 +396,18 @@ impl SpeechManager {
                 validity: None,
             });
         }
+    }
+
+    /// Plays `sound` at once at `gain` (1.0 for as recorded), on the
+    /// events' mixer source: for the settings dialog to let a sound be
+    /// heard, as the theme panel's sound list and volume slider do.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::Stream`] when the sound cannot be converted to
+    /// the device's format.
+    pub fn play_sound(&self, sound: &Sound, gain: f32) -> Result<(), AudioError> {
+        self.earcons.play(sound, gain)
     }
 
     /// A handle for cancelling, pausing, and dropping expired speech.
