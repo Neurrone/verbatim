@@ -69,7 +69,9 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             query_id,
             reply,
         } => reduce_text_completed(state, *trace_id, *query_id, reply.clone()),
-        Input::CaretKey { key, .. } => editing::caret_key(state, *key),
+        Input::CaretKey {
+            key, pressed_at_ms, ..
+        } => editing::caret_key(state, *key, *pressed_at_ms),
         Input::CharacterTyped { trace_id, text } => {
             editing::character_typed(state, *trace_id, text)
         }

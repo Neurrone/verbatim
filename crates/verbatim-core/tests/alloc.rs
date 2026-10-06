@@ -243,6 +243,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
             motion: CaretMotion::NextCharacter,
             select: false,
         },
+        pressed_at_ms: 0,
     });
     let Some(Effect::Text(request)) = effects.first() else {
         panic!("expected a caret wait, got {effects:?}");

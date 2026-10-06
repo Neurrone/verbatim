@@ -169,11 +169,12 @@ Public API:
   a text pattern, where a position (`UiaPos`) is one end of a text range,
   and `edit::EditText`, over an edit control's messages, where it is an
   offset. `caret_report` reads the caret's line and the selection, for
-  `CaretMoved`. `Anchors` keeps one backend's anchors, by node, numbered
+  `CaretMoved`, and remembers when its read finished. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share; `NodeText` is one
   node's. `CaretSignal` is a caret key's wait: whether a caret event
-  arrived, waiting for one, and the clock, so the unit tests run on a fake
-  clock. Details under "Text" below.
+  arrived, waiting for one, and the clocks (an `Instant` for the wait
+  and Unix milliseconds for when a caret was read), so the unit tests run
+  on fake clocks. Details under "Text" below.
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global
@@ -538,9 +539,16 @@ Implementation notes:
     caret no longer where it was known to be, the characters either side
     of the caret changed from what was known, the text at the caret
     changed after a Delete, or the selection changed. Where it was known
-    to be is the caret this outpost last reported for the node when that
-    is newer than Core's (a caret event handled just before the request,
-    a paste's or an earlier key's), else Core's. The characters matter
+    to be is the newest caret this outpost reported for the node from a
+    read that finished before the key was pressed (the watch's
+    `pressed_at_ms`, stamped by the keyboard hook on the same Unix
+    millisecond clock as `observed_at_ms`), which can be newer than Core's
+    (an earlier key's late caret event, or a paste's), else Core's. A
+    caret read at or after the key's time is never the baseline: the
+    application's caret event for this very key can reach the outpost, and
+    be reported, before Core's request does, and judging against it would
+    find no evidence. The outpost remembers its last eight reports per
+    node for this. The characters matter
     because a provider's positions follow edits (a deleted character takes
     the known position with it) and the application may have handled the
     key before the request arrived; only the caret's neighbors count, since

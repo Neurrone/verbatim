@@ -30,7 +30,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 - The hook's gesture map observes the caret keys
   (`GestureMap::with_observed(caret_bindings())`): they reach the
   application, and each one the hook reports becomes `Input::CaretKey`
-  through the same table. Each text a key types becomes
+  through the same table, with the time the hook stamped it. Each text a key types becomes
   `Input::CharacterTyped` (the hook's translation,
   [verbatim-input-windows](verbatim-input-windows.md)), and each key that
   cancels speech also sends `Input::SpeechCancelled`, as does a gesture

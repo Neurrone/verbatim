@@ -91,10 +91,14 @@ fn editing(text: &str, offset: u32) -> SrState {
     state
 }
 
+/// When [`key`] says each key was pressed.
+const KEY_PRESSED_AT: u64 = 1_700_000_000_000;
+
 fn key(motion: CaretMotion, select: bool) -> Input {
     Input::CaretKey {
         trace_id: TraceId::mint(),
         key: CaretKey { motion, select },
+        pressed_at_ms: KEY_PRESSED_AT,
     }
 }
 
@@ -175,6 +179,9 @@ fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
             offset: 0
         })
     );
+    // When the key was pressed, for the outpost to tell which of its caret
+    // reports came before it.
+    assert_eq!(watch.pressed_at_ms, KEY_PRESSED_AT);
     assert_eq!(watch.unit, TextUnit::Character);
     assert_eq!(watch.wait, CaretWait::Standard);
     assert!(watch.previous_selection.is_none());

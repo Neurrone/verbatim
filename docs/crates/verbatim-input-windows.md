@@ -11,7 +11,14 @@ which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
 carries out each key press's effect on speech; `reports` is a
 `KeyReportFn` that receives, after the speech effect, what a key passed to
 the application did, a `KeyReport`: `Observed`, the observed gesture the
-key completed (a caret key, `Decision::observed`), or `Typed`, the text the
+key completed (a caret key, `Decision::observed`) and `pressed_at_ms`,
+the Unix time in milliseconds when the hook procedure ran, on the clock
+outposts stamp observations with; the application gets the key only once
+the hook returns, so an outpost's read that finished before that time
+came before the key. The key event's own `time` is not used: it counts
+from startup at the system timer's resolution of about 16 milliseconds,
+and converted to Unix time it could fall after the application handled
+the key. Or `Typed`, the text the
 key types, with a trace id minted when it was observed (the source of
 `Input::CharacterTyped`, milestone M4). Both are called on the hook thread,
 so they must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim

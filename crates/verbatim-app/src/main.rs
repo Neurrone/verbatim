@@ -331,10 +331,14 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         }),
         Box::new(move |report| {
             let input = match report {
-                KeyReport::Observed(observed) => match caret_keys.get(&observed.gesture) {
+                KeyReport::Observed {
+                    gesture,
+                    pressed_at_ms,
+                } => match caret_keys.get(&gesture.gesture) {
                     Some(&key) => Input::CaretKey {
-                        trace_id: observed.trace_id,
+                        trace_id: gesture.trace_id,
                         key,
+                        pressed_at_ms,
                     },
                     None => return,
                 },

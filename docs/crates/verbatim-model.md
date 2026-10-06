@@ -254,8 +254,12 @@ older one, whose answer Core then drops. The operations (`TextOp`):
 - `AwaitCaret(CaretWatch)`: Core has just passed a caret key to the
   application. Wait for evidence, then answer `TextReply::Caret` with a
   `CaretReply`. Evidence is any of: a caret event from the application;
-  the caret no longer at `since` (where Core last knew it, `None` when it
-  did not); the text of `unit` at the caret differing from `compare` (the
+  the caret no longer where it was when the key was pressed (Core's
+  `since`, where Core last knew it, `None` when it did not, unless the
+  outpost itself reported a caret from a read that finished before
+  `pressed_at_ms`, the key's time on the clock of `observed_at_ms`, in
+  which case its newest such report; a caret read at or after that time
+  may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
   character or word at the caret before a Delete); the selection no longer
   `previous_selection`. Wait up to 100 milliseconds for
   `CaretWait::Standard` and 300 for `CaretWait::Extended` (terminals), and
@@ -310,8 +314,10 @@ failed).
 
 ### Inputs from the shell
 
-- `Input::CaretKey { trace_id, key: CaretKey }`: a caret key the keyboard
-  hook observed and passed to the application. A `CaretKey` is a
+- `Input::CaretKey { trace_id, key: CaretKey, pressed_at_ms }`: a caret
+  key the keyboard hook observed and passed to the application, with when
+  the hook saw it, in milliseconds since the Unix epoch, the clock of an
+  event's `observed_at_ms` (0 when unknown). A `CaretKey` is a
   `CaretMotion` (previous or next character, word, line, paragraph, or
   page; start or end of the line; top or bottom; Backspace and
   Control+Backspace; Delete and Control+Delete; Control+A) and whether

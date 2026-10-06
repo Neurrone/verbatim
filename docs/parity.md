@@ -1013,9 +1013,13 @@ verified.
   a caret event alone is not evidence when the caret's position is known,
   since an application's late caret event can belong to an earlier key; the
   position, the characters either side of the caret, or the selection must
-  change, polled every 10 ms. Terminals are recognized by their UIA class
-  (`TermControl`, `WPFTermControl`) and the console host's window class,
-  never by title. Terminal diffing is **not yet (M4)**.
+  change, polled every 10 ms. The caret as it was when the key was pressed
+  is the baseline: the outpost's own newest report, when the read behind it
+  finished before the hook saw the key, else where Core knew it; a report
+  read after the key, from the application's caret event for that very key
+  arriving before Core's request, is not. Terminals are recognized by
+  their UIA class (`TermControl`, `WPFTermControl`) and the console host's
+  window class, never by title. Terminal diffing is **not yet (M4)**.
 - Word and character segmentation (Uniscribe grapheme clusters and
   word stops) and the three-way paragraph-style setting. NVDA:
   [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched

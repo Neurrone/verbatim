@@ -48,6 +48,10 @@ impl CaretSignal for AlreadyMoved {
     fn now(&mut self) -> Instant {
         Instant::now()
     }
+
+    fn now_ms(&mut self) -> u64 {
+        0
+    }
 }
 
 /// The text of mockapp's "Notes" document through UIA.
@@ -128,7 +132,7 @@ fn lines_stop_at_the_end<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     break_text: &str,
 ) {
-    let (report, _) = caret_report(source, anchors).expect("the caret");
+    let (report, _) = caret_report(source, anchors, &mut || 0).expect("the caret");
     assert_eq!(report.line.text, format!("alpha beta{break_text}"));
     assert_eq!(report.line.offset, 0);
     assert_eq!(report.selection, None);
@@ -203,12 +207,13 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
 ) {
     common::apply(app, hwnd, "caret doc 0");
-    let (before, _) = caret_report(source, anchors).expect("the caret");
+    let (before, _) = caret_report(source, anchors, &mut || 0).expect("the caret");
     common::apply(app, hwnd, "caret doc 6");
     let reply = perform(
         source,
         anchors,
         &TextOp::AwaitCaret(CaretWatch {
+            pressed_at_ms: 0,
             since: Some(point_of(&before.line)),
             unit: TextUnit::Word,
             compare: None,
@@ -225,13 +230,14 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     assert!(reply.unit.expect("the word").text.starts_with("beta"));
 
     common::apply(app, hwnd, "caret doc 0");
-    let (collapsed, _) = caret_report(source, anchors).expect("the caret");
+    let (collapsed, _) = caret_report(source, anchors, &mut || 0).expect("the caret");
     common::apply(app, hwnd, "caret doc 0 5");
     let at = point_of(&collapsed.line);
     let reply = perform(
         source,
         anchors,
         &TextOp::AwaitCaret(CaretWatch {
+            pressed_at_ms: 0,
             since: Some(at),
             unit: TextUnit::Character,
             compare: None,

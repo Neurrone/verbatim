@@ -82,6 +82,10 @@ impl CaretSignal for Signal<'_> {
         Instant::now()
     }
 
+    fn now_ms(&mut self) -> u64 {
+        super::now_ms()
+    }
+
     fn reading(&mut self) {
         self.context.caret_read(self.node_id);
     }
@@ -235,13 +239,21 @@ pub(super) fn report_caret(context: &Context, node_id: NodeId) -> Option<CaretRe
     let report = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
-            text::caret_report(&mut source, &mut anchors.node(node_id.number()))
-                .map(|(report, _)| report)
+            text::caret_report(
+                &mut source,
+                &mut anchors.node(node_id.number()),
+                &mut super::now_ms,
+            )
+            .map(|(report, _)| report)
         }
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
-            text::caret_report(&mut source, &mut anchors.node(node_id.number()))
-                .map(|(report, _)| report)
+            text::caret_report(
+                &mut source,
+                &mut anchors.node(node_id.number()),
+                &mut super::now_ms,
+            )
+            .map(|(report, _)| report)
         }
     };
     match report {

@@ -330,7 +330,8 @@ other object is flat text without asking.
 
 Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 `Input::CaretKey` on a focus with text asks its outpost to wait for
-evidence (`TextOp::AwaitCaret`), with the caret Core last knew, the unit
+evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
+the key was pressed, the unit
 to report, for Delete the character or word at the caret (whose change is
 evidence), for a selecting key the selection before it, and a wait three
 times longer in a terminal. A newer caret key supersedes one still

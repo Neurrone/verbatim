@@ -37,7 +37,7 @@ use std::cell::RefCell;
 use std::io;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::Sender;
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
@@ -79,7 +79,19 @@ use verbatim_model::TraceId;
 pub enum KeyReport {
     /// The key completed an observed gesture (`Decision::observed`), a
     /// caret key whose result the reducer speaks.
-    Observed(EmittedGesture),
+    Observed {
+        /// The gesture.
+        gesture: EmittedGesture,
+        /// Milliseconds since the Unix epoch when the hook procedure ran,
+        /// the clock outposts stamp what they observe with. The
+        /// application receives the key only after the hook returns, so
+        /// anything an outpost read before this time came before the key.
+        /// This is not the key event's own `time`, which counts
+        /// milliseconds since startup at the system timer's resolution of
+        /// about 16 ms: converted to this clock it could fall after the
+        /// application handled the key.
+        pressed_at_ms: u64,
+    },
     /// The key types `text` into the focused application: the source of
     /// `Input::CharacterTyped`. A tab is a tab character and Enter a
     /// carriage return; a dead key types nothing until the key after it.
@@ -246,6 +258,15 @@ fn hook_thread(
     HOOK_STATE.with(|state| *state.borrow_mut() = None);
 }
 
+/// Milliseconds since the Unix epoch, as outposts stamp their observations.
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 /// Runs the message loop until `WM_QUIT` (or a `GetMessageW` error) ends it.
 /// A low-level hook only fires while its installing thread pumps messages.
 fn pump_messages() {
@@ -316,7 +337,10 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             if let Some(observed) = decision.observed
                 && !own
             {
-                (state.reports)(KeyReport::Observed(observed));
+                (state.reports)(KeyReport::Observed {
+                    gesture: observed,
+                    pressed_at_ms: unix_ms(),
+                });
             }
             if event.pressed
                 && decision.decision == KeyDecision::Pass

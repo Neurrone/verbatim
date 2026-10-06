@@ -78,7 +78,8 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 
 /// Handles a caret key passed to the application: when the focus has text,
 /// or may have, ask its outpost to wait for evidence and report the caret.
-pub(crate) fn caret_key(state: &mut SrState, key: CaretKey) -> Vec<Effect> {
+/// `pressed_at_ms` is when the hook saw the key, on the outposts' clock.
+pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
     state.typed_word.clear();
     // The key's own report says where the caret went; the focus's text at
@@ -113,6 +114,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey) -> Vec<Effect> {
         .flatten();
     let watch = CaretWatch {
         since: context.map(CaretContext::caret),
+        pressed_at_ms,
         unit,
         compare,
         previous_selection,

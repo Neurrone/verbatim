@@ -947,6 +947,10 @@ impl CaretSignal for AlreadyMoved {
     fn now(&mut self) -> Instant {
         Instant::now()
     }
+
+    fn now_ms(&mut self) -> u64 {
+        0
+    }
 }
 
 /// One caret move answered, as the outpost's worker answers a caret key
@@ -966,13 +970,14 @@ fn measure_caret_move<S: TextSource>(
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(app, hwnd, "caret doc 0");
-    let (before, _) = caret_report(source, &mut anchors).expect("the caret");
+    let (before, _) = caret_report(source, &mut anchors, &mut || 0).expect("the caret");
     common::apply(app, hwnd, "caret doc 1");
     let _ = take();
     let reply = perform(
         source,
         &mut anchors,
         &TextOp::AwaitCaret(CaretWatch {
+            pressed_at_ms: 0,
             since: Some(TextPosition {
                 anchor: before.line.start,
                 offset: before.line.offset,
@@ -997,7 +1002,7 @@ fn measure_caret_move<S: TextSource>(
 
     common::apply(app, hwnd, "caret doc 2");
     let _ = take();
-    let (report, _) = caret_report(source, &mut anchors).expect("the caret");
+    let (report, _) = caret_report(source, &mut anchors, &mut || 0).expect("the caret");
     let calls = take();
     assert_eq!(report.line.offset, 2);
     let report = Cost {

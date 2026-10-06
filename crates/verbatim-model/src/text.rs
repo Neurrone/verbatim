@@ -247,6 +247,13 @@ pub struct CaretWatch {
     /// Where Core last knew the caret to be, before the key; `None` when it
     /// did not know.
     pub since: Option<TextPosition>,
+    /// Milliseconds since the Unix epoch when the key was pressed, on the
+    /// clock of an event's `observed_at_ms`; 0 when unknown. A caret the
+    /// outpost read and reported before this time is where the caret was
+    /// before the key, and stands in for `since`, which may be older; one
+    /// read at or after it may already show the key's effect, and does not.
+    #[serde(default)]
+    pub pressed_at_ms: u64,
     /// The unit to report at the caret once the wait ends, besides the line.
     pub unit: TextUnit,
     /// The text of `unit` at the caret before the key, when a change of it is

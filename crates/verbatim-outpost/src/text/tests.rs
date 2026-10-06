@@ -220,14 +220,32 @@ impl CaretSignal for FakeSignal {
     fn now(&mut self) -> Instant {
         self.now
     }
+
+    fn now_ms(&mut self) -> u64 {
+        WAITED_AT
+    }
 }
+
+/// When [`report`] reads the caret, in milliseconds since the Unix epoch.
+const REPORTED_AT: u64 = 1_000;
+
+/// When [`watch`]'s key was pressed, after [`report`]'s reads.
+const PRESSED_AT: u64 = 2_000;
+
+/// When a [`FakeSignal`] says a wait reads the caret, after the key.
+const WAITED_AT: u64 = 2_050;
 
 fn store() -> Anchors<usize> {
     Anchors::new(Arc::new(AtomicU64::new(0)))
 }
 
 fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
-    caret_report(source, &mut anchors.node(1))
+    report_at(source, anchors, REPORTED_AT)
+}
+
+/// A caret report from a read that finished at `read_at_ms`.
+fn report_at(source: &mut Fake, anchors: &mut Anchors<usize>, read_at_ms: u64) -> CaretReport {
+    caret_report(source, &mut anchors.node(1), &mut || read_at_ms)
         .expect("the fake answers")
         .0
 }
@@ -235,6 +253,7 @@ fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
 fn watch(since: Option<TextPosition>, unit: TextUnit) -> CaretWatch {
     CaretWatch {
         since,
+        pressed_at_ms: PRESSED_AT,
         unit,
         compare: None,
         previous_selection: None,
@@ -417,17 +436,19 @@ fn a_changed_line_at_the_same_position_is_evidence() {
 
 #[test]
 fn a_caret_reported_after_the_one_core_knew_is_the_baseline() {
-    // Core asked with the caret it knew; the outpost has since reported a
-    // newer one (a paste's caret, say), and the key has done nothing yet.
+    // Core asked with the caret it knew; before the key, the outpost
+    // reported a newer one (an earlier key's late caret event, or a
+    // paste's), which Core had not had yet, and the key has done nothing
+    // yet.
     let mut source = Fake::new("one two", 0);
     let mut anchors = store();
-    let line = report(&mut source, &mut anchors).line;
+    let line = report_at(&mut source, &mut anchors, PRESSED_AT - 500).line;
     let known_to_core = TextPosition {
         anchor: line.start,
         offset: line.offset,
     };
     source.caret = 4;
-    report(&mut source, &mut anchors);
+    report_at(&mut source, &mut anchors, PRESSED_AT - 1);
     let mut signal = FakeSignal::new();
     let reply = caret_reply(perform(
         &mut source,
@@ -440,6 +461,58 @@ fn a_caret_reported_after_the_one_core_knew_is_the_baseline() {
         "the change Core had not heard of is not the key's"
     );
     assert_eq!(signal.waits, 10);
+}
+
+#[test]
+fn a_caret_reported_after_the_key_but_before_the_wait_is_not_the_baseline() {
+    // Backspace after typing "x": the application handled the key and its
+    // caret event reached the outpost, which reported the new caret, before
+    // Core's request did. The caret as it was when the key was pressed is
+    // the baseline, so the move is evidence.
+    let mut source = Fake::new("delta epsilonx", 14);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let known_to_core = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.text = "delta epsilon".encode_utf16().collect();
+    source.caret = 13;
+    report_at(&mut source, &mut anchors, PRESSED_AT + 5);
+    let mut signal = FakeSignal::new();
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch(Some(known_to_core), TextUnit::Character)),
+        &mut signal,
+    ));
+    assert!(reply.moved, "the key's own caret event is not the baseline");
+    assert_eq!(signal.waits, 0);
+    assert_eq!(reply.caret.line.text, "delta epsilon");
+    assert_eq!(reply.caret.line.offset, 13);
+}
+
+#[test]
+fn a_caret_read_in_the_same_millisecond_as_the_key_is_not_the_baseline() {
+    // The read may have finished after the key reached the application.
+    let mut source = Fake::new("one two", 0);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let known_to_core = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.caret = 4;
+    report_at(&mut source, &mut anchors, PRESSED_AT);
+    let mut signal = FakeSignal::new();
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch(Some(known_to_core), TextUnit::Character)),
+        &mut signal,
+    ));
+    assert!(reply.moved);
+    assert_eq!(signal.waits, 0);
 }
 
 #[test]

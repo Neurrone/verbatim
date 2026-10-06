@@ -460,6 +460,12 @@ pub enum Input {
         trace_id: TraceId,
         /// Which key.
         key: CaretKey,
+        /// Milliseconds since the Unix epoch when the hook saw the key,
+        /// before the application could: the clock of an event's
+        /// `observed_at_ms`, so an outpost can tell whether a caret it read
+        /// came before the key. 0 when unknown.
+        #[serde(default)]
+        pressed_at_ms: u64,
     },
     /// Text was typed into the focused application: one character, or
     /// several at once when an input method commits a composition (one key

@@ -40,7 +40,7 @@ pub mod edit;
 pub mod uia;
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
@@ -54,6 +54,11 @@ use verbatim_model::{
 /// How often the caret is read again while a caret key's wait for evidence
 /// runs and no caret event arrives: NVDA's 10 ms retry interval.
 pub const CARET_POLL: Duration = Duration::from_millis(10);
+
+/// How many of its newest caret reports for a node the outpost remembers,
+/// with when it read them, for a caret key's wait to find the one read
+/// before the key.
+const REMEMBERED_CARETS: usize = 8;
 
 /// How many anchors a node keeps beyond those Core holds.
 pub const KEPT_ANCHORS: usize = 64;
@@ -245,6 +250,11 @@ pub trait CaretSignal {
     /// The time now.
     fn now(&mut self) -> Instant;
 
+    /// Milliseconds since the Unix epoch: the clock outposts stamp events'
+    /// `observed_at_ms` with and the hook stamps a caret key's
+    /// `pressed_at_ms` with.
+    fn now_ms(&mut self) -> u64;
+
     /// The caret is about to be read: a caret event observed before now
     /// changed nothing the read will not see.
     fn reading(&mut self) {}
@@ -261,8 +271,9 @@ struct Anchor<P> {
 pub struct NodeAnchors<P> {
     anchors: BTreeMap<u64, Anchor<P>>,
     reported: HashMap<(u64, u32), P>,
-    /// The caret the outpost last reported for the node.
-    last_caret: Option<TextPosition>,
+    /// The carets the outpost last reported for the node, oldest first,
+    /// each with when it was read, in milliseconds since the Unix epoch.
+    carets: VecDeque<(u64, TextPosition)>,
 }
 
 impl<P> Default for NodeAnchors<P> {
@@ -270,7 +281,7 @@ impl<P> Default for NodeAnchors<P> {
         Self {
             anchors: BTreeMap::new(),
             reported: HashMap::new(),
-            last_caret: None,
+            carets: VecDeque::new(),
         }
     }
 }
@@ -560,7 +571,8 @@ fn chunk<S: TextSource>(
 }
 
 /// The caret's line and selection, reported for a caret event or an answer
-/// to a caret key, with the caret state they were read from.
+/// to a caret key, with the caret state they were read from. `now_ms` is
+/// the clock of [`CaretSignal::now_ms`], read once the caret has been.
 ///
 /// # Errors
 ///
@@ -568,9 +580,11 @@ fn chunk<S: TextSource>(
 pub fn caret_report<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
+    now_ms: &mut dyn FnMut() -> u64,
 ) -> TextResult<(CaretReport, CaretState<S::Pos>)> {
     let state = source.caret()?;
-    let report = report_for(source, anchors, &state, None)?;
+    let read_at_ms = now_ms();
+    let report = report_for(source, anchors, (&state, read_at_ms), None)?;
     Ok((report, state))
 }
 
@@ -586,12 +600,12 @@ fn caret_line<S: TextSource>(
     Ok((line, offset))
 }
 
-/// The report for a caret state already read, with its line when that was
-/// read already.
+/// The report for a caret state already read, and the time its read
+/// finished, with its line when that was read already.
 fn report_for<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    state: &CaretState<S::Pos>,
+    (state, read_at_ms): (&CaretState<S::Pos>, u64),
     line: Option<(Unit<S::Pos>, usize)>,
 ) -> TextResult<CaretReport> {
     let (line, offset) = match line {
@@ -605,10 +619,17 @@ fn report_for<S: TextSource>(
         (offset, state.caret.clone()),
         false,
     );
-    anchors.anchors.last_caret = Some(TextPosition {
-        anchor: line.start,
-        offset: line.offset,
-    });
+    let carets = &mut anchors.anchors.carets;
+    if carets.len() == REMEMBERED_CARETS {
+        carets.pop_front();
+    }
+    carets.push_back((
+        read_at_ms,
+        TextPosition {
+            anchor: line.start,
+            offset: line.offset,
+        },
+    ));
     let selection = state.selection.as_ref().map(|(start, end)| Selection {
         start: anchors.position_of(start.clone()),
         end: anchors.position_of(end.clone()),
@@ -682,12 +703,23 @@ fn await_caret<S: TextSource>(
     signal: &mut dyn CaretSignal,
 ) -> TextResult<TextReply> {
     let deadline = signal.now() + wait_length(watch.wait);
-    // Where the caret was known to be before the key: the caret this
-    // outpost last reported, which Core may not have had when it asked
-    // (a caret event handled just before the request, from an earlier key
-    // or a paste), else where Core knew it. A position whose anchor was
+    // Where the caret was before the key: the newest caret this outpost
+    // reported from a read that finished before the key was pressed, which
+    // Core may not have had yet when the key came (a caret event from an
+    // earlier key or a paste), else where Core knew it. A caret read once
+    // the key was pressed may already show what the key did (the
+    // application's caret event can arrive before this request does), so
+    // it is never the baseline; nor is one read in the same millisecond as
+    // the key, which could have come after it. A position whose anchor was
     // forgotten is no evidence either way.
-    let baseline = anchors.anchors.last_caret.or(watch.since);
+    let reported = anchors
+        .anchors
+        .carets
+        .iter()
+        .rev()
+        .find(|(read_at_ms, _)| *read_at_ms < watch.pressed_at_ms)
+        .map(|&(_, position)| position);
+    let baseline = reported.or(watch.since);
     let since = match baseline {
         Some(position) => anchors.resolve(source, position)?,
         None => None,
@@ -715,9 +747,10 @@ fn await_caret<S: TextSource>(
             .anchor_text(position.anchor)
             .map(|text| beside(&text, position.offset as usize))
     });
-    let (state, moved, line) = loop {
+    let (state, read_at_ms, moved, line) = loop {
         signal.reading();
         let state = source.caret()?;
+        let read_at_ms = signal.now_ms();
         let mut line = None;
         // A caret event alone is evidence only when Core did not know where
         // the caret was: otherwise it may be the application's late report
@@ -742,11 +775,11 @@ fn await_caret<S: TextSource>(
         }
         let now = signal.now();
         if moved || now >= deadline {
-            break (state, moved, line);
+            break (state, read_at_ms, moved, line);
         }
         signal.wait(CARET_POLL.min(deadline - now));
     };
-    let caret = report_for(source, anchors, &state, line)?;
+    let caret = report_for(source, anchors, (&state, read_at_ms), line)?;
     let unit = unit_at_caret(source, anchors, &state, &caret.line, watch.unit)?;
     let selection_changes = match &previous {
         Some(previous) => selection_changes(source, previous, &state)?,
