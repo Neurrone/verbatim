@@ -35,7 +35,9 @@ use verbatim_model::{
     Backend, CallCounts, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
     TraceId,
 };
-use verbatim_uia::map::{cached_process_id, snapshot_from_cached_element};
+use verbatim_uia::map::{
+    cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
+};
 use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handle};
 use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
@@ -1194,9 +1196,8 @@ impl Worker<'_> {
         let enriching = Instant::now();
         let remote = match self.remote_enrichment(element.as_ref(), &previous, focus_in) {
             Some(read::RemoteEnrichment::NotFocused) => {
-                // Read live in the same round trip, as `LiveFocus::Elsewhere`
-                // reads it: the focus moved on after the focused element was
-                // read.
+                // Read live in the same round trip: the focus moved on after
+                // the focused element was read, as for `LiveFocus::Elsewhere`.
                 tracing::debug!("UIA focus held: the element lost the keyboard focus");
                 self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
                 return;
@@ -1250,17 +1251,10 @@ impl Worker<'_> {
             return;
         };
         let node = Self::uia_node(context, fact, Some(&element));
+        let node = with_legacy_checked_state(&element, node); // Menu items only.
         let enrichment = match remote {
             Some((enrichment, _)) => enrichment,
-            None => match self.client.uia() {
-                Some(uia) => match uia.base_cache_request() {
-                    Ok(cache) => {
-                        read::uia_enrichment(context, uia, &cache, &element, node.role, &previous)
-                    }
-                    Err(_) => (None, None),
-                },
-                None => (None, None),
-            },
+            None => self.classic_enrichment(&element, node.role, &previous),
         };
         tracing::debug!(
             %trace,
@@ -1279,6 +1273,22 @@ impl Worker<'_> {
             object,
             enrichment,
         );
+    }
+
+    /// [`read::uia_enrichment`], the classic walk, for a focus's element.
+    fn classic_enrichment(
+        &mut self,
+        element: &IUIAutomationElement,
+        role: Role,
+        previous: &[NodeSnapshot],
+    ) -> read::Enrichment {
+        let Some(uia) = self.client.uia() else {
+            return (None, None);
+        };
+        match uia.base_cache_request() {
+            Ok(cache) => read::uia_enrichment(self.context, uia, &cache, element, role, previous),
+            Err(_) => (None, None),
+        }
     }
 
     /// [`read::uia_remote_enrichment`] for a focus's element, when there is

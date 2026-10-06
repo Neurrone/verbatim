@@ -108,13 +108,18 @@ Public API:
   supported"), and `IsContentElement` and `IsControlElement` (an ancestor
   is focus context only when both hold). The list is public as
   `CACHED_PROPERTIES`, so `verbatim-uia-rops` caches the same set, and
-  `runtime_id(element)` reads an element's runtime id. The list also
-  holds `LegacyIAccessibleState`, read ignoring its default: a menu item
-  that no pattern makes checkable is checkable and checked when that MSAA
-  state has its checked bit, as NVDA 2027.1 reads Windows Forms menu items
-  (it costs no call, but UIA answers it by asking each element's provider
-  for the `LegacyIAccessible` pattern; `docs/performance.md` has the
-  provider hits).
+  `runtime_id(element)` reads an element's runtime id.
+- `map::with_legacy_checked_state(element, node)` — a menu item that no
+  pattern makes checkable (`map::wants_legacy_checked_state`) is checkable
+  and checked when its legacy MSAA state (`LegacyIAccessibleState`, read
+  ignoring its default) has the checked bit, as NVDA 2027.1 reads Windows
+  Forms menu items. The state is read live, one counted UIA call, and only
+  for such a menu item, as NVDA reads it lazily for its menu item class:
+  caching it for every element made UIA ask every provider for the
+  `LegacyIAccessible` pattern, roughly doubling a focus change's provider
+  work. The outpost applies it to the focus it reports, the focus-now
+  answer, and a navigation step's neighbor; `map::add_legacy_checked_state`
+  is the rule alone, for tests.
   A selected radio button is checked rather than selected, and a
   toggleable element other than a check box or toggle button is
   checkable.
@@ -125,10 +130,11 @@ Public API:
   an error. So each wrapper method holds one documented `unsafe` call and
   is safe to call. `ElementExt`, on `IUIAutomationElement`, has the cached
   reads (`cached_value`, `cached_value_ignoring_default`, `cached_i32`,
-  `cached_i32_ignoring_default`, `cached_bool`, `cached_optional_bool`,
+  `cached_bool`, `cached_optional_bool`,
   `cached_f64`, `cached_string`, `cached_bounding_rectangle`,
   `cached_control_type`, `cached_framework_id`), which are local, and the
-  live calls (`current_control_type`, `has_keyboard_focus`,
+  live calls (`current_control_type`, `current_i32_ignoring_default`,
+  `has_keyboard_focus`,
   `build_updated_cache`, `current_pattern`, `controller_for`,
   `find_first`, `find_first_build_cache`), each of which counts one UIA
   call. `WalkerExt`, on `IUIAutomationTreeWalker`, has `parent`,

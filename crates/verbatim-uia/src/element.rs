@@ -59,14 +59,6 @@ pub trait ElementExt {
         unsafe { variant_i32(&value) }
     }
 
-    /// A cached integer property, `None` when it was not cached, the element
-    /// does not support it, or UIA only supplies the property's default.
-    fn cached_i32_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<i32> {
-        let value = self.cached_value_ignoring_default(property)?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here.
-        unsafe { variant_i32(&value) }
-    }
-
     /// A cached boolean property, `false` when it was not cached or is not a
     /// boolean.
     fn cached_bool(&self, property: UIA_PROPERTY_ID) -> bool {
@@ -114,6 +106,18 @@ pub trait ElementExt {
     ///
     /// The COM error if the provider fails the read.
     fn current_control_type(&self) -> windows::core::Result<UIA_CONTROLTYPE_ID>;
+
+    /// An integer property read live, `Ok(None)` when the element does not
+    /// support it, UIA only supplies its default, or it is not an integer.
+    /// Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails the read.
+    fn current_i32_ignoring_default(
+        &self,
+        property: UIA_PROPERTY_ID,
+    ) -> windows::core::Result<Option<i32>>;
 
     /// Whether the element has the keyboard focus, read live rather than
     /// from the cache. Cross-process.
@@ -225,6 +229,18 @@ impl ElementExt for IUIAutomationElement {
         count(CallKind::Uia);
         // SAFETY: `self` is a live element (see the module comment).
         unsafe { self.CurrentControlType() }
+    }
+
+    fn current_i32_ignoring_default(
+        &self,
+        property: UIA_PROPERTY_ID,
+    ) -> windows::core::Result<Option<i32>> {
+        count(CallKind::Uia);
+        // SAFETY: `self` is a live element (see the module comment); the
+        // property id is a plain value.
+        let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
+        // SAFETY: `value` is a VARIANT UIA returned, owned here.
+        Ok(unsafe { variant_i32(&value) })
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {

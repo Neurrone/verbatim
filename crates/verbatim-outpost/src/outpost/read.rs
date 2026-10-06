@@ -12,7 +12,9 @@ use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, StateSet,
 };
-use verbatim_uia::map::{cached_native_window_handle, snapshot_from_cached_element};
+use verbatim_uia::map::{
+    cached_native_window_handle, snapshot_from_cached_element, with_legacy_checked_state,
+};
 use verbatim_uia::{AncestorWalk, ElementExt, Uia, probe_server_side_provider};
 use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
 
@@ -578,7 +580,10 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     if window_uses_uia(context, hwnd) {
         let (uia, cache) = client.uia_and_cache().ok()?;
         let element = uia.focused_element(&cache).ok()?;
-        let node = snapshot_from_cached_element(&element, &context.uia_registry);
+        let node = with_legacy_checked_state(
+            &element,
+            snapshot_from_cached_element(&element, &context.uia_registry),
+        );
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way.
         let (ancestors, selected_child) =
@@ -721,6 +726,18 @@ pub(super) fn navigate(
                     ReadError::Failed(format!("UIA navigation failed: {error}"))
                 }
             })?;
+        // A menu item reached by navigation reads its legacy checked state
+        // as a focused one does.
+        let neighbor = neighbor.map(|neighbor| {
+            match context
+                .uia_registry
+                .element_of(neighbor.id)
+                .and_then(|agile| agile.resolve().ok())
+            {
+                Some(element) => with_legacy_checked_state(&element, neighbor),
+                None => neighbor,
+            }
+        });
         (neighbor, from_window)
     } else {
         let from_window = context.msaa_registry.key_of(node_id).map(|key| key.0);

@@ -421,6 +421,10 @@ Implementation notes:
   logged with the failing instruction's source line. The focus-now query
   reads its focus the same way. A steady-state UIA focus change costs two
   UIA calls, the focused element and the `Execute` (`docs/performance.md`).
+  A focused menu item that no pattern makes checkable costs one more: its
+  legacy MSAA checked state, read live for it alone
+  (`verbatim_uia::map::with_legacy_checked_state`), as are the focus-now
+  answer and a navigation step's neighbor.
 - Focus candidates: the intake keeps the three newest focus facts from
   each backend (`Planned::Focus`), and the worker handles them newest
   first, each under its own deadline, until one is reported, as NVDA's

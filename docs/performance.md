@@ -149,14 +149,14 @@ Counts are given as UIA calls, MSAA calls, and window messages; a kind not
 mentioned is zero. The provider calls each operation cost mockapp are in
 the ratchet beside them.
 
-Every UIA count's provider calls rose on 2026-10-06, with no change to
-the client's calls, when `LegacyIAccessibleState` joined the cached
-properties for menu items' checked state (`verbatim-uia`'s
-`CACHED_PROPERTIES`): UIA answers it for a native provider by asking for
-the `LegacyIAccessible` pattern, which roughly doubled the
-`GetPatternProvider` hits and, where UIA builds that pattern from the
-window's MSAA object, added two `WM_GETOBJECT`s (a cold focus and a focus
-into the list).
+One UIA read is made only for a kind of element the fixture does not
+have: a menu item that no pattern makes checkable reads its legacy MSAA
+state live, one more UIA call, when it is the focus, the focus-now answer,
+or a navigation step's neighbor (NVDA 2027.1 reads it the same way, and
+only for menu items). Every other focus and step makes no such call, as
+the ratchet's unchanged counts confirm. Caching the state for every
+element instead cost no call but roughly doubled the provider work of every
+focus change, so it is read lazily.
 
 The UIA operations are measured on the test's own thread, making the same
 `verbatim-uia` and `verbatim-uia-rops` calls in the same order as the
@@ -188,12 +188,12 @@ program). The MSAA operations run through a real outpost.
   sender, which it does not have.
 - Today, with remote operations: 2 UIA calls, the focused element and one
   `Execute`, which also confirms the focus, finds the nearest window, and
-  meets the group the previous focus was in. The `Execute` cost mockapp 110
+  meets the group the previous focus was in. The `Execute` cost mockapp 88
   provider calls.
 - Today, classic: 3 UIA calls: the focused element, its nearest window
   (`NormalizeElementBuildCache`, since the focus fact carries no window of
   its own for an element that is not a window), and one ancestor hop. The
-  last two cost mockapp 117 provider calls.
+  last two cost mockapp 95 provider calls.
 - Target: 2, met with remote operations: phase 6 step 2's exit criterion,
   asserted exactly.
 
@@ -205,11 +205,11 @@ program). The MSAA operations run through a real outpost.
 - Today, with remote operations: 2 UIA calls and 1 window message: the
   focused element, the probe, and one `Execute`, which walks up to the
   process's top-level window and stops there, never asking for the
-  desktop's root. 190 provider calls besides the focused-element read.
+  desktop's root. 146 provider calls besides the focused-element read.
 - Today, classic: 6 UIA calls and 1 window message: the focused element,
   its nearest window, the probe, and four ancestor hops (the group, the
   window, the desktop's root element, and a hop that finds no parent above
-  the desktop and ends the walk). 204 provider calls besides the
+  the desktop and ends the walk). 160 provider calls besides the
   focused-element read.
 - Target: 2 UIA calls and 1 window message, met. The classic walk could
   still stop at the desktop's root element, which is known locally,
@@ -223,11 +223,11 @@ The focus lands on the list itself, and its selected item is read with it.
   reads the list's selection and the first selected item's cached
   properties.
 - Today, with remote operations: 2 UIA calls, the focused element and one
-  `Execute`. 172 provider calls besides the focused-element read.
+  `Execute`. 126 provider calls besides the focused-element read.
 - Today, classic: 6 UIA calls: the focused element, its nearest window,
   one ancestor hop (the window, known from the previous focus), and the
   selected item in three calls (the `Selection` pattern,
-  `GetCurrentSelection`, and `BuildUpdatedCache` on the first item). 189
+  `GetCurrentSelection`, and `BuildUpdatedCache` on the first item). 143
   provider calls besides the focused-element read.
 - Target: 2, met.
 
@@ -237,10 +237,10 @@ The focus moves from one list item to the next.
 
 - Minimum: 2 UIA calls, as for any steady-state focus change.
 - Today, with remote operations: 2 UIA calls, the same as a steady-state
-  focus change, 110 provider calls besides the focused-element read; the
+  focus change, 88 provider calls besides the focused-element read; the
   program stops at the list, which the previous chain holds.
 - Today, classic: 3 UIA calls: the focused element, its nearest window,
-  and one ancestor hop, which meets the list. 117 provider calls besides
+  and one ancestor hop, which meets the list. 95 provider calls besides
   the focused-element read.
 - Target: 2, met.
 
@@ -254,7 +254,7 @@ Next sibling and parent, from a node the outpost holds.
   proves it still answers (`BuildUpdatedCache`), its nearest window, for
   correcting the neighbor's backend, and the step. A neighbor with no
   window of its own needs no further call for the correction. They cost
-  mockapp 185 provider calls for the next sibling and 186 for the parent.
+  mockapp 141 provider calls for the next sibling and 142 for the parent.
 - Target: 1. The refresh is not needed to take the step, which itself
   fails when the element is gone, and the nearest window can be read in
   the same program as the step.

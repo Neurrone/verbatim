@@ -167,13 +167,50 @@ struct RawUiaStates {
     /// `IsDataValidForForm`, `None` when unsupported, which counts as valid.
     data_valid: Option<bool>,
     value_read_only: bool,
-    /// The element's MSAA state bits through UIA's `LegacyIAccessible`
-    /// pattern, `None` when unsupported or only UIA's default.
-    legacy_state: Option<i32>,
 }
 
 /// MSAA's `STATE_SYSTEM_CHECKED` bit, as `LegacyIAccessibleState` reports it.
 const LEGACY_STATE_CHECKED: i32 = 0x10;
+
+/// Whether a node's checked state may be only in its legacy MSAA state: a
+/// menu item that no UIA pattern makes checkable (Windows Forms menu items
+/// say they are checked only there). Only then is that state read, live
+/// ([`with_legacy_checked_state`]), as NVDA 2027.1 reads it for a menu
+/// item and for nothing else.
+#[must_use]
+pub fn wants_legacy_checked_state(role: Role, states: StateSet) -> bool {
+    role == Role::MenuItem && !states.contains(State::Checkable)
+}
+
+/// Adds checkable and checked to `states` when the legacy MSAA state bits
+/// `legacy_state` have the checked bit. The caller has decided, with
+/// [`wants_legacy_checked_state`], that the bits are worth reading.
+pub fn add_legacy_checked_state(states: &mut StateSet, legacy_state: Option<i32>) {
+    if legacy_state.is_some_and(|bits| bits & LEGACY_STATE_CHECKED != 0) {
+        states.insert(State::Checkable);
+        states.insert(State::Checked);
+    }
+}
+
+/// `node`, read from `element`, with its checked state completed from the
+/// element's legacy MSAA state when [`wants_legacy_checked_state`] says so:
+/// one live read of `LegacyIAccessibleState`, counted, made only for a menu
+/// item without the Toggle pattern; every other node is returned unchanged
+/// without a call. Cross-process; the outpost's worker only.
+#[must_use]
+pub fn with_legacy_checked_state(
+    element: &IUIAutomationElement,
+    mut node: NodeSnapshot,
+) -> NodeSnapshot {
+    if wants_legacy_checked_state(node.role, node.states) {
+        let legacy = element
+            .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
+            .ok()
+            .flatten();
+        add_legacy_checked_state(&mut node.states, legacy);
+    }
+    node
+}
 
 /// Pure mapping from raw cached UIA state inputs to a normalized [`StateSet`].
 /// Toggle and expand values are honored only when their pattern is available,
@@ -246,18 +283,6 @@ fn states_from_uia(raw: &RawUiaStates, role: Role) -> StateSet {
     if raw.value_read_only {
         states.insert(State::ReadOnly);
     }
-    // A menu item that UIA's patterns do not make checkable can still say
-    // it is checked through its legacy MSAA state, as Windows Forms menu
-    // items do; NVDA 2027.1 reads it there for a menu item.
-    if role == Role::MenuItem
-        && !states.contains(State::Checkable)
-        && raw
-            .legacy_state
-            .is_some_and(|bits| bits & LEGACY_STATE_CHECKED != 0)
-    {
-        states.insert(State::Checkable);
-        states.insert(State::Checked);
-    }
     states
 }
 
@@ -285,7 +310,6 @@ fn states_from_cached(element: &IUIAutomationElement, role: Role) -> StateSet {
         // property's default of true where the pattern is missing.
         value_read_only: element.cached_bool(UIA_IsValuePatternAvailablePropertyId)
             && element.cached_optional_bool(UIA_ValueIsReadOnlyPropertyId) == Some(true),
-        legacy_state: element.cached_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId),
     };
     states_from_uia(&raw, role)
 }
@@ -921,33 +945,37 @@ mod tests {
 
     #[test]
     fn a_menu_item_checked_only_in_its_legacy_state_is_checked() {
-        let legacy_checked = RawUiaStates {
-            enabled: true,
-            legacy_state: Some(LEGACY_STATE_CHECKED),
-            ..RawUiaStates::default()
-        };
-        let states = states_from_uia(&legacy_checked, Role::MenuItem);
-        assert!(states.contains(State::Checkable));
-        assert!(states.contains(State::Checked));
+        let plain = states_from_uia(
+            &RawUiaStates {
+                enabled: true,
+                ..RawUiaStates::default()
+            },
+            Role::MenuItem,
+        );
+        // Only a menu item that no pattern makes checkable reads it.
+        assert!(wants_legacy_checked_state(Role::MenuItem, plain));
+        assert!(!wants_legacy_checked_state(Role::Button, plain));
+        let toggled_off = states_from_uia(
+            &RawUiaStates {
+                enabled: true,
+                toggle_available: true,
+                toggle_state: Some(0),
+                ..RawUiaStates::default()
+            },
+            Role::MenuItem,
+        );
+        assert!(!wants_legacy_checked_state(Role::MenuItem, toggled_off));
 
-        // Only a menu item reads its legacy state.
-        assert!(!states_from_uia(&legacy_checked, Role::Button).contains(State::Checked));
-        // An unchecked legacy state adds nothing.
-        let unchecked = RawUiaStates {
-            legacy_state: Some(0),
-            ..legacy_checked
-        };
-        assert!(!states_from_uia(&unchecked, Role::MenuItem).contains(State::Checkable));
-        // A menu item with the Toggle pattern is checkable through it, and
-        // its legacy state is not consulted.
-        let toggled_off = RawUiaStates {
-            toggle_available: true,
-            toggle_state: Some(0),
-            ..legacy_checked
-        };
-        let states = states_from_uia(&toggled_off, Role::MenuItem);
-        assert!(states.contains(State::Checkable));
-        assert!(!states.contains(State::Checked));
+        let mut checked = plain;
+        add_legacy_checked_state(&mut checked, Some(LEGACY_STATE_CHECKED));
+        assert!(checked.contains(State::Checkable));
+        assert!(checked.contains(State::Checked));
+        // An unchecked or unsupported legacy state adds nothing.
+        for legacy in [Some(0), None] {
+            let mut states = plain;
+            add_legacy_checked_state(&mut states, legacy);
+            assert_eq!(states, plain);
+        }
     }
 
     #[test]
