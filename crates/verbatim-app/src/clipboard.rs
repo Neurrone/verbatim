@@ -14,7 +14,7 @@ use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 
 /// Copies `text` to the system clipboard and speaks a localized
@@ -37,31 +37,39 @@ pub fn copy(manager: &Arc<SpeechManager>, text: &str) {
 }
 
 /// The clipboard's text (`CF_UNICODETEXT`), `None` when it holds none or
-/// cannot be opened.
+/// cannot be opened. The data may have been put there by any process, so
+/// it is read up to its terminator or the end of its allocation, whichever
+/// comes first.
 fn clipboard_text() -> Option<String> {
-    // SAFETY: the clipboard is opened for this thread and always closed;
-    // the global handle is locked only while its null-terminated UTF-16
-    // contents are copied out, and never freed, since the clipboard owns it.
-    unsafe {
-        OpenClipboard(Some(HWND::default())).ok()?;
-        let read = (|| {
-            let handle = GetClipboardData(u32::from(CF_UNICODETEXT.0)).ok()?;
-            let memory = HGLOBAL(handle.0);
-            let pointer = GlobalLock(memory).cast::<u16>();
-            if pointer.is_null() {
-                return None;
-            }
-            let mut length = 0usize;
-            while *pointer.add(length) != 0 {
-                length += 1;
-            }
-            let text = String::from_utf16_lossy(std::slice::from_raw_parts(pointer, length));
-            let _ = GlobalUnlock(memory);
-            Some(text)
-        })();
-        let _ = CloseClipboard();
-        read
-    }
+    // SAFETY: opening the clipboard for this thread, with no owner window;
+    // it is closed below on every path.
+    unsafe { OpenClipboard(Some(HWND::default())) }.ok()?;
+    let read = (|| {
+        // SAFETY: the clipboard is open on this thread; the handle stays
+        // owned by the clipboard and is never freed here.
+        let handle = unsafe { GetClipboardData(u32::from(CF_UNICODETEXT.0)) }.ok()?;
+        let memory = HGLOBAL(handle.0);
+        // SAFETY: `memory` is the clipboard's global handle; its size, in
+        // bytes, bounds the read below.
+        let units = unsafe { GlobalSize(memory) } / size_of::<u16>();
+        // SAFETY: locking the clipboard's global handle, unlocked below.
+        let pointer = unsafe { GlobalLock(memory) }.cast::<u16>();
+        if pointer.is_null() {
+            return None;
+        }
+        // SAFETY: `pointer` is the locked allocation of at least `units`
+        // UTF-16 units, aligned for them as global memory always is, and
+        // unchanged while it is locked.
+        let data = unsafe { std::slice::from_raw_parts(pointer, units) };
+        let length = data.iter().position(|&unit| unit == 0).unwrap_or(units);
+        let text = String::from_utf16_lossy(&data[..length]);
+        // SAFETY: unlocks the lock taken above; `data` is not used after.
+        let _ = unsafe { GlobalUnlock(memory) };
+        Some(text)
+    })();
+    // SAFETY: closes the clipboard this thread opened above.
+    let _ = unsafe { CloseClipboard() };
+    read
 }
 
 /// Speaks one line of confirmation text at Interrupt priority, with no
