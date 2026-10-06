@@ -1497,19 +1497,21 @@ lands on column 10, reading the cell there or "blank".
    after; the exit criterion is two round trips per steady-state UIA
    focus change against mockapp, asserted exactly.
 
-### Caret responsiveness, measured first (added with Dickson on 2026-10-06)
+### Caret responsiveness (added with Dickson on 2026-10-06)
 
 A UIA caret move costs 9 calls today (NVDA's equivalent is about 12 at
-the least, and 20 to 40 with formatting); the target is 1, by reading
-the caret through a remote operation. Before building that, `cargo
-xtask bench caret` measures what a user experiences: the time from the
-agent injecting a key to the first audible speech in the system audio,
-for Down Arrow, Right Arrow, and Control+Right Arrow in Windows 11
-Notepad, with Verbatim's remote operations on, with them off, and with
-NVDA, all on eSpeak NG. It asserts nothing and does not run in CI. The
-measurement before and after the caret remote operation decides
-whether it pays off; formatting (M4 item 7) must then be fetched in the
-same round trip rather than as extra calls.
+the least, and 20 to 40 with formatting). Remote operations are used
+whenever they are available, so the caret is read through one remote
+operation, with formatting (M4 item 7) fetched in the same round trip
+rather than as extra calls. For awareness, not as a gate:
+
+- Verbatim logs, for every caret report, the time from the caret key or
+  caret event being received to its speech being queued, by stage.
+- A one-off measurement, not a permanent tool, times a key injected by
+  the agent to the first audible speech, for Down Arrow, Right Arrow,
+  and Control+Right Arrow, in Windows 11 Notepad (UIA) and in a standard
+  Win32 edit control (MSAA and window messages), with Verbatim's remote
+  operations on and off and with NVDA, all on eSpeak NG.
 
 ### Unsafe code (added with Dickson on 2026-10-06)
 
