@@ -350,44 +350,6 @@ mod props {
         }
     }
 
-    /// The children of `index` that have the selected state, as an array of
-    /// their providers: what a list's `Selection` pattern answers.
-    pub(super) fn selected_children(
-        tree: &SharedTree,
-        hwnd: HWND,
-        index: usize,
-    ) -> WinResult<*mut SAFEARRAY> {
-        let selected: Vec<usize> = {
-            let guard = tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.nodes[index]
-                .children
-                .iter()
-                .copied()
-                .filter(|&child| guard.nodes[child].states.contains(State::Selected))
-                .collect()
-        };
-        let length = u32::try_from(selected.len()).map_err(|_| Error::empty())?;
-        // SAFETY: a `VT_UNKNOWN` vector of exactly `length` elements, each
-        // filled within bounds; `SafeArrayPutElement` takes its own reference
-        // to each provider, and ownership of the array passes to the caller,
-        // as `GetSelection`'s contract says.
-        unsafe {
-            let array = SafeArrayCreateVector(VT_UNKNOWN, 0, length);
-            if array.is_null() {
-                return Err(Error::empty());
-            }
-            for (position, child) in selected.into_iter().enumerate() {
-                let element = provider_for(std::sync::Arc::clone(tree), hwnd, child)
-                    .cast::<IRawElementProviderSimple>()?;
-                let position = i32::try_from(position).map_err(|_| Error::empty())?;
-                SafeArrayPutElement(array, &raw const position, element.as_raw())?;
-            }
-            Ok(array)
-        }
-    }
-
     fn bstr_variant(text: &str) -> VARIANT {
         VARIANT {
             Anonymous: VARIANT_0 {
@@ -929,15 +891,6 @@ mod handler {
             .into();
             return Ok(provider);
         }
-        if pattern_id == UIA_SelectionPatternId && role == verbatim_model::Role::List {
-            let provider: IUnknown = SelectionProvider {
-                tree: tree.clone(),
-                hwnd,
-                index,
-            }
-            .into();
-            return Ok(provider);
-        }
         Err(Error::empty())
     }
 
@@ -1047,31 +1000,6 @@ mod handler {
         }
     }
 
-    /// The `SelectionPattern` provider for a list: its selection is its
-    /// children that have the selected state, the single-selection model
-    /// the `select` command scripts.
-    #[implement(ISelectionProvider, Agile = false)]
-    struct SelectionProvider {
-        tree: SharedTree,
-        hwnd: HWND,
-        index: usize,
-    }
-
-    impl ISelectionProvider_Impl for SelectionProvider_Impl {
-        fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
-            hits::hit(hits::Method::GetSelection);
-            props::selected_children(&self.tree, self.hwnd, self.index)
-        }
-        fn CanSelectMultiple(&self) -> WinResult<windows_core::BOOL> {
-            hits::hit(hits::Method::CanSelectMultiple);
-            Ok(false.into())
-        }
-        fn IsSelectionRequired(&self) -> WinResult<windows_core::BOOL> {
-            hits::hit(hits::Method::IsSelectionRequired);
-            Ok(false.into())
-        }
-    }
-
     /// The `SelectionItemPattern` provider for a node whose fixture states
     /// include `selectable` or `selected`. The mutating methods are no-ops
     /// for the same reason `Toggle` is: mockapp's scripted state changes
@@ -1132,12 +1060,15 @@ mod handler {
 
     impl ISelectionProvider_Impl for SelectionProvider_Impl {
         fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetSelection);
             Ok(props::selected_children(&self.tree, self.hwnd, self.index))
         }
         fn CanSelectMultiple(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::CanSelectMultiple);
             Ok(false.into())
         }
         fn IsSelectionRequired(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::IsSelectionRequired);
             Ok(false.into())
         }
     }
