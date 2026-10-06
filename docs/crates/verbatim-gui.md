@@ -244,7 +244,11 @@ limits cannot be set outside their range; and "Speak passwords typed in
 terminals", a check box. Sliders rather than spin controls, because
 Verbatim already reads a slider's value as it moves (the Speech page's
 rate) and NVDA reads them too. Each slider is named by the label made
-just before it, and the check boxes carry their names. The page is built
+just before it, and the check boxes carry their names. A standard
+trackbar's MSAA value is its position as a percentage of its range, which
+would read 30 lines as 29 on a range from 1, so each slider carries a
+`wxAccessible` (`SliderPositionAccessible` in `gui.cpp`) whose value is
+its position, leaving everything else to the trackbar's own answers. The page is built
 from the reader settings as they are when it is first shown, so a
 Verbatim+5 toggle made earlier is shown. Unlike the Speech and Theme
 pages, a change here waits for OK, Apply, or Control+S, as in NVDA's

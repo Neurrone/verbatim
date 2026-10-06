@@ -21,6 +21,7 @@
 // which would read it in the ANSI code page.
 
 #include <wx/wx.h>
+#include <wx/access.h>
 #include <wx/filedlg.h>
 #include <wx/listctrl.h>
 #include <wx/taskbar.h>
@@ -772,6 +773,27 @@ private:
     bool rebuilding_ = false;
 };
 
+// Gives a slider its position as its MSAA value. A standard trackbar's
+// value is its position as a percentage of its range, which is the
+// position itself only for a range of 0 to 100; a line limit's range is 1
+// to 100, so 30 read as 29. Everything else falls back to the standard
+// trackbar's own answers.
+class SliderPositionAccessible : public wxAccessible {
+public:
+    explicit SliderPositionAccessible(wxSlider* slider) : wxAccessible(slider), slider_(slider) {}
+
+    wxAccStatus GetValue(int childId, wxString* value) override {
+        if (childId != wxACC_SELF) {
+            return wxACC_NOT_IMPLEMENTED;
+        }
+        *value = wxString::Format("%d", slider_->GetValue());
+        return wxACC_OK;
+    }
+
+private:
+    wxSlider* slider_;
+};
+
 // The Terminal page (phase6-design.md, "M4: text, editing, and terminals",
 // Questions): "Report new output", the two line limits as sliders, and
 // speaking passwords typed in terminals, top to bottom, which is also the
@@ -790,13 +812,15 @@ public:
         sizer->Add(report_output_, 0, wxALL, 3);
 
         // Each label is made just before its slider, so the slider is named
-        // by it. The sliders' range is the limits' range.
+        // by it. The sliders' range is the limits' range, and each reads its
+        // position as its value (SliderPositionAccessible).
         sizer->Add(new wxStaticText(this, wxID_ANY, Text(page.full_lines_label)), 0,
                    wxLEFT | wxTOP, 3);
         full_lines_ =
             new wxSlider(this, wxID_ANY, page.full_lines, page.min_lines, page.max_lines);
         full_lines_->SetLineSize(1);
         full_lines_->SetPageSize(10);
+        full_lines_->SetAccessible(new SliderPositionAccessible(full_lines_));
         sizer->Add(full_lines_, 0, wxEXPAND | wxALL, 3);
 
         sizer->Add(new wxStaticText(this, wxID_ANY, Text(page.last_lines_label)), 0,
@@ -805,6 +829,7 @@ public:
             new wxSlider(this, wxID_ANY, page.last_lines, page.min_lines, page.max_lines);
         last_lines_->SetLineSize(1);
         last_lines_->SetPageSize(10);
+        last_lines_->SetAccessible(new SliderPositionAccessible(last_lines_));
         sizer->Add(last_lines_, 0, wxEXPAND | wxALL, 3);
 
         speak_passwords_ = new wxCheckBox(this, wxID_ANY, Text(page.speak_passwords_label));

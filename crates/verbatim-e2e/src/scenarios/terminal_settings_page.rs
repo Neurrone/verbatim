@@ -10,7 +10,12 @@
 //! the setting in Core: it says "report new output on", which it says only
 //! if the applied change had turned it off. That also restores the
 //! setting. Reopen the Terminal page and hear "Report new output" checked
-//! again, so the page opens on the value Verbatim+5 set, and close it.
+//! again, so the page opens on the value Verbatim+5 set. Tab to the two
+//! line-limit sliders and hear each read the setting, 30, not 29: a
+//! standard trackbar's MSAA value is its position as a percentage of its
+//! range, 1 to 100 here, so the page gives each slider its position as its
+//! value. Right Arrow then moves the second to 31, heard as 31, and Escape
+//! closes the dialog without applying it.
 //!
 //! Every step waits for the speech it causes, or for the dialog to close,
 //! with a deadline that only bounds failure; nothing waits a fixed time.
@@ -103,6 +108,25 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The page opens on the value Verbatim+5 set.
     let heard = open_at_report_output(scenario);
     assert_checked(&heard);
+
+    // Each line limit reads its setting, as does a change to it.
+    for label in ["Lines spoken in full", "Last lines to speak"] {
+        scenario.send_keys(&["tab"]).expect("sends tab");
+        let heard = scenario
+            .speech()
+            .expect_in_order_capturing(&[label, "slider"], STEP_TIMEOUT);
+        assert!(
+            heard.split_whitespace().any(|word| word == "30"),
+            "{label:?} should read the setting, 30: {heard:?}"
+        );
+    }
+    scenario
+        .send_keys(&["rightarrow"])
+        .expect("sends rightarrow");
+    let heard = scenario
+        .speech()
+        .expect_in_order_capturing(&["31"], STEP_TIMEOUT);
+    assert_eq!(heard, "31", "the moved slider should read 31");
     close_dialog(scenario);
 }
 

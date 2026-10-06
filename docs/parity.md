@@ -141,7 +141,9 @@ verified.
     before "Context menu". The Terminal page's "Lines spoken in full"
     and "Last lines to speak" sliders read 29 for the setting's 30 in
     both screen readers: a standard trackbar's MSAA value is its position
-    as a percentage of its range, which is 1 to 100 there. Every other
+    as a percentage of its range, which is 1 to 100 there. **Fixed since
+    2026-10-07**: each slider gives its position as its value, so both
+    screen readers read 30 (the `terminal_settings_page` scenario). Every other
     control on the three pages reads the same in both, apart from the
     states and tree levels above.
   - Found by NVDA transcripts in Windows 11 Notepad on 2026-10-07 and
