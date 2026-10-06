@@ -1041,10 +1041,19 @@ fn read_snapshot(
     let role = acc
         .role()
         .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
-    let states = acc
+    let mut states = acc
         .state()
         .map(|s| states_from_msaa(s.cast_unsigned()))
         .unwrap_or_default();
+    // An edit control's client object says whether it edits more than one
+    // line, as NVDA's edit control class does, from the window's style.
+    if role == Role::EditableText
+        && key.1 == OBJID_CLIENT.0
+        && key.2 == CHILDID_SELF
+        && window::is_multiline_edit(key.0)
+    {
+        states.insert(verbatim_model::State::Multiline);
+    }
     // A detail the active theme reports as off is not read at all, saving
     // its cross-process call (`NodeIdRegistry::fetches`).
     let fetches = registry.fetches();
