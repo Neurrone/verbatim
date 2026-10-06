@@ -79,7 +79,22 @@ pub(super) enum Item {
     NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
     /// A follow-up finding the live element of a focus reported from its
     /// event alone, for the focus-following property subscription.
-    ResolveFocus { runtime_id: Vec<i32>, attempt: u32 },
+    ResolveFocus {
+        runtime_id: Vec<i32>,
+        attempt: u32,
+        /// A focus held back because another element of the application
+        /// had the keyboard focus when it was read: reported once the
+        /// follow-up finds its element focused after all.
+        held: Option<Box<HeldFocus>>,
+    },
+}
+
+/// A UIA focus fact the worker held back as possibly stale
+/// ([`Item::ResolveFocus`]), with what reporting it needs.
+pub(super) struct HeldFocus {
+    pub(super) windows: (isize, isize),
+    pub(super) fact: crate::protocol::UiaSnapshotFact,
+    pub(super) observed_at_ms: u64,
 }
 
 /// An item with its trace and observation time.

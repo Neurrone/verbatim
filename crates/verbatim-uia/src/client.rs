@@ -381,38 +381,69 @@ impl Uia {
                 return Ok((chain, None, ending));
             };
             // SAFETY: `parent` was just built with `cache`.
-            let hwnd = unsafe { crate::map::cached_native_window_handle(&parent) };
-            if hwnd != 0 && read_by_other_api(hwnd) {
-                chain.reverse();
-                log(hops, "crossed into MSAA");
-                return Ok((chain, Some(hwnd), AncestorWalk::Complete));
-            }
-            // SAFETY: `parent` was just built with `cache`.
-            let snapshot = unsafe { snapshot_from_cached_element(&parent, registry) };
-            // Non-presentable ancestors are crossed but never reported —
-            // NVDA's `isPresentableFocusAncestor`, which filters spoken
-            // focus context regardless of its review-mode setting (object
-            // navigation, by contrast, sees the full tree; see
-            // [`Uia::navigate`]).
-            // A UIA element is content only when UIA counts it both a
-            // control and content, as NVDA requires.
-            // SAFETY: `parent` was just built with `cache`.
-            if is_presentable_focus_ancestor(&snapshot)
-                && unsafe { crate::map::cached_is_control_and_content(&parent) }
+            match unsafe { take_ancestor(&parent, registry, read_by_other_api, known, &mut chain) }
             {
-                let id = snapshot.id;
-                chain.push(snapshot);
-                if known(id) {
+                Taken::Continue => current = parent,
+                Taken::Crossed(hwnd) => {
+                    chain.reverse();
+                    log(hops, "crossed into MSAA");
+                    return Ok((chain, Some(hwnd), AncestorWalk::Complete));
+                }
+                Taken::Known(id) => {
                     chain.reverse();
                     log(hops, "met a known ancestor");
                     return Ok((chain, None, AncestorWalk::MetKnown(id)));
                 }
             }
-            current = parent;
         }
         chain.reverse();
         log(hops, "hop limit");
         Ok((chain, None, AncestorWalk::Complete))
+    }
+
+    /// The same result as [`Uia::ancestor_chain`], from `parents` already
+    /// fetched, nearest first, each with its cache filled (as one remote
+    /// operation returns them): the same stops at a window read through
+    /// the other API and at a known ancestor, and the same filtering of
+    /// what is reported. `complete` says whether `parents` ends at the
+    /// root; a fetch cut short by a depth limit is reported as complete
+    /// up to there, like the classic walk's hop limit.
+    ///
+    /// # Safety
+    ///
+    /// Every element of `parents` must be live and carry a cache with the
+    /// properties [`snapshot_from_cached_element`] reads.
+    #[must_use]
+    pub unsafe fn ancestor_chain_from(
+        parents: &[IUIAutomationElement],
+        registry: &NodeIdRegistry,
+        stops: &AncestorStops<'_>,
+    ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
+        let mut chain = Vec::new();
+        for parent in parents {
+            // SAFETY: forwarded to this function's contract.
+            match unsafe {
+                take_ancestor(
+                    parent,
+                    registry,
+                    stops.read_by_other_api,
+                    stops.known,
+                    &mut chain,
+                )
+            } {
+                Taken::Continue => {}
+                Taken::Crossed(hwnd) => {
+                    chain.reverse();
+                    return (chain, Some(hwnd), AncestorWalk::Complete);
+                }
+                Taken::Known(id) => {
+                    chain.reverse();
+                    return (chain, None, AncestorWalk::MetKnown(id));
+                }
+            }
+        }
+        chain.reverse();
+        (chain, None, AncestorWalk::Complete)
     }
 
     /// The first selected child of a selection container, via the
@@ -603,6 +634,55 @@ pub unsafe fn selected_element(
     // SAFETY: `first` is live; rebuilding with `cache` prefetches the full
     // snapshot property set in one round trip.
     unsafe { first.BuildUpdatedCache(cache) }.ok()
+}
+
+/// What one ancestor did to a walk ([`take_ancestor`]).
+enum Taken {
+    /// The walk goes on to the next parent.
+    Continue,
+    /// The ancestor is the root of a window read through the other API.
+    Crossed(isize),
+    /// The ancestor was reported and is already known.
+    Known(verbatim_model::NodeId),
+}
+
+/// One ancestor of a walk, nearest first: the stop at a window read
+/// through the other API, then the report, filtered, and the stop at a
+/// known ancestor. Non-presentable ancestors are crossed but never
+/// reported, NVDA's `isPresentableFocusAncestor`, which filters spoken
+/// focus context regardless of its review-mode setting (object navigation,
+/// by contrast, sees the full tree; see [`Uia::navigate`]); a UIA element
+/// is content only when UIA counts it both a control and content, as NVDA
+/// requires.
+///
+/// # Safety
+///
+/// `parent` must be live and built with a cache holding the snapshot's
+/// properties.
+unsafe fn take_ancestor(
+    parent: &IUIAutomationElement,
+    registry: &NodeIdRegistry,
+    read_by_other_api: &dyn Fn(isize) -> bool,
+    known: &dyn Fn(verbatim_model::NodeId) -> bool,
+    chain: &mut Vec<NodeSnapshot>,
+) -> Taken {
+    // SAFETY: forwarded to this function's contract.
+    let hwnd = unsafe { crate::map::cached_native_window_handle(parent) };
+    if hwnd != 0 && read_by_other_api(hwnd) {
+        return Taken::Crossed(hwnd);
+    }
+    // SAFETY: forwarded to this function's contract.
+    let snapshot = unsafe { snapshot_from_cached_element(parent, registry) };
+    // SAFETY: forwarded to this function's contract; a cached read.
+    let content = unsafe { crate::map::cached_is_control_and_content(parent) };
+    if is_presentable_focus_ancestor(&snapshot) && content {
+        let id = snapshot.id;
+        chain.push(snapshot);
+        if known(id) {
+            return Taken::Known(id);
+        }
+    }
+    Taken::Continue
 }
 
 /// Whether this process has finished UIA's first-time setup; see
