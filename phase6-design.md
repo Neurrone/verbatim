@@ -414,6 +414,55 @@ How each would work in Verbatim:
   buffers. In those cases the outpost falls back to comparing the visible
   screen with the one it read last.
 
+### How the outpost finds new lines
+
+Written down on 2026-10-06 in answer to Dickson's question of how the
+outpost knows which lines to fetch when lines are redrawn or the
+scrollback overflows.
+
+The outpost keeps an anchor: a text range at the start of the last line
+it read, plus the text of that line and of the line before it (a
+two-line fingerprint, so a run of identical lines is less likely to
+match by accident). A range is never trusted on its own, because once
+the scrollback is full the terminal keeps a range's row number while the
+text moves up beneath it. On each change, one remote program:
+
+1. Reads the text at the anchor and the line before it, and compares
+   them with the fingerprint.
+2. If they match, the anchor is still where it was. The program counts
+   the lines from the anchor to the end of the text (moving a range
+   endpoint by line, which returns the count without sending text), and
+   reads only the lines that will be spoken: all of them up to the
+   backlog limit of 30, or the last 30 with the rest counted as
+   skipped. The anchor's own line is compared character by character,
+   so a prompt that grew, or a progress bar rewritten in place, speaks
+   only what changed.
+3. If they do not match, the text moved or changed under the anchor.
+   The program searches upward from the anchor's row, a bounded number
+   of lines, for the fingerprint. Found, the distance is how far the
+   text scrolled; the anchor moves there and step 2 continues. This is
+   the overflowing scrollback case, where the oldest lines are discarded
+   and everything shifts up.
+4. If the fingerprint is not found within the search, the anchor's line
+   is gone: the screen was cleared, a full-screen program switched to
+   the alternate screen, the line was rewritten, or more output arrived
+   than the search covers. The outpost then compares the visible screen
+   with the last screen it read, by line, and speaks the lines that are
+   new, as NVDA does for screens that scroll (#12974). A new anchor is
+   set at the end of what was read.
+
+What is spoken in each case:
+
+- A redraw that changes nothing (a full repaint with the same text)
+  matches in step 2 with nothing new, so nothing is spoken.
+- A line rewritten in place speaks only its changed characters; rapid
+  rewrites within the collapse window speak once.
+- A flood that overflowed the scrollback past the anchor (step 4)
+  cannot know exactly how many lines went by, because the discarded
+  lines are gone. The outpost then says "skipped lines" without a number
+  and speaks the last 30. The exact count is spoken whenever it is known
+  (steps 2 and 3).
+
 ### Why notifications exist, and what went wrong with them
 
 From NVDA's history and the Windows Terminal repository, researched
