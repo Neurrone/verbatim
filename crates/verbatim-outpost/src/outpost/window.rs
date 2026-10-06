@@ -58,7 +58,7 @@ pub(super) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
 
 /// `handle`'s top-level window (`GetAncestor` with `GA_ROOT`), or 0 for an
 /// invalid handle.
-pub(super) fn top_level_of(handle: isize) -> isize {
+pub(crate) fn top_level_of(handle: isize) -> isize {
     // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
     // one.
     unsafe { GetAncestor(hwnd(handle), GA_ROOT) }.0 as isize

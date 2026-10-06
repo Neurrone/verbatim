@@ -32,9 +32,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, GetClassNameW};
+use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
 
-use crate::outpost::window::window_thread;
+use crate::outpost::window::{top_level_of, window_thread};
 
 /// How long a probe that found no UIA provider is trusted before the window
 /// is probed again: NVDA's `isUIAWindow` cache period.
@@ -217,12 +217,10 @@ impl WindowClasses {
     /// Reads `hwnd`'s classes.
     #[must_use]
     pub fn of(hwnd: isize) -> Self {
-        // SAFETY: GetAncestor takes any handle and returns null for an
-        // invalid one, whose class then reads as empty.
-        let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
+        // An invalid handle's root is 0, whose class reads as empty.
         Self::new(
             &window_class_name(hwnd),
-            &window_class_name(root.0 as isize),
+            &window_class_name(top_level_of(hwnd)),
         )
     }
 
