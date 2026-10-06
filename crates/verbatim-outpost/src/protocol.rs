@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 /// When an event reached each point on its way through the listener and
 /// the outpost, for the latency log Core writes for every announcement:
-/// microseconds since the Unix epoch, 0 for a point it did not pass.
+/// microseconds since the Unix epoch, 0 for a point it did not pass. Also
+/// the cross-process calls the outpost made for it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EventTiming {
@@ -30,6 +31,11 @@ pub struct EventTiming {
     pub dequeued_at_us: u64,
     /// When the outpost sent the resulting event to Core.
     pub published_at_us: u64,
+    /// The cross-process calls the outpost's worker made between taking the
+    /// entry from its queue and publishing this message, by kind
+    /// (`docs/performance.md`). Zero from the listener, which makes none, and
+    /// from an older peer.
+    pub calls: CallCounts,
 }
 
 /// Microseconds since the Unix epoch, the clock [`EventTiming`] and the
@@ -45,8 +51,8 @@ pub fn now_us() -> u64 {
     .unwrap_or(u64::MAX)
 }
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification, OutpostId, Pid,
-    QueryKind, Role, StateSet, TraceId, TreeNode, WindowFacts,
+    Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
+    OutpostId, Pid, QueryKind, Role, StateSet, TraceId, TreeNode, WindowFacts,
 };
 
 /// The identity-free contents of a UIA focus element, as the focus listener
@@ -478,6 +484,12 @@ pub enum OutpostToSupervisor {
         request_id: u64,
         /// What became of it.
         outcome: QueryOutcome,
+        /// When the query reached each point in the outpost, and the
+        /// cross-process calls answering it made, for the latency log.
+        /// Default for a query withdrawn or abandoned, and from an older
+        /// peer.
+        #[serde(default)]
+        timing: EventTiming,
     },
     /// Answer to [`SupervisorToOutpost::Ping`].
     Pong {
@@ -700,6 +712,7 @@ mod tests {
             trace_id: TraceId::mint(),
             request_id: 1,
             outcome: QueryOutcome::Done(QueryResult::Ancestors(vec![snapshot(4)])),
+            timing: EventTiming::default(),
         };
         event.assign_outpost(OutpostId(7));
         chain.assign_outpost(OutpostId(7));
@@ -757,6 +770,20 @@ mod tests {
             .expect("reads")
             .expect("not end of stream");
         assert_eq!(read_back, expected_pong);
+    }
+
+    #[test]
+    fn a_reply_or_timing_from_an_older_peer_reads_with_no_calls() {
+        let reply: OutpostToSupervisor =
+            serde_json::from_str(r#"{"Reply":{"trace_id":7,"request_id":3,"outcome":"Gone"}}"#)
+                .expect("an older reply still reads");
+        let OutpostToSupervisor::Reply { timing, .. } = reply else {
+            panic!("still a reply");
+        };
+        assert_eq!(timing, EventTiming::default());
+        let timing: EventTiming =
+            serde_json::from_str(r#"{"observed_at_us":5}"#).expect("older timing still reads");
+        assert!(timing.calls.is_empty());
     }
 
     #[test]
@@ -932,6 +959,16 @@ mod tests {
                 trace_id: TraceId::mint(),
                 request_id: 3,
                 outcome,
+                timing: EventTiming {
+                    dequeued_at_us: 10,
+                    published_at_us: 20,
+                    calls: CallCounts {
+                        uia: 3,
+                        msaa: 0,
+                        window_messages: 1,
+                    },
+                    ..EventTiming::default()
+                },
             })
             .collect();
         for reply in &replies {

@@ -485,6 +485,7 @@ fn resolve_uia_element(
 ) -> Result<IUIAutomationElement, ReadError> {
     if let Some(agile) = context.uia_registry.element_of(node_id) {
         if let Ok(element) = agile.resolve() {
+            verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
             // SAFETY: a dead underlying element fails the call rather than
             // crashing.
             match unsafe { element.BuildUpdatedCache(cache) } {

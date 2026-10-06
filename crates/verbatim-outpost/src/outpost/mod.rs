@@ -214,7 +214,10 @@ impl Outpost {
                 },
                 *trace_id,
                 now_ms(),
-                EventTiming::default(),
+                EventTiming {
+                    relayed_at_us: now_us(),
+                    ..EventTiming::default()
+                },
             ),
             SupervisorToOutpost::Cancel { request_id } => {
                 if context.intake.cancel(*request_id) {
@@ -224,6 +227,7 @@ impl Outpost {
                         trace_id: TraceId::mint(),
                         request_id: *request_id,
                         outcome: QueryOutcome::NotStarted,
+                        timing: EventTiming::default(),
                     });
                 }
             }

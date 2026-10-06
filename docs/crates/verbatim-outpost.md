@@ -33,8 +33,10 @@ Public API:
   `EventTiming` records, in microseconds from `now_us`, when an event was
   observed, relayed to the outpost by Core, taken from the outpost's queue,
   and published to Core, and for a WinEvent how long before it was observed
-  Windows raised it; the listener's `FocusFact`, Core's `DeliverFact`, and
-  the outpost's `Event` carry it, and Core's latency log reads it.
+  Windows raised it, and the cross-process calls the worker made for it
+  (`calls`, a `CallCounts`); the listener's `FocusFact`, Core's
+  `DeliverFact`, and the outpost's `Event` and `Reply` carry it, and Core's
+  latency ledger reads it.
   `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
   window of the target, or restores normal arbitration), `DeliverFact` (a
   focus fact the listener captured, routed to this outpost — a UIA focus
@@ -48,7 +50,8 @@ Public API:
   child by closing its job handle. `OutpostToSupervisor`: `Ready`, `Event`
   (trace id, observation timestamp, backend, the event window's
   `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
-  echoing its request id, with a `QueryOutcome`: `Done` with a
+  echoing its request id, with its `EventTiming`, default for a query
+  withdrawn or abandoned, and a `QueryOutcome`: `Done` with a
   `QueryResult`, `Gone` when the node is no longer reachable, `Failed` with
   a reason, `NotStarted` when it was withdrawn before it ran, or `Abandoned`
   when it started and passed its deadline, so side effects such as an
@@ -120,7 +123,13 @@ Public API:
     finishes each before the next. It is the only thread that calls into the
     application, so events and replies leave in the order their entries
     joined the queue. It replaces the announce lane, the query pool, the
-    announce poll, the probe threads, and the late window retry.
+    announce poll, the probe threads, and the late window retry. Being the
+    only such thread, it is where the calls are counted: the backend crates
+    count each call on the thread that makes it, and the worker takes both
+    counts when it publishes an event or a reply, which carries them in its
+    `EventTiming`. Calls an entry makes without publishing, for an event it
+    drops, are taken when the entry ends, logged, and belong to no trace
+    (`docs/performance.md`, "Cancelled traces").
   - The watchdog abandons a worker whose call passes its deadline (an
     event, a focus, or a focus-now query 10 s, NVDA's normal watchdog
     timeout, since an application that is starting up can take seconds to

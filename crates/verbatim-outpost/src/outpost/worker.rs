@@ -6,6 +6,14 @@
 //! their entries joined the queue. This is NVDA's model, one thread doing all
 //! the work, with one such thread per application.
 //!
+//! Being the only thread that calls into the application, the worker is also
+//! where those calls are counted: the backend crates count each call on the
+//! thread that makes it, and the worker takes the count when it publishes an
+//! event or a reply, which carries it to Core with the timing
+//! ([`take_calls`]). Calls an entry makes without publishing anything, for an
+//! event it drops, are taken and logged when the entry ends and belong to no
+//! trace (`docs/performance.md`, "Cancelled traces").
+//!
 //! The watchdog watches the worker's deadline. If a call hangs past it, the
 //! watchdog abandons the worker (a hung cross-process call cannot be stopped
 //! safely), answers the stuck query "abandoned" if it was a query, counts the
@@ -22,7 +30,8 @@ use std::time::{Duration, Instant};
 
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, TraceId,
+    Backend, CallCounts, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
+    TraceId,
 };
 use verbatim_uia::map::{cached_process_id, snapshot_from_cached_element};
 use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handle};
@@ -257,6 +266,13 @@ fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> 
     })
 }
 
+/// The cross-process calls this thread has made through either backend
+/// since the last take, resetting the count. Only the worker calls into the
+/// application, so on the worker this is what the entry in hand has made.
+fn take_calls() -> CallCounts {
+    verbatim_uia::calls::take() + verbatim_ia2::calls::take()
+}
+
 /// Starts the first worker and the watchdog.
 pub(super) fn start(context: &Arc<Context>) {
     spawn_worker(Arc::clone(context), 0);
@@ -351,6 +367,7 @@ fn watchdog(context: &Arc<Context>) {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Abandoned,
+                timing: EventTiming::default(),
             });
         }
         spawn_worker(Arc::clone(context), generation);
@@ -447,10 +464,14 @@ fn run_entry(
     context
         .arbitrator()
         .renew_probes_since(started, Instant::now());
+    // Calls made after the entry's last publish, or by an entry that
+    // published nothing: they belong to no trace.
+    let unpublished = take_calls();
     tracing::debug!(
         %trace,
         item = %description,
         elapsed_us = started.elapsed().as_micros(),
+        ?unpublished,
         "handled"
     );
     match context.watch.finish(generation) {
@@ -472,6 +493,7 @@ fn run_entry(
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
+                timing: EventTiming::default(),
             });
         }
         Ok(None) => {
@@ -640,6 +662,7 @@ impl Worker<'_> {
                 window: window.map(window_facts),
                 timing: EventTiming {
                     published_at_us: now_us(),
+                    calls: take_calls(),
                     ..self.timing
                 },
                 event,
@@ -1412,6 +1435,11 @@ impl Worker<'_> {
                 trace_id: trace,
                 request_id,
                 outcome,
+                timing: EventTiming {
+                    published_at_us: now_us(),
+                    calls: take_calls(),
+                    ..self.timing
+                },
             },
         );
     }
