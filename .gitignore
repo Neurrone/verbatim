@@ -6,3 +6,6 @@
 /dumps/
 /packer_cache/
 /.claude/
+
+# Python bytecode from checking the NVDA add-on outside NVDA
+__pycache__/
