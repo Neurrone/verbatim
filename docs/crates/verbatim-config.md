@@ -33,6 +33,20 @@ Public API:
   - `speak_terminal_passwords`: echo characters typed into a terminal at
     once rather than when the terminal shows them, `false` by default.
     NVDA's "Speak passwords in all enhanced terminals".
+  - `report_terminal_output`: speak new output in terminals, `true` by
+    default ("Report new output", toggled with Verbatim+5).
+  - `terminal_full_lines`: "Lines spoken in full", 30 by default: up to
+    this many lines of terminal output waiting to be spoken are all
+    spoken.
+  - `terminal_last_lines`: "Last lines to speak", 30 by default: when more
+    are waiting, the older ones become "skipped N lines" and this many of
+    the newest are kept. Both limits are kept between 1 and 100
+    (`MAX_TERMINAL_LINES`).
+
+  These four and `speak_terminal_passwords` are the Terminal settings of
+  `phase6-design.md` ("M4: text, editing, and terminals", Questions). The
+  settings dialog has no Terminal panel yet; until it has, they are set
+  in `settings.toml` and, for "Report new output", with Verbatim+5.
 - `VerbatimKeys` — which keys act as the Verbatim modifier (`caps_lock`,
   `insert`, `numpad_insert`) plus `share_modifier`, which passes the
   modifier's own transitions down the hook chain for a screen reader

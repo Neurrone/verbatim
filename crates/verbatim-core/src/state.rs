@@ -362,6 +362,10 @@ pub struct SrState {
     /// The details the active theme wants fetched (`Input::Fetches`).
     #[serde(default)]
     pub(crate) fetches: Fetches,
+    /// The focused terminal's output still to be spoken (milestone M4 item
+    /// 9), bounded by the flood policy's limits.
+    #[serde(default)]
+    pub(crate) terminal: crate::terminal::TerminalSpeech,
 }
 
 impl SrState {

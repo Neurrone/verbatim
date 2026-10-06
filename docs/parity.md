@@ -1019,7 +1019,36 @@ verified.
   read after the key, from the application's caret event for that very key
   arriving before Core's request, is not. Terminals are recognized by
   their UIA class (`TermControl`, `WPFTermControl`) and the console host's
-  window class, never by title. Terminal diffing is **not yet (M4)**.
+  window class, never by title.
+- New terminal output. NVDA: [Editable text and
+  terminals](nvda/editable-text-and-terminals.md), "Terminals": diffing by
+  default, the whole document per text change; Windows Terminal's output
+  notifications only behind a flag; every new line spoken, queued, until a
+  key cancels speech; a one-character change dropped as probably typed.
+  Verbatim: **implemented since 2026-10-06** (M4 item 9), diffing in the
+  outpost with an anchor on the last line read, so only the lines spoken
+  are read (`docs/crates/verbatim-outpost.md`, "Terminals"); Windows
+  Terminal's `TerminalTextOutput` notifications from a terminal are
+  ignored, so nothing is spoken twice; a redraw with the same text speaks
+  nothing; blank lines are dropped; newer output never cancels older; a
+  key, or anything else that cuts speech off, drops output still waiting,
+  as in NVDA. **Different:** the backlog is capped ("30 and 30",
+  `phase6-design.md`, "The flood policy, reconsidered"): with more than
+  "Lines spoken in full" (30) lines waiting, the older ones become
+  "skipped N lines" ("skipped lines" when the scrollback overflowed past
+  the anchor and the count is lost) and the newest "Last lines to speak"
+  (30) are kept; NVDA speaks them all. Nothing is lost for good: every
+  line is still there for the review cursor. **Different:** in place of
+  NVDA's rule dropping any one-character change, the typing Core holds is
+  echoed when the terminal shows it at the end of the line and not spoken
+  again as output, and a line changed some other way (a password prompt's
+  asterisks) drops the held typing unspoken, so a tab completion's added
+  text is read and a password is never spoken. **Different:** a line the
+  terminal rewrites in place speaks from the start of the word where it
+  first differs, and a rewrite while the earlier version is still waiting
+  replaces it. Verbatim+5 toggles "Report new output", on NVDA's key for
+  its "report dynamic content changes" toggle, saying "report new output
+  on" and "off".
 - Word and character segmentation (Uniscribe grapheme clusters and
   word stops) and the three-way paragraph-style setting. NVDA:
   [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched

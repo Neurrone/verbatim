@@ -625,6 +625,10 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         }
         Message::NotSupported => i18n_embed_fl::fl!(loader, "message-not-supported"),
         Message::NoCaret => i18n_embed_fl::fl!(loader, "message-no-caret"),
+        Message::ReportNewOutputOn => i18n_embed_fl::fl!(loader, "message-report-new-output-on"),
+        Message::ReportNewOutputOff => {
+            i18n_embed_fl::fl!(loader, "message-report-new-output-off")
+        }
         // `Message` is non_exhaustive; an unmapped future message speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -666,6 +670,9 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         }
         Phrase::SkippedLines(count) => {
             i18n_embed_fl::fl!(loader, "phrase-skipped-lines", count = count.to_string())
+        }
+        Phrase::SkippedUncountedLines => {
+            i18n_embed_fl::fl!(loader, "phrase-skipped-uncounted-lines")
         }
         // `Phrase` is non_exhaustive; an unmapped future phrase speaks
         // nothing rather than crashing the pipeline.
@@ -1282,6 +1289,11 @@ mod tests {
         assert_eq!(earcon_text(Earcon::Progress(40)), "40 percent");
         assert_eq!(phrase_text(&Phrase::SkippedLines(1)), "skipped 1 line");
         assert_eq!(phrase_text(&Phrase::SkippedLines(120)), "skipped 120 lines");
+        assert_eq!(phrase_text(&Phrase::SkippedUncountedLines), "skipped lines");
+        assert_eq!(
+            message_text(verbatim_model::Message::ReportNewOutputOff),
+            "report new output off"
+        );
         assert_eq!(
             theme_problem_text(&ThemeProblem::MissingSound {
                 indication: Indication::SpellingError,

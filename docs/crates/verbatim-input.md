@@ -75,7 +75,9 @@ Public API:
   Verbatim+Shift+F9 (the review cursor to the start marker), Verbatim+F10
   (select from the marker to the review cursor; twice, copy), Verbatim+6
   (caret moves review cursor), Verbatim+2 and Verbatim+3 (speak typed
-  characters and words). The desktop layout's own: Verbatim+Page Up and
+  characters and words), and Verbatim+5 (report new output in terminals,
+  M4 item 9; NVDA's key for its "report dynamic content changes" toggle).
+  The desktop layout's own: Verbatim+Page Up and
   Page Down (the review cursor by page), Verbatim+Down Arrow (say all from
   the caret), Verbatim+numpad Delete (the caret's location), and
   Verbatim+Shift+numpad Delete (the review cursor's location). The laptop

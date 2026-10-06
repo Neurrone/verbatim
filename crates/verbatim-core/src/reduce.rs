@@ -22,7 +22,7 @@ use verbatim_model::{
 use verbatim_model::{FocusNow, FocusValidity};
 
 use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState};
-use crate::{editing, review, review_text, say_all, text};
+use crate::{editing, review, review_text, say_all, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity.md`, "Event
@@ -38,6 +38,17 @@ const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResul
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    let effects = reduce_input(state, input);
+    // Whatever cuts speech off drops the terminal output handed to it, and
+    // with it the output still waiting, as a key press does in NVDA.
+    if effects.iter().any(terminal::cuts_speech) {
+        terminal::cut(state);
+    }
+    effects
+}
+
+/// [`reduce`]'s dispatch, by input.
+fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Event {
             trace_id,
@@ -75,8 +86,15 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::CharacterTyped { trace_id, text } => {
             editing::character_typed(state, *trace_id, text)
         }
-        Input::MarkReached { mark } => say_all::mark_reached(state, *mark),
-        Input::SpeechCancelled => say_all::stop(state),
+        Input::MarkReached { mark } => {
+            let mut effects = say_all::mark_reached(state, *mark);
+            effects.extend(terminal::mark_reached(state, *mark));
+            effects
+        }
+        Input::SpeechCancelled => {
+            terminal::cut(state);
+            say_all::stop(state)
+        }
         Input::Settings(settings) => {
             state.settings = *settings;
             Vec::new()
@@ -379,6 +397,9 @@ fn reduce_event(
         NormalizedEvent::TextChanged { node_id } => {
             editing::text_changed(state, trace_id, *node_id)
         }
+        NormalizedEvent::TerminalOutput { node_id, output } => {
+            terminal::output(state, trace_id, *node_id, output)
+        }
         NormalizedEvent::PropertyChanged { node_id, change } => match change {
             PropertyChange::Name(name) => {
                 reduce_name_changed(state, trace_id, *node_id, name.as_ref())
@@ -643,6 +664,7 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     state.focus_text = None;
     state.typed_word.clear();
     state.held_typing.clear();
+    crate::terminal::focus_moved(state, node);
     if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
         state.caret = None;
     }
@@ -956,6 +978,7 @@ fn reduce_command(
         ReviewCommand::ToggleFollowCaret
         | ReviewCommand::ToggleTypedCharacters
         | ReviewCommand::ToggleTypedWords => toggle_setting(state, trace_id, command),
+        ReviewCommand::ToggleReportNewOutput => terminal::toggle(state, trace_id),
         ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
             caret_command(state, trace_id, command)
         }
