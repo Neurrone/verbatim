@@ -433,25 +433,26 @@ impl AudioDevice for WasapiDevice {
             Output::Closed => Err(AudioError::Device("the device is not open".to_owned())),
             Output::Stream(stream) => {
                 let frames = samples.len() / stream.channels;
+                if frames == 0 {
+                    // Less than a frame is nothing to play, and GetBuffer(0)
+                    // need not return a pointer to copy into.
+                    return Ok(());
+                }
                 let frame_count = u32::try_from(frames)
                     .map_err(|_| AudioError::Stream("write larger than the buffer".to_owned()))?;
-                #[expect(
-                    clippy::cast_ptr_alignment,
-                    reason = "WASAPI buffers are aligned for their sample format"
-                )]
+                let bytes = frames * stream.channels * std::mem::size_of::<f32>();
                 // SAFETY: GetBuffer returns room for `frames` frames of the
-                // stream's float format, which is exactly what is copied; the
-                // buffer is aligned for its format, so for f32.
+                // stream's float format, `bytes` bytes, which is exactly what
+                // is copied, byte by byte, so the buffer's alignment, which
+                // WASAPI does not document, does not matter; `frames` is not
+                // zero, so the pointer is valid. The buffer is released with
+                // the same frame count.
                 unsafe {
                     let buffer = stream
                         .render
                         .GetBuffer(frame_count)
                         .map_err(|error| device_error("get the render buffer", &error))?;
-                    std::ptr::copy_nonoverlapping(
-                        samples.as_ptr(),
-                        buffer.cast::<f32>(),
-                        frames * stream.channels,
-                    );
+                    std::ptr::copy_nonoverlapping(samples.as_ptr().cast::<u8>(), buffer, bytes);
                     stream
                         .render
                         .ReleaseBuffer(frame_count, 0)
