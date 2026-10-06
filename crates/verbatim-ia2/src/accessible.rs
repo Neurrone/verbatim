@@ -20,7 +20,7 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CoTaskMemFree, IDispatch};
-use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_EMPTY, VT_I4, VariantToInt32};
+use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_EMPTY, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccIdentity,
     IAccessible, WindowFromAccessibleObject,
@@ -201,8 +201,9 @@ impl Accessible {
         count(CallKind::Msaa);
         // SAFETY: a live interface and an integer child `VARIANT`.
         let role = unsafe { self.object.get_accRole(&child_variant(self.child)) }.ok()?;
-        // SAFETY: a `VARIANT` the method just filled in.
-        unsafe { VariantToInt32(&raw const role) }.ok()
+        // A string role does not convert; the `VARIANT`'s own `Drop`
+        // (`VariantClear`) frees it.
+        i32::try_from(&role).ok()
     }
 
     /// `accState` as the raw MSAA state word, or `None` when the read fails.
@@ -210,8 +211,7 @@ impl Accessible {
         count(CallKind::Msaa);
         // SAFETY: a live interface and an integer child `VARIANT`.
         let state = unsafe { self.object.get_accState(&child_variant(self.child)) }.ok()?;
-        // SAFETY: a `VARIANT` the method just filled in.
-        unsafe { VariantToInt32(&raw const state) }.ok()
+        i32::try_from(&state).ok()
     }
 
     /// `accLocation`, in screen coordinates, or `None` when the call fails.
@@ -381,8 +381,7 @@ fn cast_remote<T: Interface>(object: &impl Interface) -> windows::core::Result<T
 /// [`Related`]. Private to this module, which applies it only to such
 /// `VARIANT`s: their type tag always matches the union field they set.
 fn related(value: &VARIANT) -> Related {
-    // SAFETY: reading the type tag, which every `VARIANT` has.
-    let vt = unsafe { value.Anonymous.Anonymous.vt };
+    let vt = value.vt();
     if vt == VT_EMPTY {
         Related::Nothing
     } else if vt == VT_I4 {
@@ -390,8 +389,8 @@ fn related(value: &VARIANT) -> Related {
         Related::Child(unsafe { value.Anonymous.Anonymous.Anonymous.lVal })
     } else if vt == VT_DISPATCH {
         // SAFETY: the tag says the union holds `pdispVal`, an interface
-        // pointer or null; cloning it adds a reference the `VARIANT` keeps
-        // its own of.
+        // pointer or null; cloning it adds a reference, and the `VARIANT`'s
+        // own reference is released by its `Drop` (`VariantClear`).
         Related::Object(unsafe { (*value.Anonymous.Anonymous.Anonymous.pdispVal).clone() })
     } else {
         Related::Other

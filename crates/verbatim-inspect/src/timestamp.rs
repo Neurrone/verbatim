@@ -39,7 +39,7 @@ fn to_local_systemtime(unix_ms: u64) -> Option<SYSTEMTIME> {
         FileTimeToSystemTime(&raw const filetime, &raw mut utc).ok()?;
     }
     let mut local = SYSTEMTIME::default();
-    // SAFETIME is converted with the zone information for that moment, so
+    // The SYSTEMTIME is converted with the zone information for that moment, so
     // timestamps around DST transitions render correctly.
     // SAFETY: valid pointers; None selects the current time zone.
     unsafe {
