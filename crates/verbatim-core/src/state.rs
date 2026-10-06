@@ -8,7 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use verbatim_model::{NodeId, NodeSnapshot, OutpostId, Pid, QueryId, WindowFacts, WindowHandle};
+use verbatim_model::{
+    CaretKey, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
+    ReviewCommand, Selection, SpeechMark, TextChunk, TextPosition, TextUnit, WindowFacts,
+    WindowHandle,
+};
 
 /// The focused node and what the reducer knows about where it sits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,8 +69,202 @@ pub(crate) struct Attention {
 pub(crate) struct Navigator {
     pub(crate) object: NodeSnapshot,
     /// The review cursor's character offset into the object's review text
-    /// (see `review::text_of`). Always a valid boundary within that text.
+    /// (see `review::text_of`), used while the object is reviewed as flat
+    /// text. Always a valid boundary within that text.
     pub(crate) review_offset: usize,
+    /// How the review cursor reviews the object's text (milestone M4).
+    #[serde(default)]
+    pub(crate) text: ReviewText,
+}
+
+impl Navigator {
+    /// A navigator on `object`, its review cursor at the start, how its text
+    /// is reviewed not yet known.
+    pub(crate) fn on(object: NodeSnapshot) -> Self {
+        Self {
+            object,
+            review_offset: 0,
+            text: ReviewText::Unknown,
+        }
+    }
+}
+
+/// A unit of text the outpost sent, shared so the state's clone, which the
+/// flight recorder takes at each checkpoint, copies a pointer and not the
+/// text (`phase6-design.md`, "Core's state").
+pub(crate) type SharedChunk = Arc<TextChunk>;
+
+/// How the review cursor reviews the navigator object's text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ReviewText {
+    /// Not known yet: the first review command finds out, reading the line
+    /// at the caret through the text protocol for an object that may have
+    /// text, and reviewing the flat text of any other.
+    #[default]
+    Unknown,
+    /// The object has no text interface: its value or name is reviewed as
+    /// flat text (`review`), as NVDA's object review falls back to.
+    Flat,
+    /// A position in the object's text, with the line it is on.
+    At(ReviewPosition),
+    /// A position in the object's text whose line has not been read, as
+    /// say-all from the review cursor leaves it; the next review command
+    /// reads the line there first.
+    Point(TextPosition),
+}
+
+/// The review cursor in a text: the line it is on, its byte offset into
+/// that line's text, and its column (`phase6-design.md`, M4 item 5). In a
+/// terminal the column is a cell column, exact, and may lie past the end
+/// of the line's text, where the cell is blank; elsewhere it is the
+/// grapheme column the cursor would like to be at, remembered across
+/// shorter lines, with `offset` where it really is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewPosition {
+    #[serde(
+        serialize_with = "serialize_chunk",
+        deserialize_with = "deserialize_chunk"
+    )]
+    pub(crate) line: SharedChunk,
+    pub(crate) offset: usize,
+    pub(crate) column: usize,
+}
+
+/// Core's copy of the focus's caret: the line it is on, with the caret at
+/// the chunk's offset, and the selection (milestone M4). Kept current by
+/// caret events and caret key replies, so a Backspace knows what it
+/// deleted and the review cursor can follow the caret without a round
+/// trip.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CaretContext {
+    pub(crate) node: NodeId,
+    #[serde(
+        serialize_with = "serialize_chunk",
+        deserialize_with = "deserialize_chunk"
+    )]
+    pub(crate) line: SharedChunk,
+    pub(crate) selection: Option<Selection>,
+}
+
+impl CaretContext {
+    /// Where the caret is.
+    pub(crate) fn caret(&self) -> TextPosition {
+        TextPosition {
+            anchor: self.line.start,
+            offset: self.line.offset,
+        }
+    }
+}
+
+/// A caret key passed to the application, waiting for the outpost's
+/// evidence of what it did.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PendingCaret {
+    pub(crate) query_id: QueryId,
+    pub(crate) node: NodeId,
+    pub(crate) key: CaretKey,
+    /// What a Backspace deleted, worked out from the caret before the key.
+    pub(crate) deleted: Option<String>,
+}
+
+/// A text request a review or text command made, and what to do with its
+/// answer. A newer command's request supersedes it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PendingText {
+    pub(crate) query_id: QueryId,
+    pub(crate) node: NodeId,
+    pub(crate) then: TextFollowUp,
+}
+
+/// What to do with the answer to a [`PendingText`] request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TextFollowUp {
+    /// The review cursor's line was read: place the cursor at the point
+    /// read, then run the command.
+    Seed { command: ReviewCommand, repeat: u8 },
+    /// The review cursor moved to another line: land on it and speak.
+    Land(Landing),
+    /// A select then copy selected the text.
+    Selected,
+    /// A select then copy read the text to copy.
+    Copy,
+    /// A location report.
+    Location,
+}
+
+/// Where the review cursor lands on a line it moved to, and what it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Landing {
+    /// Where on the line.
+    pub(crate) place: LandingPlace,
+    /// The unit spoken there.
+    pub(crate) speak: TextUnit,
+    /// What to say, before the current unit, when the movement could not
+    /// move ("Top", "Bottom").
+    pub(crate) edge: Option<verbatim_model::Message>,
+    /// The command that moved, for re-running it from the caret if the
+    /// review position was lost.
+    pub(crate) command: ReviewCommand,
+}
+
+/// Where on a line the review cursor lands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum LandingPlace {
+    /// At the remembered column.
+    Column(usize),
+    /// At the line's start.
+    Start,
+    /// On the first word.
+    FirstWord,
+    /// On the last word.
+    LastWord,
+    /// At the point read.
+    Point,
+    /// On the character before the point read (the end of a selection).
+    BeforePoint,
+}
+
+/// The select-then-copy start marker: where in which node's text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum StartMarker {
+    /// A position in a node's text.
+    Text { node: NodeId, at: TextPosition },
+    /// A byte offset into a node's flat text.
+    Flat { node: NodeId, offset: usize },
+}
+
+impl StartMarker {
+    pub(crate) fn node(self) -> NodeId {
+        match self {
+            Self::Text { node, .. } | Self::Flat { node, .. } => node,
+        }
+    }
+}
+
+/// A say-all in progress (`docs/nvda/speech.md`, "Say-all").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SayAll {
+    /// The node being read.
+    pub(crate) node: NodeId,
+    /// Whether reading moves the caret (say-all from the caret) or the
+    /// review cursor.
+    pub(crate) moves_caret: bool,
+    /// Where reading started.
+    pub(crate) start: verbatim_model::TextPoint,
+    /// The unit asked for in each read.
+    pub(crate) unit: TextUnit,
+    /// The read in flight, if any.
+    pub(crate) pending: Option<QueryId>,
+    /// The start of the last chunk read and its unit, which the next read
+    /// moves on from.
+    pub(crate) last_chunk: Option<(TextPosition, TextUnit)>,
+    /// Spoken pieces whose marks playback has not reached yet, oldest
+    /// first, with where each starts. At most a few chunks' worth.
+    pub(crate) queued: std::collections::VecDeque<(SpeechMark, TextPosition)>,
+    /// The document's end has been read.
+    pub(crate) finished: bool,
+    /// Whether the display was asked to stay on.
+    pub(crate) display_held: bool,
 }
 
 /// The most recently issued object-navigation query whose completion has not
@@ -118,6 +316,35 @@ pub struct SrState {
     /// The node of the window most recently reported as the foreground,
     /// whose speech stays valid while it is in front (`FocusNow`).
     pub(crate) foreground: Option<NodeId>,
+    /// The reader settings (milestone M4).
+    #[serde(default)]
+    pub(crate) settings: ReaderSettings,
+    /// The focus's caret, when the focus has text.
+    #[serde(default)]
+    pub(crate) caret: Option<CaretContext>,
+    /// The caret key waiting for evidence.
+    #[serde(default)]
+    pub(crate) pending_caret: Option<PendingCaret>,
+    /// The review or text command's request in flight.
+    #[serde(default)]
+    pub(crate) pending_text: Option<PendingText>,
+    /// The select-then-copy start marker.
+    #[serde(default)]
+    pub(crate) start_marker: Option<StartMarker>,
+    /// The say-all in progress.
+    #[serde(default)]
+    pub(crate) say_all: Option<SayAll>,
+    /// The word typed so far, for typed word echo; at most
+    /// `editing::MAX_TYPED_WORD` bytes.
+    #[serde(default)]
+    pub(crate) typed_word: String,
+    /// Characters typed into a terminal, held until its text changes; at
+    /// most `editing::MAX_HELD_TYPING` bytes.
+    #[serde(default)]
+    pub(crate) held_typing: String,
+    /// The next index mark number.
+    #[serde(default)]
+    pub(crate) next_mark: u64,
 }
 
 impl SrState {
@@ -184,7 +411,73 @@ impl SrState {
         if let Some(pending) = self.latest_navigation {
             insert(pending.from);
         }
+        // Nodes whose text the state holds positions in or waits on.
+        if let Some(caret) = &self.caret {
+            insert(caret.node);
+        }
+        if let Some(pending) = &self.pending_caret {
+            insert(pending.node);
+        }
+        if let Some(pending) = &self.pending_text {
+            insert(pending.node);
+        }
+        if let Some(marker) = self.start_marker {
+            insert(marker.node());
+        }
+        if let Some(say_all) = &self.say_all {
+            insert(say_all.node);
+        }
         held
+    }
+
+    /// Every text anchor the state refers to, grouped by the outpost that
+    /// minted it: the caret's line and selection, the review cursor's line or
+    /// point, the start marker, and say-all's positions. The shell sends
+    /// each outpost its own set with its held nodes, and the outpost keeps
+    /// these anchors (`verbatim_model::TextAnchor`).
+    #[must_use]
+    pub fn held_anchors(&self) -> HeldAnchors {
+        let mut held = HeldAnchors::new();
+        let mut insert = |node: NodeId, position: TextPosition| {
+            held.entry(node.outpost())
+                .or_default()
+                .insert(position.anchor);
+        };
+        if let Some(caret) = &self.caret {
+            insert(caret.node, caret.caret());
+            if let Some(selection) = caret.selection {
+                insert(caret.node, selection.start);
+                insert(caret.node, selection.end);
+            }
+        }
+        if let Some(navigator) = &self.navigator {
+            match &navigator.text {
+                ReviewText::At(position) => {
+                    insert(navigator.object.id, TextPosition::at(position.line.start));
+                }
+                ReviewText::Point(point) => insert(navigator.object.id, *point),
+                ReviewText::Unknown | ReviewText::Flat => {}
+            }
+        }
+        if let Some(StartMarker::Text { node, at }) = self.start_marker {
+            insert(node, at);
+        }
+        if let Some(say_all) = &self.say_all {
+            if let Some((position, _)) = say_all.last_chunk {
+                insert(say_all.node, position);
+            }
+            for (_, position) in &say_all.queued {
+                insert(say_all.node, *position);
+            }
+        }
+        held
+    }
+
+    /// Allocates the next index mark.
+    pub(crate) fn allocate_mark(&mut self) -> SpeechMark {
+        let mark = SpeechMark(self.next_mark);
+        self.next_mark += 1;
+        mark
     }
 
     /// Whether the focused node is exactly `node_id` and still alive.
@@ -215,4 +508,14 @@ fn deserialize_shared<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Arc<[NodeSnapshot]>, D::Error> {
     Vec::<NodeSnapshot>::deserialize(deserializer).map(Arc::from)
+}
+
+/// Serializes a shared chunk as a plain chunk.
+fn serialize_chunk<S: Serializer>(chunk: &SharedChunk, serializer: S) -> Result<S::Ok, S::Error> {
+    chunk.as_ref().serialize(serializer)
+}
+
+/// Deserializes a plain chunk into a shared one.
+fn deserialize_chunk<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SharedChunk, D::Error> {
+    TextChunk::deserialize(deserializer).map(Arc::new)
 }

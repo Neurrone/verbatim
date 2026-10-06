@@ -9,10 +9,15 @@ Public API:
   advances the state in place, without copying it, and returns the
   effects to execute.
 - `SrState` — `new()`; `focused()`, the live focus and its application;
-  `attention()`, the application holding attention; and `held_nodes()`,
-  every node id the state refers to grouped by the outpost that issued it.
-  The last two are the views the shell derives and sends out: attention to
-  the supervisor, and each outpost's held nodes to that outpost.
+  `attention()`, the application holding attention; `held_nodes()`,
+  every node id the state refers to grouped by the outpost that issued it;
+  and `held_anchors()` (milestone M4), every text anchor the state refers
+  to, grouped the same way: the caret's line and selection, the review
+  cursor's line or point, the start marker, and say-all's positions.
+  These are the views the shell derives and sends out: attention to
+  the supervisor, and each outpost's held nodes and anchors to that
+  outpost, which keeps them alive (`docs/crates/verbatim-model.md`, "The
+  text protocol").
 - `FlightRecorder<T, S>` — a window of recent entries bounded both by
   count and by estimated bytes, kept with a checkpoint of type `S` taken
   just before its oldest entry, so the window always replays from its
@@ -220,7 +225,11 @@ Implementation notes, `reduce`:
   motions walk the navigator object's flat text (its value or name) in the
   pure `review` module — grapheme-cluster characters and word-boundary
   segmentation wait for M4's text model. All of this is pure and unit-tested
-  in `verbatim-core`.
+  in `verbatim-core`. Since M4 this flat walk serves only objects with no
+  text interface (see "Text" below); its spelling goes by grapheme
+  clusters, a punctuation character is spoken by its name, the current
+  character pressed twice gives its description, and the current line or
+  word pressed three times is spelled with descriptions.
 - Notification handling and focus-noise suppression (M3): a UIA
   `Notification` event speaks its display string when it carries one,
   interrupting for `MostRecent`/`ImportantMostRecent` processing and
@@ -269,3 +278,134 @@ Implementation notes, `reduce`:
   otherwise it is announced as usual.
 - Every `Speak` carries the triggering input's trace ID, which is what
   makes end-to-end latency timelines possible.
+
+## Text (milestone M4)
+
+The reducer's side of M4 items 1 and 3 to 6 (`phase6-design.md`, "The
+autonomous run"), over the text protocol in `verbatim-model`. Pure helpers
+over received text are in `text.rs` (a line without its break, grapheme
+clusters, columns in characters or cells, words by the text's language
+through `verbatim-text`, and the spoken segments for characters, words,
+lines, and spelling); caret keys and typing echo in `editing.rs`; the
+review cursor over text in `review_text.rs`; say-all in `say_all.rs`.
+
+What the state keeps, within the bounds of "Core's state" in
+`phase6-design.md`: the focus's caret (`CaretContext`: its line, with the
+caret at the line's offset, and the selection), the review cursor's
+position (`ReviewText`: unknown, flat, a line and a position on it, or a
+point whose line has not been read), the caret key waiting for evidence,
+the one review or text request in flight, the start marker, a say-all's
+queue of spoken pieces, the word typed so far (at most 256 bytes), and
+typing held for a terminal (at most 1 KB). Text is held only a line at a
+time, as a shared chunk of at most 64 KB, so the state's clone, which the
+flight recorder takes at each checkpoint, copies a pointer and not the
+text; `tests/alloc.rs` asserts that caret and review steps allocate the
+same over small and large states, and that a checkpoint with a 64 KB line
+in the state allocates under 1 KB.
+
+Which objects have text. A focus or navigator object whose role is an
+edit field, a document, or a terminal may have text, and so does any node
+the outpost sent a caret report for. For those, caret keys wait for
+evidence and the review cursor reads lines through the protocol; the
+first review command reads the line at the caret, and a `NoText` answer
+makes the object flat text, reviewed by its value or name as in M3. Any
+other object is flat text without asking.
+
+Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
+`Input::CaretKey` on a focus with text asks its outpost to wait for
+evidence (`TextOp::AwaitCaret`), with the caret Core last knew, the unit
+to report, for Delete the character or word at the caret (whose change is
+evidence), for a selecting key the selection before it, and a wait three
+times longer in a terminal. A newer caret key supersedes one still
+waiting, and a focus change drops it, so a focus announcement wins and
+speech never lags behind fast typing. The answer updates the caret and,
+when the review cursor follows the caret, moves the review cursor to it,
+then speaks, queued:
+
+- Left and Right Arrow, Home, and End: the character at the caret, a line
+  break or the end of the text as "blank", a punctuation character by its
+  name, a capital raised in pitch.
+- Control with Left or Right Arrow: the provider's word the outpost sent.
+- Up and Down Arrow, Page Up and Page Down, Control with Home or End: the
+  line at the caret, "blank" when it has nothing to read.
+- Control with Up or Down Arrow: the provider's paragraph, or the line when
+  the provider has no paragraphs.
+- Backspace: the character before the caret before the key, worked out from
+  Core's copy of the caret, once the caret moved; Control+Backspace the
+  text from the start of the word before the caret. Nothing at the start
+  of a line or of the text.
+- Delete and Control+Delete: the character or word now at the caret.
+- Any of them with Shift, and Control+A: what became selected and
+  unselected, NVDA's "selected hello" and "unselected hello", a single
+  character by its name, 512 characters or more as their number.
+
+Typing echo. `Input::CharacterTyped` is echoed by the settings: a finished
+word first, when word echo applies and a character that is not a letter or
+digit ends it, then each printable character (a tab included), each in
+its own queued utterance. "Only in edit controls" means a focus that is an
+edit field, a terminal, or a document that is not read-only. A protected
+field echoes only the protected character, spoken "star", and no words.
+In a terminal, unless the user asked for terminal passwords to be spoken,
+typing is held until `NormalizedEvent::TextChanged` for it arrives, so a
+password prompt that shows nothing speaks nothing; Enter drops what was
+held. A caret key or a focus change ends the word being typed.
+Interruption of speech by typing and Enter is the keyboard hook's
+(`verbatim-input`'s `interrupt_for_characters` and `interrupt_for_enter`).
+
+The review cursor over text (`docs/nvda/review-modes.md`). The cursor holds
+its line, so character and word motion within the line and reading the
+current unit need no round trip; another line, page, the document's ends,
+the selection's ends, and the start marker are read through the protocol
+and landed on. NVDA's messages and repeated presses hold as in M3, with
+"Top" and "Bottom" known at once when the line is the document's first or
+last and otherwise from a movement that did not move; the current character
+pressed twice gives its description and three times its code; the current
+line or word pressed twice is spelled and three times spelled with
+descriptions; start and end of line speak the character there; previous
+and next word cross lines, landing on the next line's first word or the
+previous line's last; a unit the text does not have says "Not supported in
+this document". The column difference from NVDA (`docs/parity.md`, "Review
+cursor columns"): moving to another line keeps the column, a cell column in
+a terminal (where a column past a row's text is a blank cell and the cursor
+can move across a padded row's blank cells) and a remembered character
+column elsewhere (a shorter line puts the cursor on its last character, the
+next longer line returns to the column). A lost anchor starts again from the
+caret.
+
+Select then copy. Verbatim+F9 marks the review cursor's position ("Start
+marked"); Verbatim+Shift+F9 moves the review cursor there; Verbatim+F10
+asks the outpost to select from the marker up to and including the
+character at the review cursor, and pressed twice reads that text and
+copies it (`Effect::CopyToClipboard`, so the shell's clipboard helper
+confirms). With no marker it says "No start marker set", and with the
+marker in another object, NVDA's "The start marker must reside within the
+same object". Flat text cannot be selected, so there the first press says
+"Not supported in this document" and the second copies.
+
+Toggles and locations. Verbatim+6 toggles the review cursor following the
+caret ("caret moves review cursor", "caret doesn't move review cursor");
+Verbatim+2 and Verbatim+3 cycle typed character and word echo through off,
+only in edit controls, and always; each says the new value and emits
+`Effect::SettingsChanged` for the shell to save. The caret's and the review
+cursor's locations are asked of the outpost and spoken "Positioned at x,
+y".
+
+Say-all (`docs/nvda/speech.md`, "Say-all"). From the caret (the focus) or
+the review cursor (the navigator), it reads one chunk at a time by the
+"Say all reads by" setting: asked for a sentence, a provider with no
+sentence unit (UIA) answers that it has none and reading goes by line, and
+one whose text NVDA splits itself answers with the paragraph, which is
+split by Unicode's sentence rules; a terminal always reads by line. The
+first chunk is read from the point onwards, every later one a unit on from
+the last. Each spoken piece starts with an index mark; when playback
+reaches it, say-all from the caret asks the outpost to move the caret
+there (and the review cursor follows the caret as usual), and say-all from
+the review cursor leaves the review cursor at that point, whose line the
+next review command reads. The next chunk is read once no more than one
+piece is still waiting, so the lookahead stays bounded; blank pieces are
+not spoken. The display is kept on while it reads (`Effect::KeepDisplayOn`,
+by the setting). It ends after the last piece of the document's last
+chunk, and stops on any command, caret key, typed text, cancelled speech
+(`Input::SpeechCancelled`, from any key), a focus change (which also cuts
+its speech off), or the end of its outpost, leaving the cursor where
+reading got to.

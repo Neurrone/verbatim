@@ -5,19 +5,21 @@
 //!
 //! This test binary installs a global allocator that counts the bytes each
 //! thread asks for, so the test runner's parallel threads do not disturb
-//! one another's counts. Today the part of the state that grows with the
-//! application is the focus ancestor chain (and the navigator that follows
-//! focus); the large state here has a previous focus with 10,000 ancestors
-//! and the small one has 10. Each step's input is the same in both cases,
-//! so only the state varies.
+//! one another's counts. Today the parts of the state that grow with the
+//! application are the focus ancestor chain (and the navigator that follows
+//! focus) and the text Core keeps for the caret and the review cursor (a
+//! line, up to 64 KB); the large state here has a previous focus with
+//! 10,000 ancestors and the small one has 10. Each step's input is the same
+//! in both cases, so only the state varies.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid,
-    ReviewCommand, Role, StateSet, TraceId,
+    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, Effect, FetchResult, Input,
+    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, ReviewCommand, Role, StateSet,
+    TextAnchor, TextChunk, TextReply, TextUnit, TraceId,
 };
 
 /// The system allocator, counting the bytes requested on each thread.
@@ -174,6 +176,109 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
     assert_eq!(small_effects, large_effects);
     assert!(!small_effects.is_empty(), "the navigator moves and speaks");
     assert_eq!(small_bytes, large_bytes);
+}
+
+/// A long line of text, as the outpost sends the caret's line: just under
+/// the 64 KB a chunk may carry.
+fn long_line(anchor: u64, offset: u32) -> TextChunk {
+    TextChunk {
+        unit: TextUnit::Line,
+        text: "word ".repeat(13_000),
+        start: TextAnchor(anchor),
+        offset,
+        languages: Vec::new(),
+        first: false,
+        last: false,
+        truncated: false,
+    }
+}
+
+/// A state whose focus is an edit field under a chain of `depth` groups,
+/// its caret on a long line.
+fn editing_with_chain(depth: u64) -> SrState {
+    let ancestors = (0..depth)
+        .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
+        .collect();
+    let mut state = SrState::new();
+    let _ = reduce(
+        &mut state,
+        &focus_event(node(1, Role::EditableText, "Body"), ancestors),
+    );
+    let _ = reduce(&mut state, &caret_moved(long_line(10, 0)));
+    state
+}
+
+fn caret_moved(line: TextChunk) -> Input {
+    Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: 0,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::CaretMoved {
+            node_id: NodeId::new(1),
+            caret: CaretReport {
+                line,
+                selection: None,
+            },
+        },
+    }
+}
+
+#[test]
+fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
+    let mut small = editing_with_chain(SMALL_CHAIN);
+    let mut large = editing_with_chain(LARGE_CHAIN);
+    let mut same = |input: &Input| {
+        let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, input));
+        let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, input));
+        assert_eq!(small_effects, large_effects);
+        assert_eq!(small_bytes, large_bytes, "{input:?}");
+        small_effects
+    };
+
+    let effects = same(&Input::CaretKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion: CaretMotion::NextCharacter,
+            select: false,
+        },
+    });
+    let Some(Effect::Text(request)) = effects.first() else {
+        panic!("expected a caret wait, got {effects:?}");
+    };
+    let _ = same(&Input::TextCompleted {
+        trace_id: TraceId::mint(),
+        query_id: request.query_id,
+        reply: TextReply::Caret(Box::new(CaretReply {
+            moved: true,
+            caret: CaretReport {
+                line: long_line(10, 1),
+                selection: None,
+            },
+            unit: None,
+            selection_changes: Vec::new(),
+        })),
+    });
+    let _ = same(&Input::Command {
+        trace_id: TraceId::mint(),
+        command: ReviewCommand::ReviewNextWord,
+        repeat: 0,
+    });
+}
+
+#[test]
+fn a_checkpoint_with_text_allocates_a_small_fixed_amount() {
+    let small = editing_with_chain(SMALL_CHAIN);
+    let large = editing_with_chain(LARGE_CHAIN);
+    let (_, small_bytes) = allocated_by(|| small.clone());
+    let (_, large_bytes) = allocated_by(|| large.clone());
+    assert_eq!(small_bytes, large_bytes);
+    // The caret's line and the review cursor's are shared, not copied.
+    assert!(
+        large_bytes < 1024,
+        "a checkpoint allocated {large_bytes} bytes"
+    );
 }
 
 #[test]

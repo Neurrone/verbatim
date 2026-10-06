@@ -14,11 +14,15 @@
 #![forbid(unsafe_code)]
 
 pub mod dump;
+mod editing;
 pub mod flight_recorder;
 mod recorder;
 mod reduce;
 mod review;
+mod review_text;
+mod say_all;
 mod state;
+mod text;
 
 pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, read_dump, write_dump,
