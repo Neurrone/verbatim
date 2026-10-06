@@ -105,6 +105,7 @@ role-application = application
 role-alert = alert
 role-hotkey-field = hot key field
 role-thumb = thumb control
+role-terminal = terminal
 role-unknown = unknown
 
 ## Reader messages: fixed announcements that describe the reader's own
@@ -125,6 +126,26 @@ message-activate = Activate
 message-no-action = No action
 message-invoke = invoke
 message-space = space
+message-start-marked = Start marked
+message-no-start-marker = No start marker set
+message-start-marker-elsewhere = The start marker must reside within the same object
+message-caret-moves-review = caret moves review cursor
+message-caret-does-not-move-review = caret doesn't move review cursor
+message-not-supported = Not supported in this document
+message-no-caret = No caret
+
+## Reader messages with values in them. Wording matches NVDA's.
+
+phrase-selected = selected { $text }
+phrase-unselected = unselected { $text }
+# Used only for 512 characters or more, so always plural.
+phrase-characters = { $count } characters
+phrase-positioned = Positioned at { $x }, { $y }
+phrase-speak-typed-characters = speak typed characters { $mode }
+phrase-speak-typed-words = speak typed words { $mode }
+typing-echo-off = off
+typing-echo-edit-controls = only in edit controls
+typing-echo-always = always
 
 ## A lock key's new state, as NVDA announces it: the key, then on or off.
 
@@ -166,3 +187,126 @@ clipboard-copied = Copied to clipboard: { $text }
 clipboard-copy-failed = Unable to copy
 # Used only for 1024 characters or more, so always plural.
 clipboard-characters = { $count } characters
+
+## The character table: how one character is named when it is spoken on its
+## own (caret and review movement by character, spelling), keyed by its
+## code point in lowercase hexadecimal. NVDA's English symbol names, with
+## its corrected ones ("superscript minus", "three eighths").
+
+character-name-0009 = tab
+character-name-000a = line feed
+character-name-000d = carriage return
+character-name-0020 = space
+character-name-0021 = bang
+character-name-0022 = quote
+character-name-0023 = number
+character-name-0024 = dollar
+character-name-0025 = percent
+character-name-0026 = and
+character-name-0027 = tick
+character-name-0028 = left paren
+character-name-0029 = right paren
+character-name-002a = star
+character-name-002b = plus
+character-name-002c = comma
+character-name-002d = dash
+character-name-002e = dot
+character-name-002f = slash
+character-name-003a = colon
+character-name-003b = semi
+character-name-003c = less
+character-name-003d = equals
+character-name-003e = greater
+character-name-003f = question
+character-name-0040 = at
+character-name-005b = left bracket
+character-name-005c = backslash
+character-name-005d = right bracket
+character-name-005e = caret
+character-name-005f = line
+character-name-0060 = graav
+character-name-007b = left brace
+character-name-007c = bar
+character-name-007d = right brace
+character-name-007e = tilda
+character-name-00a0 = space
+character-name-00a1 = inverted bang
+character-name-00a2 = cents
+character-name-00a3 = pound
+character-name-00a5 = yen
+character-name-00a6 = broken bar
+character-name-00a7 = section
+character-name-00a9 = copyright
+character-name-00ab = double left pointing angle bracket
+character-name-00ac = not
+character-name-00ae = registered
+character-name-00b0 = degrees
+character-name-00b1 = plus or minus
+character-name-00b2 = superscript 2
+character-name-00b3 = superscript 3
+character-name-00b5 = micro
+character-name-00b6 = pilcrow
+character-name-00b7 = middle dot
+character-name-00b9 = superscript 1
+character-name-00bb = double right pointing angle bracket
+character-name-00bc = one quarter
+character-name-00bd = one half
+character-name-00be = three quarters
+character-name-00bf = inverted question
+character-name-00d7 = times
+character-name-00f7 = divide by
+character-name-2013 = en dash
+character-name-2014 = em dash
+character-name-2018 = left tick
+character-name-2019 = right tick
+character-name-201c = left quote
+character-name-201d = right quote
+character-name-2022 = bullet
+character-name-2026 = dot dot dot
+character-name-2028 = line separator
+character-name-2029 = paragraph separator
+character-name-2030 = per mille
+character-name-207b = superscript minus
+character-name-20ac = euro
+character-name-2122 = trademark
+character-name-215b = one eighth
+character-name-215c = three eighths
+character-name-215d = five eighths
+character-name-215e = seven eighths
+character-name-2190 = left arrow
+character-name-2191 = up arrow
+character-name-2192 = right arrow
+character-name-2193 = down arrow
+character-name-2713 = check
+character-name-2714 = check
+
+## Character descriptions, spoken when the current character is asked for
+## twice and when text is spelled with descriptions; keyed like the names.
+## A capital letter uses its small letter's description.
+
+character-description-0061 = Alpha
+character-description-0062 = Bravo
+character-description-0063 = Charlie
+character-description-0064 = Delta
+character-description-0065 = Echo
+character-description-0066 = Foxtrot
+character-description-0067 = Golf
+character-description-0068 = Hotel
+character-description-0069 = India
+character-description-006a = Juliet
+character-description-006b = Kilo
+character-description-006c = Lima
+character-description-006d = Mike
+character-description-006e = November
+character-description-006f = Oscar
+character-description-0070 = Papa
+character-description-0071 = Quebec
+character-description-0072 = Romeo
+character-description-0073 = Sierra
+character-description-0074 = Tango
+character-description-0075 = Uniform
+character-description-0076 = Victor
+character-description-0077 = Whiskey
+character-description-0078 = X-ray
+character-description-0079 = Yankee
+character-description-007a = Zulu
