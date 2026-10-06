@@ -397,10 +397,136 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::NoAction => i18n_embed_fl::fl!(loader, "message-no-action"),
         Message::Invoke => i18n_embed_fl::fl!(loader, "message-invoke"),
         Message::Space => i18n_embed_fl::fl!(loader, "message-space"),
+        Message::StartMarked => i18n_embed_fl::fl!(loader, "message-start-marked"),
+        Message::NoStartMarker => i18n_embed_fl::fl!(loader, "message-no-start-marker"),
+        Message::StartMarkerElsewhere => {
+            i18n_embed_fl::fl!(loader, "message-start-marker-elsewhere")
+        }
+        Message::CaretMovesReview => i18n_embed_fl::fl!(loader, "message-caret-moves-review"),
+        Message::CaretDoesNotMoveReview => {
+            i18n_embed_fl::fl!(loader, "message-caret-does-not-move-review")
+        }
+        Message::NotSupported => i18n_embed_fl::fl!(loader, "message-not-supported"),
+        Message::NoCaret => i18n_embed_fl::fl!(loader, "message-no-caret"),
         // `Message` is non_exhaustive; an unmapped future message speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
     }
+}
+
+/// The localized wording of a reader message with values in it
+/// (`SegmentContent::Phrase`), used by the speech pipeline when it renders
+/// utterances. Wording matches NVDA's.
+#[must_use]
+pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
+    use verbatim_model::Phrase;
+    let loader = loader();
+    match phrase {
+        Phrase::Selected(text) => {
+            i18n_embed_fl::fl!(loader, "phrase-selected", text = selection_text(text))
+        }
+        Phrase::Unselected(text) => {
+            i18n_embed_fl::fl!(loader, "phrase-unselected", text = selection_text(text))
+        }
+        Phrase::Positioned { x, y } => i18n_embed_fl::fl!(
+            loader,
+            "phrase-positioned",
+            x = x.to_string(),
+            y = y.to_string()
+        ),
+        Phrase::SpeakTypedCharacters(mode) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-speak-typed-characters",
+            mode = typing_echo_name(*mode)
+        ),
+        Phrase::SpeakTypedWords(mode) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-speak-typed-words",
+            mode = typing_echo_name(*mode)
+        ),
+        // `Phrase` is non_exhaustive; an unmapped future phrase speaks
+        // nothing rather than crashing the pipeline.
+        _ => String::new(),
+    }
+}
+
+/// The spoken form of text named in a selection announcement: the text, a
+/// lone character by its name, or a count of characters.
+fn selection_text(text: &verbatim_model::SelectionText) -> String {
+    use verbatim_model::SelectionText;
+    match text {
+        SelectionText::Text(text) => text.clone(),
+        SelectionText::Character(character) => {
+            character_name(character, None).unwrap_or_else(|| character.clone())
+        }
+        SelectionText::Characters(count) => {
+            i18n_embed_fl::fl!(loader(), "phrase-characters", count = count.to_string())
+        }
+    }
+}
+
+/// The localized name of a typing echo choice, as its toggle announces it.
+#[must_use]
+pub fn typing_echo_name(mode: verbatim_model::TypingEcho) -> String {
+    use verbatim_model::TypingEcho;
+    let loader = loader();
+    match mode {
+        TypingEcho::Off => i18n_embed_fl::fl!(loader, "typing-echo-off"),
+        TypingEcho::EditControls => i18n_embed_fl::fl!(loader, "typing-echo-edit-controls"),
+        TypingEcho::Always => i18n_embed_fl::fl!(loader, "typing-echo-always"),
+    }
+}
+
+/// The name a character is spoken by on its own, from the character table
+/// of `language` (a BCP 47 tag; `None`, or a language with no table loaded,
+/// uses the loaded languages, English last): "comma" for a comma, "space"
+/// for a space. `None` when the character has no name, as letters and
+/// digits have none, or when `character` is more than one code point. The
+/// table is the `character-name-` messages of each locale's Fluent file,
+/// keyed by code point, so another language's names are data, not code
+/// (`phase6-design.md`, "Internationalization in the text model").
+#[must_use]
+pub fn character_name(character: &str, language: Option<&str>) -> Option<String> {
+    let code = single_code_point(character)?;
+    lookup(&format!("character-name-{code:04x}"), language)
+}
+
+/// The description a character is spoken by when it is asked for twice
+/// ("Alpha" for a), from the character table of `language`; a capital
+/// letter has its small letter's description. `None` when the table has
+/// none for it.
+#[must_use]
+pub fn character_description(character: &str, language: Option<&str>) -> Option<String> {
+    let code = single_code_point(character)?;
+    let mut lower = char::from_u32(code)?.to_lowercase();
+    let first = lower.next()?;
+    if lower.next().is_some() {
+        return None;
+    }
+    lookup(
+        &format!("character-description-{:04x}", u32::from(first)),
+        language,
+    )
+}
+
+/// The code point of a one-code-point string.
+fn single_code_point(character: &str) -> Option<u32> {
+    let mut chars = character.chars();
+    let first = chars.next()?;
+    chars.next().is_none().then_some(u32::from(first))
+}
+
+/// A table message by runtime id, in `language` when it parses, falling
+/// back to the loaded languages; `None` when no loaded language has it.
+fn lookup(id: &str, language: Option<&str>) -> Option<String> {
+    let loader = loader();
+    if let Some(language) = language.and_then(|tag| tag.parse::<LanguageIdentifier>().ok()) {
+        let chosen = loader.select_languages(&[language]);
+        if chosen.has(id) {
+            return Some(chosen.get(id));
+        }
+    }
+    loader.has(id).then(|| loader.get(id))
 }
 
 /// The localized spoken name of a role, used by the speech pipeline when it
@@ -460,6 +586,7 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::Alert => i18n_embed_fl::fl!(loader, "role-alert"),
         Role::HotkeyField => i18n_embed_fl::fl!(loader, "role-hotkey-field"),
         Role::Thumb => i18n_embed_fl::fl!(loader, "role-thumb"),
+        Role::Terminal => i18n_embed_fl::fl!(loader, "role-terminal"),
         _ => i18n_embed_fl::fl!(loader, "role-unknown"),
     }
 }
@@ -706,6 +833,61 @@ mod tests {
             "Left &Double Click"
         );
         assert_eq!(messages::tray_list_right_click(), "&Right Click");
+    }
+
+    #[test]
+    fn the_character_table_names_symbols_and_not_letters() {
+        assert_eq!(character_name(",", None).as_deref(), Some("comma"));
+        assert_eq!(character_name(" ", None).as_deref(), Some("space"));
+        assert_eq!(
+            character_name("\u{207B}", None).as_deref(),
+            Some("superscript minus")
+        );
+        assert_eq!(
+            character_name("\u{215C}", None).as_deref(),
+            Some("three eighths")
+        );
+        assert_eq!(character_name("a", None), None);
+        assert_eq!(character_name("ab", None), None);
+        // A language with no table of its own falls back to English.
+        assert_eq!(character_name(".", Some("fr")).as_deref(), Some("dot"));
+    }
+
+    #[test]
+    fn character_descriptions_are_the_phonetic_alphabet() {
+        assert_eq!(character_description("a", None).as_deref(), Some("Alpha"));
+        assert_eq!(character_description("X", None).as_deref(), Some("X-ray"));
+        assert_eq!(character_description(",", None), None);
+    }
+
+    #[test]
+    fn selection_and_toggle_phrases_are_nvdas() {
+        use verbatim_model::{Phrase, SelectionText, TypingEcho};
+        assert_eq!(
+            phrase_text(&Phrase::Selected(SelectionText::Text("hello".into()))),
+            "selected hello"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::Unselected(SelectionText::Character(",".into()))),
+            "unselected comma"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::Selected(SelectionText::Characters(600))),
+            "selected 600 characters"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::Positioned { x: 10, y: 20 }),
+            "Positioned at 10, 20"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::SpeakTypedCharacters(TypingEcho::EditControls)),
+            "speak typed characters only in edit controls"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::NoStartMarker),
+            "No start marker set"
+        );
+        assert_eq!(role_name(verbatim_model::Role::Terminal), "terminal");
     }
 
     #[test]

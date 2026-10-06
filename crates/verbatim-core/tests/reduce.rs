@@ -2095,9 +2095,11 @@ fn activate_emits_activate_for_the_navigator_object() {
 #[test]
 fn review_cursor_walks_lines_words_and_characters() {
     let source = Pid(1);
+    // Static text has no text interface, so its value is walked as flat
+    // text.
     let edit = node(
         10,
-        Role::EditableText,
+        Role::StaticText,
         Some("Body"),
         Some("first line\nsecond line"),
         StateSet::new(),
@@ -3609,10 +3611,12 @@ fn message(message: verbatim_model::Message) -> UtteranceSegment {
     UtteranceSegment::new(SegmentContent::Message(message))
 }
 
+/// A focus whose value is reviewed as flat text: a role with no text
+/// interface, so the review cursor walks its value (the M3 flat review).
 fn reviewing(value: &str) -> SrState {
     let edit = node(
         140,
-        Role::EditableText,
+        Role::StaticText,
         Some("Body"),
         Some(value),
         StateSet::new(),

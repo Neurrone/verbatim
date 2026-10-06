@@ -10,13 +10,36 @@ Public API:
 
 - `Settings` — the `settings.toml` schema: `locale`, `log_filter`,
   `verbatim_keys`, `keyboard`, `uia` (all global; profiles cannot carry
-  them), and `speech` (the base profile's section).
+  them), `speech` (the base profile's section), and `reader` (milestone M4, the
+  base profile's too until profiles grow it in M8).
+- `ReaderSettings`, `TypingEcho`, `SayAllUnit` — re-exported from
+  `verbatim-model`, which the reducer reads them from; the `[reader]`
+  section, every key with NVDA's default:
+  - `speak_typed_characters`: `"off"`, `"edit_controls"` (only in edit
+    controls and other places text can be typed), or `"always"`, the
+    default. NVDA's "Speak typed characters".
+  - `speak_typed_words`: the same choices, `"off"` by default. NVDA's
+    "Speak typed words".
+  - `follow_caret`: the review cursor follows the caret, `true` by default
+    ("caret moves review cursor", toggled with Verbatim+6).
+  - `say_all_unit`: `"sentence"` (by sentence where the text can be split
+    into sentences, by line otherwise; the default), `"paragraph"`, or
+    `"line"`. NVDA's "Say all reads by".
+  - `keep_display_on`: keep the display on while say-all reads, `true` by
+    default. NVDA's "Prevent display from turning off during say all".
+  - `speak_terminal_passwords`: echo characters typed into a terminal at
+    once rather than when the terminal shows them, `false` by default.
+    NVDA's "Speak passwords in all enhanced terminals".
 - `VerbatimKeys` — which keys act as the Verbatim modifier (`caps_lock`,
   `insert`, `numpad_insert`) plus `share_modifier`, which passes the
   modifier's own transitions down the hook chain for a screen reader
   running behind Verbatim.
 - `KeyboardConfig`, `KeyboardLayout` — the active gesture-binding layout
-  (`desktop`, the default, or `laptop`), M3's `keyboard` section. Exposed
+  (`desktop`, the default, or `laptop`), M3's `keyboard` section, and since
+  M4 NVDA's two speech interrupt settings, both `true` by default:
+  `speech_interrupt_for_characters` (a typed character, or Shift, cuts
+  speech off) and `speech_interrupt_for_enter` (Enter cuts speech off),
+  which the app maps to `verbatim-input`'s `DecisionConfig`. Exposed
   only in `settings.toml`; a GUI choice arrives with M8's gesture-remapping
   work. `verbatim-input`'s `bindings_for` consumes the resolved layout
   through its own decoupled layout enum (the app maps one to the other),

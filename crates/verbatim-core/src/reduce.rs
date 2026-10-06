@@ -21,8 +21,8 @@ use verbatim_model::{
 };
 use verbatim_model::{FocusNow, FocusValidity};
 
-use crate::review;
 use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState};
+use crate::{editing, review, review_text, say_all, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity.md`, "Event
@@ -53,10 +53,7 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             kind,
             result,
         } => reduce_navigate_completed(state, *trace_id, *query_id, *kind, result),
-        Input::OutpostEnded { outpost } => {
-            outpost_ended(state, *outpost);
-            Vec::new()
-        }
+        Input::OutpostEnded { outpost } => outpost_ended(state, *outpost),
         Input::Command {
             trace_id,
             command,
@@ -67,6 +64,21 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             activated,
             action,
         } => reduce_activation_completed(*trace_id, *activated, action.as_ref()),
+        Input::TextCompleted {
+            trace_id,
+            query_id,
+            reply,
+        } => reduce_text_completed(state, *trace_id, *query_id, reply.clone()),
+        Input::CaretKey { key, .. } => editing::caret_key(state, *key),
+        Input::CharacterTyped { trace_id, text } => {
+            editing::character_typed(state, *trace_id, text)
+        }
+        Input::MarkReached { mark } => say_all::mark_reached(state, *mark),
+        Input::SpeechCancelled => say_all::stop(state),
+        Input::Settings(settings) => {
+            state.settings = *settings;
+            Vec::new()
+        }
         // `Tick` is reserved vocabulary with no policy yet; `Input` is also
         // `#[non_exhaustive]`, so this arm doubles as the catch-all for
         // variants added by later milestones, until each grows a real
@@ -225,6 +237,34 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
 
 /// Speaks an activation's outcome, as NVDA's review activate does: the
 /// action ("Activate") when something was activated, else "No action".
+/// Routes the answer to a text request to whatever made it: a caret key
+/// waiting for evidence, a review or text command, or say-all. An answer
+/// nothing waits for any more (superseded by a newer request, or a
+/// say-all's caret movement) is dropped.
+fn reduce_text_completed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    query_id: QueryId,
+    reply: verbatim_model::TextReply,
+) -> Vec<Effect> {
+    if let Some(pending) = state
+        .pending_caret
+        .take_if(|pending| pending.query_id == query_id)
+    {
+        return editing::caret_reply(state, trace_id, &pending, reply);
+    }
+    if let Some(pending) = state
+        .pending_text
+        .take_if(|pending| pending.query_id == query_id)
+    {
+        return review_text::reply(state, trace_id, pending, reply);
+    }
+    if say_all::is_pending(state, query_id) {
+        return say_all::reply(state, trace_id, reply);
+    }
+    Vec::new()
+}
+
 fn reduce_activation_completed(
     trace_id: TraceId,
     activated: bool,
@@ -316,6 +356,13 @@ fn reduce_event(
         NormalizedEvent::Alert { node, .. } => reduce_alert(trace_id, node),
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, *node_id, value.clone())
+        }
+        NormalizedEvent::CaretMoved { node_id, caret } => {
+            editing::update_caret(state, *node_id, caret.clone());
+            Vec::new()
+        }
+        NormalizedEvent::TextChanged { node_id } => {
+            editing::text_changed(state, trace_id, *node_id)
         }
         NormalizedEvent::PropertyChanged { node_id, change } => match change {
             PropertyChange::Name(name) => {
@@ -509,10 +556,7 @@ fn reduce_focus_changed(
             // the user already heard, so take its ids without speaking.
             state.focus = Some(new_focus);
             if state.navigator.is_none() {
-                state.navigator = Some(Navigator {
-                    object: report.node.clone(),
-                    review_offset: 0,
-                });
+                state.navigator = Some(Navigator::on(report.node.clone()));
             }
             return Vec::new();
         }
@@ -525,10 +569,7 @@ fn reduce_focus_changed(
     // object-navigation command already in flight, so a completion for that
     // command must still be free to apply once it lands (see
     // `SrState::latest_navigation`).
-    let navigator = Navigator {
-        object: report.node.clone(),
-        review_offset: 0,
-    };
+    let navigator = Navigator::on(report.node.clone());
     // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
     // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
     // new foreground window cancels speech, nameless or not, and so does
@@ -553,9 +594,12 @@ fn reduce_focus_changed(
             .collect(),
         foreground: state.foreground,
     })];
-    if foreground_changed || entering_menu {
-        effects.push(Effect::StopSpeech);
-    }
+    end_text_activity(
+        state,
+        report.node.id,
+        foreground_changed || entering_menu,
+        &mut effects,
+    );
     state.focus = Some(new_focus);
     state.navigator = Some(navigator);
     if report.foreground && !has_text(report.node.name.as_deref()) {
@@ -564,6 +608,26 @@ fn reduce_focus_changed(
 
     effects.extend(focus_speech(trace_id, report, foreground_window, entered));
     effects
+}
+
+/// Ends what the previous focus's text was doing when the focus moves to
+/// `node`: a say-all reading it (its speech is cut off too, since say-all's
+/// speech is not focus speech the speech manager would drop), a caret key
+/// still waiting for evidence (the focus announcement wins, as NVDA's wait
+/// gives way to a pending focus event), and the typing being echoed. Speech
+/// is cut off when `cut` says so or say-all was reading.
+fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut Vec<Effect>) {
+    let reading = state.say_all.is_some();
+    effects.extend(say_all::stop(state));
+    if cut || reading {
+        effects.push(Effect::StopSpeech);
+    }
+    state.pending_caret = None;
+    state.typed_word.clear();
+    state.held_typing.clear();
+    if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
+        state.caret = None;
+    }
 }
 
 /// The top-level window to announce with a focus that moved into another
@@ -701,11 +765,47 @@ fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSn
 /// data but its ids are dead, and a navigator or pending navigation in that
 /// outpost is cleared. Navigation then does nothing until focus is reported
 /// again.
-fn outpost_ended(state: &mut SrState, outpost: OutpostId) {
+fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     if let Some(focus) = state.focus.as_mut()
         && focus.snapshot.id.outpost() == outpost
     {
         focus.alive = false;
+    }
+    // Text positions die with the outpost that minted them.
+    let mut effects = Vec::new();
+    if state
+        .say_all
+        .as_ref()
+        .is_some_and(|say_all| say_all.node.outpost() == outpost)
+    {
+        effects = say_all::stop(state);
+    }
+    if state
+        .caret
+        .as_ref()
+        .is_some_and(|caret| caret.node.outpost() == outpost)
+    {
+        state.caret = None;
+    }
+    if state
+        .pending_caret
+        .as_ref()
+        .is_some_and(|pending| pending.node.outpost() == outpost)
+    {
+        state.pending_caret = None;
+    }
+    if state
+        .pending_text
+        .as_ref()
+        .is_some_and(|pending| pending.node.outpost() == outpost)
+    {
+        state.pending_text = None;
+    }
+    if state
+        .start_marker
+        .is_some_and(|marker| marker.node().outpost() == outpost)
+    {
+        state.start_marker = None;
     }
     if state
         .navigator
@@ -720,6 +820,7 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) {
     {
         state.latest_navigation = None;
     }
+    effects
 }
 
 /// Handles a name change: when the focused node's name changes, the new name
@@ -810,6 +911,95 @@ fn reduce_command(
     command: ReviewCommand,
     repeat: u8,
 ) -> Vec<Effect> {
+    // Any command stops say-all, as any key does in NVDA; say-all's own
+    // commands start it afresh.
+    let mut stopped = say_all::stop(state);
+    let mut effects = match command {
+        ReviewCommand::ToggleFollowCaret
+        | ReviewCommand::ToggleTypedCharacters
+        | ReviewCommand::ToggleTypedWords => toggle_setting(state, trace_id, command),
+        ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
+            caret_command(state, trace_id, command)
+        }
+        _ => navigator_command(state, trace_id, command, repeat),
+    };
+    stopped.append(&mut effects);
+    stopped
+}
+
+/// Toggles a reader setting from its key, says its new value as NVDA does,
+/// and reports the settings for the shell to save.
+fn toggle_setting(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
+    let settings = &mut state.settings;
+    let segment = match command {
+        ReviewCommand::ToggleFollowCaret => {
+            settings.follow_caret = !settings.follow_caret;
+            SegmentContent::Message(if settings.follow_caret {
+                Message::CaretMovesReview
+            } else {
+                Message::CaretDoesNotMoveReview
+            })
+        }
+        ReviewCommand::ToggleTypedCharacters => {
+            settings.speak_typed_characters = settings.speak_typed_characters.next();
+            SegmentContent::Phrase(verbatim_model::Phrase::SpeakTypedCharacters(
+                settings.speak_typed_characters,
+            ))
+        }
+        _ => {
+            settings.speak_typed_words = settings.speak_typed_words.next();
+            SegmentContent::Phrase(verbatim_model::Phrase::SpeakTypedWords(
+                settings.speak_typed_words,
+            ))
+        }
+    };
+    vec![
+        editing::speak(trace_id, vec![UtteranceSegment::new(segment)]),
+        Effect::SettingsChanged(state.settings),
+    ]
+}
+
+/// Runs a command on the focus's caret: say-all from the caret, or the
+/// caret's location. A focus that cannot have text has no caret.
+fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
+    let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
+        return vec![editing::speak(
+            trace_id,
+            review_text::message(Message::NoCaret),
+        )];
+    };
+    let node = focus.snapshot.id;
+    let has_text = editing::may_have_text(focus.snapshot.role)
+        || state.caret.as_ref().is_some_and(|caret| caret.node == node);
+    if !has_text {
+        return vec![editing::speak(
+            trace_id,
+            review_text::message(Message::NotSupported),
+        )];
+    }
+    if command == ReviewCommand::SayAllFromCaret {
+        return say_all::start(state, node, true, verbatim_model::TextPoint::Caret);
+    }
+    let query_id = state.allocate_query_id();
+    state.pending_text = Some(crate::state::PendingText {
+        query_id,
+        node,
+        then: crate::state::TextFollowUp::Location,
+    });
+    vec![Effect::Text(verbatim_model::TextRequest {
+        query_id,
+        node_id: node,
+        op: verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
+    })]
+}
+
+/// Runs a command on the navigator object and its review cursor.
+fn navigator_command(
+    state: &mut SrState,
+    trace_id: TraceId,
+    command: ReviewCommand,
+    repeat: u8,
+) -> Vec<Effect> {
     // "To focus" is meaningful even with the navigator already on focus;
     // handle it before the navigator-present guard so it can seed one.
     if command == ReviewCommand::ToFocus {
@@ -845,7 +1035,13 @@ fn reduce_command(
         ReviewCommand::NextSibling => navigate(state, trace_id, QueryKind::NextSibling),
         ReviewCommand::PreviousSibling => navigate(state, trace_id, QueryKind::PreviousSibling),
         ReviewCommand::FirstChild => navigate(state, trace_id, QueryKind::FirstChild),
-        _ => review_text_command(state, trace_id, command, repeat),
+        command if review_text::handles(command) => {
+            match review_text::run(state, trace_id, command, repeat) {
+                review_text::Outcome::Done(effects) => effects,
+                review_text::Outcome::Flat => flat_review_command(state, trace_id, command, repeat),
+            }
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -863,10 +1059,7 @@ fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     };
     let object = focus.snapshot.clone();
     let utterance = announce_node(trace_id, SpeechPriority::Queued, &object, Reason::Focus);
-    state.navigator = Some(Navigator {
-        object,
-        review_offset: 0,
-    });
+    state.navigator = Some(Navigator::on(object));
     vec![Effect::Speak(utterance)]
 }
 
@@ -948,17 +1141,7 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
 
 /// `text` spelled character by character, a space spoken as "space".
 fn spelled(text: &str) -> Vec<UtteranceSegment> {
-    text.chars()
-        .map(|ch| {
-            if ch == ' ' {
-                UtteranceSegment::new(SegmentContent::Message(Message::Space))
-            } else if ch.is_uppercase() {
-                UtteranceSegment::new(SegmentContent::SpelledCapital(ch.to_string()))
-            } else {
-                UtteranceSegment::text(ch.to_string())
-            }
-        })
-        .collect()
+    text::spelled(text, false, None)
 }
 
 /// Runs a review-cursor text command over the navigator object's review
@@ -966,15 +1149,26 @@ fn spelled(text: &str) -> Vec<UtteranceSegment> {
 /// speaks the line, word, or character it lands on. A motion that cannot
 /// move says "Top", "Bottom", "Left", or "Right" and reads the current unit;
 /// character motions stop at the ends of the line; an empty unit is
-/// "blank". Pressed twice, the current line or word is spelled; the
-/// current character, pressed three times, is given as its code in
-/// decimal and hexadecimal.
-fn review_text_command(
+/// "blank". Pressed twice, the current line or word is spelled, and three
+/// times spelled with character descriptions; the current character
+/// pressed twice gives its description, and three times its code in
+/// decimal and hexadecimal. Commands flat text has nothing for (pages, the
+/// selection, location) say "Not supported in this document"; the start
+/// marker and select then copy work on the flat text
+/// (`review_text::flat_extra`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one motion table and one speech table, which read best together"
+)]
+pub(crate) fn flat_review_command(
     state: &mut SrState,
     trace_id: TraceId,
     command: ReviewCommand,
     repeat: u8,
 ) -> Vec<Effect> {
+    if let Some(effects) = review_text::flat_extra(state, trace_id, command, repeat) {
+        return effects;
+    }
     let Some(navigator) = state.navigator.as_mut() else {
         return Vec::new();
     };
@@ -1064,11 +1258,16 @@ fn review_text_command(
             segments.push(UtteranceSegment::text(format!("{code},")));
             segments.extend(spelled(&format!("{code:#x}")));
         }
+    } else if repeated_current && command == ReviewCommand::ReviewCurrentCharacter {
+        // The character's description, from the character table.
+        for range in verbatim_text::graphemes(slice) {
+            segments.push(UtteranceSegment::new(SegmentContent::CharacterDescription(
+                slice[range].to_owned(),
+            )));
+        }
     } else if repeated_current {
-        // Spelled; NVDA's phonetic reading of a character and its spelling
-        // with character descriptions wait for the character descriptions
-        // table (M4).
-        segments.extend(spelled(slice));
+        // Spelled, and on a third press spelled with descriptions.
+        segments.extend(text::spelled(slice, repeat > 1, None));
     } else if matches!(
         command,
         ReviewCommand::ReviewPreviousCharacter
@@ -1157,10 +1356,7 @@ fn reduce_controlled_selection(
     {
         return Vec::new();
     }
-    state.navigator = Some(Navigator {
-        object: node.clone(),
-        review_offset: 0,
-    });
+    state.navigator = Some(Navigator::on(node.clone()));
     vec![Effect::Speak(announce_node(
         trace_id,
         SpeechPriority::Interrupt,
@@ -1306,10 +1502,7 @@ fn reduce_navigate_completed(
             state.latest_navigation = None;
             let utterance =
                 announce_node(trace_id, SpeechPriority::Queued, snapshot, Reason::Focus);
-            state.navigator = Some(Navigator {
-                object: snapshot.clone(),
-                review_offset: 0,
-            });
+            state.navigator = Some(Navigator::on(snapshot.clone()));
             vec![Effect::Speak(utterance)]
         }
         FetchResult::Gone => navigator_to_focus(state, trace_id),

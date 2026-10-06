@@ -26,12 +26,25 @@ Public API:
 - `DecisionConfig`, `DecisionMachine`, `Decision`, `EmittedGesture` — the
   pure state machine. `on_key(event, now)` takes a caller-supplied clock,
   so tests script entire key streams with fake time. A `Decision` carries
-  the swallow-or-pass verdict, the gesture raised if any, and `speech`, the
-  transition's effect on speech, if any.
+  the swallow-or-pass verdict, the gesture raised if any, `speech`, the
+  transition's effect on speech, if any, and `observed`, an observed
+  gesture the passed key completed (milestone M4's caret keys). The
+  config's `interrupt_for_characters` and `interrupt_for_enter` are NVDA's
+  two speech interrupt settings, both on by default. `set_num_lock(on)`
+  tells the machine whether Num Lock is on: with it on, the numpad's
+  operator keys type their characters and complete no gesture, as NVDA
+  treats Num Lock as their modifier, so binding numpad plus does not take
+  the plus sign from a user typing numbers. The hook reports the state
+  before each key; it is off until it does.
 - `KeySpeechEffect` — what a key press does to speech: `Cancel` (current
   and queued speech) or `TogglePause` (Shift on its own).
 - `GestureMap`, `SharedGestureMap` — the bound-gesture set behind an
   arc-swap snapshot the hook reads lock-free; rebinding is one atomic store.
+  `with_observed(gestures)` adds gestures that are observed rather than
+  bound: the key is passed to the application as usual, and the
+  `Decision` reports the gesture in `observed`, so the reducer can speak
+  what the application did with it. A gesture both bound and observed is
+  bound.
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
   `Laptop`, redeclared here decoupled from `verbatim_config::KeyboardLayout`
   like `DecisionConfig` already is from `VerbatimKeys`) and `ScriptAction`
@@ -55,6 +68,33 @@ Public API:
   `bindings_for` for both the hook's map and the router's lookup. Rebinding
   at runtime, for example on a layout change, is not implemented; a new
   layout takes effect on the next start.
+- M4's commands (`phase6-design.md`, "The autonomous run", M4 item 5, with
+  NVDA's keys). Every layout: Verbatim+Alt+Home and Verbatim+Alt+End (the
+  review cursor to the selection's start and end), numpad Plus (say all
+  from the review cursor), Verbatim+F9 (set the start marker),
+  Verbatim+Shift+F9 (the review cursor to the start marker), Verbatim+F10
+  (select from the marker to the review cursor; twice, copy), Verbatim+6
+  (caret moves review cursor), Verbatim+2 and Verbatim+3 (speak typed
+  characters and words). The desktop layout's own: Verbatim+Page Up and
+  Page Down (the review cursor by page), Verbatim+Down Arrow (say all from
+  the caret), Verbatim+numpad Delete (the caret's location), and
+  Verbatim+Shift+numpad Delete (the review cursor's location). The laptop
+  layout's own: Verbatim+Shift+Page Up and Page Down, Verbatim+A (say all),
+  Verbatim+Shift+A (say all from the review cursor), Verbatim+Delete and
+  Verbatim+Shift+Delete (the locations). The tables are now the layout's
+  own bindings followed by those of every layout, since desktop and laptop
+  give Verbatim+Down Arrow different meanings, as NVDA's `kb(desktop):`
+  and `kb(laptop):` bindings do.
+- `ScriptAction::review_command` — the reducer command an action runs, or
+  `None` for speak time and the tray list, which the router handles; the
+  one place the two vocabularies meet.
+- `caret_bindings()` — the caret keys of NVDA's editable-text commands, as
+  `(GestureId, CaretKey)` pairs: Left and Right Arrow, Control with them,
+  Up and Down Arrow, Control with them, Home, End, Page Up, Page Down, and
+  Control with Home and End, each with and without Shift; Backspace,
+  Delete, and Control with each; and Control+A. They are observed, never
+  bound: the shell adds them to the hook's map with `with_observed` and
+  turns each reported gesture into `Input::CaretKey`.
 
 Implementation notes, `DecisionMachine::on_key` (the intricate one;
 `docs/parity.md`'s input section is the behavioural record for these
@@ -90,8 +130,11 @@ rules):
   never touch speech. The effect is worked out before the press is recorded
   as held, and the hook carries it out before the gesture is sent, so a
   key never cancels the speech its own gesture causes. NVDA's settings to
-  turn off cancelling for typed characters and for Enter are not offered;
-  the machine always behaves as their defaults (both on) do.
+  turn off cancelling for typed characters and for Enter are
+  `interrupt_for_characters` and `interrupt_for_enter`: with the first off,
+  a typed character (a letter, digit, punctuation key, or Space, with no
+  modifier held or Shift alone, or a lock key not serving as the Verbatim
+  modifier) and Shift leave speech alone; with the second off, Enter does.
 - Injected keys are processed identically to physical ones, which is what
   lets the control plane drive gestures with synthetic input; they cancel
   speech too.

@@ -10,6 +10,7 @@ license.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 verbatim-model.workspace = true
+verbatim-text.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [lints]

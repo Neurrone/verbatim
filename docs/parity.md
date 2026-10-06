@@ -428,11 +428,13 @@ verified.
     on every focus change that changes the top of the ancestry, so a
     focus that reaches another window without a foreground report leaves
     Verbatim's foreground node on the old window until one arrives.
-  - **Not yet:** NVDA's settings "Speech interrupt for typed characters"
-    and "Speech interrupt for Enter" (both on by default) are not
-    configurable; Verbatim always behaves as their defaults do. NVDA's
-    advanced setting to turn the culling of expired focus speech off is
-    not offered either.
+  - NVDA's settings "Speech interrupt for typed characters" and "Speech
+    interrupt for Enter" (both on by default) are **implemented since
+    2026-10-06** in the keyboard decision machine and stored in
+    `settings.toml`'s keyboard section, with NVDA's rules for what counts
+    as a typed character ([Keyboard input](nvda/input.md)); **not yet**
+    wired from the settings into the running hook. NVDA's advanced setting
+    to turn the culling of expired focus speech off is not offered.
 - Menu popup announcements. NVDA: menu events with fake-focus
   fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim:
   NVDA's menu rules run in the outpost's worker. Within a batch, focus
@@ -534,8 +536,11 @@ verified.
   an MSAA walk or navigation step stayed in MSAA across windows.
 - Navigator follows focus; review follows navigator. NVDA coupling
   rules ([Review modes](nvda/review-modes.md)). Verbatim: **matched
-  (unverified)** for the follow-focus default; `followCaret` /
-  `followMouse` equivalents **not yet (M4+)**.
+  (unverified)** for the follow-focus default. Following the caret
+  ("caret moves review cursor", on by default, toggled by Verbatim+6 with
+  NVDA's messages) is **implemented in Core since 2026-10-06**,
+  unverified until the outpost sends caret reports; `followMouse` is
+  **not yet**.
 - Report current object: report / spell / copy on 1st/2nd/3rd press.
   NVDA: script repeat counting ([Keyboard input](nvda/input.md)), reading
   the object live. Verbatim: **matched since 2026-10-03**; since
@@ -554,9 +559,12 @@ verified.
   focus", "No navigator object", and activation saying "Activate" or "No
   action" after walking up the parents. A copy says "Copied to clipboard:"
   with the text (its length from 1024 characters on) after reading the
-  clipboard back, or "Unable to copy". **Not yet:** the current character's
-  description on a second press and spelling with descriptions on a third,
-  which wait for the character descriptions table (M4). Raised pitch for
+  clipboard back, or "Unable to copy". The current character's description
+  on a second press and the current line or word spelled with
+  descriptions on a third are **matched since 2026-10-06**, from the
+  English character table in `verbatim-i18n` (the phonetic alphabet), and
+  a punctuation character spoken on its own or spelled is named from the
+  same table ("comma"). Raised pitch for
   capitals is **matched since 2026-10-04** (unverified by ear): spelling
   and reading a single character speak an uppercase letter with the pitch
   setting raised by 30 and then restored, for every synthesizer, as NVDA
@@ -610,10 +618,38 @@ verified.
   jumped to the focus and announced it.
 - Review cursor line/word/character over object text. NVDA: object
   review over TextInfo ([Review modes](nvda/review-modes.md)). Verbatim:
-  **partial**: the motions, messages, and repeated presses match (the
-  messages entry above); the text is the object's flat value or name
-  rather than a text model, and the review position starts at offset 0
-  rather than at the caret, until M4.
+  **implemented in Core since 2026-10-06, unverified** until the outpost
+  speaks the text protocol: an edit field, document, or terminal is
+  reviewed a line at a time through it, starting at the caret (or the
+  start, with no caret) as NVDA's object review does; characters are
+  grapheme clusters and words follow the text's language
+  (`verbatim-text`); previous and next word cross lines; start and end of
+  line speak the character there; the page commands (Verbatim+Page Up and
+  Page Down), the selection's start and end (Verbatim+Alt+Home and End),
+  and the review cursor's and caret's locations ("Positioned at x, y") are
+  new. An object with no text interface is reviewed by its value or name,
+  NVDA's fallback, through the M3 flat walk, whose start and end of line
+  still speak the line rather than the character there (**different**,
+  a follow-up).
+- Review cursor columns. NVDA moves the review cursor to the start of the
+  next or previous line. Verbatim: **different, deliberately** (decided
+  2026-10-06, `phase6-design.md`, M4 item 5): moving to another line,
+  page, or by line from a word keeps the column, so columns of a text table
+  or the map of a text-based game read line by line. In a terminal the
+  column is a cell column: wide characters (Chinese, Japanese, Korean) take
+  two cells by Unicode's East Asian Width, and a position past the end of a
+  row's text is a blank cell, read "blank", so moving down from column 10
+  always lands on column 10. Elsewhere the column is counted in characters
+  (grapheme clusters): a shorter line puts the cursor on its last
+  character, and the column is remembered, so the next longer line returns
+  to it, as editors do with their caret.
+- Select then copy from the review cursor (Verbatim+F9, Verbatim+Shift+F9,
+  Verbatim+F10 once to select and twice to copy). NVDA: the same keys and
+  messages ("Start marked", "No start marker set", "The start marker must
+  reside within the same object"). Verbatim: **implemented in Core since
+  2026-10-06, unverified** until the outpost selects and reads ranges; the
+  first press says nothing when the selection was made, and "Not supported
+  in this document" when the text cannot be selected.
 - Document review and screen review modes. Verbatim: **not yet
   (M6)**; screen review will be tree-projection **different (D11)**.
 - Object activation (do default action). NVDA: the review position's
@@ -779,8 +815,20 @@ verified.
 - Index marks driving callbacks at audible position. NVDA: manager
   indexing + WASAPI feed-end callbacks ([Audio output](nvda/audio.md)).
   Verbatim: **matched (unverified)** — the mixer reports each mark
-  when the device has played it, for every synthesizer (D17); say-all
-  (the main consumer) is **not yet (M4)**.
+  when the device has played it, for every synthesizer (D17). Since
+  2026-10-06 utterances carry marks (`SegmentContent::Mark`) and Core's
+  say-all moves the caret or review cursor by them; the shell still has to
+  turn each reported mark into `Input::MarkReached`.
+- Say-all. NVDA: reads by "Say all reads by" (sentence where possible,
+  paragraph, or line; UIA by line), moves the caret or review cursor as
+  audio plays, keeps a bounded lookahead, stops on any key, and keeps the
+  display on ([Speech](nvda/speech.md), "Say-all"). Verbatim:
+  **implemented in Core since 2026-10-06, unverified** until the outpost
+  reads chunks and the shell delivers marks: sentences are split by
+  Unicode's rules over a paragraph the provider sends when it has no
+  sentence unit of its own, UIA answers that it has no sentences and
+  reading goes by line, and terminals read by line. Skim reading is **not
+  offered**.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.
@@ -829,9 +877,15 @@ verified.
 - Symbol/punctuation processing, speech dictionaries, character
   descriptions. NVDA:
   [Symbols, dictionaries, and character processing](nvda/symbols-and-dictionaries.md).
-  Verbatim: **not yet (M8)** — D12 plans this over typed spans; the
+  Verbatim: symbol processing in flowing text and speech dictionaries are
+  **not yet (M8)** — D12 plans this over typed spans; the
   dictionaries-before-symbols ordering and the symbol preserve rules
-  are the parity-critical details.
+  are the parity-critical details. The character table for one character
+  spoken on its own (caret and review movement, spelling, typing echo) and
+  character descriptions are **partial since 2026-10-06**: English only,
+  keyed by locale in the Fluent files, with NVDA's English symbol names
+  (its corrected ones included) for the common punctuation and symbols and
+  the phonetic alphabet; no CLDR emoji names yet.
 - Automatic language switching. NVDA: strip-or-pass of language
   commands per config ([Speech](nvda/speech.md)). Verbatim: **not
   yet** (unscheduled; needs backend language attributes first).
@@ -845,11 +899,13 @@ verified.
   ([verbatim-input](crates/verbatim-input.md)); live side-by-side with NVDA still
   worth one session (sticky/locked modifier states **not yet**).
   **Different, deliberately:** Caps Lock is a Verbatim key by default (see
-  "Spoken vocabulary and key layouts"). **Not yet:** NVDA treats Num Lock
-  as a modifier of the numpad operator keys, so a binding of plain
-  numpad plus does not take the plus sign from a user with Num Lock on;
-  Verbatim ignores Num Lock, which matters once such a binding exists
-  (say all, M4).
+  "Spoken vocabulary and key layouts"). NVDA treats Num Lock as a modifier
+  of the numpad operator keys, so a binding of plain numpad plus (say all
+  from the review cursor, bound since 2026-10-06) does not take the plus
+  sign from a user with Num Lock on: the decision machine **implements
+  this since 2026-10-06** (`set_num_lock`), and **not yet** is the hook
+  telling it the Num Lock state, until which numpad plus is always the
+  command.
 - Script repeat counting. NVDA: `scriptHandler` counts each run of the
   same script within the multi-press timeout, and forgets the last script
   when an unbound gesture comes between. Verbatim: **matched since
@@ -860,9 +916,17 @@ verified.
 - Gesture map / rebindable input, input help mode. Verbatim: map
   exists; user rebinding UI and input help **not yet (M8/M9)**.
 - Typed-character echo. NVDA: in-process reports; UIA textEdit
-  events where applicable. Verbatim: **not yet (M4)** — decide the
-  no-injection echo source (UIA events + polling?) explicitly
-  against [Keyboard input](nvda/input.md).
+  events where applicable. Verbatim: the echo itself is **implemented in
+  Core since 2026-10-06**: "Speak typed characters" (always, by default)
+  and "Speak typed words" (off), each off, only in edit controls, or
+  always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
+  character that is not a letter or digit ends it, before that character;
+  a protected field echoes only the protected character ("star") and no
+  words; typing into a terminal waits until the terminal's text changes
+  unless "Speak passwords" is on, so a password prompt speaks nothing, and
+  Enter drops what was held. The source of `Input::CharacterTyped` is
+  **not yet** decided (the hook translating keys to text, or the
+  application's text-edit events), against [Keyboard input](nvda/input.md).
 - IME/composition reporting. Verbatim: **not yet** (unscheduled;
   needs a decision — NVDA's implementation is injection-dependent).
 - Mouse tracking (text-unit speech, audio coordinates, injection
@@ -874,14 +938,36 @@ verified.
 ## Text, documents, terminals (M4/M6 previews)
 
 - TextInfo-equivalent layer, caret-key reporting via
-  wait-for-evidence, selection deltas, terminal diffing: all **not
-  yet (M4)**; the NVDA references to design against are
+  wait-for-evidence, selection deltas. NVDA:
   [TextInfo](nvda/text-infos.md) and
   [Editable text and terminals](nvda/editable-text-and-terminals.md).
+  Verbatim: the text protocol (`docs/crates/verbatim-model.md`, "The text
+  protocol") and Core's side are **implemented since 2026-10-06,
+  unverified** until the outpost implements the protocol. Caret keys pass
+  to the application and Core asks the outpost to wait for evidence (a
+  caret event, the caret leaving where Core knew it, the text at the caret
+  changing for Delete, or the selection changing), up to 100 milliseconds,
+  300 in a terminal, then speaks NVDA's unit for the key: the character
+  for Left and Right Arrow, Home, and End; the provider's word for Control
+  with Left or Right Arrow; the line for Up and Down Arrow, the page keys,
+  and Control with Home or End; the paragraph for Control with Up or Down
+  Arrow; what Backspace deleted; what Delete left at the caret. A newer key
+  supersedes a waiting one and a focus change drops it, NVDA's two
+  short-circuits. Shift movement speaks "selected" and "unselected" with
+  the text, a single character by its name, and 512 characters or more as
+  their number. **Different:** Verbatim never swallows and resends the key,
+  so what Backspace deleted is worked out from Core's copy of the caret's
+  line rather than read before the key; a backspace over a line break says
+  nothing. NVDA's `caretMovementFailed` event is not offered. Terminal
+  diffing is **not yet (M4)**.
 - Word and character segmentation (Uniscribe grapheme clusters and
   word stops) and the three-way paragraph-style setting. NVDA:
-  [TextInfo](nvda/text-infos.md). Verbatim: **not yet (M4)** — the
-  review module's flat-text walk explicitly defers both.
+  [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched
+  since 2026-10-06** in `verbatim-text` (grapheme clusters, Unicode's word
+  rules with dictionaries, jieba for Chinese, a run of spaces and tabs as
+  one segment), used by the review cursor over text and by spelling; where
+  the application moves the caret by word, the provider's word is spoken.
+  The paragraph-style setting is **not yet**.
 - Browse mode, quick nav, pass-through rules, virtual-buffer
   equivalent: **not yet (M6)**; references
   [Browse mode](nvda/browse-mode.md), [Virtual buffers](nvda/virtual-buffers.md).

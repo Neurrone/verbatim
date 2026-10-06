@@ -67,6 +67,12 @@ pub struct DecisionConfig {
     /// How quickly a lone Verbatim-modifier tap must be repeated to pass the
     /// key through to the operating system (double-tap passthrough).
     pub multi_press_timeout: Duration,
+    /// NVDA's "Speech interrupt for typed characters": when false, a typed
+    /// character and Shift leave speech alone.
+    pub interrupt_for_characters: bool,
+    /// NVDA's "Speech interrupt for Enter key": when false, Enter leaves
+    /// speech alone.
+    pub interrupt_for_enter: bool,
 }
 
 impl Default for DecisionConfig {
@@ -77,6 +83,8 @@ impl Default for DecisionConfig {
             numpad_insert: true,
             share_modifier: false,
             multi_press_timeout: DEFAULT_MULTI_PRESS_TIMEOUT,
+            interrupt_for_characters: true,
+            interrupt_for_enter: true,
         }
     }
 }
@@ -136,6 +144,12 @@ pub struct Decision {
     /// key reaches the operating system, so whether a lock key used this
     /// way changes state is not known here.
     pub shared_modifier: bool,
+    /// An observed gesture this key-down completed ([`GestureMap::observes`]):
+    /// the key is passed to the application, and the gesture reported, so
+    /// the reducer can speak what the application did with it (a caret
+    /// key). Only ever set on a [`KeyDecision::Pass`]; its `repeat` is
+    /// always 0.
+    pub observed: Option<EmittedGesture>,
 }
 
 impl Decision {
@@ -146,6 +160,19 @@ impl Decision {
             emitted: None,
             speech: None,
             shared_modifier: false,
+            observed: None,
+        }
+    }
+
+    /// Pass the transition through, reporting the observed gesture.
+    fn pass_observed(gesture: GestureId) -> Self {
+        Self {
+            observed: Some(EmittedGesture {
+                trace_id: TraceId::mint(),
+                gesture,
+                repeat: 0,
+            }),
+            ..Self::pass()
         }
     }
 
@@ -176,6 +203,10 @@ impl Decision {
 }
 
 /// Virtual-key codes the speech effect treats specially.
+const VK_RETURN: u16 = 0x0D;
+const VK_SPACE: u16 = 0x20;
+const VK_NUMLOCK: u16 = 0x90;
+const VK_SCROLL: u16 = 0x91;
 const VK_SHIFT: u16 = 0x10;
 const VK_LSHIFT: u16 = 0xA0;
 const VK_RSHIFT: u16 = 0xA1;
@@ -358,6 +389,9 @@ pub struct DecisionMachine {
     /// [`last_gesture`](Self::last_gesture); carried unchanged across
     /// auto-repeats of the same held gesture.
     repeat_count: u8,
+    /// Whether Num Lock is on, as the hook last reported it
+    /// ([`set_num_lock`](Self::set_num_lock)).
+    num_lock_on: bool,
 }
 
 impl DecisionMachine {
@@ -373,7 +407,19 @@ impl DecisionMachine {
             lone_modifier: LoneModifier::Idle,
             last_gesture: None,
             repeat_count: 0,
+            num_lock_on: false,
         }
+    }
+
+    /// Tells the machine whether Num Lock is on. With it on, the numpad's
+    /// operator keys (plus, minus, multiply, divide) type their characters
+    /// and complete no gesture, as NVDA treats Num Lock as a modifier of
+    /// them, so a binding of numpad plus (say all from the review cursor)
+    /// does not take the plus sign from a user typing numbers. The hook
+    /// reads the state locally (it is the keyboard's own) and reports it
+    /// before each key; off until it does.
+    pub fn set_num_lock(&mut self, on: bool) {
+        self.num_lock_on = on;
     }
 
     /// Feeds one raw key transition and returns the swallow-or-pass decision
@@ -393,11 +439,14 @@ impl DecisionMachine {
         }
     }
 
-    /// What a key-down does to speech, as NVDA decides it: the volume keys
-    /// and a key Windows does not know leave speech alone; Shift on its own
-    /// pauses or resumes it, but not while held, where Windows repeats it;
-    /// every other key cancels it, modifiers included. Read before the
-    /// press is recorded as held.
+    /// What a key-down does to speech, as NVDA decides it
+    /// (`docs/nvda/input.md`, "What a key press does to speech"): the
+    /// volume keys and a key Windows does not know leave speech alone; with
+    /// speech interrupt for typed characters off, so do a typed character
+    /// and Shift; with speech interrupt for Enter off, so does Enter; Shift
+    /// on its own pauses or resumes speech, but not while held, where
+    /// Windows repeats it; every other key cancels it, modifiers included.
+    /// Read before the press is recorded as held.
     fn speech_effect(&self, event: KeyEvent) -> Option<KeySpeechEffect> {
         let key: KeyCode = (event.vk, event.extended);
         if (event.extended && (VK_VOLUME_MUTE..=VK_VOLUME_UP).contains(&event.vk))
@@ -405,13 +454,44 @@ impl DecisionMachine {
         {
             return None;
         }
-        if matches!(event.vk, VK_SHIFT | VK_LSHIFT | VK_RSHIFT) {
+        let is_shift = matches!(event.vk, VK_SHIFT | VK_LSHIFT | VK_RSHIFT);
+        if !self.config.interrupt_for_characters && (is_shift || self.is_typed_character(event)) {
+            return None;
+        }
+        if !self.config.interrupt_for_enter && event.vk == VK_RETURN {
+            return None;
+        }
+        if is_shift {
             if self.held_modifiers.contains(&key) {
                 return None;
             }
             return Some(KeySpeechEffect::TogglePause);
         }
         Some(KeySpeechEffect::Cancel)
+    }
+
+    /// Whether a key-down types a character, as NVDA's typed-character
+    /// interrupt setting counts one: a key whose name is one character (a
+    /// letter, a digit, a punctuation key) or Space, pressed with no
+    /// modifier held or with Shift alone; a lock key counts too, unless it
+    /// is serving as the Verbatim modifier.
+    fn is_typed_character(&self, event: KeyEvent) -> bool {
+        let vk = event.vk;
+        if self.is_verbatim_modifier(vk, event.extended) {
+            return false;
+        }
+        let modifiers_allow = self
+            .held_modifiers
+            .iter()
+            .all(|&(held, _)| matches!(held, VK_SHIFT | VK_LSHIFT | VK_RSHIFT));
+        let character_key = vk == VK_SPACE
+            || (0x30..=0x39).contains(&vk)
+            || (0x41..=0x5A).contains(&vk)
+            || (0xBA..=0xC0).contains(&vk)
+            || (0xDB..=0xDF).contains(&vk)
+            || vk == 0xE2;
+        let lock_key = matches!(vk, VK_CAPITAL | VK_NUMLOCK | VK_SCROLL);
+        lock_key || (character_key && modifiers_allow)
     }
 
     /// Decides a key-down in three steps: what part the key plays, where that
@@ -435,6 +515,10 @@ impl DecisionMachine {
         // Step three: name the key, build the chord it completes, and decide.
         let main_name = match role {
             KeyRole::Modifier => keys::VERBATIM_MODIFIER_NAME,
+            KeyRole::Named(_) if self.num_lock_on && is_numpad_operator(event.vk) => {
+                self.last_gesture = None;
+                return Decision::pass();
+            }
             KeyRole::Named(name) => name,
             KeyRole::Unnamed => {
                 self.last_gesture = None;
@@ -445,14 +529,15 @@ impl DecisionMachine {
             self.held_modifiers.insert(key);
         }
 
-        if let Some(gesture) = self.build_gesture(key, main_name)
-            && self.map.load().contains(&gesture)
+        let gesture = self.build_gesture(key, main_name);
+        if let Some(gesture) = &gesture
+            && self.map.load().contains(gesture)
         {
-            let repeat = self.count_press(&gesture, key, now);
+            let repeat = self.count_press(gesture, key, now);
             self.swallowed_downs.insert(key);
             return Decision::swallow_emit(EmittedGesture {
                 trace_id: TraceId::mint(),
-                gesture,
+                gesture: gesture.clone(),
                 repeat,
             });
         }
@@ -483,6 +568,11 @@ impl DecisionMachine {
         // fate as much as any other.
         if hands_to_os && self.config.share_modifier {
             return Decision::pass_shared_modifier();
+        }
+        if let Some(gesture) = gesture
+            && self.map.load().observes(&gesture)
+        {
+            return Decision::pass_observed(gesture);
         }
         Decision::pass()
     }
@@ -586,6 +676,12 @@ fn generic_modifier_name(vk: u16) -> Option<&'static str> {
     }
 }
 
+/// Whether the virtual key is one of the numpad's operator keys: multiply,
+/// plus, minus, or divide.
+fn is_numpad_operator(vk: u16) -> bool {
+    matches!(vk, 0x6A | 0x6B | 0x6D | 0x6F)
+}
+
 /// Whether the virtual key is one of the normal (non-Verbatim) modifiers.
 fn is_normal_modifier(vk: u16) -> bool {
     generic_modifier_name(vk).is_some()
@@ -646,6 +742,88 @@ mod tests {
         // The volume keys and a key Windows does not know leave speech alone.
         assert_eq!(m.on_key(down(0xAE, true), t).speech, None);
         assert_eq!(m.on_key(down(0xFF, false), t).speech, None);
+    }
+
+    #[test]
+    fn with_the_typed_character_interrupt_off_typing_and_shift_leave_speech_alone() {
+        let config = DecisionConfig {
+            interrupt_for_characters: false,
+            ..DecisionConfig::default()
+        };
+        let mut m = machine(config, &[]);
+        let t = Instant::now();
+        assert_eq!(m.on_key(down(A, false), t).speech, None);
+        m.on_key(up(A, false), t);
+        assert_eq!(m.on_key(down(0x20, false), t).speech, None);
+        m.on_key(up(0x20, false), t);
+        // Shift no longer pauses, and Shift with a letter is still typing.
+        assert_eq!(m.on_key(down(0xA0, false), t).speech, None);
+        assert_eq!(m.on_key(down(A, false), t).speech, None);
+        m.on_key(up(A, false), t);
+        m.on_key(up(0xA0, false), t);
+        // A modified letter and a command key still cancel.
+        m.on_key(down(CONTROL, false), t);
+        assert_eq!(
+            m.on_key(down(A, false), t).speech,
+            Some(KeySpeechEffect::Cancel)
+        );
+        m.on_key(up(A, false), t);
+        m.on_key(up(CONTROL, false), t);
+        assert_eq!(
+            m.on_key(down(0x0D, false), t).speech,
+            Some(KeySpeechEffect::Cancel)
+        );
+    }
+
+    #[test]
+    fn with_the_enter_interrupt_off_enter_leaves_speech_alone() {
+        let config = DecisionConfig {
+            interrupt_for_enter: false,
+            ..DecisionConfig::default()
+        };
+        let mut m = machine(config, &[]);
+        let t = Instant::now();
+        assert_eq!(m.on_key(down(0x0D, false), t).speech, None);
+        m.on_key(up(0x0D, false), t);
+        assert_eq!(
+            m.on_key(down(A, false), t).speech,
+            Some(KeySpeechEffect::Cancel)
+        );
+    }
+
+    #[test]
+    fn with_num_lock_on_numpad_plus_types_its_character() {
+        let mut m = machine(DecisionConfig::default(), &["kb:numpadplus"]);
+        let t = Instant::now();
+        let plus = 0x6B;
+        assert_eq!(
+            m.on_key(down(plus, false), t).decision,
+            KeyDecision::Swallow
+        );
+        m.on_key(up(plus, false), t);
+        m.set_num_lock(true);
+        let decision = m.on_key(down(plus, false), t);
+        assert_eq!(decision.decision, KeyDecision::Pass);
+        assert!(decision.emitted.is_none());
+        assert_eq!(m.on_key(up(plus, false), t).decision, KeyDecision::Pass);
+    }
+
+    #[test]
+    fn an_observed_gesture_passes_and_is_reported() {
+        let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")])
+            .with_observed([GestureId::parse("kb:leftarrow").expect("valid id")]);
+        let mut m = DecisionMachine::new(DecisionConfig::default(), map.into_shared());
+        let t = Instant::now();
+        let left = 0x25;
+        let decision = m.on_key(down(left, true), t);
+        assert_eq!(decision.decision, KeyDecision::Pass);
+        assert!(decision.emitted.is_none());
+        let observed = decision.observed.expect("observed");
+        assert_eq!(observed.gesture.as_str(), "kb:leftarrow");
+        assert_eq!(observed.repeat, 0);
+        assert_eq!(m.on_key(up(left, true), t).decision, KeyDecision::Pass);
+        // The numpad twin is a different key and is not observed.
+        assert!(m.on_key(down(left, false), t).observed.is_none());
     }
 
     #[test]

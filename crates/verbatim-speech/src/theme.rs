@@ -13,11 +13,12 @@
 //! both.
 
 use verbatim_i18n::{
-    level, message_text, negated_state_name, position_in_set, role_name, state_name,
+    character_description, character_name, level, message_text, negated_state_name, phrase_text,
+    position_in_set, role_name, state_name,
 };
 use verbatim_model::{SegmentContent, Utterance, UtteranceId};
 
-use crate::driver::{SpeechItem, SpeechSequence};
+use crate::driver::{IndexMark, SpeechItem, SpeechSequence};
 
 /// A presentation theme: flattens structured utterances at the end of the
 /// speech pipeline.
@@ -41,7 +42,11 @@ pub trait Theme: Send {
 /// set size — a bare position has no useful spoken form); a level becomes
 /// the localized "level 3". The groups are joined with single spaces. A
 /// capital spelled out is spoken with the pitch raised by
-/// [`CAPITAL_PITCH_OFFSET`], as NVDA raises it by default.
+/// [`CAPITAL_PITCH_OFFSET`], as NVDA raises it by default. A character
+/// spoken on its own is spoken by its name from the character table of
+/// its segment's language ("comma"), or, with no name, as itself, a capital
+/// raised in pitch; its description replaces it where one is asked for and
+/// the table has one. An index mark becomes a mark item where it stands.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlainTheme;
 
@@ -52,19 +57,33 @@ pub const CAPITAL_PITCH_OFFSET: i32 = 30;
 impl Theme for PlainTheme {
     /// The sequence is text items, or none when nothing is spoken; a
     /// spelled capital is a text item between two pitch changes, the
-    /// second back to the configured pitch. It carries no index marks,
-    /// since no current utterance embeds them. The language tag is taken
-    /// from the first segment that overrides it, if any.
+    /// second back to the configured pitch; an index mark is a mark item.
+    /// The language tag is taken from the first segment that overrides it,
+    /// if any.
     fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
         let mut items = Vec::new();
         let mut parts: Vec<String> = Vec::new();
         for segment in &utterance.segments {
-            if let SegmentContent::SpelledCapital(text) = &segment.content {
+            let language = segment.language.as_deref();
+            let raised = match &segment.content {
+                SegmentContent::SpelledCapital(text) => Some(text.clone()),
+                SegmentContent::Character(text) if character_name(text, language).is_none() => {
+                    is_capital(text).then(|| text.clone())
+                }
+                SegmentContent::CharacterDescription(text) if is_capital(text) => {
+                    Some(character_description(text, language).unwrap_or_else(|| text.clone()))
+                }
+                _ => None,
+            };
+            if let Some(text) = raised {
                 flush(&mut parts, &mut items);
                 items.push(SpeechItem::Pitch(CAPITAL_PITCH_OFFSET));
-                items.push(SpeechItem::Text(text.clone()));
+                items.push(SpeechItem::Text(text));
                 items.push(SpeechItem::Pitch(0));
-            } else if let Some(part) = spoken_form(&segment.content) {
+            } else if let SegmentContent::Mark(mark) = &segment.content {
+                flush(&mut parts, &mut items);
+                items.push(SpeechItem::Mark(IndexMark(mark.0)));
+            } else if let Some(part) = spoken_form(&segment.content, language) {
                 parts.push(part);
             }
         }
@@ -93,12 +112,22 @@ fn flush(parts: &mut Vec<String>, items: &mut Vec<SpeechItem>) {
     }
 }
 
+/// Whether `text` is one uppercase letter, which is raised in pitch when it
+/// is spoken on its own.
+fn is_capital(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_uppercase() && chars.next().is_none())
+}
+
 /// The plain spoken form of one span, or `None` for spans with nothing to
 /// say: empty text, states that are never announced, a bare position
 /// without a set size (which has no useful spoken form), and any future
 /// variant until it is given a spoken form here (`SegmentContent` is
-/// non-exhaustive).
-fn spoken_form(content: &SegmentContent) -> Option<String> {
+/// non-exhaustive). `language` is the segment's language, for the
+/// character table.
+fn spoken_form(content: &SegmentContent, language: Option<&str>) -> Option<String> {
     match content {
         SegmentContent::Text(text)
         | SegmentContent::Label(text)
@@ -116,6 +145,16 @@ fn spoken_form(content: &SegmentContent) -> Option<String> {
             let text = message_text(*message);
             (!text.is_empty()).then_some(text)
         }
+        SegmentContent::Phrase(phrase) => {
+            let text = phrase_text(phrase);
+            (!text.is_empty()).then_some(text)
+        }
+        SegmentContent::Character(text) => {
+            character_name(text, language).or_else(|| (!text.is_empty()).then(|| text.clone()))
+        }
+        SegmentContent::CharacterDescription(text) => character_description(text, language)
+            .or_else(|| character_name(text, language))
+            .or_else(|| (!text.is_empty()).then(|| text.clone())),
         _ => None,
     }
 }
@@ -155,6 +194,31 @@ mod tests {
             ]
         );
         assert_eq!(sequence.text(), "a B c");
+    }
+
+    #[test]
+    fn characters_are_spoken_by_name_description_or_raised_pitch() {
+        use verbatim_model::SpeechMark;
+        let utterance = utterance_of(vec![
+            UtteranceSegment::new(SegmentContent::Character(",".to_owned())),
+            UtteranceSegment::new(SegmentContent::Character("x".to_owned())),
+            UtteranceSegment::new(SegmentContent::Mark(SpeechMark(4))),
+            UtteranceSegment::new(SegmentContent::CharacterDescription("b".to_owned())),
+            UtteranceSegment::new(SegmentContent::Character("Q".to_owned())),
+        ]);
+        let sequence = PlainTheme.flatten(&utterance, UtteranceId(1));
+        assert_eq!(
+            sequence.items,
+            vec![
+                SpeechItem::Text("comma x".to_owned()),
+                SpeechItem::Mark(IndexMark(4)),
+                SpeechItem::Text("Bravo".to_owned()),
+                SpeechItem::Pitch(CAPITAL_PITCH_OFFSET),
+                SpeechItem::Text("Q".to_owned()),
+                SpeechItem::Pitch(0),
+            ]
+        );
+        assert!(sequence.has_marks());
     }
 
     #[test]

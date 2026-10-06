@@ -1608,6 +1608,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "toml 1.1.2+spec-1.1.0",
+ "verbatim-model",
  "workspace-hack",
 ]
 
@@ -1632,6 +1633,7 @@ dependencies = [
  "serde",
  "serde_json",
  "verbatim-model",
+ "verbatim-text",
  "workspace-hack",
 ]
 

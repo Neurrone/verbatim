@@ -80,7 +80,16 @@ Public API:
   renders plain speech: labels, values, and descriptions as their text,
   roles and states through `verbatim-i18n`, positions as "2 of 5" (nothing
   without a set size — a bare position has no useful spoken form), levels
-  as "level 3". M11's earcon and voice-styling themes implement the same
+  as "level 3", messages and phrases with values through `verbatim-i18n`.
+  Since M4 it renders a character spoken on its own
+  (`SegmentContent::Character`) by its name from the character table of
+  the segment's language ("comma"), or, with no name, as itself, a capital
+  raised in pitch; a character description by the table's description,
+  falling back to the character; and an index mark
+  (`SegmentContent::Mark`) as a mark item where it stands, which is how the
+  reducer's marks reach the mixer, which reports them as they are played
+  (`SpeechEvents::mark_reached`; the shell turns each into
+  `Input::MarkReached` for say-all). M11's earcon and voice-styling themes implement the same
   trait, which is why utterances carry their source node's role and screen
   rectangle even though `PlainTheme` ignores both.
 
@@ -192,7 +201,8 @@ speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
 synthesis boundary at each mark.
 
-Pitch changes. `PlainTheme` renders a `SegmentContent::SpelledCapital`
+Pitch changes. `PlainTheme` renders a `SegmentContent::SpelledCapital`,
+and a capital letter spoken as a character or by its description,
 as a pitch change of `CAPITAL_PITCH_OFFSET` (30, NVDA's default), the
 letter, and a return to the configured pitch. A driver whose
 `changes_pitch` is `true` (eSpeak NG and OneCore) is given the sequence

@@ -23,6 +23,24 @@ Public API:
   "2 of 5" and "level 3" phrases for the corresponding utterance spans.
   Both pass their numbers as pre-rendered strings so no locale applies
   digit grouping to an ordinal position.
+- `message_text(message)` and `phrase_text(phrase)` — the wording of the
+  reader's fixed messages and of its messages with values ("selected
+  hello", "Positioned at 10, 20", "speak typed characters only in edit
+  controls"), NVDA's English wording; `typing_echo_name(mode)` names a
+  typing echo choice.
+- `character_name(character, language)` and
+  `character_description(character, language)` (milestone M4) — the
+  character table: the name a character is spoken by on its own ("comma",
+  "space", "superscript minus") and its description ("Alpha" for a, a
+  capital taking its small letter's). Both are keyed by locale: the table
+  is the `character-name-` and `character-description-` messages of each
+  locale's Fluent file, one per code point in lowercase hexadecimal
+  (`character-name-002c = comma`), so another language's table is data, not
+  code. `language` is the text's BCP 47 tag; a language with no table falls
+  back to the loaded languages, English last. English is the only table
+  shipped: NVDA's English symbol names, with its corrected ones ("three
+  eighths", "superscript minus"), and the phonetic alphabet. NVDA's
+  translations are never imported (the provenance rule).
 
 Implementation notes: the loader disables Fluent's bidi argument isolation
 globally — Fluent wraps interpolated arguments in invisible directional

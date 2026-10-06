@@ -88,24 +88,36 @@ Public API:
   themes decide what it sounds like), `Activate` (invoke or default-action a
   node), and `CopyToClipboard` (routed through the shell's shared clipboard
   helper, so the reducer never touches the clipboard); menu and quit
-  concerns never appear here.
+  concerns never appear here. Milestone M4 adds the text protocol's
+  inputs and effects, described under "The text protocol" below.
 - `ActionName` — the name of the action an activation performed, carried
   in `Input::ActivationCompleted`: `Invoke` (UIA, spoken "invoke") or
   `Named` (an application's own name for a default action, spoken as is).
 - `ReviewCommand` — the model-level review and object-navigation vocabulary
   (report object, parent, siblings, first child, to-focus, activate, and
-  the review-cursor line/word/character motions) the keyboard layer's
-  scripts map onto, so the reducer never depends on input-crate types.
+  the review-cursor line/word/character motions; since M4 also previous
+  and next page, the selection's start and end, say-all from the review
+  cursor or the caret, the start marker and select then copy, the follow
+  caret and typing echo toggles, and the caret's and review cursor's
+  locations) the keyboard layer's scripts map onto, so the reducer never
+  depends on input-crate types.
 - `Utterance`, `UtteranceSegment`, `SegmentContent`, `UtteranceSource`,
   `SpeechPriority` — structured speech per decision D12. Segments are
   semantic spans: literal text, `Label`, `Value`, `Description`, role and
   state tokens (including `NegatedState` for announcements like "not
   checked"), `SpelledCapital` (an uppercase letter spelled out, which a
   theme speaks at a raised pitch), `Position` (a "2 of 5" pair), `Level`,
-  and `Message` (a fixed
+  `Message` (a fixed
   reader message the reducer names — a navigation edge, for instance —
   rather than a property of any node, so it can say something without
-  pre-flattening text). The pure reducer never touches localization; spans
+  pre-flattening text), and, since M4, `Character` (one character spoken
+  on its own, by its name from the character table, "comma", or raised in
+  pitch when a capital), `CharacterDescription` ("Alpha" for a),
+  `Mark` (a `SpeechMark`, an index mark reported back when playback
+  reaches it), and `Phrase` (a reader message with values in it: `Selected`
+  and `Unselected` with a `SelectionText` that is text, one character, or a
+  count of characters; `Positioned` with screen coordinates; and the new
+  values of the typing echo toggles). The pure reducer never touches localization; spans
   become words at the speech pipeline's presentation stage. An utterance optionally carries an
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
@@ -127,6 +139,14 @@ Public API:
   all of its audio; one with no audio completes when the audio before it
   has played), `Cancelled` (cut off or dropped before all of it was
   heard), or `Failed` with a reason.
+- `ReaderSettings`, `TypingEcho`, `SayAllUnit` (milestone M4) — the
+  settings the reducer reads, with NVDA's defaults: speak typed characters
+  (always) and words (off), each off, only in edit controls, or always;
+  the review cursor following the caret (on); say-all reading by sentence
+  where possible, by paragraph, or by line (sentence); keeping the display
+  on during say-all (on); and speaking terminal passwords (off).
+  `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
+  them; the shell hands them to the reducer as `Input::Settings`.
 - `GestureId` — normalized gesture identifiers, NVDA's scheme.
 - `CallKind` and `CallCounts` — how many cross-process calls a piece of
   work made, by kind: UIA calls, MSAA calls, and window messages
@@ -135,6 +155,172 @@ Public API:
   counts add. The model only names the counts: `verbatim-uia` and
   `verbatim-ia2` count, the outpost sends them, and the latency ledger and
   the control plane carry them.
+
+## The text protocol (milestone M4)
+
+How an outpost sends text to Core, and how Core asks an outpost to read
+text, wait for the caret, select, or move the caret
+(`phase6-design.md`, "M4: text, editing, and terminals" and
+"Internationalization in the text model"). The types are in `text.rs`;
+everything is serde-serializable like the rest of the model, so it travels
+the Core-outpost pipe and the flight recorder unchanged. This section is
+the contract the Windows side implements.
+
+### Positions
+
+- Core never does arithmetic on provider positions. A `TextAnchor` is an
+  opaque number an outpost mints for a position in one node's text (a UIA
+  text range's start, an edit control's UTF-16 offset). A `TextPosition`
+  is an anchor plus `offset`, a byte offset into the UTF-8 text of the
+  chunk that started at that anchor, as the outpost sent it. The outpost
+  resolves a position by reading forward from the anchor and converting
+  the byte count into its own units; the offset is always a character
+  boundary of that text.
+- A `TextPoint` is where a request starts: `Caret`, `SelectionStart`,
+  `SelectionEnd` (just past the last selected character), `Start`, `End`
+  (after the last character, so a line read there is the last line), or
+  `At(TextPosition)`. A node with text but no caret answers `Caret` from
+  its start, as NVDA's object review falls back to the first position;
+  with nothing selected, both selection points are the caret.
+- Anchors are kept by the outpost. `SrState::held_anchors()` in
+  `verbatim-core` lists every anchor Core holds, by outpost, alongside
+  `held_nodes()`; the outpost keeps those, and may forget any other anchor
+  once it has minted 64 newer ones for the node. A request naming a
+  forgotten anchor is answered `AnchorLost`, and Core starts again from the
+  caret. Anchors die with the outpost incarnation, as node ids do.
+
+### Chunks
+
+- A `TextChunk` is one unit of text: `unit` (`TextUnit`), `text` (UTF-8,
+  line breaks included as the provider gives them), `start` (an anchor at
+  its start), `offset` (the byte offset of the point the request was about:
+  the caret in a caret report, the point reached in a read), `languages`
+  (`LanguageRun`s: byte ranges of the text with a BCP 47 tag, in order and
+  not overlapping; empty when the provider reports none), `first` and
+  `last` (the chunk is known to be the document's first or last unit of its
+  kind; false when not, or when the outpost cannot tell cheaply, and Core
+  then asks), and `truncated`.
+- A chunk's text is at most `MAX_CHUNK_BYTES` (64 KB), cut at a character
+  boundary, so one unit can never grow Core's state without bound.
+- `TextUnit` is `Character` (a grapheme cluster, whatever the provider's
+  own character unit says), `Word` (the provider's word), `Line` (the
+  provider's line, soft-wrapped lines included; Core never splits text on
+  line breaks to find lines), `Sentence`, `Paragraph`, `Page`, and
+  `Document` (only for moving to the ends, never read as a chunk). In a
+  terminal, paragraph, page, and document must not be read: line is the
+  largest unit.
+
+### Events the outpost sends
+
+- `NormalizedEvent::CaretMoved { node_id, caret: CaretReport }`: the caret
+  or selection moved in a node with text. A `CaretReport` is the line at
+  the caret, with its `offset` at the caret, and the `Selection` (a start
+  and an end `TextPosition`), `None` when nothing is selected. Send one
+  when a node with text gains the focus, as soon after the focus event as
+  possible, and on every later caret or selection change in the focus,
+  coalesced so a burst sends only the latest. It keeps Core's copy of the
+  caret current (Backspace knows what it deleted, the review cursor
+  follows the caret); it speaks nothing by itself.
+- `NormalizedEvent::TextChanged { node_id }`: the node's text changed.
+  Characters typed into a terminal wait for this before Core echoes them.
+
+### Requests and replies
+
+Core emits `Effect::Text(TextRequest { query_id, node_id, op })`; the
+outpost owning `node_id` answers with `Input::TextCompleted { trace_id,
+query_id, reply }`. A newer request for the same purpose supersedes an
+older one, whose answer Core then drops. The operations (`TextOp`):
+
+- `AwaitCaret(CaretWatch)`: Core has just passed a caret key to the
+  application. Wait for evidence, then answer `TextReply::Caret` with a
+  `CaretReply`. Evidence is any of: a caret event from the application;
+  the caret no longer at `since` (where Core last knew it, `None` when it
+  did not); the text of `unit` at the caret differing from `compare` (the
+  character or word at the caret before a Delete); the selection no longer
+  `previous_selection`. Wait up to 100 milliseconds for
+  `CaretWait::Standard` and 300 for `CaretWait::Extended` (terminals), and
+  answer when the wait runs out too, with `moved` false. The reply carries
+  the caret as it now is, the requested `unit` at the caret as a chunk
+  (`None` when the unit is `Line`, which the caret's line already is, or
+  when the provider does not have the unit, in which case Core speaks the
+  line), and `selection_changes` when the watch carried a
+  `previous_selection` (a `PreviousSelection`, collapsed at the caret when
+  nothing was selected). Each `SelectionChange` is `selected` (true for
+  newly selected text, false for text no longer selected), its `text` cut
+  to `MAX_SELECTION_TEXT_BYTES` (4 KB), and the full count of its
+  `characters` (grapheme clusters). With the old selection from
+  old start to old end and the new from new start to new end, compare
+  endpoints: when the two neither overlap nor touch, the old text is
+  unselected and then the new text selected; otherwise, first the start
+  side (text between the new and the old start is selected when the start
+  moved back, unselected when it moved forward), then the end side (text
+  between the old and the new end is selected when the end moved forward,
+  unselected when it moved back). Leave out empty changes.
+- `Read(TextRead { at, movement, unit })`: start at `at`, move by
+  `movement` (a `TextMovement`: a unit and a signed count) when there is
+  one, landing on that unit's start, then read the `unit` containing the
+  point reached. Answer `TextReply::Read { moved, chunk }`, where `moved`
+  is how far the movement really went: less than asked at the document's
+  ends, and zero when it could not move at all. Movement never wraps. The
+  chunk's `offset` is the point reached. A unit the provider does not have
+  is answered `UnsupportedUnit(unit)`, never approximated. For `Sentence`:
+  a provider with no sentence unit (UIA) answers `UnsupportedUnit`, and
+  Core reads by line; a provider whose text NVDA splits into sentences
+  itself (the offset-based edit controls) answers with the paragraph
+  containing the point (a chunk whose `unit` is `Paragraph`), which Core
+  splits by Unicode's sentence rules, and is moved by `Paragraph` for the
+  next read; a provider with a sentence unit of its own answers with the
+  sentence.
+- `ReadRange { start, end }`: the text between two points, whichever comes
+  first in the document, answered `Range { text, truncated }`, cut to
+  `MAX_RANGE_BYTES` (1 MB). For a copy to the clipboard.
+- `Select { start, end }`: select the text between two points and move the
+  caret there where the application allows; answer `Done`, or
+  `Unsupported` when the text cannot be selected.
+- `MoveCaret(point)`: move the caret, as say-all from the caret does as it
+  reads; answer `Done` or `Unsupported`. Core does not wait for the answer.
+- `Location(point)`: the point's screen position, answered `Location { x,
+  y }` in pixels, or `Unsupported`.
+
+Any request can also be answered `NoText` (the node has no text interface
+at all; Core then reviews its value or name as flat text, as NVDA's object
+review falls back to), `AnchorLost`, `Gone` (the node no longer exists),
+or `Unanswered` (the application did not answer in time, or the read
+failed).
+
+### Inputs from the shell
+
+- `Input::CaretKey { trace_id, key: CaretKey }`: a caret key the keyboard
+  hook observed and passed to the application. A `CaretKey` is a
+  `CaretMotion` (previous or next character, word, line, paragraph, or
+  page; start or end of the line; top or bottom; Backspace and
+  Control+Backspace; Delete and Control+Delete; Control+A) and whether
+  Shift extends the selection. `CaretMotion::unit` is the unit spoken
+  after it. `verbatim-input`'s `caret_bindings` maps gestures to these.
+- `Input::CharacterTyped { trace_id, text }`: text typed into the focused
+  application, one character or several at once (an input method's
+  committed composition), a tab as a tab character and Enter as a
+  carriage return. The platform side produces it, from the keyboard hook's
+  translation of keys to text or from the application's text-edit events.
+- `Input::MarkReached { mark }`: playback reached a `SpeechMark` the
+  reducer placed, as the speech pipeline's `mark_reached` reports it.
+- `Input::SpeechCancelled`: a key press cut speech off outside the reducer
+  (the hook's `KeySpeechEffect::Cancel`); say-all stops.
+- `Input::Settings(ReaderSettings)`: the reader settings, at startup and
+  whenever they change.
+
+### Effects for the shell
+
+- `Effect::Text(TextRequest)`, routed to the node's outpost.
+- `Effect::KeepDisplayOn(bool)`: keep the display on while say-all reads,
+  and let it go again; every true is followed by a false.
+- `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
+  setting; save it.
+
+The model also adds `Role::Terminal`, NVDA's terminal role, for Windows
+Terminal's text control, the console host, and embedded terminals: the
+review cursor keeps cell columns there, caret waits are longer, and typing
+waits for the terminal to show it.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases
 everything, and sorts the plus-separated parts, exactly like NVDA's

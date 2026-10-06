@@ -13,7 +13,9 @@
 mod calls;
 mod event;
 mod gesture;
+mod settings;
 mod speech;
+mod text;
 mod tree;
 
 pub use calls::{CallCounts, CallKind};
@@ -23,9 +25,16 @@ pub use event::{
     ReviewCommand, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
+pub use settings::{ReaderSettings, SayAllUnit, TypingEcho};
 pub use speech::{
-    FocusNow, FocusValidity, Message, SegmentContent, SpeechPriority, Utterance, UtteranceEnding,
-    UtteranceId, UtteranceSegment, UtteranceSource,
+    FocusNow, FocusValidity, Message, Phrase, SegmentContent, SelectionText, SpeechMark,
+    SpeechPriority, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment, UtteranceSource,
+};
+pub use text::{
+    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, HeldAnchors,
+    LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_SELECTION_TEXT_BYTES, PreviousSelection,
+    Selection, SelectionChange, TextAnchor, TextChunk, TextMovement, TextOp, TextPoint,
+    TextPosition, TextRead, TextReply, TextRequest, TextUnit,
 };
 pub use tree::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet, TreeNode};
 

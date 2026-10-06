@@ -125,6 +125,12 @@ pub enum Role {
     HotkeyField,
     /// The movable part of a slider or scroll bar (UIA `Thumb`).
     Thumb,
+    /// A terminal: Windows Terminal's text control, the console host, or a
+    /// terminal embedded in another application (NVDA's terminal role).
+    /// Its text is a grid of cells: the review cursor keeps its column in
+    /// cells, and typed characters wait for the terminal to show them
+    /// (`phase6-design.md`, M4 items 4 and 5).
+    Terminal,
     /// Anything not yet mapped into the vocabulary.
     Unknown,
 }

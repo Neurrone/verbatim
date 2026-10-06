@@ -1,0 +1,557 @@
+//! The text protocol (milestone M4): how an outpost sends text to Core and
+//! how Core asks an outpost to read text, wait for the caret, select, or
+//! move the caret (`phase6-design.md`, "M4: text, editing, and terminals"
+//! and "Internationalization in the text model").
+//!
+//! The rules the types follow:
+//!
+//! - Positions are the provider's, not Core's. A position is a
+//!   [`TextPosition`]: an opaque [`TextAnchor`] the outpost minted, plus a
+//!   byte offset into the UTF-8 text of the [`TextChunk`] that anchor
+//!   started. Core never does arithmetic on provider positions; it only
+//!   slices text it received, and the outpost converts between UTF-8 bytes
+//!   and its own units (UTF-16 code units, UIA text ranges) at the
+//!   boundary.
+//! - Text arrives with the event that needs it: a caret report carries the
+//!   line at the caret, so Core can answer the next key (Backspace, the
+//!   review cursor following the caret) without a round trip. Larger units
+//!   are read on request, one unit at a time, never the whole document.
+//! - Every chunk is capped at [`MAX_CHUNK_BYTES`], so one unit cannot grow
+//!   Core's state without bound.
+//! - A unit the provider does not support is answered
+//!   [`TextReply::UnsupportedUnit`], never approximated silently, and
+//!   movement stops at the document's ends: a [`TextReply::Read`] reports
+//!   how far it really moved.
+//! - Text carries its language in [`LanguageRun`]s, so speech can switch
+//!   voices and word segmentation can follow the language.
+
+use serde::{Deserialize, Serialize};
+
+use crate::event::QueryId;
+use crate::{NodeId, OutpostId};
+
+/// The most UTF-8 bytes of text one [`TextChunk`] carries. A longer unit
+/// (a minified file's single line) is cut at a character boundary at or
+/// before this length and marked [`TextChunk::truncated`].
+pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
+
+/// The most UTF-8 bytes of text one [`SelectionChange`] carries; its
+/// [`characters`](SelectionChange::characters) count is always complete.
+pub const MAX_SELECTION_TEXT_BYTES: usize = 4 * 1024;
+
+/// The most UTF-8 bytes of text a [`TextReply::Range`] carries, for a copy
+/// to the clipboard.
+pub const MAX_RANGE_BYTES: usize = 1024 * 1024;
+
+/// An opaque position in a node's text, minted by the outpost that owns the
+/// node: a UIA text range's start, a Win32 edit control's UTF-16 offset, or
+/// whatever the backend needs to find the position again.
+///
+/// An anchor means something only together with the node it was minted
+/// for, and only to that node's outpost incarnation. The outpost keeps
+/// every anchor Core holds (`SrState::held_anchors` in `verbatim-core`,
+/// sent to the outpost alongside the held nodes) and may forget any other
+/// once it has minted 64 newer ones for the node; a request naming a
+/// forgotten anchor is answered [`TextReply::AnchorLost`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TextAnchor(pub u64);
+
+/// A position in a node's text: `offset` UTF-8 bytes into the text of the
+/// chunk that starts at `anchor`, as the outpost sent that chunk. The
+/// outpost resolves it by reading forward from the anchor and converting
+/// the byte count into its own units.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TextPosition {
+    /// The start of the chunk the offset counts into.
+    pub anchor: TextAnchor,
+    /// The byte offset into that chunk's UTF-8 text; always a character
+    /// boundary of it.
+    pub offset: u32,
+}
+
+impl TextPosition {
+    /// The position at `anchor` itself.
+    #[must_use]
+    pub const fn at(anchor: TextAnchor) -> Self {
+        Self { anchor, offset: 0 }
+    }
+}
+
+/// Where a text request starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextPoint {
+    /// The caret. A node with text but no caret (static text, a read-only
+    /// document without one) answers from the start of its text, as NVDA's
+    /// object review falls back to the first position.
+    Caret,
+    /// The start of the selection; the caret when nothing is selected.
+    SelectionStart,
+    /// The end of the selection (just past its last character); the caret
+    /// when nothing is selected.
+    SelectionEnd,
+    /// The start of the node's text.
+    Start,
+    /// The end of the node's text: the position after its last character,
+    /// so expanding to a line there reads the last line.
+    End,
+    /// A position Core holds.
+    At(TextPosition),
+}
+
+/// A text unit, NVDA's `UNIT_*` vocabulary as far as M4 uses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum TextUnit {
+    /// One character: a grapheme cluster, whatever the provider's own
+    /// character unit says (an emoji sequence or a letter with combining
+    /// marks is one character).
+    Character,
+    /// The provider's word, which Core speaks where the application moved
+    /// the caret itself (Control+Right Arrow), so speech matches where the
+    /// caret went.
+    Word,
+    /// The provider's line, soft-wrapped lines included. Core never splits
+    /// text on line breaks to find lines.
+    Line,
+    /// A sentence. Providers without one (UIA has none) answer
+    /// [`TextReply::UnsupportedUnit`].
+    Sentence,
+    /// The provider's paragraph.
+    Paragraph,
+    /// The provider's page, where it has pages.
+    Page,
+    /// The whole text. Never read as a chunk (it can be any size); used only
+    /// to move to the start or end.
+    Document,
+}
+
+/// The language of a span of a chunk's text, from the provider's culture
+/// or language attribute.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageRun {
+    /// Byte offset of the span's start in the chunk's text.
+    pub start: u32,
+    /// Byte offset just past the span's end.
+    pub end: u32,
+    /// BCP 47 language tag, such as `zh-CN`.
+    pub language: String,
+}
+
+/// One unit of text an outpost read: its text, where it starts, the point
+/// of interest inside it, and what is known about the document's ends.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextChunk {
+    /// The unit the chunk is.
+    pub unit: TextUnit,
+    /// The text, as UTF-8, line breaks included as the provider gives them,
+    /// cut to [`MAX_CHUNK_BYTES`].
+    pub text: String,
+    /// An anchor at the start of the chunk, for positions inside it.
+    pub start: TextAnchor,
+    /// The byte offset in `text` of the point the request was about: the
+    /// caret in a caret report, the point read at after any movement in a
+    /// read. Always a character boundary, and at most `text.len()`.
+    pub offset: u32,
+    /// The languages of spans of the text; empty when the provider reports
+    /// none. Spans do not overlap and are in order; text outside every span
+    /// is in the node's default language.
+    #[serde(default)]
+    pub languages: Vec<LanguageRun>,
+    /// The chunk is known to be the document's first unit of its kind; false
+    /// when it is not, or when the outpost could not tell cheaply.
+    #[serde(default)]
+    pub first: bool,
+    /// The chunk is known to be the document's last unit of its kind.
+    #[serde(default)]
+    pub last: bool,
+    /// The text was cut at [`MAX_CHUNK_BYTES`].
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+impl TextChunk {
+    /// The language of the text at byte `offset`, when a run covers it.
+    #[must_use]
+    pub fn language_at(&self, offset: usize) -> Option<&str> {
+        self.languages
+            .iter()
+            .find(|run| (run.start as usize..run.end as usize).contains(&offset))
+            .map(|run| run.language.as_str())
+    }
+}
+
+/// A selection: its start and its end, the end just past the last selected
+/// character. A collapsed selection (start equal to end) is no selection,
+/// and is reported as `None` wherever a selection is optional.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Selection {
+    /// Where the selection starts.
+    pub start: TextPosition,
+    /// Where it ends.
+    pub end: TextPosition,
+}
+
+/// Text that became selected or stopped being selected, which Core speaks
+/// as NVDA's "selected" and "unselected" announcements.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionChange {
+    /// True for text newly selected, false for text no longer selected.
+    pub selected: bool,
+    /// The text, cut to [`MAX_SELECTION_TEXT_BYTES`].
+    pub text: String,
+    /// How many characters (grapheme clusters) the whole change has, even
+    /// when `text` was cut.
+    pub characters: u32,
+}
+
+/// Where the caret is: the line it is on, with
+/// [`TextChunk::offset`] at the caret, and the selection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaretReport {
+    /// The line containing the caret; its `offset` is the caret.
+    pub line: TextChunk,
+    /// The selection, when something is selected.
+    #[serde(default)]
+    pub selection: Option<Selection>,
+}
+
+/// How long the outpost may wait for evidence that the caret moved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CaretWait {
+    /// NVDA's default: up to 100 milliseconds.
+    Standard,
+    /// Three times as long, up to 300 milliseconds, for terminals, whose
+    /// caret can move late (Windows Terminal over SSH; `phase6-design.md`,
+    /// "The NVDA update of 2026-10-06").
+    Extended,
+}
+
+/// What Core asks the outpost to do after it has passed a caret key to the
+/// application: wait for evidence of what the key did, then report the
+/// caret (`docs/nvda/editable-text-and-terminals.md`, the wait for
+/// evidence).
+///
+/// The outpost answers as soon as one of these holds, or when the wait
+/// runs out, and in every case answers with the caret as it then is:
+///
+/// - a caret event arrives from the application;
+/// - the caret is no longer at `since`;
+/// - the text of `unit` at the caret differs from `compare` (Delete, which
+///   changes the text without moving the caret);
+/// - the selection is no longer `previous_selection`.
+///
+/// A newer request for the same node supersedes this one: the outpost may
+/// answer the older one at once, with what it has, or not at all.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaretWatch {
+    /// Where Core last knew the caret to be, before the key; `None` when it
+    /// did not know.
+    pub since: Option<TextPosition>,
+    /// The unit to report at the caret once the wait ends, besides the line.
+    pub unit: TextUnit,
+    /// The text of `unit` at the caret before the key, when a change of it is
+    /// evidence.
+    pub compare: Option<String>,
+    /// The selection before the key, for a key that changes the selection
+    /// (any Shift movement, Control+A); `None` otherwise. When the request
+    /// carries one, the reply's `selection_changes` describe how the
+    /// selection changed from it.
+    pub previous_selection: Option<PreviousSelection>,
+    /// How long to wait.
+    pub wait: CaretWait,
+}
+
+/// The selection before a selecting key: the selection Core knew, or a
+/// collapsed one at the caret when nothing was selected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviousSelection {
+    /// Where it started.
+    pub start: TextPosition,
+    /// Where it ended; equal to `start` when nothing was selected.
+    pub end: TextPosition,
+}
+
+/// The outpost's answer to a [`CaretWatch`].
+///
+/// `selection_changes`, when the watch carried a previous selection
+/// `[old_start, old_end)` and the selection is now `[new_start, new_end)`
+/// (each collapsed at the caret when nothing is selected), are worked out
+/// by comparing endpoints, which only the outpost can do:
+///
+/// - When the two do not overlap or touch (`new_end < old_start` or
+///   `new_start > old_end`), the old text, if any, is unselected and the new
+///   text, if any, is selected, in that order.
+/// - Otherwise, first the start: `[new_start, old_start)` is selected when
+///   the start moved back, `[old_start, new_start)` unselected when it
+///   moved forward; then the end: `[old_end, new_end)` is selected when
+///   the end moved forward, `[new_end, old_end)` unselected when it moved
+///   back.
+///
+/// Empty changes are left out.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaretReply {
+    /// Whether evidence arrived before the wait ran out.
+    pub moved: bool,
+    /// The caret as it is now.
+    pub caret: CaretReport,
+    /// The watch's unit at the caret; `None` when the unit is
+    /// [`TextUnit::Line`], which `caret.line` already is.
+    #[serde(default)]
+    pub unit: Option<TextChunk>,
+    /// How the selection changed, when the watch asked.
+    #[serde(default)]
+    pub selection_changes: Vec<SelectionChange>,
+}
+
+/// A movement by whole units, positive forward and negative back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextMovement {
+    /// The unit moved by.
+    pub unit: TextUnit,
+    /// How many units, and which way.
+    pub count: i32,
+}
+
+/// Read one unit: start at `at`, move by `movement` when there is one,
+/// expand to the `unit` containing the point reached, and reply with it.
+/// The reply's chunk has its `offset` at the point reached. Moving by a
+/// unit lands on that unit's start, as NVDA's `move` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextRead {
+    /// Where to start.
+    pub at: TextPoint,
+    /// How to move first, if at all.
+    pub movement: Option<TextMovement>,
+    /// The unit to read where the movement ends.
+    pub unit: TextUnit,
+}
+
+/// One operation Core asks an outpost to perform on a node's text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum TextOp {
+    /// Wait for a passed caret key's evidence, then report the caret:
+    /// answered [`TextReply::Caret`].
+    AwaitCaret(CaretWatch),
+    /// Read one unit: answered [`TextReply::Read`].
+    Read(TextRead),
+    /// Read the text between two points, in document order whichever comes
+    /// first, for a copy: answered [`TextReply::Range`].
+    ReadRange {
+        /// One end.
+        start: TextPoint,
+        /// The other end.
+        end: TextPoint,
+    },
+    /// Select the text between two points, and move the caret there where
+    /// the application allows: answered [`TextReply::Done`], or
+    /// [`TextReply::Unsupported`] when the text cannot be selected.
+    Select {
+        /// One end.
+        start: TextPoint,
+        /// The other end.
+        end: TextPoint,
+    },
+    /// Move the caret to a point (say-all moving the caret as it reads):
+    /// answered [`TextReply::Done`] or [`TextReply::Unsupported`].
+    MoveCaret(TextPoint),
+    /// The screen position of a point: answered [`TextReply::Location`], or
+    /// [`TextReply::Unsupported`] when the provider cannot tell.
+    Location(TextPoint),
+}
+
+/// A text request from Core to the outpost that owns `node_id`; the answer
+/// comes back as `Input::TextCompleted` with the same `query_id`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextRequest {
+    /// Correlates the answer with this request.
+    pub query_id: QueryId,
+    /// The node whose text to use. Its outpost is the one asked.
+    pub node_id: NodeId,
+    /// What to do.
+    pub op: TextOp,
+}
+
+/// An outpost's answer to a [`TextRequest`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum TextReply {
+    /// The answer to [`TextOp::AwaitCaret`].
+    Caret(Box<CaretReply>),
+    /// The answer to [`TextOp::Read`]: `moved` is how many units the
+    /// movement really went, which is less than asked (and zero for a
+    /// movement that could not start) at the document's ends; movement
+    /// never wraps.
+    Read {
+        /// Units moved, signed like the request.
+        moved: i32,
+        /// The unit read where the movement ended.
+        chunk: TextChunk,
+    },
+    /// The answer to [`TextOp::ReadRange`].
+    Range {
+        /// The text, cut to [`MAX_RANGE_BYTES`].
+        text: String,
+        /// The text was cut.
+        truncated: bool,
+    },
+    /// A [`TextOp::Select`] or [`TextOp::MoveCaret`] was done.
+    Done,
+    /// The answer to [`TextOp::Location`]: screen coordinates of the point,
+    /// in pixels.
+    Location {
+        /// Screen x.
+        x: i32,
+        /// Screen y.
+        y: i32,
+    },
+    /// The provider has no such unit (UIA has no sentence; a plain edit
+    /// control has no page). Core falls back to a unit it has.
+    UnsupportedUnit(TextUnit),
+    /// The provider cannot do this operation on this text.
+    Unsupported,
+    /// The node has no text interface at all. Core falls back to the node's
+    /// value or name, as NVDA's object review does.
+    NoText,
+    /// A [`TextPosition`] named an anchor the outpost no longer has.
+    AnchorLost,
+    /// The node no longer exists.
+    Gone,
+    /// The application did not answer in time, or the read failed.
+    Unanswered,
+}
+
+/// What a caret key does, as Core's caret handling knows it: the motion
+/// the application performs, and whether it extends the selection (the
+/// key was pressed with Shift).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CaretKey {
+    /// The motion.
+    pub motion: CaretMotion,
+    /// Shift was held: the selection changes, and the change is spoken.
+    pub select: bool,
+}
+
+/// The caret motions of NVDA's editable-text commands
+/// (`docs/nvda/editable-text-and-terminals.md`). The key is always passed
+/// to the application, which moves the caret; Core only reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CaretMotion {
+    /// Left Arrow.
+    PreviousCharacter,
+    /// Right Arrow.
+    NextCharacter,
+    /// Control+Left Arrow.
+    PreviousWord,
+    /// Control+Right Arrow.
+    NextWord,
+    /// Up Arrow.
+    PreviousLine,
+    /// Down Arrow.
+    NextLine,
+    /// Control+Up Arrow.
+    PreviousParagraph,
+    /// Control+Down Arrow.
+    NextParagraph,
+    /// Home.
+    StartOfLine,
+    /// End.
+    EndOfLine,
+    /// Page Up.
+    PreviousPage,
+    /// Page Down.
+    NextPage,
+    /// Control+Home.
+    Top,
+    /// Control+End.
+    Bottom,
+    /// Backspace: deletes the character before the caret.
+    Backspace,
+    /// Control+Backspace: deletes the word before the caret.
+    BackspaceWord,
+    /// Delete: deletes the character at the caret.
+    Delete,
+    /// Control+Delete: deletes the word at the caret.
+    DeleteWord,
+    /// Control+A: selects everything.
+    SelectAll,
+}
+
+impl CaretMotion {
+    /// The unit spoken after the motion: the character for character keys,
+    /// Home, End, and Delete; the provider's word for word keys; the
+    /// paragraph for paragraph keys; the line for line, page, and document
+    /// keys.
+    #[must_use]
+    pub const fn unit(self) -> TextUnit {
+        match self {
+            Self::PreviousCharacter
+            | Self::NextCharacter
+            | Self::StartOfLine
+            | Self::EndOfLine
+            | Self::Backspace
+            | Self::Delete => TextUnit::Character,
+            Self::PreviousWord | Self::NextWord | Self::BackspaceWord | Self::DeleteWord => {
+                TextUnit::Word
+            }
+            Self::PreviousParagraph | Self::NextParagraph => TextUnit::Paragraph,
+            Self::PreviousLine
+            | Self::NextLine
+            | Self::PreviousPage
+            | Self::NextPage
+            | Self::Top
+            | Self::Bottom
+            | Self::SelectAll => TextUnit::Line,
+        }
+    }
+}
+
+/// Text anchors grouped by the outpost that minted them.
+pub type HeldAnchors =
+    std::collections::BTreeMap<OutpostId, std::collections::BTreeSet<TextAnchor>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chunk_finds_the_language_at_an_offset() {
+        let chunk = TextChunk {
+            unit: TextUnit::Line,
+            text: "hello 你好".to_owned(),
+            start: TextAnchor(1),
+            offset: 0,
+            languages: vec![LanguageRun {
+                start: 6,
+                end: 12,
+                language: "zh-CN".to_owned(),
+            }],
+            first: true,
+            last: false,
+            truncated: false,
+        };
+        assert_eq!(chunk.language_at(0), None);
+        assert_eq!(chunk.language_at(6), Some("zh-CN"));
+    }
+
+    #[test]
+    fn a_reply_round_trips_through_json() {
+        let reply = TextReply::Read {
+            moved: -1,
+            chunk: TextChunk {
+                unit: TextUnit::Line,
+                text: "line\r\n".to_owned(),
+                start: TextAnchor(7),
+                offset: 0,
+                languages: Vec::new(),
+                first: false,
+                last: true,
+                truncated: false,
+            },
+        };
+        let json = serde_json::to_string(&reply).expect("serializes");
+        let back: TextReply = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, reply);
+    }
+}
