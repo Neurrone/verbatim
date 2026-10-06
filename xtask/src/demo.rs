@@ -90,7 +90,6 @@ fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
         .parent()
         .expect("xtask lives one directory under the workspace root")
         .to_path_buf();
-    let libclang = crate::find_libclang();
 
     println!("xtask demo: building the agent");
     let status = Command::new(env!("CARGO"))
@@ -132,9 +131,6 @@ fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
         .env(recording::RECORD_ENV, "1")
         .env(recording::QUALITY_ENV, "demo")
         .current_dir(&repo_root);
-    if let Some(dir) = &libclang {
-        command.env("LIBCLANG_PATH", dir);
-    }
     let status = command
         .status()
         .map_err(|error| format!("could not run cargo test: {error}"))?;

@@ -1064,10 +1064,8 @@ fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> 
 /// dependencies, never Verbatim's executables, so without this a
 /// runner-direct run silently staged whatever `target/debug/verbatim.exe`
 /// a past build left behind. Building here is a no-op when nothing changed.
-/// The build needs `LIBCLANG_PATH` the same way any direct `cargo build` of
-/// `verbatim-app` does (see `CLAUDE.md`); its output goes straight to the
-/// terminal. The outcome is remembered, so each test process builds at most
-/// once.
+/// Its output goes straight to the terminal. The outcome is remembered, so
+/// each test process builds at most once.
 ///
 /// # Errors
 ///

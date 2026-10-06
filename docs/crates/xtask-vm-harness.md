@@ -38,10 +38,7 @@ module tree, not a library):
   synthesizer host may hold them open. It also copies the vendored
   `ffmpeg.exe` to `FFMPEG_GUEST_PATH`, after checking it is the real
   binary and not a Git LFS pointer. There is no `--audible` flag on
-  the VM path, since `test` is audible by default. `deploy::build`
-  probes for `libclang.dll` before its `cargo build` the same way
-  `xtask`'s own `ci` command does (reusing `find_libclang`), since building
-  `verbatim-app` pulls in `verbatim-gui`'s wxDragon dependency. When an
+  the VM path, since `test` is audible by default. When an
   executable must be copied, `deploy` stops the guest's `VerbatimAgent`
   task first and restarts it afterwards even if a copy fails
   (`copy_then_restart`), so a failed deploy never leaves the agent down.

@@ -3,7 +3,7 @@
 //! Startup order: refuse to run outside an interactive session, namespace
 //! trace IDs, load config, start tracing, replace any running instance, load locales, bring up the speech pipeline, the
 //! supervisor and its focus listener (decision D13), the reducer and router
-//! threads, the control plane, and the keyboard hook — then run the wxDragon
+//! threads, the control plane, and the keyboard hook — then run the wxWidgets
 //! GUI loop on this, the process main thread, until shutdown is requested from
 //! the menu, the control plane, or a replacing instance.
 

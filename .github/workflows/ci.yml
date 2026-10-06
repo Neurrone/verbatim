@@ -103,26 +103,6 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      - name: Locate libclang for wxDragon's bindgen
-        shell: pwsh
-        run: |
-          # `cargo xtask ci` probes these same candidates automatically;
-          # this job calls cargo directly (see CLAUDE.md's Commands
-          # section for why), so the wxDragon bindgen build needs
-          # LIBCLANG_PATH set by hand.
-          $candidates = @(
-            "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin",
-            "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin",
-            "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin",
-            "C:\Program Files\LLVM\bin"
-          )
-          $found = $candidates | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
-          if ($found) {
-            Write-Output "found libclang.dll under $found"
-            Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$found"
-          } else {
-            Write-Warning "libclang.dll not found in known locations; relying on PATH"
-          }
       - name: Build Verbatim, its child processes, and the agent (debug)
         run: cargo build -p verbatim-app -p verbatim-agent -p verbatim-outpost -p verbatim-synth-host
       # Every scenario is recorded, video and Verbatim's own audio, when
