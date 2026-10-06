@@ -10,8 +10,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
-    ReviewCommand, Selection, SpeechMark, TextChunk, TextPosition, TextUnit, WindowFacts,
-    WindowHandle,
+    ReviewCommand, Selection, SpeechMark, TextAttributes, TextChunk, TextPosition, TextUnit,
+    WindowFacts, WindowHandle,
 };
 
 /// The focused node and what the reducer knows about where it sits.
@@ -49,6 +49,12 @@ pub(crate) struct FocusContext {
     /// focus can be taken silently (`docs/parity.md`, "Recovery after an
     /// outpost is replaced"), but the ids name nothing any more.
     pub(crate) alive: bool,
+    /// The focused node reported itself focused when it became the focus,
+    /// so a later state set without the focused state means the focus has
+    /// left it before the next focus event arrived (`docs/parity.md`,
+    /// "State changes after the focus has left").
+    #[serde(default)]
+    pub(crate) reported_focused: bool,
 }
 
 /// The application and window of the most recent foreground change (decision
@@ -201,6 +207,13 @@ pub(crate) enum TextFollowUp {
     Copy,
     /// A location report.
     Location,
+    /// The selected text of the navigator object was read for its
+    /// announcement: speak it, or with nothing selected read the caret's
+    /// line.
+    NavigatorSelection,
+    /// The caret's line in the navigator object was read for its
+    /// announcement: speak it.
+    NavigatorLine,
 }
 
 /// Where the review cursor lands on a line it moved to, and what it says.
@@ -366,6 +379,11 @@ pub struct SrState {
     /// 9), bounded by the flood policy's limits.
     #[serde(default)]
     pub(crate) terminal: crate::terminal::TerminalSpeech,
+    /// The formatting last reported in a node's text (milestone M4 item 7):
+    /// NVDA's per-object cache, from which only changes are spoken
+    /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.
+    #[serde(default)]
+    pub(crate) reported_format: Option<(NodeId, TextAttributes)>,
 }
 
 impl SrState {
@@ -402,6 +420,15 @@ impl SrState {
     #[must_use]
     pub fn fetches(&self) -> Fetches {
         self.fetches
+    }
+
+    /// The reader settings as the reducer has them now: the last
+    /// `Input::Settings`, with the toggle keys' changes since. The shell
+    /// merges a change from the settings dialog into these, so a toggle key
+    /// pressed meanwhile is not undone.
+    #[must_use]
+    pub fn settings(&self) -> ReaderSettings {
+        self.settings
     }
 
     /// How many of a change's newest lines an outpost reads from a terminal

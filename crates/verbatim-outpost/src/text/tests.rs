@@ -252,7 +252,7 @@ fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
 
 /// A caret report from a read that finished at `read_at_ms`.
 fn report_at(source: &mut Fake, anchors: &mut Anchors<usize>, read_at_ms: u64) -> CaretReport {
-    caret_report(source, &mut anchors.node(1), &mut || read_at_ms)
+    caret_report(source, &mut anchors.node(1), &mut || read_at_ms, false)
         .expect("the fake answers")
         .0
 }

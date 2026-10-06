@@ -171,8 +171,12 @@ Public API:
   of one node's text in its own positions and UTF-16: `uia::UiaText`, over
   a text pattern, where a position (`UiaPos`) is one end of a text range,
   and `edit::EditText`, over an edit control's messages, where it is an
-  offset. `caret_report` reads the caret's line and the selection, for
-  `CaretMoved`, and remembers when its read finished. `Anchors` keeps one backend's anchors, by node, numbered
+  offset; `UiaText::new` takes the element too, which a remote operation
+  starts from, and `remote` and `fetches` say whether caret reads try a
+  remote operation and which formatting they read. `caret_report` reads
+  the caret's line and the selection, for `CaretMoved`, with the line's
+  formatting when asked (the report after a focus), and remembers when
+  its read finished. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share; `NodeText` is one
   node's. `CaretSignal` is a caret key's wait: whether a caret event
   arrived, waiting for one, and the clocks (an `Instant` for the wait
@@ -501,8 +505,10 @@ Implementation notes:
   tree position reads through the MSAA registry, which holds the same
   setting. The cache requests of the UIA event subscriptions are fixed when
   they are registered and still ask for everything; the presentation stage
-  drops what is off either way. The outpost reads no text formatting yet,
-  so the formatting details change nothing here.
+  drops what is off either way. Text formatting (milestone M4 item 7) is
+  read only for the indications that are on: the annotation types for
+  spelling and grammar errors, the font's name and size, its weight,
+  italic, and underline style, and the color, each with its own detail.
 - Text (milestone M4, `text` and the worker's `text_reads`). A `Query::Text`
   is answered `QueryResult::Text` with whatever the protocol answers,
   `NoText` and `Gone` among them, so Core hands every answer to the reducer
@@ -534,11 +540,34 @@ Implementation notes:
     surrogate pair moving past it. UIA reads carry the range's `Culture`
     as one language run over the chunk (a mixed range carries none);
     caret reports carry none, to keep a caret move's calls down.
+  - The caret through UIA (`TextSource::caret_read`, which `UiaText`
+    implements with `verbatim_uia_rops::caret_read`) is read in one go: the
+    caret and the selection, whether they moved from the baseline, the
+    caret's line and the watch's unit with the caret's offset in each, and
+    the formatting of the text to be spoken, in one remote operation where
+    the window's provider runs them (the same choice and fallback as the
+    focus walk and the terminal read, logged and remembered alike), and
+    otherwise in its classic reads. The edit controls have no such read,
+    and are read part by part as before, without formatting. Formatting is
+    read for the report after a focus (the line, which Core speaks) and
+    for a caret key's answer (the character, the word, or the line the key
+    speaks; not a paragraph or a page, as NVDA reads no spelling errors
+    when the caret moves by paragraph), never for the report after a typed
+    character, which nothing speaks. It travels in the chunk as
+    `FormatRun`s (byte ranges of its text), in the model's words: bold
+    from a font weight of 700 or more, underlined from any underline style
+    but none, the size as "11.0 pt", and the color by the nearest of
+    NVDA's named hues, saturations, and brightnesses ("dark red",
+    `text/color.rs`, ported from NVDA's `colors.py`). A character's
+    formatting covers the character.
   - A caret key's wait (`AwaitCaret`) follows NVDA's caret scripts: it
     reads the caret, then waits for evidence, polling every 10 ms between
     caret events, for up to 100 or 300 ms, and answers with the caret's
     line, the watch's unit at the caret (a character cut from the line,
-    any other unit read), and the selection's changes. The evidence is the
+    any other unit read), and the selection's changes. Through UIA each
+    read of the wait is the whole caret read above, one round trip
+    remotely, so the read that finds the evidence is the answer, with
+    nothing more to read. The evidence is the
     caret no longer where it was known to be, the characters either side
     of the caret changed from what was known, the text at the caret
     changed after a Delete, or the selection changed. Where it was known

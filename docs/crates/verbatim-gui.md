@@ -16,7 +16,8 @@ Public API:
 - `GuiHandle::send(command)` — cloneable, callable from any thread;
   sends the command down the GUI's own channel and wakes the event loop,
   which drains the channel on the GUI thread.
-- `run_gui(settings_host, theme_host, events, on_ready)` — runs the event
+- `run_gui(settings_host, theme_host, terminal_host, events, on_ready)` —
+  runs the event
   loop on the calling thread (the app calls it from the process main thread); once the
   frame and tray exist, `on_ready` hands out the `GuiHandle`. It returns
   when the loop ends: after `Shutdown`, or when a replacing instance posts
@@ -45,6 +46,14 @@ Public API:
   `persist` (save the choice), and `play`, `speak`, and `play_earcon` for
   previews. The app implements it over its configuration store and speech
   manager.
+- `TerminalHost` (trait) and `TerminalChange` — what the Terminal page
+  needs from the app: `reader_settings`, the reader settings as they are
+  now, and `change`, which applies a `TerminalChange` to Core's reader
+  settings and saves them. A `TerminalChange` carries each terminal
+  setting that changed (`report_output`, `full_lines`, `last_lines`,
+  `speak_passwords`, each an `Option`), and `apply_to` merges it into a
+  `ReaderSettings`, leaving the rest alone. The app implements the host
+  over its configuration store and the reducer thread.
 
 The private modules:
 
@@ -62,11 +71,18 @@ The private modules:
   `SettingControl`s, `SynthesizerPicker`, `ListDialog`, and for the Theme
   page `ThemePage` (with its `ThemePrompts`), `ThemeTreeCategory` and
   `ThemeTreeItem`, `IndicationControls`, and `ThemeEdit`, what became of a
-  change to an indication. Every string crosses resolved, so
+  change to an indication; and for the Terminal page `TerminalPage`. Every
+  string crosses resolved, so
   C++ never sees a Fluent message id; text is UTF-8 and C++ converts it
-  explicitly, keeping its own narrow literals ASCII.
+  explicitly, keeping its own narrow literals ASCII. The thread rule is
+  enforced by types: every C++ function except `wake_event_loop` is
+  declared `unsafe fn`, and Rust calls them only through the safe methods
+  of `GuiThread`, a token of the same names that is neither `Send` nor
+  `Sync`. `run_gui` makes the one token, by an `unsafe` constructor whose
+  contract is being on the GUI thread, before it runs the loop there.
 - `GuiCore` (in `lib.rs`) — the GUI's Rust half. It lives on `run_gui`'s
-  stack for the whole loop and is used only on the GUI thread. Menus and
+  stack for the whole loop and is used only on the GUI thread; it keeps
+  the `GuiThread` token, which also keeps it on that thread. Menus and
   modal dialogs run nested event loops that call back into it, so every
   method takes `&self`, its state sits in `RefCell`s, and no borrow is
   ever held across a call into C++.
@@ -78,7 +94,8 @@ The private modules:
   only once neither the menu nor an open dialog needs it as its visible
   owner.
 - `settings` — the settings dialog's model, pure apart from reading the
-  host: the categories (Speech, then Theme), the Speech page generated
+  host: the categories (Speech, Theme, then Terminal), the Speech page
+  generated
   from the host's descriptors through `plan`, `SpeechControls`, which turns
   a change reported by control index into a setting value (changes from a
   replaced set of controls, identified by a generation number, are
@@ -91,6 +108,9 @@ The private modules:
   pure apart from the theme files (through `verbatim_config::themes`) and
   its `ThemeHost`; unit tested against a fake host over temporary
   folders.
+- `terminal_panel` — the Terminal page's model (`TerminalPanel`),
+  described below, pure apart from its `TerminalHost`; unit tested
+  against a fake host.
 - `list_dialog` — the reusable list dialog component (M3): a title, a
   static label above a single-selection list box around 550 by 250, and a
   configurable row of buttons plus an automatic Cancel. Callers describe
@@ -214,6 +234,24 @@ by it; the check boxes carry their names. The dialog title names the
 category, not a profile, since profiles are not activated until M8. A
 failed file operation is reported in a message box with
 `verbatim-config`'s error text, which is English.
+
+The Terminal page (milestone M4, `phase6-design.md`, "M4: text, editing,
+and terminals", Questions). From top to bottom, which is also the tab
+order: "Report new output", a check box; "Lines spoken in full" and "Last
+lines to speak", sliders from 1 to 100 (`MAX_TERMINAL_LINES`) that move by
+one with the arrow keys and by ten with Page Up and Page Down, so the
+limits cannot be set outside their range; and "Speak passwords typed in
+terminals", a check box. Sliders rather than spin controls, because
+Verbatim already reads a slider's value as it moves (the Speech page's
+rate) and NVDA reads them too. Each slider is named by the label made
+just before it, and the check boxes carry their names. The page is built
+from the reader settings as they are when it is first shown, so a
+Verbatim+5 toggle made earlier is shown. Unlike the Speech and Theme
+pages, a change here waits for OK, Apply, or Control+S, as in NVDA's
+panels; applying sends only the settings changed since the page opened
+or was last applied, so a Verbatim+5 pressed while the dialog is open is
+not undone, and Cancel drops what was not applied, which Core never saw.
+The page joins the Control+Tab cycle as the third category.
 
 The systrayList replica (M3): `OpenShellItemList` focuses the existing
 dialog when one is open, drops the request when an enumeration is already

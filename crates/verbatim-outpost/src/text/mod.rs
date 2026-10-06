@@ -36,6 +36,7 @@
 
 #![forbid(unsafe_code)]
 
+mod color;
 pub mod edit;
 pub mod uia;
 
@@ -46,9 +47,10 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
 use verbatim_model::{
-    CaretReply, CaretReport, CaretWait, CaretWatch, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
-    MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection, SelectionChange, TextAnchor, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply, TextUnit,
+    CaretReply, CaretReport, CaretWait, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES,
+    MAX_RANGE_BYTES, MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection, SelectionChange,
+    TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
+    TextReply, TextUnit,
 };
 
 /// How often the caret is read again while a caret key's wait for evidence
@@ -68,7 +70,54 @@ pub const KEPT_ANCHORS: usize = 64;
 const MAX_RANGE_UNITS: usize = MAX_RANGE_BYTES / 2;
 
 /// The most UTF-16 code units read for one chunk.
-const MAX_CHUNK_UNITS: usize = MAX_CHUNK_BYTES;
+pub(crate) const MAX_CHUNK_UNITS: usize = MAX_CHUNK_BYTES;
+
+/// The formatting of a stretch of a unit's text: a start and an end UTF-16
+/// offset into the unit's text, and the attributes there.
+pub type Formatting = (usize, usize, TextAttributes);
+
+/// Whose formatting a caret read reads ([`CaretRequest::formats`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormatSpan {
+    /// The character at the caret, one stretch.
+    Character,
+    /// The unit read besides the line ([`CaretRequest::unit`]).
+    Unit,
+    /// The caret's line.
+    Line,
+}
+
+/// What a caret read covers, for [`TextSource::caret_read`]: everything a
+/// caret report or a caret key's answer needs, so a source that can read it
+/// in one go does.
+pub struct CaretRequest<'a, P> {
+    /// Where the caret was known to be, to compare it with.
+    pub since: Option<&'a P>,
+    /// The selection's ends as they were known (both the caret when nothing
+    /// was selected), to compare it with.
+    pub previous: Option<&'a (P, P)>,
+    /// A unit to read at the caret besides its line: a word, a paragraph, a
+    /// page.
+    pub unit: Option<TextUnit>,
+    /// Whose formatting to read, with the attributes the theme asks for.
+    pub formats: Option<FormatSpan>,
+}
+
+/// The answer to a [`CaretRequest`].
+pub struct CaretRead<P> {
+    /// The caret and the selection.
+    pub state: CaretState<P>,
+    /// The caret is not where [`CaretRequest::since`] says.
+    pub moved: bool,
+    /// The selection is not what [`CaretRequest::previous`] says.
+    pub selection_moved: bool,
+    /// The caret's line and the caret's UTF-16 offset in it.
+    pub line: (Unit<P>, usize),
+    /// The request's unit at the caret, with the caret's offset in it.
+    pub unit: Option<(Unit<P>, usize)>,
+    /// The formatting of the request's span, UTF-16 ranges of its text.
+    pub formats: Vec<Formatting>,
+}
 
 /// Why a source could not answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,6 +286,21 @@ pub trait TextSource {
 
     /// How the source treats sentences.
     fn sentences(&self) -> Sentences;
+
+    /// Reads the caret and everything `request` asks for at once, where the
+    /// source can do it in one round trip (UIA's remote operations, with
+    /// its classic reads behind them); `None` for a source that reads them
+    /// one at a time, which the caller then does, reading no formatting.
+    ///
+    /// # Errors
+    ///
+    /// As [`caret`](Self::caret).
+    fn caret_read(
+        &mut self,
+        _request: &CaretRequest<'_, Self::Pos>,
+    ) -> TextResult<Option<CaretRead<Self::Pos>>> {
+        Ok(None)
+    }
 }
 
 /// Caret events, and the clock, for a caret key's wait for evidence.
@@ -522,13 +586,15 @@ fn point<S: TextSource>(
 }
 
 /// Builds the chunk for `unit` read as `kind`, with its offset at the
-/// UTF-16 offset `offset`, the source position `at`, and mints its anchor.
+/// UTF-16 offset `offset`, the source position `at`, and mints its anchor;
+/// with its languages when `languages` is true, and with `formats`, its
+/// formatting read already.
 fn chunk<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (unit, kind): (&Unit<S::Pos>, TextUnit),
     (offset, at): (usize, S::Pos),
-    languages: bool,
+    (languages, formats): (bool, &[Formatting]),
 ) -> TextChunk {
     let runs = if languages {
         source.languages(unit)
@@ -537,6 +603,10 @@ fn chunk<S: TextSource>(
     };
     let mut wanted = vec![offset];
     for (start, end, _) in &runs {
+        wanted.push(*start);
+        wanted.push(*end);
+    }
+    for (start, end, _) in formats {
         wanted.push(*start);
         wanted.push(*end);
     }
@@ -550,6 +620,19 @@ fn chunk<S: TextSource>(
                 start: u32::try_from(start).unwrap_or(u32::MAX),
                 end: u32::try_from(end).unwrap_or(u32::MAX),
                 language: language.clone(),
+            })
+        })
+        .collect();
+    let base = 1 + 2 * runs.len();
+    let formats = formats
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, _, attributes))| {
+            let (start, end) = (mapped[base + 2 * index], mapped[base + 1 + 2 * index]);
+            (start < end).then(|| FormatRun {
+                start: u32::try_from(start).unwrap_or(u32::MAX),
+                end: u32::try_from(end).unwrap_or(u32::MAX),
+                attributes: attributes.clone(),
             })
         })
         .collect();
@@ -572,12 +655,16 @@ fn chunk<S: TextSource>(
         first,
         last,
         truncated: unit.truncated || cut,
+        formats,
     }
 }
 
 /// The caret's line and selection, reported for a caret event or an answer
 /// to a caret key, with the caret state they were read from. `now_ms` is
 /// the clock of [`CaretSignal::now_ms`], read once the caret has been.
+/// With `formats`, the line carries its formatting where the source reads
+/// it in one go ([`TextSource::caret_read`]): the report after a focus,
+/// whose line is spoken, and not the one after each typed character.
 ///
 /// # Errors
 ///
@@ -586,7 +673,24 @@ pub fn caret_report<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     now_ms: &mut dyn FnMut() -> u64,
+    formats: bool,
 ) -> TextResult<(CaretReport, CaretState<S::Pos>)> {
+    let request = CaretRequest {
+        since: None,
+        previous: None,
+        unit: None,
+        formats: formats.then_some(FormatSpan::Line),
+    };
+    if let Some(read) = source.caret_read(&request)? {
+        let read_at_ms = now_ms();
+        let report = report_for(
+            source,
+            anchors,
+            (&read.state, read_at_ms),
+            Some((read.line.0, read.line.1, read.formats)),
+        )?;
+        return Ok((report, read.state));
+    }
     let state = source.caret()?;
     let read_at_ms = now_ms();
     let report = report_for(source, anchors, (&state, read_at_ms), None)?;
@@ -605,24 +709,33 @@ fn caret_line<S: TextSource>(
     Ok((line, offset))
 }
 
+/// A unit read at the caret and the caret's UTF-16 offset in it.
+type UnitAt<P> = (Unit<P>, usize);
+
+/// A unit read at the caret: the unit, the caret's UTF-16 offset in it, and
+/// its formatting, UTF-16 ranges of its text (empty when none was read).
+type ReadUnit<P> = (Unit<P>, usize, Vec<Formatting>);
+
 /// The report for a caret state already read, and the time its read
 /// finished, with its line when that was read already.
 fn report_for<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (state, read_at_ms): (&CaretState<S::Pos>, u64),
-    line: Option<(Unit<S::Pos>, usize)>,
+    line: Option<ReadUnit<S::Pos>>,
 ) -> TextResult<CaretReport> {
-    let (line, offset) = match line {
-        Some(read) => read,
-        None => caret_line(source, state)?,
+    let (line, offset, formats) = if let Some(read) = line {
+        read
+    } else {
+        let (line, offset) = caret_line(source, state)?;
+        (line, offset, Vec::new())
     };
     let line = chunk(
         source,
         anchors,
         (&line, TextUnit::Line),
         (offset, state.caret.clone()),
-        false,
+        (false, &formats),
     );
     let carets = &mut anchors.anchors.carets;
     if carets.len() == REMEMBERED_CARETS {
@@ -659,17 +772,20 @@ fn selection_moved<S: TextSource>(
 
 /// The text of `unit` at the caret, for comparing with what it was before a
 /// Delete: the character cut from the caret's line (`line`, UTF-8 with the
-/// caret's byte offset), or the source's unit.
+/// caret's byte offset), the unit already read, or the source's unit.
 fn text_at_caret<S: TextSource>(
     source: &mut S,
     state: &CaretState<S::Pos>,
-    unit: TextUnit,
+    (unit, read): (TextUnit, Option<&Unit<S::Pos>>),
     (line, offset): (&str, usize),
 ) -> TextResult<String> {
     if unit == TextUnit::Character {
         return Ok(verbatim_text::grapheme_at(line, offset)
             .map(|range| line[range].to_owned())
             .unwrap_or_default());
+    }
+    if let Some(read) = read {
+        return Ok(to_utf8(&read.text, MAX_CHUNK_BYTES, &[]).0);
     }
     Ok(source
         .unit_at(&state.caret, unit, MAX_CHUNK_UNITS)?
@@ -699,8 +815,94 @@ fn wait_length(wait: CaretWait) -> Duration {
     }
 }
 
+/// The unit a caret key's answer reads besides the line, as the source has
+/// it: none for a character (cut from the line), a line, or the document;
+/// the paragraph for a sentence where the source splits text by paragraph,
+/// and none where it has no sentences.
+fn extra_unit<S: TextSource>(source: &S, unit: TextUnit) -> Option<TextUnit> {
+    match unit {
+        TextUnit::Character | TextUnit::Line | TextUnit::Document => None,
+        TextUnit::Sentence => match source.sentences() {
+            Sentences::Unsupported => None,
+            Sentences::ByParagraph => Some(TextUnit::Paragraph),
+        },
+        other => Some(other),
+    }
+}
+
+/// Whose formatting a caret key's answer carries: the character, word, or
+/// line spoken. None for a paragraph or a page, as NVDA reports no spelling
+/// errors when the caret moves by paragraph, for speed
+/// (`docs/nvda/document-formatting.md`).
+fn format_span(unit: TextUnit) -> Option<FormatSpan> {
+    match unit {
+        TextUnit::Character => Some(FormatSpan::Character),
+        TextUnit::Word => Some(FormatSpan::Unit),
+        TextUnit::Line => Some(FormatSpan::Line),
+        _ => None,
+    }
+}
+
+/// One read of a caret key's wait: the caret, the evidence found by
+/// comparing positions, and whatever was read with them.
+struct Polled<P> {
+    state: CaretState<P>,
+    read_at_ms: u64,
+    /// The caret is not where it was known to be.
+    caret_moved: bool,
+    /// The selection is not what it was.
+    selection_moved: bool,
+    line: Option<(Unit<P>, usize)>,
+    unit: Option<(Unit<P>, usize)>,
+    formats: Vec<Formatting>,
+}
+
+/// Reads the caret for a caret key's wait: in one go where the source can
+/// ([`TextSource::caret_read`]), else by its parts, comparing positions as
+/// it goes and reading no more than the comparisons need.
+fn poll<S: TextSource>(
+    source: &mut S,
+    request: &CaretRequest<'_, S::Pos>,
+    signal: &mut dyn CaretSignal,
+) -> TextResult<Polled<S::Pos>> {
+    signal.reading();
+    if let Some(read) = source.caret_read(request)? {
+        return Ok(Polled {
+            state: read.state,
+            read_at_ms: signal.now_ms(),
+            caret_moved: read.moved,
+            selection_moved: read.selection_moved,
+            line: Some(read.line),
+            unit: read.unit,
+            formats: read.formats,
+        });
+    }
+    let state = source.caret()?;
+    let read_at_ms = signal.now_ms();
+    let mut caret_moved = false;
+    if let Some(since) = request.since {
+        caret_moved = source.compare(&state.caret, since)? != Ordering::Equal;
+    }
+    let mut selection_moved = false;
+    if !caret_moved && let Some(previous) = request.previous {
+        selection_moved = self::selection_moved(source, &state, previous)?;
+    }
+    Ok(Polled {
+        state,
+        read_at_ms,
+        caret_moved,
+        selection_moved,
+        line: None,
+        unit: None,
+        formats: Vec::new(),
+    })
+}
+
 /// Waits for evidence that a caret key did something, then reports the
-/// caret, the watch's unit at it, and how the selection changed.
+/// caret, the watch's unit at it, and how the selection changed. Each read
+/// while waiting is one round trip where the source reads the caret in one
+/// go ([`TextSource::caret_read`]), with what the answer needs, so the read
+/// that finds the evidence is the answer.
 fn await_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
@@ -708,6 +910,77 @@ fn await_caret<S: TextSource>(
     signal: &mut dyn CaretSignal,
 ) -> TextResult<TextReply> {
     let deadline = signal.now() + wait_length(watch.wait);
+    let Baseline {
+        since,
+        previous,
+        known,
+    } = baseline(source, anchors, watch)?;
+    let request = CaretRequest {
+        since: since.as_ref(),
+        previous: previous.as_ref(),
+        unit: extra_unit(source, watch.unit),
+        formats: format_span(watch.unit),
+    };
+    let polled = loop {
+        let mut polled = poll(source, &request, signal)?;
+        // A caret event alone is evidence only when Core did not know where
+        // the caret was: otherwise it may be the application's late report
+        // of something earlier, and the caret is compared instead.
+        let mut moved = (since.is_none() && signal.caret_event())
+            || polled.caret_moved
+            || polled.selection_moved;
+        if !moved && (known.is_some() || watch.compare.is_some()) {
+            let (unit, offset) = match polled.line.take() {
+                Some(line) => line,
+                None => caret_line(source, &polled.state)?,
+            };
+            let (text, mapped, _) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &[offset]);
+            if let Some(known) = &known {
+                moved = beside(&text, mapped[0]) != *known;
+            }
+            if !moved && let Some(compare) = &watch.compare {
+                let read = polled.unit.as_ref().map(|(unit, _)| unit);
+                moved = text_at_caret(
+                    source,
+                    &polled.state,
+                    (watch.unit, read),
+                    (&text, mapped[0]),
+                )? != *compare;
+            }
+            polled.line = Some((unit, offset));
+        }
+        let now = signal.now();
+        if moved || now >= deadline {
+            polled.caret_moved = moved;
+            break polled;
+        }
+        signal.wait(CARET_POLL.min(deadline - now));
+    };
+    signal.awaited();
+    answer_caret(
+        source,
+        anchors,
+        polled,
+        (request.formats, watch.unit),
+        previous.as_ref(),
+    )
+}
+
+/// What a caret key's wait compares with: where the caret was, the
+/// selection's ends, and the characters either side of the caret, as known
+/// before the key.
+struct Baseline<P> {
+    since: Option<P>,
+    previous: Option<(P, P)>,
+    known: Option<(String, String)>,
+}
+
+/// The baseline of a caret key's wait.
+fn baseline<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    watch: &CaretWatch,
+) -> TextResult<Baseline<S::Pos>> {
     // Where the caret was before the key: the newest caret this outpost
     // reported from a read that finished before the key was pressed, which
     // Core may not have had yet when the key came (a caret event from an
@@ -752,42 +1025,47 @@ fn await_caret<S: TextSource>(
             .anchor_text(position.anchor)
             .map(|text| beside(&text, position.offset as usize))
     });
-    let (state, read_at_ms, moved, line) = loop {
-        signal.reading();
-        let state = source.caret()?;
-        let read_at_ms = signal.now_ms();
-        let mut line = None;
-        // A caret event alone is evidence only when Core did not know where
-        // the caret was: otherwise it may be the application's late report
-        // of something earlier, and the caret is compared instead.
-        let mut moved = since.is_none() && signal.caret_event();
-        if !moved && let Some(since) = &since {
-            moved = source.compare(&state.caret, since)? != Ordering::Equal;
-        }
-        if !moved && let Some(previous) = &previous {
-            moved = selection_moved(source, &state, previous)?;
-        }
-        if !moved && (known.is_some() || watch.compare.is_some()) {
-            let (unit, offset) = caret_line(source, &state)?;
-            let (text, mapped, _) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &[offset]);
-            if let Some(known) = &known {
-                moved = beside(&text, mapped[0]) != *known;
-            }
-            if !moved && let Some(compare) = &watch.compare {
-                moved = text_at_caret(source, &state, watch.unit, (&text, mapped[0]))? != *compare;
-            }
-            line = Some((unit, offset));
-        }
-        let now = signal.now();
-        if moved || now >= deadline {
-            break (state, read_at_ms, moved, line);
-        }
-        signal.wait(CARET_POLL.min(deadline - now));
+    Ok(Baseline {
+        since,
+        previous,
+        known,
+    })
+}
+
+/// The answer to a caret key once its wait has ended: the caret's line,
+/// the unit at the caret, and the selection's changes, from what the last
+/// read found, with the formatting read for `span`.
+fn answer_caret<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    polled: Polled<S::Pos>,
+    (span, unit): (Option<FormatSpan>, TextUnit),
+    previous: Option<&(S::Pos, S::Pos)>,
+) -> TextResult<TextReply> {
+    let Polled {
+        state,
+        read_at_ms,
+        caret_moved: moved,
+        line,
+        unit: read_unit,
+        formats,
+        ..
+    } = polled;
+    let (line_formats, unit_formats) = if span == Some(FormatSpan::Line) {
+        (formats, Vec::new())
+    } else {
+        (Vec::new(), formats)
     };
-    signal.awaited();
+    let line = line.map(|(unit, offset)| (unit, offset, line_formats));
     let caret = report_for(source, anchors, (&state, read_at_ms), line)?;
-    let unit = unit_at_caret(source, anchors, &state, &caret.line, watch.unit)?;
-    let selection_changes = match &previous {
+    let unit = unit_at_caret(
+        source,
+        anchors,
+        (&state, &caret.line),
+        unit,
+        (read_unit, unit_formats),
+    )?;
+    let selection_changes = match previous {
         Some(previous) => selection_changes(source, previous, &state)?,
         None => Vec::new(),
     };
@@ -801,13 +1079,15 @@ fn await_caret<S: TextSource>(
 
 /// The watch's unit at the caret, as a chunk: `None` for a line, which the
 /// caret's line already is, and for a unit the source does not have. A
-/// character is cut from the line already read.
+/// character is cut from the line already read; any other unit is the one
+/// already read (`read`), or read now. `formats` is the formatting read for
+/// the unit, UTF-16 ranges of its text; a character's covers it.
 fn unit_at_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    state: &CaretState<S::Pos>,
-    line: &TextChunk,
+    (state, line): (&CaretState<S::Pos>, &TextChunk),
     unit: TextUnit,
+    (read, formats): (Option<UnitAt<S::Pos>>, Vec<Formatting>),
 ) -> TextResult<Option<TextChunk>> {
     match unit {
         TextUnit::Line | TextUnit::Document => Ok(None),
@@ -816,6 +1096,17 @@ fn unit_at_caret<S: TextSource>(
             let text = verbatim_text::grapheme_at(&line.text, offset)
                 .map(|range| line.text[range].to_owned())
                 .unwrap_or_default();
+            // The character's formatting, read for it alone, covers it.
+            let formats = formats
+                .into_iter()
+                .next()
+                .map(|(_, _, attributes)| FormatRun {
+                    start: 0,
+                    end: u32::try_from(text.len()).unwrap_or(u32::MAX),
+                    attributes,
+                })
+                .into_iter()
+                .collect();
             let start = anchors.mint(state.caret.clone(), &text);
             anchors.remember(TextPosition::at(start), state.caret.clone());
             Ok(Some(TextChunk {
@@ -827,27 +1118,28 @@ fn unit_at_caret<S: TextSource>(
                 first: false,
                 last: false,
                 truncated: false,
+                formats,
             }))
         }
         other => {
-            let reported = if other == TextUnit::Sentence {
-                match source.sentences() {
-                    Sentences::Unsupported => return Ok(None),
-                    Sentences::ByParagraph => TextUnit::Paragraph,
-                }
-            } else {
-                other
-            };
-            let Some(found) = source.unit_at(&state.caret, reported, MAX_CHUNK_UNITS)? else {
+            let Some(reported) = extra_unit(source, other) else {
                 return Ok(None);
             };
-            let offset = source.offset_in(&found, &state.caret)?;
+            let (found, offset) = if let Some(read) = read {
+                read
+            } else {
+                let Some(found) = source.unit_at(&state.caret, reported, MAX_CHUNK_UNITS)? else {
+                    return Ok(None);
+                };
+                let offset = source.offset_in(&found, &state.caret)?;
+                (found, offset)
+            };
             Ok(Some(chunk(
                 source,
                 anchors,
                 (&found, reported),
                 (offset, state.caret.clone()),
-                false,
+                (false, &formats),
             )))
         }
     }
@@ -963,7 +1255,7 @@ fn read_unit<S: TextSource>(
     } else {
         source.offset_in(&found, &at)?
     };
-    let chunk = chunk(source, anchors, (&found, kind), (offset, at), true);
+    let chunk = chunk(source, anchors, (&found, kind), (offset, at), (true, &[]));
     Ok(TextReply::Read { moved, chunk })
 }
 

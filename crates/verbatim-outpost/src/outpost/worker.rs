@@ -700,7 +700,7 @@ impl Worker<'_> {
         {
             return;
         }
-        let event = match text_reads::report_caret(self.context, node_id) {
+        let event = match text_reads::report_caret(self.context, node_id, after_focus) {
             Some(caret) => NormalizedEvent::CaretMoved { node_id, caret },
             None if after_focus => NormalizedEvent::NoText { node_id },
             None => return,

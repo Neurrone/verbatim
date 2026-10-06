@@ -10,7 +10,8 @@
 //! What is checked: lines, words, and characters read; the caret reported;
 //! a caret key answered with what it did, the selection's change included;
 //! an unsupported unit reported as such; movement stopping at the text's
-//! ends; and the language UIA reports.
+//! ends; the language UIA reports; and the caret read in one remote
+//! operation agreeing with its classic reads, formatting included.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -27,8 +28,14 @@ use verbatim_model::{
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{Anchors, CaretSignal, NodeText, TextSource, caret_report, perform};
+use verbatim_uia::text::Endpoint;
 use verbatim_uia::{NodeIdRegistry, Uia};
+use verbatim_uia_rops::{
+    Attributes, CaretAnswer, CaretQuery, FormatSpan, RangeEnd, RunAttributes, caret_read_classic,
+    caret_read_remote,
+};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Word};
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
@@ -54,8 +61,8 @@ impl CaretSignal for AlreadyMoved {
     }
 }
 
-/// The text of mockapp's "Notes" document through UIA.
-fn uia_notes(hwnd: HWND) -> UiaText {
+/// mockapp's "Notes" document's element.
+fn notes_element(hwnd: HWND) -> IUIAutomationElement {
     let uia = Uia::new().expect("a UIA client");
     let cache = uia.base_cache_request().expect("a cache request");
     let root = uia
@@ -72,12 +79,18 @@ fn uia_notes(hwnd: HWND) -> UiaText {
         .expect("the Notes document")
         .snapshot
         .id;
-    let notes = registry
+    registry
         .element_of(notes_id)
         .and_then(|agile| agile.resolve().ok())
-        .expect("its element");
+        .expect("its element")
+}
+
+/// The text of mockapp's "Notes" document through UIA, read remotely or
+/// classically.
+fn uia_notes(hwnd: HWND, remote: bool) -> UiaText {
+    let notes = notes_element(hwnd);
     let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    UiaText::new(pattern, pattern2, false)
+    UiaText::new(notes, pattern, pattern2, false).remote(remote)
 }
 
 /// The edit control mockapp's MSAA backend hosts for the "Notes" text.
@@ -132,7 +145,7 @@ fn lines_stop_at_the_end<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     break_text: &str,
 ) {
-    let (report, _) = caret_report(source, anchors, &mut || 0).expect("the caret");
+    let (report, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
     assert_eq!(report.line.text, format!("alpha beta{break_text}"));
     assert_eq!(report.line.offset, 0);
     assert_eq!(report.selection, None);
@@ -207,7 +220,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
 ) {
     common::apply(app, hwnd, "caret doc 0");
-    let (before, _) = caret_report(source, anchors, &mut || 0).expect("the caret");
+    let (before, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 6");
     let reply = perform(
         source,
@@ -230,7 +243,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     assert!(reply.unit.expect("the word").text.starts_with("beta"));
 
     common::apply(app, hwnd, "caret doc 0");
-    let (collapsed, _) = caret_report(source, anchors, &mut || 0).expect("the caret");
+    let (collapsed, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
     common::apply(app, hwnd, "caret doc 0 5");
     let at = point_of(&collapsed.line);
     let reply = perform(
@@ -262,7 +275,7 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
     let title = common::unique_title("mockapp-text-uia");
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let mut source = uia_notes(hwnd);
+    let mut source = uia_notes(hwnd, true);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
 
@@ -289,6 +302,159 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
     ));
     assert_eq!(line.language_at(0), Some("en-US"));
     a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut source, &mut anchors);
+    // And the same keys answered the classic way, with remote operations
+    // off.
+    let mut classic = uia_notes(hwnd, false);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut classic, &mut anchors);
+    app.send("quit");
+}
+
+/// Runs a caret read both ways and checks that they agree; returns the
+/// remote answer's line text and offset, unit text and offset, and runs.
+fn caret_both(query: &CaretQuery<'_>) -> CaretSummary {
+    let remote = caret_read_remote(query).expect("the remote program runs");
+    let classic = caret_read_classic(query).expect("the classic reads run");
+    let remote = summary(&remote);
+    assert_eq!(remote, summary(&classic));
+    remote
+}
+
+/// What a caret read found, comparable across the two implementations.
+#[derive(Debug, PartialEq)]
+struct CaretSummary {
+    moved: bool,
+    selection_moved: bool,
+    line: (String, usize),
+    unit: Option<(String, usize)>,
+    runs: Vec<(usize, RunAttributes)>,
+}
+
+fn summary(answer: &CaretAnswer) -> CaretSummary {
+    let text = |text: &[u16]| String::from_utf16_lossy(text);
+    CaretSummary {
+        moved: answer.moved,
+        selection_moved: answer.selection_moved,
+        line: (text(&answer.line.text), answer.line.offset),
+        unit: answer
+            .unit
+            .as_ref()
+            .map(|unit| (text(&unit.text), unit.offset)),
+        runs: answer
+            .runs
+            .iter()
+            .map(|run| (run.length, run.attributes.clone()))
+            .collect(),
+    }
+}
+
+/// The attributes mockapp reports, with these errors and weight.
+fn mock_attributes(spelling_error: bool, bold: bool) -> RunAttributes {
+    RunAttributes {
+        spelling_error,
+        grammar_error: false,
+        font_name: Some("Consolas".to_owned()),
+        font_size: Some(11.0),
+        font_weight: Some(if bold { 700 } else { 400 }),
+        italic: Some(false),
+        underline: Some(0),
+        color: Some(0),
+    }
+}
+
+fn remote_and_classic_caret_reads_agree() {
+    common::init_com();
+    let title = common::unique_title("mockapp-caret-read");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let all = Attributes {
+        annotations: true,
+        font: true,
+        font_attributes: true,
+        color: true,
+    };
+    let query = |formats, unit| CaretQuery {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+        since: None,
+        previous_selection: None,
+        unit,
+        formats,
+        attributes: all,
+        max_text: 1024,
+    };
+
+    // The caret in "beta", a spelling error after bold "alpha": the line's
+    // stretches are bold "alpha", a space, the error, and the line feed.
+    common::apply(&mut app, hwnd, "caret doc 7");
+    let line = caret_both(&query(Some(FormatSpan::Line), None));
+    assert_eq!(line.line, ("alpha beta\n".to_owned(), 7));
+    assert_eq!(
+        line.runs,
+        [
+            (5, mock_attributes(false, true)),
+            (1, mock_attributes(false, false)),
+            (4, mock_attributes(true, false)),
+            (1, mock_attributes(false, false)),
+        ]
+    );
+    // The word, with its formatting.
+    let word = caret_both(&query(Some(FormatSpan::Unit), Some(TextUnit_Word)));
+    assert_eq!(word.unit, Some(("beta".to_owned(), 1)));
+    assert_eq!(word.runs, [(4, mock_attributes(true, false))]);
+    // The character alone.
+    let character = caret_both(&query(Some(FormatSpan::Character), None));
+    assert_eq!(character.runs, [(0, mock_attributes(true, false))]);
+    // Only what the theme asks for: no attributes, no formatting.
+    let mut nothing = query(Some(FormatSpan::Line), None);
+    nothing.attributes = Attributes::default();
+    assert_eq!(caret_both(&nothing).runs, []);
+
+    // The evidence: compared with where the caret was, and the selection.
+    let known = caret_read_classic(&query(None, None)).expect("the caret");
+    common::apply(&mut app, hwnd, "caret doc 8");
+    let mut moved = query(None, None);
+    moved.since = Some(RangeEnd {
+        range: &known.caret,
+        endpoint: Endpoint::Start,
+    });
+    moved.previous_selection = Some((
+        RangeEnd {
+            range: &known.caret,
+            endpoint: Endpoint::Start,
+        },
+        RangeEnd {
+            range: &known.caret,
+            endpoint: Endpoint::Start,
+        },
+    ));
+    let found = caret_both(&moved);
+    assert!(found.moved && found.selection_moved);
+    common::apply(&mut app, hwnd, "caret doc 6 10");
+    let selected = caret_read_remote(&query(None, None)).expect("the caret");
+    assert!(selected.selection.is_some());
+    let again = caret_both(&CaretQuery {
+        since: Some(RangeEnd {
+            range: &selected.caret,
+            endpoint: Endpoint::Start,
+        }),
+        previous_selection: Some((
+            RangeEnd {
+                range: selected.selection.as_ref().expect("a selection"),
+                endpoint: Endpoint::Start,
+            },
+            RangeEnd {
+                range: selected.selection.as_ref().expect("a selection"),
+                endpoint: Endpoint::End,
+            },
+        )),
+        ..query(None, None)
+    });
+    assert!(!again.moved && !again.selection_moved);
     app.send("quit");
 }
 
@@ -332,6 +498,10 @@ fn edit_control_text_reads_moves_and_answers_caret_keys() {
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        (
+            "remote_and_classic_caret_reads_agree",
+            remote_and_classic_caret_reads_agree,
+        ),
         (
             "uia_text_reads_moves_and_answers_caret_keys",
             uia_text_reads_moves_and_answers_caret_keys,

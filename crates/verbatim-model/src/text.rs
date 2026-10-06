@@ -167,6 +167,50 @@ pub struct TextChunk {
     /// The text was cut at [`MAX_CHUNK_BYTES`].
     #[serde(default)]
     pub truncated: bool,
+    /// The formatting of the text, stretch by stretch, where the outpost
+    /// read it (milestone M4 item 7): in order, not overlapping, each a
+    /// byte range of `text` on character boundaries. Empty when none was
+    /// read; a caret report carries it for the text that is spoken, with
+    /// only the attributes the theme asks for ([`crate::Fetches`]).
+    #[serde(default)]
+    pub formats: Vec<FormatRun>,
+}
+
+/// The formatting of a stretch of text, as an outpost read it (milestone M4
+/// item 7; `docs/nvda/document-formatting.md`). An attribute the provider
+/// does not expose, or that was not read because its indication is off, is
+/// `None` (false for the errors).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TextAttributes {
+    /// The text is a spelling error.
+    pub spelling_error: bool,
+    /// The text is a grammar error.
+    pub grammar_error: bool,
+    /// The font's name, "Calibri".
+    pub font_name: Option<String>,
+    /// The font's size as spoken, "11.0 pt".
+    pub font_size: Option<String>,
+    /// The text's color as spoken, "dark red".
+    pub color: Option<String>,
+    /// Whether the text is bold.
+    pub bold: Option<bool>,
+    /// Whether the text is italic.
+    pub italic: Option<bool>,
+    /// Whether the text is underlined.
+    pub underline: Option<bool>,
+}
+
+/// One stretch of a chunk's text with the same formatting: a byte range of
+/// the chunk's text and its attributes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormatRun {
+    /// The byte offset in the chunk's text where the stretch starts.
+    pub start: u32,
+    /// The byte offset just past its end.
+    pub end: u32,
+    /// Its formatting.
+    pub attributes: TextAttributes,
 }
 
 impl TextChunk {
@@ -537,6 +581,7 @@ mod tests {
             first: true,
             last: false,
             truncated: false,
+            formats: Vec::new(),
         };
         assert_eq!(chunk.language_at(0), None);
         assert_eq!(chunk.language_at(6), Some("zh-CN"));
@@ -555,6 +600,7 @@ mod tests {
                 first: false,
                 last: true,
                 truncated: false,
+                formats: Vec::new(),
             },
         };
         let json = serde_json::to_string(&reply).expect("serializes");

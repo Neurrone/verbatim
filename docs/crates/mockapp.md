@@ -97,13 +97,19 @@ its crate-internal modules are the reviewable surface:
   units are simple and fixed: a character is one code unit; a word is a run
   of letters and digits with the spaces after it, or one other character;
   a line ends after its line feed, and a text ending in one has an empty
-  last line, as an editor shows; a paragraph is a line; the format unit,
-  the page, and the document are the whole text. Moving lands on a unit's
+  last line, as an editor shows; a paragraph is a line; a stretch of the
+  format unit ends wherever one of the node's `spelling_errors` or `bold`
+  stretches (optional fixture fields, each a list of UTF-16 start and end
+  offsets) starts or ends; the page and the document are the whole text. Moving lands on a unit's
   start and never past the last unit, so a client sees the text's ends; a
   move back from inside a unit to its start counts as one, as UIA
   specifies. The caret (`GetCaretRange`) is the selection's start, as the
-  edit controls report it; the language (`Culture`) is `en-US`, and every
-  other attribute unsupported. A range handed back by a client
+  edit controls report it; the language (`Culture`) is `en-US`; the
+  annotation types are the spelling error type (60001) for a range
+  touching one of the spelling errors and unsupported otherwise, as
+  Windows 11 Notepad reports them; the font is 11 point Consolas in black,
+  neither italic nor underlined, weighing 700 within a bold stretch, 400
+  outside, and mixed across both; every other attribute is unsupported. A range handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation.
 - `edit` — the MSAA backend's real edit control: created inside the host

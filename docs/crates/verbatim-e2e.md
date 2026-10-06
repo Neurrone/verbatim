@@ -195,7 +195,7 @@ Public API:
   Navigation group holds `object_navigation_in_settings` and
   `system_information_tree`; the Text group (milestone M4) holds
   `notepad_editing`, `notepad_review_cursor`, `notepad_say_all`,
-  `windows_terminal_commands`, `conhost_commands`,
+  `notepad_spelling_errors`, `windows_terminal_commands`, `conhost_commands`,
   `terminal_spoken_password`, `terminal_flood`, and
   `terminal_review_grid`; the Demo group holds the demonstrations
   recorded for `videos/demos` by `cargo xtask demo`,
@@ -308,6 +308,16 @@ Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
 `notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
 the second line plays, and checks that the caret was left on that line and
 that the third was never heard.
+`notepad_spelling_errors` (milestone M4 item 7) opens a line with two
+misspelt words and checks what the default theme reports as the caret
+moves, each utterance exactly, the error sound's marker included: the
+line with "spelling error" before each misspelt word, a character entering
+an error and the next one inside it saying only itself, a word leaving an
+error with "out of spelling error", and a line without errors saying
+nothing about them. Windows 11 Notepad's spell checker marks a document a
+moment after it opens, so the first line is read again with Control+Home,
+each reading heard in full, until its errors are marked, within 30
+seconds.
 
 The terminal scenarios, also in the Text group, share a setup
 (`scenarios/terminal.rs`). Each opens a window of its own titled with

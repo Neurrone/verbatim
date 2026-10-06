@@ -1659,8 +1659,8 @@ left them open:
   outpost's watchdog abandons a query, until the outpost answers again.
 - The outposts skip what is off in their UIA reads and remote focus walk
   and in their MSAA reads; the UIA event subscriptions' cache requests
-  are fixed when registered and still ask for everything. Nothing reads
-  text formatting yet.
+  are fixed when registered and still ask for everything. Text formatting
+  is read only for the indications that are on (item 7, below).
 - On the Theme page, changes to indications are held until Apply or OK
   saves them, and Cancel drops them; file operations (New, Rename,
   Import, Export, Remove, and Browse for a sound) act on the themes
@@ -1672,6 +1672,34 @@ left them open:
   the theme's settings above and the theme buttons below; the tab order
   follows the design's list.
 
+
+Choices the run made for item 7 and the caret's remote operation, where
+the design left them open (2026-10-07):
+
+- The caret is read by one entry point, `verbatim_uia_rops::caret_read`,
+  remote or classic with the fallback of the focus walk. Every read of a
+  caret key's wait is the whole read (the caret, the evidence, the line,
+  the unit, and the formatting), one round trip remotely, so a wait that
+  finds nothing costs one round trip per read and the read that finds
+  evidence is the answer. The classic reads do the same work call by
+  call. A run that failed because the provider is gone or timed out is
+  not repeated classically.
+- Formatting is read for what is spoken: the line after a focus, and a
+  caret key's character, word, or line; not a paragraph or a page (NVDA
+  reads no spelling errors when moving by paragraph), not the report
+  after a typed character, and not yet for review commands or say-all.
+- Bold, italic, and underline are one new indication, "font attributes"
+  (`font-attributes`), off by default as NVDA's font attributes setting
+  is; strikethrough is not read.
+- Colors are named in the outpost, by NVDA's hue, saturation, and
+  brightness names, in English.
+- The standard edit controls report no formatting: their message for it
+  (`EM_GETCHARFORMAT`) reports the selection's format, so reading a
+  character's means moving the selection, three messages and a visible
+  change per stretch, as NVDA does; not cheap, so left out.
+- Where NVDA's default and the default theme differ: NVDA reports
+  spelling errors by speech alone by default; the default theme also
+  plays the error sound. Recorded in `docs/parity.md` for a decision.
 
 Choices the run made for item 9, terminals, where the design left them
 open:
@@ -1736,3 +1764,33 @@ found, on 2026-10-06, and what changed:
   against the third, both into a full scrollback: a flood filling an
   empty one while it is read is slower in the console host whether its
   output is reported or not.
+### After M4 (scheduled with Dickson on 2026-10-07)
+
+In this order, once M4's remaining items (formatting spans, the caret
+remote operation, the Terminal page, the demonstrations) are merged:
+
+1. NVDA comparison captures for every M4 feature, taken with `cargo
+   xtask nvda capture` (working material, not kept in the repository),
+   compared with what Verbatim says for the same steps, each difference
+   either fixed or recorded in `docs/parity.md` as intended, and turned
+   into end-to-end and unit tests that pin the behavior down. This is
+   how Verbatim is shown to behave correctly, so it comes first: editing in
+   Notepad (caret by character, word, and line; selection; typed echo;
+   Backspace and Delete), the review cursor (including the column
+   difference), say-all, terminal output and typing in Windows Terminal
+   and the console host, the password prompt, a flood, and the settings
+   dialog's pages.
+2. Edit fields under object navigation and report current object read
+   their text, as on focus, rather than their whole value.
+3. A dialog's own text (a message box's question) is read when the
+   dialog opens.
+4. A state change of an object that has already lost the focus is not
+   spoken (the stray "unavailable" from Reset).
+5. The clipboard write frees its memory when it fails, and opens the
+   clipboard with an owner window.
+6. The GUI bridge's GUI-thread rule enforced by its types rather than
+   stated in a comment.
+7. A tray icon re-found before it is clicked.
+8. `cargo xtask demo` respects `CARGO_TARGET_DIR`.
+9. This document brought up to date with the run's decisions and each
+   step's outcome.

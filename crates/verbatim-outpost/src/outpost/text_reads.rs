@@ -183,7 +183,24 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
     // Built with the base cache request, which caches the class name.
     let class = element.cached_string(windows::Win32::UI::Accessibility::UIA_ClassNamePropertyId);
     let terminal = is_terminal_class(class.as_deref()) || console_focus(context, node_id);
-    Ok(UiaText::new(text_pattern, caret_pattern, terminal))
+    let remote = context.tries_remote(context.tracking().window());
+    Ok(UiaText::new(element, text_pattern, caret_pattern, terminal)
+        .remote(remote)
+        .fetches(context.fetches()))
+}
+
+/// Logs a caret read that fell back from its remote operation to the
+/// classic reads, and stops trying remote operations in the window when the
+/// import failed, as the focus walk and the terminal read do.
+fn note_fallback(context: &Context, source: &mut UiaText) {
+    let Some(error) = source.take_fallback() else {
+        return;
+    };
+    let window = context.tracking().window();
+    tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+    if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (&error, window) {
+        context.read_classically(window);
+    }
 }
 
 /// Whether `node_id` is the focus and in a console window, the console
@@ -242,12 +259,15 @@ pub(super) fn answer(
     let reply = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
-            text::perform(
+            let reply = text::perform(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 op,
                 &mut signal,
-            )
+            );
+            drop(anchors);
+            note_fallback(context, &mut source);
+            reply
         }
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
@@ -262,20 +282,29 @@ pub(super) fn answer(
     (reply, signal.awaited)
 }
 
-/// The caret of `node_id`, for a `CaretMoved` event; `None` when the node
-/// has no text or the read failed.
-pub(super) fn report_caret(context: &Context, node_id: NodeId) -> Option<CaretReport> {
+/// The caret of `node_id`, for a `CaretMoved` event, with the line's
+/// formatting when `formats` (the report after a focus, whose line is
+/// spoken); `None` when the node has no text or the read failed.
+pub(super) fn report_caret(
+    context: &Context,
+    node_id: NodeId,
+    formats: bool,
+) -> Option<CaretReport> {
     let source = source(context, node_id).ok()?;
     context.caret_read(node_id);
     let report = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
-            text::caret_report(
+            let report = text::caret_report(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
+                formats,
             )
-            .map(|(report, _)| report)
+            .map(|(report, _)| report);
+            drop(anchors);
+            note_fallback(context, &mut source);
+            report
         }
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
@@ -283,6 +312,7 @@ pub(super) fn report_caret(context: &Context, node_id: NodeId) -> Option<CaretRe
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
+                formats,
             )
             .map(|(report, _)| report)
         }

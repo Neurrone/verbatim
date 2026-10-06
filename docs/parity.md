@@ -158,9 +158,14 @@ verified.
     announcement rather than between the role and the states.
     **Different:** a protected field's text is never read on focus, where
     NVDA reads whatever masked text the control gives; and an empty field
-    has no placeholder to speak. **Not yet:** object navigation and
-    reporting the current object still speak the value, where NVDA reads
-    the text there too.
+    has no placeholder to speak. Object navigation, to-focus, and
+    reporting the current object read the text the same way, **matched
+    since 2026-10-07**, whether or not the object has the focus: the
+    selected text, else the line at the caret, else the first line of a
+    control that reports no caret, and the value when it has no text
+    interface. **Not yet:** reporting the current object a second and
+    third time still spells and copies the name and value, where NVDA
+    spells and copies the name and the same text.
   - A multi-column list view item (a report view, such as msinfo32's
     right pane) is named by NVDA from its column texts, with no value
     or description; Verbatim keeps MSAA's name and description, since
@@ -473,6 +478,21 @@ verified.
   [Speech](nvda/speech.md). Verbatim: **matched since 2026-10-02**
   against NVDA's source (the audit above); needs a live NVDA
   comparison across roles.
+- State changes after the focus has left. NVDA speaks a state change
+  only while the changed object is its focus, and its focus changes when
+  it handles the focus event, in the order the events came ("The focus
+  gate" in [Event handling](nvda/events.md)): the state change of a
+  control the focus has already left, raised after the focus event for
+  the next control, is silent. Verbatim's outposts can deliver that state
+  change before the focus event, which takes longer to read, so Core
+  still holds the old control as the focus when it arrives; it spoke the
+  Theme page's Reset button's "unavailable" after Reset had handed the
+  focus to the indications tree and been disabled. Verbatim: **matched
+  since 2026-10-07** by the changed object's own states: a focus that
+  reported itself focused when it became the focus, and whose new state
+  set no longer includes focused, has lost the focus, and its change is
+  not spoken (its states are still kept). A control that never reports
+  the focused state is unaffected. Unverified live.
 - Selection announcements (focused list's selected child; changes
   while focus stays on container; combo box exclusion). NVDA:
   selection events. Verbatim: **different, deliberately** (the roadmap's
@@ -898,9 +918,11 @@ verified.
   tone, used when a theme reports capitals by sound, is 1760 Hz for 40
   ms. In the default theme a spelling error is reported by speech and
   sound: where an error starts the sound plays and then "spelling error"
-  is spoken (NVDA's own default for `reportSpellingErrors2` is to be
-  checked against NVDA when the shell is wired); where the error ends only the words "out of spelling error" are
-  spoken. Line indentation tones are **not yet**: indentation is not
+  is spoken; where the error ends only the words "out of spelling error"
+  are spoken. NVDA's own default, read from `config/configSpec.py` on
+  2026-10-07, is speech alone (`reportSpellingErrors2` defaults to 1, the
+  speech flag), so the default theme's sound is a **difference** still to
+  be decided. Line indentation tones are **not yet**: indentation is not
   reported yet. Which events produce earcons (start and exit, browse and
   focus mode, suggestions, progress bars, logged errors) is the shell's
   and later milestones' to wire; the reducer emits none of them yet.
@@ -911,9 +933,23 @@ verified.
   reporting](nvda/document-formatting.md)). Verbatim: **different**, by
   design: each is an indication in the theme, off, speech, sound, or
   speech and sound, with NVDA's defaults in the default theme (font name,
-  size, and color off; descriptions, positions, and shortcuts spoken). An
-  indication set to off is also not fetched where the reducer decides
-  what is fetched. **Unverified**.
+  size, color, and font attributes off; descriptions, positions, and
+  shortcuts spoken). An indication set to off is also not fetched where
+  the reducer decides what is fetched. **Unverified**.
+- Formatting while the caret moves (milestone M4 item 7). NVDA: the
+  formatting last spoken is kept per object, and a unit read speaks only
+  what changed, at its start and where it changes inside it, an error's
+  end only for a character or a word ([Document formatting
+  reporting](nvda/document-formatting.md), "The cache, attribute by
+  attribute"). Verbatim: **matched** for caret keys and a focus's first
+  line, through UIA, with spelling and grammar errors, font name and size,
+  color, bold, italic, and underline; NVDA's other formatting (styles,
+  alignment, indentation, links, comments, and the rest) is **not yet**,
+  nor is formatting while reviewing or reading with say-all. The standard
+  edit controls report no formatting (NVDA moves their selection to read
+  each character's, which Verbatim does not do). Colors are named in
+  English only. **Verified** live for spelling errors in Windows 11
+  Notepad.
 - Synth isolation. NVDA: in-process drivers (crash = NVDA crash),
   one out-of-process precedent ([Synth drivers](nvda/synth-drivers.md)).
   Verbatim: **different (D6)** — native synth host out of process
@@ -961,7 +997,7 @@ verified.
   exists; user rebinding UI and input help **not yet (M8/M9)**.
 - Typed-character echo. NVDA: in-process reports; UIA textEdit
   events where applicable. Verbatim: the echo itself is **implemented in
-  Core since 2026-10-06**: "Speak typed characters" (always, by default)
+  Core since 2026-10-06**: "Speak typed characters" (only in edit controls, by default)
   and "Speak typed words" (off), each off, only in edit controls, or
   always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
   character that is not a letter or digit ends it, before that character;
@@ -1000,7 +1036,8 @@ verified.
   changing for Delete, or the selection changing), up to 100 milliseconds,
   300 in a terminal, then speaks NVDA's unit for the key: the character
   for Left and Right Arrow, Home, and End; the provider's word for Control
-  with Left or Right Arrow; the line for Up and Down Arrow, the page keys,
+  with Left or Right Arrow, a word of one character (Notepad's full stop)
+  by its name, as NVDA spells it; the line for Up and Down Arrow, the page keys,
   and Control with Home or End; the paragraph for Control with Up or Down
   Arrow; what Backspace deleted; what Delete left at the caret. A newer key
   supersedes a waiting one and a focus change drops it, NVDA's two
@@ -1127,6 +1164,19 @@ verified.
   through one key hook on the dialog, as NVDA's do
   (`settings_dialog_keys` verifies Cancel, Apply, Control+S, and
   Control+Tab).
+- The terminal settings. NVDA: no page of their own; "Speak passwords in
+  all enhanced terminals" and the choice between diffing and Windows
+  Terminal's notifications are in the Advanced panel, behind its warning,
+  and NVDA's "Report dynamic content changes", which Verbatim+5 matches,
+  is in Object Presentation. Verbatim: **different** by decision
+  (`phase6-design.md`, "M4: text, editing, and terminals", Questions): a
+  Terminal page in the settings dialog, after Theme, with "Report new
+  output", the flood policy's two limits ("Lines spoken in full" and
+  "Last lines to speak", 1 to 100, sliders), which NVDA has no equivalent
+  of, and "Speak passwords typed in terminals". Its changes wait for OK
+  or Apply, as NVDA's do, where the Speech and Theme pages apply live
+  (`terminal_settings_page` verifies that an applied change reaches
+  Core).
 - Logging and the log viewer. NVDA: [Logging](nvda/logging.md).
   Verbatim: **not yet (M9)** — tracing exists (flight recorder,
   latency ledger); user-facing logging is unbuilt.

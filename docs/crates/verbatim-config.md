@@ -19,8 +19,8 @@ Public API:
   `verbatim-model`, which the reducer reads them from; the `[reader]`
   section, every key with NVDA's default:
   - `speak_typed_characters`: `"off"`, `"edit_controls"` (only in edit
-    controls and other places text can be typed), or `"always"`, the
-    default. NVDA's "Speak typed characters".
+    controls and other places text can be typed), the default, or
+    `"always"`. NVDA's "Speak typed characters".
   - `speak_typed_words`: the same choices, `"off"` by default. NVDA's
     "Speak typed words".
   - `follow_caret`: the review cursor follows the caret, `true` by default
@@ -44,9 +44,9 @@ Public API:
     (`MAX_TERMINAL_LINES`).
 
   These four and `speak_terminal_passwords` are the Terminal settings of
-  `phase6-design.md` ("M4: text, editing, and terminals", Questions). The
-  settings dialog has no Terminal panel yet; until it has, they are set
-  in `settings.toml` and, for "Report new output", with Verbatim+5.
+  `phase6-design.md` ("M4: text, editing, and terminals", Questions),
+  set on the settings dialog's Terminal page and, for "Report new
+  output", with Verbatim+5.
 - `VerbatimKeys` — which keys act as the Verbatim modifier (`caps_lock`,
   `insert`, `numpad_insert`) plus `share_modifier`, which passes the
   modifier's own transitions down the hook chain for a screen reader

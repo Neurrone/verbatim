@@ -8,11 +8,18 @@
 //! is a run of letters and digits with the spaces after it, or one other
 //! character; a line ends after its line feed, and a text ending in a line
 //! feed has an empty last line, as an editor shows one; a paragraph is a
-//! line; the format unit, the page, and the document are the whole text.
+//! line; a stretch of the format unit ends wherever a spelling error or a
+//! bold stretch of the fixture starts or ends; the page and the document
+//! are the whole text.
 //! Moving by a unit lands on a unit's start and never goes past the last
 //! unit, so a client sees the text's ends. The caret is the selection's
 //! start, as the edit controls report it. The language is English
-//! (`en-US`); every other text attribute is unsupported.
+//! (`en-US`); the annotation types are the spelling error type for a range
+//! touching one of the fixture's spelling errors and unsupported
+//! otherwise, as Windows 11 Notepad reports them; the font is 11 point
+//! Consolas in black, neither italic nor underlined, its weight 700 in the
+//! fixture's bold stretches, 400 elsewhere, and mixed across both; every
+//! other text attribute is unsupported.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -29,20 +36,23 @@ use std::mem::ManuallyDrop;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::SAFEARRAY;
 use windows::Win32::System::Variant::{
-    VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4, VT_UNKNOWN,
+    VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4, VT_UNKNOWN,
 };
 use windows::Win32::UI::Accessibility::{
     IRawElementProviderSimple, ITextProvider, ITextProvider_Impl, ITextProvider2,
     ITextProvider2_Impl, ITextRangeProvider, ITextRangeProvider_Impl, SupportedTextSelection,
     SupportedTextSelection_Single, TextPatternRangeEndpoint, TextPatternRangeEndpoint_Start,
-    TextUnit, TextUnit_Character, TextUnit_Line, TextUnit_Paragraph, TextUnit_Word,
-    UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID, UiaGetReservedNotSupportedValue, UiaPoint,
+    TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line, TextUnit_Paragraph,
+    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_CultureAttributeId, UIA_FontNameAttributeId,
+    UIA_FontSizeAttributeId, UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId,
+    UIA_IsItalicAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
+    UiaGetReservedMixedAttributeValue, UiaGetReservedNotSupportedValue, UiaPoint,
 };
 use windows::core::{BSTR, Interface, Result as WinResult};
 use windows_core::{AsImpl, Error, IUnknown, implement};
 
 use crate::hits::{self, Method};
-use crate::tree::SharedTree;
+use crate::tree::{Formats, SharedTree};
 
 /// The language every range reports: English (United States).
 const EN_US: i32 = 0x0409;
@@ -143,6 +153,95 @@ fn text_of(tree: &SharedTree, index: usize) -> Vec<u16> {
         .clone()
         .unwrap_or_default()
 }
+
+/// The node's formatting now.
+fn formats_of(tree: &SharedTree, index: usize) -> Formats {
+    tree.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .nodes[index]
+        .formats
+        .clone()
+}
+
+/// The spans of `unit` in the node's text: the format unit's from its
+/// formatting, any other unit's from the text alone.
+fn spans_of(tree: &SharedTree, index: usize, unit: TextUnit) -> Vec<(usize, usize)> {
+    let text = text_of(tree, index);
+    if unit != TextUnit_Format {
+        return units(&text, unit);
+    }
+    let formats = formats_of(tree, index);
+    let mut boundaries = vec![0, text.len()];
+    for &(start, end) in formats.spelling_errors.iter().chain(&formats.bold) {
+        boundaries.push(start.min(text.len()));
+        boundaries.push(end.min(text.len()));
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    if text.is_empty() {
+        return Vec::new();
+    }
+    boundaries
+        .windows(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect()
+}
+
+/// Whether a stretch from `start` to `end` touches any of `stretches`; an
+/// empty one, whether one contains its position.
+fn touches(stretches: &[(usize, usize)], start: usize, end: usize) -> bool {
+    stretches.iter().any(|&(from, to)| {
+        if start == end {
+            from <= start && start < to
+        } else {
+            from < end && start < to
+        }
+    })
+}
+
+/// Whether every character from `start` to `end` lies in `stretches`; an
+/// empty stretch, whether one contains its position.
+fn within(stretches: &[(usize, usize)], start: usize, end: usize) -> bool {
+    if start == end {
+        return touches(stretches, start, end);
+    }
+    (start..end).all(|at| touches(stretches, at, at))
+}
+
+/// A variant holding `value`, an integer.
+fn int_variant(value: i32) -> VARIANT {
+    VARIANT {
+        Anonymous: VARIANT_0 {
+            Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                vt: VT_I4,
+                wReserved1: 0,
+                wReserved2: 0,
+                wReserved3: 0,
+                Anonymous: VARIANT_0_0_0 { lVal: value },
+            }),
+        },
+    }
+}
+
+/// A variant holding one of UIA's sentinel objects.
+fn sentinel_variant(sentinel: IUnknown) -> VARIANT {
+    VARIANT {
+        Anonymous: VARIANT_0 {
+            Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                vt: VT_UNKNOWN,
+                wReserved1: 0,
+                wReserved2: 0,
+                wReserved3: 0,
+                Anonymous: VARIANT_0_0_0 {
+                    punkVal: ManuallyDrop::new(Some(sentinel)),
+                },
+            }),
+        },
+    }
+}
+
+/// UIA's spelling error annotation type.
+const ANNOTATION_SPELLING_ERROR: i32 = 60001;
 
 /// The spans of `unit` in `text`, in order; none for an empty text.
 fn units(text: &[u16], unit: TextUnit) -> Vec<(usize, usize)> {
@@ -267,7 +366,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn ExpandToEnclosingUnit(&self, unit: TextUnit) -> WinResult<()> {
         hits::hit(Method::RangeExpandToEnclosingUnit);
-        let spans = units(&text_of(&self.tree, self.index), unit);
+        let spans = spans_of(&self.tree, self.index, unit);
         let (start, end) = spans
             .get(containing(&spans, self.start.get()))
             .copied()
@@ -294,33 +393,58 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn GetAttributeValue(&self, attributeid: UIA_TEXTATTRIBUTE_ID) -> WinResult<VARIANT> {
         hits::hit(Method::RangeGetAttributeValue);
-        if attributeid == UIA_CultureAttributeId {
-            return Ok(VARIANT {
-                Anonymous: VARIANT_0 {
-                    Anonymous: ManuallyDrop::new(VARIANT_0_0 {
-                        vt: VT_I4,
-                        wReserved1: 0,
-                        wReserved2: 0,
-                        wReserved3: 0,
-                        Anonymous: VARIANT_0_0_0 { lVal: EN_US },
-                    }),
-                },
-            });
-        }
-        // SAFETY: UIA's own sentinel object, owned by the returned variant.
-        let unsupported = unsafe { UiaGetReservedNotSupportedValue() }?;
-        Ok(VARIANT {
-            Anonymous: VARIANT_0 {
-                Anonymous: ManuallyDrop::new(VARIANT_0_0 {
-                    vt: VT_UNKNOWN,
-                    wReserved1: 0,
-                    wReserved2: 0,
-                    wReserved3: 0,
-                    Anonymous: VARIANT_0_0_0 {
-                        punkVal: ManuallyDrop::new(Some(unsupported)),
-                    },
-                }),
-            },
+        let (start, end) = (self.start.get(), self.end.get());
+        let formats = formats_of(&self.tree, self.index);
+        let not_supported = || {
+            // SAFETY: UIA's own sentinel object, owned by the returned
+            // variant.
+            unsafe { UiaGetReservedNotSupportedValue() }.map(sentinel_variant)
+        };
+        // The attribute ids are the `windows` crate's constants, named as
+        // UIA names them.
+        #[allow(non_upper_case_globals)]
+        Ok(match attributeid {
+            UIA_CultureAttributeId => int_variant(EN_US),
+            UIA_AnnotationTypesAttributeId => {
+                if touches(&formats.spelling_errors, start, end) {
+                    let spelling = ANNOTATION_SPELLING_ERROR;
+                    // SAFETY: a one-element vector of plain integers, the
+                    // pointer to a local the call copies.
+                    let array = unsafe {
+                        super::props::filled_vector(VT_I4, &[(&raw const spelling).cast()])
+                    };
+                    // The returned variant owns the array.
+                    VARIANT {
+                        Anonymous: VARIANT_0 {
+                            Anonymous: ManuallyDrop::new(VARIANT_0_0 {
+                                vt: VARENUM(VT_ARRAY.0 | VT_I4.0),
+                                wReserved1: 0,
+                                wReserved2: 0,
+                                wReserved3: 0,
+                                Anonymous: VARIANT_0_0_0 { parray: array },
+                            }),
+                        },
+                    }
+                } else {
+                    not_supported()?
+                }
+            }
+            UIA_FontNameAttributeId => VARIANT::from(BSTR::from("Consolas")),
+            UIA_FontSizeAttributeId => VARIANT::from(11.0_f64),
+            UIA_FontWeightAttributeId => {
+                if within(&formats.bold, start, end) {
+                    int_variant(700)
+                } else if touches(&formats.bold, start, end) {
+                    // SAFETY: UIA's own sentinel object, owned by the
+                    // returned variant.
+                    sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?)
+                } else {
+                    int_variant(400)
+                }
+            }
+            UIA_IsItalicAttributeId => VARIANT::from(false),
+            UIA_UnderlineStyleAttributeId | UIA_ForegroundColorAttributeId => int_variant(0),
+            _ => not_supported()?,
         })
     }
     fn GetBoundingRectangles(&self) -> WinResult<*mut SAFEARRAY> {
@@ -343,7 +467,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn Move(&self, unit: TextUnit, count: i32) -> WinResult<i32> {
         hits::hit(Method::RangeMove);
-        let spans = units(&text_of(&self.tree, self.index), unit);
+        let spans = spans_of(&self.tree, self.index, unit);
         if spans.is_empty() || count == 0 {
             return Ok(0);
         }
@@ -379,8 +503,10 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     ) -> WinResult<i32> {
         hits::hit(Method::RangeMoveEndpointByUnit);
         let text = text_of(&self.tree, self.index);
-        let mut boundaries: Vec<usize> =
-            units(&text, unit).iter().map(|&(start, _)| start).collect();
+        let mut boundaries: Vec<usize> = spans_of(&self.tree, self.index, unit)
+            .iter()
+            .map(|&(start, _)| start)
+            .collect();
         boundaries.push(text.len());
         boundaries.dedup();
         let mut at = self.endpoint(endpoint);

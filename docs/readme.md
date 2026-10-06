@@ -62,7 +62,5 @@ NVDA says, to decide what Verbatim should say.
   current, and target call counts that CI asserts exactly.
 - [The NVDA transcript](nvda-transcript.md) — the NVDA add-on and
   `cargo xtask nvda capture`, for recording what NVDA says in a scenario.
-- [NVDA captures](nvda-captures/readme.md) — recorded NVDA readings kept
-  as references, such as Verbatim's GUI before the port.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary, each term
   linked to its defining document.

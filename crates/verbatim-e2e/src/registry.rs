@@ -57,7 +57,10 @@
 //!   a lock key's new state spoken, and
 //!   [`theme_panel`](crate::scenarios::theme_panel), the settings dialog's
 //!   Theme page, where a role changed to a sound is then heard as that
-//!   sound.
+//!   sound, and
+//!   [`terminal_settings_page`](crate::scenarios::terminal_settings_page),
+//!   its Terminal page, whose applied change Verbatim+5 then finds in
+//!   Core.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
@@ -99,10 +102,10 @@ use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
     demo_terminal_session, explorer_folder_window, lock_key_announcements,
     menu_and_settings_dialog, notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor,
-    notepad_say_all, object_navigation_in_settings, rapid_tabbing_in_settings,
-    settings_dialog_keys, settings_system_page, start_menu_search, switch_to_onecore,
-    synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_flood,
-    terminal_review_grid, theme_panel,
+    notepad_say_all, notepad_spelling_errors, object_navigation_in_settings,
+    rapid_tabbing_in_settings, settings_dialog_keys, settings_system_page, start_menu_search,
+    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
+    terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -356,6 +359,15 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: notepad_say_all::teardown,
     },
     ScenarioDef {
+        name: "notepad_spelling_errors",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: notepad_spelling_errors::setup,
+        body: notepad_spelling_errors::body,
+        teardown: notepad_spelling_errors::teardown,
+    },
+    ScenarioDef {
         name: "theme_panel",
         group: Group::Speech,
         target_images: &[],
@@ -363,6 +375,15 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: theme_panel::setup,
         body: theme_panel::body,
         teardown: theme_panel::teardown,
+    },
+    ScenarioDef {
+        name: "terminal_settings_page",
+        group: Group::Speech,
+        target_images: &[],
+        settings: None,
+        setup: terminal_settings_page::setup,
+        body: terminal_settings_page::body,
+        teardown: terminal_settings_page::teardown,
     },
     ScenarioDef {
         name: "windows_terminal_commands",

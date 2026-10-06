@@ -163,6 +163,25 @@ read through its text interface, which gives the masked characters the
 control shows. (`getObjectSpeech` and `_objectSpeech_calculateAllowedProps`
 in `speech/speech.py`; `_hasNavigableText` on the base NVDA object.)
 
+The object does not need the focus. Object navigation and reporting the
+current object read the same text for an edit field the user has not
+focused, through the same calls: the selection is asked of the control
+itself, which keeps its selection, and so its caret, while it does not
+have the focus. A Win32 edit control answers from its own selection; a UI
+Automation control answers from its text pattern's selection, which most
+providers report without the focus. When the control reports no selection
+at all (UI Automation gives an empty array, or the call fails), the first
+line is read instead, so a field the user never entered usually reads its
+first line. (`UIATextInfo` for `POSITION_SELECTION` in
+`NVDAObjects/UIA/__init__.py`.)
+
+Reporting the current object a second and third time spells and copies
+the same text for such an object: the name followed by the selected text,
+or by the line at the caret when nothing is selected, rather than the name
+and the value. An object without a real text interface spells and copies
+its name and value. (`script_navigatorObject_current` in
+`globalCommands.py`.)
+
 ### Line breaks in spoken text
 
 Before any text reaches the synthesizer, NVDA replaces every carriage
@@ -172,6 +191,20 @@ in it, such as a selection over two lines or a multi-line value, is
 spoken with a space between one line's last word and the next line's
 first, never as one run-together word. A text made only of spaces
 and line breaks is blank.
+
+### A word of one character
+
+When NVDA speaks a word or a character of text, such as the word at the
+caret after Control with Left or Right Arrow, or the review cursor's
+word, and that text is a single character once surrounding white space
+is set aside, it spells it rather than speaking it as text: the
+character is spoken by its name, as a character is when the caret moves
+over it. A full stop that the application's word unit counts as a word of
+its own (Windows 11 Notepad's does, after the last word of a sentence)
+is therefore spoken "dot", where as text, at the default symbol level,
+it would say nothing. A word of two or more characters is spoken as
+text. (`getTextInfoSpeech` and `_getTextInfoSpeech_considerSpelling` in
+`speech/speech.py`.)
 
 ### Capitals when spelling
 

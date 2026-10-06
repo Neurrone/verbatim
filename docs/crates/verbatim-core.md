@@ -23,7 +23,10 @@ Public API:
   detail whose indication is off, such as descriptions, is never fetched
   (`phase6-design.md`, "Themes: one model for verbosity, speech, and
   sounds"). It is the one place the reducer consults the theme; how
-  everything else is presented is the speech pipeline's.
+  everything else is presented is the speech pipeline's. `settings()`
+  returns the reader settings as the reducer has them, toggle keys
+  included, which the shell merges the settings dialog's Terminal page
+  changes into.
 - `FlightRecorder<T, S>` — a window of recent entries bounded both by
   count and by estimated bytes, kept with a checkpoint of type `S` taken
   just before its oldest entry, so the window always replays from its
@@ -124,7 +127,19 @@ Implementation notes, `reduce`:
   ends) and speaks "selected" with it, or its count at 512 characters or
   more. `NoText` in its place speaks the value. The name and role are never
   held back for it; a caret key or a focus change drops what is still
-  waiting, and a protected field's text and value are never spoken. The role is left out, as NVDA
+  waiting, and a protected field's text and value are never spoken. Object
+  navigation, to-focus, and the first press of report current object
+  announce such an object the same way, with or without the focus
+  (`announce_navigator` in `reduce.rs`, `navigator_text` in `editing.rs`):
+  the name, role, and states without the value, then its text as a second
+  queued utterance. The focus's known caret is read at once; otherwise the
+  outpost is asked for the selected text (`ReadRange` from
+  `SelectionStart` to `SelectionEnd`) and, when nothing is selected, for
+  the line at the caret (`Read` at `Caret`, which a control with no caret
+  answers from its first line). The requests are a `PendingText` with the
+  `NavigatorSelection` and `NavigatorLine` follow-ups, so a newer text
+  request supersedes them, and an answer for an object the navigator has
+  left says nothing; `NoText` or `Unsupported` speaks the value. The role is left out, as NVDA
   leaves it out, when the node has a name or a value and its role is one
   of the roles silent on focus (list item, menu item, tree item, pane,
   static text, unknown); this applies to focus changes, entered
@@ -282,7 +297,12 @@ Implementation notes, `reduce`:
 - A states change on the focused node is diffed against the stored
   snapshot: the gained states are spoken, and of the lost ones those
   spoken by their absence, so unchecking says "not checked" and leaving
-  half checked without becoming checked says it too.
+  half checked without becoming checked says it too. A focus that
+  reported itself focused when it became the focus
+  (`FocusContext::reported_focused`) and whose new state set no longer
+  includes focused has lost the focus before the next focus event
+  arrived: its states are kept but nothing is spoken (`docs/parity.md`,
+  "State changes after the focus has left").
 - Outpost replacement (`docs/parity.md`, "Recovery after an outpost is
   replaced"): node ids carry the outpost incarnation that issued them, so an
   id from a replaced outpost never names a node in its successor. On
@@ -343,7 +363,9 @@ then speaks, queued:
 - Left and Right Arrow, Home, and End: the character at the caret, a line
   break or the end of the text as "blank", a punctuation character by its
   name, a capital raised in pitch.
-- Control with Left or Right Arrow: the provider's word the outpost sent.
+- Control with Left or Right Arrow: the provider's word the outpost sent;
+  a word of one character, such as the full stop Notepad counts as a word,
+  as that character, by its name.
 - Up and Down Arrow, Page Up and Page Down, Control with Home or End: the
   line at the caret, "blank" when it has nothing to read.
 - Control with Up or Down Arrow: the provider's paragraph, or the line when
@@ -356,6 +378,26 @@ then speaks, queued:
 - Any of them with Shift, and Control+A: what became selected and
   unselected, NVDA's "selected hello" and "unselected hello", a single
   character by its name, 512 characters or more as their number.
+
+Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
+A caret key's character, word, or line, and a new focus's first line,
+carry the formatting the outpost read for them (`TextChunk::formats`).
+The state keeps the formatting last reported and the node it was in
+(`reported_format`, NVDA's per-object cache); a new focus starts with
+none. The unit is spoken with the formatting at its start that differs
+from that (`text::format_changes`: font name, size, and color when
+present and different; bold, italic, and underline starting, or ending
+after having been on; a spelling or grammar error starting), then its
+text, with each later change placed where it happens
+(`text::formatted_segments`), and the formatting at its end becomes the
+one reported. For a character or a word, the extra detail of NVDA's
+review and caret units, an error's end is also said ("out of spelling
+error"); a character, or a word of one character, says only the
+formatting at its start. A word's trailing white space is not spoken,
+but its formatting change is, so moving onto a misspelt word says
+"spelling error", the word, and "out of spelling error". Each change is
+a `Format` span, which the theme reports as words, a sound, both, or not
+at all. Review commands and say-all read no formatting yet.
 
 Typing echo. `Input::CharacterTyped` is echoed by the settings: a finished
 word first, when word echo applies and a character that is not a letter or
@@ -381,7 +423,8 @@ pressed twice gives its description and three times its code; the current
 line or word pressed twice is spelled and three times spelled with
 descriptions; start and end of line speak the character there; previous
 and next word cross lines, landing on the next line's first word or the
-previous line's last; a unit the text does not have says "Not supported in
+previous line's last; a word of one character is spoken by its name, as
+the caret's word is; a unit the text does not have says "Not supported in
 this document". The column difference from NVDA (`docs/parity.md`, "Review
 cursor columns"): moving to another line keeps the column, a cell column in
 a terminal (where a column past a row's text is a blank cell and the cursor

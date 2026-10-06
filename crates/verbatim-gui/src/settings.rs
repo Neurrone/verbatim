@@ -12,7 +12,8 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost, SynthChoice, 
 use crate::bridge::ffi;
 use crate::plan::{ControlPlan, accessible_name, plan_for};
 
-/// The settings dialog's categories and buttons: Speech, then Theme. The
+/// The settings dialog's categories and buttons: Speech, Theme, and
+/// Terminal. The
 /// dialog is written over the list, so adding a category is a matter of
 /// adding it here and a page for its kind in C++.
 pub(crate) fn dialog() -> ffi::SettingsDialog {
@@ -30,6 +31,10 @@ pub(crate) fn dialog() -> ffi::SettingsDialog {
             category(
                 messages::settings_category_theme(),
                 ffi::CategoryKind::Theme,
+            ),
+            category(
+                messages::settings_category_terminal(),
+                ffi::CategoryKind::Terminal,
             ),
         ],
         categories_label: messages::settings_categories_label(),
@@ -388,14 +393,21 @@ mod tests {
     }
 
     #[test]
-    fn the_dialog_opens_on_speech_and_lists_theme_after_it() {
+    fn the_dialog_opens_on_speech_then_lists_theme_and_terminal() {
         let dialog = dialog();
         let kinds: Vec<_> = dialog
             .categories
             .iter()
             .map(|category| category.kind)
             .collect();
-        assert_eq!(kinds, [ffi::CategoryKind::Speech, ffi::CategoryKind::Theme]);
+        assert_eq!(
+            kinds,
+            [
+                ffi::CategoryKind::Speech,
+                ffi::CategoryKind::Theme,
+                ffi::CategoryKind::Terminal
+            ]
+        );
         for category in &dialog.categories {
             assert!(category.title.contains(&category.name));
         }

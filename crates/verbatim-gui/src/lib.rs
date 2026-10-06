@@ -30,6 +30,7 @@ mod list_dialog;
 mod plan;
 mod settings;
 pub mod shell_items;
+mod terminal_panel;
 mod theme_panel;
 mod tray_list;
 
@@ -43,12 +44,14 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
 pub use shell_items::ShellItemKind;
+pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
 
-use bridge::ffi;
+use bridge::{GuiThread, ffi};
 use lifecycle::{Frame, Lifecycle, OpenSettings, OpenShellList};
 use list_dialog::{ButtonVerdict, ListDialogButtons};
 use settings::{ControlChange, SpeechControls};
+use terminal_panel::TerminalPanel;
 use theme_panel::ThemePanel;
 
 /// A command posted to the GUI thread from anywhere in the app.
@@ -128,9 +131,9 @@ impl std::error::Error for GuiError {}
 /// can begin posting commands; `on_ready` runs on the GUI thread during
 /// initialization, so it should hand the handle off rather than block.
 ///
-/// `settings_host` backs the settings dialog's Speech page and
-/// `theme_host` its Theme page; `events` carries [`GuiEvent`]s out to the
-/// app.
+/// `settings_host` backs the settings dialog's Speech page,
+/// `theme_host` its Theme page, and `terminal_host` its Terminal page;
+/// `events` carries [`GuiEvent`]s out to the app.
 ///
 /// The GUI runs at most once per process: wxWidgets keeps one application
 /// in process-wide state and does not support starting again after it
@@ -143,6 +146,7 @@ impl std::error::Error for GuiError {}
 pub fn run_gui(
     settings_host: Arc<dyn SpeechSettingsHost>,
     theme_host: Arc<dyn ThemeHost>,
+    terminal_host: Arc<dyn TerminalHost>,
     events: Sender<GuiEvent>,
     on_ready: impl FnOnce(GuiHandle) + Send + 'static,
 ) -> Result<(), GuiError> {
@@ -152,11 +156,17 @@ pub fn run_gui(
             "the GUI has already run in this process".to_owned(),
         ));
     }
+    // SAFETY: this thread runs the event loop below, so it is the GUI
+    // thread, and the check above makes it the only one.
+    let gui = unsafe { GuiThread::new() };
     let (sender, receiver) = unbounded();
     let core = GuiCore {
+        gui,
         host: settings_host,
         theme_host,
         theme: RefCell::new(None),
+        terminal_host,
+        terminal: RefCell::new(None),
         events,
         handle: GuiHandle { sender },
         receiver,
@@ -174,7 +184,7 @@ pub fn run_gui(
         settings_item: messages::menu_settings(),
         exit_item: messages::menu_exit(),
     };
-    match ffi::run_event_loop(&core, &text) {
+    match gui.run_event_loop(&core, &text) {
         -1 => Err(GuiError("wxWidgets could not start".to_owned())),
         _ => Ok(()),
     }
@@ -191,12 +201,20 @@ type OnReady = Box<dyn FnOnce(GuiHandle) + Send>;
 /// can run a nested event loop that calls back in; for the same reason no
 /// `RefCell` borrow is ever held across a call into C++.
 pub(crate) struct GuiCore {
+    /// The GUI thread's token, through which every call into C++ goes; it
+    /// also keeps `GuiCore` from leaving the GUI thread.
+    gui: GuiThread,
     host: Arc<dyn SpeechSettingsHost>,
     /// What the Theme page reads and changes.
     theme_host: Arc<dyn ThemeHost>,
     /// The Theme page's state while the settings dialog is open and the
     /// page has been shown.
     theme: RefCell<Option<ThemePanel>>,
+    /// What the Terminal page reads and changes.
+    terminal_host: Arc<dyn TerminalHost>,
+    /// The Terminal page's state while the settings dialog is open and the
+    /// page has been shown.
+    terminal: RefCell<Option<TerminalPanel>>,
     events: Sender<GuiEvent>,
     /// The GUI's own handle, for work it hands to other threads.
     handle: GuiHandle,
@@ -216,7 +234,7 @@ impl GuiCore {
     fn ready(&self) {
         // Mark the frame so every outpost can recognize and suppress
         // announcing it (decision D9); see `hidden_frame`'s module doc.
-        if let Some(hwnd) = foreground::hwnd_of(ffi::frame_handle()) {
+        if let Some(hwnd) = foreground::hwnd_of(self.gui.frame_handle()) {
             hidden_frame::mark(hwnd);
         }
         let on_ready = self.on_ready.borrow_mut().take();
@@ -267,9 +285,9 @@ impl GuiCore {
     /// event, so Verbatim's own supervisor never targets our process and
     /// never reads the popup. Showing the (1x1) frame and forcing it
     /// foreground fixes both.
-    fn pre_popup() {
-        ffi::show_frame();
-        if let Some(hwnd) = foreground::hwnd_of(ffi::frame_handle()) {
+    fn pre_popup(&self) {
+        self.gui.show_frame();
+        if let Some(hwnd) = foreground::hwnd_of(self.gui.frame_handle()) {
             foreground::force_foreground(hwnd);
         }
     }
@@ -278,9 +296,9 @@ impl GuiCore {
     /// we keep no visible window and the foreground falls back to the
     /// previous application — unless the lifecycle says a dialog still
     /// needs the frame as its visible owner.
-    fn post_popup(after: Frame) {
+    fn post_popup(&self, after: Frame) {
         if after == Frame::Hide {
-            ffi::hide_frame();
+            self.gui.hide_frame();
         }
     }
 
@@ -290,19 +308,19 @@ impl GuiCore {
         if !pop {
             return;
         }
-        let at = ffi::centre_frame();
+        let at = self.gui.centre_frame();
         let (x, y) = (at.x, at.y);
-        Self::pre_popup();
+        self.pre_popup();
         // The menu's nested loop dispatches the chosen item (which may open
         // settings) before this returns.
-        let shown = ffi::popup_menu();
+        let shown = self.gui.popup_menu();
         // Info, not debug: whether the popup actually showed is the first
         // fact needed when diagnosing a menu that opened silently or not at
         // all, and it fires only on an explicit user gesture, so it cannot
         // flood the log.
         tracing::info!(shown, x, y, "popped the Verbatim menu");
         let after = self.lifecycle.borrow_mut().menu_closed();
-        Self::post_popup(after);
+        self.post_popup(after);
     }
 
     /// Opens the settings dialog, or focuses the existing one.
@@ -310,13 +328,13 @@ impl GuiCore {
         let action = self.lifecycle.borrow_mut().request_settings();
         match action {
             OpenSettings::Ignore => {}
-            OpenSettings::FocusExisting => Self::focus_foreground(ffi::DialogKind::Settings),
+            OpenSettings::FocusExisting => self.focus_foreground(ffi::DialogKind::Settings),
             OpenSettings::Create => {
                 // Take the foreground before the dialog exists, so the
                 // process already owns it when the dialog asks for it.
-                Self::pre_popup();
-                ffi::open_settings_dialog(&settings::dialog());
-                Self::focus_foreground(ffi::DialogKind::Settings);
+                self.pre_popup();
+                self.gui.open_settings_dialog(&settings::dialog());
+                self.focus_foreground(ffi::DialogKind::Settings);
             }
         }
     }
@@ -332,7 +350,7 @@ impl GuiCore {
             OpenShellList::Ignore => {
                 tracing::debug!("a shell item enumeration is already in flight; request dropped");
             }
-            OpenShellList::FocusExisting => Self::focus_foreground(ffi::DialogKind::ShellList),
+            OpenShellList::FocusExisting => self.focus_foreground(ffi::DialogKind::ShellList),
             OpenShellList::Enumerate => {
                 let handle = self.handle.clone();
                 let started = shell_items::request_shell_items(kind, move |items| {
@@ -364,19 +382,19 @@ impl GuiCore {
         // Same discipline as settings: take the foreground before the
         // dialog exists, so the process already owns it when the dialog
         // asks.
-        Self::pre_popup();
-        ffi::open_list_dialog(&model);
-        Self::focus_foreground(ffi::DialogKind::ShellList);
+        self.pre_popup();
+        self.gui.open_list_dialog(&model);
+        self.focus_foreground(ffi::DialogKind::ShellList);
     }
 
     /// Raises a dialog, takes the foreground for it, and focuses it, so its
     /// controls are read as they gain focus.
-    fn focus_foreground(dialog: ffi::DialogKind) {
-        ffi::raise_dialog(dialog);
-        if let Some(hwnd) = foreground::hwnd_of(ffi::dialog_handle(dialog)) {
+    fn focus_foreground(&self, dialog: ffi::DialogKind) {
+        self.gui.raise_dialog(dialog);
+        if let Some(hwnd) = foreground::hwnd_of(self.gui.dialog_handle(dialog)) {
             foreground::force_foreground(hwnd);
         }
-        ffi::focus_dialog(dialog);
+        self.gui.focus_dialog(dialog);
     }
 
     /// Tears down the tray, the dialogs, and the frame, and ends the event
@@ -384,16 +402,17 @@ impl GuiCore {
     fn shut_down(&self) {
         self.lifecycle.borrow_mut().shut_down();
         self.list_buttons.borrow_mut().take();
-        if let Some(hwnd) = foreground::hwnd_of(ffi::frame_handle()) {
+        if let Some(hwnd) = foreground::hwnd_of(self.gui.frame_handle()) {
             hidden_frame::unmark(hwnd);
         }
-        ffi::shut_down();
+        self.gui.shut_down();
     }
 
     fn dialog_closed(&self, dialog: ffi::DialogKind) {
         let which = match dialog {
             ffi::DialogKind::Settings => {
                 self.theme.borrow_mut().take();
+                self.terminal.borrow_mut().take();
                 lifecycle::Dialog::Settings
             }
             ffi::DialogKind::ShellList => {
@@ -403,7 +422,7 @@ impl GuiCore {
             _ => return,
         };
         let after = self.lifecycle.borrow_mut().closed(which);
-        Self::post_popup(after);
+        self.post_popup(after);
     }
 
     fn speech_page(&self) -> ffi::SpeechPage {
@@ -449,12 +468,18 @@ impl GuiCore {
                 tracing::warn!(failures, "could not save the theme settings");
             }
         }
+        if let Some(terminal) = self.terminal.borrow_mut().as_mut() {
+            terminal.apply();
+        }
     }
 
     fn revert_settings(&self) {
         self.host.revert();
         if let Some(theme) = self.theme.borrow_mut().as_mut() {
             theme.cancel();
+        }
+        if let Some(terminal) = self.terminal.borrow_mut().as_mut() {
+            terminal.cancel();
         }
     }
 
@@ -557,6 +582,35 @@ impl GuiCore {
 
     fn remove_theme(&self) -> String {
         self.with_theme(ThemePanel::remove)
+    }
+
+    /// Runs `act` on the Terminal page's state, opening it from the reader
+    /// settings as they are now the first time the page is used.
+    fn with_terminal<R>(&self, act: impl FnOnce(&mut TerminalPanel) -> R) -> R {
+        let mut terminal = self.terminal.borrow_mut();
+        let panel =
+            terminal.get_or_insert_with(|| TerminalPanel::open(Arc::clone(&self.terminal_host)));
+        act(panel)
+    }
+
+    fn terminal_page(&self) -> ffi::TerminalPage {
+        self.with_terminal(|terminal| terminal.page())
+    }
+
+    fn terminal_report_output_changed(&self, checked: bool) {
+        self.with_terminal(|terminal| terminal.set_report_output(checked));
+    }
+
+    fn terminal_full_lines_changed(&self, value: i32) {
+        self.with_terminal(|terminal| terminal.set_full_lines(value));
+    }
+
+    fn terminal_last_lines_changed(&self, value: i32) {
+        self.with_terminal(|terminal| terminal.set_last_lines(value));
+    }
+
+    fn terminal_speak_passwords_changed(&self, checked: bool) {
+        self.with_terminal(|terminal| terminal.set_speak_passwords(checked));
     }
 
     fn synthesizer_picker(&self) -> ffi::SynthesizerPicker {

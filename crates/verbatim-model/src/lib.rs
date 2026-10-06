@@ -37,10 +37,10 @@ pub use speech::{
 };
 pub use terminal::{LineChange, MAX_TERMINAL_LINE_BYTES, Skipped, TerminalOutput};
 pub use text::{
-    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, HeldAnchors,
+    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, FormatRun, HeldAnchors,
     LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_SELECTION_TEXT_BYTES, PreviousSelection,
-    Selection, SelectionChange, TextAnchor, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReply, TextRequest, TextUnit,
+    Selection, SelectionChange, TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit,
 };
 pub use theme::{
     DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,

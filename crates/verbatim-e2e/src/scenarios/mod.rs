@@ -21,6 +21,7 @@ pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod notepad_editing;
 pub(crate) mod notepad_review_cursor;
 pub(crate) mod notepad_say_all;
+pub(crate) mod notepad_spelling_errors;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod rapid_tabbing_in_settings;
 pub(crate) mod settings_dialog_keys;
@@ -33,6 +34,7 @@ pub(crate) mod terminal;
 pub(crate) mod terminal_commands;
 pub(crate) mod terminal_flood;
 pub(crate) mod terminal_review_grid;
+pub(crate) mod terminal_settings_page;
 pub(crate) mod theme_panel;
 
 /// How Verbatim speaks `character` on its own, as typed-character echo

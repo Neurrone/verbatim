@@ -78,6 +78,15 @@ theme-remove-title = Remove Theme
 theme-remove-question = Remove the theme { $name }? This cannot be undone.
 theme-error-title = Theme
 theme-in-use = The configuration uses { $name }, so it cannot be removed.
+
+## The Terminal settings page (phase6-design.md, "M4: text, editing, and
+## terminals", Questions). The dialog's own Categories and Apply take C and A.
+
+settings-category-terminal = Terminal
+terminal-report-output = Report &new output
+terminal-full-lines = &Lines spoken in full:
+terminal-last-lines = Last lines to s&peak:
+terminal-speak-passwords = Speak passwords typed in &terminals
 select-synth-title = Select Synthesizer
 select-synth-label = &Synthesizer:
 
@@ -239,6 +248,7 @@ indication-grammar-error = grammar error
 indication-font-name = font name
 indication-font-size = font size
 indication-color = color
+indication-font-attributes = font attributes
 indication-capital = capital letter
 indication-blank = blank
 indication-skipped-lines = skipped lines
@@ -255,6 +265,12 @@ format-spelling-error = spelling error
 format-not-spelling-error = out of spelling error
 format-grammar-error = grammar error
 format-not-grammar-error = out of grammar error
+format-bold = bold
+format-not-bold = no bold
+format-italic = italic
+format-not-italic = no italic
+format-underline = underlined
+format-not-underline = not underlined
 earcon-app-not-responding = not responding
 earcon-start = Verbatim started
 earcon-exit = Exiting Verbatim

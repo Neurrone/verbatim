@@ -16,6 +16,7 @@ mod live;
 mod requests;
 mod single_instance;
 mod speech_events;
+mod terminal_settings;
 mod themes;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -76,6 +77,16 @@ type SharedRecorder = Arc<Mutex<ReducerRecorder>>;
 /// The folder flight-recorder dumps are written to, next to the executable.
 const DUMPS_FOLDER: &str = "dumps";
 
+/// Writes a line to standard error, as `eprintln!` does, but ignores a
+/// failed write instead of panicking: a full disk or a closed pipe under
+/// redirected output must not take the process down.
+macro_rules! report_error {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 fn main() -> ExitCode {
     // Keep Core's trace IDs disjoint from every outpost's; they meet in the
     // latency ledger and the flight recorder.
@@ -90,7 +101,7 @@ fn main() -> ExitCode {
     // work never stops one that does.
     if let Err(diagnosis) = check_interactive_session() {
         tracing::error!(diagnosis, "verbatim cannot run in this session");
-        eprintln!("verbatim: {diagnosis}");
+        report_error!("verbatim: {diagnosis}");
         return ExitCode::FAILURE;
     }
 
@@ -99,7 +110,7 @@ fn main() -> ExitCode {
         Ok(guard) => guard,
         Err(error) => {
             tracing::error!(%error, "single-instance startup failed");
-            eprintln!("verbatim: {error}");
+            report_error!("verbatim: {error}");
             return ExitCode::FAILURE;
         }
     };
@@ -113,7 +124,7 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             tracing::error!(%error, "verbatim failed to start");
-            eprintln!("verbatim: {error}");
+            report_error!("verbatim: {error}");
             ExitCode::FAILURE
         }
     }
@@ -378,10 +389,21 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         manager: Arc::clone(&manager),
         commands: command_tx.clone(),
     });
+    let terminal_host: Arc<dyn verbatim_gui::TerminalHost> =
+        Arc::new(terminal_settings::AppTerminalHost {
+            store: Arc::clone(&store),
+            commands: command_tx.clone(),
+        });
     let handle_slot = Arc::clone(&gui_handle);
-    run_gui(host_for_gui, theme_host, gui_event_tx, move |handle| {
-        let _ = handle_slot.set(handle);
-    })?;
+    run_gui(
+        host_for_gui,
+        theme_host,
+        terminal_host,
+        gui_event_tx,
+        move |handle| {
+            let _ = handle_slot.set(handle);
+        },
+    )?;
 
     // The wx loop has exited (Exit menu item, control-plane quit, or a
     // replacing instance's WM_QUIT). The exit sound is heard before
@@ -427,12 +449,12 @@ fn load_config(exe_dir: &std::path::Path) -> ConfigStore {
             // profiles/base.toml are discoverable and hand-editable from the
             // first run; existing files are never touched.
             if let Err(error) = config.ensure_files_exist() {
-                eprintln!("verbatim: could not create default config files: {error}");
+                report_error!("verbatim: could not create default config files: {error}");
             }
             config
         }
         Err(error) => {
-            eprintln!("verbatim: config error, continuing with defaults: {error}");
+            report_error!("verbatim: config error, continuing with defaults: {error}");
             ConfigStore::load(&std::env::temp_dir().join("verbatim-defaults"))
                 .unwrap_or_else(|fallback| panic!("default config must load: {fallback}"))
         }
@@ -452,6 +474,11 @@ fn init_tracing(configured: Option<&str>) {
         .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        // A write that fails (a full disk, a closed pipe) is dropped: by
+        // default the formatter reports it with `eprint!`, which panics when
+        // standard error fails too, and a panic in a hook or a COM callback
+        // aborts the process.
+        .log_internal_errors(false)
         .finish()
         .with(error_sound::ErrorSoundLayer)
         .init();
@@ -633,7 +660,8 @@ fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
 }
 
 /// Saves reader settings the reducer changed with a toggle key
-/// (`Effect::SettingsChanged`) into the base profile.
+/// (`Effect::SettingsChanged`), or the settings dialog's Terminal page
+/// changed, into the base profile.
 fn save_reader_settings(store: &Mutex<ConfigStore>, settings: ReaderSettings) {
     let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
     store.settings_mut().reader = settings;
@@ -746,6 +774,9 @@ pub(crate) enum ShellCommand {
     /// Report an event as the theme says, such as the error sound for an
     /// error logged on another thread.
     PlayEarcon(Earcon),
+    /// The settings dialog's Terminal page applied a change: merge it into
+    /// the reducer's reader settings, give it them, and save them.
+    TerminalSettings(verbatim_gui::TerminalChange),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -1020,7 +1051,18 @@ impl ReducerThread<'_> {
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
             ShellCommand::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
+            ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
         }
+    }
+
+    /// Merges a change from the settings dialog's Terminal page into the
+    /// reader settings the reducer has now, toggle keys included, so none
+    /// is undone; gives the reducer the result, and saves it.
+    fn change_terminal_settings(&mut self, change: verbatim_gui::TerminalChange) {
+        let mut settings = self.state.settings();
+        change.apply_to(&mut settings);
+        self.apply(Input::Settings(settings));
+        save_reader_settings(&self.context.store, settings);
     }
 
     /// Delivers a query's outcome through the request table, applying the

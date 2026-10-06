@@ -16,8 +16,127 @@
 //! which C++ calls back into `GuiCore`. Every `GuiCore` method therefore
 //! takes `&self`, and no borrow of its interior state is held across a
 //! call into C++.
+//!
+//! The thread rule: wxWidgets and the C++ layer's state live on the GUI
+//! thread, the thread [`run_gui`](crate::run_gui) runs the event loop on.
+//! The C++ functions that drive them are declared `unsafe fn`, and Rust
+//! calls them only through the methods of [`GuiThread`], a token that is
+//! neither `Send` nor `Sync`, made once by `run_gui` on the GUI thread and
+//! kept by `GuiCore`. Only `wake_event_loop`, which any thread may call,
+//! is called directly.
+
+use std::marker::PhantomData;
 
 use crate::{GuiCore, next_category, route_settings_key};
+
+/// Proof that the code holding it runs on the GUI thread, and so may call
+/// into the C++ layer: each method calls the C++ function of the same name.
+///
+/// It is neither `Send` nor `Sync`, so it never leaves the thread it was
+/// made on. [`run_gui`](crate::run_gui) makes it once, on the thread that
+/// then runs the event loop, and `GuiCore`, which only that thread uses,
+/// keeps a copy for its methods.
+#[derive(Clone, Copy)]
+pub(crate) struct GuiThread {
+    /// A raw pointer is neither `Send` nor `Sync`, and so neither is the
+    /// token.
+    _not_send: PhantomData<*const ()>,
+}
+
+#[expect(
+    clippy::unused_self,
+    reason = "the token carries no data; taking it is what shows the call is on the GUI thread"
+)]
+impl GuiThread {
+    /// The token for the calling thread.
+    ///
+    /// # Safety
+    ///
+    /// The calling thread must be the GUI thread: the one thread that runs
+    /// wxWidgets' event loop in this process, about to run it or running
+    /// it.
+    pub(crate) unsafe fn new() -> Self {
+        Self {
+            _not_send: PhantomData,
+        }
+    }
+
+    /// Runs wxWidgets' event loop on this thread until it ends, calling
+    /// back into `core` meanwhile. Returns the loop's exit code, or -1 when
+    /// wxWidgets could not start.
+    pub(crate) fn run_event_loop(self, core: &GuiCore, text: &ffi::ShellText) -> i32 {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::run_event_loop(core, text) }
+    }
+
+    /// The hidden frame's native window handle.
+    pub(crate) fn frame_handle(self) -> usize {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::frame_handle() }
+    }
+
+    /// Centres the hidden frame on the screen and returns its position.
+    pub(crate) fn centre_frame(self) -> ffi::ScreenPoint {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::centre_frame() }
+    }
+
+    /// Shows and raises the hidden frame.
+    pub(crate) fn show_frame(self) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::show_frame() }
+    }
+
+    /// Hides the hidden frame.
+    pub(crate) fn hide_frame(self) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::hide_frame() }
+    }
+
+    /// Pops the Verbatim menu at the hidden frame's own origin, running a
+    /// nested loop until it closes. True when it was shown.
+    pub(crate) fn popup_menu(self) -> bool {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::popup_menu() }
+    }
+
+    /// Builds and shows the settings dialog.
+    pub(crate) fn open_settings_dialog(self, dialog: &ffi::SettingsDialog) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::open_settings_dialog(dialog) }
+    }
+
+    /// Builds and shows a list dialog.
+    pub(crate) fn open_list_dialog(self, dialog: &ffi::ListDialog) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::open_list_dialog(dialog) }
+    }
+
+    /// A dialog's native window handle, or 0 when it is not open.
+    pub(crate) fn dialog_handle(self, dialog: ffi::DialogKind) -> usize {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::dialog_handle(dialog) }
+    }
+
+    /// Raises a dialog above other windows.
+    pub(crate) fn raise_dialog(self, dialog: ffi::DialogKind) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::raise_dialog(dialog) }
+    }
+
+    /// Gives a dialog the keyboard focus.
+    pub(crate) fn focus_dialog(self, dialog: ffi::DialogKind) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::focus_dialog(dialog) }
+    }
+
+    /// Removes the tray icon, destroys the dialogs and the frame, and ends
+    /// the event loop.
+    pub(crate) fn shut_down(self) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::shut_down() }
+    }
+}
 
 #[allow(
     clippy::multiple_unsafe_ops_per_block,
@@ -96,6 +215,36 @@ pub(crate) mod ffi {
         Speech,
         /// The Theme page: the theme in use and its indications.
         Theme,
+        /// The Terminal page: new output and its limits, and passwords.
+        Terminal,
+    }
+
+    /// The Terminal page: its labels and the settings as they are now.
+    struct TerminalPage {
+        /// The "Report new output" check box's label, with its mnemonic.
+        report_output_label: String,
+        /// Its accessible name, the label without its mnemonic.
+        report_output_name: String,
+        /// Whether it is checked.
+        report_output: bool,
+        /// The "Lines spoken in full" slider's label.
+        full_lines_label: String,
+        /// Its value.
+        full_lines: i32,
+        /// The "Last lines to speak" slider's label.
+        last_lines_label: String,
+        /// Its value.
+        last_lines: i32,
+        /// Both sliders' minimum.
+        min_lines: i32,
+        /// Both sliders' maximum.
+        max_lines: i32,
+        /// The check box for speaking passwords typed in terminals.
+        speak_passwords_label: String,
+        /// Its accessible name.
+        speak_passwords_name: String,
+        /// Whether it is checked.
+        speak_passwords: bool,
     }
 
     /// The Theme page: its labels, the themes, the selected theme's
@@ -507,6 +656,18 @@ pub(crate) mod ffi {
         /// Removes the selected theme. Returns why it failed, or empty.
         fn remove_theme(self: &GuiCore) -> String;
 
+        /// The Terminal page, as its state has it.
+        fn terminal_page(self: &GuiCore) -> TerminalPage;
+        /// "Report new output" was toggled.
+        fn terminal_report_output_changed(self: &GuiCore, checked: bool);
+        /// "Lines spoken in full" moved.
+        fn terminal_full_lines_changed(self: &GuiCore, value: i32);
+        /// "Last lines to speak" moved.
+        fn terminal_last_lines_changed(self: &GuiCore, value: i32);
+        /// The check box for speaking passwords typed in terminals was
+        /// toggled.
+        fn terminal_speak_passwords_changed(self: &GuiCore, checked: bool);
+
         /// A list dialog button was activated with an item selected; true
         /// when the dialog should close.
         fn list_button(self: &GuiCore, button: usize, item: usize) -> bool;
@@ -523,49 +684,49 @@ pub(crate) mod ffi {
         fn next_category(current: usize, count: usize, forward: bool) -> usize;
     }
 
-    // SAFETY: every function here except `wake_event_loop` reads the C++
-    // side's unsynchronized shell state and drives wxWidgets, so it is
-    // called only on the GUI thread: `run_event_loop` from `run_gui`, which
-    // runs once per process, and the rest from `GuiCore` methods while that
-    // loop runs. This module is private to the crate, and `GuiCore` is not
-    // `Sync`, so no other thread can reach a `GuiCore` to call them from.
+    // SAFETY: these declarations match `cpp/gui.h`. Every function here
+    // except `wake_event_loop` reads the C++ side's unsynchronized shell
+    // state and drives wxWidgets, so it may be called only on the GUI
+    // thread; each is an `unsafe fn` for that reason, and Rust calls them
+    // only through the safe methods of `GuiThread`, which exists only on
+    // that thread.
     unsafe extern "C++" {
         include!("verbatim-gui/cpp/gui.h");
 
         /// Runs wxWidgets' event loop on this thread until it ends,
         /// calling back into `core` meanwhile. Returns the loop's exit
         /// code, or -1 when wxWidgets could not start.
-        fn run_event_loop(core: &GuiCore, text: &ShellText) -> i32;
+        unsafe fn run_event_loop(core: &GuiCore, text: &ShellText) -> i32;
         /// Asks the event loop to call `GuiCore::drain`. Callable from any
         /// thread; does nothing when the loop is not running.
         fn wake_event_loop();
 
         /// The hidden frame's native window handle.
-        fn frame_handle() -> usize;
+        unsafe fn frame_handle() -> usize;
         /// Centres the hidden frame on the screen and returns its position.
-        fn centre_frame() -> ScreenPoint;
+        unsafe fn centre_frame() -> ScreenPoint;
         /// Shows and raises the hidden frame.
-        fn show_frame();
+        unsafe fn show_frame();
         /// Hides the hidden frame.
-        fn hide_frame();
+        unsafe fn hide_frame();
         /// Pops the Verbatim menu at the hidden frame's own origin (screen
         /// centre, once [`centre_frame`] has run), running a nested loop
         /// until it closes. True when it was shown.
-        fn popup_menu() -> bool;
+        unsafe fn popup_menu() -> bool;
 
         /// Builds and shows the settings dialog.
-        fn open_settings_dialog(dialog: &SettingsDialog);
+        unsafe fn open_settings_dialog(dialog: &SettingsDialog);
         /// Builds and shows a list dialog.
-        fn open_list_dialog(dialog: &ListDialog);
+        unsafe fn open_list_dialog(dialog: &ListDialog);
         /// A dialog's native window handle, or 0 when it is not open.
-        fn dialog_handle(dialog: DialogKind) -> usize;
+        unsafe fn dialog_handle(dialog: DialogKind) -> usize;
         /// Raises a dialog above other windows.
-        fn raise_dialog(dialog: DialogKind);
+        unsafe fn raise_dialog(dialog: DialogKind);
         /// Gives a dialog the keyboard focus.
-        fn focus_dialog(dialog: DialogKind);
+        unsafe fn focus_dialog(dialog: DialogKind);
 
         /// Removes the tray icon, destroys the dialogs and the frame, and
         /// ends the event loop.
-        fn shut_down();
+        unsafe fn shut_down();
     }
 }

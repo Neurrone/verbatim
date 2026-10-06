@@ -234,6 +234,8 @@ pub struct SpeechManager {
     /// startup may not be.
     configured: SynthId,
     choices: Vec<SynthChoice>,
+    /// Whether speech is paused, as the queue thread last applied it.
+    paused: Arc<AtomicBool>,
     queue_handle: Option<JoinHandle<()>>,
     synth_handle: Option<JoinHandle<()>>,
 }
@@ -322,6 +324,8 @@ impl SpeechManager {
         } = startup;
 
         let queue_events = events.clone();
+        let paused = Arc::new(AtomicBool::new(false));
+        let queue_paused = Arc::clone(&paused);
         let queue_handle = std::thread::Builder::new()
             .name("verbatim-speech-queue".to_owned())
             .spawn(move || {
@@ -335,6 +339,7 @@ impl SpeechManager {
                     in_flight: None,
                     handed_on: VecDeque::new(),
                     paused: false,
+                    paused_flag: queue_paused,
                     focus_now: None,
                 }
                 .run(&queue_rx);
@@ -344,6 +349,7 @@ impl SpeechManager {
             })?;
 
         Ok(Self {
+            paused,
             queue_tx,
             _mixer: mixer,
             themes,
@@ -478,6 +484,14 @@ impl SpeechManager {
     /// the device's format.
     pub fn play_sound(&self, sound: &Sound, gain: f32) -> Result<(), AudioError> {
         self.earcons.play(sound, gain)
+    }
+
+    /// Whether speech is paused. It changes once the manager has applied a
+    /// [`SpeechControl::toggle_pause`] or a resume, after the mixer has been
+    /// told, so audio arriving from then on is ordered after the pause.
+    #[must_use]
+    pub fn paused(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
     }
 
     /// A handle for cancelling, pausing, and dropping expired speech.
@@ -709,6 +723,9 @@ struct QueueThread {
     handed_on: VecDeque<(UtteranceId, Option<FocusValidity>)>,
     /// Speech is paused.
     paused: bool,
+    /// [`paused`](Self::paused), published for [`SpeechManager::paused`]
+    /// once the mixer has been told.
+    paused_flag: Arc<AtomicBool>,
     /// Where the focus was last reported, for judging waiting focus speech
     /// when its turn comes.
     focus_now: Option<FocusNow>,
@@ -740,6 +757,7 @@ impl QueueThread {
                 QueueEvent::TogglePause => {
                     self.paused = !self.paused;
                     self.source.pause(self.paused);
+                    self.paused_flag.store(self.paused, Ordering::Release);
                 }
                 QueueEvent::DropExpired(now) => self.drop_expired(now),
                 QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
@@ -832,6 +850,7 @@ impl QueueThread {
         if self.paused {
             self.paused = false;
             self.source.pause(false);
+            self.paused_flag.store(false, Ordering::Release);
         }
     }
 

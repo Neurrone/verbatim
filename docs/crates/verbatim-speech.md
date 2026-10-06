@@ -77,7 +77,10 @@ Public API:
   pause; `toggle_pause()` pauses speech where it is, or resumes it when
   paused; `drop_expired(now)` drops focus speech whose `FocusValidity` no
   longer holds for the `FocusNow` given (see "When speech is cut off"
-  below).
+  below). `SpeechManager::paused()` says whether speech is paused, as
+  the manager last applied it: it changes only after the mixer has been
+  told, so audio arriving afterwards is ordered after the pause or
+  resume.
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
   GUI's live handle: list synthesizers, switch the active one, read
   descriptors and values, `set_setting` applying immediately (slider drags
