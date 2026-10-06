@@ -299,7 +299,7 @@ impl ThemeHandle {
 /// words are joined with single spaces. Every span that is an indication is
 /// reported as the theme says: off, its words, a sound item where it
 /// stands followed by its words, or the sound alone. A capital letter spoken
-/// on its own is raised in pitch by [`CAPITAL_PITCH_OFFSET`] when the
+/// on its own is raised in pitch by `CAPITAL_PITCH_OFFSET` (30) when the
 /// capital indication is spoken, as NVDA raises it by default, and preceded
 /// by its sound when it plays one. A character spoken on its own is spoken
 /// by its name from the character table of its segment's language
