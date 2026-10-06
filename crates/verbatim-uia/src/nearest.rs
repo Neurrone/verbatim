@@ -63,6 +63,13 @@ thread_local! {
     static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
 }
 
+/// Drops this thread's walker and cache request, if they were built (see
+/// [`crate::release_thread_state`]).
+pub(crate) fn release_thread_context() {
+    let context = CONTEXT.with(|cell| cell.borrow_mut().take());
+    drop(context);
+}
+
 /// Resolves the native window handle of `element` itself, or of its nearest
 /// ancestor that has one — NVDA's `getNearestWindowHandle`. If `element`
 /// already has a window handle, the call still works: `NormalizeElement`

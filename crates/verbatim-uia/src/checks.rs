@@ -31,6 +31,13 @@ thread_local! {
     static CLIENT: RefCell<Option<Uia>> = const { RefCell::new(None) };
 }
 
+/// Drops this thread's client, if one was built (see
+/// [`crate::release_thread_state`]).
+pub(crate) fn release_thread_client() {
+    let client = CLIENT.with(|cell| cell.borrow_mut().take());
+    drop(client);
+}
+
 /// Runs `read` with this thread's client, mapping a timeout to `None` and any
 /// other failure to `Some(false)`.
 fn with_client(read: impl FnOnce(&Uia) -> windows::core::Result<bool>) -> Option<bool> {

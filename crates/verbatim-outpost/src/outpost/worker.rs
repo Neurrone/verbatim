@@ -391,12 +391,20 @@ fn watchdog(context: &Arc<Context>) {
     }
 }
 
-/// The worker's loop.
+/// The worker's thread: its loop, then the release of the UIA objects
+/// `verbatim-uia` kept for this thread, before the thread exits rather than
+/// from its thread-local destructors under the loader lock.
 fn run(context: &Context, generation: u64) {
     // Held objects are agile references, resolved in this apartment.
     if let Err(error) = verbatim_uia::init_mta() {
         tracing::warn!(%error, "the worker could not join the multithreaded apartment");
     }
+    run_loop(context, generation);
+    verbatim_uia::release_thread_state();
+}
+
+/// The worker's loop, until the intake closes or this worker is abandoned.
+fn run_loop(context: &Context, generation: u64) {
     let mut client = Client::default();
     // When the current batch's foreground change was confirmed. `next` names
     // the window only with a batch's first entry, and the foreground fact
