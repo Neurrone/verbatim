@@ -99,7 +99,14 @@ verified.
     Verbatim spoke it twice; NVDA's `UIItem` class reports no value.
     **Matched since 2026-10-02.**
   - NVDA speaks a tree item's level first ("level 1, System, 2 of
-    12"); Verbatim speaks it last.
+    12"); Verbatim speaks it last. An NVDA transcript in msinfo32 on
+    2026-10-07 showed NVDA puts the level first only when it differs from
+    the last one spoken ("level 1 Hardware Resources collapsed 1 of 3",
+    then "Components collapsed 2 of 3 level 1"); Verbatim still always
+    speaks it last (a follow-up). The same transcript showed a standard
+    tree view's root item is "level 0", the raw `accValue`, in NVDA;
+    Verbatim had added one, and matches since 2026-10-07 (the
+    `system_information_tree` scenario).
 
   A parity audit of the UIA and MSAA handling on 2026-10-02, checked
   against NVDA's source, found these differences in generic behavior.
@@ -116,6 +123,11 @@ verified.
     query; "focused" and "off screen" spoken in a query. The rules are
     "Which states are spoken, and in what order" in
     [Speech](nvda/speech.md).
+  - "multi line" for a standard or rich edit control with the
+    `ES_MULTILINE` style, after "read only" (NVDA's edit control class;
+    UIA's multi-line state is dropped, as NVDA drops it): **matched since
+    2026-10-07**, found by comparing transcripts with NVDA in a Windows
+    Forms text box and Verbatim's own read-only description field.
   - Values and descriptions: an edit field or document no longer
     speaks the whole field after every keystroke; an unchanged value is
     not repeated; a check box, radio button, link, menu item, or
@@ -1068,7 +1080,10 @@ verified.
   read after the key, from the application's caret event for that very key
   arriving before Core's request, is not. Terminals are recognized by
   their UIA class (`TermControl`, `WPFTermControl`) and the console host's
-  window class, never by title.
+  window class, never by title. The console host's text area is announced
+  as "terminal" without its English-only name, "Text Area", as NVDA's
+  console class drops it (**matched since 2026-10-07**, found by
+  comparing transcripts; the terminal scenarios assert it).
 - New terminal output. NVDA: [Editable text and
   terminals](nvda/editable-text-and-terminals.md), "Terminals": diffing by
   default, the whole document per text change; Windows Terminal's output

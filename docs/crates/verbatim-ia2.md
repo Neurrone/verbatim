@@ -128,7 +128,7 @@ Public API:
   siblings, and first child would otherwise all answer the visible-order
   neighbor instead of the logical one; a tree item's `accValue` is its
   0-based indent depth, not a value, so `read_snapshot` reads it into the
-  snapshot's one-based level and leaves the value empty, again matching
+  snapshot's level as it is, a root item at level 0, and leaves the value empty, again matching
   NVDA. And a window-root object — the window face every windowed control
   exposes alongside its client object, keyed under `OBJID_WINDOW` (not
   `OBJID_CLIENT`, so the two faces of one hwnd get distinct node ids

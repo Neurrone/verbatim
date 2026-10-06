@@ -43,7 +43,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // `expect_in_order` advances through all three substrings whether they
     // land on one line or several.
     scenario.speech().expect_in_order(
-        &["System Information", "System Summary", "level 1"],
+        &["System Information", "System Summary", "level 0"],
         STEP_TIMEOUT,
     );
 
@@ -53,7 +53,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends move-to-first-child");
     scenario
         .speech()
-        .expect_in_order(&["Hardware Resources", "level 2"], STEP_TIMEOUT);
+        .expect_in_order(&["Hardware Resources", "level 1"], STEP_TIMEOUT);
 
     // Next sibling: "Components" — a real sibling; the flat exposure used
     // to answer the next visible item, descending into children instead.
@@ -62,7 +62,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends move-to-next-sibling");
     scenario
         .speech()
-        .expect_in_order(&["Components", "level 2"], STEP_TIMEOUT);
+        .expect_in_order(&["Components", "level 1"], STEP_TIMEOUT);
 
     // Previous sibling: back to "Hardware Resources".
     scenario
@@ -70,7 +70,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends move-to-previous-sibling");
     scenario
         .speech()
-        .expect_in_order(&["Hardware Resources", "level 2"], STEP_TIMEOUT);
+        .expect_in_order(&["Hardware Resources", "level 1"], STEP_TIMEOUT);
 
     // Parent: the logical parent item "System Summary", not the tree
     // control (the flat exposure used to answer the control for every
@@ -80,7 +80,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends move-to-parent");
     scenario
         .speech()
-        .expect_in_order(&["System Summary", "level 1"], STEP_TIMEOUT);
+        .expect_in_order(&["System Summary", "level 0"], STEP_TIMEOUT);
 
     // Parent from the root item: the tree control itself, spoken by its
     // bare role since msinfo32's tree control is unnamed — and never as an
@@ -102,7 +102,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends move-review-to-focus");
     scenario
         .speech()
-        .expect_in_order(&["System Summary", "level 1"], STEP_TIMEOUT);
+        .expect_in_order(&["System Summary", "level 0"], STEP_TIMEOUT);
 }
 
 #[allow(

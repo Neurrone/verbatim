@@ -1023,11 +1023,11 @@ fn window_sibling(
 /// overloads `accValue` to report its 0-based indent depth as a numeric
 /// string rather than a real value — NVDA's `sysTreeView32.py` overrides
 /// `TreeViewItem.value` to `None` for exactly this reason. This reads that
-/// same string into [`NodeDetails::level`] instead, one-based to match
-/// NVDA's spoken level (confirmed live: the root item's raw `accValue` is
-/// `"0"`, which read as `value` used to make Verbatim announce the root's
-/// value as "0" instead of its level), and leaves `value` itself `None` for
-/// a tree item, matching NVDA.
+/// same string into [`NodeDetails::level`] instead, as it is: NVDA's tree
+/// view level is the raw `accValue`, so a root item is "level 0"
+/// (confirmed by an NVDA transcript in msinfo32 on 2026-10-07; Verbatim had
+/// added one). It leaves `value` itself `None` for a tree item, matching
+/// NVDA.
 fn read_snapshot(
     acc: &Accessible,
     key: MsaaKey,
@@ -1080,7 +1080,6 @@ fn read_snapshot(
         let level = raw_value
             .as_deref()
             .and_then(|v| v.parse::<u32>().ok())
-            .map(|v| v + 1)
             .filter(|_| fetches.level);
         (None, level)
     } else {
