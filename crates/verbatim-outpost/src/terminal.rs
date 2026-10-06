@@ -102,19 +102,30 @@ pub fn trimmed(raw: &str) -> String {
 
 /// How the last line read changed in place, `None` when it did not or only
 /// got shorter: what it gained at its end, or, rewritten, the line from the
-/// start of the word where it first differs.
+/// start of the word where it first differs. `old` and `new` are the lines
+/// as the provider gave them; they are compared without their padding,
+/// and the white space a grown line gained where `old` already had the same
+/// white space (its padding, or its own trailing spaces, which cannot be
+/// told apart) is counted as uncertain.
 #[must_use]
-pub fn line_change(old: &str, new: &str) -> Option<LineChange> {
-    let old = trimmed(old);
-    let new = trimmed(new);
+pub fn line_change(old_raw: &str, new_raw: &str) -> Option<LineChange> {
+    let old = trimmed(old_raw);
+    let new = trimmed(new_raw);
     if old == new || old.starts_with(&new) {
         return None;
     }
     if let Some(added) = new.strip_prefix(&old) {
+        let uncertain = added
+            .chars()
+            .zip(old_raw[old.len()..].chars())
+            .take_while(|&(gained, had)| gained == had && gained.is_whitespace())
+            .map(|(gained, _)| gained.len_utf8())
+            .sum();
         return Some(LineChange {
             text: added.to_owned(),
             line: new.clone(),
             appended: true,
+            uncertain,
         });
     }
     let differs = old
@@ -131,6 +142,7 @@ pub fn line_change(old: &str, new: &str) -> Option<LineChange> {
         text: new[word..].to_owned(),
         line: new.clone(),
         appended: false,
+        uncertain: 0,
     })
 }
 

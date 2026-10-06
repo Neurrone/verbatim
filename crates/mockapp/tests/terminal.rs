@@ -205,6 +205,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
             text: " ls".to_owned(),
             line: "ready> ls".to_owned(),
             appended: true,
+            uncertain: 0,
         })
     );
 

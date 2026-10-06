@@ -85,6 +85,7 @@ fn appended(text: &str, line: &str) -> LineChange {
         text: text.to_owned(),
         line: line.to_owned(),
         appended: true,
+        uncertain: 0,
     }
 }
 
@@ -256,6 +257,7 @@ fn a_line_rewritten_while_waiting_is_spoken_once_as_it_now_is() {
                     text: format!("{percent}%"),
                     line: format!("progress {percent}%"),
                     appended: false,
+                    uncertain: 0,
                 }),
                 None,
                 Vec::new(),
@@ -275,6 +277,7 @@ fn a_line_rewritten_while_waiting_is_spoken_once_as_it_now_is() {
                 text: "100%".to_owned(),
                 line: "progress 100%".to_owned(),
                 appended: false,
+                uncertain: 0,
             }),
             None,
             Vec::new(),
@@ -314,6 +317,32 @@ fn typing_is_echoed_when_the_terminal_shows_it_and_not_spoken_again() {
         ),
     );
     assert_eq!(playback.play_all(&mut state), ["ass"]);
+}
+
+#[test]
+fn typing_after_a_prompt_s_trailing_space_is_echoed() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // The prompt "ready> " was read as "ready>": its space comes back with
+    // the typing, uncertain, and is not taken for something else shown.
+    playback.feed(&mut state, &typed("e"));
+    let mut change = appended(" e", "ready> e");
+    change.uncertain = 1;
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(change), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), ["e"]);
+    // Typed white space is matched as typed, padding or not.
+    playback.feed(&mut state, &typed(" "));
+    playback.feed(&mut state, &typed("x"));
+    let mut change = appended(" x", "ready> e x");
+    change.uncertain = 1;
+    playback.feed(
+        &mut state,
+        &output_from(TERMINAL, Some(change), None, Vec::new()),
+    );
+    assert_eq!(playback.play_all(&mut state), [" ", "x"]);
 }
 
 #[test]

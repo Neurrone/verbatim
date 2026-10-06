@@ -466,7 +466,12 @@ is ignored.
   echoed is taken as the typing showing: the typing is echoed and the
   rewrite is not spoken. With "speak passwords" on, typing is echoed at
   once and remembered until the terminal shows it, so it is not spoken
-  twice. Enter forgets both.
+  twice. Enter forgets both. White space at the start of what the line
+  gained that the line may already have had (`LineChange::uncertain`: a
+  prompt's trailing space, which the outpost cannot tell from padding) is
+  matched only as far as the typing itself starts with white space, so
+  typing after "ready> " is echoed, and a typed space is still matched as
+  typed.
 - Anything that cuts speech off drops the output waiting and handed to
   speech: `Input::SpeechCancelled` (a key), and any step whose effects stop
   speech or speak an interrupting utterance (`reduce` checks every step's

@@ -175,7 +175,8 @@ fn lines(texts: &[&str]) -> Vec<String> {
 
 #[test]
 fn appended_lines_are_read_and_a_prompt_that_grew_speaks_what_it_gained() {
-    let mut reader = Reader::new(Sim::new(100, &["welcome", "ready>"]));
+    // The prompt's own trailing space reads as padding: it is uncertain.
+    let mut reader = Reader::new(Sim::new(100, &["welcome", "ready> "]));
     reader.sim.rewrite_last("ready> echo hi");
     let output = reader.read();
     assert_eq!(
@@ -184,6 +185,7 @@ fn appended_lines_are_read_and_a_prompt_that_grew_speaks_what_it_gained() {
             text: " echo hi".to_owned(),
             line: "ready> echo hi".to_owned(),
             appended: true,
+            uncertain: 1,
         })
     );
     assert_eq!(output.lines, Vec::<String>::new());
@@ -220,6 +222,7 @@ fn a_line_rewritten_in_place_speaks_from_the_word_that_changed() {
             text: "50% done".to_owned(),
             line: "progress 50% done".to_owned(),
             appended: false,
+            uncertain: 0,
         })
     );
     // Backspace shortens the line: nothing is spoken for it.
