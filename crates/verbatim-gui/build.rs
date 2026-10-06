@@ -32,6 +32,13 @@ fn main() {
         // the build the same.
         .define("NDEBUG", None)
         .flag("/utf-8")
+        // Standard C++ exceptions, as the libraries were built with. Without
+        // it `_CPPUNWIND` is undefined, the headers turn wxUSE_EXCEPTIONS
+        // off, and wxApp's exception virtuals vanish from this side's view
+        // of its vtable: the library's first virtual call through the
+        // application object (CreateTraits, in wxEntryStart) then lands on
+        // the wrong function and crashes.
+        .flag("/EHsc")
         .compile("verbatim-gui-cpp");
 
     println!("cargo:rustc-link-search=native={}", wx.lib.display());
