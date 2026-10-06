@@ -65,7 +65,7 @@ fn press(scenario: &mut Scenario, keys: &[&str], heard: &[&str]) {
 }
 
 /// Tabs until a control whose announcement contains every one of `parts`
-/// has the focus.
+/// has the focus, hearing each control's speech out before the next Tab.
 fn tab_to(scenario: &mut Scenario, parts: &[&str]) {
     let mut heard = String::new();
     for _ in 0..MAX_TABS {
@@ -73,6 +73,10 @@ fn tab_to(scenario: &mut Scenario, parts: &[&str]) {
         heard = scenario
             .speech()
             .expect_change_capturing(&heard, STEP_TIMEOUT);
+        // A control can say more after its name, such as an edit field's
+        // text, as its own utterance; hear it out before moving on, so the
+        // next Tab does not cut it off.
+        scenario.speech().wait_until_quiet(STEP_TIMEOUT);
         if parts.iter().all(|part| heard.contains(part)) {
             return;
         }
