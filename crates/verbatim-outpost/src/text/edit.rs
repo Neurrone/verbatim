@@ -227,15 +227,16 @@ impl TextSource for EditText {
         unit: TextUnit,
         max_units: usize,
     ) -> TextResult<Option<Unit<u32>>> {
-        let Some((start, end)) = self.span(*at, unit)? else {
-            return Ok(None);
-        };
-        let text = if matches!(unit, TextUnit::Line | TextUnit::Paragraph) {
-            let line = self.line(start)?;
-            self.line_text(line, max_units.saturating_add(1))?
+        let (start, end, text) = if matches!(unit, TextUnit::Line | TextUnit::Paragraph) {
+            let line = self.line(*at)?;
+            let text = self.line_text(line, max_units.saturating_add(1))?;
+            (line.start, line.end, text)
         } else {
+            let Some((start, end)) = self.span(*at, unit)? else {
+                return Ok(None);
+            };
             let cut = end.min(start.saturating_add(to_u32(max_units.saturating_add(1))));
-            self.control.text_range(start, cut)?
+            (start, end, self.control.text_range(start, cut)?)
         };
         let truncated = text.len() > max_units;
         let mut text = text;
