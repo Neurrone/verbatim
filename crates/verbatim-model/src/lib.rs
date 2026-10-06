@@ -97,8 +97,10 @@ impl fmt::Display for TraceId {
 /// unknown, a race described in `docs/roadmap.md`'s M3 section.
 /// `verbatim-gui` sets this property (`SetPropW`) on the frame at creation
 /// and clears it (`RemovePropW`) at shutdown; every outpost checks it
-/// (`GetPropW`) before emitting any `FocusChanged` — the MSAA event path,
-/// the UIA focus callback, and the synthetic focus query alike.
+/// (`GetPropW`), and that the window belongs to Core's process, before
+/// emitting any `FocusChanged` — the MSAA event path, the UIA focus
+/// callback, and the synthetic focus query alike. The owner check keeps
+/// another application from hiding its own windows by setting the property.
 pub const HIDDEN_FRAME_WINDOW_PROP: &str = "VerbatimHiddenFrame";
 
 /// Names one outpost process incarnation.

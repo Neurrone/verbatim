@@ -3,8 +3,12 @@
 //! any thread and cannot block on a hung application.
 
 use std::ffi::c_void;
+use std::sync::OnceLock;
 
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW, GetWindowThreadProcessId,
@@ -33,14 +37,54 @@ fn hwnd(handle: isize) -> HWND {
     HWND(handle as *mut c_void)
 }
 
-/// Whether `handle` carries Core's hidden-main-frame marker property
-/// (decision D9; see [`verbatim_model::HIDDEN_FRAME_WINDOW_PROP`]).
+/// Whether `handle` is Core's hidden main frame: it carries the marker
+/// property (decision D9; see [`verbatim_model::HIDDEN_FRAME_WINDOW_PROP`])
+/// and belongs to Core's process. Any process can set the property on its
+/// own windows, so the owner is checked too; Core is this outpost's parent,
+/// which launched it.
 pub(super) fn window_is_hidden_frame(handle: isize) -> bool {
     let name = HSTRING::from(HIDDEN_FRAME_WINDOW_PROP);
     // SAFETY: GetPropW reads a window property by name; an invalid or
     // property-less window yields a null handle.
     let value = unsafe { GetPropW(hwnd(handle), &name) };
-    !value.0.is_null()
+    !value.0.is_null() && core_pid().is_some_and(|core| window_owner(handle).1 == core)
+}
+
+/// Core's process id: this process's parent, read once. `None` when it
+/// cannot be read.
+fn core_pid() -> Option<u32> {
+    static CORE: OnceLock<Option<u32>> = OnceLock::new();
+    *CORE.get_or_init(parent_pid)
+}
+
+/// This process's parent's id, from a snapshot of the running processes.
+/// Core's outposts end with Core (they run in its kill-on-close job), so
+/// the id cannot have been reused while this process runs under Core.
+fn parent_pid() -> Option<u32> {
+    // SAFETY: a process snapshot has no preconditions; the handle is owned
+    // here and closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ok()?;
+    let own = std::process::id();
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(0),
+        ..Default::default()
+    };
+    let mut parent = None;
+    // SAFETY: `snapshot` is the valid snapshot just taken; `entry` has its
+    // `dwSize` set, as the call requires.
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while has_entry {
+        if entry.th32ProcessID == own {
+            parent = Some(entry.th32ParentProcessID);
+            break;
+        }
+        // SAFETY: as above; the call overwrites `entry` with the next
+        // process.
+        has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the snapshot handle is owned here and closed once.
+    let _ = unsafe { CloseHandle(snapshot) };
+    parent
 }
 
 /// Whether `handle` is Core's hidden main frame or a child window of it. The
