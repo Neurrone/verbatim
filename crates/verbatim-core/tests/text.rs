@@ -278,6 +278,15 @@ fn a_word_of_one_character_is_spoken_as_that_character() {
 }
 
 #[test]
+fn the_review_cursor_speaks_a_word_of_one_character_by_its_name() {
+    let mut state = editing("the river bank.\r\n", 11);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
+    assert_eq!(spoken(&effects), vec![character(".")]);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentWord, 0));
+    assert_eq!(spoken(&effects), vec![character(".")]);
+}
+
+#[test]
 fn shift_movement_speaks_what_was_selected_and_unselected() {
     let mut state = editing("hello, world\n", 5);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));

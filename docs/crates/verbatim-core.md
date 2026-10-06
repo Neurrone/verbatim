@@ -386,7 +386,8 @@ pressed twice gives its description and three times its code; the current
 line or word pressed twice is spelled and three times spelled with
 descriptions; start and end of line speak the character there; previous
 and next word cross lines, landing on the next line's first word or the
-previous line's last; a unit the text does not have says "Not supported in
+previous line's last; a word of one character is spoken by its name, as
+the caret's word is; a unit the text does not have says "Not supported in
 this document". The column difference from NVDA (`docs/parity.md`, "Review
 cursor columns"): moving to another line keeps the column, a cell column in
 a terminal (where a column past a row's text is a blank cell and the cursor

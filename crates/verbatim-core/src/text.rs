@@ -156,6 +156,20 @@ pub(crate) fn text_segments(text: &str, language: Option<&str>) -> Vec<Utterance
     }
 }
 
+/// The segments for a word read on its own: its text, or, for a word that
+/// is a single character (a full stop a provider counts as a word of its
+/// own), that character by its name, as NVDA speaks it
+/// (`docs/nvda/speech.md`, "A word of one character"): spoken as text, a
+/// punctuation mark would say nothing.
+pub(crate) fn word_segments(word: &str, language: Option<&str>) -> Vec<UtteranceSegment> {
+    let word = word.trim();
+    if verbatim_text::graphemes(word).len() == 1 {
+        character_segments(Some(word), language)
+    } else {
+        text_segments(word, language)
+    }
+}
+
 /// The segments for one character spoken on its own: by its name, raised
 /// in pitch when a capital (the presentation stage decides both), or
 /// "blank" for none or a line break.
