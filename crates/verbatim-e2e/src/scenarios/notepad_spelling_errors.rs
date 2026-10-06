@@ -11,6 +11,14 @@
 //! the first step reads the first line until the marks are there; every
 //! other step waits for its speech to be heard in full before the next key,
 //! as a listening user would, and there is no other wait.
+//!
+//! This is a demonstration (`registry::DEMONSTRATIONS`), run only through
+//! `cargo xtask demo notepad_spelling_errors`, not part of the suite:
+//! GitHub's Windows Server runners have classic Notepad, a Win32 edit
+//! control with no spell checker. The suite's
+//! [`spelling_errors`](super::spelling_errors) hears the same speech from
+//! `mockapp`'s scripted text, which holds everywhere; this keeps the real
+//! spell checker's marks, read from a real provider, demonstrable.
 
 use std::io;
 use std::time::{Duration, Instant};

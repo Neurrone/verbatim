@@ -384,13 +384,14 @@ who opens the VM's console.
 The suite always runs against a fixed, generated configuration, never
 whatever `settings.toml` a developer's own manual runs left behind.
 Concretely, in this runner-direct mode, `Scenario::launch` first runs
-`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host`,
+`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host -p mockapp`,
 once per test binary, so
 a run can never stage an executable older than the source under test
 (`cargo test -p verbatim-e2e` alone builds only this crate and its
 libraries, not Verbatim's executables). That build is a no-op when
 nothing changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`,
-`verbatim-synth-host.exe`, and the `espeak-ng-data` and `sounds`
+`verbatim-synth-host.exe`, `mockapp.exe` (the scripted application the
+spelling errors scenario reads), and the `espeak-ng-data` and `sounds`
 directories into
 `target/e2e-stage` under the workspace root (skipping a copy when the
 destination already matches byte-for-byte, file by file for the

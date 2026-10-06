@@ -35,6 +35,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             for def in registry::SCENARIOS {
                 eprintln!("  {}", def.name);
             }
+            eprintln!("demonstrations, which only a demo runs:");
+            for def in registry::DEMONSTRATIONS {
+                eprintln!("  {}", def.name);
+            }
             return ExitCode::from(2);
         }
     };
@@ -69,7 +73,7 @@ fn parse(args: &[String]) -> Result<(String, String), String> {
         }
     }
     let scenario = scenario.ok_or("name a scenario")?;
-    if !registry::SCENARIOS.iter().any(|def| def.name == scenario) {
+    if registry::find(&scenario).is_none() {
         return Err(format!("no scenario is named {scenario}"));
     }
     let name = name.unwrap_or_else(|| scenario.replace('_', "-"));
@@ -125,6 +129,8 @@ fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
             scenario,
             "--",
             "--exact",
+            // A demonstration's test is ignored, so the suite never runs it.
+            "--include-ignored",
             "--test-threads=1",
         ])
         .env("VERBATIM_E2E_ENDPOINT", format!("127.0.0.1:{AGENT_PORT}"))

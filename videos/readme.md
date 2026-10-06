@@ -18,7 +18,10 @@ This builds and starts an agent of its own, runs the scenario through
 the end-to-end harness while recording it, and saves the result as
 `videos/<name>.mp4`. The name defaults to the scenario's, with hyphens
 for underscores; `cargo xtask demo` with no arguments lists the
-scenarios. A scenario that fails leaves this folder unchanged. Like any
+scenarios, and then the demonstrations: scenarios of something only some
+machines have, which the suite leaves out so that it runs the same
+everywhere, such as `notepad_spelling_errors`, Windows 11 Notepad's own
+spell checker. A scenario that fails leaves this folder unchanged. Like any
 local end-to-end run, it takes over the desktop while it runs
 (`docs/tooling.md`).
 

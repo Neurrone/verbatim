@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use verbatim_model::{Role, StateSet};
+use verbatim_model::{Role, State, StateSet};
 
 use crate::fixture::FixtureNode;
 
@@ -75,7 +75,9 @@ pub(crate) type SharedTree = Arc<Mutex<Tree>>;
 
 impl Tree {
     /// Flattens a parsed fixture tree into the arena, depth-first, so the
-    /// root is always index 0.
+    /// root is always index 0. The focus starts on the first node in the
+    /// `focused` state, if any, as an application's window opens with its
+    /// focus already on a control.
     #[must_use]
     pub(crate) fn build(root: FixtureNode) -> Self {
         let mut nodes = Vec::new();
@@ -87,10 +89,13 @@ impl Tree {
         for (index, controlled) in controllers {
             nodes[index].controller_for = by_fixture_id.get(&controlled).copied();
         }
+        let focused = nodes
+            .iter()
+            .position(|node| node.states.contains(State::Focused));
         Self {
             nodes,
             by_fixture_id,
-            focused: None,
+            focused,
             selected: None,
         }
     }

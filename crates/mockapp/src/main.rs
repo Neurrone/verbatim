@@ -42,6 +42,10 @@ struct Cli {
     /// The host window's title.
     #[arg(long, default_value = "mockapp")]
     title: String,
+    /// Shows the window, for the end-to-end suite, which drives it with
+    /// real keys; the cross-process tests leave it hidden.
+    #[arg(long)]
+    show: bool,
 }
 
 /// The `--backend` values `mockapp` accepts, translated to
@@ -72,6 +76,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         BackendArg::Uia => Backend::Uia,
         BackendArg::Msaa => Backend::Msaa,
     };
-    window::run(backend, tree, &cli.title)?;
+    window::run(backend, tree, &cli.title, cli.show)?;
     Ok(())
 }

@@ -95,9 +95,9 @@ use crate::scenarios::{
     explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
     notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor, notepad_say_all,
     notepad_spelling_errors, object_navigation_in_settings, rapid_tabbing_in_settings,
-    settings_dialog_keys, settings_system_page, start_menu_search, switch_to_onecore,
-    synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_flood,
-    terminal_review_grid, terminal_settings_page, theme_panel,
+    settings_dialog_keys, settings_system_page, spelling_errors, start_menu_search,
+    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
+    terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -346,13 +346,13 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: notepad_say_all::teardown,
     },
     ScenarioDef {
-        name: "notepad_spelling_errors",
+        name: "spelling_errors",
         group: Group::Text,
-        target_images: &[],
+        target_images: &["mockapp.exe"],
         settings: None,
-        setup: notepad_spelling_errors::setup,
-        body: notepad_spelling_errors::body,
-        teardown: notepad_spelling_errors::teardown,
+        setup: spelling_errors::setup,
+        body: spelling_errors::body,
+        teardown: spelling_errors::teardown,
     },
     ScenarioDef {
         name: "theme_panel",
@@ -428,10 +428,31 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
 ];
 
-/// Looks up a scenario by [`ScenarioDef::name`].
+/// Demonstrations: scenarios of something only some machines have, run
+/// only on request, through `cargo xtask demo` (`videos/readme.md`). The
+/// suite is the same everywhere, so these are never part of it: their
+/// `#[test]` wrappers are ignored, and `cargo xtask vm test` selects only
+/// from [`SCENARIOS`]. `notepad_spelling_errors` reads Windows 11
+/// Notepad's own spell checker, which GitHub's Windows Server runners do
+/// not have; the suite's `spelling_errors` reads the same speech from
+/// `mockapp`'s scripted text instead.
+pub const DEMONSTRATIONS: &[ScenarioDef] = &[ScenarioDef {
+    name: "notepad_spelling_errors",
+    group: Group::Text,
+    target_images: &[],
+    settings: None,
+    setup: notepad_spelling_errors::setup,
+    body: notepad_spelling_errors::body,
+    teardown: notepad_spelling_errors::teardown,
+}];
+
+/// Looks up a scenario or a demonstration by [`ScenarioDef::name`].
 #[must_use]
 pub fn find(name: &str) -> Option<&'static ScenarioDef> {
-    SCENARIOS.iter().find(|def| def.name == name)
+    SCENARIOS
+        .iter()
+        .chain(DEMONSTRATIONS)
+        .find(|def| def.name == name)
 }
 
 /// The deduplicated union of every registered scenario's

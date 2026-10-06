@@ -32,10 +32,10 @@ Public API:
 - `Scenario` — the lifecycle owner for one live, agent-driven Verbatim run:
   a guard struct, not a manual-cleanup checklist. In runner-direct mode
   `Scenario::launch` first builds `verbatim-app`, `verbatim-outpost`,
-  and `verbatim-synth-host` (once per test binary, skipped when
+  `verbatim-synth-host`, and `mockapp` (once per test binary, skipped when
   `VERBATIM_E2E_VERBATIM_EXE` names a build to stage instead), then
   copies `verbatim.exe`, `verbatim-outpost.exe`,
-  `verbatim-synth-host.exe`, eSpeak NG's `espeak-ng-data` directory, and
+  `verbatim-synth-host.exe`, `mockapp.exe`, eSpeak NG's `espeak-ng-data` directory, and
   the default theme's `sounds` directory
   into `target/e2e-stage` (staging fails if either directory is
   missing; building `verbatim-synth-host` creates the first and building
@@ -188,18 +188,23 @@ Public API:
   teardown: nothing, a target's pid, a window title, or a `Window` (the
   launch's pid, the window's title, and the folder of the files it uses),
   as the terminal scenarios open. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario. The Speech group holds
+  registered scenario, the suite. `DEMONSTRATIONS` lists the scenarios of
+  something only some machines have, run only through `cargo xtask demo`:
+  their `#[test]` wrappers are ignored, and `cargo xtask vm test` selects
+  only from `SCENARIOS`, so the suite is the same everywhere. It holds
+  `notepad_spelling_errors`. The Speech group holds
   `menu_and_settings_dialog`, `rapid_tabbing_in_settings`,
   `switch_to_onecore`, and `synth_host_crash_recovery`; the Shell group
   holds `notepad_and_verbatim_menu` and `start_menu_search`; the
   Navigation group holds `object_navigation_in_settings` and
   `system_information_tree`; the Text group (milestone M4) holds
   `notepad_editing`, `notepad_review_cursor`, `notepad_say_all`,
-  `notepad_spelling_errors`, `windows_terminal_commands`, `conhost_commands`,
+  `spelling_errors`, `windows_terminal_commands`, `conhost_commands`,
   `terminal_spoken_password`, `terminal_flood`, and
   `terminal_review_grid`. Each
   is implemented in
-  `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
+  `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name,
+  among the scenarios and the demonstrations;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
   scenario) into a list, erroring
@@ -304,16 +309,23 @@ Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
 `notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
 the second line plays, and checks that the caret was left on that line and
 that the third was never heard.
-`notepad_spelling_errors` (milestone M4 item 7) opens a line with two
-misspelt words and checks what the default theme reports as the caret
-moves, each utterance exactly, the error sound's marker included: the
-line with "spelling error" before each misspelt word, a character entering
-an error and the next one inside it saying only itself, a word leaving an
-error with "out of spelling error", and a line without errors saying
-nothing about them. Windows 11 Notepad's spell checker marks a document a
-moment after it opens, so the first line is read again with Control+Home,
-each reading heard in full, until its errors are marked, within 30
-seconds.
+`spelling_errors` (milestone M4 item 7) opens `mockapp`'s scripted text,
+a line with two misspelt words, marked with UIA's spelling error
+annotation, and checks what the default theme reports as the caret moves,
+each utterance exactly, the error sound's marker included: the line with
+"spelling error" before each misspelt word, a character entering an error
+and the next one inside it saying only itself, a word leaving an error
+with "out of spelling error", and a line without errors saying nothing
+about them. `mockapp` is staged and launched from the run's directory with
+a fixture the scenario writes there, and moves its caret with the keys the
+scenario presses. It stands in for a real control because none with
+spelling errors Verbatim reads is on both Windows 11 and GitHub's Windows
+Server runners, whose Notepad is classic Notepad, with no spell checker;
+the scenario's doc comment gives the controls considered. The
+`notepad_spelling_errors` demonstration walks the same steps in Windows 11
+Notepad, whose spell checker marks a document a moment after it opens, so
+its first line is read again with Control+Home, each reading heard in
+full, until its errors are marked, within 30 seconds.
 
 The terminal scenarios, also in the Text group, share a setup
 (`scenarios/terminal.rs`). Each opens a window of its own titled with
