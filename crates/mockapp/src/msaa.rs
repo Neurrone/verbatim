@@ -283,15 +283,11 @@ mod handler {
     /// node's direct children (the "ask the parent about child N" shortcut
     /// MSAA allows without a separate `get_accChild` round trip).
     fn resolve_child(tree: &SharedTree, index: usize, child: &VARIANT) -> Option<usize> {
-        // SAFETY: `child` is a caller-supplied VARIANT, as every IAccessible
-        // accessor receives; only its type and, if VT_I4, integer field are
-        // read.
-        let child_id = unsafe {
-            if child.Anonymous.Anonymous.vt == VT_I4 {
-                child.Anonymous.Anonymous.Anonymous.lVal
-            } else {
-                0
-            }
+        // Only a VT_I4 names a child.
+        let child_id = if child.vt() == VT_I4 {
+            i32::try_from(child).unwrap_or(0)
+        } else {
+            0
         };
         if child_id == 0 {
             return Some(index);
@@ -368,17 +364,13 @@ mod handler {
 
         fn get_accChild(&self, varchild: &VARIANT) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccChild);
-            // SAFETY: `varchild` is caller-supplied, as always; only its type
-            // and, if VT_I4, integer field are read.
-            let child_id = unsafe {
-                if varchild.Anonymous.Anonymous.vt == VT_I4 {
-                    varchild.Anonymous.Anonymous.Anonymous.lVal
-                } else {
-                    return Err(Error::from_hresult(
-                        windows::Win32::Foundation::E_INVALIDARG,
-                    ));
-                }
-            };
+            // Only a VT_I4 names a child.
+            if varchild.vt() != VT_I4 {
+                return Err(Error::from_hresult(
+                    windows::Win32::Foundation::E_INVALIDARG,
+                ));
+            }
+            let child_id = i32::try_from(varchild)?;
             if child_id == 0 {
                 return Err(Error::from_hresult(
                     windows::Win32::Foundation::E_INVALIDARG,

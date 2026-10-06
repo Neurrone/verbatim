@@ -89,46 +89,55 @@ fn nudge_foreground_lock() {
 /// process.
 pub(crate) fn force_foreground(hwnd: HWND) {
     nudge_foreground_lock();
-    // SAFETY: plain Win32 window calls on a handle of this process's own
-    // frame; a handle that has gone makes them fail, which is ignored.
-    unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = BringWindowToTop(hwnd);
-        if SetForegroundWindow(hwnd).as_bool() {
-            tracing::info!("popup foreground taken directly");
-            return;
-        }
+    // Plain Win32 window calls on a window this process created (the
+    // hidden frame or one of its dialogs), its handle read fresh by the
+    // caller; a handle that has gone makes them fail, which is ignored.
+    // SAFETY: as above.
+    let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+    // SAFETY: as above.
+    let _ = unsafe { BringWindowToTop(hwnd) };
+    // SAFETY: as above.
+    if unsafe { SetForegroundWindow(hwnd) }.as_bool() {
+        tracing::info!("popup foreground taken directly");
+        return;
+    }
 
-        let foreground = GetForegroundWindow();
-        if foreground.is_invalid() {
-            tracing::warn!(
-                "popup foreground not taken: SetForegroundWindow failed and no foreground window exists to attach to"
-            );
-            return;
-        }
-        let foreground_thread = GetWindowThreadProcessId(foreground, None);
-        let our_thread = GetCurrentThreadId();
-        if foreground_thread == 0 || foreground_thread == our_thread {
-            tracing::warn!(
-                foreground_thread,
-                "popup foreground not taken: SetForegroundWindow failed with no attachable foreground thread"
-            );
-            return;
-        }
+    // SAFETY: no preconditions.
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_invalid() {
+        tracing::warn!(
+            "popup foreground not taken: SetForegroundWindow failed and no foreground window exists to attach to"
+        );
+        return;
+    }
+    // SAFETY: tolerates any handle, answering 0 for an invalid one.
+    let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, None) };
+    // SAFETY: no preconditions.
+    let our_thread = unsafe { GetCurrentThreadId() };
+    if foreground_thread == 0 || foreground_thread == our_thread {
+        tracing::warn!(
+            foreground_thread,
+            "popup foreground not taken: SetForegroundWindow failed with no attachable foreground thread"
+        );
+        return;
+    }
 
-        if AttachThreadInput(our_thread, foreground_thread, true).as_bool() {
-            let taken = SetForegroundWindow(hwnd).as_bool();
-            let _ = BringWindowToTop(hwnd);
-            let _ = AttachThreadInput(our_thread, foreground_thread, false);
-            if taken {
-                tracing::info!("popup foreground taken via input-queue attachment");
-            } else {
-                tracing::warn!(
-                    "popup foreground not taken: SetForegroundWindow failed even attached to the foreground thread; popup may not be readable"
-                );
-            }
+    // SAFETY: two thread ids; the attachment is undone just below.
+    if unsafe { AttachThreadInput(our_thread, foreground_thread, true) }.as_bool() {
+        // SAFETY: as for the window calls above.
+        let taken = unsafe { SetForegroundWindow(hwnd) }.as_bool();
+        // SAFETY: as above.
+        let _ = unsafe { BringWindowToTop(hwnd) };
+        // SAFETY: undoes the attachment made above.
+        let _ = unsafe { AttachThreadInput(our_thread, foreground_thread, false) };
+        if taken {
+            tracing::info!("popup foreground taken via input-queue attachment");
         } else {
-            tracing::warn!("could not attach to the foreground thread; popup may not be readable");
+            tracing::warn!(
+                "popup foreground not taken: SetForegroundWindow failed even attached to the foreground thread; popup may not be readable"
+            );
         }
+    } else {
+        tracing::warn!("could not attach to the foreground thread; popup may not be readable");
     }
 }

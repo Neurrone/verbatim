@@ -106,8 +106,10 @@ pub fn run(tests: &[(&'static str, fn())]) -> ! {
 fn end(code: u32) -> ! {
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
+    // SAFETY: the pseudo-handle of this process; no preconditions.
+    let process = unsafe { GetCurrentProcess() };
     // SAFETY: ends this process; nothing runs after it.
-    let _ = unsafe { TerminateProcess(GetCurrentProcess(), code) };
+    let _ = unsafe { TerminateProcess(process, code) };
     // TerminateProcess on the current process does not return.
     std::process::abort();
 }

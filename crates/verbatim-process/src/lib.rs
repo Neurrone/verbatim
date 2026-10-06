@@ -282,8 +282,8 @@ fn spawn_in_job(
             .map_err(to_io)?;
     }
     let result = (|| {
-        // SAFETY: `inherited` and `jobs` outlive the CreateProcessW call
-        // that reads them.
+        // SAFETY: `attributes` is initialized; `inherited` outlives the
+        // CreateProcessW call that reads it, and its size is given.
         unsafe {
             UpdateProcThreadAttribute(
                 attributes,
@@ -294,7 +294,10 @@ fn spawn_in_job(
                 None,
                 None,
             )
-            .map_err(to_io)?;
+        }
+        .map_err(to_io)?;
+        // SAFETY: as above, for `jobs`, one handle.
+        unsafe {
             UpdateProcThreadAttribute(
                 attributes,
                 0,
@@ -304,8 +307,8 @@ fn spawn_in_job(
                 None,
                 None,
             )
-            .map_err(to_io)?;
         }
+        .map_err(to_io)?;
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(0);
         startup.lpAttributeList = attributes;

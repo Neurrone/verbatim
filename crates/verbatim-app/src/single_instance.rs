@@ -54,12 +54,11 @@ pub struct InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
-        // SAFETY: `mutex` is the handle CreateMutexW returned and has not
-        // been closed elsewhere.
-        unsafe {
-            let _ = windows::Win32::System::Threading::ReleaseMutex(self.mutex);
-            let _ = CloseHandle(self.mutex);
-        }
+        // SAFETY: `mutex` is the handle CreateMutexW returned, owned by
+        // this thread (the guard is not `Send`), and not closed yet.
+        let _ = unsafe { windows::Win32::System::Threading::ReleaseMutex(self.mutex) };
+        // SAFETY: as above; closed once, here.
+        let _ = unsafe { CloseHandle(self.mutex) };
     }
 }
 
@@ -73,25 +72,25 @@ pub fn acquire_replacing() -> io::Result<InstanceGuard> {
     replace_running_instance();
     allow_quit_across_integrity_levels();
 
-    // SAFETY: standard mutex creation and wait; the handle is owned by the
-    // returned guard.
-    unsafe {
-        let mutex = CreateMutexW(None, false, MUTEX_NAME)
-            .map_err(|error| io::Error::other(format!("creating startup mutex: {error}")))?;
-        let wait = WaitForSingleObject(mutex, MUTEX_WAIT_MS);
-        if wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED {
-            // WAIT_ABANDONED means the previous instance died without
-            // releasing; ownership still transfers to us.
-            if wait == WAIT_ABANDONED {
-                tracing::warn!("previous instance abandoned the startup mutex (crash?)");
-            }
-            Ok(InstanceGuard { mutex })
-        } else {
-            let _ = CloseHandle(mutex);
-            Err(io::Error::other(
-                "another Verbatim instance is still running and did not exit in time",
-            ))
+    // SAFETY: a constant name and default security; the handle is owned
+    // by the returned guard, or closed below.
+    let mutex = unsafe { CreateMutexW(None, false, MUTEX_NAME) }
+        .map_err(|error| io::Error::other(format!("creating startup mutex: {error}")))?;
+    // SAFETY: waiting on the mutex handle just created.
+    let wait = unsafe { WaitForSingleObject(mutex, MUTEX_WAIT_MS) };
+    if wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED {
+        // WAIT_ABANDONED means the previous instance died without
+        // releasing; ownership still transfers to us.
+        if wait == WAIT_ABANDONED {
+            tracing::warn!("previous instance abandoned the startup mutex (crash?)");
         }
+        Ok(InstanceGuard { mutex })
+    } else {
+        // SAFETY: the handle created above, not returned, closed once.
+        let _ = unsafe { CloseHandle(mutex) };
+        Err(io::Error::other(
+            "another Verbatim instance is still running and did not exit in time",
+        ))
     }
 }
 
@@ -156,20 +155,24 @@ fn shut_down_if_verbatim(hwnd: HWND, own_name: &std::ffi::OsStr) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case(own_name));
     if is_verbatim {
         tracing::info!(old_pid = pid, "replacing running Verbatim instance");
-        // SAFETY: posting to a window of the process just identified, and
-        // waiting on and terminating that process through its open handle.
-        unsafe {
-            let _ = PostMessageW(
+        // SAFETY: a message with no pointer parameters, posted to a window
+        // of the process just identified.
+        let _ = unsafe {
+            PostMessageW(
                 Some(hwnd),
                 WM_QUIT,
                 WPARAM(0),
                 windows::Win32::Foundation::LPARAM(0),
-            );
-            if WaitForSingleObject(process, GRACEFUL_EXIT_MS) != WAIT_OBJECT_0 {
-                tracing::warn!(old_pid = pid, "old instance ignored WM_QUIT; terminating");
-                let _ = TerminateProcess(process, 1);
-                let _ = WaitForSingleObject(process, TERMINATE_WAIT_MS);
-            }
+            )
+        };
+        // SAFETY: waiting on the process through its open handle.
+        if unsafe { WaitForSingleObject(process, GRACEFUL_EXIT_MS) } != WAIT_OBJECT_0 {
+            tracing::warn!(old_pid = pid, "old instance ignored WM_QUIT; terminating");
+            // SAFETY: the open handle, with terminate access, of the process
+            // just identified as a Verbatim.
+            let _ = unsafe { TerminateProcess(process, 1) };
+            // SAFETY: as for the wait above.
+            let _ = unsafe { WaitForSingleObject(process, TERMINATE_WAIT_MS) };
         }
     }
     // SAFETY: `process` is the handle opened above, closed once.

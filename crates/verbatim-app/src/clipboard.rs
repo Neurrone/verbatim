@@ -94,29 +94,38 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
     utf16.push(0);
     let bytes = std::mem::size_of_val(utf16.as_slice());
 
-    // SAFETY: each call is checked; the global buffer is sized to hold the
-    // whole null-terminated UTF-16 string and is written only within that
-    // size while locked. `HWND(null)` opens the clipboard for this thread
-    // with no owner window, which is valid.
-    unsafe {
-        OpenClipboard(Some(HWND::default())).map_err(|error| format!("OpenClipboard: {error}"))?;
-        // A guard-free early exit would leak the open clipboard; every error
-        // path below closes it before returning.
-        let result = (|| {
-            EmptyClipboard().map_err(|error| format!("EmptyClipboard: {error}"))?;
-            let handle: HGLOBAL =
-                GlobalAlloc(GHND, bytes).map_err(|error| format!("GlobalAlloc: {error}"))?;
-            let destination = GlobalLock(handle);
-            if destination.is_null() {
-                return Err("GlobalLock returned null".to_owned());
-            }
+    // SAFETY: `HWND(null)` opens the clipboard for this thread with no
+    // owner window, which is valid; it is closed below on every path.
+    unsafe { OpenClipboard(Some(HWND::default())) }
+        .map_err(|error| format!("OpenClipboard: {error}"))?;
+    // A guard-free early exit would leak the open clipboard; every error
+    // path below closes it before returning.
+    let result = (|| {
+        // SAFETY: the clipboard is open on this thread.
+        unsafe { EmptyClipboard() }.map_err(|error| format!("EmptyClipboard: {error}"))?;
+        // SAFETY: allocates `bytes` bytes of movable, zeroed global memory.
+        let handle: HGLOBAL =
+            unsafe { GlobalAlloc(GHND, bytes) }.map_err(|error| format!("GlobalAlloc: {error}"))?;
+        // SAFETY: locks the allocation just made, unlocked below.
+        let destination = unsafe { GlobalLock(handle) };
+        if destination.is_null() {
+            return Err("GlobalLock returned null".to_owned());
+        }
+        // SAFETY: the locked allocation holds `bytes` bytes, exactly the
+        // whole null-terminated UTF-16 string, and is aligned for `u16`, as
+        // global memory always is; the source is a separate vector.
+        unsafe {
             std::ptr::copy_nonoverlapping(utf16.as_ptr(), destination.cast::<u16>(), utf16.len());
-            let _ = GlobalUnlock(handle);
-            SetClipboardData(CF_UNICODETEXT.0.into(), Some(HANDLE(handle.0)))
-                .map_err(|error| format!("SetClipboardData: {error}"))?;
-            Ok(())
-        })();
-        let _ = CloseClipboard();
-        result
-    }
+        }
+        // SAFETY: unlocks the lock taken above.
+        let _ = unsafe { GlobalUnlock(handle) };
+        // SAFETY: the clipboard is open and emptied by this thread; on
+        // success it owns the memory.
+        unsafe { SetClipboardData(CF_UNICODETEXT.0.into(), Some(HANDLE(handle.0))) }
+            .map_err(|error| format!("SetClipboardData: {error}"))?;
+        Ok(())
+    })();
+    // SAFETY: closes the clipboard this thread opened above.
+    let _ = unsafe { CloseClipboard() };
+    result
 }

@@ -385,17 +385,12 @@ fn walk(
     );
 
     let cache = uia.base_cache_request().expect("base cache request");
+    // SAFETY: a live client; the condition takes no arguments.
+    let condition = unsafe { uia.client().CreateTrueCondition() }.unwrap();
     // SAFETY: `element` is a live, cached element on this client's own
     // apartment thread.
-    let children = unsafe {
-        element
-            .FindAllBuildCache(
-                TreeScope_Children,
-                &uia.client().CreateTrueCondition().unwrap(),
-                &cache,
-            )
-            .expect("FindAllBuildCache")
-    };
+    let children = unsafe { element.FindAllBuildCache(TreeScope_Children, &condition, &cache) }
+        .expect("FindAllBuildCache");
     let children = verbatim_uia::elements_of(&children);
     let count = children.len();
     // Only the window itself can have host-merged extra children.

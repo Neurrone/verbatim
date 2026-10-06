@@ -455,14 +455,15 @@ impl RawPipe {
 impl Drop for RawPipe {
     fn drop(&mut self) {
         self.disconnect();
-        // SAFETY: `handle`, `read_event`, and `write_event` are all owned
+        // `handle`, `read_event`, and `write_event` are all owned
         // exclusively by this `RawPipe` and not used again after this
         // point.
-        unsafe {
-            let _ = CloseHandle(self.handle);
-            let _ = CloseHandle(self.read_event);
-            let _ = CloseHandle(self.write_event);
-        }
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.handle) };
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.read_event) };
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.write_event) };
     }
 }
 
@@ -663,11 +664,10 @@ fn create_pipe_instance(
     let write_event = match create_event() {
         Ok(event) => event,
         Err(error) => {
-            // SAFETY: neither handle is used again on this path.
-            unsafe {
-                let _ = CloseHandle(handle);
-                let _ = CloseHandle(read_event);
-            }
+            // SAFETY: `handle` is not used again on this path.
+            let _ = unsafe { CloseHandle(handle) };
+            // SAFETY: nor is `read_event`.
+            let _ = unsafe { CloseHandle(read_event) };
             return Err(error);
         }
     };

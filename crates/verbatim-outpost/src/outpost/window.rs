@@ -139,12 +139,9 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
     let window = hwnd(handle);
     // SAFETY: GetAncestor tolerates any handle, returning null for an
     // invalid one.
-    let (root, root_owner) = unsafe {
-        (
-            GetAncestor(window, GA_ROOT),
-            GetAncestor(window, GA_ROOTOWNER),
-        )
-    };
+    let root = unsafe { GetAncestor(window, GA_ROOT) };
+    // SAFETY: as above.
+    let root_owner = unsafe { GetAncestor(window, GA_ROOTOWNER) };
     let root = if root.0.is_null() { window } else { root };
     let root_owner = if root_owner.0.is_null() {
         root
@@ -158,23 +155,20 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
                 cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
                 ..Default::default()
             };
-            // SAFETY: `info` has cbSize set before the call; IsChild tolerates
-            // any pair of handles.
-            unsafe {
-                GetGUIThreadInfo(0, &raw mut info).is_ok()
-                    && !info.hwndActive.0.is_null()
-                    && (info.hwndActive == window || IsChild(info.hwndActive, window).as_bool())
-            }
+            // SAFETY: `info` has cbSize set before the call.
+            unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok()
+                && !info.hwndActive.0.is_null()
+                && (info.hwndActive == window
+                    // SAFETY: IsChild tolerates any pair of handles.
+                    || unsafe { IsChild(info.hwndActive, window) }.as_bool())
         });
-    // SAFETY: GetForegroundWindow has no preconditions; GetAncestor
-    // tolerates any handle.
-    let in_foreground = unsafe {
-        let foreground = GetForegroundWindow();
-        !foreground.0.is_null()
-            && (root == foreground
-                || root_owner == foreground
-                || root_owner == GetAncestor(foreground, GA_ROOTOWNER))
-    };
+    // SAFETY: GetForegroundWindow has no preconditions.
+    let foreground = unsafe { GetForegroundWindow() };
+    let in_foreground = !foreground.0.is_null()
+        && (root == foreground
+            || root_owner == foreground
+            // SAFETY: GetAncestor tolerates any handle.
+            || root_owner == unsafe { GetAncestor(foreground, GA_ROOTOWNER) });
     WindowFacts {
         top_level: window_handle(root.0 as isize),
         root_owner: window_handle(root_owner.0 as isize),
@@ -234,17 +228,12 @@ pub(super) fn window_text(handle: isize) -> Option<String> {
 /// `GetForegroundWindow()` if it belongs to `target_pid`, else `None`. Always
 /// a genuine top-level window when it returns `Some`.
 pub(super) fn foreground_window_of(target_pid: u32) -> Option<isize> {
-    // SAFETY: GetForegroundWindow and GetWindowThreadProcessId both fail
-    // safely rather than blocking.
-    unsafe {
-        let window = GetForegroundWindow();
-        if window.0.is_null() {
-            return None;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(window, Some(&raw mut pid));
-        (pid == target_pid).then_some(window.0 as isize)
+    // SAFETY: GetForegroundWindow has no preconditions.
+    let window = unsafe { GetForegroundWindow() };
+    if window.0.is_null() {
+        return None;
     }
+    (window_owner(window.0 as isize).1 == target_pid).then_some(window.0 as isize)
 }
 
 /// The target's top-level window for a tree dump: its foreground window,

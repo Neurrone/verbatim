@@ -382,16 +382,21 @@ fn cast_remote<T: Interface>(object: &impl Interface) -> windows::core::Result<T
 /// `VARIANT`s: their type tag always matches the union field they set.
 fn related(value: &VARIANT) -> Related {
     let vt = value.vt();
+    // SAFETY: every `VARIANT` holds the tagged form, not a `DECIMAL`, whose
+    // layout overlaps the tag; `vt` was just read from it.
+    let tagged = unsafe { &value.Anonymous.Anonymous };
     if vt == VT_EMPTY {
         Related::Nothing
     } else if vt == VT_I4 {
         // SAFETY: the tag says the union holds `lVal`.
-        Related::Child(unsafe { value.Anonymous.Anonymous.Anonymous.lVal })
+        Related::Child(unsafe { tagged.Anonymous.lVal })
     } else if vt == VT_DISPATCH {
         // SAFETY: the tag says the union holds `pdispVal`, an interface
-        // pointer or null; cloning it adds a reference, and the `VARIANT`'s
-        // own reference is released by its `Drop` (`VariantClear`).
-        Related::Object(unsafe { (*value.Anonymous.Anonymous.Anonymous.pdispVal).clone() })
+        // pointer or null.
+        let dispatch = unsafe { &tagged.Anonymous.pdispVal };
+        // Cloning it adds a reference, and the `VARIANT`'s own reference is
+        // released by its `Drop` (`VariantClear`).
+        Related::Object((**dispatch).clone())
     } else {
         Related::Other
     }

@@ -141,13 +141,14 @@ pub(crate) fn run(backend: Backend, tree: SharedTree, title: &str) -> Result<(),
         .map_err(|error| WindowError(error.to_string()))?;
 
     let mut msg = MSG::default();
-    // SAFETY: standard Win32 message loop; `msg` is written by `GetMessageW`
+    // A standard Win32 message loop; `msg` is written by `GetMessageW`
     // before each dispatch.
-    unsafe {
-        while GetMessageW(&raw mut msg, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&raw const msg);
-            DispatchMessageW(&raw const msg);
-        }
+    // SAFETY: `msg` is a local the call writes; no window filter.
+    while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
+        // SAFETY: `msg` is the message just retrieved.
+        let _ = unsafe { TranslateMessage(&raw const msg) };
+        // SAFETY: as above.
+        unsafe { DispatchMessageW(&raw const msg) };
     }
     Ok(())
 }

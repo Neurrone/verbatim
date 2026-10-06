@@ -64,14 +64,14 @@ fn uia_set_name_raises_a_property_changed_event() {
     let root = uia
         .element_from_handle(hwnd.0 as isize, &cache)
         .expect("element_from_handle");
+    // SAFETY: a live client; the condition takes no arguments.
+    let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
     // SAFETY: `root` was built with the base cache request; `TreeScope_Children`
     // and the true condition are standard client-side arguments.
     let children = unsafe {
         root.FindAllBuildCache(
             windows::Win32::UI::Accessibility::TreeScope_Children,
-            &uia.client()
-                .CreateTrueCondition()
-                .expect("CreateTrueCondition"),
+            &condition,
             &cache,
         )
     }
@@ -227,13 +227,13 @@ fn pump_wait_until(message: &str, mut condition: impl FnMut() -> bool) {
         if condition() {
             return;
         }
-        // SAFETY: standard non-blocking message pump; `msg` is written by
-        // `PeekMessageW` when it returns a message.
-        unsafe {
-            if PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&raw const msg);
-                windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&raw const msg);
-            }
+        // A standard non-blocking message pump.
+        // SAFETY: `msg` is a local the call writes when it returns a message.
+        if unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            // SAFETY: `msg` is the message just retrieved.
+            let _ = unsafe { TranslateMessage(&raw const msg) };
+            // SAFETY: as above.
+            unsafe { windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&raw const msg) };
         }
         assert!(
             Instant::now() < deadline,

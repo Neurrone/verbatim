@@ -22,20 +22,22 @@ pub(crate) fn local_time() -> Option<String> {
     // the formatting call. A null locale name is LOCALE_NAME_USER_DEFAULT;
     // a null format string selects the user's configured time format; a
     // null SYSTEMTIME formats the current local time.
-    // SAFETY: both calls pass either no buffer or a live, correctly sized
-    // one; the API writes at most the returned length.
-    unsafe {
-        let length = GetTimeFormatEx(PCWSTR::null(), TIME_NOSECONDS, None, PCWSTR::null(), None);
-        let mut buffer = vec![0u16; usize::try_from(length).ok().filter(|&len| len > 0)?];
-        let written = GetTimeFormatEx(
+    // SAFETY: no buffer, so the call only reports the length it needs.
+    let length =
+        unsafe { GetTimeFormatEx(PCWSTR::null(), TIME_NOSECONDS, None, PCWSTR::null(), None) };
+    let mut buffer = vec![0u16; usize::try_from(length).ok().filter(|&len| len > 0)?];
+    // SAFETY: a live buffer of the reported length; the API writes at most
+    // its length.
+    let written = unsafe {
+        GetTimeFormatEx(
             PCWSTR::null(),
             TIME_NOSECONDS,
             None,
             PCWSTR::null(),
             Some(&mut buffer),
-        );
-        string_from(&buffer, written)
-    }
+        )
+    };
+    string_from(&buffer, written)
 }
 
 /// The current local date in the user's long date format. `None` when the
@@ -43,28 +45,30 @@ pub(crate) fn local_time() -> Option<String> {
 pub(crate) fn local_date() -> Option<String> {
     // Same two-call shape as `local_time`; the trailing null is the
     // reserved calendar parameter.
-    // SAFETY: as in `local_time` — no buffer, then a live, correctly sized
-    // one.
-    unsafe {
-        let length = GetDateFormatEx(
+    // SAFETY: as in `local_time`: no buffer, so only the length.
+    let length = unsafe {
+        GetDateFormatEx(
             PCWSTR::null(),
             DATE_LONGDATE,
             None,
             PCWSTR::null(),
             None,
             PCWSTR::null(),
-        );
-        let mut buffer = vec![0u16; usize::try_from(length).ok().filter(|&len| len > 0)?];
-        let written = GetDateFormatEx(
+        )
+    };
+    let mut buffer = vec![0u16; usize::try_from(length).ok().filter(|&len| len > 0)?];
+    // SAFETY: as in `local_time`: a live buffer of the reported length.
+    let written = unsafe {
+        GetDateFormatEx(
             PCWSTR::null(),
             DATE_LONGDATE,
             None,
             PCWSTR::null(),
             Some(&mut buffer),
             PCWSTR::null(),
-        );
-        string_from(&buffer, written)
-    }
+        )
+    };
+    string_from(&buffer, written)
 }
 
 /// Decodes a formatting call's output: `written` counts UTF-16 units

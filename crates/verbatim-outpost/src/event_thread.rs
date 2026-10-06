@@ -101,11 +101,10 @@ fn event_thread_main(
         if result.0 <= 0 {
             break; // WM_QUIT (0) or error (-1).
         }
+        // SAFETY: translating a fully owned message.
+        let _ = unsafe { TranslateMessage(&raw const message) };
         // SAFETY: dispatching a fully owned message.
-        unsafe {
-            let _ = TranslateMessage(&raw const message);
-            DispatchMessageW(&raw const message);
-        }
+        unsafe { DispatchMessageW(&raw const message) };
     }
     drop(hook);
 }

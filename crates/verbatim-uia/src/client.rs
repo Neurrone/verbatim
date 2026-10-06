@@ -686,16 +686,17 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
                 // released, for the life of the process.
                 unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() }?;
                 init_mta()?;
-                // SAFETY: as in `create_client`; then a local call on that
-                // client, released before the thread leaves COM.
+                // SAFETY: as in `create_client`.
                 let result = unsafe {
                     CoCreateInstance::<_, IUIAutomation>(
                         &CUIAutomation8,
                         None,
                         CLSCTX_INPROC_SERVER,
                     )
-                    .and_then(|client| client.CreateCacheRequest().map(drop))
-                };
+                }
+                // SAFETY: a local call on the client just created, released
+                // before the thread leaves COM.
+                .and_then(|client| unsafe { client.CreateCacheRequest() }.map(drop));
                 // SAFETY: balances this thread's `init_mta`.
                 unsafe { windows::Win32::System::Com::CoUninitialize() };
                 result

@@ -97,16 +97,17 @@ pub(super) fn launch(
 pub(super) fn process_is_alive(pid: Pid) -> bool {
     // SAFETY: OpenProcess with a query-only access right fails safely on an
     // invalid or inaccessible pid; the handle is closed before returning.
-    unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) else {
-            return false;
-        };
-        let mut exit_code = 0u32;
-        let alive = GetExitCodeProcess(handle, &raw mut exit_code).is_ok()
-            && exit_code == STILL_ACTIVE.0.cast_unsigned();
-        let _ = windows::Win32::Foundation::CloseHandle(handle);
-        alive
-    }
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) })
+    else {
+        return false;
+    };
+    let mut exit_code = 0u32;
+    // SAFETY: `handle` is open with query access; `exit_code` is a local.
+    let alive = unsafe { GetExitCodeProcess(handle, &raw mut exit_code) }.is_ok()
+        && exit_code == STILL_ACTIVE.0.cast_unsigned();
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+    alive
 }
 
 /// Whether any visible top-level window of `pid` is reported hung by the
@@ -125,20 +126,21 @@ pub(super) fn application_is_hung(pid: Pid) -> bool {
 fn image_stem(pid: Pid) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
-    // SAFETY: OpenProcess with a query-only right fails safely; the buffer
-    // outlives the call, which writes at most `length` units; the handle is
-    // closed before returning.
+    // SAFETY: OpenProcess with a query-only right fails safely; the handle
+    // is closed below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) }.ok()?;
+    // SAFETY: `handle` is open with query access; the buffer outlives the
+    // call, which writes at most `length` units.
     let read = unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0).ok()?;
-        let read = QueryFullProcessImageNameW(
+        QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_WIN32,
             PWSTR(buffer.as_mut_ptr()),
             &raw mut length,
-        );
-        let _ = windows::Win32::Foundation::CloseHandle(handle);
-        read
+        )
     };
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
     read.ok()?;
     let path = String::from_utf16_lossy(&buffer[..usize::try_from(length).ok()?]);
     Path::new(&path)

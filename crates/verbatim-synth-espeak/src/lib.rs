@@ -154,16 +154,15 @@ unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEv
     if events.is_null() {
         return 0;
     }
+    // SAFETY: the first event is always present, checked non-null above.
+    let user_data = unsafe { (*events).user_data };
+    if user_data.is_null() {
+        return 0;
+    }
     // SAFETY: eSpeak NG passes the user data given to `espeak_Synth` in
-    // every event, and the first event is always present; the pointer is to
-    // the `Synthesis` alive for the whole synchronous `espeak_Synth` call.
-    let synthesis = unsafe {
-        let user_data = (*events).user_data;
-        if user_data.is_null() {
-            return 0;
-        }
-        &mut *user_data.cast::<Synthesis<'_>>()
-    };
+    // every event; the pointer is to the `Synthesis` alive for the whole
+    // synchronous `espeak_Synth` call, and nothing else uses it meanwhile.
+    let synthesis = unsafe { &mut *user_data.cast::<Synthesis<'_>>() };
     if synthesis.stopped {
         return 1;
     }
@@ -232,21 +231,31 @@ unsafe fn read_c(pointer: *const c_char) -> String {
 /// for language "variant").
 fn list(spec: Option<&EspeakVoice>) -> Vec<Choice> {
     let mut choices = Vec::new();
-    // SAFETY: eSpeak NG is initialized; the returned array is
-    // null-terminated and owned by eSpeak NG, read before the next call.
-    unsafe {
-        let mut entry = espeak_ListVoices(spec.map_or(std::ptr::null(), std::ptr::from_ref));
-        while !entry.is_null() && !(*entry).is_null() {
-            let voice = &**entry;
-            choices.push(Choice {
-                // eSpeak NG reports identifiers with the platform's path
-                // separator (`gmw\en` on Windows); they are kept with `/`
-                // so a saved setting means the same everywhere.
-                id: read_c(voice.identifier).replace('\\', "/"),
-                display_name: read_c(voice.name),
-            });
-            entry = entry.add(1);
-        }
+    // The returned array is null-terminated and owned by eSpeak NG, and is
+    // read before the next call.
+    // SAFETY: eSpeak NG is initialized; `spec` is null or a live voice
+    // specification.
+    let mut entry = unsafe { espeak_ListVoices(spec.map_or(std::ptr::null(), std::ptr::from_ref)) };
+    // SAFETY: `entry` is non-null and within the null-terminated array.
+    while !entry.is_null() && !unsafe { *entry }.is_null() {
+        // SAFETY: as above.
+        let element = unsafe { *entry };
+        // SAFETY: the element is a non-null pointer to a voice eSpeak NG
+        // owns.
+        let voice = unsafe { &*element };
+        choices.push(Choice {
+            // eSpeak NG reports identifiers with the platform's path
+            // separator (`gmw\en` on Windows); they are kept with `/`
+            // so a saved setting means the same everywhere.
+            // SAFETY: the voice's strings are null or NUL-terminated, owned
+            // by eSpeak NG.
+            id: unsafe { read_c(voice.identifier) }.replace('\\', "/"),
+            // SAFETY: as above.
+            display_name: unsafe { read_c(voice.name) },
+        });
+        // SAFETY: the element was not the terminator, so the next one is
+        // within the array.
+        entry = unsafe { entry.add(1) };
     }
     choices
 }

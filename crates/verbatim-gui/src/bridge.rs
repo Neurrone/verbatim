@@ -19,6 +19,10 @@
 
 use crate::{GuiCore, next_category, route_settings_key};
 
+#[allow(
+    clippy::multiple_unsafe_ops_per_block,
+    reason = "cxx generates the shims' unsafe blocks; there is no hand-written unsafe code here"
+)]
 #[cxx::bridge(namespace = "verbatim_gui")]
 pub(crate) mod ffi {
     /// The strings the hidden frame, tray icon, and menu show.

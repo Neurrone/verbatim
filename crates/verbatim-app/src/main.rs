@@ -652,13 +652,11 @@ fn warm_own_outpost(
 /// local call.
 fn foreground_pid() -> Option<Pid> {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-    // SAFETY: reading the current foreground window and its process id.
-    let pid = unsafe {
-        let hwnd = GetForegroundWindow();
-        let mut pid: u32 = 0;
-        GetWindowThreadProcessId(hwnd, Some(&raw mut pid));
-        pid
-    };
+    // SAFETY: no preconditions.
+    let hwnd = unsafe { GetForegroundWindow() };
+    let mut pid: u32 = 0;
+    // SAFETY: tolerates any handle; `pid` is a local out-parameter.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
     (pid != 0).then_some(Pid(pid))
 }
 
