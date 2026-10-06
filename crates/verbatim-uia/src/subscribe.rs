@@ -317,7 +317,7 @@ mod handlers {
             _newvalue: &VARIANT,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                (self.callback)(element, propertyid.0);
+                crate::com::guarded("property", || (self.callback)(element, propertyid.0));
             }
             Ok(())
         }
@@ -336,7 +336,7 @@ mod handlers {
             eventid: UIA_EVENT_ID,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                (self.callback)(element, eventid.0);
+                crate::com::guarded("event", || (self.callback)(element, eventid.0));
             }
             Ok(())
         }
@@ -358,15 +358,17 @@ mod handlers {
             activityid: &windows_core::BSTR,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                let display = (!displaystring.is_empty()).then(|| displaystring.to_string());
-                let activity = (!activityid.is_empty()).then(|| activityid.to_string());
-                (self.callback)(
-                    element,
-                    notificationkind,
-                    notificationprocessing,
-                    display,
-                    activity,
-                );
+                crate::com::guarded("notification", || {
+                    let display = (!displaystring.is_empty()).then(|| displaystring.to_string());
+                    let activity = (!activityid.is_empty()).then(|| activityid.to_string());
+                    (self.callback)(
+                        element,
+                        notificationkind,
+                        notificationprocessing,
+                        display,
+                        activity,
+                    );
+                });
             }
             Ok(())
         }
