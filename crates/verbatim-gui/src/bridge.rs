@@ -548,9 +548,10 @@ pub(crate) mod ffi {
         fn show_frame();
         /// Hides the hidden frame.
         fn hide_frame();
-        /// Pops the Verbatim menu from the hidden frame at `at`, running a
-        /// nested loop until it closes. True when it was shown.
-        fn popup_menu(at: ScreenPoint) -> bool;
+        /// Pops the Verbatim menu at the hidden frame's own origin (screen
+        /// centre, once [`centre_frame`] has run), running a nested loop
+        /// until it closes. True when it was shown.
+        fn popup_menu() -> bool;
 
         /// Builds and shows the settings dialog.
         fn open_settings_dialog(dialog: &SettingsDialog);

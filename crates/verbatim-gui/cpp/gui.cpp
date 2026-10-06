@@ -1236,13 +1236,13 @@ void hide_frame() {
     }
 }
 
-bool popup_menu(ScreenPoint at) {
+bool popup_menu() {
     if (g_shell == nullptr || g_shell->frame == nullptr || g_shell->menu == nullptr) {
         return false;
     }
-    // The position is the frame's own screen position, passed as the
-    // window-relative position PopupMenu takes, as the wxDragon GUI did.
-    return g_shell->frame->PopupMenu(g_shell->menu, at.x, at.y);
+    // PopupMenu takes a position relative to the window it is called on, so
+    // the frame's own origin, which centre_frame put at the screen's centre.
+    return g_shell->frame->PopupMenu(g_shell->menu, 0, 0);
 }
 
 void open_settings_dialog(const SettingsDialog& dialog) {

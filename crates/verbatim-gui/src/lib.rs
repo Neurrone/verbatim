@@ -295,7 +295,7 @@ impl GuiCore {
         Self::pre_popup();
         // The menu's nested loop dispatches the chosen item (which may open
         // settings) before this returns.
-        let shown = ffi::popup_menu(at);
+        let shown = ffi::popup_menu();
         // Info, not debug: whether the popup actually showed is the first
         // fact needed when diagnosing a menu that opened silently or not at
         // all, and it fires only on an explicit user gesture, so it cannot
@@ -335,9 +335,15 @@ impl GuiCore {
             OpenShellList::FocusExisting => Self::focus_foreground(ffi::DialogKind::ShellList),
             OpenShellList::Enumerate => {
                 let handle = self.handle.clone();
-                shell_items::request_shell_items(kind, move |items| {
+                let started = shell_items::request_shell_items(kind, move |items| {
                     handle.post(GuiMessage::ShellItems(kind, items));
                 });
+                if !started {
+                    // No outcome will ever arrive: end the enumeration now,
+                    // as one that found nothing, so later requests are not
+                    // ignored as if it were still in flight.
+                    self.lifecycle.borrow_mut().shell_items_arrived(false);
+                }
             }
         }
     }

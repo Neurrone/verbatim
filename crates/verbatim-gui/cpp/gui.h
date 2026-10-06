@@ -24,7 +24,7 @@ std::size_t frame_handle();
 ScreenPoint centre_frame();
 void show_frame();
 void hide_frame();
-bool popup_menu(ScreenPoint at);
+bool popup_menu();
 
 void open_settings_dialog(const SettingsDialog& dialog);
 void open_list_dialog(const ListDialog& dialog);
