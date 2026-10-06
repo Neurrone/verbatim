@@ -78,3 +78,11 @@ first, so only the scenario's own windows appear.
   synthesizer's host process is killed, and the next announcement is
   still heard from a new one. It demonstrates recovering from a
   synthesizer crash.
+- `theme-panel.mp4`, from `theme_panel`: the Settings dialog's Theme
+  page is read control by control, the indications tree is walked
+  through the first entry of each category, and the find field narrows
+  it to the buttons. The button role is set to be reported by a sound,
+  which makes a copy of the built-in theme, and the Preview button is
+  then announced with the sound in place of its role. The indication is
+  reset, and the copy removed. It demonstrates themes and the Theme
+  page.
