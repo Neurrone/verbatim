@@ -103,9 +103,9 @@ use crate::scenarios::{
     demo_terminal_session, explorer_folder_window, lock_key_announcements,
     menu_and_settings_dialog, notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor,
     notepad_say_all, notepad_spelling_errors, object_navigation_in_settings,
-    rapid_tabbing_in_settings, settings_dialog_keys, settings_system_page, spelling_errors, start_menu_search,
-    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
-    terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
+    rapid_tabbing_in_settings, settings_dialog_keys, settings_system_page, spelling_errors,
+    start_menu_search, switch_to_onecore, synth_host_crash_recovery, system_information_tree,
+    terminal_commands, terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -483,7 +483,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: demo_settings_dialog_keys::setup,
         body: demo_settings_dialog_keys::body,
         teardown: demo_settings_dialog_keys::teardown,
-    },    // Windows 11 Notepad's own spell checker, which GitHub's Windows Server
+    }, // Windows 11 Notepad's own spell checker, which GitHub's Windows Server
     // runners do not have; the suite's `spelling_errors` reads the same
     // speech from mockapp's scripted text instead.
     ScenarioDef {
@@ -496,7 +496,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: notepad_spelling_errors::teardown,
     },
 ];
-
 
 /// Looks up a scenario or a demonstration by [`ScenarioDef::name`].
 #[must_use]
