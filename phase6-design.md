@@ -327,17 +327,19 @@ ledger.
 
 ### Questions
 
-- The Terminal settings panel, agreed 2026-10-06:
+- The Terminal settings panel, agreed 2026-10-06, with both limits at 30
+  (see "The flood policy, reconsidered"):
   - "Report new output", a checkbox, on by default, with a command to
     toggle it, Verbatim+5, NVDA's key for its "report dynamic content
     changes" toggle. It silences a noisy window for a while without
     leaving the terminal. NVDA's setting covers all dynamic content, live
     regions included; Verbatim's covers terminals until M6 adds live
     regions, when it widens to match.
-  - "Lines spoken in full", a number, default 5: a burst of output up to
-    this many lines is spoken entirely.
-  - "Last lines to speak", a number, default 5: a longer burst is spoken
-    as "skipped N lines" followed by its last lines. This is the only
+  - "Lines spoken in full", a number, default 30: up to this many lines
+    of output waiting to be spoken are all spoken.
+  - "Last lines to speak", a number, default 30: when more are waiting,
+    the older ones are replaced by "skipped N lines" and the last lines
+    are kept. This is the only
     behavior for longer output for now, so it is not a choice. NVDA tried
     a cap and reverted it (see "The NVDA update"); Verbatim's differs in
     that nothing is lost, since every line stays reachable with the
@@ -346,9 +348,8 @@ ledger.
     in all enhanced terminals": typed characters are held until the
     terminal shows them.
 
-  Fixed behavior, not settings: blank lines are dropped; a newer burst
-  cancels whatever of the older one is still unspoken, as in NVDA; a
-  burst is the output found by one diff. NVDA's default speaks every new line of a batch, up
+  Fixed behavior, not settings: blank lines are dropped, and newer
+  output never cancels older output still waiting to be spoken. NVDA's default speaks every new line of a batch, up
   to the last 100, and a newer batch cancels whatever of the previous one
   is still unspoken, as does any speech cancellation; a change of a
   single character is ignored as probably typed. Terminal Access's policy
@@ -484,14 +485,43 @@ only lines that changed are spoken.
 
 ### The flood policy, reconsidered
 
-NVDA tried what the Terminal panel proposes (speak the tail of a large
-burst, with a sound for the skipped lines) and reverted it within a
-release because users found terminals unusable. NVDA's users could also
-have reviewed the skipped lines with the review cursor, so "nothing is
-lost" did not make the cap acceptable. Before the settings' defaults are
-fixed, Dickson should decide whether the default is to speak every line,
-as NVDA does now, with "skipped N lines" available as an option, or the
-cap of 5 as agreed.
+What NVDA users complained about (nvaccess/nvda#20888, reported against
+2026.3 beta 2): ordinary, short output stopped being read. `git pull`
+sometimes spoke only the shell prompt instead of "Already up to date",
+and `git log` spoke only its last line instead of reading from the top.
+The cause was not the 100-line cap itself but the rule that came with
+it: each batch of new lines was spoken from a generator, and a newer
+batch cancelled whatever of the previous one was still unspoken. Output
+often reaches the screen in several batches (the result, then the
+prompt), so the prompt's batch cancelled the result. NVDA reverted both
+changes in the beta (#20898); its reason was that output was skipped and
+users could not read it, and it would accept another attempt only with "a
+way of safely pumping the text that avoids performance issues but also
+avoids skipping useful content".
+
+NVDA's behavior now: every line of every batch is queued for speech in
+order, at normal priority, with no cap and nothing superseded by newer
+output. What stops it is the user: any key press except Shift cancels all
+speech, queued terminal output included (the "speech interrupt for typed
+characters" setting, on by default; Shift pauses instead). So a flood is
+spoken until the user presses a key.
+
+What this means for Verbatim:
+
+- Newer output must never cancel older output still waiting to be
+  spoken; the rule proposed earlier ("a newer burst cancels whatever of
+  the older one is still unspoken") is dropped. It is exactly what broke
+  NVDA's beta.
+- A cap per batch would also misfire, since one command's output arrives
+  in several batches. The cap applies instead to the backlog: lines are
+  queued in order as they arrive, and when more lines are waiting than
+  the limit, the oldest waiting lines are replaced by "skipped N lines",
+  keeping the most recent ones. Output shorter than the limit is never
+  touched, however many batches it arrives in.
+- The limit is the decision. With a limit of 5, a 20-line `git log`
+  becomes "skipped 15 lines" and its last five lines, which is the
+  experience NVDA's users rejected. A limit around a screenful or more
+  keeps ordinary command output whole and still bounds a flood.
 
 ### Generic, not an app module
 
@@ -539,8 +569,7 @@ first sounds.
   and progress tones, plus short recorded sounds stored as WAV files in
   the repository and decoded once at startup. Sounds are resampled to the
   mixer's format when it opens.
-- **Settings.** Sounds on or off, and sound volume relative to speech, on
-  the Speech panel or a new Sounds panel.
+- **Settings.** The "Audio theme" and "Indications" panels, below.
 - **First sounds in this milestone**: the terminal's "skipped N lines"
   cue, the application-not-responding cue (already defined), spelling and
   grammar errors while reading text (from M4's formatting spans), a
@@ -592,7 +621,8 @@ What the others do:
 
 Proposed for Verbatim:
 
-- **Name.** "Audio theme" in the interface and documentation, since
+- **Name.** "Audio theme" in the interface and documentation (agreed
+  2026-10-06), since
   "theme" alone reads as a visual theme in Windows and "sound scheme" is
   Windows' own name for system sounds; `Theme` in code.
 - **What a theme maps.** Semantic keys from D12's spans and from events,
@@ -607,38 +637,151 @@ Proposed for Verbatim:
   or nothing), and a voice style (relative pitch, rate, and volume, as in
   Emacspeak, defined in the theme rather than per voice). A sound can
   accompany the words or replace them, which removes JAWS's conflict.
-- **What a theme cannot do.** Verbosity settings and the reducer decide
-  whether something is reported; the theme decides only how it sounds. A
-  theme that silences a word never removes it from braille or review.
-- **Scheduling belongs to the key**, not the theme: span keys are played
-  in the speech stream and cancelled with it; event cues play
-  immediately. The theme chooses whether a role's sound comes at the
-  start of the utterance or where the word would be.
-- **Layers.** A theme may be sparse and names a base theme it falls back
-  to, ending at the plain default, which reproduces speech exactly. The
-  user's changes are stored as a layer over the installed theme, never as
-  a copy. M8's configuration profiles choose the theme per application
-  and may add their own layer.
-- **Packaging.** A theme is a directory holding a TOML manifest (id, name,
-  author, description, version, base, gain, voice styles, mappings) and
-  its sound files; it is shared as that directory zipped. Import installs
-  one; Export writes the active theme with the user's changes as a new
-  one.
-- **Settings.** An "Audio themes" panel: the theme, previewed as you
-  arrow through the list and reverted by Cancel; its description; sound
-  volume; "Also speak what sounds replace" (JAWS's training mode); "Play
-  sounds during say all"; and Customize, New based on this, Import,
-  Export, and Remove. Customize opens a tree of categories (roles,
-  states, text formatting, structure, events) whose items read as a
-  summary ("slider: sound slider.wav, speech silent, voice default"),
-  with a sound choice that plays on Space, a gain, the speech choice, the
-  voice style, "Reset to theme default", and a Preview button that speaks
-  a sample utterance through the edited theme. No wizards and no nested
-  dialogs.
-- **Scope.** This milestone builds the theme model, the plain default,
-  one theme using NVDA's sounds, the settings panel's theme choice,
-  volume, and the two checkboxes. The Customize editor, Import, and Export
-  could follow in M11; Dickson to decide.
+### Indications: verbosity and audio themes as one model
+
+Proposed 2026-10-06 at Dickson's suggestion: whether something is
+reported and how it is reported are one setting, not two systems.
+
+NVDA already does this for two items. "Report spelling errors" takes
+speech, sound, both, or off (and braille, as a flag set,
+`reportSpellingErrors2` with `ReportSpellingErrors` in
+`config/configFlags.py`), and "line indentation" takes speech, tones,
+both, or off (`reportLineIndentation`). Its other verbosity settings are
+on-or-off checkboxes. VoiceOver's verbosity items each take speak, change
+pitch, or play a tone. Verbatim generalizes this to every indication.
+
+The model has three parts:
+
+- **The indication catalogue**, defined in code: every kind of thing
+  Verbatim can report, each with a stable id and a category. Roles
+  ("link", "heading level 2"), states and their negations ("checked",
+  "not checked"), properties (description, position "3 of 7", shortcut
+  key), text attributes (spelling error, bold, font change), structure
+  (entering a list, leaving a table, blank line, indentation, skipped
+  lines), and events (browse or focus mode, not responding, error,
+  progress). It grows with the features: this milestone has what
+  Verbatim reports today plus M4's text and terminal indications.
+- **The audio theme**, an installed package that says how each indication
+  sounds: its sound file and gain, replacement words if any, a voice
+  style if any, and a suggested way of reporting it. The plain theme has
+  no sounds and suggests speech for everything, which reproduces today's
+  speech exactly.
+- **The user's settings**, stored in the configuration: the chosen theme,
+  sound volume, and, for any indication the user has changed, how it is
+  reported and any change to its sound, words, or voice style.
+
+How each indication is reported is a set of outputs: speech, sound, and,
+once braille exists (M15), braille. So the choices are off, speech only,
+sound only, or speech and sound. Off is the only choice that removes
+information: an indication set to sound only whose theme has no sound for
+it is spoken instead, so switching theme can never silently drop
+something. The value for an indication is resolved from the active
+profile's settings, then the base settings, then the theme's suggestion,
+then the built-in default, which is speech, as in NVDA.
+
+Where it applies in the pipeline: the reducer keeps putting every fact it
+has into the utterance as typed spans (D12), and the presentation stage
+at the end of the speech pipeline turns each span into words, a sound,
+both, or nothing. The reducer consults the setting in one case, to skip
+fetching information that is set to off, such as descriptions, so off
+also saves the cross-process cost. Sounds for spans are placed in the
+speech stream and cancelled with it; sounds for events play at once
+(see "Earcons").
+
+### Configuration profiles
+
+Profiles exist in `verbatim-config` as sparse overlays on the base
+settings (`settings.toml` plus files in `profiles`), resolved most
+specific first; activating them, manually or by application, is M8's
+work. Everything above is ordinary profile data:
+
+- The chosen audio theme, sound volume, the say-all and learning-mode
+  checkboxes, and every per-indication change can differ per profile.
+  A profile for a terminal-heavy application could choose a theme with
+  more sounds; a proofreading profile could set bold and font changes to
+  speech.
+- A profile holds only what it changes. An indication the profile does
+  not mention falls through to the base settings, then to the theme.
+- The settings dialog edits the active profile, as NVDA's does, and says
+  which one in its title. Until M8, that is always the base.
+- Themes themselves are not stored in profiles; they are installed
+  packages that profiles refer to by id.
+
+One mechanism for user changes, not two: a change to an indication's
+sound, words, or voice is stored as a setting like its reporting choice,
+so there is no separate "modified theme" layer. Export writes the theme
+with the active settings' changes applied as a new theme to share.
+
+### The settings dialog
+
+Two panels in the settings dialog's category list.
+
+**The "Audio theme" panel:**
+
+1. "Audio theme", a combo box listing the installed themes, the plain
+   theme first. Moving through the list applies each theme at once, so
+   the next thing spoken uses it, and Cancel restores the theme the
+   dialog opened with.
+2. "Description", a read-only text field: the theme's author and
+   description.
+3. "Sound volume", a slider from 0 to 100, relative to speech. Moving it
+   plays a short sample at the new volume.
+4. "Play sounds during say all", a checkbox, on by default.
+5. "Also speak indications that play a sound", a checkbox, off by
+   default: JAWS's training mode, for learning a theme's sounds; every
+   indication set to sound only is also spoken.
+6. Buttons: "Import theme..." opens a file dialog for a shared theme
+   file and installs it; "Export theme..." saves the current theme with
+   the active settings' changes as a new theme file; "Remove theme"
+   uninstalls the selected theme after a confirmation, and is
+   unavailable for the plain theme.
+
+**The "Indications" panel**, where verbosity and sounds meet:
+
+1. "Find", an edit field that filters the tree below to indications
+   whose names contain the text.
+2. "Indications", a tree view. Top-level items are the categories (Roles,
+   States, Properties, Text formatting, Structure, Events); their
+   children are the indications. Each indication's name summarizes its
+   current setting, such as "Link: speech and sound" or "Checked: sound
+   (check.wav)" or "Description: off", so arrowing through the tree reads
+   the whole configuration. A changed indication's name ends with
+   "changed".
+3. Below the tree, the controls for the selected indication:
+   - "Report as", a combo box: off, speech, sound, speech and sound.
+   - "Sound", a combo box: none, each sound the theme provides, and
+     "Browse..." for a sound file. Space on the combo box plays the
+     selected sound.
+   - "Words", an edit field: the words spoken for the indication, empty
+     for the default words.
+   - "Voice", a combo box: default, or one of the theme's voice styles.
+   - "Preview", a button that speaks a sample through the current
+     settings, such as a link inside a sentence, so the sound is heard in
+     context.
+   - "Reset", a button that returns the indication to the theme's
+     setting.
+   Controls that do not apply are disabled: with "Report as" set to off
+   or speech, "Sound" is disabled; with sound only, "Words" and "Voice"
+   are disabled.
+4. "Reset all to theme", a button, after a confirmation.
+
+Changes apply at once and Cancel reverts them, like the Speech panel.
+Enter activates OK, except on a button, which activates the button, as
+the GUI port's key routing does everywhere.
+
+Today's NVDA-style checkboxes (report descriptions, report position
+information, and the M4 formatting settings) are not separate settings:
+they are indications on this panel. The Speech panel keeps the
+synthesizer and voice settings.
+
+### Scope
+
+This milestone: the catalogue for what Verbatim reports plus M4's
+additions, the plain theme and one theme with NVDA's sounds, both panels
+as described including Import and Export, and the resolution through
+profiles (with only the base active until M8). M11 keeps voice styling
+beyond simple relative pitch, rate, and volume, and themes provided by
+extensions.
 
 ## Core's state
 
