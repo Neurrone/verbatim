@@ -20,13 +20,17 @@
 //! final focus won, and the reply proves the outpost still answers queries.
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 /// Per-step speech timeout, matching the other live scenarios.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The longest the burst's focus may take to settle back on the category
+/// item; it only bounds a failure.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(30);
 
 /// How many Tab presses the burst makes before coming back.
 const TABS: usize = 6;
@@ -49,21 +53,30 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .collect();
     scenario.send_keys(&burst).expect("sends the burst");
 
-    // The burst ends back on the category item, whose focus announcement
-    // ("Speech 1 of 1") says the last of its focus events has been read,
-    // so the report below answers for the control that really has focus.
-    scenario
-        .speech()
-        .expect_in_order(&["Speech", "1 of 1"], STEP_TIMEOUT);
-
     // The navigator follows focus, so reporting it names the control that
-    // really has focus: the category item the burst returned to.
-    scenario
-        .send_gesture("kb:verbatim+numpad5")
-        .expect("sends report-current-object");
-    scenario
-        .speech()
-        .expect_in_order(&["Speech", "list item"], STEP_TIMEOUT);
+    // has focus. The burst's focus events may still be arriving when the
+    // report is answered, and when the burst ends where it began nothing
+    // more is spoken, so there is nothing to wait for first. Instead the
+    // report is repeated after each later announcement until it names the
+    // category item the burst returned to; a final focus that is wrong
+    // never does, and fails at the deadline.
+    let deadline = Instant::now() + SETTLE_DEADLINE;
+    loop {
+        scenario
+            .send_gesture("kb:verbatim+numpad5")
+            .expect("sends report-current-object");
+        let report = scenario.speech().expect_change_capturing("", STEP_TIMEOUT);
+        if report.contains("Speech") && report.contains("list item") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the focus never settled on the Speech category item; last report {report:?}"
+        );
+        scenario
+            .speech()
+            .expect_change_capturing(&report, STEP_TIMEOUT);
+    }
 }
 
 #[allow(
