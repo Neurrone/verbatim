@@ -48,6 +48,9 @@ commit updated only the changed crate's own guide.
 - [verbatim-core](verbatim-core.md) — the pure reducer, flight recorder,
   and dump format.
 - [verbatim-uia](verbatim-uia.md) — the UIA client stack.
+- [verbatim-uia-rops](verbatim-uia-rops.md) — UIA remote operations:
+  programs that run inside a provider's process, and the focus ancestry
+  in one round trip.
 - [verbatim-ia2](verbatim-ia2.md) — the MSAA/IA2 client stack.
 - [verbatim-outpost](verbatim-outpost.md) — per-app outposts, the focus
   listener (D13), the supervisor, and their protocol.

@@ -1,0 +1,277 @@
+# verbatim-uia-rops
+
+UIA remote operations (architecture section 4): small programs that run
+inside a UIA provider's process, so work that would take one
+cross-process round trip per step takes one in all. The crate calls
+Windows' own API, the WinRT class
+`Windows.UI.UIAutomation.Core.CoreAutomationRemoteOperation`, as NVDA
+does; it does not use Microsoft's `microsoft-ui-uiautomation` library.
+It is Windows-specific and GPL, so it ports NVDA's framework
+(`source/UIAHandler/_remoteOps/`) freely, with attribution in each
+ported file; where it follows Microsoft's MIT-licensed
+`RemoteOperationInstructions.h`, that file carries Microsoft's notice.
+The design of record is phase 6's "UIA remote operations" section.
+
+The crate has three layers: the instruction set and a typed builder,
+execution, and algorithms. Only the focus ancestry exists so far;
+`terminal_tail` (the anchor line's text, the number of lines from the
+anchor to the end, and the last lines' text) comes with milestone M4's
+terminals.
+
+## Layer 1: instructions and the builder
+
+- `Opcode` is the full table NVDA uses, 104 opcodes (`Opcode::ALL`):
+  every general instruction from `0x00` to `0x54`, cache requests
+  (`0x4C` to `0x50`) included, and the 19 text range methods, whose
+  opcode is `(patternId << 16) | (relatedObject << 8) | vtableIndex`
+  (`pattern_related_object_method`). `Comparison`,
+  `NavigationDirection`, `PointProperty`, and `RectProperty` are the
+  enumerations instructions carry; `Status` is a run's outcome.
+- `Instruction` is one instruction with its parameters, and
+  `Instruction::encode` writes its bytes. Every instruction has a unit
+  test of its exact bytes, and a second test checks that those tests
+  cover every opcode.
+- `Builder` writes a program. Each register is a `Reg<K>`, where `K` is a
+  marker from `kind` saying what it holds: `Element`, `TextRange`, `Int`,
+  `Uint`, `Bool`, `Double`, `Char`, `Str`, `Point`, `Rect`, `Array`,
+  `StringMap`, `CacheRequest`, `Guid`, or `Any` for a value whose type is
+  known only at run time (a property value, an array item, a map entry),
+  which `Reg::assume` names. Arithmetic takes only `Numeric` kinds,
+  ordering comparisons only `Ordered` ones, and indexes only `Index`
+  ones, so a program that compares an element with an integer does not
+  compile.
+- Constants (`Builder::int`, `uint`, `bool`, `string`) are gathered in a
+  section ahead of the program and shared by every use of the same value,
+  as NVDA's const section is; `new_int` and its siblings make variables
+  set where they are emitted. A program is built per call, with that
+  call's values as constants.
+- Control flow takes closures, which run once at build time to emit their
+  bodies, and computes its own jump offsets: `if_`, `if_else`, `while_`
+  (with `break_loop` and `continue_loop`), `try_catch`, and `halt`. The
+  layouts are NVDA's: a loop block whose continue target is the condition
+  just after it, the condition's `ForkIfFalse` jumping to the
+  `EndLoopBlock`, and a `ContinueLoop` ending the body; a try block whose
+  catch target reads the operation status and resets it to zero before
+  the catch body runs.
+- `Builder::import_element` and `import_text_range` bring in the objects
+  a program starts from; `add_to_results` asks for a register's value
+  after the run; `finish` ends the program with a `Halt` and returns the
+  `Operation`.
+- Every emitting method is `#[track_caller]`, so each instruction records
+  the Rust source line that emitted it; a failing instruction's index maps
+  back to that line (`Operation::location`), as NVDA maps it to the
+  Python line. NVDA's local emulator and Python operator overloading are
+  not ported: tests run against mockapp's real provider instead.
+
+### The encoding, as verified
+
+The layout of each instruction is not documented officially. Verified
+on Windows 11 26200 (x64): a program is the `u32` version 0 followed by
+its instructions, with no padding. An instruction is its `i32` opcode and
+then its parameters in order, little-endian: an operand is a `u32`
+register id, an offset or enumeration an `i32`, a boolean one byte, a
+character two bytes, a double eight bytes, and a string a `u32` length
+that counts a terminating null, followed by that many UTF-16 code units,
+the null included. Jump offsets count instructions from the jumping one,
+and a failure's location is an instruction index.
+
+Two of NVDA's instruction definitions are wrong, and Microsoft's are
+right: `RemoteArrayRemoveAt` and `RemoteStringMapRemove` write a result
+(the removed value) before their target, which NVDA's omit (NVDA never
+uses either). Sent NVDA's way, the program fails as malformed bytecode.
+
+## Layer 2: execution
+
+`Operation::execute` creates a `CoreAutomationRemoteOperation`, imports
+the program's elements and text ranges (an `IUIAutomationElement` casts
+to the WinRT `AutomationElement` by `QueryInterface`), checks with
+`IsOpcodeSupported` that the provider supports every opcode the program
+uses (support is known only once something is imported, since it depends
+on the provider's process), registers the requested results, and runs
+`Execute`, the one cross-process round trip. Creating the operation and
+importing took about half a microsecond and each support check 18
+nanoseconds in a release build: both are answered in Verbatim's process.
+
+A failed run is an `Error`:
+
+- `Unavailable`: Windows lacks the API.
+- `Import`: an import failed. An element served by a client-side proxy
+  (UIA's MSAA proxy inside Verbatim's own process) fails with
+  `E_UNEXPECTED`, since there is no provider process to run in; nothing
+  about that element's window will change.
+- `Unsupported(opcode)`: the provider lacks an instruction.
+- `Execute`: the call itself failed.
+- `Failed(Failure)`: the program stopped with a failure status
+  (`MalformedBytecode`, `InstructionLimitExceeded`, `UnhandledException`,
+  or `ExecutionFailure`), with the extended HRESULT, the failing
+  instruction's index, its opcode, the Rust line that emitted it, and the
+  results computed before it stopped (`Failure::partial`).
+- `MissingResult` and `ResultType`: a requested result is absent, or not
+  of its register's type.
+- `Uia`: a UIA call failed, in a classic implementation.
+
+`Error::hresult` gives the HRESULT behind any of them: a provider whose
+process has gone gives `UIA_E_ELEMENTNOTAVAILABLE`, and one that did not
+answer in time `UIA_E_TIMEOUT`.
+
+`Outcome::get` converts a requested register to Rust by its kind: `Int`
+to `i32`, `Uint` to `u32`, `Bool` to `bool`, `Double` to `f64`, `Char` to
+`u16`, `Str` to `String`, `Element` to `Option<IUIAutomationElement>`
+(with the cache the program filled, readable through the `Cached*`
+getters with no further call), `TextRange` to
+`Option<IUIAutomationTextRange>`, `Array` to `Vec<Value>`, and `Any` to a
+`Value`. Scalars come back as `IPropertyValue`s, arrays as
+`IVector<IInspectable>` (the `windows-collections` crate), a runtime id
+as an integer array, and a null register as a null object.
+
+## Layer 3: the focus ancestry
+
+`focus_ancestry_remote` and `focus_ancestry_classic` share one signature
+(`FocusAncestryFn`): a `&Uia` and a `FocusQuery`, which holds the focused
+element (the focus event's sender, already cached), the runtime ids the
+caller already knows, a depth limit, and the properties to cache on every
+returned element (`verbatim_uia::CACHED_PROPERTIES`, so they match what
+the snapshot code reads). Both answer `FocusAncestry::NotFocused` when a
+live read of the element's `HasKeyboardFocus` is false (NVDA's check
+that a focus event is not stale), and otherwise an `Ancestry`:
+
+- `ancestors`: the raw-view parents, nearest first, each with the
+  properties cached. The walk ends at the top-level window of the
+  element's process: in a program, the top-level window's parent is null
+  (verified), so the classic walk stops below the desktop root as well.
+- `met_known`: which of the known runtime ids the last ancestor has, when
+  the walk stopped there.
+- `depth_limited`: whether the walk stopped at the depth limit with
+  ancestors left.
+- `selected_child`: for a list or tab control (by the element's cached
+  control type), the first selected child, with the properties cached.
+
+The remote program is one round trip. It reads `HasKeyboardFocus` and
+halts when it is false. For a list or tab control it reads the element's
+`Selection` property (the Selection pattern has no method instructions;
+the property is the same array of elements, verified against mockapp),
+fills the first item's cache, and keeps it. Then it walks with
+`Navigate` (direction parent), filling each ancestor's cache inside the
+provider, turning its runtime id into a string with `Stringify`, and
+stopping at the first one found in a string map of the known ids.
+`Stringify` writes a runtime id as its integers in decimal, comma
+separated, in square brackets (`[42,14681214,4,5]`); `runtime_id_key`
+makes the same string on Verbatim's side. Setting the walking register
+to the parent does not disturb the elements already appended to the
+results array, though both are held by reference (verified).
+
+The classic implementation is the reference and the fallback: the same
+live read, the selected child through the Selection pattern
+(`verbatim_uia::selected_element`, which `Uia::selected_child` also
+uses), and one `GetParentElementBuildCache` round trip per ancestor over
+the raw view, the walk `Uia::ancestor_chain` makes. `ancestor_chain`
+itself is not called, because it returns filtered snapshots, not
+elements: the presentable-ancestor filter, the switch to MSAA, and the
+splice with the previous focus's chain stay with the outpost, which
+applies them to either implementation's elements.
+
+### Cached properties filled remotely
+
+A cache filled by a remote program stores a property's default where a
+locally built cache stores UIA's "not supported" value, so reading a
+property while ignoring defaults (`GetCachedPropertyValueEx` with
+`ignoreDefault`) cannot tell an unsupported property from its default.
+The snapshot code reads three properties that way, and each is handled:
+
+- `ValueIsReadOnly` (default true) and `RangeValueValue` (default zero)
+  are now read only when `IsValuePatternAvailable` and
+  `IsRangeValuePatternAvailable` say the pattern is there; both flags
+  joined `CACHED_PROPERTIES`. Without that, every container read
+  remotely was read-only with a value of "0".
+- `IsDataValidForForm` (whose default reads as false) has no pattern, so
+  the program leaves it out of the cache of an element that does not
+  support it, which the snapshot reads as it reads "not supported".
+  `PopulateCache` replaces an element's cache rather than adding to it
+  (verified), so the program builds one request per combination of
+  these properties (`LEFT_OUT_WHEN_UNSUPPORTED`, one property, so two
+  requests) and picks one per element after a `GetPropertyValue` with
+  `ignoreDefault` and an `IsNotSupported` test.
+
+Against mockapp, every other cached property reads the same both ways,
+and the snapshots the outpost makes from the two implementations' elements
+are equal.
+
+## Fallback rules
+
+These are the design's rules for the outpost, which chooses an
+implementation per call:
+
+- A window without a native UIA provider (arbitration's
+  `UiaHasServerSideProvider` verdict) uses the classic implementation
+  without trying. An import that fails anyway (`Error::Import`) marks the
+  window the same way for its lifetime.
+- A run that fails otherwise runs the classic implementation for that
+  call and is logged with the failing instruction's index and source
+  line; repeated failures for one window mark it like a failed import.
+- A run that exceeds the instruction limit is retried once with a smaller
+  depth limit, then falls back.
+- A developer setting (`uia.remote_operations`, on by default) forces the
+  classic path.
+
+A provider whose process has gone and one that times out
+(`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`, both as an
+`ExecutionFailure`) are not program failures: the classic
+implementation would fail the same way, so they are answered as the
+outpost answers a gone or unresponsive element.
+
+## A stalled or exited provider
+
+Verified against mockapp's `stall` command, which blocks the window
+thread its apartment-threaded providers run on:
+
+- `Execute` blocks while the provider is stalled, exactly as a classic
+  call does. The UIA connection timeout (`IUIAutomation2`'s
+  `ConnectionTimeout`, which `Uia::within` shortens) does not bound it:
+  with a one-second connection timeout, both a program and the classic
+  walk waited out a four-second stall and then succeeded.
+- UIA's transaction timeout (`IUIAutomation2`'s `TransactionTimeout`,
+  20 seconds by default) does bound it. With it at one second, `Execute`
+  returned after about 1.1 seconds with `ExecutionFailure` and extended
+  error `UIA_E_TIMEOUT`, as the classic walk's call failed with
+  `UIA_E_TIMEOUT` in the same time.
+- The transaction timeout is process-wide: the last value set through any
+  `IUIAutomation` object in the process applies to every client and every
+  element, whichever client fetched the element, and reading it back
+  through another client returns that value.
+- So the outpost's worker can call `Execute` directly, as it makes
+  classic calls: a stalled provider holds it no longer than it holds one
+  classic hop, and its watchdog covers both the same way. A program is
+  one wait where a classic walk against a provider that stalls partway is
+  one wait per remaining hop.
+- When the provider's process has exited, `Execute` returns at once
+  (under a millisecond) with `ExecutionFailure` and extended error
+  `UIA_E_ELEMENTNOTAVAILABLE`; the classic walk's first call fails with
+  the same code.
+
+## Timings
+
+Measured in a release build against mockapp (whose providers run on one
+apartment-threaded window thread, so every provider call inside a
+program is itself marshaled to that thread), averaged over 200 calls:
+
+- Five ancestors to the top-level window: 3.4 ms remotely, 25 ms
+  classically. Most of the classic time is the last hop, from the
+  top-level window to the desktop root, which the classic walk needs to
+  find the end.
+- Stopping at a known ancestor after three: 4.0 ms remotely, 4.6 ms
+  classically.
+- A list with its selected child and one ancestor: 3.4 ms remotely, 17 ms
+  classically.
+- One live property read, for scale: 0.31 ms.
+
+## Tests
+
+Unit tests cover each instruction's bytes and the builder's control flow
+offsets, constants, and source locations. `crates/mockapp/tests/remote_ops.rs`
+runs both implementations against mockapp's `ancestry.json` fixture and
+asserts the same ancestors with the same cached properties and snapshots
+for a deep chain, controls with a value and a checked state, a list and
+a tab control with selected children (including one selected after
+start), a stop at a known ancestor, and the depth limit; that an element
+that lost the focus returns early; and the stalled and exited provider
+findings above.

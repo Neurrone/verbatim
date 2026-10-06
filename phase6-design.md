@@ -1097,12 +1097,19 @@ that probe.
   pattern works: the known runtime ids go in as strings in a string map,
   and each step turns the ancestor's runtime id into a string and checks
   the map (verified).
-- **Not yet verified:** whether `Execute` honours the UIA connection
-  timeout against a hung provider, what happens when the provider's
-  process has gone, and the instruction limit's value. mockapp's `stall`
-  command makes the first two testable, and they are the first thing the
-  run verifies, because a call that ignores the timeout would block the
-  outpost's worker.
+- **Verified in the run against mockapp's `stall` command:** `Execute`
+  does not honour the UIA connection timeout, and neither does a classic
+  call on an element already fetched; both are bounded by UIA's
+  transaction timeout (20 seconds by default), which is process-wide (the
+  last value set through any client applies to all), and a run that
+  times out ends with an execution failure carrying `UIA_E_TIMEOUT`. So
+  the worker can call `Execute` as it makes classic calls. Against a
+  provider whose process has gone, `Execute` fails at once with
+  `UIA_E_ELEMENTNOTAVAILABLE`. The instruction limit's value is still
+  unmeasured. The details are in `docs/crates/verbatim-uia-rops.md`,
+  which also records that a remotely filled cache stores defaults where a
+  local one stores "not supported", which `verbatim-uia`'s mapping and
+  the remote program now handle.
 
 ### Proposed design
 

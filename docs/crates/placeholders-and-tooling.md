@@ -1,6 +1,5 @@
 # Placeholders and tooling
 
-- `verbatim-uia-rops` — UIA remote operations, lands in M4.
 - `verbatim-ext` and `verbatim-ext-api` — the Wasm extension host and WIT
   contract, land in M5.
 - `xtask` — workspace automation. `cargo xtask ci` is the standard check
