@@ -47,9 +47,18 @@ fn main() -> ExitCode {
             target_pid,
             options,
         }) => {
-            // SAFETY: the handle values name pipe ends the supervisor created
-            // and this process inherited; each is owned by exactly one File.
-            let (reader, writer) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+            // SAFETY: the supervisor passes the values of the pipe ends it
+            // created for this process, which inherited them and uses them
+            // nowhere else; `inherited_pipes` checks that they are distinct
+            // open pipes, so a malformed command line fails here.
+            let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+            let (reader, writer) = match pipes {
+                Ok(pipes) => pipes,
+                Err(error) => {
+                    eprintln!("outpost: {error}");
+                    return ExitCode::from(2);
+                }
+            };
             match run_pipe(Box::new(reader), Box::new(writer), target_pid, options) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -59,9 +68,18 @@ fn main() -> ExitCode {
             }
         }
         Some(Mode::Listener { pipe_in, pipe_out }) => {
-            // SAFETY: the handle values name pipe ends the supervisor created
-            // and this process inherited; each is owned by exactly one File.
-            let (reader, writer) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+            // SAFETY: the supervisor passes the values of the pipe ends it
+            // created for this process, which inherited them and uses them
+            // nowhere else; `inherited_pipes` checks that they are distinct
+            // open pipes, so a malformed command line fails here.
+            let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+            let (reader, writer) = match pipes {
+                Ok(pipes) => pipes,
+                Err(error) => {
+                    eprintln!("outpost: {error}");
+                    return ExitCode::from(2);
+                }
+            };
             match run_listener(Box::new(reader), Box::new(writer)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
