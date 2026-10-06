@@ -24,6 +24,9 @@ pub(crate) struct Live {
     /// The held nodes and text anchors last sent to it, and the position
     /// acknowledged then.
     pub(crate) held_sent: (BTreeSet<u64>, BTreeSet<u64>, u64),
+    /// Whether its last query passed its deadline with no answer since:
+    /// the application is not responding.
+    stalled: bool,
 }
 
 /// The live outpost incarnations, by outpost id.
@@ -42,8 +45,26 @@ impl LiveOutposts {
                 ready: false,
                 position: 0,
                 held_sent: (BTreeSet::new(), BTreeSet::new(), 0),
+                stalled: false,
             },
         );
+    }
+
+    /// Records that a query to `outpost` passed its deadline (the outpost's
+    /// watchdog abandoned it): whether the application has only now stopped
+    /// responding, so "not responding" is reported once per stall rather
+    /// than for every query that times out during it.
+    pub(crate) fn query_abandoned(&mut self, outpost: OutpostId) -> bool {
+        self.outposts
+            .get_mut(&outpost)
+            .is_some_and(|live| !std::mem::replace(&mut live.stalled, true))
+    }
+
+    /// Records that `outpost` answered: its application responds again.
+    pub(crate) fn answered(&mut self, outpost: OutpostId) {
+        if let Some(live) = self.outposts.get_mut(&outpost) {
+            live.stalled = false;
+        }
     }
 
     /// Whether a message from `outpost` may reach the reducer: only while
@@ -135,6 +156,23 @@ mod tests {
         assert_eq!(live.newest(Pid(40)), Some(OutpostId(6)));
         live.mark_ready(OutpostId(6));
         assert_eq!(live.ready(Pid(40)), Some(OutpostId(6)));
+    }
+
+    #[test]
+    fn a_stall_is_reported_once_until_the_outpost_answers_again() {
+        let mut live = LiveOutposts::default();
+        live.started(OutpostId(2), Pid(7));
+        assert!(live.query_abandoned(OutpostId(2)), "the stall begins");
+        assert!(
+            !live.query_abandoned(OutpostId(2)),
+            "a second timeout in the same stall"
+        );
+        live.answered(OutpostId(2));
+        assert!(live.query_abandoned(OutpostId(2)), "a new stall");
+        assert!(
+            !live.query_abandoned(OutpostId(9)),
+            "an outpost that is not live"
+        );
     }
 
     #[test]

@@ -62,6 +62,35 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 - The held anchors (`SrState::held_anchors`) go to each outpost with its
   held nodes, and a change of either sends the list again.
 
+Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
+"Earcons"):
+
+- `themes` loads the theme the configuration names
+  (`ActiveConfig::theme_id` and `theme_options`, through
+  `verbatim_config::themes::find_theme`; one that cannot be loaded is
+  logged and the built-in default theme used instead) and makes a theme
+  active: its sounds are decoded from its own directory or the shared
+  `sounds` folder beside `verbatim.exe` (`LoadedTheme::sound_path`), every
+  problem found is logged, the speech manager's theme handle is set, and
+  the reducer is sent `Input::Fetches` with what the theme wants fetched.
+  It runs at startup and whenever the settings dialog's Theme panel
+  changes the theme or its options. A sound that is missing (a run
+  without the `sounds` folder) is spoken instead, so nothing is lost.
+- `Effect::PlayEarcon` plays through `SpeechManager::play_earcon`. The
+  shell produces three events of its own: the start sound with the
+  startup announcement; the exit sound once the GUI loop has ended, played
+  with `play_earcon_to_end` so it is heard before the process exits, for
+  at most two seconds; and "application not responding" when the
+  outpost's watchdog abandons a query that passed its deadline
+  (`QueryOutcome::Abandoned`), once per stall: `LiveOutposts` marks the
+  outpost stalled and clears the mark when it answers a query or reports
+  an event.
+- `error_sound` is a tracing layer: every event logged at error level, on
+  any thread, sends `ShellCommand::PlayEarcon(Earcon::Error)` to the
+  reducer thread, which plays the error sound, as NVDA plays one for a
+  logged error. It only sends, so logging from inside the speech pipeline
+  or the mixer can never reenter them.
+
 Public surface: none — this is the binary. Internal structure worth
 knowing for review:
 
