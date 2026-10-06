@@ -15,6 +15,7 @@ tracing-subscriber.workspace = true
 verbatim-ia2.workspace = true
 verbatim-model.workspace = true
 verbatim-process.workspace = true
+verbatim-text.workspace = true
 verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true
 windows.workspace = true

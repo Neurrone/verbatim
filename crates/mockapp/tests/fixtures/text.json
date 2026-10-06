@@ -1,0 +1,14 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Text Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Notes",
+      "states": ["focusable"],
+      "text": "alpha beta\ngamma\n"
+    }
+  ]
+}

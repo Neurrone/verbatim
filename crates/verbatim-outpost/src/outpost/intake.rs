@@ -49,6 +49,10 @@ pub(super) enum UiaKind {
     Selection,
     /// An application-initiated notification.
     Notification(Notification),
+    /// A text focus's caret or selection changed (`Text_TextSelectionChanged`).
+    TextSelection,
+    /// A text focus's text changed (`Text_TextChanged`).
+    TextChanged,
 }
 
 /// A UIA event as its callback captured it: cached properties only, plus an
@@ -79,6 +83,9 @@ pub(super) enum Item {
     /// The nodes Core still holds, and the position of the last message it
     /// has handled: release the rest.
     NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
+    /// Report the caret of the focus `node_id` names, which has text: just
+    /// after it was reported, or after an MSAA caret event on it.
+    CaretOf { node_id: verbatim_model::NodeId },
     /// A follow-up finding the live element of a focus reported from its
     /// event alone, for the focus-following property subscription.
     ResolveFocus {
@@ -120,6 +127,7 @@ pub(super) enum Key {
     MenuPopup(isize, i32, i32),
     UiaMenuOpened(Vec<i32>),
     NodesHeld,
+    CaretOf(u64),
 }
 
 impl Key {
@@ -133,7 +141,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaMenuOpened(runtime_id) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(_) | Key::NodesHeld => None,
+            Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
         }
     }
 }
@@ -319,6 +327,8 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             let key = match &event.kind {
                 UiaKind::Property(id) => Some(Key::Uia(0, *id, event.parts.runtime_id.clone())),
                 UiaKind::Selection => Some(Key::Uia(1, 0, event.parts.runtime_id.clone())),
+                UiaKind::TextSelection => Some(Key::Uia(2, 0, event.parts.runtime_id.clone())),
+                UiaKind::TextChanged => Some(Key::Uia(3, 0, event.parts.runtime_id.clone())),
                 // Each notification carries its own text, so none replaces
                 // another.
                 UiaKind::Notification(_) => None,
@@ -382,6 +392,9 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         }
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
+        // Only the newest caret report for a node matters, and it is never
+        // limited: the focus's caret.
+        Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
         Item::Query { .. } | Item::ResolveFocus { .. } => (None, Category::Exempt, 0),
     }
 }

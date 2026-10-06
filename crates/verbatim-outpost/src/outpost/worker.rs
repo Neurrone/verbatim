@@ -42,7 +42,7 @@ use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handl
 use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
 };
-use windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW;
+use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
@@ -52,10 +52,12 @@ use crate::protocol::{
 use super::Context;
 use super::intake::{Entry, HeldFocus, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
+use super::text_reads::{self, CONSOLE_WINDOW_CLASS};
 use super::window::{
     focus_window_of, front_is_another_thread_of_its_application, now_ms,
     window_belongs_to_hidden_frame, window_facts, window_is_foreground,
 };
+use crate::arbitration::window_class_name;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
@@ -103,6 +105,10 @@ const STEP_DEADLINE: Duration = Duration::from_millis(400);
 /// The deadline for an ancestor walk or a tree dump, each up to 64 hops or
 /// 4096 nodes.
 const WALK_DEADLINE: Duration = Duration::from_secs(5);
+
+/// The deadline for a text request: a caret key's wait for evidence takes
+/// up to 300 ms in a terminal, and the reads after it a few calls more.
+const TEXT_DEADLINE: Duration = Duration::from_secs(2);
 
 /// The worker incarnation in charge, its deadline, and the abandoned count.
 #[derive(Default)]
@@ -246,6 +252,13 @@ pub(super) struct Tracking {
     /// How many focuses (not foreground changes) this outpost has reported,
     /// so the worker can tell when a focus candidate was reported.
     reported: u64,
+}
+
+impl Tracking {
+    /// The window of the last focus this outpost reported.
+    pub(super) fn window(&self) -> Option<isize> {
+        self.window
+    }
 }
 
 /// Publishes `message`, an entry's one result, if `generation` is still the
@@ -535,13 +548,16 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
             let deadline = match query {
                 Query::FocusNow => HANDLING_DEADLINE,
                 Query::Ancestors { .. } | Query::DumpTree => WALK_DEADLINE,
+                Query::Text { .. } => TEXT_DEADLINE,
                 _ => STEP_DEADLINE,
             };
             (deadline, Some((*request_id, entry.trace)))
         }
-        Item::Fact(_) | Item::Msaa { .. } | Item::Uia(_) | Item::ResolveFocus { .. } => {
-            (HANDLING_DEADLINE, None)
-        }
+        Item::Fact(_)
+        | Item::Msaa { .. }
+        | Item::Uia(_)
+        | Item::ResolveFocus { .. }
+        | Item::CaretOf { .. } => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -562,6 +578,7 @@ fn describe(item: &Item) -> String {
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
+        Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
     }
 }
 
@@ -622,6 +639,76 @@ impl Worker<'_> {
                 attempt,
                 held,
             } => self.resolve_focus(&runtime_id, trace, attempt, held),
+            Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms),
+        }
+    }
+
+    /// Whether `node_id` is the focus this outpost last reported.
+    fn is_focus(&self, node_id: NodeId) -> bool {
+        let object = if let Some(runtime_id) = self.context.uia_registry.runtime_id_of(node_id) {
+            Object::Uia(runtime_id)
+        } else if let Some((hwnd, object, child)) = self.context.msaa_registry.key_of(node_id) {
+            Object::Msaa(hwnd, object, child)
+        } else {
+            return false;
+        };
+        self.context.intake.focused() == Some(object)
+    }
+
+    /// Reports the caret of `node_id` as `CaretMoved`, when it is still the
+    /// focus and the worker has not read its caret since the event that
+    /// asked: a caret key's answer, read after the event, already told Core.
+    fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+        if !self.is_focus(node_id)
+            || self
+                .context
+                .caret_read_since(node_id, self.timing.observed_at_us)
+        {
+            return;
+        }
+        let Some(caret) = text_reads::report_caret(self.context, node_id) else {
+            return;
+        };
+        let backend = if self.context.uia_registry.runtime_id_of(node_id).is_some() {
+            Backend::Uia
+        } else {
+            Backend::Msaa
+        };
+        let window = self.context.tracking().window;
+        self.emit(
+            trace,
+            observed_at_ms,
+            backend,
+            window,
+            NormalizedEvent::CaretMoved { node_id, caret },
+        );
+    }
+
+    /// Asks for the caret of a newly reported focus that may have text, and
+    /// moves the subscription to caret and text changes to it (to nothing
+    /// for a focus without text, or one read through MSAA, whose caret
+    /// events come from the hooks).
+    fn follow_text(&self, node: &NodeSnapshot, trace: TraceId) {
+        let has_text = text_reads::may_have_text(self.context, node);
+        if let Some(subscription) = self.context.text_events.get() {
+            let element = has_text
+                .then(|| self.context.uia_registry.element_of(node.id))
+                .flatten();
+            subscription.retarget(match element {
+                Some(element) => verbatim_uia::Scope::Elements(vec![element]),
+                None => verbatim_uia::Scope::Nothing,
+            });
+        }
+        if has_text {
+            self.context.intake.push(Entry {
+                item: Item::CaretOf { node_id: node.id },
+                trace,
+                observed_at_ms: now_ms(),
+                timing: EventTiming {
+                    observed_at_us: now_us(),
+                    ..EventTiming::default()
+                },
+            });
         }
     }
 
@@ -633,7 +720,7 @@ impl Worker<'_> {
         // The nodes leave both registries under the watch lock, so a worker
         // that replaces this one, should it be abandoned while the objects
         // are dropped, can never report a node that is about to vanish.
-        let objects = {
+        let (objects, released) = {
             let mut state = self.context.watch.lock();
             let released = state.take_releasable(&held, acknowledged);
             if released.is_empty() {
@@ -641,10 +728,14 @@ impl Worker<'_> {
             }
             let keep = |id: NodeId| !released.contains(&id.number());
             (
-                self.context.uia_registry.retain(keep),
-                self.context.msaa_registry.retain(keep),
+                (
+                    self.context.uia_registry.retain(keep),
+                    self.context.msaa_registry.retain(keep),
+                ),
+                released,
             )
         };
+        text_reads::forget(self.context, released);
         // Outside the lock: releasing an object can call into the
         // application.
         drop(objects);
@@ -693,7 +784,17 @@ impl Worker<'_> {
         object: Option<Object>,
         (ancestors, selected_child): read::Enrichment,
     ) {
+        let mut node = node;
+        // The console host's text area is a terminal, known by its window
+        // (Windows Terminal's control is known by its UIA class).
+        if backend == Backend::Uia
+            && matches!(node.role, Role::EditableText | Role::Document)
+            && window.is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS)
+        {
+            node.role = Role::Terminal;
+        }
         let role = node.role;
+        let text_node = (!foreground).then(|| node.clone());
         tracing::debug!(
             ?role,
             name = ?node.name,
@@ -738,6 +839,10 @@ impl Worker<'_> {
                 if let Some(chain) = chain {
                     tracking.chain = chain;
                 }
+            }
+            drop(tracking);
+            if let Some(node) = text_node {
+                self.follow_text(&node, trace);
             }
         }
     }
@@ -787,6 +892,46 @@ impl Worker<'_> {
         }
         if read::window_uses_uia(self.context, hwnd) {
             return; // UIA owns this window.
+        }
+        // The caret, a text selection, or the text of the focus, when it is
+        // an edit control: reported from the control's messages, without
+        // reading its MSAA object (whose value is its whole text).
+        let client = Object::Msaa(hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+        let of_focus = self.context.intake.focused() == Some(client);
+        match kind {
+            WinEventKind::Caret | WinEventKind::TextSelectionChange => {
+                if of_focus {
+                    let node_id =
+                        self.context
+                            .msaa_registry
+                            .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                    self.caret_of(node_id, trace, observed_at_ms);
+                }
+                return;
+            }
+            WinEventKind::ValueChange
+                if of_focus
+                    && id_object == OBJID_CLIENT.0
+                    && id_child == CHILDID_SELF
+                    && verbatim_ia2::edit::edit_api_version(
+                        &crate::arbitration::normalize_class_name(&window_class_name(hwnd)),
+                    )
+                    .is_some() =>
+            {
+                let node_id =
+                    self.context
+                        .msaa_registry
+                        .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                self.emit(
+                    trace,
+                    observed_at_ms,
+                    Backend::Msaa,
+                    Some(hwnd),
+                    NormalizedEvent::TextChanged { node_id },
+                );
+                return;
+            }
+            _ => {}
         }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
             hwnd,
@@ -847,6 +992,37 @@ impl Worker<'_> {
             self.emit(trace, observed_at_ms, Backend::Uia, hwnd, selection);
             return;
         }
+        // A text focus's caret and text: the subscription follows only the
+        // focus, so these are the focus's.
+        match event.kind {
+            UiaKind::TextSelection => {
+                if let Some(node_id) = self
+                    .context
+                    .uia_registry
+                    .existing_id(&event.parts.runtime_id)
+                {
+                    self.caret_of(node_id, trace, observed_at_ms);
+                }
+                return;
+            }
+            UiaKind::TextChanged => {
+                if let Some(node_id) = self
+                    .context
+                    .uia_registry
+                    .existing_id(&event.parts.runtime_id)
+                {
+                    self.emit(
+                        trace,
+                        observed_at_ms,
+                        Backend::Uia,
+                        hwnd,
+                        NormalizedEvent::TextChanged { node_id },
+                    );
+                }
+                return;
+            }
+            _ => {}
+        }
         let node = Self::uia_node(self.context, &event.parts, element.as_ref());
         let normalized = match event.kind {
             UiaKind::Property(id) if id == UIA_NamePropertyId.0 => {
@@ -872,6 +1048,7 @@ impl Worker<'_> {
                 node_id: node.id,
                 notification,
             },
+            UiaKind::TextSelection | UiaKind::TextChanged => return,
         };
         self.emit(trace, observed_at_ms, Backend::Uia, hwnd, normalized);
     }
@@ -1540,6 +1717,9 @@ impl Worker<'_> {
                 read::ancestors(context, client, *node_id).map(QueryResult::Ancestors)
             }
             Query::DumpTree => read::dump_tree(context, client).map(QueryResult::Tree),
+            Query::Text { node_id, op } => {
+                Ok(QueryResult::Text(text_reads::answer(context, *node_id, op)))
+            }
         };
         let outcome = match result {
             Ok(result) => QueryOutcome::Done(result),

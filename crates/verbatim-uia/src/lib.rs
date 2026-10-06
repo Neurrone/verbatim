@@ -36,6 +36,8 @@
 //!   cached and live reads and the tree walker's steps, each holding one
 //!   documented `unsafe` call and counting its cross-process call, so the
 //!   code that reads UIA, here and in the outpost, is safe Rust.
+//! - [`text`] — the same kind of wrappers over the text pattern and its
+//!   ranges (milestone M4), which the outpost's text protocol reads with.
 
 mod cache;
 pub mod calls;
@@ -49,6 +51,7 @@ mod nearest;
 mod probe;
 mod registry;
 mod subscribe;
+pub mod text;
 
 pub use cache::{CACHED_PROPERTIES, base_cache_request};
 pub use checks::{console_reports_formatting, is_windows_forms};
@@ -60,6 +63,6 @@ pub use nearest::nearest_window_handle;
 pub use probe::{has_server_side_provider, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
-    ElementCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback, Registration, Scope,
-    Subscription,
+    ElementCallback, EventCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback,
+    Registration, Scope, Subscription,
 };

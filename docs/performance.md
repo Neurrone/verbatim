@@ -44,7 +44,20 @@ kinds, counted separately (`verbatim_model::CallKind`):
 - A window message sent to one of the application's windows and answered
   by its window procedure: the arbitration probe (`UiaHasServerSideProvider`
   is one `WM_GETOBJECT`, and the probe's `WM_NULL` wait for a busy window),
-  and a list view's or tree view's `LVM_` and `TVM_` messages.
+  a list view's or tree view's `LVM_` and `TVM_` messages, and an edit
+  control's `EM_` messages and `WM_GETTEXT`.
+
+Text (milestone M4) adds no new kind. A text pattern's methods
+(`GetSelection`, `DocumentRange`, `GetCaretRange`) and a text range's
+(`Clone`, `CompareEndpoints`, `ExpandToEnclosingUnit`, `Move`,
+`MoveEndpointByUnit`, `MoveEndpointByRange`, `GetText`, `Select`,
+`GetBoundingRectangles`, `GetAttributeValue`) are UIA calls, one each: a
+range is a provider object in the application, so even copying one is a
+round trip. A rich edit control's structures are written into memory in
+the application's process and read back (`VirtualAllocEx`,
+`WriteProcessMemory`, `ReadProcessMemory`); those are calls into the
+kernel, which never wait on the application's message loop, so only the
+message counts.
 
 The rules that decide the edge cases:
 
@@ -333,7 +346,61 @@ Stopping speech when a key is pressed.
   count.
 - Target: none.
 
-### Typed-character echo and a terminal output line
+### A caret move, UIA
 
-Milestone M4 adds both. Their minimums, counts, and targets join the
-ledger, and their measurements the ratchet, when M4 builds them.
+A caret key the application has already handled (Right Arrow, the caret
+one character on), answered with the caret's line, its offset in it, and
+the character there, from the text pattern the outpost keeps for the node.
+Measured against mockapp's text provider (`tests/fixtures/text.json`).
+
+- Minimum: 9 UIA calls one at a time: the selection (`GetSelection`),
+  whether it is empty (`CompareEndpoints` of its two ends), the evidence
+  (`CompareEndpoints` with the caret Core knew), the line (a copy of the
+  caret, `ExpandToEnclosingUnit`, `GetText`), and the caret's offset in it
+  (a copy of the line, `MoveEndpointByRange` to the caret, `GetText`). The
+  character is cut from the line's text, at no cost.
+- Today: 9 UIA calls, each one provider call.
+- Target: 1, one remote operations program doing all nine inside the
+  provider, as the focus ancestry does.
+
+### A caret report, UIA
+
+The caret reported without a key: a caret event's report (`CaretMoved`),
+which follows every typed character, and the report after a text focus.
+
+- Minimum: 8 UIA calls, a caret move's without the comparison.
+- Today: 8, each one provider call.
+- Target: 1, with remote operations.
+
+### A caret move, Win32 edit control
+
+The same caret key in a standard edit control, read through its messages.
+
+- Minimum: 5 window messages: the selection (`EM_GETSEL`), the caret's
+  line (`EM_LINEFROMCHAR`), where it and the next line start (two
+  `EM_LINEINDEX`), and its text (`EM_GETLINE`). A rich edit control from
+  version 2.0 takes the same number, with `EM_EXGETSEL`,
+  `EM_EXLINEFROMCHAR`, and `EM_GETTEXTRANGE`.
+- Today: 5.
+- Target: 5.
+
+### A caret report, Win32 edit control
+
+- Minimum: 5 window messages, as for a caret move, whose comparison is
+  local for offsets.
+- Today: 5.
+- Target: 5.
+
+### Typed-character echo
+
+- Minimum: none for the echo itself: the keyboard hook translates the key
+  locally (`ToUnicodeEx`, `docs/crates/verbatim-input-windows.md`), and
+  nothing about the application is read. The caret event the typing causes
+  is reported like any other, a caret report above.
+- Today: none, and one caret report for the caret event.
+- Target: none.
+
+### A terminal output line
+
+Milestone M4's terminal work adds it; its minimum, count, and target join
+the ledger, and its measurement the ratchet, when that is built.

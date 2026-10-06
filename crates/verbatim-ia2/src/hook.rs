@@ -29,12 +29,13 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
-    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
-    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GetClassNameW, OBJID_ALERT, OBJID_CLIENT,
-    OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
+    EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
+    EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
+    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
+    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GetClassNameW,
+    OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW,
+    WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -75,6 +76,13 @@ pub enum WinEventKind {
     /// `EVENT_SYSTEM_ALERT` — an alert was generated; toast notifications
     /// arrive this way (decision D14).
     Alert,
+    /// `EVENT_OBJECT_LOCATIONCHANGE` on the system caret (`OBJID_CARET`):
+    /// the caret moved, as NVDA hears it for edit controls (milestone M4).
+    /// The location changes of every other object are dropped at the hook.
+    Caret,
+    /// `EVENT_OBJECT_TEXTSELECTIONCHANGED`: a text control's selection, or
+    /// its caret, changed.
+    TextSelectionChange,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -83,7 +91,7 @@ pub enum WinEventKind {
 /// table. `StateChange` maps four raw ids to the one kind, so a caller that
 /// wants state changes also gets the selection add, remove, and within
 /// hooks.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 15] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 17] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -102,18 +110,26 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 15] = [
     (EVENT_SYSTEM_SWITCHEND, WinEventKind::SwitchEnd),
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
     (EVENT_SYSTEM_ALERT, WinEventKind::Alert),
+    (EVENT_OBJECT_LOCATIONCHANGE, WinEventKind::Caret),
+    (
+        EVENT_OBJECT_TEXTSELECTIONCHANGED,
+        WinEventKind::TextSelectionChange,
+    ),
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
-/// process-scoped property, value, state, and selection events, and object
-/// destruction (for windows going away). Focus, menu-popup, and the end of a
-/// menu are not here — the focus listener owns them globally.
+/// process-scoped property, value, state, and selection events, the caret
+/// and text selection (milestone M4), and object destruction (for windows
+/// going away). Focus, menu-popup, and the end of a menu are not here — the
+/// focus listener owns them globally.
 pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ValueChange,
     WinEventKind::StateChange,
     WinEventKind::NameChange,
     WinEventKind::Selection,
     WinEventKind::Destroy,
+    WinEventKind::Caret,
+    WinEventKind::TextSelectionChange,
 ];
 
 /// The focus listener's subscription set (decisions D13 and D14): the
@@ -218,12 +234,16 @@ fn kind_of(event: u32) -> Option<WinEventKind> {
         .find_map(|&(id, kind)| (id == event).then_some(kind))
 }
 
-/// NVDA's early filters for `WinEvent`s, all local checks: object ids at or
-/// below `OBJID_ALERT` are not accessible objects; a focus on a menu bar
-/// object itself is not a real focus; Program Manager and the taskbar never
-/// report a foreground change; and the IME candidate window's menu events
-/// are not menus (NVDA's `winEventCallback` and its event limiter).
+/// NVDA's early filters for `WinEvent`s, all local checks: a location
+/// change matters only for the caret; object ids at or below `OBJID_ALERT`
+/// are not accessible objects; a focus on a menu bar object itself is not a
+/// real focus; Program Manager and the taskbar never report a foreground
+/// change; and the IME candidate window's menu events are not menus (NVDA's
+/// `winEventCallback` and its event limiter).
 fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
+    if kind == WinEventKind::Caret {
+        return id_object == OBJID_CARET.0;
+    }
     if id_object <= OBJID_ALERT.0 {
         return false;
     }
@@ -301,6 +321,27 @@ mod tests {
         ] {
             assert_eq!(kind_of(removed_or_added), Some(WinEventKind::StateChange));
         }
+    }
+
+    #[test]
+    fn only_the_carets_location_changes_are_wanted() {
+        let any = HWND::default();
+        assert_eq!(
+            kind_of(EVENT_OBJECT_LOCATIONCHANGE),
+            Some(WinEventKind::Caret)
+        );
+        assert!(is_wanted(
+            WinEventKind::Caret,
+            any,
+            OBJID_CARET.0,
+            CHILDID_SELF
+        ));
+        assert!(!is_wanted(
+            WinEventKind::Caret,
+            any,
+            OBJID_WINDOW.0,
+            CHILDID_SELF
+        ));
     }
 
     #[test]

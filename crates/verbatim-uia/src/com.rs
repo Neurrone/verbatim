@@ -156,18 +156,43 @@ pub fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
 /// `IUIAutomationElement::GetRuntimeId`); this function takes ownership and
 /// destroys it.
 unsafe fn take_i32_safearray(array: *mut SAFEARRAY) -> Vec<i32> {
+    // SAFETY: the caller's guarantee, for an array of `i32`.
+    unsafe { take_safearray(array) }
+}
+
+/// Copies a `SAFEARRAY` of `f64` (a text range's bounding rectangles) into
+/// a `Vec`, destroying the array afterward. Returns an empty vector for a
+/// null or malformed array.
+///
+/// # Safety
+///
+/// `array` must be a one-dimensional `SAFEARRAY` of `f64` owned by the
+/// caller; this function takes ownership and destroys it.
+pub(crate) unsafe fn take_f64_safearray(array: *mut SAFEARRAY) -> Vec<f64> {
+    // SAFETY: the caller's guarantee, for an array of `f64`.
+    unsafe { take_safearray(array) }
+}
+
+/// Copies a one-dimensional `SAFEARRAY` of `T` into a `Vec`, destroying the
+/// array afterward.
+///
+/// # Safety
+///
+/// `array` must be null or a one-dimensional `SAFEARRAY` whose elements are
+/// `T`, owned by the caller; this function takes ownership and destroys it.
+unsafe fn take_safearray<T: Copy + Default>(array: *mut SAFEARRAY) -> Vec<T> {
     if array.is_null() {
         return Vec::new();
     }
-    // SAFETY: `array` is a valid, caller-owned SAFEARRAY of i32. Bounds come
-    // from the array itself; each element is read by index and the array is
-    // destroyed exactly once before returning.
+    // SAFETY: `array` is a valid, caller-owned SAFEARRAY of `T`. Bounds come
+    // from the array itself; each element is read by index into a `T` and
+    // the array is destroyed exactly once before returning.
     unsafe {
         let mut out = Vec::new();
         if let (Ok(lower), Ok(upper)) = (SafeArrayGetLBound(array, 1), SafeArrayGetUBound(array, 1))
         {
             for index in lower..=upper {
-                let mut element: i32 = 0;
+                let mut element = T::default();
                 if SafeArrayGetElement(array, &raw const index, (&raw mut element).cast()).is_ok() {
                     out.push(element);
                 }

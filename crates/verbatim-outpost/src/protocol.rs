@@ -54,7 +54,7 @@ pub fn now_us() -> u64 {
 }
 use verbatim_model::{
     Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    OutpostId, Pid, QueryKind, Role, StateSet, TraceId, TreeNode, WindowFacts,
+    OutpostId, Pid, QueryKind, Role, StateSet, TextOp, TextReply, TraceId, TreeNode, WindowFacts,
 };
 
 /// The identity-free contents of a UIA focus element, as the focus listener
@@ -269,10 +269,6 @@ pub enum FactKey {
 /// handle; there is no shutdown message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a command is built once and moved, never stored in bulk"
-)]
 pub enum SupervisorToOutpost {
     /// Forces one backend for every window of the target application,
     /// overriding arbitration; used by tests and per-app config overrides.
@@ -329,6 +325,12 @@ pub enum SupervisorToOutpost {
     NodesHeld {
         /// The held nodes' numbers.
         nodes: Vec<u64>,
+        /// The text anchors Core holds in this outpost
+        /// (`SrState::held_anchors` in `verbatim-core`): the outpost keeps
+        /// these, and may forget any other once it has minted newer ones
+        /// (the text protocol, `docs/crates/verbatim-model.md`).
+        #[serde(default)]
+        anchors: Vec<u64>,
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },
@@ -365,6 +367,15 @@ pub enum Query {
     /// The application's tree from its top-level window, capped at a depth
     /// of 64 and 4096 nodes.
     DumpTree,
+    /// A text request (milestone M4's text protocol, `TextOp` in
+    /// `verbatim-model`): read, wait for the caret, select, or move the
+    /// caret in a node's text. Answered [`QueryResult::Text`].
+    Text {
+        /// The node whose text to use.
+        node_id: NodeId,
+        /// What to do.
+        op: TextOp,
+    },
 }
 
 /// The one outcome of a query.
@@ -409,6 +420,10 @@ pub enum QueryResult {
     Ancestors(Vec<NodeSnapshot>),
     /// The answer to [`Query::DumpTree`].
     Tree(DumpedTree),
+    /// The answer to [`Query::Text`]. Every answer the text protocol has,
+    /// `NoText` and `Gone` among them, comes back this way, so Core hands it
+    /// to the reducer unchanged.
+    Text(TextReply),
 }
 
 /// The answer to [`Query::FocusNow`].

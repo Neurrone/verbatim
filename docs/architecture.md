@@ -681,6 +681,23 @@ gesture is enqueued; gesture semantics run on the reducer thread. Gesture maps a
 and per-app-module overridable, NVDA-style. Touch and mouse tracking come
 later but route through the same `Input` type.
 
+Typed text (milestone M4, decided 2026-10-06) also comes from the hook:
+each key it passes to the application is translated with `ToUnicodeEx`,
+using the foreground thread's keyboard layout and the flag that leaves the
+keyboard state unchanged, so a pending dead key, whose state every
+translation with the layout shares, is never consumed, and the letter
+after it reads as composed; with an input method's layout active, nothing
+is translated, since its composition is unknowable from keys. NVDA hears
+typed characters from inside the application (`WM_CHAR` and its input
+method hooks, through injection), which decision D2 keeps off the
+correctness path; the application's own text events were the other
+candidate, rejected because they cannot tell typing from a paste or an
+autocompletion and echo an input method's composition key by key. The
+reasoning is in `docs/crates/verbatim-input-windows.md`, "Typed text".
+The hook also reports the caret keys it passes, which the reducer answers
+by asking the focus's outpost for the caret once the application has
+moved it.
+
 ## 6. Speech and audio
 
 Pipeline stages, in order: structured utterance (semantic spans, per D12),

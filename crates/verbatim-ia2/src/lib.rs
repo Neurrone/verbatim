@@ -23,18 +23,23 @@
 //! - [`calls`] — the per-thread count of the cross-process calls
 //!   [`acquire`] makes, which the outpost's worker takes around each entry
 //!   it handles.
+//! - [`edit`] — the standard Win32 edit and rich edit controls' text,
+//!   through their window messages (milestone M4), as NVDA's
+//!   `EditTextInfo` reads them.
 //!
 //! `unsafe` code lives only in the private modules that wrap the platform:
 //! `accessible`, the safe MSAA wrappers (an `IAccessible` with its child id,
 //! and the `oleacc` acquisition functions) that [`acquire`] is written
 //! against; `window`, the window functions and the list view and tree view
-//! messages; and `hook`, the `WinEvent` hooks.
+//! messages; `hook`, the `WinEvent` hooks; and [`edit`], the edit
+//! controls' messages and the target memory some of them need.
 //! [`acquire`] itself is safe code.
 
 mod accessible;
 pub mod acquire;
 pub mod calls;
 mod com;
+pub mod edit;
 mod hook;
 pub mod map;
 mod registry;

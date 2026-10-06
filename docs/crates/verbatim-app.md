@@ -19,6 +19,49 @@ map and its gesture-to-script table from `verbatim_input::bindings_for` for
 the configured keyboard layout, so the active review and navigation bindings
 follow `settings.toml`'s `keyboard.layout`.
 
+Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
+"The text protocol"):
+
+- The reader settings (`settings.toml`'s `[reader]` section) are the
+  reducer's first input, `Input::Settings`. They change only by the
+  reducer's own toggle keys, whose `Effect::SettingsChanged` is saved to
+  `settings.toml` through the config store; no other part of the shell
+  edits them yet.
+- The hook's gesture map observes the caret keys
+  (`GestureMap::with_observed(caret_bindings())`): they reach the
+  application, and each one the hook reports becomes `Input::CaretKey`
+  through the same table. Each text a key types becomes
+  `Input::CharacterTyped` (the hook's translation,
+  [verbatim-input-windows](verbatim-input-windows.md)), and each key that
+  cancels speech also sends `Input::SpeechCancelled`, as does a gesture
+  injected through the control plane, so say-all stops. All of these go
+  straight from the hook thread to the reducer thread's command channel,
+  which is unbounded, so the hook never waits, and in the order the keys
+  were pressed. The hook's `DecisionConfig` takes the two speech interrupt
+  settings from `keyboard.speech_interrupt_for_characters` and
+  `keyboard.speech_interrupt_for_enter`. The router maps a script action
+  to its reducer command with `ScriptAction::review_command`.
+- `Effect::Text` goes to the outpost of the node it names as
+  `Query::Text`, recorded in the request table as `Asker::Text`; its one
+  outcome comes back as `Input::TextCompleted` under the reducer's query
+  id, the outpost's reply when it answered, `Gone` when the node or its
+  outpost is gone, and `Unanswered` for any failure.
+- The speech pipeline's observer (`speech_events`) is the latency ledger
+  plus the marks: every index mark playback reaches becomes
+  `Input::MarkReached` on the same command channel, so say-all advances.
+  Every synthesizer reports marks: `OneCore` from its own bookmarks, and
+  eSpeak NG, whose marks are unreliable after a full stop, through the
+  speech manager's split of each sequence at its marks
+  ([verbatim-speech](verbatim-speech.md), "Mark fallback"), so neither
+  degrades say-all.
+- `Effect::KeepDisplayOn` calls `SetThreadExecutionState` on the reducer
+  thread, which lives as long as Verbatim: the display and the system
+  required while say-all reads, released when it ends.
+- `Effect::CopyToClipboard`, which select-then-copy emits, goes through
+  the shared clipboard helper like every copy.
+- The held anchors (`SrState::held_anchors`) go to each outpost with its
+  held nodes, and a change of either sends the list again.
+
 Public surface: none — this is the binary. Internal structure worth
 knowing for review:
 

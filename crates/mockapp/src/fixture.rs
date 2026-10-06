@@ -87,6 +87,8 @@ struct RawNode {
     #[serde(default)]
     controller_for: Option<String>,
     #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -107,6 +109,9 @@ pub(crate) struct FixtureNode {
     pub(crate) level: Option<u32>,
     /// The `id` of the node this one controls (UIA `ControllerFor`).
     pub(crate) controller_for: Option<String>,
+    /// The node's text, served through UIA's text pattern, or for the MSAA
+    /// backend by a real Win32 edit control (milestone M4).
+    pub(crate) text: Option<String>,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -179,6 +184,7 @@ fn convert(
         set_size: raw.set_size,
         level: raw.level,
         controller_for: raw.controller_for,
+        text: raw.text,
         children,
     })
 }

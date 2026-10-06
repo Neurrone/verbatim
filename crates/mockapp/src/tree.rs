@@ -35,6 +35,11 @@ pub(crate) struct NodeData {
     pub(crate) level: Option<u32>,
     /// The node this one controls (UIA `ControllerFor`).
     pub(crate) controller_for: Option<usize>,
+    /// The node's text as UTF-16, served through UIA's text pattern.
+    pub(crate) text: Option<Vec<u16>>,
+    /// The text's selection, start and end as UTF-16 offsets; the caret is
+    /// at its start, and a collapsed selection is the caret alone.
+    pub(crate) selection: (usize, usize),
     pub(crate) parent: Option<usize>,
     pub(crate) children: Vec<usize>,
 }
@@ -118,6 +123,8 @@ fn insert(
         set_size: node.set_size,
         level: node.level,
         controller_for: None,
+        text: node.text.map(|text| text.encode_utf16().collect()),
+        selection: (0, 0),
         parent,
         children: Vec::new(),
     });
@@ -157,6 +164,7 @@ mod tests {
             set_size: None,
             level: None,
             controller_for: None,
+            text: None,
             children,
         }
     }

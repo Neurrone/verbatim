@@ -37,6 +37,10 @@ pub type PropertyCallback = Arc<dyn Fn(&IUIAutomationElement, i32) + Send + Sync
 /// element that raised it.
 pub type ElementCallback = Arc<dyn Fn(&IUIAutomationElement) + Send + Sync>;
 
+/// Invoked on a UIA callback thread for one of several automation events,
+/// with the cached element that raised it and the event's id.
+pub type EventCallback = Arc<dyn Fn(&IUIAutomationElement, i32) + Send + Sync>;
+
 /// Invoked on a UIA callback thread for a notification: the raising element,
 /// the kind and processing hint, and the optional display string and
 /// activity id.
@@ -98,6 +102,14 @@ pub enum Subscription {
     Notifications {
         /// Called for each notification.
         callback: NotificationCallback,
+    },
+    /// Several automation events through one handler, such as a text
+    /// control's caret and text changes.
+    Events {
+        /// The events to watch.
+        events: Vec<UIA_EVENT_ID>,
+        /// Called for each event, with its id.
+        callback: EventCallback,
     },
 }
 
@@ -168,6 +180,7 @@ enum Handler {
         Vec<UIA_PROPERTY_ID>,
     ),
     Event(IUIAutomationEventHandler, UIA_EVENT_ID),
+    Events(IUIAutomationEventHandler, Vec<UIA_EVENT_ID>),
     Notifications(IUIAutomationNotificationEventHandler, IUIAutomation5),
 }
 
@@ -185,8 +198,15 @@ fn run(
                 properties,
                 callback,
             } => Handler::Properties(handlers::PropertyHandler { callback }.into(), properties),
-            Subscription::Event { event, callback } => {
-                Handler::Event(handlers::EventHandler { callback }.into(), event)
+            Subscription::Event { event, callback } => Handler::Event(
+                handlers::EventHandler {
+                    callback: Arc::new(move |element, _| callback(element)),
+                }
+                .into(),
+                event,
+            ),
+            Subscription::Events { events, callback } => {
+                Handler::Events(handlers::EventHandler { callback }.into(), events)
             }
             Subscription::Notifications { callback } => Handler::Notifications(
                 handlers::NotificationHandler { callback }.into(),
@@ -255,6 +275,10 @@ fn register(uia: &Uia, cache: &IUIAutomationCacheRequest, handler: &Handler, sco
                 Handler::Event(handler, event) => uia
                     .client()
                     .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler),
+                Handler::Events(handler, events) => events.iter().try_for_each(|event| {
+                    uia.client()
+                        .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler)
+                }),
                 Handler::Notifications(handler, client5) => {
                     client5.AddNotificationEventHandler(&element, tree_scope, cache, handler)
                 }
@@ -277,7 +301,7 @@ mod handlers {
     };
     use windows_core::implement;
 
-    use super::{ElementCallback, NotificationCallback, PropertyCallback};
+    use super::{EventCallback, NotificationCallback, PropertyCallback};
 
     /// The property-change handler.
     #[implement(windows::Win32::UI::Accessibility::IUIAutomationPropertyChangedEventHandler)]
@@ -302,17 +326,17 @@ mod handlers {
     /// The automation-event handler.
     #[implement(windows::Win32::UI::Accessibility::IUIAutomationEventHandler)]
     pub struct EventHandler {
-        pub callback: ElementCallback,
+        pub callback: EventCallback,
     }
 
     impl IUIAutomationEventHandler_Impl for EventHandler_Impl {
         fn HandleAutomationEvent(
             &self,
             sender: windows_core::Ref<IUIAutomationElement>,
-            _eventid: UIA_EVENT_ID,
+            eventid: UIA_EVENT_ID,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                (self.callback)(element);
+                (self.callback)(element, eventid.0);
             }
             Ok(())
         }

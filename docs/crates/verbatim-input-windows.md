@@ -5,18 +5,25 @@ never-blocking imperative shell around [verbatim-input](verbatim-input.md)'s
 pure `DecisionMachine`. It is a separate crate so that the machine, the key
 names, and the gesture tables carry no Windows dependency.
 
-Public API: `InputHook::start(config, map, events, speech)`, which
-installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls. `speech`
-is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect) + Send`) that carries
-out each key press's effect on speech; it is called on the hook thread, so
-it must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim gives keys
-it injects for its own purposes (the GUI's Control tap that unlocks the
-foreground): the hook still decides them, but leaves speech alone, as
-NVDA ignores the keys it injects itself.
+Public API: `InputHook::start(config, map, events, speech, reports)`,
+which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
+`speech` is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect) + Send`) that
+carries out each key press's effect on speech; `reports` is a
+`KeyReportFn` that receives, after the speech effect, what a key passed to
+the application did, a `KeyReport`: `Observed`, the observed gesture the
+key completed (a caret key, `Decision::observed`), or `Typed`, the text the
+key types, with a trace id minted when it was observed (the source of
+`Input::CharacterTyped`, milestone M4). Both are called on the hook thread,
+so they must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim
+gives keys it injects for its own purposes (the GUI's Control tap that
+unlocks the foreground): the hook still decides them, but leaves speech
+alone and reports nothing, as NVDA ignores the keys it injects itself.
 
 Implementation notes: the hook thread keeps the machine in a thread-local
 (the hook procedure is a bare callback with no user pointer, and only ever
-runs on the thread that installed it), calls `speech` with the decision's
+runs on the thread that installed it), tells it before each key whether
+Num Lock is on (`DecisionMachine::set_num_lock`, from the keyboard's own
+toggle state, a local read), calls `speech` with the decision's
 speech effect before sending the gesture, so speech the gesture causes is
 never the speech the key press cancels, forwards emitted gestures with a
 non-blocking `try_send` that drops on a full channel, also sends the
@@ -29,5 +36,59 @@ swallow or calls `CallNextHookEx` to pass. The never-block constraint is
 load-bearing: Windows silently removes low-level hooks whose procedure
 exceeds the system timeout, and the reader would go deaf to the keyboard
 with no error. The `hook_echo` example installs the real hook with two
-bound gestures and prints what fires; it needs an interactive desktop and
-is never run in CI.
+bound gestures and prints what fires and what each key reports; it needs
+an interactive desktop and is never run in CI.
+
+## Typed text (the `typed` module)
+
+Which source `Input::CharacterTyped` comes from was the open choice M4's
+Core work left: the hook's translation of each key, or the application's
+own text changes. It comes from the hook, decided on 2026-10-06, because
+that is the source that is correct for dead keys and never wrong for input
+methods, and the one the reducer's password rule for terminals needs
+(characters arrive before the terminal shows them, and are held until it
+does):
+
+- Each key-down the hook passes to the application, with no modifier but
+  Shift, or with AltGr (Control and Alt together), is translated with
+  `ToUnicodeEx`, using the keyboard layout of the thread that owns the
+  foreground window (each thread has its own layout) and the modifier and
+  Caps Lock state read locally. Control or Alt alone, or the Windows key,
+  make a shortcut, which types nothing. The result counts when it is text
+  other than control characters, a tab and the carriage return of Enter
+  excepted.
+- Dead keys. Windows keeps a pending dead key (the accent of a
+  US-International key, waiting for the letter it modifies) in state every
+  translation with that layout shares; measured on 2026-10-06, one process
+  translating a dead key leaves it for another process's translation of a
+  letter, which comes back accented. Translating keys in a hook the
+  classic way consumes the application's dead key and breaks its typing,
+  the well-known fault of keyboard hooks. The hook therefore
+  translates with `ToUnicodeEx`'s flag that leaves the keyboard state
+  unchanged (Windows 10 version 1607 and later): the dead key itself
+  translates to nothing and is not echoed, and the letter after it reads
+  the pending state the application's own translation of the dead key set,
+  so it is echoed composed ("é"), without disturbing the application. A
+  letter typed faster than the application handles the dead key before it
+  reads uncomposed; nothing else is lost.
+- Input methods. Chinese, Japanese, and Korean input compose several keys
+  into text the hook cannot know, so with such a layout active (by the
+  layout's language, or an older input method's layout handle, whose high
+  word starts with hexadecimal E) nothing is translated, rather than
+  echoing the romanized keys. `ImmIsIME` cannot tell: with text services
+  it answers true for every layout, the US one included (found
+  2026-10-06). The committed text is not echoed; NVDA hears it from inside
+  the application (its `ime` and `tsf` hooks), which Verbatim's injection
+  helper (decision D2, milestone M6) can do, and announcing compositions is
+  a later milestone (`phase6-design.md`, "Internationalization in the text
+  model").
+- A key typed as a Unicode packet (`VK_PACKET`, from an on-screen keyboard
+  or `SendInput` with `KEYEVENTF_UNICODE`) carries its UTF-16 unit, a
+  surrogate pair as two keys, which are joined.
+
+The application's text events were the alternative and were rejected:
+they cannot tell typing from a paste, an autocompletion, or a program's own
+change; an input method's composition text appears in the document as it
+is composed, so it would be echoed key by key and again on commit; and a
+terminal's password prompt would need no rule at all, but every other
+terminal echo would wait for the screen.

@@ -36,6 +36,8 @@ use crate::tree::SharedTree;
 
 pub(crate) use handler::{ChildProvider, RootProvider};
 
+mod text;
+
 /// Builds the root's provider, for answering `WM_GETOBJECT`.
 pub(crate) fn root_provider(tree: SharedTree, hwnd: HWND) -> RootProvider {
     RootProvider {
@@ -73,6 +75,15 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
             }
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text),
+        Command::Caret(id, start, end) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(index) = guard.index_of(&id) {
+                let length = guard.nodes[index].text.as_ref().map_or(0, Vec::len);
+                guard.nodes[index].selection = (start.min(length), end.min(length));
+            }
+        }
         // Handled by the window thread before dispatch.
         Command::Stall(_) | Command::Quit => {}
     }
@@ -660,13 +671,13 @@ mod handler {
         ISelectionProvider, ISelectionProvider_Impl, IToggleProvider, IToggleProvider_Impl,
         NavigateDirection, ProviderOptions, ProviderOptions_ServerSideProvider,
         ProviderOptions_UseComThreading, UIA_ExpandCollapsePatternId, UIA_PATTERN_ID,
-        UIA_PROPERTY_ID, UIA_SelectionItemPatternId, UIA_SelectionPatternId, UIA_TogglePatternId,
-        UIA_ValuePatternId, UiaRect,
+        UIA_PROPERTY_ID, UIA_SelectionItemPatternId, UIA_SelectionPatternId, UIA_TextPattern2Id,
+        UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
     use windows::core::Result as WinResult;
     use windows_core::{Error, IUnknown, implement};
 
-    use super::props;
+    use super::{props, text};
     use crate::hits;
     use crate::tree::SharedTree;
 
@@ -882,6 +893,11 @@ mod handler {
             }
             .into();
             return Ok(provider);
+        }
+        if (pattern_id == UIA_TextPatternId || pattern_id == UIA_TextPattern2Id)
+            && text::has_text(tree, index)
+        {
+            return Ok(text::provider(tree, hwnd, index));
         }
         if pattern_id == UIA_SelectionItemPatternId && props::selection_available(states) {
             let provider: IUnknown = SelectionItemProvider {

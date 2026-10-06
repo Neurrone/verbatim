@@ -142,6 +142,36 @@ pub(crate) enum Method {
     GetIdsOfNames,
     /// `IDispatch::Invoke`.
     DispatchInvoke,
+    /// `ITextProvider::GetSelection`.
+    TextGetSelection,
+    /// `ITextProvider::GetVisibleRanges`.
+    TextGetVisibleRanges,
+    /// `ITextProvider::DocumentRange`.
+    TextDocumentRange,
+    /// `ITextProvider2::GetCaretRange`.
+    TextGetCaretRange,
+    /// `ITextRangeProvider::Clone`.
+    RangeClone,
+    /// `ITextRangeProvider::Compare`.
+    RangeCompare,
+    /// `ITextRangeProvider::CompareEndpoints`.
+    RangeCompareEndpoints,
+    /// `ITextRangeProvider::ExpandToEnclosingUnit`.
+    RangeExpandToEnclosingUnit,
+    /// `ITextRangeProvider::GetAttributeValue`.
+    RangeGetAttributeValue,
+    /// `ITextRangeProvider::GetBoundingRectangles`.
+    RangeGetBoundingRectangles,
+    /// `ITextRangeProvider::GetText`.
+    RangeGetText,
+    /// `ITextRangeProvider::Move`.
+    RangeMove,
+    /// `ITextRangeProvider::MoveEndpointByUnit`.
+    RangeMoveEndpointByUnit,
+    /// `ITextRangeProvider::MoveEndpointByRange`.
+    RangeMoveEndpointByRange,
+    /// `ITextRangeProvider::Select`.
+    RangeSelect,
 }
 
 /// How many methods are counted.
@@ -153,7 +183,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 55] = [
+    pub(crate) const ALL: [Method; 70] = [
         Method::CommandApplied,
         Method::GetObject,
         Method::ProviderOptions,
@@ -209,6 +239,21 @@ impl Method {
         Method::GetTypeInfo,
         Method::GetIdsOfNames,
         Method::DispatchInvoke,
+        Method::TextGetSelection,
+        Method::TextGetVisibleRanges,
+        Method::TextDocumentRange,
+        Method::TextGetCaretRange,
+        Method::RangeClone,
+        Method::RangeCompare,
+        Method::RangeCompareEndpoints,
+        Method::RangeExpandToEnclosingUnit,
+        Method::RangeGetAttributeValue,
+        Method::RangeGetBoundingRectangles,
+        Method::RangeGetText,
+        Method::RangeMove,
+        Method::RangeMoveEndpointByUnit,
+        Method::RangeMoveEndpointByRange,
+        Method::RangeSelect,
     ];
 
     /// The method's name, as its interface names it.
@@ -273,6 +318,21 @@ impl Method {
             Method::GetTypeInfo => "GetTypeInfo",
             Method::GetIdsOfNames => "GetIDsOfNames",
             Method::DispatchInvoke => "IDispatch::Invoke",
+            Method::TextGetSelection => "ITextProvider::GetSelection",
+            Method::TextGetVisibleRanges => "GetVisibleRanges",
+            Method::TextDocumentRange => "DocumentRange",
+            Method::TextGetCaretRange => "GetCaretRange",
+            Method::RangeClone => "Clone",
+            Method::RangeCompare => "Compare",
+            Method::RangeCompareEndpoints => "CompareEndpoints",
+            Method::RangeExpandToEnclosingUnit => "ExpandToEnclosingUnit",
+            Method::RangeGetAttributeValue => "GetAttributeValue",
+            Method::RangeGetBoundingRectangles => "GetBoundingRectangles",
+            Method::RangeGetText => "GetText",
+            Method::RangeMove => "Move",
+            Method::RangeMoveEndpointByUnit => "MoveEndpointByUnit",
+            Method::RangeMoveEndpointByRange => "MoveEndpointByRange",
+            Method::RangeSelect => "ITextRangeProvider::Select",
         }
     }
 

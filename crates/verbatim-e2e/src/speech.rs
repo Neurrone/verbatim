@@ -76,6 +76,8 @@ pub struct SpeechCollector {
     endings: HashMap<UtteranceId, UtteranceEnding>,
     /// Utterances queued and not yet ended.
     unended: BTreeSet<UtteranceId>,
+    /// Utterances whose audio has started playing.
+    started: BTreeSet<UtteranceId>,
     /// When the last utterance was queued or ended.
     last_activity: Instant,
 }
@@ -111,6 +113,7 @@ impl SpeechCollector {
             texts: HashMap::new(),
             endings: HashMap::new(),
             unended: BTreeSet::new(),
+            started: BTreeSet::new(),
             last_activity: Instant::now(),
         }
     }
@@ -134,6 +137,7 @@ impl SpeechCollector {
             }
             Frame::SpeechStarted { utterance, .. } => {
                 self.timeline.push_audio_started(self.text_of(utterance));
+                self.started.insert(utterance);
                 None
             }
             Frame::SpeechEnded { utterance, ending } => {
@@ -356,6 +360,107 @@ impl SpeechCollector {
             );
         };
         self.expect_heard(&utterance);
+    }
+
+    /// Like [`expect_in_order`](Self::expect_in_order), but each utterance
+    /// must equal its text exactly rather than contain it: for speech as
+    /// short as one character, which many unrelated utterances contain.
+    ///
+    /// # Panics
+    ///
+    /// As [`expect_in_order`](Self::expect_in_order).
+    pub fn expect_exactly(&mut self, texts: &[&str], timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let mut next = 0usize;
+        let mut completing = None;
+        while next < texts.len() && Instant::now() < deadline {
+            match self.next_utterance() {
+                Ok(Some(utterance)) if utterance.text == texts[next] => {
+                    next += 1;
+                    completing = Some(utterance);
+                }
+                Ok(_) => {}
+                Err(error) if is_read_timeout(&error) => {}
+                Err(error) => panic!(
+                    "speech connection failed while waiting for utterance {} of {} ({:?}); timeline so far:\n{}\nunderlying error: {error}",
+                    next + 1,
+                    texts.len(),
+                    texts[next],
+                    self.timeline.render()
+                ),
+            }
+        }
+        assert!(
+            next >= texts.len(),
+            "timed out after {timeout:?} waiting for utterance {} of {} to be exactly {:?}; timeline so far:\n{}",
+            next + 1,
+            texts.len(),
+            texts[next],
+            self.timeline.render()
+        );
+        if let Some(utterance) = completing {
+            self.expect_heard(&utterance);
+        }
+    }
+
+    /// Waits for an utterance containing `text` to start playing, tolerating
+    /// unrelated utterances before it, and returns without waiting for it to
+    /// end: for a key pressed while it plays.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the full timeline if no such utterance starts playing
+    /// within `timeout`, if it ends without having played, or if the speech
+    /// connection fails outright.
+    pub fn expect_playing(&mut self, text: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let utterance = loop {
+            match self.next_utterance() {
+                Ok(Some(utterance)) if utterance.text.contains(text) => {
+                    break utterance.utterance;
+                }
+                Ok(_) => {}
+                Err(error) if is_read_timeout(&error) => {}
+                Err(error) => panic!(
+                    "speech connection failed while waiting for {text:?} to play; timeline so far:\n{}\nunderlying error: {error}",
+                    self.timeline.render()
+                ),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out after {timeout:?} waiting for {text:?} to be queued; timeline so far:\n{}",
+                self.timeline.render()
+            );
+        };
+        while !self.started.contains(&utterance) {
+            assert!(
+                !self.endings.contains_key(&utterance),
+                "{text:?} ended without playing; timeline so far:\n{}",
+                self.timeline.render()
+            );
+            assert!(
+                Instant::now() < deadline,
+                "timed out after {timeout:?} waiting for {text:?} to start playing; timeline so far:\n{}",
+                self.timeline.render()
+            );
+            match self.read_aside() {
+                Ok(()) => {}
+                Err(error) if is_read_timeout(&error) => {}
+                Err(error) => panic!(
+                    "speech connection failed while waiting for {text:?} to play; timeline so far:\n{}\nunderlying error: {error}",
+                    self.timeline.render()
+                ),
+            }
+        }
+    }
+
+    /// Whether an utterance whose text is exactly `text` has started
+    /// playing, as far as the frames read so far tell.
+    #[must_use]
+    pub fn has_played(&self, text: &str) -> bool {
+        self.started
+            .iter()
+            .any(|utterance| self.texts.get(utterance).is_some_and(|heard| heard == text))
     }
 
     /// Waits until every utterance queued so far has ended. It never waits

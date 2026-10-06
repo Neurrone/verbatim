@@ -61,6 +61,10 @@ pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 /// How long a window the harness asks to close is given to go.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How often [`Scenario::save_document`] checks whether the document's
+/// title still marks unsaved changes.
+const SAVE_POLL: Duration = Duration::from_millis(50);
+
 /// One application a scenario launched, for cleanup.
 struct Launched {
     pid: u32,
@@ -468,13 +472,29 @@ impl Scenario {
     /// Returns an error if a request fails or the window does not take the
     /// foreground.
     pub fn open_document(&mut self, application: &str) -> io::Result<u32> {
-        let marker = format!("{DOCUMENT_MARKER}notes");
+        self.open_document_with(application, "notes", "")
+    }
+
+    /// [`Scenario::open_document`] on a document holding `contents`, named
+    /// with [`DOCUMENT_MARKER`] and `name`, for a scenario that reads or
+    /// edits text.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::open_document`].
+    pub fn open_document_with(
+        &mut self,
+        application: &str,
+        name: &str,
+        contents: &str,
+    ) -> io::Result<u32> {
+        let marker = format!("{DOCUMENT_MARKER}{name}");
         let directory = Path::new(&self.stderr_log_path)
             .parent()
             .and_then(Path::to_str)
             .ok_or_else(|| io::Error::other("no directory for the harness document"))?;
         let path = format!("{directory}\\{marker}.txt");
-        self.process_agent.write_file(&path, b"")?;
+        self.process_agent.write_file(&path, contents.as_bytes())?;
         let pid = self.process_agent.launch_process(
             application,
             std::slice::from_ref(&path),
@@ -490,6 +510,71 @@ impl Scenario {
         });
         self.require_window_in_front(&image, Some(&marker))?;
         Ok(pid)
+    }
+
+    /// Saves the harness document `name` ([`Scenario::open_document_with`])
+    /// when its window is in front with unsaved changes, and waits until its
+    /// title no longer marks them. An edited document left unsaved would be
+    /// restored by Windows 11 Notepad the next time it opens, which then
+    /// asks whether to keep the changes when the harness writes the file
+    /// afresh. Nothing is sent when another window is in front.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the title still marks unsaved
+    /// changes after `timeout`.
+    pub fn save_document(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
+        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let unsaved_in_front = |agent: &mut AgentClient| -> io::Result<bool> {
+            Ok(agent.foreground_info()?.foreground.is_some_and(|window| {
+                window.title.contains(&marker) && window.title.starts_with('*')
+            }))
+        };
+        if !unsaved_in_front(&mut self.process_agent)? {
+            return Ok(());
+        }
+        self.send_keys(&["control+s"])?;
+        let deadline = Instant::now() + timeout;
+        while unsaved_in_front(&mut self.process_agent)? {
+            if Instant::now() >= deadline {
+                return Err(io::Error::other(format!(
+                    "{marker} still had unsaved changes after {timeout:?}"
+                )));
+            }
+            thread::sleep(SAVE_POLL);
+        }
+        Ok(())
+    }
+
+    /// Waits until the harness document `name`'s window, in front, marks
+    /// unsaved changes in its title: the evidence that an edit with nothing
+    /// to hear, such as a paste, has reached the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the title does not mark
+    /// unsaved changes within `timeout`.
+    pub fn expect_unsaved(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
+        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let deadline = Instant::now() + timeout;
+        loop {
+            let unsaved = self
+                .process_agent
+                .foreground_info()?
+                .foreground
+                .is_some_and(|window| {
+                    window.title.contains(&marker) && window.title.starts_with('*')
+                });
+            if unsaved {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other(format!(
+                    "{marker} did not show unsaved changes within {timeout:?}"
+                )));
+            }
+            thread::sleep(SAVE_POLL);
+        }
     }
 
     /// Opens a harness folder in File Explorer: writes `files` (paths

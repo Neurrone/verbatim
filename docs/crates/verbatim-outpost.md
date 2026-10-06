@@ -45,7 +45,8 @@ Public API:
   timestamp so the latency timeline starts at the OS event, and its
   `EventTiming`), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
-  `Activate`, `Ancestors`, or `DumpTree`), `Cancel` (withdraws a query that
+  `Activate`, `Ancestors`, `DumpTree`, or `Text`, a node and a model
+  `TextOp`, milestone M4's text protocol), `Cancel` (withdraws a query that
   has not started), and `Ping`. There is no shutdown message: Core ends a
   child by closing its job handle. `OutpostToSupervisor`: `Ready`, `Event`
   (trace id, observation timestamp, backend, the event window's
@@ -160,6 +161,19 @@ Public API:
   is window-manager calls (`outpost/window.rs`, arbitration's class
   reads), the event thread's message loop, process creation, and the
   inherited pipe handles.
+- `text` (milestone M4) — the outpost's side of the text protocol
+  (`docs/crates/verbatim-model.md`, "The text protocol"), public so
+  mockapp's tests drive it as the worker does. `perform(source, anchors,
+  op, signal)` answers one `TextOp` over a `TextSource`, a backend's view
+  of one node's text in its own positions and UTF-16: `uia::UiaText`, over
+  a text pattern, where a position (`UiaPos`) is one end of a text range,
+  and `edit::EditText`, over an edit control's messages, where it is an
+  offset. `caret_report` reads the caret's line and the selection, for
+  `CaretMoved`. `Anchors` keeps one backend's anchors, by node, numbered
+  from a counter both of an outpost's backends share; `NodeText` is one
+  node's. `CaretSignal` is a caret key's wait: whether a caret event
+  arrived, waiting for one, and the clock, so the unit tests run on a fake
+  clock. Details under "Text" below.
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global
@@ -453,7 +467,8 @@ Implementation notes:
   publish is recorded as reported at that position. Core's reader counts
   the same messages and hands the app each message's position. The app
   sends `SupervisorToOutpost::NodesHeld` with the node numbers the reducer
-  holds in that outpost and the position of the last message it has
+  holds in that outpost, the text anchors it holds there (milestone M4),
+  and the position of the last message it has
   handled, whenever that set changes and also every 256 messages, so an
   outpost whose held set stays the same still releases what it reported
   meanwhile. The worker then releases every node not held that was
@@ -465,6 +480,79 @@ Implementation notes:
   for a released node answers `Gone`. Core's writer replaces a waiting
   list with a newer one and lets it past a full queue; the intake queue
   likewise keeps only the newest and never limits it.
+- Text (milestone M4, `text` and the worker's `text_reads`). A `Query::Text`
+  is answered `QueryResult::Text` with whatever the protocol answers,
+  `NoText` and `Gone` among them, so Core hands every answer to the reducer
+  unchanged; its deadline is two seconds. The node's backend comes from the
+  registry that issued it: a UIA node has text when its element has a text
+  pattern, fetched once per node (`TextPattern2` where the provider has it,
+  for the caret) and kept until the node is released, and a node whose
+  element has none answers `NoText`; an MSAA node has text when it is the
+  client area of a window whose class, normalized by NVDA's class map, is
+  an edit control's (`Edit`, `RichEdit`, `RichEdit20`, `REComboBox20W`,
+  `RICHEDIT50W`), read through its messages, and any other MSAA node
+  answers `NoText`, as MSAA has no text interface. A UIA terminal (by its
+  class, or a focus in a `ConsoleWindowClass` window, the console host)
+  never reads a paragraph or a page, which Windows Terminal reports as the
+  whole buffer. The rules the module follows:
+  - Positions. An anchor is minted at the start of every chunk sent and at
+    each end of a selection; a `TextPosition` is resolved by moving forward
+    from its anchor over the chunk's text converted to UTF-16, checking
+    the text passed so a provider whose characters are code points or
+    grapheme clusters lands right, except a position the outpost itself
+    reported (a caret, a selection's end, a read's point), which it
+    remembers. Anchors Core holds (`NodesHeld`'s `anchors`, set as the
+    list arrives, before the worker sees it) are kept; any other is
+    forgotten once 64 newer ones were minted for the node, and a request
+    naming it is answered `AnchorLost`. A released node's anchors and text
+    patterns go with it.
+  - Chunks are at most 64 KB of UTF-8, cut at a character boundary; offsets
+    are converted from UTF-16 at character boundaries, a position inside a
+    surrogate pair moving past it. UIA reads carry the range's `Culture`
+    as one language run over the chunk (a mixed range carries none);
+    caret reports carry none, to keep a caret move's calls down.
+  - A caret key's wait (`AwaitCaret`) follows NVDA's caret scripts: it
+    reads the caret, then waits for evidence, polling every 10 ms between
+    caret events, for up to 100 or 300 ms, and answers with the caret's
+    line, the watch's unit at the caret (a character cut from the line,
+    any other unit read), and the selection's changes. The evidence is the
+    caret no longer where it was known to be, the characters either side
+    of the caret changed from what was known, the text at the caret
+    changed after a Delete, or the selection changed. Where it was known
+    to be is the caret this outpost last reported for the node when that
+    is newer than Core's (a caret event handled just before the request,
+    a paste's or an earlier key's), else Core's. The characters matter
+    because a provider's positions follow edits (a deleted character takes
+    the known position with it) and the application may have handled the
+    key before the request arrived; only the caret's neighbors count, since
+    a line can wrap anew with no key at all. A caret event alone only wakes
+    the wait, unless nothing knew the caret: it can be the application's
+    late report of something earlier. The selection's changes are worked
+    out by comparing endpoints, as the contract says.
+  - Reads move first when asked: from the start of the unit containing the
+    point, by whole units, never past the text's ends, saying how far they
+    went; a document movement goes to the start or the end. A unit the
+    source lacks is `UnsupportedUnit`; UIA has no sentence, and an edit
+    control's sentence read is its paragraph, which is its line, for Core
+    to split. `ReadRange` reads up to 1 MB for a copy, `Select` and
+    `MoveCaret` select through the backend, and `Location` gives the
+    screen position of the character at a point.
+- Caret and text events (the worker). A focus that may have text (through
+  UIA an edit field, a document, or a terminal; through MSAA an edit
+  control's client area) gets a caret report, queued just after the focus
+  is published (`Item::CaretOf`), so the focus's own calls and speech are
+  unchanged, and sent as `CaretMoved`. The worker then follows its caret:
+  a second focus-following UIA subscription, moved to the focus when it
+  has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
+  reported as `CaretMoved`, and `Text_TextChanged`, reported as
+  `TextChanged`; for an edit control, the hooks' caret
+  (`EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET`) and text selection
+  events are reported as `CaretMoved`, and its value change as
+  `TextChanged` without reading the control's whole text as its MSAA value.
+  The intake keeps one waiting caret report per node, and a caret event
+  observed before the worker last read that node's caret (a caret key's
+  answer reads it after the event) is dropped. Every caret event also
+  counts for a caret key's wait, on the event and callback threads.
 - Queries (the worker): `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::walk_tree` with the base cache request, MSAA via

@@ -2,7 +2,7 @@
 //!
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
-//! `notify <text>`, `stall <ms>`, and `quit`.
+//! `caret <id> <start> [<end>]`, `notify <text>`, `stall <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -30,6 +30,11 @@ pub(crate) enum Command {
     /// selection notification — `SelectionItem_ElementSelected` for UIA,
     /// `EVENT_OBJECT_SELECTION` for MSAA.
     Select(String),
+    /// `caret <id> <start> [<end>]`: selects a text node's text from `start`
+    /// to `end` (UTF-16 offsets; the caret alone at `start` when `end` is
+    /// left out), raising no event, as an application's caret moves before
+    /// the client asks where it is.
+    Caret(String, usize, usize),
     /// `notify <text>`: raises a UIA `AutomationNotification` carrying
     /// `text` as its display string, from the root provider. UIA-only; the
     /// MSAA backend reports it as unsupported, since MSAA has no
@@ -60,6 +65,16 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
+        "caret" => {
+            let mut parts = rest.split_whitespace();
+            let id = parts.next()?;
+            let start: usize = parts.next()?.parse().ok()?;
+            let end = match parts.next() {
+                Some(end) => end.parse().ok()?,
+                None => start,
+            };
+            Some(Command::Caret(id.to_owned(), start, end))
+        }
         "set-name" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetName(id.to_owned(), text.trim().to_owned()))
@@ -143,6 +158,21 @@ mod tests {
             }
             _ => panic!("expected SetName"),
         }
+    }
+
+    #[test]
+    fn parses_caret() {
+        match parse_command("caret doc 3") {
+            Some(Command::Caret(id, start, end)) => {
+                assert_eq!((id.as_str(), start, end), ("doc", 3, 3));
+            }
+            _ => panic!("expected Caret"),
+        }
+        match parse_command("caret doc 3 7") {
+            Some(Command::Caret(_, start, end)) => assert_eq!((start, end), (3, 7)),
+            _ => panic!("expected Caret"),
+        }
+        assert!(parse_command("caret doc").is_none());
     }
 
     #[test]
