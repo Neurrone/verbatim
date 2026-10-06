@@ -142,12 +142,16 @@ Public API:
   watches a pid directly, asks for its focus, and prints outbound messages as
   JSON lines to stdout, the standalone dev mode.
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
-  outpost redesign, "The focus listener"): sets up the writer, announces
-  `Ready`, and installs the desktop-global `FocusRegistration`, the global
+  outpost redesign, "The focus listener"): sets up the writer, installs
+  the desktop-global `FocusRegistration`, the global
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
   menu-popup, menu and switcher end, and alert), and desktop-wide UIA
   subscriptions for the events NVDA registers globally on Windows 11: an
-  element selected, a menu opened, and notifications. Each event becomes a `FocusFact` (a
+  element selected, a menu opened, and notifications, and only then
+  announces `Ready`, so focus and menus are seen from the moment it does
+  (announcing first lost a menu opened right after start, found
+  2026-10-06). The event thread (`EventThread::spawn`) likewise returns
+  only once its hooks are installed. Each event becomes a `FocusFact` (a
   `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
   cached and hang-safe local reads. A foreground event is forwarded without
   checking the foreground: a starting application's window raises it before
@@ -169,8 +173,9 @@ Public API:
   incarnation without waiting, failing at once with a `QueueError` when that
   incarnation has ended or its queue is full; and `note_views(attention,
   holding)` passes the views the app derives from the reducer state. The
-  app hears that the listener was replaced through
-  `OutpostMessage::ListenerReplaced`, and of each incarnation through
+  app hears that the listener is ready, and whether it replaced one that
+  ended, through `OutpostMessage::ListenerReady`, and of each incarnation
+  through
   `OutpostMessage`: `Started` before
   any of its messages, `Event(pid, outpost_id, message)` for each message,
   and `Ended` with a reason (exited, killed, or retired).

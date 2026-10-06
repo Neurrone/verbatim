@@ -1079,6 +1079,7 @@ mod tests {
                 version: "test".to_owned(),
                 active_synth: None,
                 outposts: Vec::new(),
+                ready: true,
             }),
             send_gesture: Box::new(|identifier| {
                 if identifier == "kb:verbatim+v" {

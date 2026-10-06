@@ -194,6 +194,12 @@ pub struct StatusInfo {
     pub active_synth: Option<String>,
     /// One entry per live outpost.
     pub outposts: Vec<OutpostStatus>,
+    /// Whether Verbatim is ready for input: its GUI can act on gestures,
+    /// the focus listener is running, and the outpost reading Verbatim's
+    /// own windows is ready. A client that acts right after connecting
+    /// waits for this rather than for a fixed time.
+    #[serde(default)]
+    pub ready: bool,
 }
 
 /// Status of one outpost.

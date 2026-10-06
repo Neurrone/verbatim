@@ -365,9 +365,10 @@ impl Owner {
         }
     }
 
-    /// Releases held facts on `Ready`, in arrival order. A replacement
-    /// listener's `Ready` is reported to the app: facts were lost in the gap,
-    /// so the app asks for the current focus.
+    /// Releases held facts on `Ready`, in arrival order. A listener's
+    /// `Ready` is reported to the app, saying whether it is a replacement:
+    /// facts were then lost in the gap, so the app asks for the current
+    /// focus.
     fn on_ready(&mut self, outpost: OutpostId) {
         if let Some(listener) = self
             .listener
@@ -375,9 +376,9 @@ impl Owner {
             .filter(|listener| listener.outpost == outpost)
         {
             tracing::info!(%outpost, "focus listener ready");
-            if listener.replacement {
-                let _ = self.events_tx.send(OutpostMessage::ListenerReplaced);
-            }
+            let _ = self.events_tx.send(OutpostMessage::ListenerReady {
+                replacement: listener.replacement,
+            });
             return;
         }
         let Some(record) = self.record_of(outpost) else {

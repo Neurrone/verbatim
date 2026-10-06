@@ -117,10 +117,13 @@ pub enum OutpostMessage {
         /// the largest reply.
         message: Box<OutpostToSupervisor>,
     },
-    /// The focus listener was replaced and its replacement is ready. Facts
-    /// were lost in the gap, so the app asks the foreground application for
-    /// its current focus.
-    ListenerReplaced,
+    /// The focus listener is ready. When it is a replacement for one that
+    /// ended, facts were lost in the gap, so the app asks the foreground
+    /// application for its current focus.
+    ListenerReady {
+        /// Whether this listener replaced one that ended.
+        replacement: bool,
+    },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
     /// somewhere on the desktop, at `ended_at_ms`: unless a focus observed
     /// since has been applied, the app asks the foreground application for

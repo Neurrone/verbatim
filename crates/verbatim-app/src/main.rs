@@ -18,6 +18,7 @@ mod single_instance;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -196,6 +197,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
     let supervisor = Arc::new(Supervisor::new(outpost_tx)?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
+    // Set once the focus listener first reports ready; part of the
+    // readiness the control plane's status reports.
+    let listener_ready = Arc::new(AtomicBool::new(false));
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
@@ -214,6 +218,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             server_slot: Arc::clone(&server_slot),
             outposts: Arc::clone(&outposts),
             recorder: Arc::clone(&recorder),
+            listener_ready: Arc::clone(&listener_ready),
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
@@ -259,6 +264,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         own_pid,
         settings_host: settings_host.clone(),
         outposts: Arc::clone(&outposts),
+        listener_ready: Arc::clone(&listener_ready),
         ledger: Arc::clone(&ledger),
         bound_gestures: Arc::clone(&bound_gestures),
         gesture_tx: gesture_tx.clone(),
@@ -591,6 +597,7 @@ struct ReducerContext {
     server_slot: Arc<OnceLock<ControlServer>>,
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     recorder: SharedRecorder,
+    listener_ready: Arc<AtomicBool>,
 }
 
 /// Work handed to the reducer thread by other threads: a reducer input (a
@@ -698,10 +705,11 @@ impl ReducerThread<'_> {
                     self.apply(input);
                 }
             }
-            OutpostMessage::ListenerReplaced => {
+            OutpostMessage::ListenerReady { replacement } => {
+                self.context.listener_ready.store(true, Ordering::Release);
                 // Facts were lost while there was no listener: read the
                 // foreground afresh and ask its application for the focus.
-                if let Some(pid) = foreground_pid() {
+                if replacement && let Some(pid) = foreground_pid() {
                     self.want_focus_now(pid);
                 }
             }
@@ -1277,6 +1285,8 @@ struct ControlHandlersConfig {
     own_pid: u32,
     settings_host: verbatim_speech::SettingsHost,
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
+    /// Whether the focus listener has reported ready.
+    listener_ready: Arc<AtomicBool>,
     ledger: Arc<LatencyLedger>,
     bound_gestures: SharedGestureMap,
     gesture_tx: crossbeam_channel::Sender<EmittedGesture>,
@@ -1294,6 +1304,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         own_pid,
         settings_host,
         outposts,
+        listener_ready,
         ledger,
         bound_gestures,
         gesture_tx,
@@ -1303,17 +1314,30 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         recorder,
         dumps_dir,
     } = config;
+    let ready_handle = gui_handle.clone();
     ServerHandlers {
-        status: Box::new(move || StatusInfo {
-            pid: Pid(own_pid),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            active_synth: Some(settings_host.active_synthesizer().id.0),
-            outposts: outposts
+        status: Box::new(move || {
+            let outposts: Vec<OutpostStatus> = outposts
                 .lock()
                 .expect("outposts lock")
                 .values()
                 .cloned()
-                .collect(),
+                .collect();
+            // Ready to take input: the GUI can act on gestures, the focus
+            // listener is running, and the outpost reading Verbatim's own
+            // windows (its menu and dialogs) is ready.
+            let ready = ready_handle.get().is_some()
+                && listener_ready.load(Ordering::Acquire)
+                && outposts.iter().any(|outpost| {
+                    outpost.target_pid == Pid(own_pid) && outpost.state == OutpostState::Ready
+                });
+            StatusInfo {
+                pid: Pid(own_pid),
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                active_synth: Some(settings_host.active_synthesizer().id.0),
+                outposts,
+                ready,
+            }
         }),
         send_gesture: Box::new(move |identifier| {
             let gesture = GestureId::parse(identifier).map_err(|error| error.to_string())?;

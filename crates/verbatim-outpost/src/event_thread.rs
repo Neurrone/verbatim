@@ -19,7 +19,8 @@ use verbatim_ia2::{WinEventCallback, WinEventHook, WinEventKind};
 /// given pid, or global for pid zero), then pumps messages so the
 /// out-of-context callbacks are delivered. Both a per-application outpost and
 /// the focus listener (decision D13) use it, differing only in their pid and
-/// subscription set.
+/// subscription set. [`EventThread::spawn`] returns once the hooks are
+/// installed, so its caller may report itself ready.
 pub(crate) struct EventThread {
     thread_id: u32,
     join: Option<JoinHandle<()>>,
@@ -69,7 +70,6 @@ fn event_thread_main(
 ) {
     // SAFETY: GetCurrentThreadId is always sound.
     let thread_id = unsafe { GetCurrentThreadId() };
-    let _ = id_tx.send(thread_id);
     // Installed once, for the whole life of the process (decision D9): a
     // second live hook set on the same thread while a first is still
     // registered has been observed to permanently kill WinEvent delivery on
@@ -82,6 +82,9 @@ fn event_thread_main(
             None
         }
     };
+    // `spawn` returns only now, with the hooks installed, so a caller that
+    // reports itself ready after it really sees the events from then on.
+    let _ = id_tx.send(thread_id);
     let mut message = MSG::default();
     loop {
         // SAFETY: standard message loop; `message` is fully owned here.

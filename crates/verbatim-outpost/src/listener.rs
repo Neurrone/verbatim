@@ -180,8 +180,12 @@ struct Listener {
 }
 
 impl Listener {
-    /// Sets up the listener: starts the writer, announces readiness, and
-    /// installs every subscription, reporting a failure as a fault.
+    /// Sets up the listener: starts the writer, installs every subscription,
+    /// reporting a failure as a fault, and only then announces readiness,
+    /// so the supervisor and Core know focus and menus are seen from then
+    /// on. Installing the UIA focus registration can take hundreds of
+    /// milliseconds; announcing readiness first let events in that time go
+    /// unseen, such as a menu opened right after Verbatim started.
     ///
     /// # Panics
     ///
@@ -202,13 +206,6 @@ impl Listener {
             })
             .expect("spawn the listener writer");
 
-        // The listener has no target application; `target_pid` is a sentinel
-        // the supervisor only logs.
-        outgoing.urgent(OutpostToSupervisor::Ready {
-            outpost_pid: Pid(std::process::id()),
-            target_pid: Pid(0),
-        });
-
         let focus_registration = install_focus_registration(&outgoing);
         let registrations = install_desktop_subscriptions(&outgoing);
 
@@ -220,6 +217,13 @@ impl Listener {
             })
         });
         let event_thread = EventThread::spawn(0, LISTENER_SUBSCRIPTIONS, make_callback);
+
+        // The listener has no target application; `target_pid` is a sentinel
+        // the supervisor only logs.
+        outgoing.urgent(OutpostToSupervisor::Ready {
+            outpost_pid: Pid(std::process::id()),
+            target_pid: Pid(0),
+        });
 
         Self {
             outgoing,
