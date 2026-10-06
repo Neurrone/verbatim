@@ -43,7 +43,6 @@ const SHA256: &str = "458a1ef598c90174ee43622e8e63bfa1eccb451ffc2258bb4f8edcb050
 const RECIPE: u32 = 1;
 
 /// A built wxWidgets: where its headers and libraries are.
-#[expect(dead_code, reason = "read once the C++ layer is compiled and linked")]
 pub struct Wx {
     /// The directory of wxWidgets' public headers.
     pub include: PathBuf,

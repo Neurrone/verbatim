@@ -14,6 +14,8 @@ arc-swap = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
+# The bridge between verbatim-gui and its C++ wxWidgets layer (decision D4).
+cxx = "1"
 i18n-embed = { version = "0.16", features = ["fluent-system"] }
 i18n-embed-fl = "0.10"
 # debug-embed: without it, debug builds do not embed at all — rust-embed
@@ -40,7 +42,6 @@ toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unic-langid = "0.9"
-wxdragon = "0.9"
 
 # Workspace crates.
 mockapp = { path = "crates/mockapp" }

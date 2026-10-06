@@ -1,10 +1,12 @@
-//! The lifecycle of the GUI's dialogs as one state machine, with no widget
-//! code: which dialogs are open, whether a shell item enumeration is in
-//! flight, whether shutdown has begun, and what each request or close
-//! means for the hidden frame.
+//! The lifecycle of the GUI's menu and dialogs as one state machine, with
+//! no widget code: whether the menu is up, which dialogs are open, whether
+//! a shell item enumeration is in flight, whether shutdown has begun, and
+//! what each request or close means for the hidden frame.
 //!
 //! The rules:
 //!
+//! - The menu is popped once at a time: a request while it is up (which
+//!   can arrive in the menu's own nested event loop) is ignored.
 //! - The settings dialog and the shell item list are singletons. A request
 //!   to open one that is already open focuses it instead, as NVDA does.
 //! - A shell item list request while an enumeration is in flight is
@@ -68,9 +70,10 @@ enum ShellList {
     Open,
 }
 
-/// The GUI's dialog lifecycle.
+/// The GUI's menu and dialog lifecycle.
 #[derive(Debug, Default)]
 pub(crate) struct Lifecycle {
+    menu_open: bool,
     settings_open: bool,
     shell_list: ShellList,
     shutting_down: bool,
@@ -80,6 +83,23 @@ impl Lifecycle {
     /// A lifecycle with nothing open.
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// Decides a request to pop the menu: true when it should be popped,
+    /// which records it as up.
+    pub(crate) fn request_menu(&mut self) -> bool {
+        if self.menu_open || self.shutting_down {
+            false
+        } else {
+            self.menu_open = true;
+            true
+        }
+    }
+
+    /// Records that the menu closed, and says what to do with the frame.
+    pub(crate) fn menu_closed(&mut self) -> Frame {
+        self.menu_open = false;
+        self.frame_after_popup()
     }
 
     /// Decides a request to open the settings dialog. A `Create` answer
@@ -136,8 +156,8 @@ impl Lifecycle {
 
     /// What to do with the frame once a popup, the menu or a dialog, is
     /// gone.
-    pub(crate) fn frame_after_popup(&self) -> Frame {
-        if self.settings_open || self.shell_list == ShellList::Open {
+    fn frame_after_popup(&self) -> Frame {
+        if self.menu_open || self.settings_open || self.shell_list == ShellList::Open {
             Frame::Keep
         } else {
             Frame::Hide
@@ -147,6 +167,7 @@ impl Lifecycle {
     /// Records that shutdown began: every later request is ignored.
     pub(crate) fn shut_down(&mut self) {
         self.shutting_down = true;
+        self.menu_open = false;
         self.settings_open = false;
         self.shell_list = ShellList::Closed;
     }
@@ -155,6 +176,39 @@ impl Lifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_menu_is_popped_once_at_a_time() {
+        let mut lifecycle = Lifecycle::new();
+        assert!(lifecycle.request_menu());
+        assert!(
+            !lifecycle.request_menu(),
+            "a request from inside the menu's own loop is ignored"
+        );
+        assert_eq!(lifecycle.menu_closed(), Frame::Hide);
+        assert!(lifecycle.request_menu());
+    }
+
+    #[test]
+    fn a_dialog_opened_from_the_menu_keeps_the_frame() {
+        let mut lifecycle = Lifecycle::new();
+        assert!(lifecycle.request_menu());
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Create);
+        assert_eq!(
+            lifecycle.menu_closed(),
+            Frame::Keep,
+            "the menu closing must not hide the settings dialog's owner"
+        );
+    }
+
+    #[test]
+    fn closing_a_dialog_while_the_menu_is_up_keeps_the_frame() {
+        let mut lifecycle = Lifecycle::new();
+        lifecycle.request_settings();
+        assert!(lifecycle.request_menu());
+        assert_eq!(lifecycle.closed(Dialog::Settings), Frame::Keep);
+        assert_eq!(lifecycle.menu_closed(), Frame::Hide);
+    }
 
     #[test]
     fn settings_is_a_singleton() {
@@ -199,13 +253,7 @@ mod tests {
     #[test]
     fn the_frame_stays_while_any_dialog_needs_it() {
         let mut lifecycle = Lifecycle::new();
-        assert_eq!(lifecycle.frame_after_popup(), Frame::Hide);
         lifecycle.request_settings();
-        assert_eq!(
-            lifecycle.frame_after_popup(),
-            Frame::Keep,
-            "the menu closing must not hide the settings dialog's owner"
-        );
         lifecycle.request_shell_list();
         assert!(lifecycle.shell_items_arrived(true));
         assert_eq!(
@@ -220,7 +268,8 @@ mod tests {
     fn an_enumeration_in_flight_does_not_keep_the_frame() {
         let mut lifecycle = Lifecycle::new();
         lifecycle.request_shell_list();
-        assert_eq!(lifecycle.frame_after_popup(), Frame::Hide);
+        assert!(lifecycle.request_menu());
+        assert_eq!(lifecycle.menu_closed(), Frame::Hide);
     }
 
     #[test]
@@ -231,5 +280,6 @@ mod tests {
         assert!(!lifecycle.shell_items_arrived(true));
         assert_eq!(lifecycle.request_settings(), OpenSettings::Ignore);
         assert_eq!(lifecycle.request_shell_list(), OpenShellList::Ignore);
+        assert!(!lifecycle.request_menu());
     }
 }
