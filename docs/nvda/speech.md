@@ -99,6 +99,16 @@ Three states are spoken by their absence:
   says it only on the focus;
 - "not pressed", for a toggle button.
 
+For a change of state, "focused" means the object's own new states
+still include focused, not merely that it is the object the screen
+reader last announced as the focus. Moving through a list or tree,
+many controls take the selection and the focus from the old item
+before the focus event for the new one arrives, so the old item's
+change still reaches the screen reader while it is the last focus;
+it no longer reports itself focused, and its "not selected" or "not
+checked" is not spoken. Any state it gained, such as expanded, still
+is.
+
 A change of state speaks only the states that changed: the ones gained,
 and of the ones lost, those that would be spoken by their absence.
 (`processAndLabelStates` in `controlTypes/processAndLabelStates.py`,

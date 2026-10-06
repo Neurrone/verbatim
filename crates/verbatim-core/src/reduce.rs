@@ -1903,12 +1903,17 @@ fn spoken_states(role: Role, states: StateSet, reason: StateReason) -> StateSet 
 }
 
 /// The states whose absence from a node is spoken for `reason`. A change
-/// is only ever spoken for the focus, so it counts as focused here.
+/// speaks "not selected" and "not checked" only while the node still
+/// reports itself focused: the item the focus is leaving loses its
+/// selection before the focus event for the next one arrives, and that
+/// loss is not worth hearing.
 fn negated_states(role: Role, states: StateSet, reason: StateReason) -> StateSet {
     let mut negated = StateSet::new();
+    let focused = reason != StateReason::Change || states.contains(State::Focused);
     if states.contains(State::Selectable)
         && states.contains(State::Focusable)
         && reason != StateReason::Query
+        && focused
         && matches!(
             role,
             Role::ListItem
@@ -1924,6 +1929,7 @@ fn negated_states(role: Role, states: StateSet, reason: StateReason) -> StateSet
     }
     if (matches!(role, Role::CheckBox | Role::RadioButton) || states.contains(State::Checkable))
         && !states.contains(State::Mixed)
+        && focused
     {
         negated.insert(State::Checked);
     }

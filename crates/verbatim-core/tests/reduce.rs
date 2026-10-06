@@ -613,7 +613,7 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
         Role::CheckBox,
         Some("Agree"),
         None,
-        StateSet::new().with(State::Checked),
+        StateSet::new().with(State::Focused).with(State::Checked),
     );
     let (state, _) = reduce(
         &SrState::new(),
@@ -621,7 +621,12 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
     );
 
     let trace_id = TraceId::mint();
-    let toggled_off = states_changed_input(trace_id, source, node_id, StateSet::new());
+    let toggled_off = states_changed_input(
+        trace_id,
+        source,
+        node_id,
+        StateSet::new().with(State::Focused),
+    );
     let (state, effects) = reduce(&state, &toggled_off);
 
     let utterances = speak_effects(&effects);
@@ -636,7 +641,67 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
     );
     assert_eq!(
         state.focused().map(|(_, n)| n.states),
-        Some(StateSet::new())
+        Some(StateSet::new().with(State::Focused))
+    );
+}
+
+#[test]
+fn states_changed_as_the_focus_leaves_an_item_is_silent() {
+    // The list item the focus is leaving loses its selection and the
+    // focus before the focus event for the next item arrives: no longer
+    // focused, its "not selected" is not spoken.
+    let source = Pid(1);
+    let node_id = NodeId::new(26);
+    let selectable = StateSet::new()
+        .with(State::Focusable)
+        .with(State::Selectable);
+    let item = node(
+        26,
+        Role::ListItem,
+        Some("Speech"),
+        None,
+        selectable.with(State::Focused).with(State::Selected),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, item),
+    );
+
+    let left = states_changed_input(TraceId::mint(), source, node_id, selectable);
+    let (_, effects) = reduce(&state, &left);
+
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+}
+
+#[test]
+fn states_changed_unselecting_the_focused_item_announces_not_selected() {
+    let source = Pid(1);
+    let node_id = NodeId::new(27);
+    let focused = StateSet::new()
+        .with(State::Focused)
+        .with(State::Focusable)
+        .with(State::Selectable);
+    let item = node(
+        27,
+        Role::ListItem,
+        Some("Speech"),
+        None,
+        focused.with(State::Selected),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, item),
+    );
+
+    let unselected = states_changed_input(TraceId::mint(), source, node_id, focused);
+    let (_, effects) = reduce(&state, &unselected);
+
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::new(SegmentContent::NegatedState(
+            State::Selected
+        ))]
     );
 }
 
