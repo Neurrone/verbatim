@@ -983,18 +983,128 @@ For later milestones, recorded in `docs/roadmap.md` under M6 and M8:
 browse-mode additions, copying the last spoken text, dictionary rule
 style, OCR capture, and menu item locations in 32-bit applications.
 
-## Proposed scope for the autonomous run
+## The autonomous run
 
-For discussion; the scope is Dickson's decision.
+Agreed scope (2026-10-06): steps 1 to 3 and all of M4, after the UIA
+remote operations crate is designed with Dickson. The run works on
+`main`, commits each independently reviewable change with `cargo xtask
+ci` passing (x64; ARM64 left to CI), verifies behavior live (desktop
+takeover allowed), compares with NVDA through the transcript tool where
+NVDA has the behavior, and reports at the end. Where the design leaves a
+choice open, the run takes the reading the design most directly
+supports, records it here, and lists it in the final report.
 
-- Step 1 in full, including the three automated scenarios.
-- Step 2 in full, including UIA remote operations for the focus ancestor
-  walk (M4 part 1). The counters land first, so the change is measured
-  before and after; the code without remote operations stays as the
-  fallback, which NVDA also keeps for systems whose UIA core cannot run
-  remote programs.
-- Step 3 in full.
-- The `reduce` change to mutation in place, and the flight recorder's
-  snapshots, since the text model depends on them.
+### Step 1: NVDA as the reference
 
-The rest of M4 (parts 2 to 8) would follow after a check-in.
+1. Capture NVDA on the three deferred scenarios (an Explorer folder
+   window, a Settings toggle, Start-menu search results), following the
+   recipes in `docs/roadmap-done.md`. Only the Start menu has a scenario
+   today, `start_menu_search`, and it asserts only that the search box is
+   announced; navigating the results, Explorer, and Settings have none.
+   Then run the same keys against Verbatim;
+   fix differences in Verbatim, or record them in `docs/parity.md` when
+   they are intentional.
+2. Automate them as end-to-end scenarios in the default suite (extending
+   `start_menu_search` to the results), with assertions written by hand
+   from the captures.
+3. Capture NVDA reading Verbatim's menu and settings dialog (Verbatim in
+   test-audio mode, with the share-modifier setting so the two readers use
+   different keys), committed as a reference transcript for step 3.
+
+### Step 2: counts, memory, and remote operations
+
+1. `docs/performance.md`: the operation ledger, with the minimum and
+   current cross-process call counts for each operation and backend, and
+   the definitions of cold, warm, and cancelled.
+2. A counting helper around every cross-process call in `verbatim-uia`
+   and `verbatim-ia2`; the outpost worker reads and resets it per entry;
+   the counts travel with the event's timing to the latency ledger, the
+   control plane's `LatencyRecord` (which also gains the stages), and
+   `verbatim-inspect latency`, which reports each stage as time, count,
+   and ratio to floor.
+3. Hit counters in mockapp's providers, read by a synchronous window
+   message, and tests that assert the client call count and the provider
+   hits exactly for each ledger operation on each backend.
+4. Core: `reduce` takes `&mut SrState`; the flight recorder takes state
+   snapshots at checkpoints so every recorded window replays; a counting
+   allocator test binary in `verbatim-core` asserts allocation per step
+   is independent of the state's size; the flight recorder and latency
+   ledger are bounded by bytes; the shell's per-event clone for the
+   control plane moves after the subscriber check.
+5. Calibration in the end-to-end suite: each scenario measures one
+   cross-process call against its target and reports stage times as
+   ratios to it.
+6. From the NVDA update: the live `HasKeyboardFocus` check on UIA focus
+   events (counted in the ledger), and the legacy checked-state fallback
+   for UIA menu items.
+7. `verbatim-uia-rops` as designed with Dickson (see "UIA remote
+   operations"), and the focus ancestor walk through it, keeping the
+   current walk as the fallback. The counts are recorded before and
+   after; the exit criterion is two round trips per steady-state UIA
+   focus change against mockapp, asserted exactly.
+
+### Step 3: the GUI port
+
+1. On wxDragon still: extract the pure Rust parts (key routing, the
+   dialog lifecycle, the settings model) with tests, and put a real
+   channel sender behind `GuiHandle`.
+2. `verbatim-gui/build.rs`: wxWidgets 3.3.3, base and core only, static,
+   adapted from wxdragon-sys's recipe, into a fixed directory per version
+   and architecture; a CI cache step for it.
+3. The cxx bridge and the C++ layer, switched in one commit: frame, tray,
+   and menu; the settings dialog with the dialog-wide key hook (audit item
+   7); the list dialog; check list boxes with their own accessible.
+4. Remove wxDragon, bindgen, and the libclang plumbing; update the crate
+   guide, the tooling guide, CLAUDE.md's libclang note, and D4's wording.
+5. Verify: the existing GUI scenarios, a new scenario for item 7, and the
+   NVDA captures of the GUI compared before and after.
+
+### M4
+
+In this order, since later parts build on earlier ones:
+
+1. **Text foundations.** A platform-neutral text crate with grapheme,
+   word (ICU4X, with `jieba-rs` for Chinese, and the whitespace-run
+   rule), and sentence segmentation; the text model in Core's state;
+   language carried on text runs.
+2. **Reading text in the outpost.** UIA TextPattern, and the standard
+   Win32 edit and rich edit controls through their window messages (as
+   NVDA's `EditTextInfo` does), which covers edit fields in applications
+   Verbatim otherwise reads through MSAA; MSAA itself has no text
+   interface, so a custom control known only through MSAA reports its
+   value, as in NVDA, until IA2 (M6) and the display model (M14); caret and selection events; text sent to Core with the caret
+   event; unsupported units reported as such, movement stopping at
+   document ends.
+3. **Caret navigation and selection**, following NVDA's wait-for-evidence
+   rules (`docs/nvda/editable-text-and-terminals.md`), with the provider's
+   word unit where the application moves the caret; "selected" and
+   "unselected"; the character-description table (English, keyed by
+   locale, with NVDA's corrected symbol names).
+4. **Typed-character and word echo**, with NVDA's settings, the password
+   rule for terminals, and interruption of all speech by typing and
+   Enter.
+5. **The review cursor**: NVDA's review commands and key layout.
+6. **Say-all** with index marks, the "Say all reads by" setting
+   (sentence by default where the text can be split into sentences, line
+   for UIA), and the display kept on while reading.
+7. **Formatting spans**: spelling and grammar errors, font and color
+   where exposed.
+8. **Themes and earcons**: the indication catalogue; the default theme
+   with NVDA's sounds in the top-level `sounds/` directory; the
+   presentation stage resolving each span through the theme; sounds in
+   the speech stream and immediate sounds on their own mixer source; the
+   Theme panel with new, import, and export; the reducer skipping fetches
+   for indications set to off.
+9. **Terminals**: generic terminal behavior keyed by the control (Windows
+   Terminal, the embedded `WPFTermControl`, conhost); the anchored diff in
+   the outpost, through remote operations; the backlog flood policy (30
+   and 30); "Report new output" with Verbatim+5; the Terminal panel; the
+   password rule; the longer caret wait in Windows Terminal. Verbatim
+   already subscribes to UIA notification events and speaks them, so the
+   generic handler ignores Windows Terminal's output notifications
+   (activity id `TerminalTextOutput`) from terminal controls; otherwise
+   every line would be spoken twice.
+10. **Exit**: Notepad editing and Terminal end-to-end scenarios, the
+    terminal flood scenario showing bounded latency and no hang, the
+    remote-operations count, and the flood wall-time ratio under two.
+
