@@ -62,6 +62,24 @@ spoken with the focus reason, and so are items selected in a list the
 focus controls. (`getPropertiesSpeech` and `silentRolesOnFocus` in
 `controlTypes/role.py`.)
 
+### Where the level goes
+
+A tree view item or list item that reports a level speaks it as "level"
+and the number, and where it goes depends on the level spoken before it.
+NVDA remembers the last such level it put first. When an item's level
+differs from that one, the level is spoken first, before the name, and
+becomes the remembered level; when it is the same, the level is spoken
+last, after the position. So moving into a tree says "level 1 Hardware
+Resources collapsed 1 of 3", the next item at the same depth "Components
+collapsed 2 of 3 level 1", and moving back out to the root "level 0 System
+Summary". The remembered level belongs to speech as a whole, not to one
+tree or one reason: a focus, object navigation, a selection spoken in a
+list, and reporting the current object all read and update it, and nothing
+resets it. Any other role that reports a level speaks it last, without
+reading or updating the remembered level, and a container the focus enters
+speaks no level at all. (`getPropertiesSpeech` in `speech/speech.py`, with
+`_speechState.oldTreeLevel`.)
+
 ### Which states are spoken, and in what order
 
 States are spoken in one fixed order, whatever order the object

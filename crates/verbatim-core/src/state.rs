@@ -396,6 +396,11 @@ pub struct SrState {
     /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.
     #[serde(default)]
     pub(crate) reported_format: Option<(NodeId, TextAttributes)>,
+    /// The last tree or list item level spoken first, which an item at
+    /// the same level speaks last instead ("Where the level goes" in
+    /// `docs/nvda/speech.md`).
+    #[serde(default)]
+    pub(crate) last_tree_level: Option<u32>,
 }
 
 impl SrState {

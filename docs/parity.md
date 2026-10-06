@@ -99,11 +99,15 @@ verified.
     Verbatim spoke it twice; NVDA's `UIItem` class reports no value.
     **Matched since 2026-10-02.**
   - NVDA speaks a tree item's level first ("level 1, System, 2 of
-    12"); Verbatim speaks it last. An NVDA transcript in msinfo32 on
+    12"); Verbatim spoke it last. An NVDA transcript in msinfo32 on
     2026-10-07 showed NVDA puts the level first only when it differs from
     the last one spoken ("level 1 Hardware Resources collapsed 1 of 3",
-    then "Components collapsed 2 of 3 level 1"); Verbatim still always
-    speaks it last (a follow-up). The same transcript showed a standard
+    then "Components collapsed 2 of 3 level 1"). **Matched since
+    2026-10-07** ("Where the level goes" in [Speech](nvda/speech.md)): a
+    tree or list item's level goes first when it differs from the last
+    level put first, and last otherwise, for a focus, object navigation, a
+    selection, and reporting the current object alike (the
+    `system_information_tree` scenario). The same transcript showed a standard
     tree view's root item is "level 0", the raw `accValue`, in NVDA;
     Verbatim had added one, and matches since 2026-10-07 (the
     `system_information_tree` scenario).
