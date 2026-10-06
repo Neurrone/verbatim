@@ -19,8 +19,8 @@ Public API:
   `verbatim-model`, which the reducer reads them from; the `[reader]`
   section, every key with NVDA's default:
   - `speak_typed_characters`: `"off"`, `"edit_controls"` (only in edit
-    controls and other places text can be typed), or `"always"`, the
-    default. NVDA's "Speak typed characters".
+    controls and other places text can be typed), the default, or
+    `"always"`. NVDA's "Speak typed characters".
   - `speak_typed_words`: the same choices, `"off"` by default. NVDA's
     "Speak typed words".
   - `follow_caret`: the review cursor follows the caret, `true` by default

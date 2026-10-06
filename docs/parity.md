@@ -977,7 +977,7 @@ verified.
   exists; user rebinding UI and input help **not yet (M8/M9)**.
 - Typed-character echo. NVDA: in-process reports; UIA textEdit
   events where applicable. Verbatim: the echo itself is **implemented in
-  Core since 2026-10-06**: "Speak typed characters" (always, by default)
+  Core since 2026-10-06**: "Speak typed characters" (only in edit controls, by default)
   and "Speak typed words" (off), each off, only in edit controls, or
   always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
   character that is not a letter or digit ends it, before that character;

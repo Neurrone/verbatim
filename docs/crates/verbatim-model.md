@@ -151,7 +151,7 @@ Public API:
   heard), or `Failed` with a reason.
 - `ReaderSettings`, `TypingEcho`, `SayAllUnit` (milestone M4) — the
   settings the reducer reads, with NVDA's defaults: speak typed characters
-  (always) and words (off), each off, only in edit controls, or always;
+  (only in edit controls) and words (off), each off, only in edit controls, or always;
   the review cursor following the caret (on); say-all reading by sentence
   where possible, by paragraph, or by line (sentence); keeping the display
   on during say-all (on); speaking terminal passwords (off); and, for M4

@@ -800,10 +800,11 @@ fn the_follow_caret_toggle_is_spoken_saved_and_obeyed() {
         &mut state,
         &command(ReviewCommand::ToggleTypedCharacters, 0),
     );
+    // From the default, only in edit controls, the next setting is always.
     assert_eq!(
         spoken(&effects),
         vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::SpeakTypedCharacters(TypingEcho::Off)
+            Phrase::SpeakTypedCharacters(TypingEcho::Always)
         ))]
     );
 }

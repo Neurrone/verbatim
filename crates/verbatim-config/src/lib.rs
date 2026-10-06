@@ -660,7 +660,7 @@ mod tests {
         let old: Settings =
             toml::from_str("[keyboard]\nlayout = \"laptop\"\n").expect("parses an older file");
         assert!(old.keyboard.speech_interrupt_for_enter);
-        assert_eq!(old.reader.speak_typed_characters, TypingEcho::Always);
+        assert_eq!(old.reader.speak_typed_characters, TypingEcho::EditControls);
     }
 
     #[test]

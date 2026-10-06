@@ -124,7 +124,7 @@ impl ReaderSettings {
 impl Default for ReaderSettings {
     fn default() -> Self {
         Self {
-            speak_typed_characters: TypingEcho::Always,
+            speak_typed_characters: TypingEcho::EditControls,
             speak_typed_words: TypingEcho::Off,
             follow_caret: true,
             say_all_unit: SayAllUnit::Sentence,
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn the_defaults_are_nvdas() {
         let settings = ReaderSettings::default();
-        assert_eq!(settings.speak_typed_characters, TypingEcho::Always);
+        assert_eq!(settings.speak_typed_characters, TypingEcho::EditControls);
         assert_eq!(settings.speak_typed_words, TypingEcho::Off);
         assert!(settings.follow_caret);
         assert_eq!(settings.say_all_unit, SayAllUnit::Sentence);
