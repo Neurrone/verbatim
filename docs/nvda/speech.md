@@ -211,6 +211,23 @@ both cancels speech and leaves the caret where reading stopped.
 Structure changes mid-read (the document mutating) surface as the
 TextInfo failing to move, ending the run gracefully.
 
+The reading chunk is configurable: `UNIT_READINGCHUNK` resolves through
+`TextInfo.unit_readingChunk` (`textInfos/__init__.py`) to the
+`speech.sayAllReadingUnit` feature flag, whose options are "Sentence
+where possible" (the default), Paragraph, and Line ("Say all reads by"
+in the Speech settings panel). Offsets-based TextInfos find sentences
+with ICU (UAX 29) over the containing paragraph
+(`OffsetsTextInfo._getSentenceOffsets` in `textInfos/offsets.py`) and
+fall back to the line where a unit is not implemented; UIA TextInfos
+always read by line, because `UIAHandler.NVDAUnitsToUIAUnits` maps the
+reading chunk to `TextUnit_Line` (UIA has no sentence unit).
+
+While a say-all runs, NVDA keeps the system awake: `_Reader.start`
+(`speech/sayAll.py`) calls `systemUtils.preventSystemIdle(persistent=True)`,
+which also keeps the display on when the general setting
+`preventDisplayTurningOff` is set (the default), and `_Reader.stop`
+releases it (`systemUtils.resetThreadExecutionState`).
+
 ## Automatic language switching
 
 `speech/languageHandling.py` decides whether the `LangChangeCommand`s

@@ -20,7 +20,10 @@ mints one), with:
   `setEndPoint(other, which)`, `compareEndPoints(other, which)`,
   `copy()`. Units (`UNIT_*`): character, word, line, sentence,
   paragraph, page, table/row/column/cell, screen, story (the whole
-  document), readingChunk (say-all's step), controlField,
+  document), readingChunk (say-all's step, which resolves to sentence,
+  paragraph, or line by the `speech.sayAllReadingUnit` setting through
+  `TextInfo.unit_readingChunk`; UIA always uses line;
+  [Speech](speech.md)), controlField,
   formatField. Not every implementation supports every unit; callers
   degrade (the unit constants double as the vocabulary of the "read
   by X" commands).
@@ -66,16 +69,44 @@ respective TextInfo subclasses.
 ## Word and character segmentation
 
 For offsets-based backends, unit boundaries are not left to naive
-string splitting: `OffsetsTextInfo`'s character and word units call
-into `nvdaHelperLocal` (`calculateCharacterOffsets` /
-`calculateWordOffsets`, `nvdaHelper/local/textUtils.cpp`), which runs
-**Uniscribe** (`ScriptBreak`) over the line and reads its logical
-attributes — `fCharStop` for character boundaries (so a "character"
-is a grapheme cluster: surrogate pairs, combining marks, and emoji
-sequences move as one) and `fWordStop` for word boundaries (giving
-linguistically informed segmentation, including for scripts without
-spaces). A plain whitespace/punctuation fallback exists for backends
-that opt out or when the helper is unavailable. Range-based backends
+string splitting. `OffsetsTextInfo`'s character unit calls into
+`nvdaHelperLocal` (`calculateCharacterOffsets`,
+`nvdaHelper/local/textUtils.cpp`), which runs **Uniscribe**
+(`ScriptBreak`) over the line and reads `fCharStop` from its logical
+attributes, so a "character" is a grapheme cluster: surrogate pairs,
+combining marks, and emoji sequences move as one.
+
+The word unit (`OffsetsTextInfo._getWordOffsets`) hands the line to a
+`WordSegmenter` (`textUtils/_wordSeg/wordSegmenter.py`), which picks a
+strategy (`textUtils/_wordSeg/wordSegStrategy.py`) from the
+`documentNavigation.wordSegmentationStandard` feature flag
+(`WordNavigationUnitFlag`: Automatic, the default; Chinese; Unicode
+(ICU); Legacy (Uniscribe)):
+
+- **Chinese** (`ChineseWordSegmentationStrategy`, the bundled cppjieba
+  library): always under the Chinese flag, and under Automatic for
+  text containing CJK ideographs and no Japanese kana, when cppjieba
+  loaded.
+- **ICU** (`IcuWordSegmentationStrategy`, Windows' built-in ICU,
+  `textUtils/icu.py` `calculateWordOffsets`): UAX 29 word boundaries
+  plus ICU's script-selected dictionary segmentation for scripts such
+  as Thai, Lao, Khmer, and CJK. Used for every flag except Legacy, and
+  as the fallback when cppjieba is unavailable. To match Uniscribe, a
+  word includes its trailing whitespace: the start moves back over
+  whitespace-only segments and the end moves forward over them, so an
+  offset anywhere in a run of spaces, tabs, or both yields the same
+  word (commit `0fd87b9c7`, #20494, which fixed the browse mode caret
+  sticking in runs of tabs).
+- **Uniscribe** (`UniscribeWordSegmentationStrategy`, `fWordStop` from
+  `calculateWordOffsets` in `textUtils.cpp`): the Legacy flag's only
+  strategy and the final fallback when ICU is unavailable. Classes
+  that must match a Windows control pin it: `EditTextInfo`
+  (`NVDAObjects/window/edit.py`) forces `WordSegFlag.UNISCRIBE` to
+  match the edit control and Notepad.
+
+A plain whitespace/punctuation fallback (`findStartOfWord` /
+`findEndOfWord`) remains for backends that opt out (the deprecated
+`useUniscribe = False`) or when the chosen strategy fails. Range-based backends
 (UIA, Word) instead inherit the native API's own unit semantics —
 one reason "word" does not segment identically across controls.
 

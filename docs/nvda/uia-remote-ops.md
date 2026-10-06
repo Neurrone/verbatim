@@ -42,8 +42,29 @@ The layers, bottom up:
   the fallback when the OS lacks remote operations support, and the
   test double (the same program can run locally against live UIA,
   slower but semantically identical).
-- `remoteAlgorithms.py` — shared remote-side algorithms (bulk text
-  range walking, attribute-run iteration).
+- `remoteAlgorithms.py` — shared remote-side algorithms; at this pin
+  the only one is `remote_forEachUnitInTextRange`, which walks a text
+  range one unit (such as a paragraph) at a time, forwards or in
+  reverse.
+- Cache requests (`instructions/cacheRequest.py`, commit `9fccec044`,
+  #20621): the `NewCacheRequest`, `CacheRequestAddProperty`,
+  `CacheRequestAddPattern`, and `PopulateCache` instructions, exposed as
+  `ra.newCacheRequest()`, `RemoteCacheRequest.addProperty` and
+  `addPattern` (`remoteTypes/cacheRequest.py`), and
+  `RemoteElement.populateCache`. An element returned or yielded from the
+  operation carries the populated cache, so its cached getters need no
+  further cross-process calls. The readme's caveat: a remotely
+  populated cache stores default values for properties the element does
+  not support, not the reserved "not supported" value a locally built
+  cache returns, so `getCachedPropertyValueEx` behaves as if
+  `ignoreDefault` were unset; to test pattern support, cache the
+  `IsXPatternAvailable` property, or fetch explicitly with
+  `getPropertyValue` and `ignoreDefault` and test the variant with
+  `RemoteVariant.isNotSupported`. The same commit taught the result
+  marshalling in `UIARemote.dll` to return UInt32, Int64, Single, and
+  Double values, beyond the Int32, string, and boolean scalars it
+  handled before. Nothing outside the framework and its tests uses
+  cache requests yet at this pin.
 
 The programming model's key restriction (from the readme): the
 decorated build function must express all logic through the `RemoteAPI`
@@ -54,25 +75,37 @@ police this.
 
 ## What NVDA uses it for
 
-`source/UIAHandler/remote.py` is the consumer-facing module. Current
-production uses:
+`source/UIAHandler/remote.py` is the consumer-facing module. Its
+production uses at this pin, all gated on `remote.isSupported()`
+(Windows 11 or later):
 
 - `msWord_getCustomAttributeValue` — fetching Word's custom text
   attributes (via Word's extended-text-range custom pattern GUID) in
-  one round trip.
-- Bulk text-content and attribute-run extraction for UIA documents
-  (Word, Terminal): collecting a range's text plus formatting runs in a
-  single operation instead of one call per run — the difference between
-  usable and unusable "say all" latency in big UIA documents.
-- General utilities like collecting ancestor names (the readme's
-  example) where a loop of parent fetches would otherwise be a loop of
-  round trips.
+  one round trip; `NVDAObjects/UIA/wordDocument.py` uses it for line,
+  page, section, and text column numbers and expand/collapse state.
+- Word sentence movement: `msWord_textRange_moveBySentence`,
+  `msWord_textRange_moveEndpointBySentence`, and
+  `msWord_textRange_expandToEnclosingSentence`, which call Word's
+  custom extended-text-range sentence methods remotely (used by
+  `wordDocument.py`).
+- Heading quick navigation in UIA documents:
+  `collectAllHeadingsInTextRange` and `findFirstHeadingInTextRange`
+  walk a range paragraph by paragraph with
+  `remote_forEachUnitInTextRange` and test each paragraph's `StyleId`
+  attribute for Heading 1 to 9, instead of one cross-process call per
+  paragraph (`UIAHandler/browseMode.py`).
+
+NVDA does not use remote operations for bulk text extraction in
+Windows Terminal or for collecting ancestor names; the latter appears
+only as an example in the readme.
 
 ## Constraints and failure modes
 
 - OS-gated: requires a Windows 11 UIA core new enough to accept remote
-  programs; NVDA falls back to local execution otherwise
-  (`localExecute.py`), preserving behavior at the old latency.
+  programs. Where `remote.isSupported()` is false, NVDA's callers take
+  their ordinary non-remote code path; `localExecute.py` (the
+  `localMode` option of `Operation`) serves unit tests rather than
+  production fallback.
 - The remote VM is sandboxed and instruction-limited (the platform
   bounds execution); a program that exceeds limits fails with a status
   in the result set — `OperationException.errorLocation` maps it back

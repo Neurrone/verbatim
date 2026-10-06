@@ -312,6 +312,9 @@ const GOOD_UIA_CLASSES: &[&str] = &[
     "RAIL_WINDOW",
     // WinUI 3 top-level pane.
     "Microsoft.UI.Content.DesktopChildSiteBridge",
+    // Windows Terminal: its top-level window reports no server-side
+    // provider; the XAML island child that hosts its content does.
+    "CASCADIA_HOSTING_WINDOW_CLASS",
 ];
 
 /// The Windows 11 shell's top-level windows, from NVDA's Explorer app
@@ -516,7 +519,11 @@ mod tests {
         // nvda/source/UIAHandler/__init__.py, goodUIAWindowClassNames.
         assert_eq!(
             GOOD_UIA_CLASSES,
-            ["RAIL_WINDOW", "Microsoft.UI.Content.DesktopChildSiteBridge"]
+            [
+                "RAIL_WINDOW",
+                "Microsoft.UI.Content.DesktopChildSiteBridge",
+                "CASCADIA_HOSTING_WINDOW_CLASS",
+            ]
         );
         // nvda/source/appModules/explorer.py, isGoodUIAWindow's Windows 11
         // shell tuple.

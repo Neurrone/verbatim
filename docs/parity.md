@@ -666,11 +666,16 @@ verified.
   2026-10-03 (all **matched since 2026-10-03** unless marked otherwise):
   - A UIA focus is built from the event: its name, role, value, and
     states come from the properties the event delivered, as NVDA builds
-    the focus object from the event's sender, and it is accepted only
-    when those say the element has the keyboard focus
-    (`shouldAllowUIAFocusEvent`). Until 2026-10-03 the outpost read the
-    focused element live, took the focus from that read, and dropped the
-    focus when the read failed; under a busy application the read blocked
+    the focus object from the event's sender and serves its reads from
+    the sender's cache. **Different, to be fixed in phase 6:** Verbatim
+    accepts the focus only when the delivered properties say the element
+    has the keyboard focus, whereas NVDA reads that one property live
+    (`currentHasKeyboardFocus` in `shouldAllowUIAFocusEvent`, since
+    NVDA commit `3ca80a5fa`), because a stale cached value let
+    intermediate focus events through ([The UIA client](nvda/uia.md)).
+    Until 2026-10-03 Verbatim's outpost read the focused element live,
+    took the focus from that read, and dropped the focus when the read
+    failed; under a busy application the read blocked
     for more than ten seconds or returned UIA's stand-in for the window,
     so the focus was announced wrongly or not at all.
   - **Different, because of the outposts:** the event's element is in the

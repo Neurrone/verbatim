@@ -18,7 +18,10 @@ does not move any cursor itself.
   polls the caret position against the bookmark on a
   retry-with-timeout loop (10 ms steps, timeout scaled by
   `_caretMovementTimeoutMultiplier`, longer when caret events exist
-  but haven't arrived) — then speak the new unit (line after
+  but haven't arrived; Windows Terminal's overlays in
+  `NVDAObjects/UIA/winConsoleUIA.py` set the multiplier to 3.0 because
+  its UIA caret can update after the default timeout, especially over
+  SSH, commit `fdbb6c851`, #20398) — then speak the new unit (line after
   up/down, character after left/right, deleted character after
   delete, and so on).
 - `_hasCaretMoved` has three short-circuits that matter as much as
@@ -103,17 +106,45 @@ two eras of support:
   routing and review use UIA text ranges (with substantial per-build
   workarounds for the console's early UIA bugs, visible throughout
   that file), and *new output* arrives as UIA textChange
-  events feeding the same diffing layer.
+  events feeding the same diffing layer. Windows Terminal's UIA
+  provider reports the paragraph, page, and document units as spanning
+  the whole buffer, so its TextInfo (`_WinTerminalUIATextInfo`) maps
+  the mouse chunk from paragraph to line.
 
 The diffing layer (`source/diffHandler.py`) is shared: given the
 before and after text, it chooses per config between Difflib
 (line-level, ordered) and DMP (diff-match-patch, character-level)
-to extract what to speak — the "read new terminal output" feature
-(`speakNewText`). Where the terminal implements UIA notifications
-for output, those are preferred (the passive path).
+to extract what to speak — the "read new terminal output" feature.
+`LiveText._getText` (`NVDAObjects/behaviors.py`) reads the object's
+`POSITION_ALL` text, which for current (FORMATTED API level) consoles
+and for Windows Terminal is the whole document, not the visible screen;
+only older consoles bound it to the visible range
+(`ConsoleUIATextInfo`), and those prefer Difflib
+(`WinConsoleUIA._get_diffAlgo`). Everything else uses DMP by default
+(`LiveText._get_diffAlgo` returns `prefer_dmp()`; the
+`terminals.diffAlgo` setting can override either choice).
 
-Design note transferable to any implementation: terminal reporting is
-explicitly *best-effort lossy* — under fast output NVDA coalesces
-(diffing the latest state rather than every intermediate write), on
-the theory that speaking every scroll of a compile log is worse than
-speaking its current tail.
+UIA notifications for terminal output are not the default path:
+
+- The console host's notification events are blocked to avoid
+  double reporting (`WinConsoleUIA.event_UIA_notification` only logs
+  them).
+- Windows Terminal's are used only under an opt-in feature flag,
+  `terminals.wtStrategy` (default: diffing), which selects
+  `_NotificationsBasedWinTerminalUIA` over `_DiffBasedWinTerminalUIA`;
+  the diffing overlay blocks notifications too. The user guide warns
+  that notification mode reports typed characters that are not shown
+  on screen, such as passwords, and may not report contiguous spans of
+  output over 1,000 characters accurately.
+
+Design note transferable to any implementation: terminal reporting
+coalesces — under fast output the monitor thread (`LiveText._monitor`)
+diffs the latest state rather than every intermediate write, and drops
+a diff that is a single character, on the assumption that it is a
+typed character. It does not cap what it speaks: at this pin
+`LiveText._reportNewLines` speaks every new line the diff produced.
+A cap existed briefly: #20177 truncated a batch to its last
+`MAX_LINES` (100) lines, beeping for the skipped ones, and spoke the
+rest from a generator cancelled when speech was cancelled; #20649
+made it configurable. Commit `0e48954c8` (#20898) reverted both,
+because users could not read the skipped output.

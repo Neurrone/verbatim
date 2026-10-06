@@ -17,7 +17,7 @@ Rules for this folder:
   submodule. If a claim is uncited, treat it as a summary of the cited
   material around it — and if it matters, verify it.
 - **Versioned.** Written against the pinned submodule commit
-  `92942556f` (post-2026.2beta6). NVDA moves; when the submodule is
+  `663e4b679` (NVDA master, 2027.1 development, 2026-10-05). NVDA moves; when the submodule is
   updated, spot-check claims in the files you rely on.
 - **Depth target**: enough detail that a Verbatim task can proceed without
   reading NVDA source for the common cases, with precise pointers into the

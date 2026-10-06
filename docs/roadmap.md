@@ -93,6 +93,13 @@ continuously alongside every later milestone.
   the same throughout, only the source improves underneath.
 - Interaction-before-full-render E2E on a very large page.
 - Scan-mode generalization: the same projection over an ordinary app.
+- From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): Alt+Up and
+  Alt+Down collapse or expand the control at the caret, or move by
+  sentence, depending on the control (`browseMode.py`); focusing a
+  `role=application` element announces the labels of the regions and
+  groupings it enters; a native selection mode setting; quick navigation
+  to clickable elements; a history in the Find dialog; virtual buffer
+  attributes whose names are not valid XML are dropped.
 
 Exit: real browsing works day-to-day; large-page E2E passes; corpus
 performance/parity report vs NVDA written, at (or consciously accepted
@@ -121,6 +128,15 @@ Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
 - Secure-desktop instance (`--secure`), AT registration, UIAccess/test-signing
   story in the VM (R5).
 - Installer/updater skeleton.
+- From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): copying the
+  last spoken text to the clipboard (NVDA+Control+X) and a controller
+  call reporting whether speech is in progress; dictionary rules written
+  as zero-width lookarounds, which avoid catastrophic backtracking (NVDA's
+  rewrite of its camel-case and word-to-digit rules in `builtin.dic`);
+  OCR captured through Windows Graphics Capture; menu item locations in
+  32-bit applications converted from the 96-DPI space the OLEACC menu
+  proxy reports when the client's bitness differs (needed once locations
+  are used, by the focus highlight or the mouse).
 
 Exit: sign-in and UAC prompts are read in the VM; curtain + highlight E2E.
 

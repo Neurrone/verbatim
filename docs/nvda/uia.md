@@ -25,11 +25,24 @@ into `CoalesceEvents` (duplicate-event batching in UIA itself) and
 
 At startup the handler builds `baseCacheRequest` with the window
 handle, control type, name, and the other properties every event
-handler will need, plus the Text pattern (`MTAThreadFunc`); every event
-registration passes it, so each event arrives with its element's core
-properties prefetched, and focus objects are constructed from cached
-values without re-round-tripping. Tree walking and searches elsewhere
-in the UIA code build purpose-specific cache requests. This is the
+handler will need (`baseCachePropertyIDs`, which since commit
+`6498abece`, #20608, includes `HasKeyboardFocus`), plus the Text
+pattern (`MTAThreadFunc`); every event registration passes it, so each
+event arrives with its element's core properties prefetched. Since the
+same commit, an object built from an event sender records that its
+element already caches those properties (`initialUIACachedPropertyIDs`
+in `NVDAObjects/UIA/__init__.py`) and serves reads from that cache
+instead of re-round-tripping, and `UIA.event_gainFocus` prefetches a
+batch of further properties in one cache request
+(`_focusPrefetchUIAPropertyIDs`, such as description, position in set,
+value, and bounding rectangle, together with `_UIAStatesPropertyIDs`,
+the properties the states are computed from). The one deliberate live
+read: `shouldAllowUIAFocusEvent` asks `currentHasKeyboardFocus` rather
+than the cached value (commit `3ca80a5fa`, #20764), because with the
+richer cache a stale cached "has focus" let intermediate focus events
+through (a container announced before the focused item in WeChat).
+Tree walking and searches elsewhere in the UIA code build
+purpose-specific cache requests. This is the
 pattern NVDA relies on for latency; property access outside a cache is
 treated as a bug to hunt.
 
@@ -94,8 +107,12 @@ strategy — the function that decides, per window class, whether NVDA
 treats a window through UIA or leaves it to MSAA/IA2:
 
 1. Never for NVDA's own process.
-2. Always for `goodUIAWindowClassNames`; app modules can force either
-   way (`isGoodUIAWindow` / `isBadUIAWindow`).
+2. Always for `goodUIAWindowClassNames` (`RAIL_WINDOW`,
+   `Microsoft.UI.Content.DesktopChildSiteBridge`, and Windows
+   Terminal's `CASCADIA_HOSTING_WINDOW_CLASS`, whose top-level window
+   reports no server-side provider although its XAML island child
+   does, #20448); app modules can force either way
+   (`isGoodUIAWindow` / `isBadUIAWindow`).
 3. Never for `badUIAWindowClassNames` — the documented scar tissue:
    Win32 common controls whose UIA proxies are worse than their MSAA
    (`SysTreeView32`, `ComboBox`, `Edit`, rich edit variants, progress

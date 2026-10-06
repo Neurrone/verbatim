@@ -19,14 +19,28 @@ thread alongside the core pump ([Main loop and watchdog](main-loop-and-watchdog.
   panel's `onSave`, in order. Panels register into the category list
   declaratively, and add-ons can append their own panels — the same
   mechanism ships NVDA's own two dozen
-  (`SpeechSettingsPanel` through `RemoteSettingsPanel`).
+  (`SpeechSettingsPanel` through `RemoteSettingsPanel`). The Speech
+  panel includes the "Say all reads by" feature-flag combo
+  box (`speech.sayAllReadingUnit`: Sentence where possible, the
+  default; Paragraph; Line;
+  [Speech](speech.md)).
 - Layout goes through `source/gui/guiHelper.py` (spacing and sizer
   conventions) and `source/gui/nvdaControls.py` (custom controls with
   fixed accessibility: checkable lists, feature-flag combo boxes, a
   `SettingsPanelAccessible` wx.Accessible subclass giving panels
   proper names/roles). Worth noting for any wx GUI: NVDA still needed
   hand-written accessibility glue for its own composite controls —
-  wx alone was not sufficient.
+  wx alone was not sufficient. At this pin NVDA uses wxPython 4.3.1 on
+  wxWidgets 3.3.3 (`pyproject.toml`; commit `d2c4d6cc6`, #20882).
+  wxWidgets 3.3.2 and later give the check list box its own MSAA
+  implementation, which sends a state change event when an item is
+  toggled, so NVDA removed the duplicate event its `CustomCheckListBox`
+  used to send (`notifyIAccessible`). NVDA still installs its own
+  `ListCtrlAccessible` on that control (`gui/nvdaControls.py`), because
+  the wxWidgets implementation reports no child items to MSAA (so
+  object navigation cannot reach the items and position information
+  such as "1 of 3" is lost) and reports every item as focused and none
+  as selected.
 - Settings apply live where possible (changers fire on control events
   — slider drags are audible immediately) with save/discard semantics
   on top; a profile-aware warning system tells the user when they are
