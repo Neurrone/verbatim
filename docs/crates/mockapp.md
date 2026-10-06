@@ -35,7 +35,11 @@ complete name tables.
 
 Stdin commands, one per line: `focus <id>` (raises the backend's
 focus-changed notification — `UiaRaiseAutomationEvent` for UIA,
-`NotifyWinEvent(EVENT_OBJECT_FOCUS, ...)` for MSAA), `set-name <id> <text>`
+`NotifyWinEvent(EVENT_OBJECT_FOCUS, ...)` for MSAA), `set-focus <id>`
+(moves the focused state as `focus` does but raises nothing, so no client
+on the machine, a running screen reader included, calls into mockapp in
+response; for the tests that count an operation's calls exactly, which
+hand the focus to the outpost themselves), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
 property-change or name/value-change notification), `select <id>` (marks
 the node selected, moving the state off any previous selection, and raises
@@ -73,6 +77,17 @@ its crate-internal modules are the reviewable surface:
   probe finds nothing and the window arbitrates to MSAA. Role and state
   mapping is the inverse of `verbatim_ia2::map`.
 - `stdin` — command parsing and the reader thread.
+- `hits` — the provider-side hit counters: one atomic per provider method
+  (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,
+  `IRawElementProviderFragmentRoot`, and pattern-provider method, every
+  `IAccessible` and `IDispatch` method), one for `WM_GETOBJECT`, and one
+  for stdin commands applied. A test reads them with two synchronous
+  window messages to the host window, answered by the same thread that
+  runs every provider call, so a read made after a client's call returns
+  counts every hit that call caused: `WM_APP + 2` returns the counter
+  whose index in `Method::ALL` is `wParam`, and `WM_APP + 3` zeroes them
+  all. The tests compile `src/hits.rs` into their shared module, so the
+  method list and message numbers cannot drift apart.
 
 Implementation notes:
 
@@ -136,8 +151,8 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). The test files that use UIA as a
-client (`arbitration.rs`, `controller_for.rs`, `events.rs`, `remote_ops.rs`,
-`uia_tree.rs`)
+client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
+`events.rs`, `remote_ops.rs`, `uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
@@ -184,3 +199,17 @@ listener fact, and asserts the outpost still reports it after the read
 has waited longer than the outpost's old 1.5 second deadline. The
 scripted focus event is raised with `NotifyWinEvent`, so this test too
 needs no real keyboard focus.
+
+`call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
+over `tests/fixtures/counts.json` it measures each ledger operation on each
+backend and asserts exactly how many cross-process calls the client side
+made, by kind, and how many calls mockapp's providers answered, by method.
+The MSAA operations (a focus change cold and in the steady state, a focus
+into a list, an arrow to the next list item, and a next-sibling and parent
+navigation step) run through a real outpost, as `slow_application.rs`
+does, reading the calls from the event's or reply's timing. The UIA ones
+run on the test's own thread, making the same `verbatim-uia` calls in the
+same order as the outpost's worker once it has the element: the outpost
+finds a UIA focus's element by reading the system's keyboard focus, which
+a test must not take. On a mismatch the test prints every measured count,
+so a deliberate change updates all the numbers that moved in one pass.

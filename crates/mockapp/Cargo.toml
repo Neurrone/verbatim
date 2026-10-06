@@ -29,6 +29,10 @@ name = "arbitration"
 harness = false
 
 [[test]]
+name = "call_counts"
+harness = false
+
+[[test]]
 name = "controller_for"
 harness = false
 

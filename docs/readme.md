@@ -56,6 +56,10 @@ NVDA says, to decide what Verbatim should say.
   concurrency vocabulary Verbatim uses.
 - [Tooling](tooling.md) and [the VM harness](vm.md) — driving the
   project day to day.
+- [Performance](performance.md) — the operation ledger: what counts as
+  a cross-process call, cold and steady state, cancelled traces, the
+  floor and the ratio, and for each operation and backend the minimum,
+  current, and target call counts that CI asserts exactly.
 - [The NVDA transcript](nvda-transcript.md) — the NVDA add-on and
   `cargo xtask nvda capture`, for recording what NVDA says in a scenario.
 - [NVDA captures](nvda-captures/readme.md) — recorded NVDA readings kept

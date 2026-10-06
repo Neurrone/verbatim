@@ -208,3 +208,59 @@ pub fn eventually_true(mut probe: impl FnMut() -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// mockapp's provider-side hit counters (`src/hits.rs`), compiled into the
+/// tests too, so both sides share one method list and one pair of message
+/// numbers.
+#[path = "../../src/hits.rs"]
+pub mod hits;
+
+/// Zeroes mockapp's hit counters.
+pub fn reset_hits(hwnd: HWND) {
+    // SAFETY: a message with no pointers, answered by mockapp's window
+    // procedure.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            hwnd,
+            hits::WM_HITS_RESET,
+            None,
+            None,
+        );
+    }
+}
+
+/// mockapp's hit counters that are not zero, by method name, in counter
+/// order.
+#[must_use]
+pub fn read_hits(hwnd: HWND) -> Vec<(&'static str, u32)> {
+    hits::Method::ALL
+        .iter()
+        .enumerate()
+        .filter_map(|(index, method)| {
+            // SAFETY: as in `reset_hits`; the index travels as a plain
+            // integer.
+            let count = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+                    hwnd,
+                    hits::WM_HITS_READ,
+                    Some(windows::Win32::Foundation::WPARAM(index)),
+                    None,
+                )
+            }
+            .0;
+            let count = u32::try_from(count).unwrap_or(u32::MAX);
+            (count != 0).then(|| (method.name(), count))
+        })
+        .collect()
+}
+
+/// Sends `line` to mockapp and waits until it has taken effect, then zeroes
+/// the hit counters, so what is measured next starts from nothing.
+pub fn apply(app: &mut MockApp, hwnd: HWND, line: &str) {
+    reset_hits(hwnd);
+    app.send(line);
+    wait_until(&format!("mockapp to apply {line:?}"), || {
+        read_hits(hwnd).contains(&("command applied", 1))
+    });
+    reset_hits(hwnd);
+}

@@ -1,0 +1,42 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Counts Fixture",
+  "children": [
+    {
+      "id": "group",
+      "role": "group",
+      "name": "Settings",
+      "children": [
+        { "id": "first", "role": "button", "name": "First", "states": ["focusable"] },
+        { "id": "second", "role": "button", "name": "Second", "states": ["focusable"] }
+      ]
+    },
+    {
+      "id": "list",
+      "role": "list",
+      "name": "Options",
+      "states": ["focusable"],
+      "children": [
+        {
+          "id": "item1",
+          "role": "list_item",
+          "name": "One",
+          "states": ["focusable", "selectable", "selected"]
+        },
+        {
+          "id": "item2",
+          "role": "list_item",
+          "name": "Two",
+          "states": ["focusable", "selectable"]
+        },
+        {
+          "id": "item3",
+          "role": "list_item",
+          "name": "Three",
+          "states": ["focusable", "selectable"]
+        }
+      ]
+    }
+  ]
+}
