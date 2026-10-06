@@ -24,10 +24,18 @@ Public API:
   (OneCore) stop early.
 - `SpeechSequence` — what a synthesizer is asked to speak: the utterance
   id, the trace id, an optional BCP 47 language, and `items`, a list of
-  `SpeechItem::Text`, `SpeechItem::Mark`, and `SpeechItem::Pitch` (an
-  offset from the configured pitch, `0` to return to it). Plain
-  serializable data, so it can cross a process or Wasm boundary unchanged.
-  `text` joins the text items, `has_marks` and `has_pitch_changes` report
+  `SpeechItem::Text`, `SpeechItem::Mark`, `SpeechItem::Pitch` (an
+  offset from the configured pitch, `0` to return to it), and
+  `SpeechItem::Sound` (a `SoundCue`: the id of the indication it reports,
+  the decoded `verbatim_audio::Sound`, and its gain). Plain
+  serializable data, so it can cross a process or Wasm boundary unchanged,
+  except sounds, which are never serialized: the manager places them in
+  the mixer itself and no driver sees one.
+  `text` joins the text items, with each sound in its place as `sound:`
+  and its indication's id (`sound: spelling-error`), which is what is
+  reported as queued, so the control plane and the end-to-end suite see
+  sounds like words; `has_text` says whether there is text to speak;
+  `has_marks` and `has_pitch_changes` report
   whether any mark or pitch change is present, `split_at_marks` cuts the
   sequence into pieces each followed by the mark that ended it, and
   `split(at_marks)` cuts at pitch changes, and at marks too when asked.
@@ -43,8 +51,17 @@ Public API:
   reported under, and `settings_host(persist)`. The config carries the
   registry, the initial synth, a `SavedSettingsFn` that reads any
   synthesizer's persisted setting values, the `Arc<Mixer>` speech plays
-  through (the manager adds its own source to it), an optional observer,
-  and an optional theme. `control()` returns a `SpeechControl`.
+  through (the manager adds its own source to it, and a second for
+  events' sounds), an optional observer,
+  and an optional presenter (`theme`). `control()` returns a
+  `SpeechControl`. `themes()` returns the manager's `ThemeHandle`, which
+  the default presenter reads; the shell sets the configured theme on it
+  at startup and the settings dialog switches it.
+  `play_earcon(earcon)` reports an event at once (`Effect::PlayEarcon`)
+  as the active theme says: its sound plays now on the events' own mixer
+  source, mixed over speech and never cancelled by it (a progress tone
+  rising with the percentage), and its words, when the theme speaks it or
+  its sound is unavailable, are queued as an utterance.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
   any thread without blocking, which the keyboard hook and the reducer's
   effects use: `cancel()` cancels current and queued speech and ends a
@@ -67,31 +84,65 @@ Public API:
   mark; a default no-op), `synthesis_started`, `synthesizer_audio` (the
   driver's first audio), and `audio_to_mixer` (its first audio past the
   trimmer; these three are default no-ops, called on the synth thread,
-  for the latency log), and `utterance_ended` (its one ending, as an
-  `UtteranceEnding`). `utterance_queued`, and the ending of an utterance
+  for the latency log), `utterance_ended` (its one ending, as an
+  `UtteranceEnding`), and `sound_played` (an event's sound played at once,
+  with its indication, for reporting as `sound:` and its id; a default
+  no-op, called on the thread that asked for the earcon). `utterance_queued`, and the ending of an utterance
   cancelled before synthesis, are called on the queue thread; the rest on
   the mixer's audio thread, so every implementation must be cheap and
   non-blocking.
-- `Theme` and `PlainTheme` — the presentation stage (decision D12): a theme
-  flattens each structured utterance to the `SpeechSequence` handed to
-  the synthesizer, with `flatten(utterance, id)`, on the queue thread when
-  the utterance is accepted. `PlainTheme` is
-  the default (selected when `SpeechManagerConfig::theme` is `None`) and
-  renders plain speech: labels, values, and descriptions as their text,
-  roles and states through `verbatim-i18n`, positions as "2 of 5" (nothing
-  without a set size — a bare position has no useful spoken form), levels
-  as "level 3", messages and phrases with values through `verbatim-i18n`.
-  Since M4 it renders a character spoken on its own
+- `Presenter` and `ThemePresenter` — the presentation stage (decision
+  D12, `phase6-design.md` "Themes: one model for verbosity, speech, and
+  sounds"): a presenter flattens each structured utterance to the
+  `SpeechSequence` handed to the synthesizer, with `flatten(utterance,
+  id)`, on the queue thread when the utterance is accepted.
+  `ThemePresenter` is the default (selected when
+  `SpeechManagerConfig::theme` is `None`) and resolves each span through
+  the active theme of a `ThemeHandle`. Content is always spoken: labels,
+  values, and text as their text, messages and phrases with values
+  through `verbatim-i18n`, a character spoken on its own
   (`SegmentContent::Character`) by its name from the character table of
-  the segment's language ("comma"), or, with no name, as itself, a capital
-  raised in pitch; a character description by the table's description,
-  falling back to the character; and an index mark
-  (`SegmentContent::Mark`) as a mark item where it stands, which is how the
-  reducer's marks reach the mixer, which reports them as they are played
-  (`SpeechEvents::mark_reached`; the shell turns each into
-  `Input::MarkReached` for say-all). M11's earcon and voice-styling themes implement the same
-  trait, which is why utterances carry their source node's role and screen
-  rectangle even though `PlainTheme` ignores both.
+  the segment's language ("comma"), or, with no name, as itself; a
+  character description by the table's description, falling back to the
+  character; and an index mark (`SegmentContent::Mark`) as a mark item
+  where it stands, which is how the reducer's marks reach the mixer, which
+  reports them as they are played (`SpeechEvents::mark_reached`; the shell
+  turns each into `Input::MarkReached` for say-all). A span that is an
+  indication (`verbatim_model::Indication::of_segment`: roles, states,
+  descriptions, shortcuts, positions, levels, formatting, "blank",
+  skipped lines) is reported as the theme says: nothing for off; its
+  words for speech (roles and states through `verbatim-i18n`, positions
+  as "2 of 5" and nothing without a set size, levels as "level 3",
+  formatting as "spelling error" and "out of spelling error"); a sound
+  item where the span stands for sound; the sound item and then the words
+  for both. An error's sound marks where it starts, not where it ends. A
+  span with nothing to say (a state never announced) plays nothing
+  either. An indication set to sound alone whose sound is unavailable is
+  spoken instead, and so is one whose sound plays when
+  `ThemeOptions::speak_sounded_indications` is on. Replacement words
+  replace a role's or state's name, and come before what carries content
+  of its own (a description, a position, a font); a voice style with a
+  pitch change speaks the words between two pitch items. A capital letter
+  spoken on its own (a spelled capital, a capital character with no name,
+  a capital's description) follows the `capital` indication: raised in
+  pitch by `CAPITAL_PITCH_OFFSET` when spoken, after its tone when it
+  plays one, and as it is when off. A sound's gain is the theme's, the
+  indication's, and the sound volume multiplied. With the built-in default
+  theme and no sounds loaded, speech is plain NVDA-style speech.
+  Utterances still carry their source node's role and screen rectangle
+  for M11's positional sounds.
+- `ActiveTheme` and `ThemeHandle` — a theme ready to present with, and a
+  cloneable, switchable handle on the active one. `ActiveTheme::new(theme,
+  sound_path, options)` resolves every indication against the default
+  theme, decodes each sound file the theme names through `sound_path` (a
+  file name to its path, which the shell gets from `verbatim-config`'s
+  `LoadedTheme::sound_path`), generates its tones, and reports and logs
+  each sound that is missing or cannot be decoded (`problems`);
+  `with_options` changes the settings that go with it, keeping its
+  sounds; `fetches` gives what the reducer should fetch. The default is
+  the built-in default theme with no sound files. `ThemeHandle::get`,
+  `set`, and `set_options` read and switch it; a switch applies to the
+  next utterance presented.
 
 - `hosting` (a public module) — the synthesizer host protocol (decision
   D18), the `SynthDriver` contract made into messages so a host process
@@ -195,13 +246,27 @@ ending or the next utterance. At most two seconds of quiet audio is held;
 a longer run is released as it is. Marks reached during held audio keep
 their place relative to it.
 
+Sounds in the speech stream (decision D17). Before a job is synthesized,
+each sound item is replaced by a mark whose top bit is set and whose
+other bits are the sound's index; the mark fallback below and the
+silence trimmer treat it like any mark, so the sound keeps its exact place
+whatever the driver does with marks. When such a mark arrives at the
+sink, it is placed in the mixer as a sound of the utterance
+(`Source::sound`) instead of as a mark, so it starts when playback reaches
+it, plays on over the speech that follows, and is dropped or stopped with
+the utterance; it is never reported as a mark. A piece of a sequence with
+no text, such as a sound with no words, is not given to the driver: its
+marks and sounds are placed where it stands. `tests/sounds.rs` checks
+that a sound plays between the words around it without the synthesizer
+seeing it, and that an event with no sound to play is spoken.
+
 Mark fallback. When the active driver's `places_marks` is `false` and the
 sequence has marks, the synth thread splits it with `split_at_marks` and
 speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
 synthesis boundary at each mark.
 
-Pitch changes. `PlainTheme` renders a `SegmentContent::SpelledCapital`,
+Pitch changes. `ThemePresenter` renders a `SegmentContent::SpelledCapital`,
 and a capital letter spoken as a character or by its description,
 as a pitch change of `CAPITAL_PITCH_OFFSET` (30, NVDA's default), the
 letter, and a return to the configured pitch. A driver whose

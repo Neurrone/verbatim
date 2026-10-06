@@ -1,9 +1,9 @@
 # verbatim-audio
 
 Audio output (architecture section 6, decisions D5, D16 and D17): the
-mixer that everything audible goes through, the `AudioDevice` seam it
-writes to, `SilentDevice`, and `WavRecorder`, which records what the mixer
-plays. The WASAPI device is
+mixer that everything audible goes through, speech and sounds alike, the
+`AudioDevice` seam it writes to, `Sound`, `SilentDevice`, and
+`WavRecorder`, which records what the mixer plays. The WASAPI device is
 [verbatim-audio-wasapi](verbatim-audio-wasapi.md); this crate has no
 Windows dependency.
 
@@ -41,7 +41,24 @@ Public API:
   `cancel_all` ends every utterance of the source not yet ended as
   cancelled; `pause(paused)` holds the source's audio where it is, or lets
   it go on, with its playback events waiting with the audio. `fail` and
-  `cancel_all` return only after the audio thread has carried them out. Clones are handles to the same source.
+  `cancel_all` return only after the audio thread has carried them out.
+  Sounds (`phase6-design.md`, "Earcons"): `sound(utterance, sound, gain)`
+  places a `Sound` at the current end of the utterance's audio, as `mark`
+  places a mark, to start when playback reaches it and play on over the
+  audio that follows; `play(sound, gain)` plays one at once, for a source
+  that carries only sounds. Both convert the sound to the device's format
+  (an error only when it cannot be converted), and `cancel_all` stops
+  both. Clones are handles to the same source.
+- `Sound` — a sound decoded to 16-bit PCM, shared as `Arc<Sound>`:
+  `from_wav` and `from_wav_file` decode WAV files (8, 16, 24, or 32-bit
+  integer PCM, or 32-bit float, any rate and channel count, through the
+  small pure-Rust `hound` crate), `from_pcm` takes samples, and
+  `tone(frequency_hz, duration_ms)` generates a sine at 48 kHz, about
+  10 dB below full scale, fading in and out over at most 5 ms so it does
+  not click (20 Hz to 20 kHz, up to five seconds). A sound longer than a
+  minute is refused. `format` and `duration` describe it. It is converted
+  to the device's format through the same converter as speech the first
+  time it plays in that format, and kept converted.
 - `PlaybackEvent` — `Started` (the utterance's first frame has played),
   `Mark` (playback reached an index mark), and `Ended` with an
   `UtteranceEnding`. Each carries the utterance id and trace id.
@@ -57,6 +74,22 @@ Public API:
   step with real time. `create(path)` creates the file and, beside it,
   `<path>.start`, holding the recorder's creation time as Unix time in
   milliseconds, and starts the recording's clock.
+
+Implementation notes, sounds. A source mixes sounds over its own audio as
+voices. A voice waits until the source's audio has been mixed up to its
+place (its source position), or starts with the next frames mixed when it
+was played at once, and is then counted in mix positions: frame n of it
+is at the mix position it started at plus n. While a voice plays, the
+source has frames to mix even when its own audio has run out, so a sound
+placed at the end of an utterance plays whole, and the utterance still
+ends when its own last frame has played. A voice is let go once its last
+frame has played. When the device's queue is discarded, a voice not yet
+heard waits for its place again, and one partly heard goes on from the
+frame where it was heard, at the next frames mixed; a pause is the same,
+so a paused source's sounds wait with it. Failing an utterance drops its
+sounds; `cancel_all` and the device changing format drop every sound of
+the source. Gains are applied as the frames are summed, before the mix is
+clamped.
 
 Implementation notes, the audio thread: each pass reads how many frames
 the device still has queued, works out how many have played, reports
@@ -167,7 +200,13 @@ runners have none), by `verbatim-audio-wasapi` as its fallback, and by
 Tests: `tests/mixer.rs` drives the mixer against a scripted device and
 covers completion only after the last frame plays, marks, utterances
 without audio, cancellation sparing later utterances, failure, write
-backpressure, replaying unplayed audio after a reopen, and the tap getting
-exactly what played and never what was cut off. A unit test in `wav.rs`
+backpressure, replaying unplayed audio after a reopen, the tap getting
+exactly what played and never what was cut off, and sounds: one placed in
+an utterance starting at its place and playing on past the utterance's
+end without delaying it, one stopped or never mixed when its utterance is
+cancelled, one played at once over another source's speech and alone,
+and one partly heard going on from where it was after a reopen. Unit
+tests in `sound.rs` decode WAV files of each sample format, refuse what is
+not one, and check a tone's fades and a sound's conversion. A unit test in `wav.rs`
 checks that the recorder writes a valid WAV with silence where nothing
 played.

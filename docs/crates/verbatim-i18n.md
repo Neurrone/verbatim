@@ -28,6 +28,17 @@ Public API:
   hello", "Positioned at 10, 20", "speak typed characters only in edit
   controls"), NVDA's English wording; `typing_echo_name(mode)` names a
   typing echo choice.
+- Themes (milestone M4): `indication_name(indication)` and
+  `indication_category_name(category)`, the catalogue as the theme panel
+  lists it (a role's or state's spoken name, "spelling error", "Text
+  formatting"); `presentation_name` ("speech and sound");
+  `theme_default_name` and `theme_default_description`, since the built-in
+  default theme has no name of its own; `format_text` for formatting spans
+  ("spelling error", "out of spelling error", and a font or color as the
+  application words it); `earcon_text`, an event's words when a theme
+  speaks it ("browse mode", "40 percent"); and `theme_problem_text`, a
+  problem found loading a theme. `phrase_text` also words "skipped 1 line"
+  and "skipped 120 lines".
 - `character_name(character, language)` and
   `character_description(character, language)` (milestone M4) — the
   character table: the name a character is spoken by on its own ("comma",

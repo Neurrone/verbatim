@@ -38,6 +38,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Control plane** — the one authenticated protocol (JSON over the
   control pipe) serving dev tooling now and remote support later
   (D8). [verbatim-control](crates/verbatim-control.md).
+- **Earcon** — an event Verbatim reports at once, outside the speech
+  queue (start, a mode switch, an application not responding), named
+  semantically; the active theme decides whether it plays a sound, is
+  spoken, both, or neither. [verbatim-model](crates/verbatim-model.md).
 - **Effect** — a reducer output: an instruction (Speak, Fetch,
   Activate…) the shell executes; the reducer itself does no I/O.
   [verbatim-core](crates/verbatim-core.md).
@@ -63,6 +67,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   held attention for two minutes and in which Core holds no nodes
   (risk R2's memory mitigation).
   [verbatim-outpost](crates/verbatim-outpost.md).
+- **Indication** — one entry of the catalogue of everything Verbatim
+  can report (a role, a state, a description, a spelling error, an
+  event), with a stable id and a category; a theme says how each is
+  reported. [verbatim-model](crates/verbatim-model.md).
 - **Message position** — the count of messages carrying node ids an
   outpost has sent, kept the same way by the outpost and Core; Core
   acknowledges a position when it reports its held nodes, so the
@@ -98,8 +106,15 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   teardown, artifacts, and a `#[test]` wrapper sharing its name.
   [verbatim-e2e](crates/verbatim-e2e.md).
 - **Span** — one typed piece of an utterance (label, role, value,
-  state, text run) per D12; flattened to text by a **theme** at the
-  last pipeline stage. [verbatim-speech](crates/verbatim-speech.md).
+  state, text run) per D12; turned into words, a sound, both, or
+  nothing by the active **theme** at the last pipeline stage.
+  [verbatim-speech](crates/verbatim-speech.md).
+- **Theme** — a complete collection of indications and how each is
+  reported (off, speech, sound, or speech and sound), with its sounds,
+  replacement words, and voice styles; verbosity, speech, and sounds in
+  one model. The built-in default theme is complete; every other theme
+  holds only its differences. [verbatim-model](crates/verbatim-model.md)
+  and [verbatim-config](crates/verbatim-config.md).
 - **Trace id** — the correlation id minted at the triggering input
   and carried through event, reducer, speech, and audio, making
   end-to-end latency timelines possible.

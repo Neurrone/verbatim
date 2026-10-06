@@ -17,7 +17,13 @@ Public API:
   These are the views the shell derives and sends out: attention to
   the supervisor, and each outpost's held nodes and anchors to that
   outpost, which keeps them alive (`docs/crates/verbatim-model.md`, "The
-  text protocol").
+  text protocol"). `fetches()` (milestone M4) is another: the details the
+  active theme wants fetched, as the last `Input::Fetches` set them
+  (everything until then), which the shell gives every outpost so that a
+  detail whose indication is off, such as descriptions, is never fetched
+  (`phase6-design.md`, "Themes: one model for verbosity, speech, and
+  sounds"). It is the one place the reducer consults the theme; how
+  everything else is presented is the speech pipeline's.
 - `FlightRecorder<T, S>` — a window of recent entries bounded both by
   count and by estimated bytes, kept with a checkpoint of type `S` taken
   just before its oldest entry, so the window always replays from its
@@ -72,7 +78,8 @@ Public API:
   allocate the same number of bytes against a state whose previous focus
   has 10 ancestors and one with 10,000, with the same input, and that
   cloning the state for a flight-recorder checkpoint allocates the same
-  small amount (under 1 KB) for both. It holds because `reduce` changes the
+  small amount (under 1 KB) for both, and that the theme's fetches are
+  taken in without allocating at all. It holds because `reduce` changes the
   state in place and `SrState` holds the ancestor chain as a shared
   `Arc<[NodeSnapshot]>`; anything later added to the state that grows with
   the application must be held the same way.

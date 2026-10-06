@@ -84,8 +84,11 @@ Public API:
   first child, with a `NoNeighbor` `FetchResult` for a genuine tree edge and
   `Gone` for a node that could no longer be re-acquired — the outpost
   never conflates the two), `PlayEarcon`
-  (an `Earcon` names a sound semantically — `AppNotResponding` first — and
-  themes decide what it sounds like), `Activate` (invoke or default-action a
+  (an `Earcon` names an event reported at once, outside the speech queue,
+  semantically: an application not responding, start, exit, an error,
+  browse and focus mode, suggestions opened and closed, and progress with
+  its percentage; the active theme decides whether it plays a sound, is
+  spoken, both, or neither, see "Themes" below), `Activate` (invoke or default-action a
   node), and `CopyToClipboard` (routed through the shell's shared clipboard
   helper, so the reducer never touches the clipboard); menu and quit
   concerns never appear here. Milestone M4 adds the text protocol's
@@ -117,7 +120,10 @@ Public API:
   reaches it), and `Phrase` (a reader message with values in it: `Selected`
   and `Unselected` with a `SelectionText` that is text, one character, or a
   count of characters; `Positioned` with screen coordinates; and the new
-  values of the typing echo toggles). The pure reducer never touches localization; spans
+  values of the typing echo toggles, and `SkippedLines` with a count, for
+  terminal output too much to read), and `Format` (a `TextFormat`: a
+  spelling or grammar error starting or ending, or a font name, size, or
+  color as the application words it, spoken as formatting changes). The pure reducer never touches localization; spans
   become words at the speech pipeline's presentation stage. An utterance optionally carries an
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
@@ -147,6 +153,12 @@ Public API:
   on during say-all (on); and speaking terminal passwords (off).
   `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
   them; the shell hands them to the reducer as `Input::Settings`.
+- The theme model, described under "Themes" below: `Indication`,
+  `IndicationCategory`, `Theme`, `IndicationSetting`, `Presentation`,
+  `SoundSource`, `Tone`, `VoiceStyle`, `ThemeOptions`, `ThemeProblem`,
+  `Fetches`, and `progress_frequency`. `Role::ALL` lists every role, the
+  roles of the catalogue; `Role` and `State` are ordered, so indications
+  are.
 - `GestureId` — normalized gesture identifiers, NVDA's scheme.
 - `CallKind` and `CallCounts` — how many cross-process calls a piece of
   work made, by kind: UIA calls, MSAA calls, and window messages
@@ -308,6 +320,8 @@ failed).
   (the hook's `KeySpeechEffect::Cancel`); say-all stops.
 - `Input::Settings(ReaderSettings)`: the reader settings, at startup and
   whenever they change.
+- `Input::Fetches(Fetches)`: the details the active theme wants fetched
+  (see "Themes" below), at startup and whenever the theme in use changes.
 
 ### Effects for the shell
 
@@ -321,6 +335,68 @@ The model also adds `Role::Terminal`, NVDA's terminal role, for Windows
 Terminal's text control, the console host, and embedded terminals: the
 review cursor keeps cell columns there, caret waits are longer, and typing
 waits for the terminal to show it.
+
+## Themes (milestone M4)
+
+One model for verbosity, speech, and sounds (`phase6-design.md`,
+"Themes: one model for verbosity, speech, and sounds"). The types are in
+`theme.rs`; files and settings are `verbatim-config`'s, and presenting
+with a theme is `verbatim-speech`'s.
+
+- `Indication` — one entry of the catalogue of everything Verbatim can
+  report, with a stable id (`id`, `from_id`) that theme files use, and a
+  `category` (`IndicationCategory`: roles, states, properties, text
+  formatting, structure, events). `Indication::catalogue()` lists all 89
+  in display order: the 52 roles (`role-link`), the 13 states that are
+  spoken (`state-checked`) and the 3 whose absence is
+  (`state-not-checked`), the properties (`description`, `shortcut`,
+  `position`, `level`), text formatting (`spelling-error`,
+  `grammar-error`, `font-name`, `font-size`, `color`, and `capital`, a
+  capital letter spoken on its own), structure (`blank`,
+  `skipped-lines`), and events (`app-not-responding`, `start`, `exit`,
+  `error`, `browse-mode`, `focus-mode`, `suggestions-opened`,
+  `suggestions-closed`, `progress`). A role's or state's id is its variant
+  name in kebab case, so variants are never renamed. `of_segment` finds
+  the indication a span reports, `None` for content (labels, values,
+  text, characters, marks, and messages other than "blank"), which is
+  always spoken; `of_earcon` finds an event's.
+- `Presentation` — how an indication is reported: `Off`, `Speech`,
+  `Sound`, or `SpeechAndSound`; `speaks` and `sounds` read it.
+- `IndicationSetting` — one indication in a theme: `report`, `sound` (a
+  `SoundSource`, either a WAV file name or a generated `Tone` of a
+  frequency and duration), `gain` in percent (100 as recorded, up to
+  `MAX_GAIN`, 400), replacement `words`, and the name of a `voice` style.
+- `VoiceStyle` — a theme's named change to the voice, relative pitch,
+  rate, and volume; only the pitch is applied so far.
+- `Theme` — id, name, author, description, version, overall gain, voice
+  styles, and the indications where it differs from the default theme.
+  `builtin_default()` is the complete built-in default theme, id
+  `default`, each indication with `Indication::default_setting`;
+  `setting(indication)` resolves an indication, falling back to the
+  default theme for anything the theme does not mention (no chains of
+  themes); `differs` says whether an indication is "changed";
+  `problems` finds what is wrong without reading files (sound alone with
+  no sound, an unknown voice style, a gain too high, a sound file name
+  with a directory in it); `fetches` gives the reducer's `Fetches`.
+- The default theme, matching NVDA's defaults: everything spoken as
+  NVDA speaks it; sounds where NVDA plays them by default (browse and
+  focus mode, suggestions opened and closed, errors, start and exit, NVDA's
+  files in the top-level `sounds` directory), the spelling error sound
+  with its words, Verbatim's own cues as tones (an application not
+  responding, skipped terminal lines, progress bars rising three octaves
+  from 220 Hz, `progress_frequency`), font name, size, and color off as in
+  NVDA, and a capital raised in pitch.
+- `ThemeProblem` — what loading a theme found wrong: an unknown
+  indication id, sound alone with no sound, a sound missing or unreadable,
+  a sound file name that is not a plain name, an unknown voice style, a
+  gain too high. A theme with problems still loads.
+- `ThemeOptions` — the settings that go with a theme but are not part of
+  it: sound volume (0 to 100, relative to speech), sounds during say-all,
+  and speaking indications that play a sound (for learning a theme).
+- `Fetches` — the details the reducer fetches: description, shortcut,
+  position, level, spelling and grammar errors, font, and color, each
+  unless its indication is off. The shell gives them to the reducer as
+  `Input::Fetches`.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases
 everything, and sorts the plus-separated parts, exactly like NVDA's

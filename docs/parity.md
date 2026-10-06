@@ -860,16 +860,47 @@ verified.
 - Instant cancel (stop + reset, audible immediately). NVDA:
   `WavePlayer.stop`. Verbatim: **matched (verified)** — WASAPI
   stop+reset; latency measured in the E2E ledger.
-- Rate boost via sonic, audio ducking, sound split, tones/earcons:
-  **not yet** (M8 ducking/config breadth, M11 earcons).
+- Rate boost via sonic, audio ducking, sound split: **not yet** (M8
+  ducking and configuration breadth). Tones and earcons: see the next
+  entry.
 - Sonification (spelling-error sounds, mode-switch sounds, progress
   beeps, indentation tones) and its scheduling split between
   in-stream playback-synchronized commands and immediate
   fire-and-forget sounds. NVDA: [Sonification](nvda/sonification.md).
-  Verbatim: **not yet (M11)**, and **different (D12)** by intent —
-  themes should let one semantic event render as word, earcon, or
-  parameter change; NVDA hard-codes the choice per feature. The
-  inventory is the parity floor M11 must cover.
+  Verbatim: **implemented in the platform-neutral crates since
+  2026-10-06, unverified** until the shell wires them: the same two ways
+  to play, a sound placed in the speech stream at its span's place,
+  overlapping the speech after it and ended with its utterance, and an
+  event's sound played at once on its own mixer source, never cut off by
+  speech. **Different (D12)** by intent: a theme decides, for every
+  indication, speech, sound, both, or off, where NVDA offers the choice
+  for spelling errors and line indentation and hard-codes it elsewhere.
+  The default theme uses NVDA's sound files where NVDA plays them by
+  default. Deliberate differences: NVDA starts an in-stream sound when
+  playback reaches it, through a callback, so it can be late by the
+  device's buffer; Verbatim mixes it at its exact sample. A key press that
+  cancels speech also stops an in-stream sound already playing, where
+  NVDA lets it finish. Progress bar tones rise three octaves from 220 Hz
+  over 0 to 100 percent, a range of Verbatim's own; the capital letter
+  tone, used when a theme reports capitals by sound, is 1760 Hz for 40
+  ms. In the default theme a spelling error is reported by speech and
+  sound: where an error starts the sound plays and then "spelling error"
+  is spoken (NVDA's own default for `reportSpellingErrors2` is to be
+  checked against NVDA when the shell is wired); where the error ends only the words "out of spelling error" are
+  spoken. Line indentation tones are **not yet**: indentation is not
+  reported yet. Which events produce earcons (start and exit, browse and
+  focus mode, suggestions, progress bars, logged errors) is the shell's
+  and later milestones' to wire; the reducer emits none of them yet.
+- Verbosity settings (report object descriptions, position information,
+  keyboard shortcuts, and the document formatting options). NVDA:
+  checkboxes in the Object Presentation and Document Formatting panels
+  ([Event handling](nvda/events.md), [Document formatting
+  reporting](nvda/document-formatting.md)). Verbatim: **different**, by
+  design: each is an indication in the theme, off, speech, sound, or
+  speech and sound, with NVDA's defaults in the default theme (font name,
+  size, and color off; descriptions, positions, and shortcuts spoken). An
+  indication set to off is also not fetched where the reducer decides
+  what is fetched. **Unverified**.
 - Synth isolation. NVDA: in-process drivers (crash = NVDA crash),
   one out-of-process precedent ([Synth drivers](nvda/synth-drivers.md)).
   Verbatim: **different (D6)** — native synth host out of process

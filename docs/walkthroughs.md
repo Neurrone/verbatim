@@ -386,9 +386,9 @@ reducer's `Speak` effect to the speaker (decisions D12, D17, D18;
    which gives the utterance an `UtteranceId` and sends it to the queue
    thread. It never waits.
 2. **Queued.** On the queue thread (`QueueThread::speak` in
-   `crates/verbatim-speech/src/manager.rs`), the theme (`PlainTheme`)
-   flattens the structured utterance into a `SpeechSequence`: text items
-   with index marks and pitch changes, plain data that can cross a
+   `crates/verbatim-speech/src/manager.rs`), the presenter (`ThemePresenter`)
+   flattens the structured utterance through the active theme into a `SpeechSequence`: text items
+   with index marks, pitch changes, and sounds, plain data that can cross a
    process. `SpeechEvents::utterance_queued` goes to the latency ledger
    (`crates/verbatim-app/src/latency.rs`), which broadcasts a `Speech`
    frame to control-plane speech subscribers. The utterance joins a lane
