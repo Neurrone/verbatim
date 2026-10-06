@@ -9,10 +9,10 @@
 //!    character ("e", "r"), by word ("reads", "this"), and by line, down
 //!    and back up.
 //! 2. From the start of the line, Shift+Control+Right Arrow selects the
-//!    first word ("Verbatim selected") and then the second ("reads
+//!    first word ("Verbatim  selected") and then the second ("reads
 //!    selected"), Shift+Control+Left Arrow unselects the second again
-//!    ("reads unselected"), and Shift+End extends the selection to the end
-//!    of the line ("reads this short note selected").
+//!    ("reads  unselected"), and Shift+End extends the selection to the end
+//!    of the line ("reads this short note  selected").
 //! 3. At the end of the text, a sentence is typed with typed-character
 //!    echo, each character spoken as it is typed. A typo in it is fixed
 //!    with Backspace, which speaks the character it deleted.
@@ -81,12 +81,14 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Selecting two words, unselecting the second, then selecting the rest
     // of the line. Unselecting comes before Shift+End because Notepad's
     // Shift+End takes the line break in, which Shift+Control+Left Arrow
-    // would then unselect first.
+    // would then unselect first. A selected word takes the space after it
+    // in, and the line its line break, each spoken as a space before
+    // "selected", as NVDA speaks them.
     press(scenario, "home", "V");
-    press_hearing(scenario, "shift+control+rightarrow", "Verbatim selected");
-    press_hearing(scenario, "shift+control+rightarrow", "reads selected");
-    press_hearing(scenario, "shift+control+leftarrow", "reads unselected");
-    press_hearing(scenario, "shift+end", "reads this short note selected");
+    press_hearing(scenario, "shift+control+rightarrow", "Verbatim  selected");
+    press_hearing(scenario, "shift+control+rightarrow", "reads  selected");
+    press_hearing(scenario, "shift+control+leftarrow", "reads  unselected");
+    press_hearing(scenario, "shift+end", "reads this short note  selected");
 
     // A sentence typed with typed-character echo, with a typo fixed by
     // Backspace, which speaks the character it deleted.
