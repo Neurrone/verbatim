@@ -156,7 +156,9 @@ knowing for review:
   stages and calls in its `LatencyRecord`. It mirrors
   each utterance's milestones to speech subscribers as a `Speech` frame at
   queue time, a `SpeechStarted` frame when its first frame plays, and a
-  `SpeechEnded` frame with its ending, and it answers the `latency`
+  `SpeechEnded` frame with its ending, each sound played at once for an
+  event as a `Sound` frame naming its indication, and it answers the
+  `latency`
   command newest first. Core-originated speech with no event reports its
   queue time as the timeline start.
 - `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` clones the

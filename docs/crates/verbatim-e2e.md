@@ -113,7 +113,10 @@ Public API:
   speech connection and never sending a request on it after subscribing,
   so no frame is discarded. Every utterance Verbatim queues arrives as a
   `Speech` frame and later ends with exactly one `SpeechEnded` frame
-  (decision D17). The `expect_*` assertions (`expect_in_order`,
+  (decision D17). Sounds are matched like words: a sound in the speech
+  stream is named in its utterance's text (`sound: spelling-error`), and
+  a sound played at once for an event arrives as a `Sound` frame, matched
+  as an utterance of its own (`sound: exit`) that counts as heard at once. The `expect_*` assertions (`expect_in_order`,
   `expect_in_order_capturing`, `expect_change_capturing`,
   `expect_captured`) match queued text, then wait up to 30 seconds for
   the matched utterance's ending and fail unless it completed, so a

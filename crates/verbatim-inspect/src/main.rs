@@ -273,6 +273,10 @@ fn speech_line(frame: &Frame) -> Option<String> {
             timestamp::local(*at_ms)
         )),
         Frame::SpeechEnded { utterance, ending } => Some(format!("{utterance} ended: {ending:?}")),
+        Frame::Sound { indication, at_ms } => Some(format!(
+            "sound: {indication} played {}",
+            timestamp::local(*at_ms)
+        )),
         _ => None,
     }
 }

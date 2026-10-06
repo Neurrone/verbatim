@@ -10,7 +10,7 @@ Public API:
   `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `DumpTree`,
   `DumpRecorder`, `Quit`) in a `RequestEnvelope` with a correlation id;
   `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechStarted`,
-  `SpeechEnded`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
+  `SpeechEnded`, `Sound`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
   input: GUI up, focus listener running, own-window outpost ready),
   `OutpostStatus`, `OutpostState`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
   same newline-JSON framing helpers. Of the two readers, `read_message` is
@@ -29,7 +29,12 @@ Public API:
   (completed, cancelled, or failed with a reason); every utterance
   announced by a `Speech` frame is followed by exactly one. `SpeechEnded`
   carries no text, so it never competes with `Speech` as a matchable
-  utterance.
+  utterance. A fourth frame, `Sound`, goes to the same subscribers when a
+  sound plays at once for an event, outside any utterance (the start and
+  exit sounds, an application not responding): the id of the indication
+  it reports, such as `exit`, and when it started. A sound in the speech
+  stream is not sent this way; its utterance's text names it in its place
+  (`sound: spelling-error`).
   `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
   tree (`verbatim_model::TreeNode`) and whether the outpost's depth or
   node-count cap cut it short; a walk that could not complete at all comes

@@ -62,6 +62,13 @@ Public API:
   source, mixed over speech and never cancelled by it (a progress tone
   rising with the percentage), and its words, when the theme speaks it or
   its sound is unavailable, are queued as an utterance.
+  `play_earcon_to_end(earcon, timeout)` does the same and waits, at most
+  `timeout`, until the event has been heard: its sound plays over an
+  utterance of silence as long as it is on the events' source, whose
+  ending says the sound has played to its end, and its words, if any, are
+  spoken to their end; Verbatim plays its exit sound this way before it
+  exits. Every ending passes the manager's own waiters on its way to the
+  configured observer.
   `play_sound(sound, gain)` plays any sound at once on the same source,
   for the settings dialog to let a sound be heard.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
