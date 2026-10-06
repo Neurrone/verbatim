@@ -251,7 +251,7 @@ mod handler {
     )]
 
     use std::mem::ManuallyDrop;
-    use windows::Win32::Foundation::{HWND, S_FALSE};
+    use windows::Win32::Foundation::{E_POINTER, HWND, S_FALSE};
 
     use windows::Win32::System::Com::{
         DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO, IDispatch, ITypeInfo,
@@ -600,14 +600,16 @@ mod handler {
             _varchild: &VARIANT,
         ) -> WinResult<()> {
             hits::hit(hits::Method::AccLocation);
-            // SAFETY: the four pointers are caller-owned out-parameters, as
-            // every `accLocation` caller supplies; mockapp never lays out
-            // real control geometry, so they are always zeroed.
-            unsafe {
-                *pxleft = 0;
-                *pytop = 0;
-                *pcxwidth = 0;
-                *pcyheight = 0;
+            let outputs = [pxleft, pytop, pcxwidth, pcyheight];
+            if outputs.iter().any(|output| output.is_null()) {
+                return Err(E_POINTER.into());
+            }
+            // mockapp never lays out real control geometry, so the location
+            // is always zero.
+            for output in outputs {
+                // SAFETY: a non-null out-parameter (checked above), which an
+                // `accLocation` caller owns and points at an `i32`.
+                unsafe { output.write(0) };
             }
             Ok(())
         }
