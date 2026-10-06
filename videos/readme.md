@@ -65,10 +65,10 @@ Editing a short paragraph in Windows 11 Notepad.
    speaks the words "reads" and "this"; Down Arrow and Up Arrow speak the
    second line and the first again.
 3. Home speaks "V". Shift+Control+Right Arrow selects the first word, and
-   Verbatim says "selected Verbatim", then the second, "selected reads";
-   Shift+Control+Left Arrow takes the second word out again, "unselected
-   reads"; and Shift+End extends the selection to the end of the line,
-   "selected reads this short note".
+   Verbatim says "Verbatim selected", then the second, "reads selected";
+   Shift+Control+Left Arrow takes the second word out again, "reads
+   unselected"; and Shift+End extends the selection to the end of the line,
+   "reads this short note selected".
 4. Control+End moves to the empty last line ("blank"), and the sentence
    "Typing is echoed." is typed. Each character is spoken as it is typed,
    the spaces as "space". It is first typed with a typo, "echoef":
@@ -99,7 +99,7 @@ price, so it is shorter than the Price column.
 3. On the Apple row, Shift+numpad 1 moves to the start of the line ("A")
    and numpad 5 reads the word "Apple". Numpad 5 pressed twice spells it,
    letter by letter. Numpad 2 pressed twice describes the character,
-   "Alpha". Numpad 3 and numpad 1 move to the next character, "p", and
+   "Alfa". Numpad 3 and numpad 1 move to the next character, "p", and
    back, "A", and numpad 2 pressed three times gives the character code,
    65, then in hexadecimal.
 4. Verbatim+F9 marks the start of the Apple row ("Start marked"),
