@@ -435,34 +435,10 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
-        // SAFETY: `element` is live per the caller's contract; a missing
-        // pattern surfaces as an error mapped to None.
-        let Ok(pattern) = (unsafe {
-            element.GetCurrentPatternAs::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
-        }) else {
-            return Ok(None);
-        };
-        // SAFETY: `pattern` was just obtained from a live element.
-        let Ok(selection) = (unsafe { pattern.GetCurrentSelection() }) else {
-            return Ok(None);
-        };
-        // SAFETY: `selection` is a live element array.
-        if unsafe { selection.Length() }.unwrap_or(0) == 0 {
-            return Ok(None);
-        }
-        // SAFETY: index 0 exists per the length check above.
-        let Ok(first) = (unsafe { selection.GetElement(0) }) else {
-            return Ok(None);
-        };
-        // SAFETY: `first` is live; rebuilding with `cache` prefetches the
-        // full snapshot property set in one round trip.
-        let Ok(cached) = (unsafe { first.BuildUpdatedCache(cache) }) else {
-            return Ok(None);
-        };
-        // SAFETY: `cached` was just built with `cache`.
-        Ok(Some(unsafe {
-            snapshot_from_cached_element(&cached, registry)
-        }))
+        // SAFETY: forwarded to this function's contract.
+        let selected = unsafe { selected_element(element, cache) };
+        // SAFETY: `selected` was built with `cache`.
+        Ok(selected.map(|selected| unsafe { snapshot_from_cached_element(&selected, registry) }))
     }
 
     /// Navigates one step from `element` in `direction`, via the raw-view
@@ -577,6 +553,40 @@ impl Uia {
             "element exposes no Invoke, Toggle, or SelectionItem pattern",
         ))
     }
+}
+
+/// The element behind [`Uia::selected_child`]: the first element of the
+/// container's current selection, rebuilt with `cache`, or `None` for every
+/// benign outcome (no `Selection` pattern, nothing selected, or a failed
+/// call). Two cross-process round trips after the pattern fetch: the
+/// selection, then the cache rebuild. `verbatim-uia-rops` calls it for the
+/// classic focus ancestry.
+///
+/// # Safety
+///
+/// `element` must be a live element.
+#[must_use]
+pub unsafe fn selected_element(
+    element: &IUIAutomationElement,
+    cache: &IUIAutomationCacheRequest,
+) -> Option<IUIAutomationElement> {
+    // SAFETY: `element` is live per the caller's contract; a missing
+    // pattern surfaces as an error mapped to None.
+    let pattern = unsafe {
+        element.GetCurrentPatternAs::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
+    }
+    .ok()?;
+    // SAFETY: `pattern` was just obtained from a live element.
+    let selection = unsafe { pattern.GetCurrentSelection() }.ok()?;
+    // SAFETY: `selection` is a live element array.
+    if unsafe { selection.Length() }.unwrap_or(0) == 0 {
+        return None;
+    }
+    // SAFETY: index 0 exists per the length check above.
+    let first = unsafe { selection.GetElement(0) }.ok()?;
+    // SAFETY: `first` is live; rebuilding with `cache` prefetches the full
+    // snapshot property set in one round trip.
+    unsafe { first.BuildUpdatedCache(cache) }.ok()
 }
 
 /// Whether this process has finished UIA's first-time setup; see

@@ -35,16 +35,24 @@ Public API:
   `AncestorStops`: at a window read through the other API, at an ancestor
   the caller already knows (reporting `AncestorWalk::MetKnown`), or at a
   deadline (`AncestorWalk::OutOfTime`). `Uia::within(wait, read)` runs a
-  read with a shorter connection timeout, for reads that are only extras. Ancestors that are not
+  read with a shorter connection timeout, for reads that are only extras;
+  verified with `verbatim-uia-rops`'s stall test, the connection timeout
+  does not bound a call on an element already fetched, which UIA's
+  process-wide transaction timeout (20 seconds by default) does, so it
+  limits only reads that connect to a provider anew. Ancestors that are not
   presentable focus context — NVDA's `isPresentableFocusAncestor`,
   ported: layout elements (unknown and pane roles, textless static text,
   nameless windows, property pages, and groupings) plus list items, tree
   items, and editable text — are crossed but never reported, matching
   what NVDA speaks as entered containers regardless of its review-mode
   setting. Deliberately the simplest correct implementation behind this
-  method as a seam: M4's remote-operations work replaces the per-hop walk
-  with a single batched round trip inside the provider process, so
-  callers must depend only on the resulting list.
+  method as a seam: `verbatim-uia-rops`'s `focus_ancestry_remote` reads
+  the same raw-view ancestors in a single round trip inside the provider
+  process, so callers must depend only on the resulting list.
+- `selected_element(element, cache)` — the first element of a selection
+  container's current selection, rebuilt with `cache`, or `None`;
+  `Uia::selected_child` maps it to a snapshot, and `verbatim-uia-rops`'s
+  classic focus ancestry uses it as it is.
 - `Uia::navigate` — one raw-view tree-walker step (parent, next or
   previous sibling, first child, named by a navigation `QueryKind` from
   `verbatim-model`) returning
@@ -87,10 +95,16 @@ Public API:
   `ClassName` and `IsDialog` (a dialog by NVDA's rule), `IsPassword`,
   `IsRequiredForForm`, `IsDataValidForForm`, and `ValueIsReadOnly` (the
   protected, required, invalid entry, and read-only states; the last two
-  read with `GetCachedPropertyValueEx` ignoring their default of true),
+  read with `GetCachedPropertyValueEx` ignoring their defaults),
   `RangeValueValue` (the rounded value of a control with no `Value`
-  pattern, likewise ignoring its default), and `IsContentElement` and
-  `IsControlElement` (an ancestor is focus context only when both hold).
+  pattern, likewise ignoring its default), `IsValuePatternAvailable` and
+  `IsRangeValuePatternAvailable` (which gate `ValueIsReadOnly` and
+  `RangeValueValue`, because a cache filled by a remote operation stores
+  their defaults, read-only and zero, where a local cache stores "not
+  supported"), and `IsContentElement` and `IsControlElement` (an ancestor
+  is focus context only when both hold). The list is public as
+  `CACHED_PROPERTIES`, so `verbatim-uia-rops` caches the same set, and
+  `runtime_id(element)` reads an element's runtime id.
   A selected radio button is checked rather than selected, and a
   toggleable element other than a check box or toggle button is
   checkable.

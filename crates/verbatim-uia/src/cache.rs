@@ -11,11 +11,12 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
     UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_IsRequiredForFormPropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+    UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
-    UIA_LevelPropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
-    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_RangeValueValuePropertyId,
-    UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
+    UIA_IsValuePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
+    UIA_NativeWindowHandlePropertyId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
+    UIA_RangeValueValuePropertyId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
     UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
 };
 
@@ -48,7 +49,15 @@ use windows::Win32::UI::Accessibility::{
 /// `RangeValueValue` is the value of a control that has no `Value` pattern;
 /// `IsContentElement` and `IsControlElement` decide whether an ancestor is
 /// content, all as NVDA reads them.
-pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
+///
+/// `IsValuePatternAvailable` and `IsRangeValuePatternAvailable` gate
+/// `ValueIsReadOnly` and `RangeValueValue`, like the flags above: a cache
+/// filled by a remote operation (`verbatim-uia-rops`) stores a property's
+/// default where a locally built cache stores UIA's "not supported" value,
+/// so reading those two while ignoring defaults is not enough. Unsupported,
+/// their defaults (read-only, and a value of zero) would make every
+/// container read-only with a value of "0".
+pub const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID] = &[
     UIA_NamePropertyId,
     UIA_ControlTypePropertyId,
     UIA_ValueValuePropertyId,
@@ -77,7 +86,9 @@ pub(crate) const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PRO
     UIA_IsPasswordPropertyId,
     UIA_IsRequiredForFormPropertyId,
     UIA_IsDataValidForFormPropertyId,
+    UIA_IsValuePatternAvailablePropertyId,
     UIA_ValueIsReadOnlyPropertyId,
+    UIA_IsRangeValuePatternAvailablePropertyId,
     UIA_RangeValueValuePropertyId,
     UIA_IsContentElementPropertyId,
     UIA_IsControlElementPropertyId,

@@ -138,6 +138,7 @@ pub unsafe fn variant_bool(value: &VARIANT) -> bool {
 
 /// `element`'s runtime id, empty when the read fails. The array UIA returns
 /// is owned here and destroyed once, so no caller handles it.
+#[must_use]
 pub fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
     // SAFETY: `GetRuntimeId` returns a SAFEARRAY of i32 that the caller owns,
     // which `take_i32_safearray` takes.

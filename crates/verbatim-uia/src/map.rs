@@ -21,20 +21,22 @@ use windows::Win32::UI::Accessibility::{
     UIA_ImageControlTypeId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
     UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_IsRequiredForFormPropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+    UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
-    UIA_LevelPropertyId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_PaneControlTypeId, UIA_PositionInSetPropertyId,
-    UIA_ProcessIdPropertyId, UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId,
-    UIA_RangeValueValuePropertyId, UIA_ScrollBarControlTypeId,
-    UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId, UIA_SizeOfSetPropertyId,
-    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_SplitButtonControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ThumbControlTypeId,
-    UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId,
-    UIA_ToolTipControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
+    UIA_IsValuePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId,
+    UIA_PaneControlTypeId, UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
+    UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_RangeValueValuePropertyId,
+    UIA_ScrollBarControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SeparatorControlTypeId,
+    UIA_SizeOfSetPropertyId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
+    UIA_SplitButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
+    UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
+    UIA_ThumbControlTypeId, UIA_TitleBarControlTypeId, UIA_ToggleToggleStatePropertyId,
+    UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
+    UIA_WindowControlTypeId,
 };
 
 use crate::com::{variant_bool, variant_i32, variant_string};
@@ -164,8 +166,13 @@ unsafe fn cached_bool(element: &IUIAutomationElement, property: i32) -> bool {
 
 /// Reads a cached boolean property, `None` when the element does not support
 /// it or UIA only supplies the property's default (UIA's "not supported"
-/// sentinel is not a boolean), as NVDA reads `ValueIsReadOnly` and
-/// `IsDataValidForForm`, whose defaults are true.
+/// sentinel is not a boolean), as NVDA reads `ValueIsReadOnly` (whose
+/// default is true) and `IsDataValidForForm` (whose default reads as false
+/// on Windows 11 26200, though documented as true). A cache filled by a
+/// remote operation stores defaults instead of the sentinel, which is why
+/// `ValueIsReadOnly` is also gated on its pattern, and why
+/// `verbatim-uia-rops` leaves `IsDataValidForForm` out of the cache of an
+/// element that does not support it.
 ///
 /// # Safety
 ///
@@ -371,8 +378,10 @@ unsafe fn states_from_cached(element: &IUIAutomationElement, role: Role) -> Stat
             password: cached_bool(element, UIA_IsPasswordPropertyId.0),
             required: cached_bool(element, UIA_IsRequiredForFormPropertyId.0),
             data_valid: cached_optional_bool(element, UIA_IsDataValidForFormPropertyId.0),
-            value_read_only: cached_optional_bool(element, UIA_ValueIsReadOnlyPropertyId.0)
-                == Some(true),
+            // Gated on the pattern, as a remotely filled cache stores the
+            // property's default of true where the pattern is missing.
+            value_read_only: cached_bool(element, UIA_IsValuePatternAvailablePropertyId.0)
+                && cached_optional_bool(element, UIA_ValueIsReadOnlyPropertyId.0) == Some(true),
         }
     };
     states_from_uia(&raw, role)
@@ -563,7 +572,11 @@ pub unsafe fn snapshot_parts_from_cached_element(element: &IUIAutomationElement)
             name: cached_string(element, UIA_NamePropertyId.0),
             value: value_of(
                 cached_string(element, UIA_ValueValuePropertyId.0),
-                cached_f64(element, UIA_RangeValueValuePropertyId.0),
+                // Gated on the pattern, as `ValueIsReadOnly` is: a remotely
+                // filled cache stores the default of zero.
+                cached_bool(element, UIA_IsRangeValuePatternAvailablePropertyId.0)
+                    .then(|| cached_f64(element, UIA_RangeValueValuePropertyId.0))
+                    .flatten(),
             )
             .filter(|_| !reports_no_value(class_name.as_deref())),
             states: states_from_cached(element, role),
