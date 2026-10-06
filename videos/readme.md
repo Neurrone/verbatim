@@ -86,3 +86,15 @@ first, so only the scenario's own windows appear.
   then announced with the sound in place of its role. The indication is
   reset, and the copy removed. It demonstrates themes and the Theme
   page.
+- `windows-terminal-commands.mp4`, from `windows_terminal_commands`: in
+  Windows Terminal, the prompt is spoken as it appears and read with the
+  review cursor, `echo hello` is echoed character by character and its
+  output and the next prompt are spoken, and a password typed at a
+  `Read-Host -AsSecureString` prompt is never spoken. It demonstrates
+  reading a terminal's new output, typed-character echo there, and the
+  password rule.
+- `terminal-flood.mp4`, from `terminal_flood`: ten thousand lines printed
+  into Windows Terminal as fast as the shell can, spoken as their first
+  lines, how many were skipped, and the last ones, with Verbatim+5
+  answered during a second flood and output reporting off for a third.
+  It demonstrates the flood policy and staying responsive during one.

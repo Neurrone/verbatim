@@ -1711,9 +1711,10 @@ found, on 2026-10-06, and what changed:
   `LineChange::uncertain` says how much, and Core matches typing after it.
 - Ranges keep their rows while a full scrollback scrolls beneath them,
   between any two calls. Lines are therefore read in one call, a read is
-  checked to have held still and set aside when it did not, the last line
-  is found from the walk that counts, and a half-written last line is
-  found again grown.
+  checked to have held still and set aside when it did not (when the text
+  scrolled beneath it, saying lines were skipped and starting again from
+  it), the last line is found from the walk that counts, and a
+  half-written last line is found again grown.
 - The console scenarios set the scrollback to 9,001 lines, since `mode
   con` cuts it to 30. The wall-time ratio is measured on a fourth flood
   against the third, both into a full scrollback: a flood filling an
