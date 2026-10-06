@@ -450,6 +450,7 @@ fn focus_speech(
             node,
             had_focus: true,
         }),
+        say_all: false,
     })]
 }
 
