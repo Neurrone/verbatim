@@ -3815,3 +3815,33 @@ fn spelling_marks_capitals_for_a_raised_pitch() {
         ))]
     );
 }
+
+#[test]
+fn a_theme_with_descriptions_off_stops_their_fetching() {
+    use verbatim_model::{Indication, IndicationSetting, Presentation, Theme};
+    let state = SrState::new();
+    assert!(
+        state.fetches().description,
+        "everything is fetched at first"
+    );
+
+    let mut theme = Theme::new("terse", "Terse");
+    theme.indications.insert(
+        Indication::Description,
+        IndicationSetting {
+            report: Presentation::Off,
+            ..IndicationSetting::default()
+        },
+    );
+    let (state, effects) = reduce(&state, &Input::Fetches(theme.fetches()));
+    assert_eq!(effects, Vec::<Effect>::new());
+    let fetches = state.fetches();
+    assert!(!fetches.description, "off is not fetched");
+    assert!(fetches.shortcut && fetches.position && fetches.spelling_errors);
+
+    // The choice is part of the state a flight-recorder dump restores.
+    let restored: SrState =
+        serde_json::from_str(&serde_json::to_string(&state).expect("serializes"))
+            .expect("deserializes");
+    assert_eq!(restored.fetches(), fetches);
+}

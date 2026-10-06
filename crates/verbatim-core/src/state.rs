@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{
-    CaretKey, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
+    CaretKey, Fetches, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
     ReviewCommand, Selection, SpeechMark, TextChunk, TextPosition, TextUnit, WindowFacts,
     WindowHandle,
 };
@@ -345,6 +345,9 @@ pub struct SrState {
     /// The next index mark number.
     #[serde(default)]
     pub(crate) next_mark: u64,
+    /// The details the active theme wants fetched (`Input::Fetches`).
+    #[serde(default)]
+    pub(crate) fetches: Fetches,
 }
 
 impl SrState {
@@ -369,6 +372,18 @@ impl SrState {
     #[must_use]
     pub fn attention(&self) -> Option<Pid> {
         self.attention.map(|attention| attention.source)
+    }
+
+    /// The details to fetch, as the active theme decides: a detail whose
+    /// indication is off is not fetched (`phase6-design.md`, "Themes: one
+    /// model for verbosity, speech, and sounds"). Like
+    /// [`held_nodes`](Self::held_nodes), this is a view the shell sends
+    /// out: every outpost is given it, and leaves out what is not wanted
+    /// when it reads a node or text. Everything until the shell says
+    /// otherwise.
+    #[must_use]
+    pub fn fetches(&self) -> Fetches {
+        self.fetches
     }
 
     /// The application the focus belongs to; `None` before any focus.

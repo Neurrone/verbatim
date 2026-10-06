@@ -268,6 +268,19 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
 }
 
 #[test]
+fn the_themes_fetches_change_the_state_without_allocating() {
+    let mut state = state_with_chain(LARGE_CHAIN);
+    let fetches = verbatim_model::Fetches {
+        description: false,
+        ..verbatim_model::Fetches::default()
+    };
+    let (effects, bytes) = allocated_by(|| reduce(&mut state, &Input::Fetches(fetches)));
+    assert_eq!(effects, Vec::<Effect>::new());
+    assert_eq!(bytes, 0, "the fetches are held inline");
+    assert_eq!(state.fetches(), fetches);
+}
+
+#[test]
 fn a_checkpoint_with_text_allocates_a_small_fixed_amount() {
     let small = editing_with_chain(SMALL_CHAIN);
     let large = editing_with_chain(LARGE_CHAIN);

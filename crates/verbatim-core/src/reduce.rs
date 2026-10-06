@@ -79,6 +79,10 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             state.settings = *settings;
             Vec::new()
         }
+        Input::Fetches(fetches) => {
+            state.fetches = *fetches;
+            Vec::new()
+        }
         // `Tick` is reserved vocabulary with no policy yet; `Input` is also
         // `#[non_exhaustive]`, so this arm doubles as the catch-all for
         // variants added by later milestones, until each grows a real
