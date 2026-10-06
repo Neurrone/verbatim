@@ -837,7 +837,13 @@ fn walk_recursive(
         };
     };
 
-    let Some(entries) = acc.children(child_count) else {
+    // The application's count, bounded by the walk's remaining budget:
+    // children past it would only be truncated below.
+    let budget = limits.max_nodes.saturating_sub(state.visited);
+    if child_count > budget {
+        state.truncated = true;
+    }
+    let Some(entries) = acc.children(child_count.min(budget)) else {
         return TreeNode {
             snapshot,
             children: Vec::new(),

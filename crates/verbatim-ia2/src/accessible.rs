@@ -33,6 +33,10 @@ use verbatim_model::{CallKind, Rect};
 use crate::calls::count;
 use crate::com::{CHILDID_SELF, child_variant};
 
+/// The most children [`Accessible::children`] asks for in one call, far
+/// more than any real container presents at once.
+pub(crate) const MAX_CHILDREN: usize = 10_000;
+
 /// An `IAccessible` and the child id it is read at: `CHILDID_SELF` for the
 /// object itself, or a simple child addressed by id on it.
 ///
@@ -254,9 +258,13 @@ impl Accessible {
         unsafe { self.object.accChildCount() }
     }
 
-    /// Up to `max` of the object's children from the first, through
-    /// `AccessibleChildren`, or `None` when the call fails.
+    /// Up to `max` of the object's children from the first, never more
+    /// than [`MAX_CHILDREN`], through `AccessibleChildren`, or `None` when
+    /// the call fails.
     pub(crate) fn children(&self, max: usize) -> Option<Vec<Related>> {
+        // `max` usually comes from the application's own `accChildCount`;
+        // an absurd count must not size an allocation that aborts.
+        let max = max.min(MAX_CHILDREN);
         let mut buffer: Vec<VARIANT> = (0..max).map(|_| VARIANT::default()).collect();
         let mut obtained = 0i32;
         count(CallKind::Msaa);
