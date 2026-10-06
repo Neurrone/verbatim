@@ -30,7 +30,12 @@ Public API:
   transition's effect on speech, if any, and `observed`, an observed
   gesture the passed key completed (milestone M4's caret keys). The
   config's `interrupt_for_characters` and `interrupt_for_enter` are NVDA's
-  two speech interrupt settings, both on by default.
+  two speech interrupt settings, both on by default. `set_num_lock(on)`
+  tells the machine whether Num Lock is on: with it on, the numpad's
+  operator keys type their characters and complete no gesture, as NVDA
+  treats Num Lock as their modifier, so binding numpad plus does not take
+  the plus sign from a user typing numbers. The hook reports the state
+  before each key; it is off until it does.
 - `KeySpeechEffect` — what a key press does to speech: `Cancel` (current
   and queued speech) or `TogglePause` (Shift on its own).
 - `GestureMap`, `SharedGestureMap` — the bound-gesture set behind an

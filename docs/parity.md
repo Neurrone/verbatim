@@ -889,11 +889,13 @@ verified.
   ([verbatim-input](crates/verbatim-input.md)); live side-by-side with NVDA still
   worth one session (sticky/locked modifier states **not yet**).
   **Different, deliberately:** Caps Lock is a Verbatim key by default (see
-  "Spoken vocabulary and key layouts"). **Not yet:** NVDA treats Num Lock
-  as a modifier of the numpad operator keys, so a binding of plain
-  numpad plus does not take the plus sign from a user with Num Lock on;
-  Verbatim ignores Num Lock, which matters once such a binding exists
-  (say all, M4).
+  "Spoken vocabulary and key layouts"). NVDA treats Num Lock as a modifier
+  of the numpad operator keys, so a binding of plain numpad plus (say all
+  from the review cursor, bound since 2026-10-06) does not take the plus
+  sign from a user with Num Lock on: the decision machine **implements
+  this since 2026-10-06** (`set_num_lock`), and **not yet** is the hook
+  telling it the Num Lock state, until which numpad plus is always the
+  command.
 - Script repeat counting. NVDA: `scriptHandler` counts each run of the
   same script within the multi-press timeout, and forgets the last script
   when an unbound gesture comes between. Verbatim: **matched since

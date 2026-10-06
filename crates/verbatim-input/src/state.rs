@@ -389,6 +389,9 @@ pub struct DecisionMachine {
     /// [`last_gesture`](Self::last_gesture); carried unchanged across
     /// auto-repeats of the same held gesture.
     repeat_count: u8,
+    /// Whether Num Lock is on, as the hook last reported it
+    /// ([`set_num_lock`](Self::set_num_lock)).
+    num_lock_on: bool,
 }
 
 impl DecisionMachine {
@@ -404,7 +407,19 @@ impl DecisionMachine {
             lone_modifier: LoneModifier::Idle,
             last_gesture: None,
             repeat_count: 0,
+            num_lock_on: false,
         }
+    }
+
+    /// Tells the machine whether Num Lock is on. With it on, the numpad's
+    /// operator keys (plus, minus, multiply, divide) type their characters
+    /// and complete no gesture, as NVDA treats Num Lock as a modifier of
+    /// them, so a binding of numpad plus (say all from the review cursor)
+    /// does not take the plus sign from a user typing numbers. The hook
+    /// reads the state locally (it is the keyboard's own) and reports it
+    /// before each key; off until it does.
+    pub fn set_num_lock(&mut self, on: bool) {
+        self.num_lock_on = on;
     }
 
     /// Feeds one raw key transition and returns the swallow-or-pass decision
@@ -500,6 +515,10 @@ impl DecisionMachine {
         // Step three: name the key, build the chord it completes, and decide.
         let main_name = match role {
             KeyRole::Modifier => keys::VERBATIM_MODIFIER_NAME,
+            KeyRole::Named(_) if self.num_lock_on && is_numpad_operator(event.vk) => {
+                self.last_gesture = None;
+                return Decision::pass();
+            }
             KeyRole::Named(name) => name,
             KeyRole::Unnamed => {
                 self.last_gesture = None;
@@ -657,6 +676,12 @@ fn generic_modifier_name(vk: u16) -> Option<&'static str> {
     }
 }
 
+/// Whether the virtual key is one of the numpad's operator keys: multiply,
+/// plus, minus, or divide.
+fn is_numpad_operator(vk: u16) -> bool {
+    matches!(vk, 0x6A | 0x6B | 0x6D | 0x6F)
+}
+
 /// Whether the virtual key is one of the normal (non-Verbatim) modifiers.
 fn is_normal_modifier(vk: u16) -> bool {
     generic_modifier_name(vk).is_some()
@@ -764,6 +789,23 @@ mod tests {
             m.on_key(down(A, false), t).speech,
             Some(KeySpeechEffect::Cancel)
         );
+    }
+
+    #[test]
+    fn with_num_lock_on_numpad_plus_types_its_character() {
+        let mut m = machine(DecisionConfig::default(), &["kb:numpadplus"]);
+        let t = Instant::now();
+        let plus = 0x6B;
+        assert_eq!(
+            m.on_key(down(plus, false), t).decision,
+            KeyDecision::Swallow
+        );
+        m.on_key(up(plus, false), t);
+        m.set_num_lock(true);
+        let decision = m.on_key(down(plus, false), t);
+        assert_eq!(decision.decision, KeyDecision::Pass);
+        assert!(decision.emitted.is_none());
+        assert_eq!(m.on_key(up(plus, false), t).decision, KeyDecision::Pass);
     }
 
     #[test]
