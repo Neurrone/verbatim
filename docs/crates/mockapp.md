@@ -57,7 +57,11 @@ on the MSAA backend, which has no notification event), `caret <id> <start>
 offsets, the caret alone at `start` when `end` is left out, raising no
 event, as an application's caret moves before a client asks where it is;
 on the MSAA backend the offsets are the edit control's, with its carriage
-returns, sent as `EM_SETSEL`), `stall <ms>`
+returns, sent as `EM_SETSEL`), `set-text <id> <text>` (replaces a UIA
+text node's text, with `\n` for a line feed and `\\` for a backslash,
+raising no event, as a terminal's buffer changes before a client reads it;
+the terminal tests write lines, discard the oldest, and clear the screen
+with it; UIA only), `stall <ms>`
 (blocks the window thread for that long, so every cross-process call into
 the window waits, as with an application that is starting up or busy),
 and `quit`.

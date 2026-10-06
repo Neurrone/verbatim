@@ -213,6 +213,18 @@ pub enum NormalizedEvent {
         /// The node whose text changed.
         node_id: NodeId,
     },
+    /// New output in a focused terminal, found by the outpost's diff of its
+    /// text (milestone M4 item 9): sent in place of
+    /// [`TextChanged`](Self::TextChanged) for a terminal, and only when its
+    /// text really changed, so a redraw with the same text sends nothing.
+    /// Core speaks it by the flood policy, and echoes typing it held once
+    /// the terminal shows it.
+    TerminalOutput {
+        /// The terminal.
+        node_id: NodeId,
+        /// What changed.
+        output: crate::TerminalOutput,
+    },
 }
 
 impl NormalizedEvent {
@@ -246,7 +258,8 @@ impl NormalizedEvent {
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
             | NormalizedEvent::NoText { node_id }
-            | NormalizedEvent::TextChanged { node_id } => {
+            | NormalizedEvent::TextChanged { node_id }
+            | NormalizedEvent::TerminalOutput { node_id, .. } => {
                 *node_id = node_id.with_outpost(outpost);
             }
         }
@@ -585,6 +598,8 @@ pub enum ReviewCommand {
     ToggleTypedCharacters,
     /// Cycle the "Speak typed words" setting.
     ToggleTypedWords,
+    /// Toggle "Report new output" in terminals.
+    ToggleReportNewOutput,
     /// Report where the caret is on the screen.
     ReportCaretLocation,
     /// Report where the review cursor is on the screen.

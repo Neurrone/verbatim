@@ -30,6 +30,9 @@ pub(crate) struct Live {
     stalled: bool,
     /// The details to read last sent to it, `None` before the first.
     pub(crate) fetches_sent: Option<Fetches>,
+    /// How many lines a terminal read takes, as last sent to it, `None`
+    /// before the first.
+    pub(crate) terminal_lines_sent: Option<u16>,
 }
 
 /// The live outpost incarnations, by outpost id.
@@ -50,6 +53,7 @@ impl LiveOutposts {
                 held_sent: (BTreeSet::new(), BTreeSet::new(), 0),
                 stalled: false,
                 fetches_sent: None,
+                terminal_lines_sent: None,
             },
         );
     }

@@ -121,7 +121,8 @@ Public API:
   and `Unselected` with a `SelectionText` that is text, one character, or a
   count of characters; `Positioned` with screen coordinates; and the new
   values of the typing echo toggles, and `SkippedLines` with a count, for
-  terminal output too much to read), and `Format` (a `TextFormat`: a
+  terminal output too much to read, or `SkippedUncountedLines`, "skipped
+  lines", when the count is not known), and `Format` (a `TextFormat`: a
   spelling or grammar error starting or ending, or a font name, size, or
   color as the application words it, spoken as formatting changes). The pure reducer never touches localization; spans
   become words at the speech pipeline's presentation stage. An utterance optionally carries an
@@ -152,8 +153,15 @@ Public API:
   (always) and words (off), each off, only in edit controls, or always;
   the review cursor following the caret (on); say-all reading by sentence
   where possible, by paragraph, or by line (sentence); keeping the display
-  on during say-all (on); and speaking terminal passwords (off).
-  `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
+  on during say-all (on); speaking terminal passwords (off); and, for M4
+  item 9, reporting new terminal output (on, toggled with Verbatim+5 by
+  `ReviewCommand::ToggleReportNewOutput`, spoken as
+  `Message::ReportNewOutputOn` and `Off`) and the flood policy's two
+  limits, "Lines spoken in full" and "Last lines to speak" (30 each,
+  `DEFAULT_TERMINAL_LINES`), read through `full_lines` and `last_lines`,
+  which keep them between 1 and `MAX_TERMINAL_LINES` (100);
+  `terminal_read_lines` is how many of a change's newest lines an outpost
+  reads. `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
   them; the shell hands them to the reducer as `Input::Settings`.
 - The theme model, described under "Themes" below: `Indication`,
   `IndicationCategory`, `Theme`, `IndicationSetting`, `Presentation`,
@@ -243,6 +251,19 @@ the contract the Windows side implements.
   read. Core then speaks the focus's value, as for any object without text.
 - `NormalizedEvent::TextChanged { node_id }`: the node's text changed.
   Characters typed into a terminal wait for this before Core echoes them.
+- `NormalizedEvent::TerminalOutput { node_id, output }` (M4 item 9): sent
+  for a focused terminal in place of `TextChanged`, and only when its text
+  really changed. A `TerminalOutput` (`terminal.rs`) is what the outpost's
+  diff found, in the order it is spoken: `changed`, the last line read
+  changed in place (a `LineChange`: the `text` to speak, the whole `line`
+  as it now is, and whether it was `appended` to, so `text` is exactly the
+  characters added); `skipped`, lines that went by unread (`Skipped::Count`
+  or `Skipped::Uncounted` when the scrollback overflowed past the anchor
+  and the count is lost; `plus` adds two); and `lines`, the newest lines
+  without padding, an empty string for a blank line, each at most
+  `MAX_TERMINAL_LINE_BYTES` (4 KB). Core echoes typing it held when the
+  terminal shows it at the end of the line, and speaks the rest by the
+  flood policy ([verbatim-core](verbatim-core.md), "Terminals").
 
 ### Requests and replies
 

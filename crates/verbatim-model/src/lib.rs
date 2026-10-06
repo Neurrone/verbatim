@@ -15,6 +15,7 @@ mod event;
 mod gesture;
 mod settings;
 mod speech;
+mod terminal;
 mod text;
 mod theme;
 mod tree;
@@ -26,12 +27,15 @@ pub use event::{
     ReviewCommand, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
-pub use settings::{ReaderSettings, SayAllUnit, TypingEcho};
+pub use settings::{
+    DEFAULT_TERMINAL_LINES, MAX_TERMINAL_LINES, ReaderSettings, SayAllUnit, TypingEcho,
+};
 pub use speech::{
     FocusNow, FocusValidity, Message, Phrase, SegmentContent, SelectionText, SpeechMark,
     SpeechPriority, TextFormat, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
     UtteranceSource,
 };
+pub use terminal::{LineChange, MAX_TERMINAL_LINE_BYTES, Skipped, TerminalOutput};
 pub use text::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, HeldAnchors,
     LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_SELECTION_TEXT_BYTES, PreviousSelection,

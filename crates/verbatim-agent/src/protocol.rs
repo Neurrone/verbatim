@@ -22,10 +22,10 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ListFiles`]; version 3 added [`Request::ForegroundInfo`],
 /// [`Request::CloseWindows`], [`Request::WriteFile`], and
 /// `BringToForeground`'s title filter; version 4 added
-/// [`Request::ReadFileChunk`]; version 5 added [`Request::SendKeys`]. A
-/// test run against an older agent is refused at `Hello` instead of losing
-/// its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 5;
+/// [`Request::ReadFileChunk`]; version 5 added [`Request::SendKeys`];
+/// version 6 added [`Request::TypeText`]. A test run against an older agent
+/// is refused at `Hello` instead of losing its connection mid-run.
+pub const AGENT_PROTOCOL_VERSION: u32 = 6;
 
 /// The default TCP port the agent listens on.
 ///
@@ -192,6 +192,17 @@ pub enum Request {
         /// `shift+tab`.
         keys: Vec<String>,
     },
+    /// Types `text` as real key presses with `SendInput`: each character is
+    /// mapped to its virtual key and Shift, Control, and Alt state in the
+    /// keyboard layout of the foreground window's thread (`VkKeyScanEx`),
+    /// so a keyboard hook sees ordinary typing. A character that layout
+    /// cannot type, or a control character such as a line break (named
+    /// keys go through [`Request::SendKeys`]), fails the request before any
+    /// key is sent. Answered by [`ReplyPayload::TextTyped`].
+    TypeText {
+        /// The text to type.
+        text: String,
+    },
     /// Asks the agent to stop speaking this protocol on this connection and
     /// instead relay raw bytes to and from Verbatim's control-plane named
     /// pipe. After the reply to this request, the connection is a raw
@@ -280,6 +291,8 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::SendKeys`]: every key was injected.
     KeysSent,
+    /// Answer to [`Request::TypeText`]: every character was typed.
+    TextTyped,
     /// Answer to [`Request::OpenControlTunnel`]: the agent successfully
     /// opened Verbatim's control-plane pipe and is ready to relay bytes.
     /// A failure to open that pipe is reported as a [`Frame::Error`]
@@ -440,6 +453,34 @@ mod tests {
                 .expect("not end of stream");
             assert_eq!(&read, expected);
         }
+    }
+
+    #[test]
+    fn type_text_round_trips() {
+        let request = RequestEnvelope {
+            id: 11,
+            request: Request::TypeText {
+                text: "echo hello".to_owned(),
+            },
+        };
+        let frame = Frame::Reply {
+            to: 11,
+            payload: ReplyPayload::TextTyped,
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
     }
 
     #[test]

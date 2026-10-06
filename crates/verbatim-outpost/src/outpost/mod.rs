@@ -108,6 +108,12 @@ pub(crate) struct Context {
     /// their cache requests; MSAA reads skip their calls, through the MSAA
     /// registry, which holds the same.
     fetches: Mutex<Fetches>,
+    /// Each focused terminal's anchor and memory, by node (milestone M4
+    /// item 9).
+    terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
+    /// How many of a change's newest lines a terminal read takes
+    /// ([`SupervisorToOutpost::TerminalLines`]).
+    terminal_lines: std::sync::atomic::AtomicU16,
 }
 
 /// How an outpost reads its application, fixed for its whole life. The
@@ -166,6 +172,18 @@ impl Context {
     /// The details the active theme wants read for each node.
     fn fetches(&self) -> Fetches {
         *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn terminals(&self) -> MutexGuard<'_, HashMap<u64, crate::terminal::Terminal>> {
+        self.terminals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// How many of a change's newest lines a terminal read takes.
+    fn terminal_lines(&self) -> u16 {
+        self.terminal_lines
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The UIA cache request for the details the active theme wants.
@@ -279,6 +297,10 @@ impl Outpost {
             patterns: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(None),
             fetches: Mutex::new(Fetches::default()),
+            terminals: Mutex::new(HashMap::new()),
+            terminal_lines: std::sync::atomic::AtomicU16::new(
+                verbatim_model::DEFAULT_TERMINAL_LINES,
+            ),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -405,6 +427,12 @@ impl Outpost {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner) = *fetches;
                 context.msaa_registry.set_fetches(*fetches);
+            }
+            SupervisorToOutpost::TerminalLines(lines) => {
+                context.terminal_lines.store(
+                    (*lines).clamp(1, verbatim_model::MAX_TERMINAL_LINES),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,

@@ -2,7 +2,8 @@
 //!
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
-//! `caret <id> <start> [<end>]`, `notify <text>`, `stall <ms>`, and `quit`.
+//! `caret <id> <start> [<end>]`, `set-text <id> <text>`, `notify <text>`,
+//! `stall <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -35,6 +36,11 @@ pub(crate) enum Command {
     /// left out), raising no event, as an application's caret moves before
     /// the client asks where it is.
     Caret(String, usize, usize),
+    /// `set-text <id> <text>`: replaces a UIA text node's text, raising no
+    /// event, as a terminal's text changes before a client reads it; `\n`
+    /// in `text` is a line feed and `\\` a backslash, so one stdin line can
+    /// carry many lines. UIA-only.
+    SetText(String, String),
     /// `notify <text>`: raises a UIA `AutomationNotification` carrying
     /// `text` as its display string, from the root provider. UIA-only; the
     /// MSAA backend reports it as unsupported, since MSAA has no
@@ -79,12 +85,34 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetName(id.to_owned(), text.trim().to_owned()))
         }
+        "set-text" => {
+            let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
+        }
         "set-value" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetValue(id.to_owned(), text.trim().to_owned()))
         }
         _ => None,
     }
+}
+
+/// `text` with `\n` turned into a line feed and `\\` into a backslash.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Reads stdin line by line, sending each parsed command to `sink` and
@@ -128,6 +156,17 @@ mod tests {
         match parse_command("set-focus btn1") {
             Some(Command::SetFocus(id)) => assert_eq!(id, "btn1"),
             _ => panic!("expected SetFocus"),
+        }
+    }
+
+    #[test]
+    fn parses_set_text_with_line_feeds() {
+        match parse_command(r"set-text term a  \nb\\c") {
+            Some(Command::SetText(id, text)) => {
+                assert_eq!(id, "term");
+                assert_eq!(text, "a  \nb\\c");
+            }
+            _ => panic!("expected SetText"),
         }
     }
 

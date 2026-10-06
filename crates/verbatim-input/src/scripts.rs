@@ -120,6 +120,9 @@ pub enum ScriptAction {
     ToggleTypedCharacters,
     /// Cycle "Speak typed words".
     ToggleTypedWords,
+    /// Toggle "Report new output" in terminals (NVDA's key for its "report
+    /// dynamic content changes" toggle).
+    ToggleReportNewOutput,
     /// Report the caret's location.
     ReportCaretLocation,
     /// Report the review cursor's location.
@@ -166,6 +169,7 @@ impl ScriptAction {
             Self::ToggleFollowCaret => ReviewCommand::ToggleFollowCaret,
             Self::ToggleTypedCharacters => ReviewCommand::ToggleTypedCharacters,
             Self::ToggleTypedWords => ReviewCommand::ToggleTypedWords,
+            Self::ToggleReportNewOutput => ReviewCommand::ToggleReportNewOutput,
             Self::ReportCaretLocation => ReviewCommand::ReportCaretLocation,
             Self::ReportReviewLocation => ReviewCommand::ReportReviewLocation,
             Self::SpeakTime | Self::ShowTrayList => return None,
@@ -219,6 +223,7 @@ const COMMON_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+6", ScriptAction::ToggleFollowCaret),
     ("kb:verbatim+2", ScriptAction::ToggleTypedCharacters),
     ("kb:verbatim+3", ScriptAction::ToggleTypedWords),
+    ("kb:verbatim+5", ScriptAction::ToggleReportNewOutput),
 ];
 
 /// The desktop layout's own M4 bindings, NVDA's `kb(desktop):` ones: keys
@@ -422,16 +427,16 @@ mod tests {
 
     #[test]
     fn desktop_table_has_the_documented_count() {
-        // Every layout's 31 (M3's 7 object-navigation, 13 review-cursor, and
-        // 2 for time and the tray list; M4's 9), and the desktop's own 5.
-        assert_eq!(bindings_for(KeyboardLayout::Desktop).len(), 36);
+        // Every layout's 32 (M3's 7 object-navigation, 13 review-cursor, and
+        // 2 for time and the tray list; M4's 10), and the desktop's own 5.
+        assert_eq!(bindings_for(KeyboardLayout::Desktop).len(), 37);
     }
 
     #[test]
     fn laptop_table_has_the_documented_count() {
         // Its own 26 (M3's 7 object-navigation and 13 review-cursor, M4's 6)
-        // and the 31 of every layout.
-        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 57);
+        // and the 32 of every layout.
+        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 58);
     }
 
     #[test]
@@ -449,6 +454,7 @@ mod tests {
             ScriptAction::ToggleFollowCaret,
             ScriptAction::ToggleTypedCharacters,
             ScriptAction::ToggleTypedWords,
+            ScriptAction::ToggleReportNewOutput,
             ScriptAction::ReportCaretLocation,
             ScriptAction::ReportReviewLocation,
         ];

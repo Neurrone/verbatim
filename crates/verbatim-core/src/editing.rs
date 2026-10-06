@@ -466,7 +466,10 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };
-    if focus.snapshot.role == Role::Terminal && !state.settings.speak_terminal_passwords {
+    let terminal = focus.snapshot.role == Role::Terminal;
+    if terminal && state.settings.speak_terminal_passwords {
+        crate::terminal::typed(state, typed);
+    } else if terminal {
         if typed.chars().any(|c| c == '\r' || c == '\n') {
             // Enter: whatever was held was never shown, a password perhaps.
             state.held_typing.clear();
@@ -481,7 +484,9 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
 }
 
 /// Handles a change of a node's text: characters held for a terminal are
-/// echoed now that it has shown something.
+/// echoed now that it has shown something. An outpost that diffs a
+/// terminal's text sends `TerminalOutput` instead, which echoes only what
+/// the terminal shows (`crate::terminal`).
 pub(crate) fn text_changed(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
     if !state.focus_matches(node) || state.held_typing.is_empty() {
         return Vec::new();
@@ -492,7 +497,7 @@ pub(crate) fn text_changed(state: &mut SrState, trace_id: TraceId, node: NodeId)
 
 /// Echoes typed text by the settings: a finished word first, when word echo
 /// is on and the text ends one, then the characters.
-fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
+pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return Vec::new();
     };

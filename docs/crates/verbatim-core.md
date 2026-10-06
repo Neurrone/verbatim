@@ -427,3 +427,57 @@ chunk, and stops on any command, caret key, typed text, cancelled speech
 (`Input::SpeechCancelled`, from any key), a focus change (which also cuts
 its speech off), or the end of its outpost, leaving the cursor where
 reading got to.
+
+## Terminals (milestone M4 item 9)
+
+The reducer's side of terminal output (`terminal.rs`; `phase6-design.md`,
+"Terminal output: notifications or diffing" and "The flood policy,
+reconsidered"). The focused terminal's outpost diffs its text and sends
+what is new as `NormalizedEvent::TerminalOutput`
+([verbatim-model](verbatim-model.md)); output from anything but the focus
+is ignored.
+
+- Output is spoken queued, in order, one line per utterance, each starting
+  with an index mark; blank lines are dropped. Two utterances are handed to
+  speech ahead of playback (one playing, one ready behind it) and the rest
+  wait in the state (`TerminalSpeech`), so the backlog not yet spoken is
+  known. Each mark reached hands on the next. Newer output never cancels
+  older output still waiting.
+- The flood policy ("30 and 30"): when the lines waiting, with those
+  handed to speech, are more than "Lines spoken in full", everything
+  before the newest "Last lines to speak" becomes one "skipped N lines"
+  (`Phrase::SkippedLines`), adding any count the outpost sent; a count the
+  outpost could not make (`Skipped::Uncounted`) makes it "skipped lines"
+  (`Phrase::SkippedUncountedLines`). Output under the limit is never
+  touched, however many batches it arrives in. The waiting queue holds at
+  most the limit's lines, each at most 4 KB, so the state stays bounded.
+- The last line read, changed in place, speaks what changed; while an
+  earlier version of that line is still waiting, the whole new line takes
+  its place, so a progress bar rewritten quickly is spoken once, as it
+  last was.
+- Typing. With "speak passwords" off, typing into a terminal is held
+  (`editing`) and echoed only when the terminal shows it: when the line
+  grew by exactly what was typed (control characters, which never show,
+  aside), those characters are echoed by the typing echo settings and not
+  spoken again as output; what the terminal added beyond them (a tab
+  completion) is output. When the line grew by something else (a password
+  prompt's asterisks), what was held is dropped unspoken and what the
+  terminal showed is spoken. A line rewritten while typing was held or
+  echoed is taken as the typing showing: the typing is echoed and the
+  rewrite is not spoken. With "speak passwords" on, typing is echoed at
+  once and remembered until the terminal shows it, so it is not spoken
+  twice. Enter forgets both.
+- Anything that cuts speech off drops the output waiting and handed to
+  speech: `Input::SpeechCancelled` (a key), and any step whose effects stop
+  speech or speak an interrupting utterance (`reduce` checks every step's
+  effects). A focus moving to another node forgets the terminal's output;
+  utterances of output carry the terminal's focus validity, so the speech
+  pipeline drops them once the focus leaves.
+- Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
+  output", says "report new output on" or "off", and emits
+  `Effect::SettingsChanged`; off drops what is waiting and speaks no
+  output, while held typing is still echoed when the terminal shows it.
+
+`tests/terminal.rs` drives these with simulated playback, reaching each
+utterance's mark as it starts; `tests/alloc.rs` checks that a terminal
+line allocates the same whatever the size of the state.

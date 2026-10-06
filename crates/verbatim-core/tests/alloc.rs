@@ -8,7 +8,8 @@
 //! one another's counts. Today the parts of the state that grow with the
 //! application are the focus ancestor chain (and the navigator that follows
 //! focus) and the text Core keeps for the caret and the review cursor (a
-//! line, up to 64 KB); the large state here has a previous focus with
+//! line, up to 64 KB), and a terminal's output waiting to be spoken is
+//! bounded by the flood policy; the large state here has a previous focus with
 //! 10,000 ancestors and the small one has 10. Each step's input is the same
 //! in both cases, so only the state varies.
 
@@ -266,6 +267,43 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         command: ReviewCommand::ReviewNextWord,
         repeat: 0,
     });
+}
+
+#[test]
+fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
+    let terminal_with_chain = |depth: u64| {
+        let ancestors = (0..depth)
+            .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
+            .collect();
+        let mut state = SrState::new();
+        let _ = reduce(
+            &mut state,
+            &focus_event(node(1, Role::Terminal, "Terminal"), ancestors),
+        );
+        state
+    };
+    let mut small = terminal_with_chain(SMALL_CHAIN);
+    let mut large = terminal_with_chain(LARGE_CHAIN);
+    let output = Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: 0,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::TerminalOutput {
+            node_id: NodeId::new(1),
+            output: verbatim_model::TerminalOutput {
+                changed: None,
+                skipped: None,
+                lines: vec!["total 42".to_owned()],
+            },
+        },
+    };
+    let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &output));
+    let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &output));
+    assert_eq!(small_effects, large_effects);
+    assert!(!small_effects.is_empty(), "the line is spoken");
+    assert_eq!(small_bytes, large_bytes);
 }
 
 #[test]

@@ -18,6 +18,9 @@ Public API:
   connects over TCP, completes the agent's `Hello` handshake, and exposes
   `launch_process`, `kill_process`, `process_status`, `session_info`,
   `send_keys` (real key strokes through the agent's `SendKeys`),
+  `type_text` (a string typed as real key presses through the agent's
+  `TypeText`, each character mapped to its key and shift state in the
+  foreground window's keyboard layout),
   `read_file`, `copy_file` (a file of any size on the agent's machine,
   read in chunks with the agent's `ReadFileChunk` request and written to a
   path on this machine), and `open_control_tunnel` as plain methods.
@@ -38,7 +41,13 @@ Public API:
   missing; building `verbatim-synth-host` creates the first and building
   `verbatim-app` the second) and writes
   `Settings::for_e2e`'s fixed `settings.toml` there; in remote mode
-  `cargo xtask vm deploy` has already staged the guest side. Every run
+  `cargo xtask vm deploy` has already staged the guest side, and the same
+  `settings.toml` is written afresh next to the guest's Verbatim through
+  the agent. `launch_with_settings` is `launch` with a scenario's own
+  change applied to those fixed settings before they are written, such as
+  "speak passwords" turned on; since every launch writes the settings
+  afresh, in both modes, one scenario's settings never reach the next.
+  Every run
   selects eSpeak NG, the default synthesizer, which is built with
   Verbatim and so needs nothing installed on the machine. A silent run,
   the default, sets `VERBATIM_TEST_AUDIO=null`, so Verbatim plays through
@@ -66,7 +75,20 @@ Public API:
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,
   `open_document`, `open_folder`, `open_settings_page`, `kill_target`,
   `process_status`, `quit_verbatim`, and `report_latency` drive the
-  running instance. `open_document` opens an application such as Notepad
+  running instance. `type_text` types through the agent's `TypeText`,
+  recorded in the timeline as typed text. For a window of the scenario's
+  own, such as a terminal's: `harness_marker(name)` is a title unique to
+  the run (the same marker harness documents are named with);
+  `run_directory` is the agent-side folder harness files go in, next to
+  Verbatim's executable; `write_agent_file` writes a file there, and
+  `wait_for_agent_file` waits for a file to appear and returns it, the
+  evidence a script reached the point that writes it; `launch_titled`
+  starts a program whose window carries that title and tracks it to be
+  closed by the title at cleanup, terminated if it will not close only
+  when the launch asked for that (never for `wt.exe`, whose window may
+  belong to a Windows Terminal process the user's own windows share); and
+  `bring_titled_window_forward` waits for the window, finds which program
+  owns it from the agent's window list, and brings it to the foreground. `open_document` opens an application such as Notepad
   on an empty file whose name holds `DOCUMENT_MARKER`, brings the window
   with that title forward, and closes it by title at cleanup, so the
   user's own Notepad windows are never touched; `open_folder` does the
@@ -133,9 +155,17 @@ Public API:
   never did. `wait_until_quiet(timeout)` waits until every
   utterance queued so far has ended, never for a stretch of silence, and
   panics with the timeline if that does not happen within `timeout`.
-  `last_heard` gives the last utterance queued so far.
-- `timeline` — the scenario's shared log of injected gestures and keys
-  and of speech: each utterance at queue time, its audio start, and its
+  `last_heard` gives the last utterance queued so far. For speech read as
+  a sequence rather than matched, such as a terminal flood's:
+  `take_heard(until, slice)` hands over the utterances queued during a
+  short slice (those an assertion held back first) as `Heard` values,
+  stopping just after one whose text is exactly `until`, so a scenario can
+  check something else, such as the control plane's status, between
+  reads; `take_until_quiet` is `wait_until_quiet` returning what it would
+  have discarded; `ending_of` says how a `Heard` utterance ended, and
+  `expect_completed` waits for one to be heard in full.
+- `timeline` — the scenario's shared log of injected gestures, keys, and
+  typed text and of speech: each utterance at queue time, its audio start, and its
   ending, rendered as `completed`, `cancelled`, or `failed` with the
   reason. Failure messages print it in time order.
 - `registry` — the scenario registry itself. `ScenarioDef` is one named,
@@ -148,15 +178,23 @@ Public API:
   `target_images` (image names its `setup` may launch with
   `launch_target`, unioned by `swept_target_image_names`; an application
   opened with `open_document` is closed by title instead and not listed),
-  and `setup`/`body`/`teardown`
-  function pointers. `SCENARIOS` is the fixed, ordered list of every
+  `settings` (an optional change to the fixed settings its Verbatim is
+  launched with, through `Scenario::launch_with_settings`), and
+  `setup`/`body`/`teardown`
+  function pointers. `ScenarioState` is what `setup` hands the body and
+  teardown: nothing, a target's pid, a window title, or a `Window` (the
+  launch's pid, the window's title, and the folder of the files it uses),
+  as the terminal scenarios open. `SCENARIOS` is the fixed, ordered list of every
   registered scenario. The Speech group holds
   `menu_and_settings_dialog`, `rapid_tabbing_in_settings`,
   `switch_to_onecore`, and `synth_host_crash_recovery`; the Shell group
   holds `notepad_and_verbatim_menu` and `start_menu_search`; the
   Navigation group holds `object_navigation_in_settings` and
   `system_information_tree`; the Text group (milestone M4) holds
-  `notepad_editing`, `notepad_review_cursor`, and `notepad_say_all`. Each
+  `notepad_editing`, `notepad_review_cursor`, `notepad_say_all`,
+  `windows_terminal_commands`, `conhost_commands`,
+  `terminal_spoken_password`, `terminal_flood`, and
+  `terminal_review_grid`. Each
   is implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
@@ -232,10 +270,11 @@ Public API:
 
 Implementation notes: `REMOTE_ENV` (`VERBATIM_E2E_REMOTE`) marks a run where
 Verbatim lives in a guest rather than sharing this process's filesystem —
-set by `xtask vm test`, not normally by hand — and skips the two ordinary
-host-filesystem steps (`verbatim.exe` existence check, writing
-`settings.toml`) that `xtask vm deploy` has already done inside the guest
-instead. `crates/verbatim-e2e/tests/` holds one thin `#[test]` wrapper per
+set by `xtask vm test`, not normally by hand — and skips the ordinary
+host-filesystem steps (`verbatim.exe` existence check, staging) that
+`xtask vm deploy` has already done inside the guest instead; the
+`settings.toml` is written through the agent instead of to this machine's
+disk. `crates/verbatim-e2e/tests/` holds one thin `#[test]` wrapper per
 registered scenario (each just calling `registry::run_named` with its own
 name) plus `session_info` (the agent reports an interactive session — a
 precondition every scenario depends on, not itself a scenario, so it stays a
@@ -262,6 +301,68 @@ Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
 `notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
 the second line plays, and checks that the caret was left on that line and
 that the third was never heard.
+
+The terminal scenarios, also in the Text group, share a setup
+(`scenarios/terminal.rs`). Each opens a window of its own titled with
+`harness_marker`, and finds, brings forward, and closes it by that title,
+never by class or program, so the user's own terminals are never touched,
+and `WindowsTerminal.exe` and `conhost.exe` are never ended by name.
+Windows Terminal opens with `wt.exe -w new --size 120,30 new-tab --title
+<title> --suppressApplicationTitle`; the console host with `conhost.exe`,
+the shell setting its size with `mode con cols=120 lines=30`. A scenario
+that prefers Windows Terminal asks the agent to start `wt.exe` and, when
+that fails because Windows Terminal is not installed, prints so and uses
+the console host; nothing depends on the machine's name, so the same
+scenarios hold on Windows 11 and on a Windows Server runner with only the
+console host. The shell is Windows PowerShell, started with `-NoProfile
+-NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`; the start script
+removes `PSReadLine`, moves to the scenario's folder, sets the title, and
+sets the prompt `ready> `, which writes a file the first time it runs, the
+evidence the shell waits for input. The scripts a scenario runs are
+written into that folder before the window opens. Every body first reads
+the prompt line with numpad 8 and hears "ready>", so typing starts only
+once Verbatim reads the terminal. Commands are typed with `type_text` and
+Enter pressed with `send_keys`.
+
+`windows_terminal_commands` (in the console host, saying so, where Windows
+Terminal is not installed) and `conhost_commands` type `echo hello`,
+hearing each character exactly (the space as "space"), then exactly
+"hello" and "ready>"; run a script calling `Read-Host -AsSecureString
+"Password"`, hearing "Password:"; type `secret` and Enter, and assert that
+nothing from the prompt up to "done" is exactly one of the typed
+characters or contains "secret"; and hear exactly "done" and "ready>".
+`terminal_spoken_password` does the same with "speak passwords" on
+(`ScenarioDef::settings`), asserting instead that the six characters are
+each spoken, exactly and in order.
+
+`terminal_review_grid` prints a six-row table whose second column starts at
+column 10, two rows being shorter than that, hears each row and the
+prompt, reads the rows from the prompt line up to the first with numpad 7,
+goes to the first row's column 10 with Shift+numpad 1 and numpad 6, and
+then reads each next row with numpad 9 and its column 10 with numpad 2:
+the cell's character, or "blank" on the shorter rows.
+
+`terminal_flood` runs a script printing "flood line 1" to "flood line
+10000", which times itself and writes the time to a file. The first flood,
+with no key pressed, must speak its lines in increasing order, none twice;
+the lines and the skipped-lines utterances heard in full must account for
+every line exactly (between two lines heard, the skipped counts add up to
+the gap, unless a skipped-lines utterance without a number says the count
+was lost), with at least one skip; "flood line 10000" and then "ready>"
+must be heard, and nothing about the flood after it; and the control plane
+must answer a status request between reads throughout. During the second
+flood, Verbatim+5 sent while a flood line plays must be answered with
+"report new output off" within five seconds, the control plane answering
+throughout, and nothing about the flood follows it. The third flood, with
+output reporting off, must speak nothing but its command's echo; Verbatim+5
+then says "report new output on", and `echo back` is answered with "back"
+and "ready>". The wall-time ratio, the first flood's time over the third's
+by the script's own stopwatch, is how much reporting the output slows the
+terminal down; it is printed, saved as `wall-time-ratio.txt` with the
+scenario's artifacts, and must be under two, the M4 exit criterion.
+NVDA's report-title command, which the design names for the responsiveness
+check, is not bound in Verbatim, so the check uses the Verbatim+5 toggle,
+a reducer command with known text.
 `synth_host_crash_recovery` opens the Verbatim menu, kills
 `verbatim-synth-host.exe` with `kill_processes_by_name` (expecting
 exactly one), and expects the next menu item to be heard in full from

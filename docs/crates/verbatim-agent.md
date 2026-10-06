@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 0) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 6) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`), reused
   rather than reinvented. Deliberately a distinct vocabulary from
@@ -51,6 +51,15 @@ Public API:
   `verbatim_control::send_keys`, every name validated before any key is
   sent, so NVDA can be driven with no Verbatim running, for
   [the NVDA transcript](../nvda-transcript.md); protocol version 5),
+  `TypeText` (a string typed as real key presses: each character mapped
+  to its virtual key and Shift, Control, and Alt state in the keyboard
+  layout of the foreground window's thread with `VkKeyScanEx`, and pressed
+  with `SendInput`, modifiers down, key down and up, modifiers up, each
+  event carrying the key's scan code in that layout, so a keyboard hook
+  sees ordinary typing, which typed-character echo needs; a control
+  character, such as a line break, or a character the layout cannot type
+  fails the request before any key is sent, and named keys stay with
+  `SendKeys`; from the private `typing` module; protocol version 6),
   `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.

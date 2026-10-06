@@ -22,6 +22,7 @@ mod review;
 mod review_text;
 mod say_all;
 mod state;
+mod terminal;
 mod text;
 
 pub use dump::{

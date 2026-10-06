@@ -186,6 +186,8 @@ message-caret-moves-review = caret moves review cursor
 message-caret-does-not-move-review = caret doesn't move review cursor
 message-not-supported = Not supported in this document
 message-no-caret = No caret
+message-report-new-output-on = report new output on
+message-report-new-output-off = report new output off
 
 ## Reader messages with values in them. Wording matches NVDA's.
 
@@ -198,6 +200,7 @@ phrase-speak-typed-characters = speak typed characters { $mode }
 phrase-speak-typed-words = speak typed words { $mode }
 phrase-skipped-line = skipped { $count } line
 phrase-skipped-lines = skipped { $count } lines
+phrase-skipped-uncounted-lines = skipped lines
 typing-echo-off = off
 typing-echo-edit-controls = only in edit controls
 typing-echo-always = always

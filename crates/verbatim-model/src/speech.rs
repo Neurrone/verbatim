@@ -194,6 +194,10 @@ pub enum Phrase {
     /// were skipped: "skipped 120 lines". A theme can also mark it with a
     /// sound (`crate::Indication::SkippedLines`).
     SkippedLines(u32),
+    /// Terminal output was skipped, but how many lines is not known (the
+    /// scrollback overflowed past what the reader could track): "skipped
+    /// lines". Marked like [`Phrase::SkippedLines`].
+    SkippedUncountedLines,
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.
@@ -249,6 +253,13 @@ pub enum Message {
     NotSupported,
     /// A command that needs a caret found none — NVDA's "No caret".
     NoCaret,
+    /// New terminal output is spoken again, after Verbatim+5 — "report new
+    /// output on" (NVDA's toggle on the same key says "report dynamic
+    /// content changes on").
+    ReportNewOutputOn,
+    /// New terminal output is no longer spoken, after Verbatim+5 — "report
+    /// new output off".
+    ReportNewOutputOff,
 }
 
 /// One segment of an utterance, with an optional language override.

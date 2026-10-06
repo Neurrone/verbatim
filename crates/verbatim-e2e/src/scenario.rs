@@ -73,6 +73,11 @@ struct Launched {
     /// one: such an application is closed by that title, never swept by
     /// image name, so the user's own windows of it are left alone.
     marker: Option<String>,
+    /// Whether the launch is terminated by pid when its window does not
+    /// close. Not for a launcher that may hand its window to a process the
+    /// user's own windows share, such as Windows Terminal's `wt.exe`:
+    /// terminating its job could end that process.
+    kill_if_open: bool,
 }
 const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
@@ -101,8 +106,10 @@ pub const VERBATIM_EXE_ENV: &str = "VERBATIM_E2E_VERBATIM_EXE";
 /// default runner-direct mode the suite and Verbatim share a filesystem, so
 /// it is correct. Against a VM it is not: the guest path does not exist
 /// here, and `cargo xtask vm deploy` has already staged the equivalent
-/// inside the guest. Set this and the whole staging step is skipped, since
-/// the deploy owns it.
+/// inside the guest. Set this and the staging step is skipped, since the
+/// deploy owns it; only `settings.toml` is written afresh, through the
+/// agent, so a scenario's own settings ([`Scenario::launch_with_settings`])
+/// apply in the guest too and never outlive the scenario.
 pub const REMOTE_ENV: &str = "VERBATIM_E2E_REMOTE";
 
 /// Whether this is a remote (in-guest) run; see [`REMOTE_ENV`].
@@ -238,6 +245,20 @@ impl Scenario {
     /// reached, or Verbatim's control plane never comes up within the
     /// launch timeout.
     pub fn launch() -> io::Result<Self> {
+        Self::launch_with_settings(None)
+    }
+
+    /// [`Scenario::launch`] with `configure` applied to the fixed settings
+    /// before they are written, for a scenario that needs a reader setting
+    /// other than its default (see
+    /// [`crate::registry::ScenarioDef::settings`]). The settings are written
+    /// afresh for every launch, in a remote run too, through the agent, so
+    /// one scenario's settings never reach the next.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::launch`], and if the settings cannot be written.
+    pub fn launch_with_settings(configure: Option<fn(&mut Settings)>) -> io::Result<Self> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let lock = live_instance_lock()
@@ -262,9 +283,9 @@ impl Scenario {
         }
 
         // In a remote run the path above names a location in the guest, so
-        // neither staging nor the config write can happen here; `cargo
-        // xtask vm deploy` staged both inside the guest already (selecting
-        // eSpeak NG, as here). In
+        // staging cannot happen here; `cargo xtask vm deploy` staged the
+        // binaries inside the guest already, and the settings are written
+        // through the agent below. In
         // runner-direct mode, stage a private copy so this suite never
         // reads or writes the developer's own build output directory.
         let (launch_exe, launch_dir) = if remote {
@@ -280,7 +301,7 @@ impl Scenario {
             let stage_dir = stage_binaries(source_dir)?;
             // eSpeak NG, the default synthesizer, in every run; a silent
             // run differs only in playing through the silent device.
-            configure_synth(&stage_dir, ESPEAK_ID)?;
+            write_settings(&stage_dir, run_settings(configure))?;
             let staged_exe = stage_dir.join("verbatim.exe");
             (staged_exe, stage_dir)
         };
@@ -303,22 +324,10 @@ impl Scenario {
         };
 
         let mut process_agent = AgentClient::connect(&agent_addr)?;
-        // Sweep known target-application image names before doing anything
-        // else, so this scenario starts from as clean a state as possible
-        // even after a prior run aborted without running its own Drop
-        // cleanup (a killed test process, a Ctrl+C, a panic that unwound
-        // past Scenario somehow). Best-effort: a sweep failure here is
-        // logged, not fatal to the launch.
-        for name in crate::registry::swept_target_image_names() {
-            if let Err(error) = process_agent.kill_processes_by_name(name) {
-                tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
-            }
+        if remote {
+            write_remote_settings(&mut process_agent, exe_dir_str, run_settings(configure))?;
         }
-        // Harness documents a prior run left open are closed by title, so
-        // the user's own windows of the same application are left alone.
-        if let Err(error) = process_agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
-            tracing::warn!(%error, "failed to close leftover harness documents");
-        }
+        sweep_leftovers(&mut process_agent);
         // The capture starts before Verbatim, so the video shows it start.
         let mut recording = start_recording(&mut process_agent, exe_dir_str);
         if let Some(recording) = &recording {
@@ -426,6 +435,138 @@ impl Scenario {
         Ok(())
     }
 
+    /// Types `text` as real key presses through the agent's `TypeText`, each
+    /// character mapped to its key and shift state in the foreground
+    /// window's keyboard layout, so Verbatim's keyboard hook sees ordinary
+    /// typing. Named keys such as Enter go through
+    /// [`Scenario::send_keys`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when a character
+    /// cannot be typed, in which case nothing was typed.
+    pub fn type_text(&mut self, text: &str) -> io::Result<()> {
+        self.timeline.push_text(text);
+        self.process_agent.type_text(text)
+    }
+
+    /// The directory, on the agent's machine, that this run's harness
+    /// files go in: the one holding Verbatim's executable and its captured
+    /// log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log path has no parent directory.
+    pub fn run_directory(&self) -> io::Result<String> {
+        Path::new(&self.stderr_log_path)
+            .parent()
+            .and_then(Path::to_str)
+            .map(str::to_owned)
+            .ok_or_else(|| io::Error::other("no directory for the run's harness files"))
+    }
+
+    /// Writes a file on the agent's machine, creating or replacing it and
+    /// any missing parent directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn write_agent_file(&mut self, path: &str, contents: &[u8]) -> io::Result<()> {
+        self.process_agent.write_file(path, contents)
+    }
+
+    /// Waits up to `timeout` for a file to exist on the agent's machine and
+    /// returns its contents: the evidence a script the scenario started has
+    /// reached the point that writes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the last read error if the file cannot be read within
+    /// `timeout`.
+    pub fn wait_for_agent_file(&mut self, path: &str, timeout: Duration) -> io::Result<Vec<u8>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.process_agent.read_file(path) {
+                Ok(contents) => return Ok(contents),
+                Err(error) if Instant::now() >= deadline => {
+                    return Err(io::Error::other(format!(
+                        "{path} was not written within {timeout:?}: {error}"
+                    )));
+                }
+                Err(_) => thread::sleep(SAVE_POLL),
+            }
+        }
+    }
+
+    /// Launches `command`, which opens a window titled with `title`, a
+    /// title of this run's own ([`harness_marker`]), and tracks it to be
+    /// closed by that title at cleanup, so the user's own windows of the
+    /// same program are never touched. The window is not waited for; see
+    /// [`Scenario::bring_titled_window_forward`]. With `kill_if_open`
+    /// false, a window that will not close is reported and left open rather
+    /// than its launch terminated, for a launcher whose window may belong
+    /// to a process the user's own windows share, such as `wt.exe`'s.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent cannot start `command`, for example
+    /// because no such program is installed.
+    pub fn launch_titled(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+        kill_if_open: bool,
+    ) -> io::Result<u32> {
+        let pid = self
+            .process_agent
+            .launch_process(command, args, None, &[], None)?;
+        self.launched.push(Launched {
+            pid,
+            image: image_name(command),
+            marker: Some(title.to_owned()),
+            kill_if_open,
+        });
+        Ok(pid)
+    }
+
+    /// Waits up to `timeout` for a visible top-level window whose title
+    /// contains `title`, finds which program owns it (a console's window,
+    /// for example, belongs to the console host rather than the shell it
+    /// runs), and brings it to the foreground. Returns that program's image
+    /// name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with the foreground report, if no such window
+    /// appears or it does not take the foreground.
+    pub fn bring_titled_window_forward(
+        &mut self,
+        title: &str,
+        timeout: Duration,
+    ) -> io::Result<String> {
+        let deadline = Instant::now() + timeout;
+        let image = loop {
+            let info = self.process_agent.foreground_info()?;
+            if let Some(window) = info
+                .windows
+                .iter()
+                .find(|window| window.title.contains(title))
+            {
+                break window.image.clone();
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other(format!(
+                    "no window titled {title:?} appeared within {timeout:?}: {}",
+                    describe_foreground(&info)
+                )));
+            }
+            thread::sleep(POLL_INTERVAL);
+        };
+        self.require_window_in_front(&image, Some(title))?;
+        Ok(image)
+    }
+
     /// Launches an extra target application (for example `msinfo32.exe`)
     /// through the agent and brings its window to the foreground, as a
     /// user's launch would put it in front, tracking it for cleanup on drop
@@ -454,6 +595,7 @@ impl Scenario {
             pid,
             image: image.clone(),
             marker: None,
+            kill_if_open: true,
         });
         self.require_window_in_front(&image, None)?;
         Ok(pid)
@@ -488,7 +630,7 @@ impl Scenario {
         name: &str,
         contents: &str,
     ) -> io::Result<u32> {
-        let marker = document_marker(name);
+        let marker = harness_marker(name);
         let directory = Path::new(&self.stderr_log_path)
             .parent()
             .and_then(Path::to_str)
@@ -507,6 +649,7 @@ impl Scenario {
             pid,
             image: image.clone(),
             marker: Some(marker.clone()),
+            kill_if_open: true,
         });
         self.require_window_in_front(&image, Some(&marker))?;
         Ok(pid)
@@ -524,7 +667,7 @@ impl Scenario {
     /// Returns an error if a request fails or the title still marks unsaved
     /// changes after `timeout`.
     pub fn save_document(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
-        let marker = document_marker(name);
+        let marker = harness_marker(name);
         let unsaved_in_front = |agent: &mut AgentClient| -> io::Result<bool> {
             Ok(agent.foreground_info()?.foreground.is_some_and(|window| {
                 window.title.contains(&marker) && window.title.starts_with('*')
@@ -555,7 +698,7 @@ impl Scenario {
     /// Returns an error if a request fails or the title does not mark
     /// unsaved changes within `timeout`.
     pub fn expect_unsaved(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
-        let marker = document_marker(name);
+        let marker = harness_marker(name);
         let deadline = Instant::now() + timeout;
         loop {
             let unsaved = self
@@ -590,7 +733,7 @@ impl Scenario {
     /// Returns an error if a request fails or the window does not take the
     /// foreground.
     pub fn open_folder(&mut self, name: &str, files: &[&str]) -> io::Result<String> {
-        let marker = document_marker(name);
+        let marker = harness_marker(name);
         let directory = Path::new(&self.stderr_log_path)
             .parent()
             .and_then(Path::to_str)
@@ -611,6 +754,7 @@ impl Scenario {
             pid,
             image: "explorer.exe".to_owned(),
             marker: Some(marker.clone()),
+            kill_if_open: true,
         });
         self.require_window_in_front("explorer.exe", Some(&marker))?;
         Ok(marker)
@@ -639,6 +783,7 @@ impl Scenario {
             pid,
             image: "SystemSettings.exe".to_owned(),
             marker: None,
+            kill_if_open: true,
         });
         self.require_window_in_front("ApplicationFrameHost.exe", Some("Settings"))
     }
@@ -776,6 +921,11 @@ impl Scenario {
             let remaining = self.process_agent.close_windows(marker, CLOSE_TIMEOUT)?;
             if remaining == 0 {
                 return Ok(KillOutcome::AlreadyExited);
+            }
+            if !launched.kill_if_open {
+                return Err(io::Error::other(format!(
+                    "{remaining} window(s) titled {marker:?} did not close, and are left open"
+                )));
             }
             tracing::warn!(marker, remaining, "a harness document window did not close");
             return self.process_agent.kill_process(launched.pid);
@@ -1067,6 +1217,24 @@ impl Drop for Scenario {
     }
 }
 
+/// Sweeps known target-application image names, and closes by title the
+/// harness documents and windows a prior run left open (so the user's own
+/// windows of the same application are left alone), so a scenario starts
+/// from as clean a state as possible even after a prior run aborted without
+/// running its own Drop cleanup (a killed test process, a Ctrl+C, a panic
+/// that unwound past Scenario somehow). Best-effort: a failure is logged,
+/// not fatal to the launch.
+fn sweep_leftovers(agent: &mut AgentClient) {
+    for name in crate::registry::swept_target_image_names() {
+        if let Err(error) = agent.kill_processes_by_name(name) {
+            tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
+        }
+    }
+    if let Err(error) = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
+        tracing::warn!(%error, "failed to close leftover harness documents");
+    }
+}
+
 /// Starts this run's video, when recording (see [`crate::recording`]).
 fn start_recording(agent: &mut AgentClient, dir: &str) -> Option<Recording> {
     if !crate::recording::enabled() {
@@ -1326,8 +1494,38 @@ fn files_match(source: &Path, destination: &Path) -> io::Result<bool> {
     Ok(fs::read(source)? == fs::read(destination)?)
 }
 
-/// Writes `settings.toml` in `dir` to [`Settings::for_e2e`]'s fixed shape,
-/// selecting the synthesizer named by `synth_id`. Never a load-modify-save
+/// The settings a run writes: [`Settings::for_e2e`] selecting eSpeak NG
+/// ([`ESPEAK_ID`]), with the scenario's own `configure` applied.
+fn run_settings(configure: Option<fn(&mut Settings)>) -> Settings {
+    let mut settings = Settings::for_e2e(ESPEAK_ID);
+    if let Some(configure) = configure {
+        configure(&mut settings);
+    }
+    settings
+}
+
+/// Writes `settings` as the `settings.toml` of a remote run's Verbatim, in
+/// `exe_dir` on the agent's machine: serialized here exactly as
+/// [`write_settings`] writes it, into a directory of this process's own,
+/// and sent through the agent.
+fn write_remote_settings(
+    agent: &mut AgentClient,
+    exe_dir: &str,
+    settings: Settings,
+) -> io::Result<()> {
+    let local = std::env::temp_dir().join(format!("verbatim-e2e-settings-{}", std::process::id()));
+    fs::create_dir_all(&local)?;
+    write_settings(&local, settings)?;
+    let contents = fs::read(local.join(ConfigStore::SETTINGS_FILE))?;
+    let _ = fs::remove_dir_all(&local);
+    agent.write_file(
+        &format!(r"{exe_dir}\{}", ConfigStore::SETTINGS_FILE),
+        &contents,
+    )
+}
+
+/// Writes `settings.toml` in `dir` as `settings`, normally
+/// [`run_settings`]'s fixed shape. Never a load-modify-save
 /// of whatever settings already sit in `dir`: builds the store from
 /// [`Settings::for_e2e`] directly ([`ConfigStore::from_settings`]) and
 /// writes it fresh, so a run's configuration can never accumulate state
@@ -1344,8 +1542,8 @@ fn files_match(source: &Path, destination: &Path) -> io::Result<bool> {
 /// through `xtask vm deploy`'s own `write_synth_settings`, staged and
 /// parameterized the same way but kept in lockstep independently — see
 /// [`Settings::for_e2e`]'s doc comment.
-fn configure_synth(dir: &Path, synth_id: &str) -> io::Result<()> {
-    let store = ConfigStore::from_settings(dir, Settings::for_e2e(synth_id));
+fn write_settings(dir: &Path, settings: Settings) -> io::Result<()> {
+    let store = ConfigStore::from_settings(dir, settings);
     store.save_settings().map_err(|error| config_error(&error))
 }
 
@@ -1429,12 +1627,16 @@ fn describe_foreground(info: &ForegroundInfo) -> String {
     )
 }
 
-/// The marker naming harness document `name` in this run: the shared
-/// [`DOCUMENT_MARKER`], `name`, and a token of this run. A document of a
-/// fixed name would let an application restore state saved by an earlier
-/// run, as Windows 11 Notepad restores a file's last selection, which a
-/// failed run can leave anywhere; a new name has none.
-fn document_marker(name: &str) -> String {
+/// The text naming a harness document, folder, or window `name` in this
+/// run: the shared [`DOCUMENT_MARKER`], `name`, and a token unique to this
+/// run of the test binary. A document of a fixed name would let an
+/// application restore state saved by an earlier run, as Windows 11 Notepad
+/// restores a file's last selection, which a failed run can leave anywhere;
+/// a new name has none. A window titled with it is closed by that title at
+/// cleanup, and by the next launch's sweep if a run aborted before its
+/// cleanup.
+#[must_use]
+pub fn harness_marker(name: &str) -> String {
     static TOKEN: OnceLock<String> = OnceLock::new();
     format!(
         "{DOCUMENT_MARKER}{name}-{}",
@@ -1592,11 +1794,11 @@ mod tests {
     }
 
     #[test]
-    fn configure_synth_writes_fixed_settings_never_a_merge_of_existing_state() {
+    fn write_settings_writes_fixed_settings_never_a_merge_of_existing_state() {
         let dir = temp_dir("configure-synth");
         // Seed a pre-existing settings.toml carrying state a load-modify-save
         // would have carried forward (a different locale, a different
-        // synthesizer) so this test would fail if configure_synth ever
+        // synthesizer) so this test would fail if write_settings ever
         // starts loading instead of building fresh.
         fs::write(
             dir.join(ConfigStore::SETTINGS_FILE),
@@ -1604,14 +1806,25 @@ mod tests {
         )
         .expect("seed a pre-existing settings.toml");
 
-        configure_synth(&dir, "capture").expect("writes fixed settings");
+        write_settings(&dir, Settings::for_e2e("capture")).expect("writes fixed settings");
 
-        let store = ConfigStore::load(&dir).expect("reloads what configure_synth wrote");
+        let store = ConfigStore::load(&dir).expect("reloads what write_settings wrote");
         assert_eq!(store.settings(), &Settings::for_e2e("capture"));
         assert_eq!(
             store.settings().locale,
             None,
-            "the pre-existing locale must not survive: configure_synth never loads existing state"
+            "the pre-existing locale must not survive: write_settings never loads existing state"
         );
+    }
+
+    #[test]
+    fn a_scenario_s_settings_change_only_what_it_configures() {
+        assert_eq!(run_settings(None), Settings::for_e2e(ESPEAK_ID));
+        let configured = run_settings(Some(|settings| {
+            settings.reader.speak_terminal_passwords = true;
+        }));
+        let mut expected = Settings::for_e2e(ESPEAK_ID);
+        expected.reader.speak_terminal_passwords = true;
+        assert_eq!(configured, expected);
     }
 }

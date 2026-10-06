@@ -258,10 +258,11 @@ pub struct Settings {
     pub speech: SpeechConfig,
     /// The reader settings the reducer reads, the `[reader]` section:
     /// typing echo, whether the review cursor follows the caret, say-all's
-    /// reading unit, keeping the display on during say-all, and speaking
-    /// passwords in terminals, each with NVDA's default
-    /// ([`ReaderSettings`]). The base profile's only, until profiles grow
-    /// them (M8).
+    /// reading unit, keeping the display on during say-all, and the
+    /// Terminal settings (speaking passwords, reporting new output, and the
+    /// flood policy's two limits), each with NVDA's default where NVDA has
+    /// the setting ([`ReaderSettings`]). The base profile's only, until
+    /// profiles grow them (M8).
     pub reader: ReaderSettings,
     /// The base profile's theme and the settings that go with it.
     pub theme: ThemeConfig,
@@ -686,6 +687,22 @@ mod tests {
         assert_eq!(reloaded.settings().reader.say_all_unit, SayAllUnit::Line);
         assert!(!reloaded.settings().reader.follow_caret);
         assert!(!reloaded.settings().keyboard.speech_interrupt_for_enter);
+    }
+
+    #[test]
+    fn terminal_settings_read_from_the_reader_section() {
+        let settings: Settings = toml::from_str(
+            "[reader]\nreport_terminal_output = false\nterminal_full_lines = 50\nterminal_last_lines = 10\n",
+        )
+        .expect("parses");
+        assert!(!settings.reader.report_terminal_output);
+        assert_eq!(settings.reader.full_lines(), 50);
+        assert_eq!(settings.reader.last_lines(), 10);
+        // Left out, each takes its default.
+        let defaults: Settings = toml::from_str("[reader]\n").expect("parses");
+        assert!(defaults.reader.report_terminal_output);
+        assert_eq!(defaults.reader.full_lines(), 30);
+        assert_eq!(defaults.reader.last_lines(), 30);
     }
 
     #[test]
