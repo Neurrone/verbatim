@@ -34,6 +34,10 @@ pub const ESPEAK_ID: &str = verbatim_speech::hosting::synth_ids::ESPEAK;
 /// The data directory's name, looked for next to the executable.
 const DATA_DIR: &str = "espeak-ng-data";
 
+/// The size of eSpeak NG's path buffer on Windows, `_MAX_PATH`, in bytes
+/// including the terminating NUL.
+const MAX_PATH_BYTES: usize = 260;
+
 /// The voice used until another is chosen: English.
 const DEFAULT_VOICE: &str = "gmw/en";
 
@@ -170,9 +174,19 @@ unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEv
         },
         _ => return 0,
     };
-    match synthesis.sink.push_pcm(synthesis.format, samples) {
-        ControlFlow::Continue(()) => 0,
-        ControlFlow::Break(()) => {
+    // A panic in the sink would abort the process at this C boundary; caught,
+    // it stops the synthesis instead, as a sink asking to stop does.
+    let pushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        synthesis.sink.push_pcm(synthesis.format, samples)
+    }));
+    match pushed {
+        Ok(ControlFlow::Continue(())) => 0,
+        Ok(ControlFlow::Break(())) => {
+            synthesis.stopped = true;
+            1
+        }
+        Err(_) => {
+            tracing::error!("an eSpeak NG audio sink panicked; the synthesis stops");
             synthesis.stopped = true;
             1
         }
@@ -284,6 +298,16 @@ impl EspeakSynth {
         // representable; it accepts the data directory itself.
         let path = c_string(&data.to_string_lossy())
             .map_err(|_| unavailable("the eSpeak NG data path is not representable"))?;
+        // eSpeak NG copies the path, with "/espeak-ng-data" appended, into a
+        // buffer of `_MAX_PATH` bytes, NUL included. A longer path would be
+        // cut short, fail its check, and send eSpeak NG on to the other
+        // places, so it is refused here instead.
+        if path.as_bytes().len() + "/espeak-ng-data".len() >= MAX_PATH_BYTES {
+            return Err(unavailable(format!(
+                "the eSpeak NG data path is too long: {}",
+                data.display()
+            )));
+        }
         // SAFETY: a valid NUL-terminated path; DONT_EXIT makes a failure
         // return rather than end the process.
         let sample_rate = unsafe {
