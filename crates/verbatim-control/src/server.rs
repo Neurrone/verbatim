@@ -329,7 +329,11 @@ struct RawPipe {
 // `WriteFile`) with its own `OVERLAPPED`/event — Microsoft's documented
 // pattern for one handle shared by threads that each perform a different
 // kind of operation on it. `read_event` and `write_event` are likewise
-// used from exactly one of those threads each.
+// used from exactly one of those threads each. `disconnect`
+// (`DisconnectNamedPipe`) is also called from the writer thread and from
+// `ControlServer`'s drop while a read is pending; that is sound, since the
+// call is thread-safe and the pending operations then complete with an
+// error, each waited for before its stack `OVERLAPPED` goes away.
 unsafe impl Send for RawPipe {}
 // SAFETY: as above.
 unsafe impl Sync for RawPipe {}
@@ -372,19 +376,13 @@ impl RawPipe {
             hEvent: self.read_event,
             ..OVERLAPPED::default()
         };
-        let mut read = 0u32;
         // SAFETY: `buf` and `overlapped` are valid, exclusively-borrowed
         // for the duration of this call (including the blocking wait
         // below); this thread is the only one that ever issues `ReadFile`
-        // on this handle.
-        let result = unsafe {
-            ReadFile(
-                self.handle,
-                Some(buf),
-                Some(&raw mut read),
-                Some(&raw mut overlapped),
-            )
-        };
+        // on this handle. The count comes from `GetOverlappedResult`, so
+        // none is asked for here, as the documentation advises for an
+        // overlapped read.
+        let result = unsafe { ReadFile(self.handle, Some(buf), None, Some(&raw mut overlapped)) };
         if let Err(error) = &result {
             if error.code() == HRESULT::from_win32(ERROR_BROKEN_PIPE.0) {
                 return Ok(0);
@@ -416,18 +414,12 @@ impl RawPipe {
                 hEvent: self.write_event,
                 ..OVERLAPPED::default()
             };
-            let mut written = 0u32;
             // SAFETY: `buf` and `overlapped` are valid for the duration of
             // this call (including the blocking wait below); this thread
             // is the only one that ever issues `WriteFile` on this handle.
-            let result = unsafe {
-                WriteFile(
-                    self.handle,
-                    Some(buf),
-                    Some(&raw mut written),
-                    Some(&raw mut overlapped),
-                )
-            };
+            // The count comes from `GetOverlappedResult`, as for a read.
+            let result =
+                unsafe { WriteFile(self.handle, Some(buf), None, Some(&raw mut overlapped)) };
             if let Err(error) = &result
                 && error.code() != HRESULT::from_win32(ERROR_IO_PENDING.0)
             {
@@ -463,14 +455,15 @@ impl RawPipe {
 impl Drop for RawPipe {
     fn drop(&mut self) {
         self.disconnect();
-        // SAFETY: `handle`, `read_event`, and `write_event` are all owned
+        // `handle`, `read_event`, and `write_event` are all owned
         // exclusively by this `RawPipe` and not used again after this
         // point.
-        unsafe {
-            let _ = CloseHandle(self.handle);
-            let _ = CloseHandle(self.read_event);
-            let _ = CloseHandle(self.write_event);
-        }
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.handle) };
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.read_event) };
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.write_event) };
     }
 }
 
@@ -671,11 +664,10 @@ fn create_pipe_instance(
     let write_event = match create_event() {
         Ok(event) => event,
         Err(error) => {
-            // SAFETY: neither handle is used again on this path.
-            unsafe {
-                let _ = CloseHandle(handle);
-                let _ = CloseHandle(read_event);
-            }
+            // SAFETY: `handle` is not used again on this path.
+            let _ = unsafe { CloseHandle(handle) };
+            // SAFETY: nor is `read_event`.
+            let _ = unsafe { CloseHandle(read_event) };
             return Err(error);
         }
     };

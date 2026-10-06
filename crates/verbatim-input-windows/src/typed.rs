@@ -179,12 +179,14 @@ impl Modifiers {
 /// The keyboard layout of the thread that owns the foreground window, the
 /// thread a key goes to.
 fn foreground_layout() -> HKL {
-    // SAFETY: local reads; a null window or a thread id of zero yields the
-    // calling thread's layout, a harmless fallback.
-    unsafe {
-        let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
-        GetKeyboardLayout(thread)
-    }
+    // A null window or a thread id of zero yields the calling thread's
+    // layout, a harmless fallback.
+    // SAFETY: a local read with no preconditions.
+    let foreground = unsafe { GetForegroundWindow() };
+    // SAFETY: tolerates any handle, answering 0 for a null one.
+    let thread = unsafe { GetWindowThreadProcessId(foreground, None) };
+    // SAFETY: a local read of a thread's layout.
+    unsafe { GetKeyboardLayout(thread) }
 }
 
 /// Whether `layout` is an input method's, whose keys compose text the hook

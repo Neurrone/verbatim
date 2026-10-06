@@ -26,7 +26,7 @@ use windows::core::PCWSTR;
 /// provider's object needs the calling thread to already be in an
 /// apartment, and a bare `cargo test` thread starts in none. Tolerates a
 /// thread that already joined some apartment (e.g. a prior call on the same
-/// thread), matching `verbatim_uia::init_mta`'s idempotence.
+/// thread), as a repeated `verbatim_uia::init_mta` is.
 pub fn init_com() {
     // SAFETY: `CoInitializeEx` with no reserved pointer is always sound; a
     // failure other than "already initialized" would fail the caller's next

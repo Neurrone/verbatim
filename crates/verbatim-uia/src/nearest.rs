@@ -43,14 +43,15 @@ impl Context {
         // needs to answer — exactly NVDA's `windowTreeWalker` and
         // `windowCacheRequest`.
         let zero = VARIANT::from(0i32);
-        // SAFETY: local, same-thread COM calls against the client just
-        // created, each taking only live COM objects or plain values.
-        let walker = unsafe {
-            let has_no_handle =
-                client.CreatePropertyCondition(UIA_NativeWindowHandlePropertyId, &zero)?;
-            let is_a_window = client.CreateNotCondition(&has_no_handle)?;
-            client.CreateTreeWalker(&is_a_window)?
-        };
+        // Local, same-thread COM calls against the client just created,
+        // each taking only live COM objects or plain values.
+        // SAFETY: as above.
+        let has_no_handle =
+            unsafe { client.CreatePropertyCondition(UIA_NativeWindowHandlePropertyId, &zero) }?;
+        // SAFETY: as above.
+        let is_a_window = unsafe { client.CreateNotCondition(&has_no_handle) }?;
+        // SAFETY: as above.
+        let walker = unsafe { client.CreateTreeWalker(&is_a_window) }?;
         let cache = crate::cache::cache_request(&client, &[UIA_NativeWindowHandlePropertyId])?;
         Ok(Self { walker, cache })
     }
@@ -61,6 +62,13 @@ thread_local! {
     /// failed build so a transient `CoCreateInstance` failure gets retried on
     /// the next call rather than permanently disabling this thread.
     static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
+}
+
+/// Drops this thread's walker and cache request, if they were built (see
+/// [`crate::release_thread_state`]).
+pub(crate) fn release_thread_context() {
+    let context = CONTEXT.with(|cell| cell.borrow_mut().take());
+    drop(context);
 }
 
 /// Resolves the native window handle of `element` itself, or of its nearest

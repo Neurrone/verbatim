@@ -61,11 +61,14 @@ use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, Key
 pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 
 /// Carries out a key press's effect on speech; called on the hook thread,
-/// so it must not block.
+/// so it must not block, nor make a call that dispatches sent messages (a
+/// cross-apartment COM call, `SendMessage`), which would deliver the next
+/// key to the hook while this one is still being handled.
 pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect) + Send>;
 
 /// Receives what a key passed to the application did; called on the hook
-/// thread, so it must not block.
+/// thread, so it must not block, nor dispatch sent messages, as
+/// [`SpeechEffectFn`] explains.
 pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
 use verbatim_input::{KeyDecision, KeyEvent};
 use verbatim_model::TraceId;
@@ -187,9 +190,9 @@ fn hook_thread(
     (speech, reports): (SpeechEffectFn, KeyReportFn),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
-    // SAFETY: `GetModuleHandleW(None)` returns this process's module handle,
-    // the standard `hmod` for a low-level hook whose procedure lives in this
-    // module. It does not fail in practice for the current process.
+    // SAFETY: `GetModuleHandleW(None)` takes no pointer and returns this
+    // process's module handle, the standard `hmod` for a low-level hook
+    // whose procedure lives in this module; a failure is reported below.
     let hinstance = match unsafe { GetModuleHandleW(None) } {
         Ok(module) => HINSTANCE(module.0),
         Err(error) => {
@@ -285,7 +288,12 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         };
 
         let decision = HOOK_STATE.with(|state| {
-            let mut state = state.borrow_mut();
+            // A key delivered while another is still being handled, should a
+            // callback ever dispatch sent messages, passes through untouched
+            // rather than panicking on the borrow, which would abort.
+            let Ok(mut state) = state.try_borrow_mut() else {
+                return KeyDecision::Pass;
+            };
             let Some(state) = state.as_mut() else {
                 return KeyDecision::Pass;
             };

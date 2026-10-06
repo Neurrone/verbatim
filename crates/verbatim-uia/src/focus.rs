@@ -57,7 +57,7 @@ mod handler {
             sender: windows_core::Ref<IUIAutomationElement>,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                (self.callback)(element);
+                crate::com::guarded("focus", || (self.callback)(element));
             }
             Ok(())
         }
@@ -132,8 +132,9 @@ fn run(
         let cache = uia.base_cache_request()?;
         let handler: IUIAutomationFocusChangedEventHandler = FocusHandler { callback }.into();
         // SAFETY: `cache` and `handler` are live; the client is this thread's
-        // own. The handler AddRefs internally, so dropping our `cache` handle
-        // after registration is safe.
+        // own. UIA keeps its own references to both the handler and the
+        // cache request, so dropping our `cache` handle after registration
+        // is safe.
         unsafe {
             uia.client().AddFocusChangedEventHandler(&cache, &handler)?;
         }

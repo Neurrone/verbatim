@@ -251,7 +251,7 @@ mod handler {
     )]
 
     use std::mem::ManuallyDrop;
-    use windows::Win32::Foundation::{HWND, S_FALSE};
+    use windows::Win32::Foundation::{E_POINTER, HWND, S_FALSE};
 
     use windows::Win32::System::Com::{
         DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO, IDispatch, ITypeInfo,
@@ -283,15 +283,11 @@ mod handler {
     /// node's direct children (the "ask the parent about child N" shortcut
     /// MSAA allows without a separate `get_accChild` round trip).
     fn resolve_child(tree: &SharedTree, index: usize, child: &VARIANT) -> Option<usize> {
-        // SAFETY: `child` is a caller-supplied VARIANT, as every IAccessible
-        // accessor receives; only its type and, if VT_I4, integer field are
-        // read.
-        let child_id = unsafe {
-            if child.Anonymous.Anonymous.vt == VT_I4 {
-                child.Anonymous.Anonymous.Anonymous.lVal
-            } else {
-                0
-            }
+        // Only a VT_I4 names a child.
+        let child_id = if child.vt() == VT_I4 {
+            i32::try_from(child).unwrap_or(0)
+        } else {
+            0
         };
         if child_id == 0 {
             return Some(index);
@@ -368,17 +364,13 @@ mod handler {
 
         fn get_accChild(&self, varchild: &VARIANT) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccChild);
-            // SAFETY: `varchild` is caller-supplied, as always; only its type
-            // and, if VT_I4, integer field are read.
-            let child_id = unsafe {
-                if varchild.Anonymous.Anonymous.vt == VT_I4 {
-                    varchild.Anonymous.Anonymous.Anonymous.lVal
-                } else {
-                    return Err(Error::from_hresult(
-                        windows::Win32::Foundation::E_INVALIDARG,
-                    ));
-                }
-            };
+            // Only a VT_I4 names a child.
+            if varchild.vt() != VT_I4 {
+                return Err(Error::from_hresult(
+                    windows::Win32::Foundation::E_INVALIDARG,
+                ));
+            }
+            let child_id = i32::try_from(varchild)?;
             if child_id == 0 {
                 return Err(Error::from_hresult(
                     windows::Win32::Foundation::E_INVALIDARG,
@@ -600,14 +592,16 @@ mod handler {
             _varchild: &VARIANT,
         ) -> WinResult<()> {
             hits::hit(hits::Method::AccLocation);
-            // SAFETY: the four pointers are caller-owned out-parameters, as
-            // every `accLocation` caller supplies; mockapp never lays out
-            // real control geometry, so they are always zeroed.
-            unsafe {
-                *pxleft = 0;
-                *pytop = 0;
-                *pcxwidth = 0;
-                *pcyheight = 0;
+            let outputs = [pxleft, pytop, pcxwidth, pcyheight];
+            if outputs.iter().any(|output| output.is_null()) {
+                return Err(E_POINTER.into());
+            }
+            // mockapp never lays out real control geometry, so the location
+            // is always zero.
+            for output in outputs {
+                // SAFETY: a non-null out-parameter (checked above), which an
+                // `accLocation` caller owns and points at an `i32`.
+                unsafe { output.write(0) };
             }
             Ok(())
         }

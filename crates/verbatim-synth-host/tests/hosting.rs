@@ -59,12 +59,13 @@ impl<F: FnMut() -> ControlFlow<()>> SynthSink for Collect<F> {
 }
 
 fn kill(pid: u32) {
-    // SAFETY: the handle is used once and closed.
-    unsafe {
-        let process = OpenProcess(PROCESS_TERMINATE, false, pid).expect("opens the host process");
-        TerminateProcess(process, 1).expect("ends the host process");
-        let _ = CloseHandle(process);
-    }
+    // SAFETY: opening a process by id; the handle is closed below.
+    let process =
+        unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }.expect("opens the host process");
+    // SAFETY: the handle just opened, with terminate access.
+    unsafe { TerminateProcess(process, 1) }.expect("ends the host process");
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { CloseHandle(process) };
 }
 
 #[test]

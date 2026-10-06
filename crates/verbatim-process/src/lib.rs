@@ -9,8 +9,13 @@
 //! It talks to Core over two anonymous pipes whose child ends it inherits;
 //! it inherits exactly those and its log file, never another child's
 //! handles, so two launches running at once cannot keep each other's pipes
-//! open. Each child's standard output and error go to a log file named for
-//! it in this launch's log directory.
+//! open. Those handles are created non-inheritable and are inheritable only
+//! for the duration of the `CreateProcessW` call that launches the child, so
+//! another process creation elsewhere in Core that inherits every
+//! inheritable handle can pick them up only if it runs at that same moment;
+//! Core creates processes only through this module today. Each child's
+//! standard output and error go to a log file named for it in this
+//! launch's log directory.
 //!
 //! The [`session`] module reads the calling process's own session, which
 //! Verbatim and the test agent check before starting.
@@ -22,15 +27,15 @@ use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::path::{Path, PathBuf};
-use std::{fs, io, ptr};
+use std::{fs, io};
 
 use windows::Win32::Foundation::{
-    HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, INVALID_HANDLE_VALUE, SetHandleInformation,
+    GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, INVALID_HANDLE_VALUE,
+    SetHandleInformation,
 };
-use windows::Win32::Security::SECURITY_ATTRIBUTES;
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_ALWAYS,
+    FILE_TYPE_PIPE, GetFileType, OPEN_ALWAYS,
 };
 use windows::Win32::System::JobObjects::{
     CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
@@ -136,8 +141,8 @@ struct Pipes {
 }
 
 impl Pipes {
-    /// Creates both pipes with inheritable child ends and non-inheritable
-    /// parent ends.
+    /// Creates both pipes, every end non-inheritable; the child ends are
+    /// made inheritable only while the child is created.
     fn create(from_child_buffer: u32) -> io::Result<Self> {
         let (child_in, parent_out) = anonymous_pipe(PipeInherit::Read, 0)?;
         // SAFETY: the parent end is a valid pipe handle we own.
@@ -169,40 +174,33 @@ enum PipeInherit {
     Write,
 }
 
-/// Creates one anonymous pipe, returning `(child_end, parent_end)` with the
-/// child end marked inheritable and the parent end not.
+/// Creates one anonymous pipe, returning `(child_end, parent_end)`, both
+/// non-inheritable.
 fn anonymous_pipe(inherit: PipeInherit, buffer: u32) -> io::Result<(HANDLE, HANDLE)> {
     let mut read = HANDLE::default();
     let mut write = HANDLE::default();
-    let attributes = SECURITY_ATTRIBUTES {
-        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
-        lpSecurityDescriptor: ptr::null_mut(),
-        bInheritHandle: true.into(),
-    };
-    // SAFETY: both out-handles are written by CreatePipe before use; the
-    // security attributes live for the duration of the call.
-    unsafe {
-        CreatePipe(
-            &raw mut read,
-            &raw mut write,
-            Some(&raw const attributes),
-            buffer,
-        )
-        .map_err(to_io)?;
-    }
-    let (child_end, parent_end) = match inherit {
+    // SAFETY: both out-handles are written by CreatePipe before use; no
+    // security attributes, so neither end is inheritable.
+    unsafe { CreatePipe(&raw mut read, &raw mut write, None, buffer) }.map_err(to_io)?;
+    Ok(match inherit {
         PipeInherit::Read => (read, write),
         PipeInherit::Write => (write, read),
+    })
+}
+
+/// Marks `handles` inheritable, or not.
+fn set_inheritable(handles: &[HANDLE], inheritable: bool) -> io::Result<()> {
+    let flags = if inheritable {
+        HANDLE_FLAG_INHERIT
+    } else {
+        HANDLE_FLAGS(0)
     };
-    // SAFETY: `parent_end` is a valid handle just created.
-    let cleared =
-        unsafe { SetHandleInformation(parent_end, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) };
-    if let Err(error) = cleared {
-        close_handle(child_end);
-        close_handle(parent_end);
-        return Err(to_io(error));
+    for &handle in handles {
+        // SAFETY: each handle is a valid handle this process owns; the call
+        // changes only its inherit flag.
+        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, flags) }.map_err(to_io)?;
     }
-    Ok((child_end, parent_end))
+    Ok(())
 }
 
 /// Creates a job object with kill-on-close and, when given, a per-process
@@ -216,6 +214,9 @@ fn create_job(memory_cap: Option<usize>) -> io::Result<OwnedHandle> {
             "CreateJobObjectW returned an invalid handle",
         ));
     }
+    // SAFETY: `job` is a valid job handle we now own; owned from here, it
+    // is closed on every path below.
+    let job = unsafe { OwnedHandle::from_raw_handle(job.0 as RawHandle) };
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if let Some(cap) = memory_cap {
@@ -226,15 +227,14 @@ fn create_job(memory_cap: Option<usize>) -> io::Result<OwnedHandle> {
     // matching the information class.
     unsafe {
         SetInformationJobObject(
-            job,
+            HANDLE(job.as_raw_handle().cast::<c_void>()),
             JobObjectExtendedLimitInformation,
             (&raw const limits).cast(),
             u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(0),
         )
         .map_err(to_io)?;
     }
-    // SAFETY: `job` is a valid job handle we now own.
-    Ok(unsafe { OwnedHandle::from_raw_handle(job.0 as RawHandle) })
+    Ok(job)
 }
 
 /// The handle and id a spawned process yields.
@@ -270,17 +270,20 @@ fn spawn_in_job(
     unsafe {
         let _ = InitializeProcThreadAttributeList(None, 2, None, &raw mut size);
     }
-    let mut buffer = vec![0u8; size];
+    // The list holds pointer-sized fields, so its buffer is allocated in
+    // `usize`s, which aligns it for them.
+    let mut buffer = vec![0usize; size.div_ceil(size_of::<usize>())];
     let attributes = LPPROC_THREAD_ATTRIBUTE_LIST(buffer.as_mut_ptr().cast());
-    // SAFETY: `buffer` is `size` bytes as the first call asked for, and
-    // outlives every use of `attributes` below, which ends with the delete.
+    // SAFETY: `buffer` is at least `size` bytes, as the first call asked
+    // for, aligned for a pointer, and outlives every use of `attributes`
+    // below, which ends with the delete.
     unsafe {
         InitializeProcThreadAttributeList(Some(attributes), 2, None, &raw mut size)
             .map_err(to_io)?;
     }
     let result = (|| {
-        // SAFETY: `inherited` and `jobs` outlive the CreateProcessW call
-        // that reads them.
+        // SAFETY: `attributes` is initialized; `inherited` outlives the
+        // CreateProcessW call that reads it, and its size is given.
         unsafe {
             UpdateProcThreadAttribute(
                 attributes,
@@ -291,7 +294,10 @@ fn spawn_in_job(
                 None,
                 None,
             )
-            .map_err(to_io)?;
+        }
+        .map_err(to_io)?;
+        // SAFETY: as above, for `jobs`, one handle.
+        unsafe {
             UpdateProcThreadAttribute(
                 attributes,
                 0,
@@ -301,8 +307,8 @@ fn spawn_in_job(
                 None,
                 None,
             )
-            .map_err(to_io)?;
         }
+        .map_err(to_io)?;
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(0);
         startup.lpAttributeList = attributes;
@@ -313,10 +319,16 @@ fn spawn_in_job(
             startup.StartupInfo.hStdError = log;
         }
         let mut info = PROCESS_INFORMATION::default();
+        // The handle list names only inheritable handles, so the child's
+        // handles are inheritable for this call alone.
+        if let Err(error) = set_inheritable(&inherited, true) {
+            let _ = set_inheritable(&inherited, false);
+            return Err(error);
+        }
         // SAFETY: `command` is a NUL-terminated writable UTF-16 buffer; the
         // startup information is correctly sized and carries the attribute
         // list; bInheritHandles is true, restricted by that list.
-        unsafe {
+        let created = unsafe {
             CreateProcessW(
                 None,
                 Some(PWSTR(command.as_mut_ptr())),
@@ -329,15 +341,18 @@ fn spawn_in_job(
                 (&raw const startup).cast(),
                 &raw mut info,
             )
-            .map_err(to_io)?;
-        }
+        };
+        // Best effort: the caller closes these handles next anyway.
+        let _ = set_inheritable(&inherited, false);
+        created.map_err(to_io)?;
         close_handle(info.hThread);
         Ok(Spawned {
             process: info.hProcess,
             pid: info.dwProcessId,
         })
     })();
-    // SAFETY: `attributes` was initialized above and is no longer used.
+    // SAFETY: `attributes` was initialized above (a failed initialization
+    // returned before here) and is no longer used.
     unsafe {
         DeleteProcThreadAttributeList(attributes);
     }
@@ -407,7 +422,8 @@ pub fn prepare_launch_logs(exe_dir: &Path) {
 }
 
 /// Opens (creating if needed) the log file a spawned child's output is
-/// redirected into, returning an inheritable, append-mode handle — or `None`
+/// redirected into, returning an append-mode handle, not yet inheritable,
+/// or `None`
 /// if the logs directory or file could not be created, since logging is
 /// diagnostics and must never fail a spawn. `file_stem` names the file
 /// inside this launch's log directory ([`launch_log_dir`]), where the
@@ -425,20 +441,16 @@ fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
-    let attributes = SECURITY_ATTRIBUTES {
-        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
-        lpSecurityDescriptor: ptr::null_mut(),
-        bInheritHandle: true.into(),
-    };
-    // SAFETY: `wide` is a NUL-terminated path alive across the call; the
-    // attributes live for the call; append-mode writes are atomic at end of
-    // file, so concurrent writers do not interleave.
+    // SAFETY: `wide` is a NUL-terminated path alive across the call; no
+    // security attributes, so the handle is not inheritable; append-mode
+    // writes are atomic at end of file, so concurrent writers do not
+    // interleave.
     let handle = unsafe {
         CreateFileW(
             PCWSTR(wide.as_ptr()),
             FILE_APPEND_DATA.0,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
-            Some(&raw const attributes),
+            None,
             OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
             None,
@@ -461,19 +473,49 @@ fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
 /// command line passed them, into the files it reads commands from and
 /// writes messages to.
 ///
+/// The values come from the command line, so what can be checked is: they
+/// must differ, and each must name an open pipe handle in this process. A
+/// value that fails the check is an error rather than a file that would
+/// close some other handle when dropped.
+///
+/// # Errors
+///
+/// Returns an error when the values are equal or either is not an open
+/// pipe handle.
+///
 /// # Safety
 ///
 /// Each value must be an inherited pipe handle this process owns and
-/// nothing else uses; each is owned by exactly one returned file.
-#[must_use]
-pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> (File, File) {
-    // SAFETY: the caller guarantees both are owned, unshared handles.
-    unsafe {
-        (
-            File::from_raw_handle(pipe_in as *mut c_void),
-            File::from_raw_handle(pipe_out as *mut c_void),
-        )
+/// nothing else uses; each is owned by exactly one returned file. The
+/// checks above catch a malformed command line, not a pipe handle some
+/// other part of the process owns.
+pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> io::Result<(File, File)> {
+    if pipe_in == pipe_out {
+        return Err(io::Error::other(
+            "the two pipe handle values on the command line are the same",
+        ));
     }
+    for value in [pipe_in, pipe_out] {
+        let handle = HANDLE(value as *mut c_void);
+        let mut flags = 0u32;
+        // SAFETY: GetHandleInformation only reads the handle table, and
+        // fails for a value that names no open handle.
+        let open = unsafe { GetHandleInformation(handle, &raw mut flags) };
+        // SAFETY: GetFileType only queries an open handle, checked above.
+        let is_pipe = open.is_ok() && unsafe { GetFileType(handle) } == FILE_TYPE_PIPE;
+        if !is_pipe {
+            return Err(io::Error::other(format!(
+                "the handle value {value} on the command line is not an open pipe"
+            )));
+        }
+    }
+    // SAFETY: both values name open pipe handles (checked above), distinct
+    // from each other, and the caller guarantees they are owned and
+    // unshared.
+    let reader = unsafe { File::from_raw_handle(pipe_in as *mut c_void) };
+    // SAFETY: as above.
+    let writer = unsafe { File::from_raw_handle(pipe_out as *mut c_void) };
+    Ok((reader, writer))
 }
 
 fn to_io(error: windows::core::Error) -> io::Error {

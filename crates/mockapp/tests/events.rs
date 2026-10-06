@@ -64,26 +64,22 @@ fn uia_set_name_raises_a_property_changed_event() {
     let root = uia
         .element_from_handle(hwnd.0 as isize, &cache)
         .expect("element_from_handle");
+    // SAFETY: a live client; the condition takes no arguments.
+    let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
     // SAFETY: `root` was built with the base cache request; `TreeScope_Children`
     // and the true condition are standard client-side arguments.
     let children = unsafe {
         root.FindAllBuildCache(
             windows::Win32::UI::Accessibility::TreeScope_Children,
-            &uia.client()
-                .CreateTrueCondition()
-                .expect("CreateTrueCondition"),
+            &condition,
             &cache,
         )
     }
     .expect("FindAllBuildCache");
     let registry =
         verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    // SAFETY: `children` is the array just returned above.
-    let count = unsafe { children.Length() }.unwrap_or(0);
     let mut found_renamed = false;
-    for i in 0..count {
-        // SAFETY: `i` is within `[0, count)`.
-        let child = unsafe { children.GetElement(i) }.expect("GetElement");
+    for child in verbatim_uia::elements_of(&children) {
         let snapshot = verbatim_uia::map::snapshot_from_cached_element(&child, &registry);
         if snapshot.name.as_deref() == Some("Renamed") {
             found_renamed = true;
@@ -231,13 +227,13 @@ fn pump_wait_until(message: &str, mut condition: impl FnMut() -> bool) {
         if condition() {
             return;
         }
-        // SAFETY: standard non-blocking message pump; `msg` is written by
-        // `PeekMessageW` when it returns a message.
-        unsafe {
-            if PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&raw const msg);
-                windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&raw const msg);
-            }
+        // A standard non-blocking message pump.
+        // SAFETY: `msg` is a local the call writes when it returns a message.
+        if unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            // SAFETY: `msg` is the message just retrieved.
+            let _ = unsafe { TranslateMessage(&raw const msg) };
+            // SAFETY: as above.
+            unsafe { windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&raw const msg) };
         }
         assert!(
             Instant::now() < deadline,

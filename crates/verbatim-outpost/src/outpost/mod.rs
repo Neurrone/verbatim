@@ -33,7 +33,7 @@ mod text_reads;
 pub(crate) mod window;
 mod worker;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -82,8 +82,10 @@ pub(crate) struct Context {
     remote_operations: bool,
     /// Windows whose UIA elements could not be imported into a remote
     /// operation (client-side proxies), read the classic way for the
-    /// window's lifetime, since a window's provider does not change.
-    classic_windows: Mutex<HashSet<isize>>,
+    /// window's lifetime, since a window's provider does not change. Each
+    /// is kept with the thread that owned it, so a reused handle, whose
+    /// destroy event was lost, is not read the classic way by mistake.
+    classic_windows: Mutex<HashMap<isize, u32>>,
     /// The focus-following UIA subscription to a text focus's caret and
     /// text changes, which the worker moves (milestone M4).
     text_events: OnceLock<Registration>,
@@ -131,7 +133,7 @@ impl Context {
         self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn classic_windows(&self) -> MutexGuard<'_, HashSet<isize>> {
+    fn classic_windows(&self) -> MutexGuard<'_, HashMap<isize, u32>> {
         self.classic_windows
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -174,12 +176,16 @@ impl Context {
     /// operation: the setting allows it and no import for the window has
     /// failed.
     fn tries_remote(&self, hwnd: Option<isize>) -> bool {
-        self.remote_operations && hwnd.is_none_or(|hwnd| !self.classic_windows().contains(&hwnd))
+        self.remote_operations
+            && hwnd.is_none_or(|hwnd| {
+                self.classic_windows().get(&hwnd) != Some(&window::window_thread(hwnd))
+            })
     }
 
     /// Reads `hwnd`'s UIA elements the classic way from now on.
     fn read_classically(&self, hwnd: isize) {
-        self.classic_windows().insert(hwnd);
+        self.classic_windows()
+            .insert(hwnd, window::window_thread(hwnd));
     }
 
     /// Forgets what was learned about a destroyed window, whose handle may
@@ -248,7 +254,7 @@ impl Outpost {
             tracking: Mutex::new(Tracking::default()),
             focus_properties: OnceLock::new(),
             remote_operations: options.remote_operations,
-            classic_windows: Mutex::new(HashSet::new()),
+            classic_windows: Mutex::new(HashMap::new()),
             text_events: OnceLock::new(),
             caret_events: text_reads::CaretEvents::default(),
             uia_anchors: Mutex::new(Anchors::new(Arc::clone(&anchor_counter))),

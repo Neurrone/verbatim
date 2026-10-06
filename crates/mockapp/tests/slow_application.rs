@@ -110,13 +110,13 @@ fn pump_until<T>(mut value: impl FnMut() -> Option<T>) -> T {
         if let Some(value) = value() {
             return value;
         }
-        // SAFETY: a standard non-blocking message pump; `msg` is written by
-        // `PeekMessageW` when it returns a message.
-        unsafe {
-            if PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&raw const msg);
-                DispatchMessageW(&raw const msg);
-            }
+        // A standard non-blocking message pump.
+        // SAFETY: `msg` is a local the call writes when it returns a message.
+        if unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            // SAFETY: `msg` is the message just retrieved.
+            let _ = unsafe { TranslateMessage(&raw const msg) };
+            // SAFETY: as above.
+            unsafe { DispatchMessageW(&raw const msg) };
         }
         assert!(
             Instant::now() < deadline,

@@ -66,3 +66,16 @@ pub use subscribe::{
     ElementCallback, EventCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback,
     Registration, Scope, Subscription,
 };
+
+/// Releases the UIA objects this crate keeps for the calling thread: the
+/// client behind [`console_reports_formatting`] and [`is_windows_forms`],
+/// and the walker behind [`nearest_window_handle`].
+///
+/// A thread that used any of those calls this before it exits. Otherwise
+/// the objects are released by the thread's thread-local destructors, which
+/// on Windows run with the loader lock held, where COM work must not run.
+/// A later call on the same thread builds the objects again.
+pub fn release_thread_state() {
+    checks::release_thread_client();
+    nearest::release_thread_context();
+}

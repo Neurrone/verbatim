@@ -141,13 +141,14 @@ pub(crate) fn run(backend: Backend, tree: SharedTree, title: &str) -> Result<(),
         .map_err(|error| WindowError(error.to_string()))?;
 
     let mut msg = MSG::default();
-    // SAFETY: standard Win32 message loop; `msg` is written by `GetMessageW`
+    // A standard Win32 message loop; `msg` is written by `GetMessageW`
     // before each dispatch.
-    unsafe {
-        while GetMessageW(&raw mut msg, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&raw const msg);
-            DispatchMessageW(&raw const msg);
-        }
+    // SAFETY: `msg` is a local the call writes; no window filter.
+    while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
+        // SAFETY: `msg` is the message just retrieved.
+        let _ = unsafe { TranslateMessage(&raw const msg) };
+        // SAFETY: as above.
+        unsafe { DispatchMessageW(&raw const msg) };
     }
     Ok(())
 }
@@ -170,9 +171,9 @@ fn register_class(hinstance: windows::Win32::Foundation::HINSTANCE) -> windows::
         lpszClassName: CLASS_NAME,
         ..Default::default()
     };
-    // SAFETY: `class` is fully initialized above; registering the same class
-    // name twice in one process is harmless (mockapp only ever calls this
-    // once), and a real failure surfaces as `RegisterClassExW` returning 0.
+    // SAFETY: `class` is fully initialized above and outlives the call. A
+    // second registration of the same name would fail, returning 0, which
+    // is reported as an error; mockapp registers the class only once.
     let atom = unsafe { RegisterClassExW(&raw const class) };
     if atom == 0 {
         Err(windows::core::Error::from_thread())

@@ -55,40 +55,35 @@ pub trait ElementExt {
     /// an integer (UIA's "not supported" value is not).
     fn cached_i32(&self, property: UIA_PROPERTY_ID) -> Option<i32> {
         let value = self.cached_value(property)?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here.
-        unsafe { variant_i32(&value) }
+        variant_i32(&value)
     }
 
     /// A cached boolean property, `false` when it was not cached or is not a
     /// boolean.
     fn cached_bool(&self, property: UIA_PROPERTY_ID) -> bool {
         self.cached_value(property)
-            // SAFETY: `value` is a VARIANT UIA returned, owned here.
-            .is_some_and(|value| unsafe { variant_bool(&value) })
+            .is_some_and(|value| variant_bool(&value))
     }
 
     /// A cached boolean property, `None` when the element does not support
     /// it or UIA only supplies the property's default.
     fn cached_optional_bool(&self, property: UIA_PROPERTY_ID) -> Option<bool> {
         let value = self.cached_value_ignoring_default(property)?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here.
-        unsafe { variant_optional_bool(&value) }
+        variant_optional_bool(&value)
     }
 
     /// A cached floating-point property, `None` when the element does not
     /// support it or UIA only supplies the property's default.
     fn cached_f64(&self, property: UIA_PROPERTY_ID) -> Option<f64> {
         let value = self.cached_value_ignoring_default(property)?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here.
-        unsafe { variant_f64(&value) }
+        variant_f64(&value)
     }
 
-    /// A cached string property, `None` when it was not cached, not a
-    /// string, or empty.
+    /// A cached property as text, `None` when it was not cached, does not
+    /// convert to text, or is empty. A number or boolean reads as its text.
     fn cached_string(&self, property: UIA_PROPERTY_ID) -> Option<String> {
         let value = self.cached_value(property)?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here.
-        unsafe { variant_string(&value) }
+        variant_string(&value)
     }
 
     /// The cached bounding rectangle, through UIA's typed accessor.
@@ -239,8 +234,7 @@ impl ElementExt for IUIAutomationElement {
         // SAFETY: `self` is a live element (see the module comment); the
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here.
-        Ok(unsafe { variant_i32(&value) })
+        Ok(variant_i32(&value))
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {
@@ -303,7 +297,8 @@ pub fn elements_of(array: &IUIAutomationElementArray) -> Vec<IUIAutomationElemen
     // SAFETY: `array` is a live element array (see the module comment).
     let length = unsafe { array.Length() }.unwrap_or(0);
     (0..length)
-        // SAFETY: `index` is within the array's length.
+        // SAFETY: `array` is live; an index outside it just fails with
+        // `E_INVALIDARG`, and these are all within its length.
         .filter_map(|index| unsafe { array.GetElement(index) }.ok())
         .collect()
 }
@@ -471,7 +466,8 @@ fn ranges_of(array: &IUIAutomationTextRangeArray) -> Vec<IUIAutomationTextRange>
     // SAFETY: `array` is a live range array (see the module comment).
     let length = unsafe { array.Length() }.unwrap_or(0);
     (0..length)
-        // SAFETY: `index` is within the array's length.
+        // SAFETY: `array` is live; an index outside it just fails with
+        // `E_INVALIDARG`, and these are all within its length.
         .filter_map(|index| unsafe { array.GetElement(index) }.ok())
         .collect()
 }

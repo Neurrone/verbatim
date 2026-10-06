@@ -348,6 +348,9 @@ Implementation notes:
   only, so a control that lives in its own child `hwnd` inside the frame — a
   wxWidgets panel has one — is not caught by reading the marker on that child
   alone, and was announcing as a bare "pane" until the ancestor check was added.
+  A marked window counts only when it belongs to Core's process, the
+  outpost's parent (read once from a process snapshot), since any process
+  can set the property on its own windows.
 - `verbatim-gui`'s `force_foreground` (see that crate's section) injects a
   bare `VK_CONTROL` tap before attempting `SetForegroundWindow`: a gesture
   that arrived via the control plane (no physical input, as every E2E test

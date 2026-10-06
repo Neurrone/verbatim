@@ -378,15 +378,18 @@ fn is_systreeview32(hwnd: isize) -> bool {
     window::class_name(hwnd) == "SysTreeView32"
 }
 
-/// Maps an MSAA child id to its `HTREEITEM`, via `TVM_MAPACCIDTOHTREEITEM`.
-/// Falls back to using the child id as the `HTREEITEM` value directly when
-/// the message returns 0: comctl32 versions before v6 have no accid/htreeitem
-/// mapping and use the hItem as the child id outright, exactly as NVDA's
-/// `sysTreeView32.py` (`treeview_hItem`) does.
+/// Maps an MSAA child id to its `HTREEITEM`, via `TVM_MAPACCIDTOHTREEITEM`,
+/// 0 when it maps to none. When the message returns 0 from a control older
+/// than comctl32 version 6, which has no such mapping and uses the item
+/// handle as the child id outright, the child id itself is the item, as
+/// NVDA's `sysTreeView32.py` (`treeview_hItem`) takes it. A version 6
+/// control answering 0 has no such item (it may just have been deleted),
+/// and its answer is kept: the control would treat the child id as a
+/// pointer into its own memory.
 fn htreeitem_for_acc_id(hwnd: isize, acc_id: i32) -> isize {
     let wparam = usize::try_from(acc_id.cast_unsigned()).unwrap_or(0);
     let mapped = window::tree_view_item_for_acc_id(hwnd, wparam);
-    if mapped == 0 {
+    if mapped == 0 && !window::is_common_control_6(hwnd) {
         isize::try_from(acc_id).unwrap_or(0)
     } else {
         mapped
@@ -394,16 +397,16 @@ fn htreeitem_for_acc_id(hwnd: isize, acc_id: i32) -> isize {
 }
 
 /// Maps an `HTREEITEM` back to its MSAA child id, via
-/// `TVM_MAPHTREEITEMTOACCID`. Falls back to using the `HTREEITEM` value
-/// itself as the child id when the message returns 0, the same comctl32 <
-/// v6 fallback [`htreeitem_for_acc_id`] documents.
-fn acc_id_for_htreeitem(hwnd: isize, hitem: isize) -> i32 {
+/// `TVM_MAPHTREEITEMTOACCID`, `None` when it maps to none. A control older
+/// than comctl32 version 6 answers 0 and uses the item handle as the child
+/// id, the fallback [`htreeitem_for_acc_id`] documents.
+fn acc_id_for_htreeitem(hwnd: isize, hitem: isize) -> Option<i32> {
     let wparam = usize::try_from(hitem).unwrap_or(0);
     let mapped = window::tree_view_acc_id_for_item(hwnd, wparam);
-    if mapped == 0 {
-        i32::try_from(hitem).unwrap_or(0)
+    if mapped == 0 && !window::is_common_control_6(hwnd) {
+        i32::try_from(hitem).ok()
     } else {
-        i32::try_from(mapped).unwrap_or(0)
+        i32::try_from(mapped).ok().filter(|&id| id != 0)
     }
 }
 
@@ -427,7 +430,7 @@ fn tree_view_relation_acc_id(hwnd: isize, acc_id: i32, relation: u32) -> Option<
     if neighbor_hitem == 0 {
         return None;
     }
-    Some(acc_id_for_htreeitem(hwnd, neighbor_hitem))
+    acc_id_for_htreeitem(hwnd, neighbor_hitem)
 }
 
 /// The four navigation directions of a navigation [`QueryKind`] (parent,

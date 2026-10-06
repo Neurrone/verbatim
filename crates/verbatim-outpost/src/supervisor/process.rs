@@ -6,15 +6,12 @@
 use std::io;
 use std::path::Path;
 
-use windows::Win32::Foundation::{HWND, LPARAM, STILL_ACTIVE};
+use windows::Win32::Foundation::STILL_ACTIVE;
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     QueryFullProcessImageNameW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowThreadProcessId, IsHungAppWindow, IsWindowVisible,
-};
-use windows::core::{BOOL, PWSTR};
+use windows::core::PWSTR;
 
 use verbatim_model::Pid;
 pub(super) use verbatim_process::ChildPipes;
@@ -100,16 +97,17 @@ pub(super) fn launch(
 pub(super) fn process_is_alive(pid: Pid) -> bool {
     // SAFETY: OpenProcess with a query-only access right fails safely on an
     // invalid or inaccessible pid; the handle is closed before returning.
-    unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) else {
-            return false;
-        };
-        let mut exit_code = 0u32;
-        let alive = GetExitCodeProcess(handle, &raw mut exit_code).is_ok()
-            && exit_code == STILL_ACTIVE.0.cast_unsigned();
-        let _ = windows::Win32::Foundation::CloseHandle(handle);
-        alive
-    }
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) })
+    else {
+        return false;
+    };
+    let mut exit_code = 0u32;
+    // SAFETY: `handle` is open with query access; `exit_code` is a local.
+    let alive = unsafe { GetExitCodeProcess(handle, &raw mut exit_code) }.is_ok()
+        && exit_code == STILL_ACTIVE.0.cast_unsigned();
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+    alive
 }
 
 /// Whether any visible top-level window of `pid` is reported hung by the
@@ -117,37 +115,10 @@ pub(super) fn process_is_alive(pid: Pid) -> bool {
 /// that application's outpost are expected, and a replacement outpost would
 /// hang the same way.
 pub(super) fn application_is_hung(pid: Pid) -> bool {
-    struct Search {
-        pid: u32,
-        hung: bool,
-    }
-    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        // SAFETY: `lparam` is the `Search` passed below, alive for the call.
-        let search = unsafe { &mut *(lparam.0 as *mut Search) };
-        let mut owner = 0u32;
-        // SAFETY: both calls tolerate any window handle.
-        unsafe {
-            GetWindowThreadProcessId(hwnd, Some(&raw mut owner));
-            if owner == search.pid
-                && IsWindowVisible(hwnd).as_bool()
-                && IsHungAppWindow(hwnd).as_bool()
-            {
-                search.hung = true;
-                return false.into();
-            }
-        }
-        true.into()
-    }
-    let mut search = Search {
-        pid: pid.0,
-        hung: false,
-    };
-    // SAFETY: `visit` reads the search state passed here and nothing else; the
-    // state outlives the synchronous EnumWindows call.
-    unsafe {
-        let _ = EnumWindows(Some(visit), LPARAM((&raw mut search) as isize));
-    }
-    search.hung
+    use crate::outpost::window::{top_level_windows, window_is_hung, window_is_visible};
+    top_level_windows(pid.0)
+        .into_iter()
+        .any(|window| window_is_visible(window) && window_is_hung(window))
 }
 
 /// `pid`'s executable name without its extension, lower-cased, to name its
@@ -155,20 +126,21 @@ pub(super) fn application_is_hung(pid: Pid) -> bool {
 fn image_stem(pid: Pid) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
-    // SAFETY: OpenProcess with a query-only right fails safely; the buffer
-    // outlives the call, which writes at most `length` units; the handle is
-    // closed before returning.
+    // SAFETY: OpenProcess with a query-only right fails safely; the handle
+    // is closed below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) }.ok()?;
+    // SAFETY: `handle` is open with query access; the buffer outlives the
+    // call, which writes at most `length` units.
     let read = unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0).ok()?;
-        let read = QueryFullProcessImageNameW(
+        QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_WIN32,
             PWSTR(buffer.as_mut_ptr()),
             &raw mut length,
-        );
-        let _ = windows::Win32::Foundation::CloseHandle(handle);
-        read
+        )
     };
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
     read.ok()?;
     let path = String::from_utf16_lossy(&buffer[..usize::try_from(length).ok()?]);
     Path::new(&path)

@@ -34,6 +34,10 @@ pub const ESPEAK_ID: &str = verbatim_speech::hosting::synth_ids::ESPEAK;
 /// The data directory's name, looked for next to the executable.
 const DATA_DIR: &str = "espeak-ng-data";
 
+/// The size of eSpeak NG's path buffer on Windows, `_MAX_PATH`, in bytes
+/// including the terminating NUL.
+const MAX_PATH_BYTES: usize = 260;
+
 /// The voice used until another is chosen: English.
 const DEFAULT_VOICE: &str = "gmw/en";
 
@@ -150,16 +154,15 @@ unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEv
     if events.is_null() {
         return 0;
     }
+    // SAFETY: the first event is always present, checked non-null above.
+    let user_data = unsafe { (*events).user_data };
+    if user_data.is_null() {
+        return 0;
+    }
     // SAFETY: eSpeak NG passes the user data given to `espeak_Synth` in
-    // every event, and the first event is always present; the pointer is to
-    // the `Synthesis` alive for the whole synchronous `espeak_Synth` call.
-    let synthesis = unsafe {
-        let user_data = (*events).user_data;
-        if user_data.is_null() {
-            return 0;
-        }
-        &mut *user_data.cast::<Synthesis<'_>>()
-    };
+    // every event; the pointer is to the `Synthesis` alive for the whole
+    // synchronous `espeak_Synth` call, and nothing else uses it meanwhile.
+    let synthesis = unsafe { &mut *user_data.cast::<Synthesis<'_>>() };
     if synthesis.stopped {
         return 1;
     }
@@ -170,9 +173,19 @@ unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEv
         },
         _ => return 0,
     };
-    match synthesis.sink.push_pcm(synthesis.format, samples) {
-        ControlFlow::Continue(()) => 0,
-        ControlFlow::Break(()) => {
+    // A panic in the sink would abort the process at this C boundary; caught,
+    // it stops the synthesis instead, as a sink asking to stop does.
+    let pushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        synthesis.sink.push_pcm(synthesis.format, samples)
+    }));
+    match pushed {
+        Ok(ControlFlow::Continue(())) => 0,
+        Ok(ControlFlow::Break(())) => {
+            synthesis.stopped = true;
+            1
+        }
+        Err(_) => {
+            tracing::error!("an eSpeak NG audio sink panicked; the synthesis stops");
             synthesis.stopped = true;
             1
         }
@@ -218,21 +231,31 @@ unsafe fn read_c(pointer: *const c_char) -> String {
 /// for language "variant").
 fn list(spec: Option<&EspeakVoice>) -> Vec<Choice> {
     let mut choices = Vec::new();
-    // SAFETY: eSpeak NG is initialized; the returned array is
-    // null-terminated and owned by eSpeak NG, read before the next call.
-    unsafe {
-        let mut entry = espeak_ListVoices(spec.map_or(std::ptr::null(), std::ptr::from_ref));
-        while !entry.is_null() && !(*entry).is_null() {
-            let voice = &**entry;
-            choices.push(Choice {
-                // eSpeak NG reports identifiers with the platform's path
-                // separator (`gmw\en` on Windows); they are kept with `/`
-                // so a saved setting means the same everywhere.
-                id: read_c(voice.identifier).replace('\\', "/"),
-                display_name: read_c(voice.name),
-            });
-            entry = entry.add(1);
-        }
+    // The returned array is null-terminated and owned by eSpeak NG, and is
+    // read before the next call.
+    // SAFETY: eSpeak NG is initialized; `spec` is null or a live voice
+    // specification.
+    let mut entry = unsafe { espeak_ListVoices(spec.map_or(std::ptr::null(), std::ptr::from_ref)) };
+    // SAFETY: `entry` is non-null and within the null-terminated array.
+    while !entry.is_null() && !unsafe { *entry }.is_null() {
+        // SAFETY: as above.
+        let element = unsafe { *entry };
+        // SAFETY: the element is a non-null pointer to a voice eSpeak NG
+        // owns.
+        let voice = unsafe { &*element };
+        choices.push(Choice {
+            // eSpeak NG reports identifiers with the platform's path
+            // separator (`gmw\en` on Windows); they are kept with `/`
+            // so a saved setting means the same everywhere.
+            // SAFETY: the voice's strings are null or NUL-terminated, owned
+            // by eSpeak NG.
+            id: unsafe { read_c(voice.identifier) }.replace('\\', "/"),
+            // SAFETY: as above.
+            display_name: unsafe { read_c(voice.name) },
+        });
+        // SAFETY: the element was not the terminator, so the next one is
+        // within the array.
+        entry = unsafe { entry.add(1) };
     }
     choices
 }
@@ -284,6 +307,16 @@ impl EspeakSynth {
         // representable; it accepts the data directory itself.
         let path = c_string(&data.to_string_lossy())
             .map_err(|_| unavailable("the eSpeak NG data path is not representable"))?;
+        // eSpeak NG copies the path, with "/espeak-ng-data" appended, into a
+        // buffer of `_MAX_PATH` bytes, NUL included. A longer path would be
+        // cut short, fail its check, and send eSpeak NG on to the other
+        // places, so it is refused here instead.
+        if path.as_bytes().len() + "/espeak-ng-data".len() >= MAX_PATH_BYTES {
+            return Err(unavailable(format!(
+                "the eSpeak NG data path is too long: {}",
+                data.display()
+            )));
+        }
         // SAFETY: a valid NUL-terminated path; DONT_EXIT makes a failure
         // return rather than end the process.
         let sample_rate = unsafe {

@@ -8,7 +8,9 @@ Public API:
 
 - `WinEventHook::install(target_pid, kinds, callback)` — out-of-context
   WinEvent hooks for a caller-chosen set of event kinds, scoped to one
-  process id (or global for pid zero). Two constant sets name the two
+  process id (or global for pid zero). A thread holds one set at a time,
+  since its hooks share one callback; a second install on the same thread
+  fails. Two constant sets name the two
   callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
   installs — value, state, name, and selection changes
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,

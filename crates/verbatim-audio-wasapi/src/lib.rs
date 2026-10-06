@@ -211,9 +211,11 @@ pub struct WasapiDevice {
     wake: Arc<Event>,
 }
 
-// SAFETY: the COM objects are created and used only on the mixer's audio
-// thread, which owns the device; the struct is moved there before first
-// use, and never shared.
+// SAFETY: the MMDevice and audio client objects are free-threaded objects
+// created in the multithreaded apartment, so moving them to another thread
+// is allowed, provided they are used and released on a thread that has
+// joined COM; the mixer opens, uses, and drops the device on its audio
+// thread, which has. The struct is not `Sync`, so it is never shared.
 unsafe impl Send for WasapiDevice {}
 
 impl WasapiDevice {
@@ -282,88 +284,97 @@ impl WasapiDevice {
     /// Opens a shared-mode stream on the current default render device.
     fn open_stream(&mut self) -> Result<(Stream, DeviceFormat), OpenFailure> {
         let enumerator = self.enumerator().map_err(OpenFailure::Failed)?;
-        // SAFETY: plain COM calls on objects this thread owns; the mix format
-        // pointer is read once and freed with CoTaskMemFree below.
-        unsafe {
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|error| {
-                    let failure = device_error("no default render device", &error);
-                    if error.code() == E_NOTFOUND {
-                        OpenFailure::NoDevice(failure)
-                    } else {
-                        OpenFailure::Failed(failure)
-                    }
-                })?;
-            let client: IAudioClient = device
-                .Activate(CLSCTX_ALL, None)
-                .map_err(|error| device_error("activate audio client", &error))?;
-            let mix = client
-                .GetMixFormat()
-                .map_err(|error| device_error("read the mix format", &error))?;
-            let sample_rate = (*mix).nSamplesPerSec;
-            let channels = (*mix).nChannels;
-            let channel_mask = if (*mix).wFormatTag == WAVE_FORMAT_EXTENSIBLE {
-                (*mix.cast::<WAVEFORMATEXTENSIBLE>()).dwChannelMask
-            } else {
-                0
-            };
-            CoTaskMemFree(Some(mix.cast_const().cast()));
+        // The COM calls below are plain calls on objects this thread owns.
+        // SAFETY: as above.
+        let device =
+            unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.map_err(|error| {
+                let failure = device_error("no default render device", &error);
+                if error.code() == E_NOTFOUND {
+                    OpenFailure::NoDevice(failure)
+                } else {
+                    OpenFailure::Failed(failure)
+                }
+            })?;
+        // SAFETY: as above.
+        let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }
+            .map_err(|error| device_error("activate audio client", &error))?;
+        // SAFETY: as above; the mix format pointer is read once and freed
+        // with CoTaskMemFree below.
+        let mix = unsafe { client.GetMixFormat() }
+            .map_err(|error| device_error("read the mix format", &error))?;
+        // SAFETY: `mix` points to the format the call allocated, at least a
+        // WAVEFORMATEX, which is packed, so any alignment will do.
+        let header = unsafe { mix.read_unaligned() };
+        let sample_rate = header.nSamplesPerSec;
+        let channels = header.nChannels;
+        let channel_mask = if header.wFormatTag == WAVE_FORMAT_EXTENSIBLE {
+            // SAFETY: the tag says the allocation is a WAVEFORMATEXTENSIBLE,
+            // also packed.
+            unsafe { mix.cast::<WAVEFORMATEXTENSIBLE>().read_unaligned() }.dwChannelMask
+        } else {
+            0
+        };
+        // SAFETY: the format was allocated for this caller with the COM task
+        // allocator and is not used again.
+        unsafe { CoTaskMemFree(Some(mix.cast_const().cast())) };
 
-            let block_align = channels * 4;
-            let format = WAVEFORMATEXTENSIBLE {
-                Format: WAVEFORMATEX {
-                    wFormatTag: WAVE_FORMAT_EXTENSIBLE,
-                    nChannels: channels,
-                    nSamplesPerSec: sample_rate,
-                    nAvgBytesPerSec: sample_rate * u32::from(block_align),
-                    nBlockAlign: block_align,
-                    wBitsPerSample: 32,
-                    cbSize: 22,
-                },
-                Samples: WAVEFORMATEXTENSIBLE_0 {
-                    wValidBitsPerSample: 32,
-                },
-                dwChannelMask: channel_mask,
-                SubFormat: SUBTYPE_IEEE_FLOAT,
-            };
-            client
-                .Initialize(
-                    AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK
-                        | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-                        | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                    BUFFER_DURATION_HNS,
-                    0,
-                    (&raw const format).cast(),
-                    None,
-                )
-                .map_err(|error| device_error("initialize the stream", &error))?;
-            let event = Event::new()?;
-            client
-                .SetEventHandle(event.0)
-                .map_err(|error| device_error("set the render event", &error))?;
-            let buffer_frames = client
-                .GetBufferSize()
-                .map_err(|error| device_error("read the buffer size", &error))?;
-            let render: IAudioRenderClient = client
-                .GetService()
-                .map_err(|error| device_error("get the render client", &error))?;
-            Ok((
-                Stream {
-                    client,
-                    render,
-                    event,
-                    channels: usize::from(channels),
-                    running: false,
-                },
-                DeviceFormat {
-                    sample_rate,
-                    channels,
-                    buffer_frames,
-                },
-            ))
+        let block_align = channels * 4;
+        let format = WAVEFORMATEXTENSIBLE {
+            Format: WAVEFORMATEX {
+                wFormatTag: WAVE_FORMAT_EXTENSIBLE,
+                nChannels: channels,
+                nSamplesPerSec: sample_rate,
+                nAvgBytesPerSec: sample_rate * u32::from(block_align),
+                nBlockAlign: block_align,
+                wBitsPerSample: 32,
+                cbSize: 22,
+            },
+            Samples: WAVEFORMATEXTENSIBLE_0 {
+                wValidBitsPerSample: 32,
+            },
+            dwChannelMask: channel_mask,
+            SubFormat: SUBTYPE_IEEE_FLOAT,
+        };
+        // SAFETY: as for the calls above; `format` outlives the call, which
+        // copies it.
+        unsafe {
+            client.Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                BUFFER_DURATION_HNS,
+                0,
+                (&raw const format).cast(),
+                None,
+            )
         }
+        .map_err(|error| device_error("initialize the stream", &error))?;
+        let event = Event::new()?;
+        // SAFETY: as above; the event outlives the client, as `Stream`'s
+        // field order ensures.
+        unsafe { client.SetEventHandle(event.0) }
+            .map_err(|error| device_error("set the render event", &error))?;
+        // SAFETY: as above.
+        let buffer_frames = unsafe { client.GetBufferSize() }
+            .map_err(|error| device_error("read the buffer size", &error))?;
+        // SAFETY: as above.
+        let render: IAudioRenderClient = unsafe { client.GetService() }
+            .map_err(|error| device_error("get the render client", &error))?;
+        Ok((
+            Stream {
+                client,
+                render,
+                event,
+                channels: usize::from(channels),
+                running: false,
+            },
+            DeviceFormat {
+                sample_rate,
+                channels,
+                buffer_frames,
+            },
+        ))
     }
 }
 
@@ -447,17 +458,16 @@ impl AudioDevice for WasapiDevice {
                 // WASAPI does not document, does not matter; `frames` is not
                 // zero, so the pointer is valid. The buffer is released with
                 // the same frame count.
+                let buffer = unsafe { stream.render.GetBuffer(frame_count) }
+                    .map_err(|error| device_error("get the render buffer", &error))?;
+                // SAFETY: as above: `buffer` has room for `bytes` bytes, and
+                // `samples` holds at least that many.
                 unsafe {
-                    let buffer = stream
-                        .render
-                        .GetBuffer(frame_count)
-                        .map_err(|error| device_error("get the render buffer", &error))?;
                     std::ptr::copy_nonoverlapping(samples.as_ptr().cast::<u8>(), buffer, bytes);
-                    stream
-                        .render
-                        .ReleaseBuffer(frame_count, 0)
-                        .map_err(|error| device_error("release the render buffer", &error))
                 }
+                // SAFETY: as above.
+                unsafe { stream.render.ReleaseBuffer(frame_count, 0) }
+                    .map_err(|error| device_error("release the render buffer", &error))
             }
             Output::Silent(silent) => silent.write(samples),
         }
@@ -483,13 +493,12 @@ impl AudioDevice for WasapiDevice {
         match &mut self.output {
             Output::Closed => {}
             Output::Stream(stream) => {
-                // SAFETY: plain COM calls on the stream this device owns. A
-                // stream that fails these is already broken, and the mixer
+                // A stream that fails these is already broken, and the mixer
                 // reopens it on the next error it sees.
-                unsafe {
-                    let _ = stream.client.Stop();
-                    let _ = stream.client.Reset();
-                }
+                // SAFETY: a plain COM call on the stream this device owns.
+                let _ = unsafe { stream.client.Stop() };
+                // SAFETY: as above.
+                let _ = unsafe { stream.client.Reset() };
                 stream.running = false;
             }
             Output::Silent(silent) => silent.stop(),
@@ -498,19 +507,22 @@ impl AudioDevice for WasapiDevice {
 
     fn wait(&mut self, timeout: Duration) {
         let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(INFINITE - 1);
-        // SAFETY: waiting on event handles this device owns.
-        unsafe {
-            match &self.output {
-                Output::Stream(stream) if stream.running => {
-                    let _ =
-                        WaitForMultipleObjects(&[stream.event.0, self.wake.0], false, timeout_ms);
-                }
-                Output::Silent(silent) if silent.is_playing() => {
-                    let _ = WaitForSingleObject(self.wake.0, timeout_ms.min(SILENT_PERIOD_MS));
-                }
-                Output::Closed | Output::Stream(_) | Output::Silent(_) => {
-                    let _ = WaitForSingleObject(self.wake.0, timeout_ms);
-                }
+        // Each wait is on event handles this device owns.
+        match &self.output {
+            Output::Stream(stream) if stream.running => {
+                // SAFETY: as above.
+                let _ = unsafe {
+                    WaitForMultipleObjects(&[stream.event.0, self.wake.0], false, timeout_ms)
+                };
+            }
+            Output::Silent(silent) if silent.is_playing() => {
+                // SAFETY: as above.
+                let _ =
+                    unsafe { WaitForSingleObject(self.wake.0, timeout_ms.min(SILENT_PERIOD_MS)) };
+            }
+            Output::Closed | Output::Stream(_) | Output::Silent(_) => {
+                // SAFETY: as above.
+                let _ = unsafe { WaitForSingleObject(self.wake.0, timeout_ms) };
             }
         }
     }

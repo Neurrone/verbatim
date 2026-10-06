@@ -263,27 +263,32 @@ fn register(uia: &Uia, cache: &IUIAutomationCacheRequest, handler: &Handler, sco
             .collect(),
     };
     for (element, tree_scope) in targets {
-        // SAFETY: the element, cache, and handler are live and owned by this
-        // thread's client; the property slice outlives the call.
-        unsafe {
-            let _ = match handler {
-                Handler::Properties(handler, properties) => {
-                    uia.client().AddPropertyChangedEventHandlerNativeArray(
-                        &element, tree_scope, cache, handler, properties,
-                    )
-                }
-                Handler::Event(handler, event) => uia
-                    .client()
-                    .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler),
-                Handler::Events(handler, events) => events.iter().try_for_each(|event| {
+        // Each call takes the element, cache, and handler, live and owned by
+        // this thread's client.
+        let _ = match handler {
+            // SAFETY: as above; the property slice outlives the call.
+            Handler::Properties(handler, properties) => unsafe {
+                uia.client().AddPropertyChangedEventHandlerNativeArray(
+                    &element, tree_scope, cache, handler, properties,
+                )
+            },
+            // SAFETY: as above.
+            Handler::Event(handler, event) => unsafe {
+                uia.client()
+                    .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler)
+            },
+            Handler::Events(handler, events) => events.iter().try_for_each(|event| {
+                // SAFETY: as above.
+                unsafe {
                     uia.client()
                         .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler)
-                }),
-                Handler::Notifications(handler, client5) => {
-                    client5.AddNotificationEventHandler(&element, tree_scope, cache, handler)
                 }
-            };
-        }
+            }),
+            // SAFETY: as above.
+            Handler::Notifications(handler, client5) => unsafe {
+                client5.AddNotificationEventHandler(&element, tree_scope, cache, handler)
+            },
+        };
     }
 }
 
@@ -317,7 +322,7 @@ mod handlers {
             _newvalue: &VARIANT,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                (self.callback)(element, propertyid.0);
+                crate::com::guarded("property", || (self.callback)(element, propertyid.0));
             }
             Ok(())
         }
@@ -336,7 +341,7 @@ mod handlers {
             eventid: UIA_EVENT_ID,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                (self.callback)(element, eventid.0);
+                crate::com::guarded("event", || (self.callback)(element, eventid.0));
             }
             Ok(())
         }
@@ -358,15 +363,17 @@ mod handlers {
             activityid: &windows_core::BSTR,
         ) -> windows_core::Result<()> {
             if let Some(element) = sender.as_ref() {
-                let display = (!displaystring.is_empty()).then(|| displaystring.to_string());
-                let activity = (!activityid.is_empty()).then(|| activityid.to_string());
-                (self.callback)(
-                    element,
-                    notificationkind,
-                    notificationprocessing,
-                    display,
-                    activity,
-                );
+                crate::com::guarded("notification", || {
+                    let display = (!displaystring.is_empty()).then(|| displaystring.to_string());
+                    let activity = (!activityid.is_empty()).then(|| activityid.to_string());
+                    (self.callback)(
+                        element,
+                        notificationkind,
+                        notificationprocessing,
+                        display,
+                        activity,
+                    );
+                });
             }
             Ok(())
         }

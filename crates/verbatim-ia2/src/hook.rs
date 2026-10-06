@@ -33,9 +33,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
     EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
     EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
-    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GetClassNameW,
-    OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW,
-    WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_ALERT,
+    OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
 };
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -169,17 +168,30 @@ impl WinEventHook {
     /// delivering to `callback`. Call this on the thread that runs the message
     /// loop. The per-application outpost passes [`APP_SUBSCRIPTIONS`]; the
     /// focus listener passes [`LISTENER_SUBSCRIPTIONS`] with `target_pid` zero.
+    /// One set of hooks at a time per thread: the thread's callback is
+    /// shared by every hook on it.
     ///
     /// # Errors
     ///
-    /// Returns an error string if any hook fails to install; any hooks already
-    /// installed by this call are removed before returning.
+    /// Returns an error string if this thread already has a set of hooks, or
+    /// if any hook fails to install; any hooks already installed by this
+    /// call are removed before returning.
     pub fn install(
         target_pid: u32,
         kinds: &[WinEventKind],
         callback: WinEventCallback,
     ) -> Result<Self, String> {
-        CALLBACK.with(|slot| *slot.borrow_mut() = Some(callback));
+        let installed = CALLBACK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_some() {
+                return false;
+            }
+            *slot = Some(callback);
+            true
+        });
+        if !installed {
+            return Err("this thread already has a set of WinEvent hooks".to_owned());
+        }
         let mut hooks = Vec::with_capacity(SUBSCRIPTIONS.len());
         for (event, kind) in SUBSCRIPTIONS {
             if !kinds.contains(&kind) {
@@ -253,13 +265,7 @@ fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> b
     {
         return false;
     }
-    let class = || {
-        let mut buffer = [0u16; 64];
-        // SAFETY: a local call that writes at most the buffer's length and
-        // tolerates any handle.
-        let length = unsafe { GetClassNameW(hwnd, &mut buffer) };
-        String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
-    };
+    let class = || crate::window::class_name(hwnd.0 as isize);
     match kind {
         WinEventKind::Foreground => !matches!(class().as_str(), "Progman" | "Shell_TrayWnd"),
         WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {

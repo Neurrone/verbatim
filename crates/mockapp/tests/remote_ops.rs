@@ -54,17 +54,14 @@ impl Fixture {
     fn find(&self, name: &str) -> IUIAutomationElement {
         let cache = self.uia.base_cache_request().expect("base cache request");
         let value = VARIANT::from(BSTR::from(name));
-        // SAFETY: a live client and root element; a search by name.
-        unsafe {
-            let condition = self
-                .uia
-                .client()
-                .CreatePropertyCondition(UIA_NamePropertyId, &value)
-                .expect("condition");
-            self.root
-                .FindFirstBuildCache(TreeScope_Descendants, &condition, &cache)
-                .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
-        }
+        let condition = self
+            .uia
+            .property_condition(UIA_NamePropertyId, &value)
+            .expect("condition");
+        self.root
+            .find_first_build_cache(TreeScope_Descendants, &condition, &cache)
+            .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
+            .unwrap_or_else(|| panic!("no element named {name:?}"))
     }
 
     /// Focuses fixture node `id`, named `name`, and returns its element
@@ -73,8 +70,7 @@ impl Fixture {
         self.app.send(&format!("focus {id}"));
         let element = self.find(name);
         common::wait_until(&format!("{name} has the keyboard focus"), || {
-            // SAFETY: a live element; a live read.
-            unsafe { element.CurrentHasKeyboardFocus() }.is_ok_and(windows::core::BOOL::as_bool)
+            element.has_keyboard_focus().unwrap_or(false)
         });
         element
     }
@@ -114,8 +110,7 @@ fn cached_view(element: &IUIAutomationElement, registry: &NodeIdRegistry) -> Str
         if LEFT_OUT_WHEN_UNSUPPORTED.contains(&property) {
             continue;
         }
-        // SAFETY: a live element built with the base properties.
-        let value = unsafe { element.GetCachedPropertyValue(property) };
+        let value = element.cached_value(property);
         let _ = write!(
             view,
             "\n{}: {:?}",

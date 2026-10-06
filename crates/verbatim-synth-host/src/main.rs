@@ -33,9 +33,14 @@ fn main() -> ExitCode {
         eprintln!("usage: verbatim-synth-host --pipe-in <handle> --pipe-out <handle> --synth <id>");
         return ExitCode::from(2);
     };
-    // SAFETY: the values name the pipe ends Core created for this process,
-    // which it inherited and nothing else uses.
-    let (from_core, to_core) = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+    // SAFETY: Core passes the values of the pipe ends it created for this
+    // process, which inherited them and uses them nowhere else;
+    // `inherited_pipes` checks that they are distinct open pipes, so a
+    // malformed command line fails here.
+    let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
+    let Ok((from_core, to_core)) = pipes.inspect_err(|error| eprintln!("{error}")) else {
+        return ExitCode::from(2);
+    };
     let mut to_core = BufWriter::new(to_core);
 
     // Logged before and after building the synthesizer, so a host that

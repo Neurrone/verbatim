@@ -3,8 +3,12 @@
 //! any thread and cannot block on a hung application.
 
 use std::ffi::c_void;
+use std::sync::OnceLock;
 
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW, GetWindowThreadProcessId,
@@ -33,14 +37,54 @@ fn hwnd(handle: isize) -> HWND {
     HWND(handle as *mut c_void)
 }
 
-/// Whether `handle` carries Core's hidden-main-frame marker property
-/// (decision D9; see [`verbatim_model::HIDDEN_FRAME_WINDOW_PROP`]).
+/// Whether `handle` is Core's hidden main frame: it carries the marker
+/// property (decision D9; see [`verbatim_model::HIDDEN_FRAME_WINDOW_PROP`])
+/// and belongs to Core's process. Any process can set the property on its
+/// own windows, so the owner is checked too; Core is this outpost's parent,
+/// which launched it.
 pub(super) fn window_is_hidden_frame(handle: isize) -> bool {
     let name = HSTRING::from(HIDDEN_FRAME_WINDOW_PROP);
     // SAFETY: GetPropW reads a window property by name; an invalid or
     // property-less window yields a null handle.
     let value = unsafe { GetPropW(hwnd(handle), &name) };
-    !value.0.is_null()
+    !value.0.is_null() && core_pid().is_some_and(|core| window_owner(handle).1 == core)
+}
+
+/// Core's process id: this process's parent, read once. `None` when it
+/// cannot be read.
+fn core_pid() -> Option<u32> {
+    static CORE: OnceLock<Option<u32>> = OnceLock::new();
+    *CORE.get_or_init(parent_pid)
+}
+
+/// This process's parent's id, from a snapshot of the running processes.
+/// Core's outposts end with Core (they run in its kill-on-close job), so
+/// the id cannot have been reused while this process runs under Core.
+fn parent_pid() -> Option<u32> {
+    // SAFETY: a process snapshot has no preconditions; the handle is owned
+    // here and closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ok()?;
+    let own = std::process::id();
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(0),
+        ..Default::default()
+    };
+    let mut parent = None;
+    // SAFETY: `snapshot` is the valid snapshot just taken; `entry` has its
+    // `dwSize` set, as the call requires.
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while has_entry {
+        if entry.th32ProcessID == own {
+            parent = Some(entry.th32ParentProcessID);
+            break;
+        }
+        // SAFETY: as above; the call overwrites `entry` with the next
+        // process.
+        has_entry = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the snapshot handle is owned here and closed once.
+    let _ = unsafe { CloseHandle(snapshot) };
+    parent
 }
 
 /// Whether `handle` is Core's hidden main frame or a child window of it. The
@@ -58,7 +102,7 @@ pub(super) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
 
 /// `handle`'s top-level window (`GetAncestor` with `GA_ROOT`), or 0 for an
 /// invalid handle.
-pub(super) fn top_level_of(handle: isize) -> isize {
+pub(crate) fn top_level_of(handle: isize) -> isize {
     // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
     // one.
     unsafe { GetAncestor(hwnd(handle), GA_ROOT) }.0 as isize
@@ -95,12 +139,9 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
     let window = hwnd(handle);
     // SAFETY: GetAncestor tolerates any handle, returning null for an
     // invalid one.
-    let (root, root_owner) = unsafe {
-        (
-            GetAncestor(window, GA_ROOT),
-            GetAncestor(window, GA_ROOTOWNER),
-        )
-    };
+    let root = unsafe { GetAncestor(window, GA_ROOT) };
+    // SAFETY: as above.
+    let root_owner = unsafe { GetAncestor(window, GA_ROOTOWNER) };
     let root = if root.0.is_null() { window } else { root };
     let root_owner = if root_owner.0.is_null() {
         root
@@ -114,23 +155,20 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
                 cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
                 ..Default::default()
             };
-            // SAFETY: `info` has cbSize set before the call; IsChild tolerates
-            // any pair of handles.
-            unsafe {
-                GetGUIThreadInfo(0, &raw mut info).is_ok()
-                    && !info.hwndActive.0.is_null()
-                    && (info.hwndActive == window || IsChild(info.hwndActive, window).as_bool())
-            }
+            // SAFETY: `info` has cbSize set before the call.
+            unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok()
+                && !info.hwndActive.0.is_null()
+                && (info.hwndActive == window
+                    // SAFETY: IsChild tolerates any pair of handles.
+                    || unsafe { IsChild(info.hwndActive, window) }.as_bool())
         });
-    // SAFETY: GetForegroundWindow has no preconditions; GetAncestor
-    // tolerates any handle.
-    let in_foreground = unsafe {
-        let foreground = GetForegroundWindow();
-        !foreground.0.is_null()
-            && (root == foreground
-                || root_owner == foreground
-                || root_owner == GetAncestor(foreground, GA_ROOTOWNER))
-    };
+    // SAFETY: GetForegroundWindow has no preconditions.
+    let foreground = unsafe { GetForegroundWindow() };
+    let in_foreground = !foreground.0.is_null()
+        && (root == foreground
+            || root_owner == foreground
+            // SAFETY: GetAncestor tolerates any handle.
+            || root_owner == unsafe { GetAncestor(foreground, GA_ROOTOWNER) });
     WindowFacts {
         top_level: window_handle(root.0 as isize),
         root_owner: window_handle(root_owner.0 as isize),
@@ -158,7 +196,7 @@ pub(super) fn window_is_foreground(handle: isize) -> bool {
 /// Whether `handle`'s top-level window is reported hung by the system
 /// (`IsHungAppWindow`). Events from a hung window are dropped before any
 /// read, as NVDA's `_shouldSkipEventForHungWindow` does.
-pub(super) fn window_is_hung(handle: isize) -> bool {
+pub(crate) fn window_is_hung(handle: isize) -> bool {
     let root = top_level_of(handle);
     let target = if root == 0 { handle } else { root };
     // SAFETY: IsHungAppWindow tolerates any handle.
@@ -167,7 +205,7 @@ pub(super) fn window_is_hung(handle: isize) -> bool {
 
 /// The id of the thread that owns `handle`, or 0 for none. Batch limits are
 /// counted per application UI thread, as NVDA counts them.
-pub(super) fn window_thread(handle: isize) -> u32 {
+pub(crate) fn window_thread(handle: isize) -> u32 {
     if handle == 0 {
         return 0;
     }
@@ -190,17 +228,12 @@ pub(super) fn window_text(handle: isize) -> Option<String> {
 /// `GetForegroundWindow()` if it belongs to `target_pid`, else `None`. Always
 /// a genuine top-level window when it returns `Some`.
 pub(super) fn foreground_window_of(target_pid: u32) -> Option<isize> {
-    // SAFETY: GetForegroundWindow and GetWindowThreadProcessId both fail
-    // safely rather than blocking.
-    unsafe {
-        let window = GetForegroundWindow();
-        if window.0.is_null() {
-            return None;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(window, Some(&raw mut pid));
-        (pid == target_pid).then_some(window.0 as isize)
+    // SAFETY: GetForegroundWindow has no preconditions.
+    let window = unsafe { GetForegroundWindow() };
+    if window.0.is_null() {
+        return None;
     }
+    (window_owner(window.0 as isize).1 == target_pid).then_some(window.0 as isize)
 }
 
 /// The target's top-level window for a tree dump: its foreground window,
@@ -216,7 +249,7 @@ pub(super) fn main_window_of(target_pid: u32) -> Option<isize> {
 }
 
 /// Whether `handle` is visible.
-fn window_is_visible(handle: isize) -> bool {
+pub(crate) fn window_is_visible(handle: isize) -> bool {
     // SAFETY: IsWindowVisible tolerates any handle.
     unsafe { IsWindowVisible(hwnd(handle)) }.as_bool()
 }
@@ -261,7 +294,7 @@ fn is_another_thread_of_its_application(handle: isize, other: isize) -> bool {
 }
 
 /// The thread and process that own `handle`, zeros for an invalid window.
-fn window_owner(handle: isize) -> (u32, u32) {
+pub(crate) fn window_owner(handle: isize) -> (u32, u32) {
     let mut pid = 0u32;
     // SAFETY: GetWindowThreadProcessId tolerates any handle, returning 0 for
     // an invalid one.
@@ -282,7 +315,7 @@ pub(crate) fn focus_window_of(target_pid: u32) -> Option<isize> {
 }
 
 /// The top-level windows belonging to `target_pid`.
-pub(super) fn top_level_windows(target_pid: u32) -> Vec<isize> {
+pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     struct Search {
         target_pid: u32,
         windows: Vec<isize>,
@@ -290,15 +323,15 @@ pub(super) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
         // SAFETY: `lparam` is the search passed below, alive for the call.
         let search = unsafe { &mut *(lparam.0 as *mut Search) };
-        let mut pid = 0u32;
-        // SAFETY: tolerates any handle.
-        unsafe {
-            GetWindowThreadProcessId(window, Some(&raw mut pid));
-        }
-        if pid == search.target_pid {
-            search.windows.push(window.0 as isize);
-        }
-        BOOL(1)
+        // A panic here would abort the process at the callback's boundary;
+        // caught, it ends the enumeration instead.
+        let visited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (_, pid) = window_owner(window.0 as isize);
+            if pid == search.target_pid {
+                search.windows.push(window.0 as isize);
+            }
+        }));
+        BOOL::from(visited.is_ok())
     }
     let mut search = Search {
         target_pid,

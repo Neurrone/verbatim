@@ -10,9 +10,100 @@ Phase 6, step 2b (phase6-design.md, "Unsafe code", item 3). Reviewed read-only a
   instead of a per-session pipe name, every client checks that the
   pipe's server runs in its own session, which keeps one well-known name
   for the tools), and D1 (fab5ce4).
-- The low findings are fixed after M4's Windows work merges, since most
-  of them are in the crates it changes; then
-  `clippy::multiple_unsafe_ops_per_block` is turned on.
+- The low findings were re-checked against the code after M4's Windows
+  work merged (main 4a10bc3) and fixed on 2026-10-06, except where noted:
+  - A1 (a8523db): `verbatim_uia::release_thread_state` drops the
+    thread-local client and walker; the outpost's worker calls it before
+    its thread exits. This is the conventional fix, explicit teardown
+    before thread exit, rather than moving the state into the worker.
+  - A2 (fe53a2b and 4d65829): the four UIA event handlers and the
+    remaining `EnumWindows` callback catch a panic; the supervisor's
+    callback was replaced by the outpost's window helpers.
+  - A3 and A4 (fe53a2b): a SAFEARRAY from UIA must be one-dimensional,
+    with elements of the expected size that own nothing; `init_mta` fails
+    on a single-threaded apartment, and its documentation is corrected.
+  - A5 and C9 (1a5dd8d): `inherited_pipes` rejects equal values and
+    values that are not open pipes; the outpost and the synthesizer host
+    report the error.
+  - A6 (f052395): kept arbitration verdicts and classic-read windows
+    record the window's owning thread and are ignored when it changes.
+    The MSAA registry needed no change, since `acquire` already compares
+    the held object.
+  - A7 (2a2b145): the event thread makes its queue before reporting
+    ready, and `Drop` does not wait on a thread it could not signal.
+  - B4 (b0f61b6): the child-id fallback is taken only for a tree view
+    older than comctl32 version 6. The sibling walk in `position_of`
+    still sends handles the control returned a moment earlier; no message
+    makes that walk atomic, and NVDA makes the same walk.
+  - B5 (f0283bc), B6 (2527d6d), B7 (b2f6995), B8 (b70e5ec).
+  - C2, C3, and C4 (1a5dd8d): child handles are inheritable only around
+    `CreateProcessW`. A process creation elsewhere in Core at that same
+    moment could still inherit them; the module comment says so. Core
+    creates no process another way today.
+  - C5 (640cfd2), C6 (a227cd8), C7 (e80cee3), C8 (638db32).
+  - D2 was fixed with D1 (fab5ce4): the write copies bytes.
+  - D3 (9670e39): `run_gui` refuses a second run, and the bridge's
+    extern block states its thread rule. The bridge functions stay
+    declared safe: they are private to the crate and reachable only from
+    `run_gui` and `GuiCore` methods, and `GuiCore` is not `Sync`.
+    Declaring them `unsafe fn` or giving each a `&GuiCore` argument
+    would rewrite the bridge, which other work is changing now; it
+    remains a possible follow-up.
+  - D4: declined. Re-resolving a tray or taskbar item by name before the
+    click, or invoking it through UIA, changes the dialog's behavior and
+    timing, and the risk is a click on the wrong screen position, not
+    memory safety; NVDA's recipe has the same weakness. It is a product
+    follow-up.
+  - D5 (db125d5), D6 (2fbd011).
+  - D7 (2fbd011) for eSpeak NG: a sink panic stops the synthesis. For
+    the GUI the abort is kept, as the finding allows: cxx aborts on a
+    panic by design, and a panic in GUI state is a bug that should end
+    Core visibly rather than leave it running in an unknown state.
+  - The hidden-frame marker (d0ff6b6): the outposts honor it only on a
+    window of Core's process, the outpost's parent. An outpost started by
+    hand with `--attach` has no Core parent and never suppresses the
+    frame.
+- Wrong or unverifiable SAFETY comments: corrected in the commits above
+  and in a045120, b42338f, and b65562d; the WASAPI `Send` reason now
+  rests on the objects being free-threaded.
+- Unsafe blocks replaced with existing safe wrappers: the `VARIANT`
+  readers (fe53a2b and a045120), the outpost's window queries (4d65829
+  and ee0b254), `verbatim-ia2`'s class-name read (2527d6d), mockapp's
+  tests (936360e), and `shell_items.rs` (db125d5, which adds
+  `Uia::control_view_walker`). Left as they are: `subscribe.rs`'s
+  `GetRootElementBuildCache` and `nearest.rs`'s conditions, which would
+  only move the unsafe call into a wrapper, and the mockapp tests'
+  `FindAllBuildCache`, transaction-timeout, and MSAA calls, which have no
+  public wrapper.
+- `clippy::multiple_unsafe_ops_per_block` is on workspace-wide
+  (b65562d). 45 blocks held more than one operation; each was split so
+  that every operation has its own block and SAFETY comment. The only
+  allow is on the cxx bridge module, whose shims cxx generates.
+- Unsafe sites per crate after these changes, counted as below (code
+  lines with `unsafe {`, `unsafe fn`, `unsafe impl`, or `unsafe extern`,
+  comments excluded), with the count at 4a10bc3 in brackets. Splitting
+  blocks raises a count even where unsafe operations were removed. The
+  total is 548 (474).
+  - verbatim-uia: 90 in src (95)
+  - verbatim-agent: 73 in src (57)
+  - verbatim-ia2: 60 in src (62)
+  - mockapp: 43 in src (39), 32 in tests (33)
+  - verbatim-outpost: 44 in src (38)
+  - verbatim-app: 39 in src (18)
+  - verbatim-control: 33 in src (30)
+  - verbatim-audio-wasapi: 32 in src (18)
+  - verbatim-process: 29 in src (24)
+  - verbatim-synth-espeak: 21 in src (14)
+  - verbatim-gui: 19 in src (17)
+  - verbatim-input-windows: 17 in src (15)
+  - verbatim-core: 0 in src, 9 in tests (unchanged)
+  - verbatim-synth-host: 1 in src, 3 in tests (1 and 1)
+  - verbatim-inspect: 2 in src (unchanged)
+  - verbatim-synth-onecore: 1 in src (unchanged)
+- Follow-ups found on the way, not fixed here: `set_clipboard_text` does
+  not free its global memory when `SetClipboardData` fails, and it opens
+  the clipboard with no owner window, which the documentation says makes
+  `SetClipboardData` fail (B7's related notes).
 
 ## Summary
 

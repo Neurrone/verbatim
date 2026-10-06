@@ -35,10 +35,12 @@ Public API:
   best effort (see Logs below). The outpost supervisor calls it.
 - `inherited_pipes(pipe_in, pipe_out)` — the child side: turns the two
   handle values its command line carried into the files it reads commands
-  from and writes messages to. It is `unsafe` because each value must be
-  an inherited pipe handle the process owns and nothing else uses.
-  `verbatim-synth-host` uses it; the outpost binary still converts its
-  handles itself.
+  from and writes messages to. It checks that the two values differ and
+  that each names an open pipe handle, answering an error otherwise, so a
+  malformed command line fails the start. It is still `unsafe` because
+  each value must be an inherited pipe handle the process owns and nothing
+  else uses, which no check can prove. `verbatim-synth-host` and the
+  outpost binary use it.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

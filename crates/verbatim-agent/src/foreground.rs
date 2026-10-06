@@ -92,7 +92,7 @@ pub fn bring_to_foreground(
                 eprintln!("verbatim-agent: {image_name} is already the foreground window");
                 return Ok(true);
             }
-            force_foreground(window);
+            force_foreground(window, &pids);
             if holds_foreground(window) {
                 eprintln!(
                     "verbatim-agent: {image_name} brought to the foreground{}",
@@ -158,12 +158,12 @@ fn main_window_of(pids: &[u32], title_contains: Option<&str>) -> Option<HWND> {
     unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
         // SAFETY: `lparam` is the search passed below, alive for the call.
         let search = unsafe { &mut *(lparam.0 as *mut Search<'_>) };
-        // SAFETY: each call tolerates any handle.
-        let candidate = unsafe {
-            IsWindowVisible(window).as_bool()
-                && GetWindow(window, GW_OWNER).is_err()
-                && GetWindowTextLengthW(window) > 0
-        };
+        // SAFETY: each call below tolerates any handle.
+        let candidate = unsafe { IsWindowVisible(window) }.as_bool()
+            // SAFETY: as above.
+            && unsafe { GetWindow(window, GW_OWNER) }.is_err()
+            // SAFETY: as above.
+            && unsafe { GetWindowTextLengthW(window) } > 0;
         if candidate
             && search.pids.contains(&window_pid(window))
             && search
@@ -247,31 +247,47 @@ fn nudge_foreground_lock() {
 
 /// Brings `window` to the foreground: directly after the nudge, else while
 /// attached to the current foreground thread's input queue, detaching at
-/// once.
-fn force_foreground(window: HWND) {
+/// once. Nothing is done when `window` no longer belongs to one of `pids`:
+/// it was destroyed since it was found, and its handle may now name an
+/// unrelated window.
+fn force_foreground(window: HWND, pids: &[u32]) {
+    let mut owner = 0u32;
+    // SAFETY: tolerates any handle, writing 0 for an invalid one.
+    unsafe { GetWindowThreadProcessId(window, Some(&raw mut owner)) };
+    if !pids.contains(&owner) {
+        return;
+    }
     nudge_foreground_lock();
-    // SAFETY: every call below tolerates a stale handle; the attachment is
-    // undone before returning.
-    unsafe {
-        let _ = ShowWindow(window, SW_SHOW);
-        let _ = BringWindowToTop(window);
-        if SetForegroundWindow(window).as_bool() {
-            return;
-        }
-        let foreground = GetForegroundWindow();
-        if foreground.is_invalid() {
-            return;
-        }
-        let foreground_thread = GetWindowThreadProcessId(foreground, None);
-        let our_thread = GetCurrentThreadId();
-        if foreground_thread == 0 || foreground_thread == our_thread {
-            return;
-        }
-        if AttachThreadInput(our_thread, foreground_thread, true).as_bool() {
-            let _ = SetForegroundWindow(window);
-            let _ = BringWindowToTop(window);
-            let _ = AttachThreadInput(our_thread, foreground_thread, false);
-        }
+    // Every call below tolerates a stale handle, and the window's owner was
+    // checked just above.
+    // SAFETY: plain window calls taking a handle and a command.
+    let _ = unsafe { ShowWindow(window, SW_SHOW) };
+    // SAFETY: as above.
+    let _ = unsafe { BringWindowToTop(window) };
+    // SAFETY: as above.
+    if unsafe { SetForegroundWindow(window) }.as_bool() {
+        return;
+    }
+    // SAFETY: no preconditions.
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_invalid() {
+        return;
+    }
+    // SAFETY: tolerates any handle, returning 0 for an invalid one.
+    let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, None) };
+    // SAFETY: no preconditions.
+    let our_thread = unsafe { GetCurrentThreadId() };
+    if foreground_thread == 0 || foreground_thread == our_thread {
+        return;
+    }
+    // SAFETY: two thread ids; the attachment is undone just below.
+    if unsafe { AttachThreadInput(our_thread, foreground_thread, true) }.as_bool() {
+        // SAFETY: as for the calls above.
+        let _ = unsafe { SetForegroundWindow(window) };
+        // SAFETY: as above.
+        let _ = unsafe { BringWindowToTop(window) };
+        // SAFETY: undoes the attachment made above.
+        let _ = unsafe { AttachThreadInput(our_thread, foreground_thread, false) };
     }
 }
 

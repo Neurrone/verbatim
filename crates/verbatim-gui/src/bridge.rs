@@ -19,6 +19,10 @@
 
 use crate::{GuiCore, next_category, route_settings_key};
 
+#[allow(
+    clippy::multiple_unsafe_ops_per_block,
+    reason = "cxx generates the shims' unsafe blocks; there is no hand-written unsafe code here"
+)]
 #[cxx::bridge(namespace = "verbatim_gui")]
 pub(crate) mod ffi {
     /// The strings the hidden frame, tray icon, and menu show.
@@ -285,6 +289,12 @@ pub(crate) mod ffi {
         fn next_category(current: usize, count: usize, forward: bool) -> usize;
     }
 
+    // SAFETY: every function here except `wake_event_loop` reads the C++
+    // side's unsynchronized shell state and drives wxWidgets, so it is
+    // called only on the GUI thread: `run_event_loop` from `run_gui`, which
+    // runs once per process, and the rest from `GuiCore` methods while that
+    // loop runs. This module is private to the crate, and `GuiCore` is not
+    // `Sync`, so no other thread can reach a `GuiCore` to call them from.
     unsafe extern "C++" {
         include!("verbatim-gui/cpp/gui.h");
 

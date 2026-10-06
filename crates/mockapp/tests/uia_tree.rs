@@ -385,38 +385,30 @@ fn walk(
     );
 
     let cache = uia.base_cache_request().expect("base cache request");
+    // SAFETY: a live client; the condition takes no arguments.
+    let condition = unsafe { uia.client().CreateTrueCondition() }.unwrap();
     // SAFETY: `element` is a live, cached element on this client's own
     // apartment thread.
-    let children = unsafe {
-        element
-            .FindAllBuildCache(
-                TreeScope_Children,
-                &uia.client().CreateTrueCondition().unwrap(),
-                &cache,
-            )
-            .expect("FindAllBuildCache")
-    };
-    // SAFETY: `children` is the array just returned above.
-    let count = unsafe { children.Length() }.unwrap_or(0);
+    let children = unsafe { element.FindAllBuildCache(TreeScope_Children, &condition, &cache) }
+        .expect("FindAllBuildCache");
+    let children = verbatim_uia::elements_of(&children);
+    let count = children.len();
     // Only the window itself can have host-merged extra children.
     let is_window = snapshot.role == Role::Window;
     if is_window {
         assert!(
-            usize::try_from(count).unwrap_or(0) >= expectation.child_count,
+            count >= expectation.child_count,
             "root reported fewer children ({count}) than the fixture has ({})",
             expectation.child_count
         );
     } else {
         assert_eq!(
-            usize::try_from(count).unwrap_or(0),
-            expectation.child_count,
+            count, expectation.child_count,
             "child count mismatch for {name:?}"
         );
     }
-    for i in 0..count {
-        // SAFETY: `i` is within `[0, count)`.
-        let child = unsafe { children.GetElement(i) }.expect("GetElement");
-        walk(uia, &child, registry, expected, details, visited, is_window);
+    for child in &children {
+        walk(uia, child, registry, expected, details, visited, is_window);
     }
 }
 

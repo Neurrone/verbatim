@@ -310,9 +310,8 @@ impl TextRangeExt for IUIAutomationTextRange {
         count(CallKind::Uia);
         // SAFETY: as in `clone_range`; the attribute id is a plain value.
         let value = unsafe { self.GetAttributeValue(UIA_CultureAttributeId) }?;
-        // SAFETY: `value` is a VARIANT UIA returned, owned here; a mixed or
-        // unsupported value is an object, not an integer.
-        let Some(lcid) = (unsafe { variant_i32(&value) }) else {
+        // A mixed or unsupported value is an object, not an integer.
+        let Some(lcid) = variant_i32(&value) else {
             return Ok(None);
         };
         Ok(locale_name(u32::try_from(lcid).unwrap_or(0)))

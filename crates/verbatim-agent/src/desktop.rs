@@ -55,16 +55,22 @@ pub fn close_windows(title_contains: &str, timeout: Duration) -> u32 {
             .collect()
     };
     for window in matching() {
-        // SAFETY: PostMessageW tolerates a window that has since gone.
+        // Checked again just before the close: a window destroyed since the
+        // enumeration could have its handle reused by an unrelated one.
+        if !window_text(window).contains(title_contains) {
+            continue;
+        }
+        // SAFETY: PostMessageW carries no pointer and tolerates a window
+        // that has since gone; the title was checked just above.
         unsafe {
             let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
     let deadline = Instant::now() + timeout;
     loop {
-        // SAFETY: IsWindow tolerates any handle.
         let remaining = matching()
             .into_iter()
+            // SAFETY: IsWindow tolerates any handle.
             .filter(|&window| unsafe { IsWindow(Some(window)) }.as_bool())
             .count();
         if remaining == 0 || Instant::now() >= deadline {
@@ -103,9 +109,10 @@ fn top_level_windows() -> Vec<HWND> {
     unsafe extern "system" fn visit(window: HWND, lparam: LPARAM) -> BOOL {
         // SAFETY: `lparam` is the vector passed below, alive for the call.
         let windows = unsafe { &mut *(lparam.0 as *mut Vec<HWND>) };
-        // SAFETY: each call tolerates any handle.
-        let candidate =
-            unsafe { IsWindowVisible(window).as_bool() && GetWindow(window, GW_OWNER).is_err() };
+        // SAFETY: tolerates any handle.
+        let visible = unsafe { IsWindowVisible(window) }.as_bool();
+        // SAFETY: as above.
+        let candidate = visible && unsafe { GetWindow(window, GW_OWNER) }.is_err();
         if candidate && !window_text(window).is_empty() {
             windows.push(window);
         }
@@ -142,19 +149,21 @@ fn class_name(window: HWND) -> String {
 fn image_name(pid: u32) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
-    // SAFETY: a query-only open that fails safely; the buffer outlives the
-    // call, which writes at most `length` units; the handle is closed.
+    // SAFETY: a query-only open that fails safely; the handle is closed
+    // below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    // SAFETY: `handle` is open with query access; the buffer outlives the
+    // call, which writes at most `length` units.
     let read = unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let read = QueryFullProcessImageNameW(
+        QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_WIN32,
             PWSTR(buffer.as_mut_ptr()),
             &raw mut length,
-        );
-        let _ = CloseHandle(handle);
-        read
+        )
     };
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { CloseHandle(handle) };
     read.ok()?;
     let path = String::from_utf16_lossy(&buffer[..usize::try_from(length).ok()?]);
     Path::new(&path)

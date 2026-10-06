@@ -124,6 +124,18 @@ impl Uia {
         unsafe { self.client.RawViewWalker() }
     }
 
+    /// A tree walker over UIA's control view, which leaves out elements
+    /// that are only layout. Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the walker cannot be created.
+    pub fn control_view_walker(&self) -> windows::core::Result<IUIAutomationTreeWalker> {
+        // SAFETY: `self.client` is a live IUIAutomation; creating a walker
+        // takes no arguments.
+        unsafe { self.client.ControlViewWalker() }
+    }
+
     /// The desktop's root element, which UIA serves in this process, so the
     /// call is local.
     ///
@@ -674,16 +686,17 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
                 // released, for the life of the process.
                 unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() }?;
                 init_mta()?;
-                // SAFETY: as in `create_client`; then a local call on that
-                // client, released before the thread leaves COM.
+                // SAFETY: as in `create_client`.
                 let result = unsafe {
                     CoCreateInstance::<_, IUIAutomation>(
                         &CUIAutomation8,
                         None,
                         CLSCTX_INPROC_SERVER,
                     )
-                    .and_then(|client| client.CreateCacheRequest().map(drop))
-                };
+                }
+                // SAFETY: a local call on the client just created, released
+                // before the thread leaves COM.
+                .and_then(|client| unsafe { client.CreateCacheRequest() }.map(drop));
                 // SAFETY: balances this thread's `init_mta`.
                 unsafe { windows::Win32::System::Com::CoUninitialize() };
                 result

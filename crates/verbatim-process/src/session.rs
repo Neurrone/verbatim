@@ -43,14 +43,12 @@ pub struct Session {
 /// instead of erroring, since "I could not determine this" is itself part
 /// of the diagnosis.
 pub fn current() -> windows::core::Result<Session> {
-    // SAFETY: GetCurrentProcessId has no preconditions; session_id is a
-    // valid out-pointer for the duration of the call.
-    let session_id = unsafe {
-        let pid = GetCurrentProcessId();
-        let mut session_id = 0u32;
-        ProcessIdToSessionId(pid, &raw mut session_id)?;
-        session_id
-    };
+    // SAFETY: GetCurrentProcessId has no preconditions.
+    let pid = unsafe { GetCurrentProcessId() };
+    let mut session_id = 0u32;
+    // SAFETY: session_id is a valid out-pointer for the duration of the
+    // call.
+    unsafe { ProcessIdToSessionId(pid, &raw mut session_id) }?;
 
     Ok(Session {
         id: session_id,
