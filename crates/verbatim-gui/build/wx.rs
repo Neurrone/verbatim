@@ -154,6 +154,10 @@ fn build(dir: &Path, arch: &str) {
         .out_dir(dir)
         .profile("RelWithDebInfo")
         .define("CMAKE_BUILD_TYPE", "RelWithDebInfo")
+        // The configuration a multi-config generator (Visual Studio, used
+        // on ARM64) must offer: wxWidgets offers only Debug and Release
+        // unless the list is given, and then --config RelWithDebInfo fails.
+        .define("CMAKE_CONFIGURATION_TYPES", "RelWithDebInfo")
         .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL")
         .define("CMAKE_POLICY_DEFAULT_CMP0091", "NEW")
         .define("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT", "Embedded")
