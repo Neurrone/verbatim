@@ -497,6 +497,26 @@ scenario's name is also its
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
 VM (see "cargo xtask vm verbs" below).
 
+The registry also holds demonstrations, its `demo` group
+(`demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,
+`demo_terminal_session`, and `demo_settings_dialog_keys`): scenarios
+written to be recorded as videos for `videos/demos`, showing a feature at
+a viewer's pace, so that each announcement is heard in full before the
+next action, typing included. They are never part of the suite. Their
+`#[test]` wrappers are `#[ignore]`d, so `cargo test -p verbatim-e2e`, here
+and in CI's `e2e` job, skips them; `registry::select` leaves them out when
+no `--scenario` or `--group` is given; and `cargo xtask vm test` refuses
+them by name or group. They follow the suite's rules otherwise: the same
+fixed settings and speech rate, no fixed waits, and assertions on what
+they show, so a broken feature fails the recording rather than producing a
+misleading video. `demo_terminal_session` needs Windows Terminal and fails
+saying so when `wt.exe` cannot be started. `cargo xtask demo <scenario>
+[--name <name>]` records one scenario on this machine: it builds and
+starts an agent of its own, runs the scenario with `--include-ignored` and
+the recording's demo quality, and copies the video to `videos/demos` for
+a demonstration or `videos/tests` for a test scenario (`videos/readme.md`
+describes every video). Like any local run, it takes over the desktop.
+
 Every scenario run, pass or fail, writes a one-line-per-fact summary (name,
 pass or fail, latency counts) to `target/e2e-artifacts/<scenario name>/
 summary.txt` under the workspace root (`VERBATIM_E2E_ARTIFACTS_DIR`

@@ -24,7 +24,7 @@ use std::time::Duration;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Controls between the rate slider and the dialog's buttons are tabbed
 /// through one at a time, up to this many.
 const MAX_TABS_TO_BUTTON: u32 = 12;
@@ -44,18 +44,18 @@ fn trailing_number(text: &str) -> Option<i64> {
         .and_then(|run| run.parse().ok())
 }
 
-/// Opens the Speech settings and Tabs to the rate slider, returning its
-/// value.
 /// Closes the settings dialog with Escape, and waits until it has gone, so
 /// the next gesture cannot reach the GUI before the dialog has seen Escape.
-fn close_dialog(scenario: &mut Scenario) {
+pub(crate) fn close_dialog(scenario: &mut Scenario) {
     scenario.send_keys(&["escape"]).expect("sends escape");
     scenario
         .wait_for_window_to_close("Verbatim Settings", STEP_TIMEOUT)
         .expect("the settings dialog closes on Escape");
 }
 
-fn open_at_rate(scenario: &mut Scenario) -> i64 {
+/// Opens the Speech settings and Tabs to the rate slider, returning its
+/// value.
+pub(crate) fn open_at_rate(scenario: &mut Scenario) -> i64 {
     super::open_speech_settings(scenario, STEP_TIMEOUT);
     let mut heard = String::new();
     for _ in 0..MAX_TABS_TO_BUTTON {
@@ -72,7 +72,7 @@ fn open_at_rate(scenario: &mut Scenario) -> i64 {
 }
 
 /// Tabs from the current control to the button named `button`.
-fn tab_to_button(scenario: &mut Scenario, button: &str, mut heard: String) {
+pub(crate) fn tab_to_button(scenario: &mut Scenario, button: &str, mut heard: String) {
     for _ in 0..MAX_TABS_TO_BUTTON {
         scenario.send_keys(&["tab"]).expect("sends tab");
         heard = scenario

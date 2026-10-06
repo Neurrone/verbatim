@@ -175,7 +175,7 @@ Public API:
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
   and its video's file name, `<name>.mp4` — one identifier, everywhere),
-  `group` (a `Group`: `Speech`, `Shell`, `Navigation`, or `Text`, a
+  `group` (a `Group`: `Speech`, `Shell`, `Navigation`, `Text`, or `Demo`, a
   coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
   `target_images` (image names its `setup` may launch with
@@ -197,12 +197,16 @@ Public API:
   `notepad_editing`, `notepad_review_cursor`, `notepad_say_all`,
   `windows_terminal_commands`, `conhost_commands`,
   `terminal_spoken_password`, `terminal_flood`, and
-  `terminal_review_grid`. Each
+  `terminal_review_grid`; the Demo group holds the demonstrations
+  recorded for `videos/demos` by `cargo xtask demo`,
+  `demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,
+  `demo_terminal_session`, and `demo_settings_dialog_keys`, whose
+  `#[test]` wrappers are `#[ignore]`d so the suite never runs them. Each
   is implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
-  scenario) into a list, erroring
+  scenario but the demonstrations) into a list, erroring
   on any unrecognized name; `run_named` is the thin entry point
   every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
   `run_named`'s internal `run` launches, runs `setup` then `body` then

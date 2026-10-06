@@ -99,6 +99,33 @@ pub(crate) fn open(
     preferred: Terminal,
     scripts: &[(&str, &str)],
 ) -> io::Result<ScenarioState> {
+    open_with(scenario, name, preferred, true, scripts)
+}
+
+/// [`open`] in Windows Terminal, with no console host in its place: for a
+/// demonstration of Windows Terminal, which fails when it cannot be
+/// started.
+///
+/// # Errors
+///
+/// As [`open`], and when Windows Terminal cannot be started.
+pub(crate) fn open_windows_terminal_only(
+    scenario: &mut Scenario,
+    name: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
+    open_with(scenario, name, Terminal::WindowsTerminal, false, scripts)
+}
+
+/// [`open`], using the console host when Windows Terminal is preferred but
+/// cannot be started only when `console_host_fallback` is set.
+fn open_with(
+    scenario: &mut Scenario,
+    name: &str,
+    preferred: Terminal,
+    console_host_fallback: bool,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
     let title = harness_marker(name);
     let directory = format!(r"{}\{title}", scenario.run_directory()?);
     for (file, contents) in scripts {
@@ -115,7 +142,7 @@ pub(crate) fn open(
     // What Verbatim said before the window opens, such as another
     // terminal's focus, is not taken for this one's.
     scenario.speech().wait_until_quiet(STEP_TIMEOUT);
-    let pid = launch(scenario, preferred, &title, &start)?;
+    let pid = launch(scenario, preferred, console_host_fallback, &title, &start)?;
     let image = scenario.bring_titled_window_forward(&title, WINDOW_TIMEOUT)?;
     println!("the terminal window {title:?} belongs to {image}");
     Ok(ScenarioState::Window {
@@ -158,10 +185,12 @@ fn wait_for_caret_on(events: &mut ControlClient, line: &str, timeout: Duration) 
 }
 
 /// Starts the terminal: Windows Terminal when it is preferred and can be
-/// started, the console host otherwise. Returns the launch's pid.
+/// started, the console host otherwise, unless `console_host_fallback` is
+/// off. Returns the launch's pid.
 fn launch(
     scenario: &mut Scenario,
     preferred: Terminal,
+    console_host_fallback: bool,
     title: &str,
     start: &str,
 ) -> io::Result<u32> {
@@ -184,6 +213,11 @@ fn launch(
             Ok(pid) => {
                 println!("terminal: Windows Terminal");
                 return Ok(pid);
+            }
+            Err(error) if !console_host_fallback => {
+                return Err(io::Error::other(format!(
+                    "this scenario needs Windows Terminal, which could not be started: {error}"
+                )));
             }
             Err(error) => println!(
                 "terminal: the console host, since Windows Terminal could not be started: {error}"

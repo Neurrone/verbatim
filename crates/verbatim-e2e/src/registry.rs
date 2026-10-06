@@ -78,6 +78,13 @@
 //!   `terminal_spoken_password`,
 //!   [`terminal_flood`](crate::scenarios::terminal_flood), and
 //!   [`terminal_review_grid`](crate::scenarios::terminal_review_grid)).
+//! - [`Group::Demo`]: demonstrations, recorded as videos for
+//!   `videos/demos` by `cargo xtask demo` and never part of the suite: a
+//!   selection with no `--scenario` or `--group` leaves them out
+//!   ([`select`]), `cargo xtask vm test` refuses them, and their `#[test]`
+//!   wrappers are `#[ignore]`d, so a plain `cargo test -p verbatim-e2e`, as
+//!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
+//!   so a broken feature fails rather than recording a misleading video.
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -89,11 +96,13 @@ use verbatim_control::protocol::LatencyRecord;
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
-    explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
-    notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor, notepad_say_all,
-    object_navigation_in_settings, rapid_tabbing_in_settings, settings_dialog_keys,
-    settings_system_page, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree, terminal_commands, terminal_flood, terminal_review_grid, theme_panel,
+    demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
+    demo_terminal_session, explorer_folder_window, lock_key_announcements,
+    menu_and_settings_dialog, notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor,
+    notepad_say_all, object_navigation_in_settings, rapid_tabbing_in_settings,
+    settings_dialog_keys, settings_system_page, start_menu_search, switch_to_onecore,
+    synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_flood,
+    terminal_review_grid, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -113,6 +122,9 @@ pub enum Group {
     /// Text: editing, the review cursor over text, say-all, and terminals
     /// (milestone M4).
     Text,
+    /// Demonstrations, recorded by `cargo xtask demo` and left out of the
+    /// suite.
+    Demo,
 }
 
 impl Group {
@@ -126,6 +138,7 @@ impl Group {
             Self::Shell => "shell",
             Self::Navigation => "navigation",
             Self::Text => "text",
+            Self::Demo => "demo",
         }
     }
 
@@ -138,6 +151,7 @@ impl Group {
             "shell" => Some(Self::Shell),
             "navigation" => Some(Self::Navigation),
             "text" => Some(Self::Text),
+            "demo" => Some(Self::Demo),
             _ => None,
         }
     }
@@ -404,6 +418,51 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         body: system_information_tree::body,
         teardown: system_information_tree::teardown,
     },
+    ScenarioDef {
+        name: "demo_notepad_editing",
+        group: Group::Demo,
+        target_images: &[],
+        settings: None,
+        setup: demo_notepad_editing::setup,
+        body: demo_notepad_editing::body,
+        teardown: demo_notepad_editing::teardown,
+    },
+    ScenarioDef {
+        name: "demo_review_cursor",
+        group: Group::Demo,
+        target_images: &[],
+        settings: None,
+        setup: demo_review_cursor::setup,
+        body: demo_review_cursor::body,
+        teardown: demo_review_cursor::teardown,
+    },
+    ScenarioDef {
+        name: "demo_say_all",
+        group: Group::Demo,
+        target_images: &[],
+        settings: None,
+        setup: demo_say_all::setup,
+        body: demo_say_all::body,
+        teardown: demo_say_all::teardown,
+    },
+    ScenarioDef {
+        name: "demo_terminal_session",
+        group: Group::Demo,
+        target_images: &[],
+        settings: None,
+        setup: demo_terminal_session::setup,
+        body: demo_terminal_session::body,
+        teardown: demo_terminal_session::teardown,
+    },
+    ScenarioDef {
+        name: "demo_settings_dialog_keys",
+        group: Group::Demo,
+        target_images: &[],
+        settings: None,
+        setup: demo_settings_dialog_keys::setup,
+        body: demo_settings_dialog_keys::body,
+        teardown: demo_settings_dialog_keys::teardown,
+    },
 ];
 
 /// Looks up a scenario by [`ScenarioDef::name`].
@@ -431,7 +490,8 @@ pub fn swept_target_image_names() -> Vec<&'static str> {
 /// Resolves `--scenario` and `--group` selections against `scenarios`
 /// (always [`SCENARIOS`] outside tests) into an ordered, deduplicated list
 /// of matching definitions, preserving registry order. Empty `names` and
-/// `groups` selects every scenario — the default, no-flags behavior of
+/// `groups` selects every scenario but the demonstrations
+/// ([`Group::Demo`]) — the default, no-flags behavior of
 /// `cargo xtask vm test`.
 ///
 /// # Errors
@@ -445,7 +505,10 @@ pub fn select<'a>(
     groups: &[String],
 ) -> Result<Vec<&'a ScenarioDef>, String> {
     if names.is_empty() && groups.is_empty() {
-        return Ok(scenarios.iter().collect());
+        return Ok(scenarios
+            .iter()
+            .filter(|def| def.group != Group::Demo)
+            .collect());
     }
 
     let mut parsed_groups = Vec::with_capacity(groups.len());
@@ -721,7 +784,13 @@ mod tests {
 
     #[test]
     fn group_parse_round_trips_every_variant_name() {
-        for group in [Group::Speech, Group::Shell, Group::Navigation] {
+        for group in [
+            Group::Speech,
+            Group::Shell,
+            Group::Navigation,
+            Group::Text,
+            Group::Demo,
+        ] {
             assert_eq!(Group::parse(group.name()), Some(group));
         }
     }
@@ -761,6 +830,17 @@ mod tests {
         let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
         let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
         assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn select_with_no_filters_leaves_the_demonstrations_out() {
+        let mut scenarios = fixture();
+        scenarios[2].group = Group::Demo;
+        let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
+        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
+        assert_eq!(names, vec!["alpha", "beta"]);
+        let demos = select(&scenarios, &[], &["demo".to_owned()]).expect("demo is a real group");
+        assert_eq!(demos.len(), 1);
     }
 
     #[test]

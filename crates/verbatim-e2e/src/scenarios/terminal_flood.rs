@@ -111,7 +111,7 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 
 /// What one utterance says about the flood.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Spoken {
+pub(crate) enum Spoken {
     /// A flood line, by number.
     Line(u32),
     /// A skipped-lines utterance, with its count when it gives one.
@@ -121,7 +121,7 @@ enum Spoken {
 /// What `text` says about the flood, or `None` when it is not about it.
 /// A sound named in the text (`sound: skipped-lines`) is set aside first,
 /// so a sound alone is not a skipped-lines utterance.
-fn classify(text: &str) -> Option<Spoken> {
+pub(crate) fn classify(text: &str) -> Option<Spoken> {
     if let Some(number) = text.strip_prefix("flood line ") {
         return number.parse().ok().map(Spoken::Line);
     }
@@ -149,7 +149,7 @@ fn classify(text: &str) -> Option<Spoken> {
 /// Checks that `spoken`, the flood utterances heard in full in order,
 /// account for every line from 1 to `last` (this module's doc comment
 /// gives the rules), and that at least one says lines were skipped.
-fn account(spoken: &[Spoken], last: u32) -> Result<(), String> {
+pub(crate) fn account(spoken: &[Spoken], last: u32) -> Result<(), String> {
     let mut previous = 0u32;
     let mut skipped = 0u64;
     let mut uncounted = false;

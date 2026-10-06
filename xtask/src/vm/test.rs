@@ -9,7 +9,9 @@
 //!
 //! - `--scenario <name>` (repeatable) and `--group <name>` (repeatable)
 //!   choose which of `verbatim_e2e::registry::SCENARIOS` to run; with
-//!   neither given, every registered scenario runs.
+//!   neither given, every registered scenario runs except the
+//!   demonstrations (the `demo` group), which are recorded with
+//!   `cargo xtask demo` on a development machine and refused here.
 //!   `--list` prints the registry (name and group, one per line) and exits
 //!   without touching the VM at all — no build, no restore, no deploy.
 //! - `session_info` (`crates/verbatim-e2e/tests/session_info.rs`) is not a
@@ -177,6 +179,16 @@ pub(crate) fn test(host: &dyn Host, repo_root: &Path, flags: TestFlags) -> VmRes
     }
 
     let selected = registry::select(registry::SCENARIOS, &scenarios, &groups)?;
+    if let Some(demo) = selected
+        .iter()
+        .find(|def| def.group == registry::Group::Demo)
+    {
+        return Err(format!(
+            "{} is a demonstration, which the suite never runs; record it on a development \
+             machine with `cargo xtask demo {}`",
+            demo.name, demo.name
+        ));
+    }
     if selected.is_empty() {
         return Err(
             "no scenarios matched the given --scenario/--group filters (a --group with no \

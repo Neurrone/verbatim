@@ -9,6 +9,11 @@ use std::time::Duration;
 
 use crate::scenario::Scenario;
 
+pub(crate) mod demo_notepad_editing;
+pub(crate) mod demo_review_cursor;
+pub(crate) mod demo_say_all;
+pub(crate) mod demo_settings_dialog_keys;
+pub(crate) mod demo_terminal_session;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod menu_and_settings_dialog;
@@ -29,6 +34,47 @@ pub(crate) mod terminal_commands;
 pub(crate) mod terminal_flood;
 pub(crate) mod terminal_review_grid;
 pub(crate) mod theme_panel;
+
+/// How Verbatim speaks `character` on its own, as typed-character echo
+/// says it: a letter or digit as itself, and the punctuation the
+/// demonstrations type by its name in the character table
+/// (`crates/verbatim-i18n/i18n/en/verbatim.ftl`).
+pub(crate) fn character_name(character: char) -> String {
+    match character {
+        ' ' => "space".to_owned(),
+        '.' => "dot".to_owned(),
+        ',' => "comma".to_owned(),
+        '-' => "dash".to_owned(),
+        '\\' => "backslash".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+/// Types `character` and waits until each of `heard` has been heard in
+/// full, in order: the typed-character echo, and before it the finished
+/// word when typed-word echo is on.
+pub(crate) fn type_and_hear(
+    scenario: &mut Scenario,
+    character: char,
+    heard: &[&str],
+    timeout: Duration,
+) {
+    scenario
+        .type_text(&character.to_string())
+        .expect("types the character");
+    for text in heard {
+        scenario.speech().expect_exactly(&[*text], timeout);
+    }
+}
+
+/// Types `text` one character at a time, each echoed by name and heard in
+/// full before the next is typed, so a viewer hears every one.
+pub(crate) fn type_slowly(scenario: &mut Scenario, text: &str, timeout: Duration) {
+    for character in text.chars() {
+        let name = character_name(character);
+        type_and_hear(scenario, character, &[&name], timeout);
+    }
+}
 
 /// Waits for Notepad's window, then its text area, then the text the text
 /// area's announcement ends with, and returns that text once heard in full.

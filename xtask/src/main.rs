@@ -11,7 +11,8 @@
 //! `xtask/src/vm/mod.rs` for the verb list.
 //!
 //! `demo` records one end-to-end scenario on this machine as a video for
-//! the repository's `videos` folder. See `xtask/src/demo.rs`.
+//! the repository's `videos` folder: a test scenario's in `videos/tests`,
+//! a demonstration's in `videos/demos`. See `xtask/src/demo.rs`.
 //!
 //! `nvda` builds the NVDA transcript add-on and captures what NVDA speaks
 //! (`docs/nvda-transcript.md`). See `xtask/src/nvda.rs`.
@@ -68,7 +69,7 @@ fn main() -> ExitCode {
             );
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
             eprintln!(
-                "  demo  record one scenario on this machine as a video in videos/ (cargo xtask demo <scenario> [--name <name>])"
+                "  demo  record one scenario on this machine as a video in videos/tests, or a demonstration in videos/demos (cargo xtask demo <scenario> [--name <name>])"
             );
             eprintln!(
                 "  nvda  build the NVDA transcript add-on, or capture what NVDA speaks; run `cargo xtask nvda` alone for its verbs"

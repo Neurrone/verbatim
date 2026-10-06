@@ -1,21 +1,27 @@
 //! `cargo xtask demo <scenario> [--name <name>]`: records one end-to-end
-//! scenario on this machine as a demonstration video for the repository's
-//! `videos` folder (see `videos/readme.md`).
+//! scenario on this machine as a video for the repository's `videos`
+//! folder (see `videos/readme.md`): a test scenario's into `videos/tests`,
+//! and a demonstration's, one in the registry's demo group, into
+//! `videos/demos`.
 //!
 //! It builds and starts its own agent on a port of its own, runs the
 //! scenario the way the end-to-end suite does, with the recording's demo
 //! quality (`verbatim_e2e::recording::QUALITY_ENV`), and copies the
-//! scenario's video to `videos/<name>.mp4`, the name defaulting to the
-//! scenario's with hyphens for underscores. A scenario that fails leaves
-//! `videos` untouched. Like any local run, it takes over the desktop while
-//! it runs and needs an unlocked one (`docs/tooling.md`).
+//! scenario's video to `<folder>/<name>.mp4`. The name defaults to the
+//! scenario's with hyphens for underscores, without a demonstration's
+//! `demo_` prefix. Demonstrations' tests are ignored, so the suite never
+//! runs them; this runs the scenario with `--include-ignored`. A scenario
+//! that fails leaves `videos` untouched. Like any local run, it takes over
+//! the desktop while it runs and needs an unlocked one
+//! (`docs/tooling.md`).
 
 use std::net::TcpStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use verbatim_e2e::registry::{Group, ScenarioDef};
 use verbatim_e2e::{artifacts, recording, registry};
 
 /// A port of the demo's own, so an agent a developer already runs on the
@@ -31,18 +37,28 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         Err(error) => {
             eprintln!("xtask demo: {error}");
             eprintln!("usage: cargo xtask demo <scenario> [--name <name>]");
-            eprintln!("scenarios:");
-            for def in registry::SCENARIOS {
+            eprintln!("demonstrations, recorded into videos/demos:");
+            for def in registry::SCENARIOS
+                .iter()
+                .filter(|def| is_demonstration(def))
+            {
+                eprintln!("  {}", def.name);
+            }
+            eprintln!("test scenarios, recorded into videos/tests:");
+            for def in registry::SCENARIOS
+                .iter()
+                .filter(|def| !is_demonstration(def))
+            {
                 eprintln!("  {}", def.name);
             }
             return ExitCode::from(2);
         }
     };
-    match record(&scenario, &name) {
+    match record(scenario, &name) {
         Ok(path) => {
             println!("xtask demo: saved {}", path.display());
             println!(
-                "xtask demo: videos/*.mp4 is stored with Git LFS; add the file with `git add` as usual"
+                "xtask demo: the videos are stored with Git LFS; add the file with `git add` as usual"
             );
             ExitCode::SUCCESS
         }
@@ -53,8 +69,22 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     }
 }
 
+/// Whether `def` is a demonstration rather than a test scenario.
+fn is_demonstration(def: &ScenarioDef) -> bool {
+    def.group == Group::Demo
+}
+
+/// The folder under `videos` a scenario's video goes in.
+fn folder(def: &ScenarioDef) -> &'static str {
+    if is_demonstration(def) {
+        "demos"
+    } else {
+        "tests"
+    }
+}
+
 /// The scenario and the video's file name, without its extension.
-fn parse(args: &[String]) -> Result<(String, String), String> {
+fn parse(args: &[String]) -> Result<(&'static ScenarioDef, String), String> {
     let mut scenario = None;
     let mut name = None;
     let mut args = args.iter();
@@ -68,11 +98,17 @@ fn parse(args: &[String]) -> Result<(String, String), String> {
             extra => return Err(format!("unexpected argument {extra}")),
         }
     }
-    let scenario = scenario.ok_or("name a scenario")?;
-    if !registry::SCENARIOS.iter().any(|def| def.name == scenario) {
-        return Err(format!("no scenario is named {scenario}"));
-    }
-    let name = name.unwrap_or_else(|| scenario.replace('_', "-"));
+    let scenario: String = scenario.ok_or("name a scenario")?;
+    let def =
+        registry::find(&scenario).ok_or_else(|| format!("no scenario is named {scenario}"))?;
+    let name = name.unwrap_or_else(|| {
+        let stem = if is_demonstration(def) {
+            def.name.strip_prefix("demo_").unwrap_or(def.name)
+        } else {
+            def.name
+        };
+        stem.replace('_', "-")
+    });
     if name.is_empty()
         || !name
             .chars()
@@ -82,10 +118,11 @@ fn parse(args: &[String]) -> Result<(String, String), String> {
             "{name} is not a usable file name: use letters, digits, hyphens, and underscores"
         ));
     }
-    Ok((scenario, name))
+    Ok((def, name))
 }
 
-fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
+fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
+    let scenario = def.name;
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask lives one directory under the workspace root")
@@ -125,6 +162,7 @@ fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
             scenario,
             "--",
             "--exact",
+            "--include-ignored",
             "--test-threads=1",
         ])
         .env("VERBATIM_E2E_ENDPOINT", format!("127.0.0.1:{AGENT_PORT}"))
@@ -137,9 +175,7 @@ fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
     let _ = agent.0.kill();
     let _ = agent.0.wait();
     if !status.success() {
-        return Err(format!(
-            "{scenario} failed ({status}); videos/ is unchanged"
-        ));
+        return Err(format!("{scenario} failed ({status}); videos is unchanged"));
     }
 
     let video = artifacts::scenario_dir(&artifacts::artifacts_root(), scenario)
@@ -150,7 +186,7 @@ fn record(scenario: &str, name: &str) -> Result<std::path::PathBuf, String> {
             video.display()
         ));
     }
-    let videos = repo_root.join("videos");
+    let videos = repo_root.join("videos").join(folder(def));
     std::fs::create_dir_all(&videos)
         .map_err(|error| format!("could not create {}: {error}", videos.display()))?;
     let destination = videos.join(format!("{name}.mp4"));
@@ -191,11 +227,19 @@ mod tests {
     #[test]
     fn names_the_video_after_the_scenario_unless_told_otherwise() {
         let scenario = registry::SCENARIOS[0].name;
-        let (_, name) = parse(&args(&[scenario])).expect("parses");
+        let (def, name) = parse(&args(&[scenario])).expect("parses");
         assert_eq!(name, scenario.replace('_', "-"));
+        assert_eq!(folder(def), "tests");
         let (_, name) = parse(&args(&[scenario, "--name", "reading-settings"])).expect("parses");
         assert_eq!(name, "reading-settings");
         assert!(parse(&args(&[scenario, "--name", "../escape"])).is_err());
         assert!(parse(&args(&["no_such_scenario"])).is_err());
+    }
+
+    #[test]
+    fn a_demonstration_goes_in_demos_without_its_prefix() {
+        let (def, name) = parse(&args(&["demo_notepad_editing"])).expect("parses");
+        assert_eq!(folder(def), "demos");
+        assert_eq!(name, "notepad-editing");
     }
 }
