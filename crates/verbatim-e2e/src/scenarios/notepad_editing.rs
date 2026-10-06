@@ -75,10 +75,15 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "end", "blank");
 
     // Shift+Home selects back to the start of the line; Shift+Right Arrow
-    // then unselects its first character.
-    press(scenario, "shift+home", "selected delta epsilon");
-    press(scenario, "shift+rightarrow", "unselected d");
-    press(scenario, "end", "blank");
+    // then unselects its first character, the text first, in NVDA's word
+    // order. End leaves the rest of the selection: the character there,
+    // then what it unselected, as NVDA reports it.
+    press(scenario, "shift+home", "delta epsilon selected");
+    press(scenario, "shift+rightarrow", "d unselected");
+    scenario.send_keys(&["end"]).expect("sends end");
+    scenario
+        .speech()
+        .expect_exactly(&["blank", "elta epsilon unselected"], STEP_TIMEOUT);
 
     // Typed characters are echoed; Backspace speaks what it deleted.
     press(scenario, "x", "x");

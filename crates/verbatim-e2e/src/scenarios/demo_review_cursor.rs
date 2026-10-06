@@ -17,7 +17,7 @@
 //!    the Fig row to the Apple row, the column kept all the way.
 //! 3. On the Apple row, Shift+numpad 1 moves to its start ("A"), numpad 5
 //!    reads the word "Apple", and numpad 5 pressed twice spells it.
-//!    Numpad 2 pressed twice describes the character ("Alpha"). Numpad 3
+//!    Numpad 2 pressed twice describes the character ("Alfa"). Numpad 3
 //!    and numpad 1 move to the next character ("p") and back ("A"), and
 //!    numpad 2 pressed three times gives the character code, 65; the move
 //!    between them keeps the third press from counting with the earlier
@@ -110,7 +110,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     review(scenario, "kb:shift+numpad1", "A");
     review_text(scenario, "kb:numpad5", "Apple");
     press_hearing(scenario, &["numpad5", "numpad5"], "p p l e");
-    press_hearing(scenario, &["numpad2", "numpad2"], "Alpha");
+    press_hearing(scenario, &["numpad2", "numpad2"], "Alfa");
     press_hearing(scenario, &["numpad3"], "p");
     press_hearing(scenario, &["numpad1"], "A");
     press_hearing(scenario, &["numpad2", "numpad2", "numpad2"], "65");

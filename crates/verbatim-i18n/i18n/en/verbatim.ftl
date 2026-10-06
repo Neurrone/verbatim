@@ -200,8 +200,9 @@ message-report-new-output-off = report new output off
 
 ## Reader messages with values in them. Wording matches NVDA's.
 
-phrase-selected = selected { $text }
-phrase-unselected = unselected { $text }
+phrase-selected = { $text } selected
+phrase-unselected = { $text } unselected
+phrase-preselected = selected { $text }
 # Used only for 512 characters or more, so always plural.
 phrase-characters = { $count } characters
 phrase-positioned = Positioned at { $x }, { $y }
@@ -418,7 +419,7 @@ character-name-2714 = check
 ## twice and when text is spelled with descriptions; keyed like the names.
 ## A capital letter uses its small letter's description.
 
-character-description-0061 = Alpha
+character-description-0061 = Alfa
 character-description-0062 = Bravo
 character-description-0063 = Charlie
 character-description-0064 = Delta
@@ -441,6 +442,6 @@ character-description-0074 = Tango
 character-description-0075 = Uniform
 character-description-0076 = Victor
 character-description-0077 = Whiskey
-character-description-0078 = X-ray
+character-description-0078 = Xray
 character-description-0079 = Yankee
 character-description-007a = Zulu

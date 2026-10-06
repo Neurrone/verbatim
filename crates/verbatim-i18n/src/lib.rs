@@ -680,6 +680,9 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::Unselected(text) => {
             i18n_embed_fl::fl!(loader, "phrase-unselected", text = selection_text(text))
         }
+        Phrase::Preselected(text) => {
+            i18n_embed_fl::fl!(loader, "phrase-preselected", text = selection_text(text))
+        }
         Phrase::Positioned { x, y } => i18n_embed_fl::fl!(
             loader,
             "phrase-positioned",
@@ -753,7 +756,7 @@ pub fn character_name(character: &str, language: Option<&str>) -> Option<String>
 }
 
 /// The description a character is spoken by when it is asked for twice
-/// ("Alpha" for a), from the character table of `language`; a capital
+/// ("Alfa" for a), from the character table of `language`; a capital
 /// letter has its small letter's description. `None` when the table has
 /// none for it.
 #[must_use]
@@ -1378,8 +1381,8 @@ mod tests {
 
     #[test]
     fn character_descriptions_are_the_phonetic_alphabet() {
-        assert_eq!(character_description("a", None).as_deref(), Some("Alpha"));
-        assert_eq!(character_description("X", None).as_deref(), Some("X-ray"));
+        assert_eq!(character_description("a", None).as_deref(), Some("Alfa"));
+        assert_eq!(character_description("X", None).as_deref(), Some("Xray"));
         assert_eq!(character_description(",", None), None);
     }
 
@@ -1388,15 +1391,19 @@ mod tests {
         use verbatim_model::{Phrase, SelectionText, TypingEcho};
         assert_eq!(
             phrase_text(&Phrase::Selected(SelectionText::Text("hello".into()))),
-            "selected hello"
+            "hello selected"
         );
         assert_eq!(
             phrase_text(&Phrase::Unselected(SelectionText::Character(",".into()))),
-            "unselected comma"
+            "comma unselected"
         );
         assert_eq!(
             phrase_text(&Phrase::Selected(SelectionText::Characters(600))),
-            "selected 600 characters"
+            "600 characters selected"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::Preselected(SelectionText::Text("hello".into()))),
+            "selected hello"
         );
         assert_eq!(
             phrase_text(&Phrase::Positioned { x: 10, y: 20 }),

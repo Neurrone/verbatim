@@ -115,7 +115,7 @@ Public API:
   rather than a property of any node, so it can say something without
   pre-flattening text), and, since M4, `Character` (one character spoken
   on its own, by its name from the character table, "comma", or raised in
-  pitch when a capital), `CharacterDescription` ("Alpha" for a),
+  pitch when a capital), `CharacterDescription` ("Alfa" for a),
   `Mark` (a `SpeechMark`, an index mark reported back when playback
   reaches it), and `Phrase` (a reader message with values in it: `Selected`
   and `Unselected` with a `SelectionText` that is text, one character, or a

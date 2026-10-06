@@ -32,8 +32,8 @@ use verbatim_model::{
 };
 
 use crate::state::{
-    CaretContext, FocusText, PendingCaret, PendingText, ReviewPosition, ReviewText, SrState,
-    TextFollowUp,
+    CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText, ReviewPosition, ReviewText,
+    SrState, TextFollowUp,
 };
 use crate::text;
 
@@ -108,9 +108,9 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     let unit = key.motion.unit();
     let deleted = context.and_then(|caret| deleted_text(caret, key.motion, grid));
     let compare = context.and_then(|caret| compared_text(caret, key.motion, grid));
-    let previous_selection = (key.select || key.motion == CaretMotion::SelectAll)
-        .then(|| {
-            context.map(|caret| match caret.selection {
+    let previous_selection = context.and_then(|caret| {
+        if key.select || key.motion == CaretMotion::SelectAll {
+            Some(match caret.selection {
                 Some(selection) => PreviousSelection {
                     start: selection.start,
                     end: selection.end,
@@ -120,8 +120,20 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
                     end: caret.caret(),
                 },
             })
-        })
-        .flatten();
+        } else {
+            // A movement that leaves a selection unselects it, spoken after
+            // the unit, as NVDA reports any selection change of a control
+            // that reports its selection (`docs/nvda/editable-text-and-terminals.md`,
+            // "Selection changes"). A deletion replaces the selected text.
+            caret
+                .selection
+                .filter(|_| !key.motion.deletes())
+                .map(|selection| PreviousSelection {
+                    start: selection.start,
+                    end: selection.end,
+                })
+        }
+    });
     let watch = CaretWatch {
         since: context.map(CaretContext::caret),
         pressed_at_ms,
@@ -233,11 +245,20 @@ pub(crate) fn caret_reply(
         }
     };
     update_caret(state, pending.node, caret);
-    if segments.is_empty() {
+    let mut effects = Vec::new();
+    if !segments.is_empty() {
+        effects.push(speak(trace_id, segments));
+    }
+    // A movement that unselected text says so after the unit.
+    let unselected = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
         Vec::new()
     } else {
-        vec![speak(trace_id, segments)]
+        selection_segments(&selection_changes)
+    };
+    if !unselected.is_empty() {
+        effects.push(speak(trace_id, unselected));
     }
+    effects
 }
 
 /// The speech for text a Backspace deleted.
@@ -453,7 +474,8 @@ pub(crate) fn focus_selection(
     }
 }
 
-/// The speech for an object's selected text: "selected" and the text, or
+/// The speech for an object's selected text: "selected" and the text (NVDA's
+/// word order for text already selected, unlike a change's), or
 /// its number of characters when there are 512 or more. `None` when nothing
 /// is selected.
 fn selected_segments(text: String) -> Option<Vec<UtteranceSegment>> {
@@ -467,7 +489,7 @@ fn selected_segments(text: String) -> Option<Vec<UtteranceSegment>> {
         SelectionText::Text(text)
     };
     Some(vec![UtteranceSegment::new(SegmentContent::Phrase(
-        Phrase::Selected(selected),
+        Phrase::Preselected(selected),
     ))])
 }
 
@@ -528,32 +550,45 @@ fn line_segments(
     })
 }
 
-/// Starts the rest of an announcement of the navigator object `node`, made
-/// by object navigation or by reporting the current object: an object that
-/// may have text says its text in place of its value, as a focus does
-/// (`docs/nvda/speech.md`, "What an object with text says"), whether or not
-/// it has the focus. The text is the selection, as "selected" and the
-/// selected text, or the line at the caret; a control that reports no caret
-/// reads its first line. The focus's caret, once Core knows it, is read
-/// without asking the outpost; otherwise the outpost is asked for the
-/// selected text, then, when nothing is selected, the caret's line
-/// ([`navigator_text_reply`]). A protected field's text is never read, as
-/// on focus.
+/// Whether the navigator object `node` reads its text in place of its value
+/// (`docs/nvda/speech.md`, "What an object with text says"): an object that
+/// may have text and is not a protected field, whose text is never read.
+pub(crate) fn reads_text(node: &NodeSnapshot) -> bool {
+    may_have_text(node.role) && !node.states.contains(State::Protected)
+}
+
+/// Reads the text of the navigator object `node` for `read`: for its
+/// announcement, made by object navigation or by reporting the current
+/// object, an object that may have text says its text in place of its
+/// value, as a focus does (`docs/nvda/speech.md`, "What an object with text
+/// says"), whether or not it has the focus; reporting it a second or third
+/// time spells or copies its name and that text. The text is the selection,
+/// announced as "selected" and the selected text, or the line at the caret;
+/// a control that reports no caret reads its first line. The focus's caret,
+/// once Core knows it, is read without asking the outpost; otherwise the
+/// outpost is asked for the selected text, then, when nothing is selected,
+/// the caret's line ([`navigator_text_reply`]). A protected field's text is
+/// never read, as on focus.
 pub(crate) fn navigator_text(
     state: &mut SrState,
     trace_id: TraceId,
     node: &NodeSnapshot,
+    read: NavigatorRead,
 ) -> Vec<Effect> {
-    if !may_have_text(node.role) || node.states.contains(State::Protected) {
+    if !reads_text(node) {
         return Vec::new();
     }
     let (start, end) = match state.caret.as_ref().filter(|caret| caret.node == node.id) {
         Some(caret) => match caret.selection {
             Some(selection) => (TextPoint::At(selection.start), TextPoint::At(selection.end)),
-            None => {
+            None if read == NavigatorRead::Announce => {
                 return caret_line(state, node.id)
                     .map(|segments| vec![speak_about(trace_id, node, segments)])
                     .unwrap_or_default();
+            }
+            None => {
+                let line = text::line_content(&caret.line.text, is_grid(node.role)).to_owned();
+                return named_text(trace_id, node, read, &line);
             }
         },
         None => (TextPoint::SelectionStart, TextPoint::SelectionEnd),
@@ -562,8 +597,31 @@ pub(crate) fn navigator_text(
         state,
         node.id,
         TextOp::ReadRange { start, end },
-        TextFollowUp::NavigatorSelection,
+        TextFollowUp::NavigatorSelection(read),
     )
+}
+
+/// Spells or copies, by `read`, the name of `node` followed by `body`, the
+/// text it would announce, as reporting the current object a second or
+/// third time does for an object with text.
+fn named_text(
+    trace_id: TraceId,
+    node: &NodeSnapshot,
+    read: NavigatorRead,
+    body: &str,
+) -> Vec<Effect> {
+    let text = [node.name.as_deref().unwrap_or_default(), body]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.is_empty() {
+        return Vec::new();
+    }
+    match read {
+        NavigatorRead::Copy => vec![Effect::CopyToClipboard(text)],
+        _ => vec![speak_about(trace_id, node, crate::reduce::spelled(&text))],
+    }
 }
 
 /// Asks the outpost of `node` for its text, for the navigator's
@@ -587,10 +645,11 @@ fn navigator_request(
     })]
 }
 
-/// Ends the navigator's announcement with the answer [`navigator_text`]
-/// asked for: the selected text when there is some, else, after asking for
-/// it, the caret's line; the value when the object turns out to have no
-/// text to read. Nothing is said once the navigator has moved on.
+/// Ends what [`navigator_text`] started with the answer it asked for: the
+/// selected text when there is some, else, after asking for it, the caret's
+/// line; the value when the object turns out to have no text to read, and
+/// for spelling or copying the name and value, as for any object. Nothing
+/// is done once the navigator has moved on.
 pub(crate) fn navigator_text_reply(
     state: &mut SrState,
     trace_id: TraceId,
@@ -600,25 +659,49 @@ pub(crate) fn navigator_text_reply(
     let Some(object) = state
         .navigator
         .as_ref()
-        .map(|navigator| &navigator.object)
+        .map(|navigator| navigator.object.clone())
         .filter(|object| object.id == pending.node)
     else {
         return Vec::new();
     };
+    let (TextFollowUp::NavigatorSelection(read) | TextFollowUp::NavigatorLine(read)) = pending.then
+    else {
+        return Vec::new();
+    };
     let segments = match (&pending.then, reply) {
-        (TextFollowUp::NavigatorSelection, TextReply::Range { text, .. }) => {
-            match selected_segments(text) {
-                Some(segments) => segments,
-                None => return navigator_line(state, pending.node),
+        (TextFollowUp::NavigatorSelection(_), TextReply::Range { text, .. }) => {
+            if verbatim_text::graphemes(&text).is_empty() {
+                return navigator_line(state, pending.node, read);
             }
+            if read != NavigatorRead::Announce {
+                return named_text(trace_id, &object, read, &text);
+            }
+            selected_segments(text).unwrap_or_default()
         }
-        (TextFollowUp::NavigatorSelection, TextReply::Unsupported) => {
-            return navigator_line(state, pending.node);
+        (TextFollowUp::NavigatorSelection(_), TextReply::Unsupported) => {
+            return navigator_line(state, pending.node, read);
         }
-        (TextFollowUp::NavigatorLine, TextReply::Read { chunk, .. }) => {
-            line_segments(&chunk, is_grid(object.role), &mut TextAttributes::default())
+        (TextFollowUp::NavigatorLine(_), TextReply::Read { chunk, .. }) => {
+            let grid = is_grid(object.role);
+            if read != NavigatorRead::Announce {
+                return named_text(
+                    trace_id,
+                    &object,
+                    read,
+                    text::line_content(&chunk.text, grid),
+                );
+            }
+            line_segments(&chunk, grid, &mut TextAttributes::default())
         }
         (_, TextReply::NoText | TextReply::Unsupported) => {
+            if read != NavigatorRead::Announce {
+                return named_text(
+                    trace_id,
+                    &object,
+                    read,
+                    object.value.as_deref().unwrap_or_default(),
+                );
+            }
             match object.value.as_ref().filter(|value| !value.is_empty()) {
                 Some(value) => vec![UtteranceSegment::value(value.clone())],
                 None => return Vec::new(),
@@ -626,12 +709,12 @@ pub(crate) fn navigator_text_reply(
         }
         _ => return Vec::new(),
     };
-    vec![speak_about(trace_id, object, segments)]
+    vec![speak_about(trace_id, &object, segments)]
 }
 
 /// Asks for the line at the caret of the navigator object `node`, or its
-/// first line when it reports no caret.
-fn navigator_line(state: &mut SrState, node: NodeId) -> Vec<Effect> {
+/// first line when it reports no caret, for `read`.
+fn navigator_line(state: &mut SrState, node: NodeId, read: NavigatorRead) -> Vec<Effect> {
     navigator_request(
         state,
         node,
@@ -640,7 +723,7 @@ fn navigator_line(state: &mut SrState, node: NodeId) -> Vec<Effect> {
             movement: None,
             unit: TextUnit::Line,
         }),
-        TextFollowUp::NavigatorLine,
+        TextFollowUp::NavigatorLine(read),
     )
 }
 

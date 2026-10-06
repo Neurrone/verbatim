@@ -186,10 +186,14 @@ pub enum SelectionText {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Phrase {
-    /// Text became selected: NVDA's "selected hello".
+    /// Text became selected: NVDA's "hello selected".
     Selected(SelectionText),
-    /// Text stopped being selected: NVDA's "unselected hello".
+    /// Text stopped being selected: NVDA's "hello unselected".
     Unselected(SelectionText),
+    /// Text an object already had selected when it was announced: NVDA's
+    /// "selected hello", the word first as a warning that typing would
+    /// replace it.
+    Preselected(SelectionText),
     /// A text position's place on the screen: NVDA's "Positioned at 10,
     /// 20".
     Positioned {

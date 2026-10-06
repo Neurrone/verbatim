@@ -43,7 +43,7 @@ Public API:
 - `character_name(character, language)` and
   `character_description(character, language)` (milestone M4) — the
   character table: the name a character is spoken by on its own ("comma",
-  "space", "superscript minus") and its description ("Alpha" for a, a
+  "space", "superscript minus") and its description ("Alfa" for a, a
   capital taking its small letter's). Both are keyed by locale: the table
   is the `character-name-` and `character-description-` messages of each
   locale's Fluent file, one per code point in lowercase hexadecimal

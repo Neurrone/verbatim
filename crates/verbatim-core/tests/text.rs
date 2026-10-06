@@ -350,6 +350,111 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
 }
 
 #[test]
+fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() {
+    let mut state = editing(
+        "hello, world
+",
+        5,
+    );
+    let at = |offset| TextPosition {
+        anchor: TextAnchor(100),
+        offset,
+    };
+    let selected = Selection {
+        start: at(0),
+        end: at(5),
+    };
+    // Shift+Home selects "hello".
+    let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        moved: true,
+        caret: CaretReport {
+            line: line(
+                "hello, world
+",
+                100,
+                0,
+            ),
+            selection: Some(selected),
+        },
+        unit: None,
+        selection_changes: Vec::new(),
+    }));
+    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
+
+    // Right Arrow asks how the selection changed from it, and speaks the
+    // character, then the text unselected.
+    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
+    let asked = request(&effects);
+    let TextOp::AwaitCaret(watch) = &asked.op else {
+        panic!("expected a caret wait");
+    };
+    assert_eq!(
+        watch.previous_selection,
+        Some(PreviousSelection {
+            start: at(0),
+            end: at(5)
+        })
+    );
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        moved: true,
+        caret: CaretReport {
+            line: line(
+                "hello, world
+",
+                100,
+                5,
+            ),
+            selection: None,
+        },
+        unit: None,
+        selection_changes: vec![SelectionChange {
+            selected: false,
+            text: "hello".to_owned(),
+            characters: 5,
+        }],
+    }));
+    let effects = reduce(&mut state, &completed(asked.query_id, reply));
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            character(","),
+            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Unselected(
+                SelectionText::Text("hello".to_owned())
+            ))),
+        ]
+    );
+
+    // A deletion replaces a selection rather than unselecting it.
+    let mut state = editing(
+        "hello, world
+",
+        0,
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::NextWord, true));
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        moved: true,
+        caret: CaretReport {
+            line: line(
+                "hello, world
+",
+                100,
+                5,
+            ),
+            selection: Some(selected),
+        },
+        unit: None,
+        selection_changes: Vec::new(),
+    }));
+    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
+    let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
+    let TextOp::AwaitCaret(watch) = &request(&effects).op else {
+        panic!("expected a caret wait");
+    };
+    assert_eq!(watch.previous_selection, None);
+}
+
+#[test]
 fn backspace_speaks_what_it_deleted_once_the_caret_moved() {
     let mut state = editing("abc\n", 2);
     let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
@@ -1156,7 +1261,7 @@ fn a_focused_field_with_text_selected_says_the_selection() {
     assert_eq!(
         spoken(&effects),
         vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("delta epsilon".to_owned()))
+            Phrase::Preselected(SelectionText::Text("delta epsilon".to_owned()))
         ))]
     );
 }
@@ -1525,7 +1630,7 @@ fn navigating_to_an_edit_field_with_a_selection_says_it_is_selected() {
     assert_eq!(
         spoken(&effects),
         vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("second".to_owned()))
+            Phrase::Preselected(SelectionText::Text("second".to_owned()))
         ))]
     );
 }
@@ -1583,5 +1688,67 @@ fn reporting_the_focused_edit_field_reads_its_known_caret_line() {
             UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
             UtteranceSegment::text("one two"),
         ]
+    );
+}
+
+#[test]
+fn reporting_an_edit_field_again_spells_then_copies_its_name_and_caret_line() {
+    let mut state = SrState::new();
+    let mut edit = node(5, Role::EditableText, StateSet::new());
+    edit.value = Some("first\nab cd".to_owned());
+    focus(&mut state, edit);
+    caret_event(&mut state, 5, line("ab cd\n", 100, 1));
+
+    // The second press spells the name and the caret's line, not the value.
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportObject, 1));
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::new(SegmentContent::SpelledCapital("B".to_owned())),
+            UtteranceSegment::text("o"),
+            UtteranceSegment::text("d"),
+            UtteranceSegment::text("y"),
+            UtteranceSegment::new(SegmentContent::Message(Message::Space)),
+            UtteranceSegment::text("a"),
+            UtteranceSegment::text("b"),
+            UtteranceSegment::new(SegmentContent::Message(Message::Space)),
+            UtteranceSegment::text("c"),
+            UtteranceSegment::text("d"),
+        ]
+    );
+
+    // The third copies them.
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportObject, 2));
+    assert_eq!(
+        effects,
+        vec![Effect::CopyToClipboard("Body ab cd".to_owned())]
+    );
+
+    // An object whose caret Core does not know is asked for its selection,
+    // and the selected text is used.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportObject, 2));
+    let asked = request(&effects);
+    assert_eq!(
+        asked.op,
+        TextOp::ReadRange {
+            start: TextPoint::SelectionStart,
+            end: TextPoint::SelectionEnd,
+        }
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            asked.query_id,
+            TextReply::Range {
+                text: "chosen".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(
+        effects,
+        vec![Effect::CopyToClipboard("Body chosen".to_owned())]
     );
 }

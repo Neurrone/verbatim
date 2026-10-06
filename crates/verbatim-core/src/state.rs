@@ -207,13 +207,25 @@ pub(crate) enum TextFollowUp {
     Copy,
     /// A location report.
     Location,
-    /// The selected text of the navigator object was read for its
-    /// announcement: speak it, or with nothing selected read the caret's
-    /// line.
-    NavigatorSelection,
-    /// The caret's line in the navigator object was read for its
-    /// announcement: speak it.
-    NavigatorLine,
+    /// The selected text of the navigator object was read: use it, or with
+    /// nothing selected read the caret's line.
+    NavigatorSelection(NavigatorRead),
+    /// The caret's line in the navigator object was read: use it.
+    NavigatorLine(NavigatorRead),
+}
+
+/// What the navigator object's text is read for: its announcement, or
+/// reporting the current object a second time (spelling) or a third
+/// (copying), which use the name followed by the text, as NVDA's do
+/// (`docs/nvda/speech.md`, "What an object with text says").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum NavigatorRead {
+    /// Said after the rest of the announcement, in place of the value.
+    Announce,
+    /// Spelled with the name, character by character.
+    Spell,
+    /// Copied to the clipboard with the name.
+    Copy,
 }
 
 /// Where the review cursor lands on a line it moved to, and what it says.

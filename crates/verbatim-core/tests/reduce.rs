@@ -1600,7 +1600,7 @@ fn report_object_announces_spells_then_copies() {
     let source = Pid(1);
     let edit = node(
         10,
-        Role::EditableText,
+        Role::ComboBox,
         Some("Name"),
         Some("Ann"),
         StateSet::new(),

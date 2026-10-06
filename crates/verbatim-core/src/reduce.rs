@@ -21,7 +21,9 @@ use verbatim_model::{
 };
 use verbatim_model::{FocusNow, FocusValidity};
 
-use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState, TextFollowUp};
+use crate::state::{
+    Attention, FocusContext, Navigator, NavigatorRead, PendingNavigation, SrState, TextFollowUp,
+};
 use crate::{editing, review, review_text, say_all, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -293,7 +295,7 @@ fn reduce_text_completed(
     {
         if matches!(
             pending.then,
-            TextFollowUp::NavigatorSelection | TextFollowUp::NavigatorLine
+            TextFollowUp::NavigatorSelection(_) | TextFollowUp::NavigatorLine(_)
         ) {
             return editing::navigator_text_reply(state, trace_id, &pending, reply);
         }
@@ -1153,7 +1155,12 @@ fn announce_navigator(
         announce_node(trace_id, SpeechPriority::Queued, object, reason)
     };
     let mut effects = vec![Effect::Speak(utterance)];
-    effects.extend(editing::navigator_text(state, trace_id, object));
+    effects.extend(editing::navigator_text(
+        state,
+        trace_id,
+        object,
+        NavigatorRead::Announce,
+    ));
     effects
 }
 
@@ -1168,6 +1175,18 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
         0 => {
             let object = navigator.object.clone();
             announce_navigator(state, trace_id, &object, Reason::Query)
+        }
+        // An object with text spells or copies its name and the text it
+        // would announce, the selection or the caret's line, as NVDA does
+        // (`docs/nvda/speech.md`, "What an object with text says").
+        1 | 2 if editing::reads_text(&navigator.object) => {
+            let object = navigator.object.clone();
+            let read = if repeat == 1 {
+                NavigatorRead::Spell
+            } else {
+                NavigatorRead::Copy
+            };
+            editing::navigator_text(state, trace_id, &object, read)
         }
         1 => {
             // NVDA spells the name and value joined by a space.
@@ -1200,7 +1219,7 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
 /// The text the report-object copy press puts on the clipboard: the
 /// object's name and value joined by a space, each included only when
 /// present, matching what a user reading the object would expect to paste.
-fn clipboard_text(node: &NodeSnapshot) -> String {
+pub(crate) fn clipboard_text(node: &NodeSnapshot) -> String {
     let mut parts = Vec::new();
     if let Some(name) = node.name.as_ref().filter(|name| !name.is_empty()) {
         parts.push(name.clone());
@@ -1236,7 +1255,7 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
 }
 
 /// `text` spelled character by character, a space spoken as "space".
-fn spelled(text: &str) -> Vec<UtteranceSegment> {
+pub(crate) fn spelled(text: &str) -> Vec<UtteranceSegment> {
     text::spelled(text, false, None)
 }
 

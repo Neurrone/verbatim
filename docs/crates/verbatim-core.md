@@ -376,8 +376,11 @@ then speaks, queued:
   of a line or of the text.
 - Delete and Control+Delete: the character or word now at the caret.
 - Any of them with Shift, and Control+A: what became selected and
-  unselected, NVDA's "selected hello" and "unselected hello", a single
-  character by its name, 512 characters or more as their number.
+  unselected, NVDA's "hello selected" and "hello unselected", a single
+  character by its name, 512 characters or more as their number. A
+  movement without Shift that leaves a selection speaks its unit, then
+  the text it unselected; a deletion does not. Text an object already has
+  selected when it is announced puts the word first, "selected hello".
 
 Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
 A caret key's character, word, or line, and a new focus's first line,

@@ -530,6 +530,16 @@ pub enum CaretMotion {
 }
 
 impl CaretMotion {
+    /// Whether the key deletes text rather than moving the caret: Backspace
+    /// and Delete, alone or with Control.
+    #[must_use]
+    pub const fn deletes(self) -> bool {
+        matches!(
+            self,
+            Self::Backspace | Self::BackspaceWord | Self::Delete | Self::DeleteWord
+        )
+    }
+
     /// The unit spoken after the motion: the character for character keys,
     /// Home, End, and Delete; the provider's word for word keys; the
     /// paragraph for paragraph keys; the line for line, page, and document

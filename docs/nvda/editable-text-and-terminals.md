@@ -44,8 +44,20 @@ does not move any cursor itself.
   polling loop against their TextInfo. This hybrid is the
   compatibility story for the whole Win32 world.
 - Selection changes: `reportSelectionChange` compares old and new
-  selection TextInfos and speaks "selected X" / "unselected X"
-  deltas (`speech.speakSelectionChange`); typed text echo is
+  selection TextInfos and speaks the deltas (`speech.speakSelectionChange`)
+  with the text first: "hello selected" and "hello unselected", a single
+  character by its name ("comma unselected"), and 512 characters or more
+  as their number ("600 characters selected"). Only text an object
+  already has selected when it is announced puts the word first,
+  "selected hello", as a warning that typing would replace it. Controls
+  that report their selection through caret events (UIA text and the
+  standard edit controls, `EditableTextWithAutoSelectDetection` in
+  `NVDAObjects/behaviors.py`) have every selection change on the focus
+  reported this way after the caret event, whatever caused it, so a plain
+  arrow key that collapses a selection is spoken as its unit, then the
+  text it unselected: Right Arrow after Control+A in Notepad says
+  "blank", then "alpha beta gamma delta epsilon unselected". Typed text
+  echo is
   separate ([Keyboard input](input.md) — typed characters arrive via the injected
   reports or UIA textEdit events, filtered against the actual
   control's text where possible to suppress phantom echo from

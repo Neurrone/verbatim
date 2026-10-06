@@ -579,7 +579,12 @@ verified.
   navigator's copy while it rests there, so the report reads the object
   as it is now (it had read the copy taken when focus landed, saying "not
   checked" for a box just checked). The spelled text and the copy wording
-  are covered under the messages entries below.
+  are covered under the messages entries below. An object with text (an
+  edit field, a document, a terminal) spells and copies its name followed
+  by its selected text or the line at its caret, as NVDA does
+  ([Speech](nvda/speech.md), "What an object with text says"): **matched
+  since 2026-10-07**, found by comparing transcripts with NVDA in
+  Notepad, where Verbatim had spelled the whole value.
 - Review and navigator messages and repeated presses (the list in
   [Review modes](nvda/review-modes.md), "Reading commands built on
   review"). Verbatim: **matched since 2026-10-03**: the edge messages
@@ -593,7 +598,7 @@ verified.
   clipboard back, or "Unable to copy". The current character's description
   on a second press and the current line or word spelled with
   descriptions on a third are **matched since 2026-10-06**, from the
-  English character table in `verbatim-i18n` (the phonetic alphabet), and
+  English character table in `verbatim-i18n` (the phonetic alphabet, spelled as NVDA spells it, "Alfa" and "Xray", since 2026-10-07), and
   a punctuation character spoken on its own or spelled is named from the
   same table ("comma"). Raised pitch for
   capitals is **matched since 2026-10-04** (unverified by ear): spelling
@@ -1041,9 +1046,16 @@ verified.
   and Control with Home or End; the paragraph for Control with Up or Down
   Arrow; what Backspace deleted; what Delete left at the caret. A newer key
   supersedes a waiting one and a focus change drops it, NVDA's two
-  short-circuits. Shift movement speaks "selected" and "unselected" with
-  the text, a single character by its name, and 512 characters or more as
-  their number. **Different:** Verbatim never swallows and resends the key,
+  short-circuits. Shift movement speaks the text followed by "selected" or
+  "unselected", NVDA's word order, a single character by its name, and 512
+  characters or more as their number; a movement without Shift that leaves
+  a selection speaks its unit and then the text unselected. Both were
+  corrected on 2026-10-07 after comparing transcripts with NVDA (Verbatim
+  had put "selected" first, NVDA's order only for text already selected
+  when an object is announced, and had said nothing of a selection an
+  arrow key left). **Different:** NVDA reports any selection change of the
+  focus after its caret event, such as one made with the mouse; Verbatim
+  reports those that keys make. **Different:** Verbatim never swallows and resends the key,
   so what Backspace deleted is worked out from Core's copy of the caret's
   line rather than read before the key; a backspace over a line break says
   nothing. NVDA's `caretMovementFailed` event is not offered. **Different:**
