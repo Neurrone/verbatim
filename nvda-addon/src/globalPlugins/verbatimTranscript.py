@@ -118,6 +118,9 @@ class _Server(threading.Thread):
 		self._recorder = recorder
 		self._sessionId = sessionId
 		self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		# NVDA sets a ten-second default timeout on every socket at startup,
+		# which would end an idle accept, or an idle client, with an error.
+		self._listener.settimeout(None)
 		self._listener.bind(("127.0.0.1", PORT_BASE + sessionId))
 		self._listener.listen(1)
 		self._stopping = False
@@ -134,7 +137,12 @@ class _Server(threading.Thread):
 			try:
 				connection, _address = self._listener.accept()
 			except OSError:
-				return
+				if self._stopping:
+					return
+				log.error("verbatimTranscript: accept failed", exc_info=True)
+				time.sleep(1)
+				continue
+			connection.settimeout(None)
 			try:
 				self._serve(connection)
 			except Exception:
