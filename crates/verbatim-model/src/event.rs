@@ -473,6 +473,9 @@ pub enum Input {
     SpeechCancelled,
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
+    /// The details the active theme wants fetched ([`crate::Fetches`]), at
+    /// startup and whenever the theme in use changes.
+    Fetches(crate::Fetches),
 }
 
 /// The name of an action an activation performed, which NVDA speaks after
@@ -568,19 +571,35 @@ pub enum ReviewCommand {
     ReportReviewLocation,
 }
 
-/// A non-speech sound the reducer can ask for, named semantically so
-/// presentation themes (milestone M11) decide what it actually sounds like.
-///
-/// Reserved vocabulary grows variant by variant as policies land; the first
-/// consumer is the recovery ladder's not-responding cue (milestone M3
-/// outpost hardening).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// An event Verbatim indicates at once, outside the speech queue, named
+/// semantically so the active theme decides how it is reported: a sound
+/// played immediately on its own mixer source, words spoken, both, or
+/// nothing (`phase6-design.md`, "Earcons"). Each is an indication of the
+/// catalogue's Events category ([`crate::Indication::of_earcon`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Earcon {
     /// A deadline expired inside a cross-process accessibility call: the
     /// application is not responding and the reducer proceeded with stale
     /// data (architecture section 1, recovery ladder rung one).
     AppNotResponding,
+    /// Verbatim has started.
+    Start,
+    /// Verbatim is exiting.
+    Exit,
+    /// An error was logged.
+    Error,
+    /// Browse mode was turned on.
+    BrowseMode,
+    /// Focus mode was turned on.
+    FocusMode,
+    /// A list of suggestions appeared for the focused field.
+    SuggestionsOpened,
+    /// The list of suggestions went away.
+    SuggestionsClosed,
+    /// A progress bar's value changed; the percentage, from 0 to 100, sets
+    /// the pitch of its tone.
+    Progress(u8),
 }
 
 /// One effect emitted by the reducer and executed by the imperative shell.
@@ -598,7 +617,8 @@ pub enum Effect {
     /// Ask an outpost for more data; completion re-enters as
     /// [`Input::FetchCompleted`].
     Fetch(Query),
-    /// Play a non-speech sound (decision D12; themed in milestone M11).
+    /// Indicate an event at once, as the active theme reports it: a sound
+    /// on its own mixer source, words, both, or nothing.
     PlayEarcon(Earcon),
     /// Activate a node — invoke, toggle, or its default action — in the
     /// application that owns it. Fire-and-forget from the reducer's view;

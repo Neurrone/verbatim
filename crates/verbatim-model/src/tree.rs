@@ -20,7 +20,7 @@ pub enum Backend {
 ///
 /// M1 carries the roles that appear in Verbatim's own menu and settings
 /// dialog plus common shell roles; the set grows with later milestones.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Role {
     /// A top-level window.
@@ -135,8 +135,68 @@ pub enum Role {
     Unknown,
 }
 
+impl Role {
+    /// Every role, in declaration order: the roles of the indication
+    /// catalogue (`crate::Indication`). A role added to the enum is added
+    /// here too.
+    pub const ALL: [Role; 52] = [
+        Role::Window,
+        Role::Dialog,
+        Role::Pane,
+        Role::PropertyPage,
+        Role::Group,
+        Role::MenuBar,
+        Role::Menu,
+        Role::MenuItem,
+        Role::Button,
+        Role::ToggleButton,
+        Role::CheckBox,
+        Role::RadioButton,
+        Role::ComboBox,
+        Role::List,
+        Role::ListItem,
+        Role::Slider,
+        Role::SpinButton,
+        Role::TabControl,
+        Role::Tab,
+        Role::StaticText,
+        Role::EditableText,
+        Role::Link,
+        Role::ToolBar,
+        Role::StatusBar,
+        Role::Tree,
+        Role::TreeItem,
+        Role::SplitButton,
+        Role::DropDownButton,
+        Role::MenuButton,
+        Role::Graphic,
+        Role::ProgressBar,
+        Role::ScrollBar,
+        Role::Table,
+        Role::Row,
+        Role::Cell,
+        Role::ColumnHeader,
+        Role::RowHeader,
+        Role::Header,
+        Role::HeaderItem,
+        Role::DataGrid,
+        Role::DataItem,
+        Role::Calendar,
+        Role::ToolTip,
+        Role::TitleBar,
+        Role::Separator,
+        Role::Document,
+        Role::Application,
+        Role::Alert,
+        Role::HotkeyField,
+        Role::Thumb,
+        Role::Terminal,
+        Role::Unknown,
+    ];
+}
+
 /// One state a node can carry; combined in a [`StateSet`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum State {

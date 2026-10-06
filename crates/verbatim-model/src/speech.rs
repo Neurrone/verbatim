@@ -118,6 +118,34 @@ pub enum SegmentContent {
     /// A reader message with values in it, rendered to its localized
     /// wording ("selected hello").
     Phrase(Phrase),
+    /// A change of formatting at this point of text being read: a spelling
+    /// or grammar error starting or ending, or a font or color (milestone
+    /// M4). How it is reported, if at all, is the theme's indication for it
+    /// (`crate::Indication`).
+    Format(TextFormat),
+}
+
+/// A formatting fact at a point in text, named by
+/// [`SegmentContent::Format`]. Formatting is reported as it changes, as
+/// `docs/nvda/document-formatting.md` describes: "spelling error" where an
+/// error starts and "out of spelling error" where it ends.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum TextFormat {
+    /// A spelling error starts here.
+    SpellingError,
+    /// A spelling error ends here.
+    NotSpellingError,
+    /// A grammar error starts here.
+    GrammarError,
+    /// A grammar error ends here.
+    NotGrammarError,
+    /// The text from here is in this font.
+    FontName(String),
+    /// The text from here is this size, as the application words it.
+    FontSize(String),
+    /// The text from here is this color, as the application words it.
+    Color(String),
 }
 
 /// An index mark the reducer places in an utterance
@@ -162,6 +190,10 @@ pub enum Phrase {
     SpeakTypedCharacters(crate::TypingEcho),
     /// The "Speak typed words" setting's new value, after its toggle.
     SpeakTypedWords(crate::TypingEcho),
+    /// A terminal's output was too much to read, and this many lines of it
+    /// were skipped: "skipped 120 lines". A theme can also mark it with a
+    /// sound (`crate::Indication::SkippedLines`).
+    SkippedLines(u32),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.

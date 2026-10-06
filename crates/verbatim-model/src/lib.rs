@@ -16,6 +16,7 @@ mod gesture;
 mod settings;
 mod speech;
 mod text;
+mod theme;
 mod tree;
 
 pub use calls::{CallCounts, CallKind};
@@ -28,13 +29,19 @@ pub use gesture::{GestureId, GestureParseError};
 pub use settings::{ReaderSettings, SayAllUnit, TypingEcho};
 pub use speech::{
     FocusNow, FocusValidity, Message, Phrase, SegmentContent, SelectionText, SpeechMark,
-    SpeechPriority, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment, UtteranceSource,
+    SpeechPriority, TextFormat, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
+    UtteranceSource,
 };
 pub use text::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, HeldAnchors,
     LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_SELECTION_TEXT_BYTES, PreviousSelection,
     Selection, SelectionChange, TextAnchor, TextChunk, TextMovement, TextOp, TextPoint,
     TextPosition, TextRead, TextReply, TextRequest, TextUnit,
+};
+pub use theme::{
+    DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,
+    Presentation, SoundSource, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
+    is_plain_file_name, progress_frequency,
 };
 pub use tree::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet, TreeNode};
 
