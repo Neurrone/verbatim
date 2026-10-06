@@ -11,7 +11,9 @@
 //! the Core-side piece (the lifecycle owner, launches, writers, fact routing,
 //! crash and hang handling, and retirement), wired into `verbatim-app`.
 //! [`arbitration`] holds the per-window backend arbitration the outpost
-//! uses.
+//! uses. [`text`] is the outpost's side of the text protocol (milestone M4):
+//! reading, waiting for the caret, and selecting in a node's text, over
+//! UIA's text pattern and the Win32 edit controls' messages.
 
 pub mod arbitration;
 mod event_thread;
@@ -19,6 +21,7 @@ pub mod listener;
 pub mod outpost;
 pub mod protocol;
 pub mod supervisor;
+pub mod text;
 
 pub use listener::run_listener;
 pub use outpost::{Outpost, OutpostOptions, run_attach, run_pipe};

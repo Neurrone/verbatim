@@ -1760,6 +1760,7 @@ dependencies = [
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-process",
+ "verbatim-text",
  "verbatim-uia",
  "verbatim-uia-rops",
  "windows",
