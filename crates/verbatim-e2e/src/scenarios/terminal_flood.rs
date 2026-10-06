@@ -8,7 +8,7 @@
 //! default scrollback of 9,001 lines, then writes how long that took, in
 //! milliseconds by its own stopwatch, to `flood-<run>.ms` in the run's
 //! folder: the measurement, and the evidence the flood finished. The
-//! scenario runs it three times.
+//! scenario runs it four times.
 //!
 //! 1. The first flood, with no key pressed while it runs. Speech is read
 //!    until "ready>" is queued after it, Verbatim's control plane answering
@@ -44,15 +44,20 @@
 //!    says "report new output on", and `echo back` is answered with
 //!    exactly "back" and then "ready>", with nothing flood-related queued
 //!    before them.
-//! 4. The wall-time ratio, the M4 exit criterion: the first flood's time
-//!    (output reported throughout) divided by the third flood's (output
-//!    not reported), each measured by the script's own stopwatch in the
-//!    same window, is how much reading the terminal slows it down. It is
-//!    printed, saved to `wall-time-ratio.txt` with the scenario's
-//!    artifacts, and must be under two. The design describes the ratio as
-//!    computed from the trace stages and the run's calibration; the suite
-//!    has no per-run calibration yet, so this direct measurement stands in
-//!    for it.
+//! 4. A fourth flood, with output reported and no key pressed, heard out to
+//!    "ready>". The wall-time ratio, the M4 exit criterion: its time
+//!    divided by the third flood's (output not reported), each measured by
+//!    the script's own stopwatch in the same window with the scrollback
+//!    already full, is how much reporting the terminal's output slows it
+//!    down. The first flood is not the measure, since it starts with an
+//!    empty scrollback: in the console host a flood that fills the
+//!    scrollback while it is read took about twice as long as one into a
+//!    full scrollback, output reported or not, which would be counted
+//!    against reporting. The ratio is printed, saved to
+//!    `wall-time-ratio.txt` with the scenario's artifacts, and must be
+//!    under two. The design describes the ratio as computed from the trace
+//!    stages and the run's calibration; the suite has no per-run
+//!    calibration yet, so this direct measurement stands in for it.
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -221,7 +226,7 @@ fn elapsed(scenario: &mut Scenario, directory: &str, run: u32) -> Duration {
 
 /// Step 1: the first flood, with output reported and no key pressed.
 fn first_flood(scenario: &mut Scenario) {
-    terminal::run_command(scenario, r".\flood.ps1 1");
+    terminal::run_command_after_echo(scenario, r".\flood.ps1 1");
     let heard = terminal::listen_until(scenario, PROMPT, FLOOD_TIMEOUT, true);
     let after = scenario.speech().take_until_quiet(QUIET_TIMEOUT);
 
@@ -257,7 +262,7 @@ fn first_flood(scenario: &mut Scenario) {
 
 /// Step 2: Verbatim+5 answered during the second flood.
 fn responsive_during_flood(scenario: &mut Scenario, directory: &str) {
-    terminal::run_command(scenario, r".\flood.ps1 2");
+    terminal::run_command_after_echo(scenario, r".\flood.ps1 2");
     scenario
         .speech()
         .expect_playing("flood line", PLAYING_TIMEOUT);
@@ -300,7 +305,7 @@ fn silent_flood(scenario: &mut Scenario, directory: &str) {
     scenario
         .speech()
         .expect_exactly(&[OUTPUT_ON], terminal::STEP_TIMEOUT);
-    terminal::run_command(scenario, "echo back");
+    terminal::run_command_after_echo(scenario, "echo back");
     let heard = terminal::listen_until(scenario, "back", terminal::STEP_TIMEOUT, false);
     let stale = flood_related(&heard);
     assert!(
@@ -312,18 +317,28 @@ fn silent_flood(scenario: &mut Scenario, directory: &str) {
         .expect_exactly(&[PROMPT], terminal::STEP_TIMEOUT);
 }
 
+/// Step 4: the fourth flood, with output reported and no key pressed, in a
+/// scrollback as full as the third's was, for the wall-time ratio; its
+/// speech is heard out to the prompt.
+fn measured_flood(scenario: &mut Scenario) {
+    terminal::run_command_after_echo(scenario, r".\flood.ps1 4");
+    let _ = terminal::listen_until(scenario, PROMPT, FLOOD_TIMEOUT, true);
+    scenario.speech().wait_until_quiet(QUIET_TIMEOUT);
+}
+
 pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
     let ScenarioState::Window { directory, .. } = state else {
         panic!("the flood's setup opens a terminal window");
     };
     let directory = directory.clone();
-    terminal::expect_prompt_read(scenario);
+    terminal::expect_prompt_read(scenario, state);
 
     first_flood(scenario);
-    let reported = elapsed(scenario, &directory, 1);
     responsive_during_flood(scenario, &directory);
     silent_flood(scenario, &directory);
     let unreported = elapsed(scenario, &directory, 3);
+    measured_flood(scenario);
+    let reported = elapsed(scenario, &directory, 4);
 
     let ratio = reported.as_secs_f64() / unreported.as_secs_f64().max(0.001);
     let report = format!(

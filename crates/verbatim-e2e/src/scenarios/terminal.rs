@@ -22,9 +22,17 @@
 //! `-NoProfile -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`.
 //! The start script removes `PSReadLine`, so a line is neither re-rendered
 //! nor given predictions, moves to the run's folder, and sets a one-word
-//! prompt, `ready> `, spoken as "ready>". The prompt also writes a file
-//! the first time it runs, the evidence that the shell is waiting for
-//! input. Everything a scenario runs is a small script written into that
+//! prompt, `ready> `, spoken as "ready>". The script then waits for a file
+//! the scenario writes once Verbatim's announcement of the focused terminal
+//! has been heard out, so the first prompt appears only after the outpost
+//! has read where the terminal's text ends, and is spoken as new output,
+//! which the scenario hears in full before it goes on: the evidence that
+//! Verbatim follows this terminal's text. It then waits for Core to receive
+//! the caret on the prompt line (an event, through a subscription of its
+//! own), since the review cursor follows the caret and the console host
+//! reports its caret some time after its text. The prompt also writes a file the
+//! first time it runs, the evidence that the shell is waiting for input.
+//! Everything a scenario runs is a small script written into that
 //! folder before the window opens, so the typed command is short (such as
 //! `.\flood.ps1 1`) and the output is exactly known. Commands are typed
 //! with the agent's `TypeText`, and Enter is pressed with `SendKeys`.
@@ -32,7 +40,9 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{Frame, ReplyPayload, Request};
+use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
@@ -57,6 +67,13 @@ const LISTEN_SLICE: Duration = Duration::from_millis(500);
 /// The file the prompt writes the first time it runs.
 const READY_FILE: &str = "prompt-ready";
 
+/// The file the start script waits for before the shell shows its first
+/// prompt, written once Verbatim has announced the terminal's focus.
+const GO_FILE: &str = "prompt-go";
+
+/// What Verbatim's announcement of a focused terminal contains: its role.
+const FOCUSED_TERMINAL: &str = "terminal";
+
 /// The terminal a scenario's shell runs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Terminal {
@@ -68,14 +85,14 @@ pub(crate) enum Terminal {
 
 /// Writes `scripts` (file names and contents) and the start script into a
 /// folder of the run's own, opens a terminal running the shell in it, with
-/// `name` in its title, brings its window forward, and waits for the
-/// shell's first prompt. The window is closed by [`close`].
+/// `name` in its title, and brings its window forward. The shell shows its
+/// first prompt once [`expect_prompt_read`] lets it. The window is closed
+/// by [`close`].
 ///
 /// # Errors
 ///
 /// Returns an error if a file cannot be written, no terminal can be
-/// started, its window does not take the foreground, or the shell shows no
-/// prompt in time.
+/// started, or its window does not take the foreground.
 pub(crate) fn open(
     scenario: &mut Scenario,
     name: &str,
@@ -88,18 +105,56 @@ pub(crate) fn open(
         scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
     }
     let ready = format!(r"{directory}\{READY_FILE}");
+    let go = format!(r"{directory}\{GO_FILE}");
     let start = format!(r"{directory}\start.ps1");
-    scenario.write_agent_file(&start, start_script(&title, &directory, &ready).as_bytes())?;
+    scenario.write_agent_file(
+        &start,
+        start_script(&title, &directory, &go, &ready).as_bytes(),
+    )?;
 
+    // What Verbatim said before the window opens, such as another
+    // terminal's focus, is not taken for this one's.
+    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
     let pid = launch(scenario, preferred, &title, &start)?;
     let image = scenario.bring_titled_window_forward(&title, WINDOW_TIMEOUT)?;
     println!("the terminal window {title:?} belongs to {image}");
-    scenario.wait_for_agent_file(&ready, READY_TIMEOUT)?;
     Ok(ScenarioState::Window {
         pid,
         title,
         directory,
     })
+}
+
+/// Waits until `events`, a subscription to the events Core receives,
+/// carries a caret report whose line, trailing white space aside, is
+/// `line`.
+///
+/// # Errors
+///
+/// Returns an error if no such report arrives within `timeout`, or the
+/// connection fails.
+fn wait_for_caret_on(events: &mut ControlClient, line: &str, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match events.next_frame() {
+            Ok(Frame::Event {
+                event: NormalizedEvent::CaretMoved { caret, .. },
+                ..
+            }) if caret.line.text.trim_end() == line => return Ok(()),
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::other(format!(
+                "Core received no caret on the line {line:?} within {timeout:?}"
+            )));
+        }
+    }
 }
 
 /// Starts the terminal: Windows Terminal when it is preferred and can be
@@ -166,21 +221,27 @@ fn shell_command(start: &str, terminal: Terminal) -> Vec<String> {
 /// every terminal's title set, the run's folder made current, and the
 /// prompt, which writes `ready` the first time it runs. The prompt removes
 /// `PSReadLine` again, in case the shell loaded it after the script ran.
-fn start_script(title: &str, directory: &str, ready: &str) -> String {
+/// The script ends, and the shell shows its first prompt, once `go` exists.
+fn start_script(title: &str, directory: &str, go: &str, ready: &str) -> String {
     let title = quoted(title);
     let directory = quoted(directory);
+    let go = quoted(go);
     let ready = quoted(ready);
     format!(
         "param([switch]$ConsoleHost)\r\n\
          Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n\
-         if ($ConsoleHost) {{ mode con cols=120 lines=30 | Out-Null }}\r\n\
+         if ($ConsoleHost) {{\r\n\
+         \x20   mode con cols=120 lines=30 | Out-Null\r\n\
+         \x20   $Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(120, 9001)\r\n\
+         }}\r\n\
          $Host.UI.RawUI.WindowTitle = {title}\r\n\
          Set-Location -LiteralPath {directory}\r\n\
          function global:prompt {{\r\n\
          \x20   Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n\
          \x20   if (-not (Test-Path -LiteralPath {ready})) {{ [IO.File]::WriteAllText({ready}, '') }}\r\n\
          \x20   'ready> '\r\n\
-         }}\r\n"
+         }}\r\n\
+         while (-not (Test-Path -LiteralPath {go})) {{ Start-Sleep -Milliseconds 20 }}\r\n"
     )
 }
 
@@ -203,19 +264,61 @@ pub(crate) fn echo_of(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Reads the review cursor's line, which follows the caret onto the
-/// prompt: the evidence that Verbatim reads this terminal's text before a
-/// scenario types into it.
-pub(crate) fn expect_prompt_read(scenario: &mut Scenario) {
+/// Lets the shell in the window [`open`] opened show its first prompt, and
+/// reads the review cursor's line, which follows the caret onto it: the
+/// evidence that Verbatim reads this terminal's text before a scenario
+/// types into it.
+///
+/// First the terminal's focus is heard out: by then the outpost has read
+/// where its text ends, so the prompt, shown only once the go file exists,
+/// is new output, heard in full. The console host reports its caret some
+/// time after its text, and the review cursor follows the caret, so the
+/// line is read only once Core has received the caret on the prompt.
+pub(crate) fn expect_prompt_read(scenario: &mut Scenario, state: &ScenarioState) {
+    let ScenarioState::Window { directory, .. } = state else {
+        panic!("a terminal scenario's setup opens a terminal window");
+    };
+    scenario
+        .speech()
+        .expect_in_order(&[FOCUSED_TERMINAL], STEP_TIMEOUT);
+    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
+    let mut events = scenario
+        .subscribe_events()
+        .expect("subscribes to Verbatim's events");
+    scenario
+        .write_agent_file(&format!(r"{directory}\{GO_FILE}"), b"")
+        .expect("writes the go file");
+    scenario
+        .wait_for_agent_file(&format!(r"{directory}\{READY_FILE}"), READY_TIMEOUT)
+        .expect("the shell shows its first prompt");
+    scenario.speech().expect_exactly(&[PROMPT], STEP_TIMEOUT);
+    wait_for_caret_on(&mut events, PROMPT, STEP_TIMEOUT)
+        .expect("Core receives the caret on the prompt");
     scenario
         .send_gesture("kb:numpad8")
         .expect("sends the read-line gesture");
-    scenario.speech().expect_in_order(&[PROMPT], STEP_TIMEOUT);
+    scenario.speech().expect_exactly(&[PROMPT], STEP_TIMEOUT);
 }
 
 /// Types `command` and presses Enter.
 pub(crate) fn run_command(scenario: &mut Scenario, command: &str) {
     scenario.type_text(command).expect("types the command");
+    scenario.send_keys(&["enter"]).expect("presses enter");
+}
+
+/// Types `command`, waits until the echo of its end, from its last space,
+/// has been heard in full, and presses Enter: the terminal has then shown
+/// the command line as typed, so running it adds only the command's own
+/// output. A command typed and entered faster than the terminal shows it
+/// is read back as output instead, since Enter drops typing not yet shown.
+pub(crate) fn run_command_after_echo(scenario: &mut Scenario, command: &str) {
+    scenario.type_text(command).expect("types the command");
+    let end = command
+        .rfind(' ')
+        .map_or(command, |space| &command[space..]);
+    let echo = echo_of(end);
+    let echo: Vec<&str> = echo.iter().map(String::as_str).collect();
+    scenario.speech().expect_exactly(&echo, STEP_TIMEOUT);
     scenario.send_keys(&["enter"]).expect("presses enter");
 }
 
@@ -305,11 +408,14 @@ mod tests {
 
     #[test]
     fn the_start_script_quotes_what_it_names() {
-        let script = start_script("it's", r"C:\run's", r"C:\run's\ready");
+        let script = start_script("it's", r"C:\run's", r"C:\run's\go", r"C:\run's\ready");
         assert!(script.contains("WindowTitle = 'it''s'"));
         assert!(script.contains(r"Set-Location -LiteralPath 'C:\run''s'"));
         assert!(script.contains(r"WriteAllText('C:\run''s\ready', '')"));
         assert!(script.contains("    'ready> '\r\n"));
+        assert!(script.ends_with(
+            "while (-not (Test-Path -LiteralPath 'C:\\run''s\\go')) { Start-Sleep -Milliseconds 20 }\r\n"
+        ));
     }
 
     #[test]
