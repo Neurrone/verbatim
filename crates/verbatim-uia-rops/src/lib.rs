@@ -19,9 +19,11 @@
 //!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
 //!   when asked to, falls back to the classic walk when the program fails,
-//!   and says which path answered.
-//!   `terminal_tail` (the anchor line, the count of lines to the end, and
-//!   the last lines' text) follows with milestone M4's terminals.
+//!   and says which path answered; and, for milestone M4's terminals,
+//!   [`terminal_tail_remote`], [`terminal_tail_classic`], and
+//!   [`terminal_tail`]: the line at an anchor checked against what it held,
+//!   searched for upward when the text scrolled beneath it, the count of
+//!   lines to the end, and the text of only the last lines.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
@@ -33,6 +35,7 @@ mod focus;
 mod instruction;
 mod opcode;
 mod operation;
+mod terminal;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use error::{Error, Failure};
@@ -46,3 +49,7 @@ pub use opcode::{
     pattern_related_object_method,
 };
 pub use operation::{Operation, Outcome, Read, Value};
+pub use terminal::{
+    Fingerprint, Found, SEARCH_LINES, Tail, TailQuery, TailStart, TerminalTailFn, terminal_tail,
+    terminal_tail_classic, terminal_tail_remote,
+};

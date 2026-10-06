@@ -13,10 +13,8 @@ ported file; where it follows Microsoft's MIT-licensed
 The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
-execution, and algorithms. Only the focus ancestry exists so far;
-`terminal_tail` (the anchor line's text, the number of lines from the
-anchor to the end, and the last lines' text) comes with milestone M4's
-terminals.
+execution, and algorithms. The algorithms are the focus ancestry and,
+for milestone M4's terminals, `terminal_tail` (layer 3 below).
 
 ## Layer 1: instructions and the builder
 
@@ -232,6 +230,62 @@ The snapshot code reads three properties that way, and each is handled:
 Against mockapp, every other cached property reads the same both ways,
 and the snapshots the outpost makes from the two implementations' elements
 are equal.
+
+## Layer 3: a terminal's tail
+
+`terminal_tail_remote` and `terminal_tail_classic` share one signature
+(`TerminalTailFn`), and `terminal_tail(uia, query, remote)` chooses
+between them as `focus_ancestry` does, answering with a `Path` (milestone
+M4 item 9; `phase6-design.md`, "How the outpost finds new lines"). A
+`TailQuery` starts either from an anchor (`TailStart::Anchor`: a range
+whose start is the start of the last line read, with a `Fingerprint`, the
+text that line and the line before it held) or afresh
+(`TailStart::Document`, the text pattern's document range), and says how
+many of the last lines to read and how far up to search (`SEARCH_LINES`,
+256). The answer, a `Tail`, gives the text as the provider gave it,
+padding and line breaks included, so comparisons are exact and the caller
+trims:
+
+- `found`: `AtAnchor` when the line before the anchor still holds what it
+  held (the anchor's own line may have changed in place, and the caller
+  compares it); `Moved(n)` when the line pair was found `n` lines up, the
+  text having scrolled beneath the anchor (a full scrollback discards its
+  oldest lines while a range keeps its row); `NotFound`; or `Afresh`.
+- `line` and `previous`: the anchor's line and the line before it, read at
+  the anchor.
+- `count`: the lines after the anchor's line (where it was found) to the
+  end of the text; afresh, every line.
+- `lines`: the last of them, oldest first, up to the number asked for, and
+  `above`, the line just above the first of them.
+- `last`: the last line's range, the next anchor.
+
+The program reads the anchor's line and the one before it. When the one
+before it differs from the fingerprint, it walks up a line at a time,
+reading each line once, until a line equal to the fingerprint's line (as
+read, or with the line feed or carriage return and line feed a last line
+gains once more text follows it) sits under a line equal to the
+fingerprint's previous one. The strings compare inside the provider (an
+`Equal` comparison on two strings, verified against mockapp). The last
+line is the one holding the text's last character (the document range
+collapsed to its end, moved back one character, expanded to a line);
+the count is a `Move` by a million lines from the found line, less one
+when the move ended past the last line's start, as the terminals' moves
+do at the end of the text and mockapp's do not, so both read the same.
+The last lines are read upward from the last line. Nothing in it reads
+more than the lines asked for, so a read's cost does not grow with the
+scrollback.
+
+The classic implementation makes the same calls one at a time, through
+`verbatim-uia`'s text wrappers, so each is counted. A range from before
+a terminal switched to or from its alternate screen fails to compare
+with the text; the program then fails, the classic implementation fails
+the same way, and the caller reads afresh.
+
+Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`), the
+two implementations give the same answer afresh, after lines written past
+the anchor, after the oldest lines were discarded beneath it, and after
+the text was cleared, and a read that finds new output costs one round
+trip remotely (`docs/performance.md`, "A terminal output line").
 
 ## Fallback rules
 
