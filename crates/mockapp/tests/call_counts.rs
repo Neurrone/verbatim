@@ -42,11 +42,15 @@ use std::time::Instant;
 use verbatim_model::{
     CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, QueryKind, Role, TraceId, TreeNode,
 };
+use verbatim_model::{CaretWait, CaretWatch, TextOp, TextPosition, TextReply, TextUnit};
 use verbatim_outpost::Outpost;
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
     SupervisorToOutpost, read_message,
 };
+use verbatim_outpost::text::edit::EditText;
+use verbatim_outpost::text::uia::UiaText;
+use verbatim_outpost::text::{Anchors, CaretSignal, TextSource, caret_report, perform};
 use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state};
 use verbatim_uia::{
     AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia,
@@ -895,10 +899,127 @@ fn uia_navigation_steps_cost_exactly() {
     drop(app);
 }
 
+/// A caret key's wait that never waits: the caret has already moved.
+struct AlreadyMoved;
+
+impl CaretSignal for AlreadyMoved {
+    fn caret_event(&mut self) -> bool {
+        false
+    }
+
+    fn wait(&mut self, _timeout: std::time::Duration) {
+        panic!("the caret had already moved, so nothing should wait");
+    }
+
+    fn now(&mut self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// One caret move answered, as the outpost's worker answers a caret key
+/// with `text_reads::answer` once it has the node's text: the caret is
+/// reported (Core's knowledge), mockapp's caret moves one character on, as
+/// Right Arrow moves it, and the wait for evidence finds it at once and
+/// reports the line and the character there. Returns the calls and hits of
+/// the answer alone.
+fn measure_caret_move<S: TextSource>(
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    source: &mut S,
+    take: fn() -> CallCounts,
+) -> Cost {
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    common::apply(app, hwnd, "caret doc 0");
+    let (before, _) = caret_report(source, &mut anchors).expect("the caret");
+    common::apply(app, hwnd, "caret doc 1");
+    let _ = take();
+    let reply = perform(
+        source,
+        &mut anchors,
+        &TextOp::AwaitCaret(CaretWatch {
+            since: Some(TextPosition {
+                anchor: before.line.start,
+                offset: before.line.offset,
+            }),
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: None,
+            wait: CaretWait::Standard,
+        }),
+        &mut AlreadyMoved,
+    );
+    let calls = take();
+    let TextReply::Caret(reply) = reply else {
+        panic!("a caret reply, not {reply:?}");
+    };
+    assert!(reply.moved);
+    assert_eq!(reply.unit.expect("the character").text, "l");
+    Cost {
+        calls,
+        hits: common::read_hits(hwnd),
+    }
+}
+
+fn caret_moves_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+
+    let title = common::unique_title("mockapp-counts-uia-caret");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = uia_notes(hwnd);
+    let cost = measure_caret_move(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
+    ratchet.check(
+        "UIA caret move",
+        &cost,
+        calls(9, 0, 0),
+        &[
+            ("ITextProvider::GetSelection", 1),
+            ("Clone", 2),
+            ("CompareEndpoints", 2),
+            ("ExpandToEnclosingUnit", 1),
+            ("GetText", 2),
+            ("MoveEndpointByRange", 1),
+        ],
+    );
+    app.send("quit");
+
+    let title = common::unique_title("mockapp-counts-edit-caret");
+    let mut app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
+            Some(hwnd),
+            None,
+            windows::core::w!("EDIT"),
+            None,
+        )
+    }
+    .expect("mockapp's edit control");
+    let mut source = EditText::new(edit.0 as isize, 0);
+    let cost = measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
+    ratchet.check("Edit control caret move", &cost, calls(0, 0, 5), &[]);
+    app.send("quit");
+
+    ratchet.finish();
+}
+
+/// The text of mockapp's "Notes" document through UIA, as the outpost's
+/// worker builds it from the node's element and its text patterns.
+fn uia_notes(hwnd: HWND) -> UiaText {
+    let under_test = UiaUnderTest::new(hwnd);
+    let (pattern, pattern2) =
+        verbatim_uia::text::text_pattern(under_test.element("Notes")).expect("a text pattern");
+    UiaText::new(pattern, pattern2, false)
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        ("caret_moves_cost_exactly", caret_moves_cost_exactly),
         (
             "msaa_focus_changes_cost_exactly",
             msaa_focus_changes_cost_exactly,

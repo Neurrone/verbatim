@@ -81,6 +81,12 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
             // command (see crate::stdin::Command::Notify).
             eprintln!("mockapp: notify is not supported on the msaa backend");
         }
+        Command::Caret(_, start, end) => {
+            // The text is the edit control's, in its own offsets.
+            if let Some(edit) = crate::edit::find(hwnd) {
+                crate::edit::select(edit, start, end);
+            }
+        }
         // Handled by the window thread before dispatch.
         Command::Stall(_) | Command::Quit => {}
     }

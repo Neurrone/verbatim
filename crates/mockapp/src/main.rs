@@ -11,6 +11,7 @@
 //! runners. See `docs/crates/mockapp.md` for the fixture format, CLI, and stdin
 //! command reference.
 
+mod edit;
 mod fixture;
 mod hits;
 mod msaa;

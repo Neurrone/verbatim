@@ -1,0 +1,338 @@
+//! The text protocol's outpost side (milestone M4) against mockapp, on both
+//! stacks: UIA's text pattern served by mockapp's text provider, and a real
+//! Win32 edit control, which mockapp's MSAA backend hosts and which is read
+//! through its window messages. Each test drives `verbatim-outpost`'s text
+//! module on this thread exactly as the outpost's worker does once it has
+//! the node's text in hand, since the worker finds a UIA focus by reading
+//! the system's keyboard focus, which a test must not take from the desktop
+//! it runs on.
+//!
+//! What is checked: lines, words, and characters read; the caret reported;
+//! a caret key answered with what it did, the selection's change included;
+//! an unsupported unit reported as such; movement stopping at the text's
+//! ends; and the language UIA reports.
+
+mod common;
+#[path = "common/harness.rs"]
+mod harness;
+
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::time::{Duration, Instant};
+
+use verbatim_model::{
+    CaretWait, CaretWatch, PreviousSelection, TextChunk, TextMovement, TextOp, TextPoint,
+    TextPosition, TextRead, TextReply, TextUnit,
+};
+use verbatim_outpost::text::edit::EditText;
+use verbatim_outpost::text::uia::UiaText;
+use verbatim_outpost::text::{Anchors, CaretSignal, NodeText, TextSource, caret_report, perform};
+use verbatim_uia::{NodeIdRegistry, Uia};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+use windows::core::w;
+
+/// A caret key's wait that never needs to wait: every test moves mockapp's
+/// caret before asking, so the first read is the evidence.
+struct AlreadyMoved;
+
+impl CaretSignal for AlreadyMoved {
+    fn caret_event(&mut self) -> bool {
+        false
+    }
+
+    fn wait(&mut self, _timeout: Duration) {
+        panic!("the caret had already moved, so nothing should wait");
+    }
+
+    fn now(&mut self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// The text of mockapp's "Notes" document through UIA.
+fn uia_notes(hwnd: HWND) -> UiaText {
+    let uia = Uia::new().expect("a UIA client");
+    let cache = uia.base_cache_request().expect("a cache request");
+    let root = uia
+        .element_from_handle(hwnd.0 as isize, &cache)
+        .expect("mockapp's root element");
+    let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+    let (tree, _) = uia
+        .walk_tree(&root, &cache, &registry, 8, 64)
+        .expect("mockapp's tree");
+    let notes_id = tree
+        .children
+        .iter()
+        .find(|child| child.snapshot.name.as_deref() == Some("Notes"))
+        .expect("the Notes document")
+        .snapshot
+        .id;
+    let notes = registry
+        .element_of(notes_id)
+        .and_then(|agile| agile.resolve().ok())
+        .expect("its element");
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    UiaText::new(pattern, pattern2, false)
+}
+
+/// The edit control mockapp's MSAA backend hosts for the "Notes" text.
+fn edit_notes(hwnd: HWND) -> EditText {
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }
+        .expect("mockapp's edit control");
+    EditText::new(edit.0 as isize, 0)
+}
+
+/// Where a chunk's point is, as a position.
+fn point_of(chunk: &TextChunk) -> TextPosition {
+    TextPosition {
+        anchor: chunk.start,
+        offset: chunk.offset,
+    }
+}
+
+/// Reads one unit.
+fn read<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    at: TextPoint,
+    movement: Option<(TextUnit, i32)>,
+    unit: TextUnit,
+) -> TextReply {
+    perform(
+        source,
+        anchors,
+        &TextOp::Read(TextRead {
+            at,
+            movement: movement.map(|(unit, count)| TextMovement { unit, count }),
+            unit,
+        }),
+        &mut AlreadyMoved,
+    )
+}
+
+/// A read's chunk and how far it moved.
+fn chunk(reply: TextReply) -> (i32, TextChunk) {
+    match reply {
+        TextReply::Read { moved, chunk } => (moved, chunk),
+        other => panic!("a read, not {other:?}"),
+    }
+}
+
+/// Reads down the text by line from the caret at the start: each line in
+/// turn, the empty last line after the final line break, and no further.
+/// `break_text` is the line break as the backend gives it.
+fn lines_stop_at_the_end<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    break_text: &str,
+) {
+    let (report, _) = caret_report(source, anchors).expect("the caret");
+    assert_eq!(report.line.text, format!("alpha beta{break_text}"));
+    assert_eq!(report.line.offset, 0);
+    assert_eq!(report.selection, None);
+
+    let (moved, second) = chunk(read(
+        source,
+        anchors,
+        TextPoint::Caret,
+        Some((TextUnit::Line, 1)),
+        TextUnit::Line,
+    ));
+    assert_eq!(
+        (moved, second.text.as_str()),
+        (1, &*format!("gamma{break_text}"))
+    );
+    let (moved, last) = chunk(read(
+        source,
+        anchors,
+        TextPoint::At(point_of(&second)),
+        Some((TextUnit::Line, 1)),
+        TextUnit::Line,
+    ));
+    assert_eq!((moved, last.text.as_str()), (1, ""), "the empty last line");
+    let (moved, again) = chunk(read(
+        source,
+        anchors,
+        TextPoint::At(point_of(&last)),
+        Some((TextUnit::Line, 1)),
+        TextUnit::Line,
+    ));
+    assert_eq!((moved, again.text.as_str()), (0, ""), "no further");
+}
+
+/// The first word and character, and a word reached inside the line.
+fn words_and_characters<S: TextSource>(source: &mut S, anchors: &mut NodeText<'_, S::Pos>) {
+    let (_, word) = chunk(read(
+        source,
+        anchors,
+        TextPoint::Start,
+        None,
+        TextUnit::Word,
+    ));
+    assert_eq!(word.text, "alpha ");
+    let (_, character) = chunk(read(
+        source,
+        anchors,
+        TextPoint::Start,
+        None,
+        TextUnit::Character,
+    ));
+    assert_eq!(character.text, "a");
+    // A position Core found inside the word, resolved through its text.
+    let (_, next) = chunk(read(
+        source,
+        anchors,
+        TextPoint::At(TextPosition {
+            anchor: word.start,
+            offset: 3,
+        }),
+        Some((TextUnit::Word, 1)),
+        TextUnit::Word,
+    ));
+    assert!(next.text.starts_with("beta"), "{next:?}");
+}
+
+/// A caret key's answer: the caret moved to 6, the word there, and then a
+/// selection of the first word reported as selected.
+fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+) {
+    common::apply(app, hwnd, "caret doc 0");
+    let (before, _) = caret_report(source, anchors).expect("the caret");
+    common::apply(app, hwnd, "caret doc 6");
+    let reply = perform(
+        source,
+        anchors,
+        &TextOp::AwaitCaret(CaretWatch {
+            since: Some(point_of(&before.line)),
+            unit: TextUnit::Word,
+            compare: None,
+            previous_selection: None,
+            wait: CaretWait::Standard,
+        }),
+        &mut AlreadyMoved,
+    );
+    let TextReply::Caret(reply) = reply else {
+        panic!("a caret reply, not {reply:?}");
+    };
+    assert!(reply.moved);
+    assert_eq!(reply.caret.line.offset, 6);
+    assert!(reply.unit.expect("the word").text.starts_with("beta"));
+
+    common::apply(app, hwnd, "caret doc 0");
+    let (collapsed, _) = caret_report(source, anchors).expect("the caret");
+    common::apply(app, hwnd, "caret doc 0 5");
+    let at = point_of(&collapsed.line);
+    let reply = perform(
+        source,
+        anchors,
+        &TextOp::AwaitCaret(CaretWatch {
+            since: Some(at),
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: Some(PreviousSelection { start: at, end: at }),
+            wait: CaretWait::Standard,
+        }),
+        &mut AlreadyMoved,
+    );
+    let TextReply::Caret(reply) = reply else {
+        panic!("a caret reply, not {reply:?}");
+    };
+    let changes: Vec<(bool, &str, u32)> = reply
+        .selection_changes
+        .iter()
+        .map(|change| (change.selected, change.text.as_str(), change.characters))
+        .collect();
+    assert_eq!(changes, [(true, "alpha", 5)]);
+}
+
+fn uia_text_reads_moves_and_answers_caret_keys() {
+    common::init_com();
+    let title = common::unique_title("mockapp-text-uia");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = uia_notes(hwnd);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+
+    lines_stop_at_the_end(&mut source, &mut anchors, "\n");
+    words_and_characters(&mut source, &mut anchors);
+    // UIA has no sentence: Core reads by line instead.
+    assert_eq!(
+        read(
+            &mut source,
+            &mut anchors,
+            TextPoint::Start,
+            None,
+            TextUnit::Sentence
+        ),
+        TextReply::UnsupportedUnit(TextUnit::Sentence)
+    );
+    // A read carries UIA's language for its text.
+    let (_, line) = chunk(read(
+        &mut source,
+        &mut anchors,
+        TextPoint::Start,
+        None,
+        TextUnit::Line,
+    ));
+    assert_eq!(line.language_at(0), Some("en-US"));
+    a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut source, &mut anchors);
+    app.send("quit");
+}
+
+fn edit_control_text_reads_moves_and_answers_caret_keys() {
+    common::init_com();
+    let title = common::unique_title("mockapp-text-edit");
+    let mut app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = edit_notes(hwnd);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+
+    lines_stop_at_the_end(&mut source, &mut anchors, "\r\n");
+    words_and_characters(&mut source, &mut anchors);
+    // An edit control's sentences are Core's to split: the paragraph comes
+    // back, and a paragraph is a line.
+    let (_, paragraph) = chunk(read(
+        &mut source,
+        &mut anchors,
+        TextPoint::Start,
+        None,
+        TextUnit::Sentence,
+    ));
+    assert_eq!(paragraph.unit, TextUnit::Paragraph);
+    assert_eq!(paragraph.text, "alpha beta\r\n");
+    assert_eq!(
+        read(
+            &mut source,
+            &mut anchors,
+            TextPoint::Start,
+            None,
+            TextUnit::Page
+        ),
+        TextReply::UnsupportedUnit(TextUnit::Page)
+    );
+    a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut source, &mut anchors);
+    app.send("quit");
+}
+
+/// Runs this file's tests through the UIA test runner, which explains why
+/// these binaries do not exit normally (`common/harness.rs`).
+fn main() {
+    harness::run(&[
+        (
+            "uia_text_reads_moves_and_answers_caret_keys",
+            uia_text_reads_moves_and_answers_caret_keys,
+        ),
+        (
+            "edit_control_text_reads_moves_and_answers_caret_keys",
+            edit_control_text_reads_moves_and_answers_caret_keys,
+        ),
+    ]);
+}

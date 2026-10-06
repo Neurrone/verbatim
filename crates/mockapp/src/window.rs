@@ -102,6 +102,20 @@ pub(crate) fn run(backend: Backend, tree: SharedTree, title: &str) -> Result<(),
         )
     }?;
 
+    // MSAA has no text interface: the first node with text is served by a
+    // real edit control, read through its messages.
+    if backend == Backend::Msaa {
+        let text = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes
+            .iter()
+            .find_map(|node| node.text.clone());
+        if let Some(text) = text {
+            crate::edit::create(hwnd, &text)?;
+        }
+    }
+
     let (sender, receiver) = mpsc::channel();
     let context = Box::leak(Box::new(WindowContext {
         backend,
