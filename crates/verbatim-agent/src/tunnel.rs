@@ -30,7 +30,7 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE,
-    OPEN_EXISTING, ReadFile, WriteFile,
+    OPEN_EXISTING, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT, WriteFile,
 };
 use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Threading::{
@@ -188,11 +188,20 @@ impl OverlappedPipe {
                 FILE_SHARE_MODE(0),
                 None,
                 OPEN_EXISTING,
-                FILE_FLAG_OVERLAPPED,
+                // Identification only: a pipe of this name created by
+                // someone else must not be able to impersonate the agent.
+                FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
                 None,
             )
         }
         .map_err(io::Error::other)?;
+        if let Err(error) = verbatim_control::client::require_same_session(handle, pipe_name) {
+            // SAFETY: `handle` was opened just above and is not used again.
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+            }
+            return Err(error);
+        }
 
         let mut events = Vec::with_capacity(3);
         for _ in 0..3 {

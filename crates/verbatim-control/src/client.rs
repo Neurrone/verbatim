@@ -11,6 +11,13 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::io::AsRawHandle;
+
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Storage::FileSystem::SECURITY_IDENTIFICATION;
+use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 
 use crate::protocol::{
     Frame, MessageReader, PIPE_NAME, PROTOCOL_VERSION, ReplyPayload, Request, RequestEnvelope,
@@ -95,6 +102,11 @@ impl Client {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
+            // The server may learn who the client is, never act as it: a
+            // pipe of the same name created by someone else must not be
+            // able to impersonate the caller. (Setting these flags also
+            // sets SECURITY_SQOS_PRESENT.)
+            .security_qos_flags(SECURITY_IDENTIFICATION.0)
             .open(pipe_name)
             .map_err(|error| {
                 io::Error::new(
@@ -104,6 +116,7 @@ impl Client {
                     ),
                 )
             })?;
+        check_same_session(&file, pipe_name)?;
         Self::handshake(Transport::Pipe(file))
     }
 
@@ -211,6 +224,47 @@ pub fn ok_or_error(frame: Frame) -> io::Result<Frame> {
     match frame {
         Frame::Error { message, .. } => Err(io::Error::other(message)),
         reply => Ok(reply),
+    }
+}
+
+/// [`require_same_session`] for a pipe opened as a [`File`].
+fn check_same_session(pipe: &File, pipe_name: &str) -> io::Result<()> {
+    require_same_session(HANDLE(pipe.as_raw_handle()), pipe_name)
+}
+
+/// Fails unless the process serving the client end `handle` of the pipe
+/// `pipe_name` runs in this process's Windows session. The pipe's name is
+/// shared by every session on the machine, so one created by another
+/// logged-on user must not receive a client's requests. Every client of
+/// the control pipe checks this before sending anything.
+///
+/// # Errors
+///
+/// Returns `PermissionDenied` when the server is in another session, or the
+/// error from reading either process's session.
+pub fn require_same_session(handle: HANDLE, pipe_name: &str) -> io::Result<()> {
+    let mut server_pid = 0u32;
+    // SAFETY: `handle` is an open client end of a pipe, which the caller
+    // keeps alive for the call; `server_pid` is a valid out pointer.
+    unsafe { GetNamedPipeServerProcessId(handle, &raw mut server_pid) }
+        .map_err(io::Error::other)?;
+    let session_of = |pid: u32| -> io::Result<u32> {
+        let mut session = 0u32;
+        // SAFETY: a process id and a valid out pointer.
+        unsafe { ProcessIdToSessionId(pid, &raw mut session) }.map_err(io::Error::other)?;
+        Ok(session)
+    };
+    let ours = session_of(std::process::id())?;
+    let theirs = session_of(server_pid)?;
+    if ours == theirs {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "the control pipe at {pipe_name} is served by process {server_pid} in session {theirs}, not this session ({ours})"
+            ),
+        ))
     }
 }
 

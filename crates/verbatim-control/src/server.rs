@@ -58,7 +58,7 @@ use windows::Win32::Security::{
     TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
 use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Pipes::{
@@ -607,7 +607,14 @@ fn build_owner_only_security_descriptor() -> io::Result<SecurityDescriptor> {
 }
 
 /// Creates one named-pipe server instance, ready to accept a connection.
-fn create_pipe_instance(pipe_name: &str, security: &SecurityDescriptor) -> io::Result<RawPipe> {
+/// The `first` instance insists on being the pipe's first: if the name
+/// already exists, it was created by someone else, whose server clients
+/// would otherwise reach, so the call fails instead.
+fn create_pipe_instance(
+    pipe_name: &str,
+    security: &SecurityDescriptor,
+    first: bool,
+) -> io::Result<RawPipe> {
     let wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
     let attributes = SECURITY_ATTRIBUTES {
         nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>())
@@ -620,6 +627,9 @@ fn create_pipe_instance(pipe_name: &str, security: &SecurityDescriptor) -> io::R
     // even across independent handles to the same instance).
     let mut open_mode = PIPE_ACCESS_DUPLEX;
     open_mode.0 |= FILE_FLAG_OVERLAPPED.0;
+    if first {
+        open_mode.0 |= FILE_FLAG_FIRST_PIPE_INSTANCE.0;
+    }
     // SAFETY: `wide` is a valid, null-terminated wide string; `attributes`
     // is valid for the duration of this call and points at a security
     // descriptor kept alive by the caller.
@@ -850,7 +860,7 @@ impl ControlServer {
         // The first instance is created here rather than on the accept
         // thread, so the pipe exists once this returns: a client that
         // connects straight after starting the server finds it.
-        let first = create_pipe_instance(pipe_name, &security)?;
+        let first = create_pipe_instance(pipe_name, &security, true)?;
 
         let accept_thread = {
             let shutdown = Arc::clone(&shutdown);
@@ -862,7 +872,7 @@ impl ControlServer {
                 .spawn(move || {
                     accept_loop(
                         Some(first),
-                        &|| create_pipe_instance(&pipe_name, &security),
+                        &|| create_pipe_instance(&pipe_name, &security, false),
                         &shutdown,
                         &registry,
                         &connections,
