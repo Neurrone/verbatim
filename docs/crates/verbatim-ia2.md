@@ -117,9 +117,12 @@ Public API:
   `IAccIdentity` string; anything else is a new node that keeps the
   object just read. Each snapshot is read with its provenance: objects
   acquired at an event or window address, and children by id on them,
-  are at their address; objects reached through `accParent`, through
-  `accNavigate`, or as child objects are not, and never claim the address
-  made up for them. Two seams
+  are at their address, and so is a window's own standard object reached
+  through `accParent`, at the address its identity string names
+  (`Accessible::address`, `IAccPropServices::DecomposeHwndIdentityString`),
+  so a window keeps one node even when its title changes; other objects
+  reached through `accParent`, through `accNavigate`, or as child objects
+  are not, and never claim the address made up for them. Two seams
   mirror NVDA where plain MSAA navigation would mislead. A `SysTreeView32`
   item's navigation and ancestor chain route through the tree control's
   own `TVM_GETNEXTITEM` relations (with the accid-to-htreeitem mapping

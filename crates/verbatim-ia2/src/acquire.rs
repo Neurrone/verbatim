@@ -355,8 +355,17 @@ pub fn ancestor_chain_until(
             walked = Walked::Crossed(parent_hwnd);
             break;
         }
-        let parent_key = (parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
-        let snapshot = read_snapshot(&parent_acc, parent_key, false, registry);
+        // A parent that is one of a window's own standard objects names its
+        // address in its identity string, so it is found again at that
+        // address however it was reached: one window keeps one node, even
+        // after its title changes, as NVDA, re-reading the old object live,
+        // finds it equal. Any other parent gets an address made up from its
+        // window, which only finds it again as the same COM object.
+        let (parent_key, parent_at) = match parent_acc.address() {
+            Some(address) if address.0 == parent_hwnd => (address, true),
+            _ => ((parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF), false),
+        };
+        let snapshot = read_snapshot(&parent_acc, parent_key, parent_at, registry);
         let id = snapshot.id;
         chain.push(snapshot);
         hops_used += 1;

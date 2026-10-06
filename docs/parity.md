@@ -134,11 +134,14 @@ verified.
     in when the focus enters it ("Synthesizer grouping" before the
     Change button), which Verbatim does not, since a Win32 group box is
     the control's sibling rather than its parent and NVDA finds it by
-    position; Control+Tab to another category makes Verbatim announce
-    the dialog again under its new title, because the dialog is read as
-    a different node after the title changes, where NVDA, seeing the same
-    object, does not; and NVDA says "Verbatim", the menu's owner window,
-    before "Context menu". The Terminal page's "Lines spoken in full"
+    position; and NVDA says "Verbatim", the menu's owner window,
+    before "Context menu". Control+Tab to another category made Verbatim
+    announce the dialog again under its new title, because the dialog
+    was read as a different node after the title changed, where NVDA,
+    seeing the same object, does not, and says nothing about the new
+    title either: **matched since 2026-10-07**, by matching a window's
+    own MSAA object by the address its identity string names (Held
+    objects, below; the `settings_dialog_keys` scenario). The Terminal page's "Lines spoken in full"
     and "Last lines to speak" sliders read 29 for the setting's 30 in
     both screen readers: a standard trackbar's MSAA value is its position
     as a percentage of its range, which is 1 to 100 there. **Fixed since
@@ -422,7 +425,12 @@ verified.
   and a fresh read of the node's kept object gives the same role and the
   same identity string (both absent counts as the same); a failed role
   read is an unknown role, as for NVDA, so a kept object that no longer
-  answers stops matching. An object reached through `accParent` or as a child object has
+  answers stops matching. An object reached through `accParent` that is
+  one of a window's own standard objects has the address its identity
+  string names (`DecomposeHwndIdentityString`), and is matched as one
+  acquired there, so a window keeps one node whatever its title says, as
+  NVDA, re-reading the old object live, finds the two equal. Any other
+  object reached through `accParent`, or as a child object, has
   no address of its own (other objects in its window share the one
   Verbatim would make up), so it is matched only as the same COM object.
   `IAccessible2` unique ids are not read yet, and location and name are

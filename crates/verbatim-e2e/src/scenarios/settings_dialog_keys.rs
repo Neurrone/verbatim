@@ -16,7 +16,10 @@
 //! list take focus on the next category, Theme, then Control+Tab there move
 //! on to Terminal and wrap round to Speech; Tab into the page and press
 //! Control+Shift+Tab on the Change button, and hear the category list
-//! again, wrapped round to the last category, Terminal.
+//! again, wrapped round to the last category, Terminal. None of these
+//! category changes announces the dialog again, though its title names the
+//! category: it is the same window, so the same node, as it is to NVDA,
+//! which says nothing about the title either.
 
 use std::io;
 use std::time::Duration;
@@ -147,6 +150,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Control+Tab on the slider moves to the next category, Theme, and puts
     // focus on the category list; Control+Tab there cycles on through
     // Terminal and wraps round to Speech.
+    let announced_before = dialog_announcements(scenario);
     scenario
         .send_keys(&["control+tab"])
         .expect("sends control+tab on the slider");
@@ -177,7 +181,26 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .speech()
         .expect_in_order(&["Categories: list", "Terminal"], STEP_TIMEOUT);
+    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
+    assert_eq!(
+        dialog_announcements(scenario),
+        announced_before,
+        "changing category should not announce the dialog again; heard:
+{}",
+        scenario.speech().transcript()
+    );
     scenario.send_keys(&["escape"]).expect("sends escape");
+}
+
+/// How many utterances so far have named the settings dialog, whose title
+/// starts "Verbatim Settings".
+fn dialog_announcements(scenario: &mut Scenario) -> usize {
+    scenario
+        .speech()
+        .transcript()
+        .lines()
+        .filter(|line| line.contains("Verbatim Settings"))
+        .count()
 }
 
 #[allow(

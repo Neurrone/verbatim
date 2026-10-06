@@ -16,10 +16,11 @@
 //! window is destroyed ([`forget_window`]).
 //!
 //! An address is only an identity when the object was acquired at it, from
-//! an event or a window. An object reached another way, through
-//! `accParent` or as a child object, gets an address made up from its
-//! window, which it may share with other objects; such a node is never
-//! found by its address, only as the same COM object.
+//! an event or a window, or when the object is one of a window's own
+//! standard objects, whose identity string names its address. Any other
+//! object reached through `accParent` or as a child object gets an address
+//! made up from its window, which it may share with other objects; such a
+//! node is never found by its address, only as the same COM object.
 //!
 //! [`retain`]: NodeIdRegistry::retain
 //! [`forget_window`]: NodeIdRegistry::forget_window

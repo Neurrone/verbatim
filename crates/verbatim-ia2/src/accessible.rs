@@ -19,11 +19,13 @@
 use std::ffi::c_void;
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{CoTaskMemFree, IDispatch};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, IDispatch,
+};
 use windows::Win32::System::Variant::{VARIANT, VT_DISPATCH, VT_EMPTY, VT_I4};
 use windows::Win32::UI::Accessibility::{
-    AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow, IAccIdentity,
-    IAccessible, WindowFromAccessibleObject,
+    AccessibleChildren, AccessibleObjectFromEvent, AccessibleObjectFromWindow,
+    CLSID_AccPropServices, IAccIdentity, IAccPropServices, IAccessible, WindowFromAccessibleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::{AgileReference, IUnknown, Interface};
@@ -336,6 +338,35 @@ impl Accessible {
         // SAFETY: `data` came from the COM allocator and is freed once.
         unsafe { CoTaskMemFree(Some(data.cast_const().cast())) };
         bytes
+    }
+
+    /// The address the object's identity string names, its window, object
+    /// id, and child id, when the object is one of the standard objects
+    /// oleacc makes for a window (`IAccPropServices::DecomposeHwndIdentityString`),
+    /// whose identity string is made from that address. `None` for any other
+    /// object, or when it offers no identity string. The decomposition is an
+    /// in-process call; reading the identity string is not.
+    pub(crate) fn address(&self) -> Option<(isize, i32, i32)> {
+        let identity = self.identity_string()?;
+        // SAFETY: creates an in-process COM object on this thread, which the
+        // worker initialized COM on.
+        let services: IAccPropServices =
+            unsafe { CoCreateInstance(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) }.ok()?;
+        let mut hwnd = HWND::default();
+        let mut object = 0u32;
+        let mut child = 0u32;
+        // SAFETY: the identity string outlives the call, and the three
+        // out-parameters are locals, read only on success.
+        unsafe {
+            services.DecomposeHwndIdentityString(
+                &identity,
+                &raw mut hwnd,
+                &raw mut object,
+                &raw mut child,
+            )
+        }
+        .ok()?;
+        Some((hwnd.0 as isize, object.cast_signed(), child.cast_signed()))
     }
 }
 
