@@ -58,6 +58,15 @@ first, so only the scenario's own windows appear.
   tabbing quickly through the Settings dialog, each announcement cut off
   by the next key press, and the last one heard in full. It demonstrates
   speech keeping up with the focus.
+- `explorer-folder-window.mp4`, from `explorer_folder_window`: a File
+  Explorer folder window opens and its title is announced, then the
+  arrows move through a subfolder and three files, each with its
+  position, and Enter and Backspace go into the subfolder and back. It
+  demonstrates reading File Explorer.
+- `settings-toggle.mp4`, from `settings_toggle`: the Settings app opens
+  on the Clipboard page, and its Clipboard history switch is turned on
+  and off, each state announced. It demonstrates reading the Settings
+  app's switches.
 - `start-menu-search.mp4`, from `start_menu_search`: the Start menu opens
   and its search box is announced. It demonstrates reading the Windows
   shell.
