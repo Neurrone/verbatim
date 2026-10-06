@@ -27,6 +27,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+pub use verbatim_model::{ReaderSettings, SayAllUnit, TypingEcho};
 
 /// Which keys act as the Verbatim modifier (NVDA's `NVDAModifierKeys`). The
 /// default adds Caps Lock to NVDA's two Insert keys, a deliberate
@@ -85,11 +86,29 @@ pub enum KeyboardLayout {
 /// [`VerbatimKeys`]: [`Profile`] has no field for it, so no profile can
 /// override the active layout. Exposed only in the file for M3; a GUI
 /// choice arrives with M8's gesture-remapping work.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeyboardConfig {
     /// The active gesture-binding layout.
     pub layout: KeyboardLayout,
+    /// NVDA's "Speech interrupt for typed characters", on by default: a
+    /// typed character, or Shift, cuts speech off. Off, typing leaves speech
+    /// alone and Shift no longer pauses it (`docs/nvda/input.md`, "What a
+    /// key press does to speech").
+    pub speech_interrupt_for_characters: bool,
+    /// NVDA's "Speech interrupt for Enter key", on by default: Enter cuts
+    /// speech off. Off, Enter leaves speech alone.
+    pub speech_interrupt_for_enter: bool,
+}
+
+impl Default for KeyboardConfig {
+    fn default() -> Self {
+        Self {
+            layout: KeyboardLayout::Desktop,
+            speech_interrupt_for_characters: true,
+            speech_interrupt_for_enter: true,
+        }
+    }
 }
 
 /// The speech rate the E2E suite runs at, on every synthesizer's shared
@@ -169,6 +188,13 @@ pub struct Settings {
     /// The base profile's speech configuration; named profiles override it
     /// per setting.
     pub speech: SpeechConfig,
+    /// The reader settings the reducer reads, the `[reader]` section:
+    /// typing echo, whether the review cursor follows the caret, say-all's
+    /// reading unit, keeping the display on during say-all, and speaking
+    /// passwords in terminals, each with NVDA's default
+    /// ([`ReaderSettings`]). The base profile's only, until profiles grow
+    /// them (M8).
+    pub reader: ReaderSettings,
 }
 
 /// One named profile — the contents of one file in the `profiles` folder.
@@ -485,6 +511,46 @@ mod tests {
     #[test]
     fn keyboard_layout_defaults_to_desktop() {
         assert_eq!(Settings::default().keyboard.layout, KeyboardLayout::Desktop);
+    }
+
+    #[test]
+    fn typing_and_reading_settings_default_to_nvdas() {
+        let settings = Settings::default();
+        assert!(settings.keyboard.speech_interrupt_for_characters);
+        assert!(settings.keyboard.speech_interrupt_for_enter);
+        assert_eq!(settings.reader, ReaderSettings::default());
+        // A file written before these settings existed reads them as the
+        // defaults.
+        let old: Settings =
+            toml::from_str("[keyboard]\nlayout = \"laptop\"\n").expect("parses an older file");
+        assert!(old.keyboard.speech_interrupt_for_enter);
+        assert_eq!(old.reader.speak_typed_characters, TypingEcho::Always);
+    }
+
+    #[test]
+    fn reader_settings_round_trip_through_toml() {
+        let root = temp_root("reader-roundtrip");
+        let mut store = ConfigStore::load(&root).expect("loads");
+        store.settings_mut().reader.speak_typed_words = TypingEcho::EditControls;
+        store.settings_mut().reader.say_all_unit = SayAllUnit::Line;
+        store.settings_mut().reader.follow_caret = false;
+        store.settings_mut().keyboard.speech_interrupt_for_enter = false;
+        store.save_settings().expect("saves settings");
+
+        let text =
+            fs::read_to_string(root.join(ConfigStore::SETTINGS_FILE)).expect("reads the file");
+        assert!(
+            text.contains("speak_typed_words = \"edit_controls\""),
+            "{text}"
+        );
+        let reloaded = ConfigStore::load(&root).expect("reloads");
+        assert_eq!(
+            reloaded.settings().reader.speak_typed_words,
+            TypingEcho::EditControls
+        );
+        assert_eq!(reloaded.settings().reader.say_all_unit, SayAllUnit::Line);
+        assert!(!reloaded.settings().reader.follow_caret);
+        assert!(!reloaded.settings().keyboard.speech_interrupt_for_enter);
     }
 
     #[test]
