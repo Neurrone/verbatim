@@ -1742,10 +1742,11 @@ In this order, once M4's remaining items (formatting spans, the caret
 remote operation, the Terminal page, the demonstrations) are merged:
 
 1. NVDA comparison captures for every M4 feature, taken with `cargo
-   xtask nvda capture` and kept in `docs/nvda-captures/`, then compared
-   with what Verbatim says for the same steps, each difference either
-   fixed or recorded in `docs/parity.md` as intended. This is how
-   Verbatim is shown to behave correctly, so it comes first: editing in
+   xtask nvda capture` (working material, not kept in the repository),
+   compared with what Verbatim says for the same steps, each difference
+   either fixed or recorded in `docs/parity.md` as intended, and turned
+   into end-to-end and unit tests that pin the behavior down. This is
+   how Verbatim is shown to behave correctly, so it comes first: editing in
    Notepad (caret by character, word, and line; selection; typed echo;
    Backspace and Delete), the review cursor (including the column
    difference), say-all, terminal output and typing in Windows Terminal

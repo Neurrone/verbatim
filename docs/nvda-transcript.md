@@ -87,8 +87,11 @@ The options are:
 To record NVDA reading Verbatim's own GUI, run Verbatim with test audio so
 that it is silent (see the test-audio section of the tooling guide), open
 its menu with `--gesture kb:verbatim+v`, and move through the menu and
-dialogs with plain keys, which both screen readers let through. The
-recorded readings are in `docs/nvda-captures/`.
+dialogs with plain keys, which both screen readers let through.
+
+Captures are working material, not kept in the repository: they serve
+exploratory testing, comparing what Verbatim says with what NVDA says,
+and writing the end-to-end and unit tests that pin the behavior down.
 
 Two traps found on 2026-10-06. NVDA's automatic update check can open an
 "NVDA Update" dialog that takes the foreground, and every key then goes
