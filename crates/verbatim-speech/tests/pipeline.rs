@@ -314,8 +314,19 @@ fn interrupt_cancels_current_and_queued_each_exactly_once() {
         harness.recorder.ending_of(urgent),
         Some(UtteranceEnding::Completed)
     );
-    std::thread::sleep(Duration::from_millis(200));
-    assert_eq!(harness.recorder.endings(3).len(), 3, "and never a second");
+    // A second ending of any of them would be reported before the ending
+    // of speech queued after them, since the queue thread and the mixer
+    // each report endings in order: the marker's ending bounds the wait.
+    let marker = harness.manager.speak(queued("marker"));
+    assert_eq!(recv_started(&harness.started), "marker");
+    harness.finish.send(()).unwrap();
+    let endings = harness.recorder.endings(4);
+    assert_eq!(
+        endings.get(3),
+        Some(&(marker, UtteranceEnding::Completed)),
+        "and never a second ending before the marker's: {endings:?}"
+    );
+    assert_eq!(endings.len(), 4, "and never a second: {endings:?}");
 }
 
 #[test]
