@@ -464,7 +464,13 @@ Lessons applied to the design:
   read, and treats an error comparing ranges (the alternate screen) as
   invalidation.
 - Trailing blank lines and padding are trimmed before counting or
-  speaking.
+  speaking, everywhere terminal text is used: new output, reading a
+  line, say-all, and the review cursor's line and word reading. The rule
+  is language-independent: trailing characters with Unicode's White_Space
+  property are removed, not only ASCII spaces, and no word or language
+  rules are involved; spaces inside a line are kept. The review cursor
+  can still stand on a blank cell past the text (see M4's review
+  cursor), but reading the line does not speak the padding.
 - Text-change events stay the trigger and the gate for the password
   rule, coalesced in the outpost with no fixed delay. Windows Terminal
   has missed text-change events before (microsoft/terminal#10911), so its
@@ -1053,7 +1059,12 @@ supports, records it here, and lists it in the final report.
    and architecture; a CI cache step for it.
 3. The cxx bridge and the C++ layer, switched in one commit: frame, tray,
    and menu; the settings dialog with the dialog-wide key hook (audit item
-   7); the list dialog; check list boxes with their own accessible.
+   7); the list dialog; check list boxes with their own accessible. In
+   the settings dialog, Enter on a focused button activates that button,
+   so Enter on Cancel cancels (decided 2026-10-06). NVDA's settings
+   dialogs send every Enter to OK, even on Cancel
+   (`gui/settingsDialogs.py`, `_enterActivatesOk_ctrlSActivatesApply`),
+   so this is recorded in `docs/parity.md` as an intentional difference.
 4. Remove wxDragon, bindgen, and the libclang plumbing; update the crate
    guide, the tooling guide, CLAUDE.md's libclang note, and D4's wording.
 5. Verify: the existing GUI scenarios, a new scenario for item 7, and the
@@ -1083,7 +1094,20 @@ In this order, since later parts build on earlier ones:
 4. **Typed-character and word echo**, with NVDA's settings, the password
    rule for terminals, and interruption of all speech by typing and
    Enter.
-5. **The review cursor**: NVDA's review commands and key layout.
+5. **The review cursor**: NVDA's review commands and key layout, with
+   one intentional difference (decided 2026-10-06, recorded in
+   `docs/parity.md`): moving to the next or previous line keeps the
+   column, where NVDA moves to the start of the line
+   (`globalCommands.py`, `script_review_nextLine`). This makes columns of
+   a text table, or the map of a text-based game, readable line by line.
+   In a terminal the screen is a grid, so the column is a cell column:
+   wide characters, such as Chinese, Japanese, and Korean ones, take two
+   cells by Unicode's East Asian Width property, and a position past the
+   end of a line's text is a blank cell, read as "blank", so moving down
+   from column 10 always lands on column 10. In other text, the column is
+   counted in characters (grapheme clusters); a shorter line puts the
+   cursor at its end, and the column is remembered, so the next longer
+   line returns to it, as editors do with their caret.
 6. **Say-all** with index marks, the "Say all reads by" setting
    (sentence by default where the text can be split into sentences, line
    for UIA), and the display kept on while reading.
