@@ -45,14 +45,12 @@ const TERMINATE_WAIT_MS: u32 = 2000;
 /// How long to wait for the startup mutex.
 const MUTEX_WAIT_MS: u32 = 2000;
 
-/// Holds the startup mutex for the life of this instance.
+/// Holds the startup mutex for the life of this instance. Not `Send`: a
+/// mutex is released only by the thread that owns it, so the guard stays on
+/// the thread that acquired it.
 pub struct InstanceGuard {
     mutex: windows::Win32::Foundation::HANDLE,
 }
-
-// SAFETY: the wrapped mutex handle is only used by Drop and is valid for the
-// process's lifetime; kernel handles may be closed from any thread.
-unsafe impl Send for InstanceGuard {}
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
