@@ -77,6 +77,16 @@ type SharedRecorder = Arc<Mutex<ReducerRecorder>>;
 /// The folder flight-recorder dumps are written to, next to the executable.
 const DUMPS_FOLDER: &str = "dumps";
 
+/// Writes a line to standard error, as `eprintln!` does, but ignores a
+/// failed write instead of panicking: a full disk or a closed pipe under
+/// redirected output must not take the process down.
+macro_rules! report_error {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 fn main() -> ExitCode {
     // Keep Core's trace IDs disjoint from every outpost's; they meet in the
     // latency ledger and the flight recorder.
@@ -91,7 +101,7 @@ fn main() -> ExitCode {
     // work never stops one that does.
     if let Err(diagnosis) = check_interactive_session() {
         tracing::error!(diagnosis, "verbatim cannot run in this session");
-        eprintln!("verbatim: {diagnosis}");
+        report_error!("verbatim: {diagnosis}");
         return ExitCode::FAILURE;
     }
 
@@ -100,7 +110,7 @@ fn main() -> ExitCode {
         Ok(guard) => guard,
         Err(error) => {
             tracing::error!(%error, "single-instance startup failed");
-            eprintln!("verbatim: {error}");
+            report_error!("verbatim: {error}");
             return ExitCode::FAILURE;
         }
     };
@@ -114,7 +124,7 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             tracing::error!(%error, "verbatim failed to start");
-            eprintln!("verbatim: {error}");
+            report_error!("verbatim: {error}");
             ExitCode::FAILURE
         }
     }
@@ -439,12 +449,12 @@ fn load_config(exe_dir: &std::path::Path) -> ConfigStore {
             // profiles/base.toml are discoverable and hand-editable from the
             // first run; existing files are never touched.
             if let Err(error) = config.ensure_files_exist() {
-                eprintln!("verbatim: could not create default config files: {error}");
+                report_error!("verbatim: could not create default config files: {error}");
             }
             config
         }
         Err(error) => {
-            eprintln!("verbatim: config error, continuing with defaults: {error}");
+            report_error!("verbatim: config error, continuing with defaults: {error}");
             ConfigStore::load(&std::env::temp_dir().join("verbatim-defaults"))
                 .unwrap_or_else(|fallback| panic!("default config must load: {fallback}"))
         }
@@ -464,6 +474,11 @@ fn init_tracing(configured: Option<&str>) {
         .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        // A write that fails (a full disk, a closed pipe) is dropped: by
+        // default the formatter reports it with `eprint!`, which panics when
+        // standard error fails too, and a panic in a hook or a COM callback
+        // aborts the process.
+        .log_internal_errors(false)
         .finish()
         .with(error_sound::ErrorSoundLayer)
         .init();

@@ -26,11 +26,23 @@ use verbatim_speech::hosting::{
 };
 use verbatim_speech::{IndexMark, SynthDriver, SynthError, SynthSink};
 
+/// Writes a line to standard error, as `eprintln!` does, but ignores a
+/// failed write instead of panicking: a full disk or a closed pipe under
+/// redirected output must not take the process down.
+macro_rules! report_error {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 fn main() -> ExitCode {
     // Core redirects this process's output to a log file of its own.
     init_tracing();
     let Some((pipe_in, pipe_out, synth)) = parse_args(&std::env::args().collect::<Vec<_>>()) else {
-        eprintln!("usage: verbatim-synth-host --pipe-in <handle> --pipe-out <handle> --synth <id>");
+        report_error!(
+            "usage: verbatim-synth-host --pipe-in <handle> --pipe-out <handle> --synth <id>"
+        );
         return ExitCode::from(2);
     };
     // SAFETY: Core passes the values of the pipe ends it created for this
@@ -38,7 +50,7 @@ fn main() -> ExitCode {
     // `inherited_pipes` checks that they are distinct open pipes, so a
     // malformed command line fails here.
     let pipes = unsafe { verbatim_process::inherited_pipes(pipe_in, pipe_out) };
-    let Ok((from_core, to_core)) = pipes.inspect_err(|error| eprintln!("{error}")) else {
+    let Ok((from_core, to_core)) = pipes.inspect_err(|error| report_error!("{error}")) else {
         return ExitCode::from(2);
     };
     let mut to_core = BufWriter::new(to_core);
@@ -220,6 +232,10 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
+        // A write that fails (a full disk, a closed pipe) is dropped: by
+        // default the formatter reports it with `eprint!`, which panics when
+        // standard error fails too.
+        .log_internal_errors(false)
         .with_writer(std::io::stderr)
         .try_init();
 }

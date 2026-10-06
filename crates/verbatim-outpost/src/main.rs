@@ -31,6 +31,16 @@ use std::process::ExitCode;
 
 use verbatim_outpost::{OutpostOptions, run_attach, run_listener, run_pipe};
 
+/// Writes a line to standard error, as `eprintln!` does, but ignores a
+/// failed write instead of panicking: a full disk or a closed pipe under
+/// redirected output must not take the process down.
+macro_rules! report_error {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 fn main() -> ExitCode {
     // Keep this outpost's trace IDs disjoint from Core's and every other
     // outpost's; they meet in Core's latency ledger.
@@ -55,14 +65,14 @@ fn main() -> ExitCode {
             let (reader, writer) = match pipes {
                 Ok(pipes) => pipes,
                 Err(error) => {
-                    eprintln!("outpost: {error}");
+                    report_error!("outpost: {error}");
                     return ExitCode::from(2);
                 }
             };
             match run_pipe(Box::new(reader), Box::new(writer), target_pid, options) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("outpost pipe loop ended with error: {error}");
+                    report_error!("outpost pipe loop ended with error: {error}");
                     ExitCode::FAILURE
                 }
             }
@@ -76,14 +86,14 @@ fn main() -> ExitCode {
             let (reader, writer) = match pipes {
                 Ok(pipes) => pipes,
                 Err(error) => {
-                    eprintln!("outpost: {error}");
+                    report_error!("outpost: {error}");
                     return ExitCode::from(2);
                 }
             };
             match run_listener(Box::new(reader), Box::new(writer)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("listener pipe loop ended with error: {error}");
+                    report_error!("listener pipe loop ended with error: {error}");
                     ExitCode::FAILURE
                 }
             }
@@ -91,12 +101,12 @@ fn main() -> ExitCode {
         Some(Mode::Attach { pid, options }) => match run_attach(pid, options) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                eprintln!("outpost attach mode ended with error: {error}");
+                report_error!("outpost attach mode ended with error: {error}");
                 ExitCode::FAILURE
             }
         },
         None => {
-            eprintln!(
+            report_error!(
                 "verbatim-outpost is spawned by verbatim.exe. Usage:\n  \
                  verbatim-outpost --pipe-in <handle> --pipe-out <handle> --target-pid <pid> [--classic-uia]\n  \
                  verbatim-outpost --listener --pipe-in <handle> --pipe-out <handle>\n  \
@@ -118,6 +128,10 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
+        // A write that fails (a full disk, a closed pipe) is dropped: by
+        // default the formatter reports it with `eprint!`, which panics when
+        // standard error fails too.
+        .log_internal_errors(false)
         .with_writer(std::io::stderr)
         .try_init();
 }
