@@ -16,10 +16,15 @@ core executes it inside the provider's process; results chosen by the
 program come back as one result set. The raw surface NVDA binds
 (`_remoteOps/lowLevel.py`) is the bytecode instruction set
 (`instructions/`), operand IDs, and `RemoteOperationResultSet` (status,
-error location, extended error, operand retrieval). This is the same
-machinery
-[Microsoft's own UIA remote operations spec](https://github.com/microsoft/microsoft-ui-uiautomation/blob/master/docs/RemoteOperations.md)
-describes; it is
+error location, extended error, operand retrieval). This is the WinRT
+class `Windows.UI.UIAutomation.Core.CoreAutomationRemoteOperation`, called
+from `nvdaHelper/UIARemote/lowLevel.cpp`; NVDA dropped Microsoft's
+`microsoft-ui-uiautomation` library, which wraps the same class, in commit
+`7e31f30f5`. Microsoft documents the framing on
+[the class's Learn page](https://learn.microsoft.com/en-us/uwp/api/windows.ui.uiautomation.core.coreautomationremoteoperation)
+but not each instruction's layout, for which that library's
+`RemoteOperationInstructions.h` and NVDA's `lowLevel.py` are the
+references; it is
 officially sanctioned but sparsely documented — NVDA's framework is one
 of the few serious consumers.
 

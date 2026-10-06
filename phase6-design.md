@@ -989,6 +989,152 @@ For later milestones, recorded in `docs/roadmap.md` under M6 and M8:
 browse-mode additions, copying the last spoken text, dictionary rule
 style, OCR capture, and menu item locations in 32-bit applications.
 
+## UIA remote operations
+
+For design with Dickson before the run. Researched 2026-10-06, with a
+throwaway probe run on this machine (Windows 11 26200, x64) against the
+taskbar and Windows Terminal; "measured" and "verified" below refer to
+that probe.
+
+### What the platform offers
+
+- The API is in Windows itself: the WinRT class
+  `Windows.UI.UIAutomation.Core.CoreAutomationRemoteOperation`, with
+  `AutomationRemoteOperationResult`. NVDA calls it through a thin C++/WinRT
+  shim (`nvdaHelper/UIARemote/lowLevel.cpp`) and dropped Microsoft's
+  `microsoft-ui-uiautomation` library in 2024 (NVDA commit `7e31f30f5`)
+  as unmaintained and slow to build. The `windows` crate exposes the
+  class behind its `UI_UIAutomation_Core` feature; it activates here.
+- A client imports elements and text ranges as operands (an
+  `IUIAutomationElement` casts to the WinRT `AutomationElement` by
+  QueryInterface, verified), runs a bytecode program with `Execute`, and
+  reads back the registers it asked for. One `Execute` is one
+  cross-process round trip; the program runs inside the provider's
+  process.
+- The bytecode framing is documented on Microsoft Learn; the layout of
+  each instruction is not, so the references are Microsoft's MIT-licensed
+  `RemoteOperationInstructions.h` and NVDA's
+  `source/UIAHandler/_remoteOps/lowLevel.py` and `instructions/`. Opcodes
+  cover registers, integers, strings, booleans, arrays, string maps,
+  comparison, loops and branches, property reads, navigation, pattern and
+  text-range methods, and, since NVDA commit `9fccec044`, cache requests
+  populated inside the provider.
+- Support depends on the provider's process, so `IsOpcodeSupported`
+  answers only after an import (verified).
+- Results: a status (success, malformed bytecode, instruction limit
+  exceeded, unhandled exception, execution failure), the failing
+  instruction's index, an extended HRESULT, and any requested registers
+  computed before a failure.
+
+### What the probe found
+
+- **Client-side proxies cannot run programs.** Importing an element
+  served by the MSAA proxy inside the client's own process (Windows
+  Terminal's caption buttons) fails with E_UNEXPECTED. Server-side
+  providers import, including the taskbar's proxy, which runs in
+  Explorer. So the classic path stays as a fallback.
+- **The remote walk stops at the process's top-level window.** It crosses
+  child windows within the process, and returns nothing for the desktop
+  root.
+- **Timings** (release build): a remote ancestor walk of 1 level took
+  0.33 ms, 2 levels 0.61 ms, 5 levels 2.3 ms, against 3.6 to 3.8 ms for the
+  classic walk of 6 levels. `GetFocusedElement` alone costs about 1.5 ms.
+  Ancestors that are window-host elements cost about 0.6 ms each even
+  inside a program, which suggests extra calls for those proxies
+  (unverified). Against the taskbar's server-side proxy, remote and
+  classic were close (2.3 ms against 2.6 ms). Counting 42 terminal lines
+  to the end and reading the last 5 took 0.48 ms remotely.
+- **Runtime ids compare remotely.** The "walk until a known ancestor"
+  pattern works: the known runtime ids go in as strings in a string map,
+  and each step turns the ancestor's runtime id into a string and checks
+  the map (verified).
+- **Not yet verified:** whether `Execute` honours the UIA connection
+  timeout against a hung provider, what happens when the provider's
+  process has gone, and the instruction limit's value. mockapp's `stall`
+  command makes the first two testable, and they are the first thing the
+  run verifies, because a call that ignores the timeout would block the
+  outpost's worker.
+
+### Proposed design
+
+The crate stays Windows-specific (GPL tier), so porting from NVDA's
+Python framework is allowed. Three layers:
+
+1. **The program builder.** A typed builder that emits bytecode: each
+   register has a Rust type for what it holds (element, text range,
+   integer, boolean, string, array, string map, cache request), so a
+   program that compares an element with an integer does not compile.
+   Structured blocks (`if`, `while`) compute the jump offsets, which the
+   bytecode counts in instructions. Only the opcodes Verbatim uses are
+   implemented, each with a unit test of its exact bytes against the
+   reference layout. Building a program costs microseconds, so programs
+   are built per call, with that call's values as literals.
+2. **Execution.** `Operation` imports the elements or text ranges, runs
+   the program, maps the status to a Rust error (with the failing
+   instruction's index), and converts the requested registers to Rust
+   values, or to `IUIAutomationElement` with the populated cache, which
+   the existing snapshot code in `verbatim-uia` reads unchanged. Every
+   `Execute` passes through the call counter of step 2, as one round
+   trip.
+3. **Algorithms.** Named operations the outpost calls, each with a
+   classic implementation behind the same function signature:
+   - `focus_ancestry(element, known_runtime_ids, depth_limit)`: the
+     element's ancestors, nearest first, each with Verbatim's cached
+     property set, stopping at the first ancestor whose runtime id is
+     known (and saying which), plus a list's or tab control's selected
+     child.
+   - `terminal_tail(anchor, lines_wanted)`: the anchor line's text, the
+     number of lines from the anchor to the end, and the text of the last
+     lines, for M4's terminals.
+
+   The classic implementation is today's walk. It is the fallback, the
+   baseline for the before-and-after measurement, and the reference in
+   tests: against mockapp, both implementations must return the same
+   ancestors with the same properties.
+
+Fallback, so a failure costs one attempt, not one per event:
+
+- An import that fails (a client-side proxy) marks the window as not
+  supporting remote programs, for the window's lifetime, like the
+  arbitration verdicts, and the classic implementation runs.
+- An `Execute` that fails runs the classic implementation for that call
+  and is logged with the instruction index; repeated failures for one
+  window mark it like a failed import.
+- A program that exceeds the instruction limit is retried once with a
+  smaller depth limit, then falls back.
+
+The two-round-trip target for a steady-state UIA focus change: the focus
+event arrives with its cache already filled, so `GetFocusedElement` is
+not needed; the outpost imports the event's sender. Then:
+
+- Option A: one round trip for the live `HasKeyboardFocus` check that
+  NVDA now makes, and one `Execute` for the ancestry.
+- Option B: the program reads `HasKeyboardFocus` first and returns early
+  if it is false, so the whole focus change is one round trip.
+
+Option B is proposed: it meets the target with one round trip to spare.
+
+The program reads raw-view parents, which is the view the classic walk
+uses (`RawViewWalker` in `verbatim-uia`'s client), so the two return the
+same tree.
+
+Dependencies: the `UI_UIAutomation` and `UI_UIAutomation_Core` features
+of `windows`, and the `windows-collections` crate (the WinRT vector type
+moved there), which means rerunning hakari.
+
+Corrections this research makes: `docs/architecture.md`'s remote
+operations bullet and the crate's doc comment both say Verbatim wraps
+Microsoft's `microsoft-ui-uiautomation` library; it uses the API in
+Windows directly, as NVDA now does. `docs/nvda/uia-remote-ops.md` links
+to a `docs/RemoteOperations.md` in that repository which does not exist.
+
+### Questions for Dickson
+
+- The typed builder covering only the opcodes used, grown as needed,
+  rather than a port of NVDA's whole framework: agreed?
+- Option B, folding the live focus check into the program: agreed?
+- Fallback marking per window for its lifetime: agreed?
+
 ## The autonomous run
 
 Agreed scope (2026-10-06): steps 1 to 3 and all of M4, after the UIA
@@ -1108,6 +1254,36 @@ In this order, since later parts build on earlier ones:
    counted in characters (grapheme clusters); a shorter line puts the
    cursor at its end, and the column is remembered, so the next longer
    line returns to it, as editors do with their caret.
+   The review commands in M4, NVDA's desktop keys first, laptop keys in
+   parentheses (from `globalCommands.py`):
+   - Lines: previous, current, next, on numpad 7, 8, 9 (Verbatim+Up
+     Arrow, Verbatim+Shift+Period, Verbatim+Down Arrow); current line
+     pressed twice spells it.
+   - Words: numpad 4, 5, 6 (Verbatim+Control+Left Arrow,
+     Verbatim+Control+Period, Verbatim+Control+Right Arrow); current word
+     pressed twice spells it.
+   - Characters: numpad 1, 2, 3 (Verbatim+Left Arrow, Verbatim+Period,
+     Verbatim+Right Arrow); current character pressed twice gives its
+     description from the character table, three times its numeric value.
+   - Top and bottom: Shift+numpad 7 and 9 (Verbatim+Control+Home and End).
+   - Start and end of line: Shift+numpad 1 and 3 (Verbatim+Home and End).
+   - Previous and next page: Verbatim+Page Up and Page Down
+     (Verbatim+Shift+Page Up and Page Down).
+   - Say all from the review cursor: numpad Plus (Verbatim+Shift+A).
+   - Start and end of the selection: Verbatim+Alt+Home and End.
+   - Select and copy (requested by Dickson): Verbatim+F9 marks the start;
+     Verbatim+Shift+F9 moves the review cursor to that mark; Verbatim+F10
+     once selects from the mark to the review cursor where the text
+     supports selection, twice copies that text to the clipboard. With no
+     mark, Verbatim+F10 says "No start marker set".
+   - The review cursor follows the caret, toggled by Verbatim+6 ("caret
+     moves review cursor").
+   - The review cursor's location and the caret's location
+     (Verbatim+numpad Delete, Verbatim+Delete on laptops).
+   Not in M4: switching review modes (Verbatim+numpad 7 and 1). M4 has
+   only object review, the text of the navigator object; document review
+   needs browse mode and screen review needs the screen projection, both
+   M6. Object navigation, already implemented, is unchanged.
 6. **Say-all** with index marks, the "Say all reads by" setting
    (sentence by default where the text can be split into sentences, line
    for UIA), and the display kept on while reading.

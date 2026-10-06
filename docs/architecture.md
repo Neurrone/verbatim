@@ -614,9 +614,11 @@ M13) for Java applications.
 - **Threading.** Per UIA guidance, event callbacks arrive on dedicated MTA
   threads separate from threads that make UIA calls; each outpost owns both.
   Multiple UIA client threads are a supported, intended part of the design.
-- **Remote Operations.** The Microsoft.UI.UIAutomation remote-ops API (which
-  NVDA vendors as UIARemote) executes batched operations inside the provider
-  process in one cross-process round trip. Wrapped in a `verbatim-uia-rops`
+- **Remote Operations.** Windows' own remote operations API (the WinRT
+  `Windows.UI.UIAutomation.Core.CoreAutomationRemoteOperation`, which NVDA
+  calls through its small `UIARemote` shim, having dropped Microsoft's
+  `microsoft-ui-uiautomation` library) executes batched operations inside
+  the provider process in one cross-process round trip. Wrapped in a `verbatim-uia-rops`
   crate and used for: ancestor-chain retrieval on focus events, bulk text
   attribute runs, terminal text-range walking, and browse-mode buffer batch
   fetches. Verify ARM64 behavior early (R3).
