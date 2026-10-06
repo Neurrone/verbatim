@@ -10,12 +10,16 @@ use std::sync::Arc;
 
 use verbatim_model::{SpeechPriority, TraceId, Utterance, UtteranceSegment};
 use verbatim_speech::SpeechManager;
-use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE,
+};
+use windows::core::{PCWSTR, w};
 
 /// Copies `text` to the system clipboard and speaks a localized
 /// confirmation. A failure to reach the clipboard is logged and announced
@@ -86,47 +90,134 @@ fn speak(manager: &Arc<SpeechManager>, text: String) {
 }
 
 /// Places `text` on the clipboard as `CF_UNICODETEXT`, the standard Win32
-/// copy dance: open the clipboard, empty it, allocate movable global memory
-/// holding the UTF-16 string plus its null terminator, and hand ownership to
-/// the clipboard. The clipboard owns the memory after `SetClipboardData`
-/// succeeds, so it is not freed here.
+/// copy dance: open the clipboard with an owner window, empty it, allocate
+/// movable global memory holding the UTF-16 string plus its null
+/// terminator, and hand ownership to the clipboard. The clipboard owns the
+/// memory once `SetClipboardData` succeeds; on any failure before that, the
+/// memory is freed here.
+///
+/// The owner window is needed because emptying a clipboard opened with no
+/// owner window leaves the clipboard with no owner, and `SetClipboardData`
+/// then fails, as Microsoft's documentation of `OpenClipboard` says. The
+/// caller is the reducer thread, which runs no message loop, so the window
+/// is a message-only window made for this write and destroyed after it
+/// ([`OwnerWindow`]).
 fn set_clipboard_text(text: &str) -> Result<(), String> {
     let mut utf16: Vec<u16> = text.encode_utf16().collect();
     utf16.push(0);
     let bytes = std::mem::size_of_val(utf16.as_slice());
 
-    // SAFETY: `HWND(null)` opens the clipboard for this thread with no
-    // owner window, which is valid; it is closed below on every path.
-    unsafe { OpenClipboard(Some(HWND::default())) }
-        .map_err(|error| format!("OpenClipboard: {error}"))?;
+    let owner = OwnerWindow::new()?;
+    // SAFETY: opens the clipboard for this thread, owned by `owner`, a
+    // window of this thread that outlives the clipboard being open; it is
+    // closed below on every path.
+    unsafe { OpenClipboard(Some(owner.0)) }.map_err(|error| format!("OpenClipboard: {error}"))?;
     // A guard-free early exit would leak the open clipboard; every error
     // path below closes it before returning.
     let result = (|| {
         // SAFETY: the clipboard is open on this thread.
         unsafe { EmptyClipboard() }.map_err(|error| format!("EmptyClipboard: {error}"))?;
-        // SAFETY: allocates `bytes` bytes of movable, zeroed global memory.
-        let handle: HGLOBAL =
-            unsafe { GlobalAlloc(GHND, bytes) }.map_err(|error| format!("GlobalAlloc: {error}"))?;
-        // SAFETY: locks the allocation just made, unlocked below.
-        let destination = unsafe { GlobalLock(handle) };
-        if destination.is_null() {
-            return Err("GlobalLock returned null".to_owned());
-        }
-        // SAFETY: the locked allocation holds `bytes` bytes, exactly the
-        // whole null-terminated UTF-16 string, and is aligned for `u16`, as
-        // global memory always is; the source is a separate vector.
-        unsafe {
-            std::ptr::copy_nonoverlapping(utf16.as_ptr(), destination.cast::<u16>(), utf16.len());
-        }
-        // SAFETY: unlocks the lock taken above.
-        let _ = unsafe { GlobalUnlock(handle) };
-        // SAFETY: the clipboard is open and emptied by this thread; on
-        // success it owns the memory.
-        unsafe { SetClipboardData(CF_UNICODETEXT.0.into(), Some(HANDLE(handle.0))) }
+        let memory = OwnedGlobal::holding(&utf16, bytes)?;
+        // SAFETY: the clipboard is open and emptied by this thread, with an
+        // owner; on success it owns the memory, which is then released from
+        // `memory` so it is not freed here.
+        unsafe { SetClipboardData(CF_UNICODETEXT.0.into(), Some(HANDLE(memory.0.0))) }
             .map_err(|error| format!("SetClipboardData: {error}"))?;
+        memory.release();
         Ok(())
     })();
     // SAFETY: closes the clipboard this thread opened above.
     let _ = unsafe { CloseClipboard() };
     result
+}
+
+/// A hidden message-only window owned by the calling thread, to open the
+/// clipboard with, destroyed when dropped. It lives only as long as one
+/// write: the clipboard sends its owner messages, such as the
+/// `WM_DESTROYCLIPBOARD` another application's `EmptyClipboard` sends, and
+/// a window kept on a thread that pumps no messages would leave that
+/// application waiting for an answer. Once the window is destroyed the
+/// clipboard keeps the text with no owner.
+struct OwnerWindow(HWND);
+
+impl OwnerWindow {
+    /// Creates the window, of the system's predefined static class, so no
+    /// class is registered for it.
+    fn new() -> Result<Self, String> {
+        // SAFETY: creates a window of a class the system registers in every
+        // process, with no name, menu, module, or creation data, as a
+        // message-only window (its parent `HWND_MESSAGE`) owned by this
+        // thread; it is destroyed in `drop`.
+        let window = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                PCWSTR::null(),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+        }
+        .map_err(|error| format!("CreateWindowExW: {error}"))?;
+        Ok(Self(window))
+    }
+}
+
+impl Drop for OwnerWindow {
+    fn drop(&mut self) {
+        // SAFETY: destroys the window this thread created in `new`, on the
+        // same thread, as `DestroyWindow` requires; nothing uses it after.
+        let _ = unsafe { DestroyWindow(self.0) };
+    }
+}
+
+/// Global memory allocated for the clipboard, freed when dropped unless
+/// [`release`](Self::release) handed it to the clipboard.
+struct OwnedGlobal(HGLOBAL);
+
+impl OwnedGlobal {
+    /// Allocates `bytes` bytes of movable global memory holding `units`,
+    /// which are exactly `bytes` long.
+    fn holding(units: &[u16], bytes: usize) -> Result<Self, String> {
+        // SAFETY: allocates `bytes` bytes of movable, zeroed global memory,
+        // owned by the value made from it and freed when that drops.
+        let handle =
+            unsafe { GlobalAlloc(GHND, bytes) }.map_err(|error| format!("GlobalAlloc: {error}"))?;
+        let memory = Self(handle);
+        // SAFETY: locks the allocation just made, unlocked below.
+        let destination = unsafe { GlobalLock(memory.0) };
+        if destination.is_null() {
+            return Err("GlobalLock returned null".to_owned());
+        }
+        // SAFETY: the locked allocation holds `bytes` bytes, exactly
+        // `units`, and is aligned for `u16`, as global memory always is;
+        // the source is a separate slice.
+        unsafe {
+            std::ptr::copy_nonoverlapping(units.as_ptr(), destination.cast::<u16>(), units.len());
+        }
+        // SAFETY: unlocks the lock taken above.
+        let _ = unsafe { GlobalUnlock(memory.0) };
+        Ok(memory)
+    }
+
+    /// Gives the memory up to the clipboard, which now owns it.
+    fn release(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for OwnedGlobal {
+    fn drop(&mut self) {
+        // SAFETY: frees the unlocked allocation `holding` made, which the
+        // clipboard never took; nothing uses it after. `GlobalFree` returns
+        // null on success, which the binding reports as an error, so its
+        // result says nothing and is ignored.
+        let _ = unsafe { GlobalFree(Some(self.0)) };
+    }
 }
