@@ -128,6 +128,13 @@ Public API:
   has played), `Cancelled` (cut off or dropped before all of it was
   heard), or `Failed` with a reason.
 - `GestureId` — normalized gesture identifiers, NVDA's scheme.
+- `CallKind` and `CallCounts` — how many cross-process calls a piece of
+  work made, by kind: UIA calls, MSAA calls, and window messages
+  (`docs/performance.md`). `CallCounts::record` counts one call,
+  saturating rather than overflowing; `total` and `is_empty` read it, and
+  counts add. The model only names the counts: `verbatim-uia` and
+  `verbatim-ia2` count, the outpost sends them, and the latency ledger and
+  the control plane carry them.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases
 everything, and sorts the plus-separated parts, exactly like NVDA's

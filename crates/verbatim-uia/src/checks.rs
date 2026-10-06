@@ -17,6 +17,9 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::{BSTR, HRESULT, Interface};
 
+use verbatim_model::CallKind;
+
+use crate::calls::count;
 use crate::client::Uia;
 
 /// UIA's error for a provider that did not answer within the connection
@@ -64,13 +67,17 @@ pub fn console_reports_formatting(hwnd: isize) -> Option<bool> {
             let condition = uia
                 .client()
                 .CreatePropertyCondition(UIA_AutomationIdPropertyId, &id)?;
+            count(CallKind::Uia);
             let text_area = window.FindFirst(TreeScope_Children, &condition)?;
+            count(CallKind::Uia);
             let pattern: IUIAutomationTextPattern =
                 text_area.GetCurrentPattern(UIA_TextPatternId)?.cast()?;
+            count(CallKind::Uia);
             let ranges = pattern.GetVisibleRanges()?;
             if ranges.Length()? != 1 {
                 return Ok(false);
             }
+            count(CallKind::Uia);
             let font = ranges
                 .GetElement(0)?
                 .GetAttributeValue(UIA_FontNameAttributeId)?;

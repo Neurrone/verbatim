@@ -90,6 +90,7 @@ pub fn nearest_window_handle(element: &IUIAutomationElement) -> Option<isize> {
             *slot = Context::build().ok();
         }
         let context = slot.as_ref()?;
+        crate::calls::count(verbatim_model::CallKind::Uia);
         // SAFETY: `element` is a live element per the caller's contract;
         // `context.walker` and `context.cache` are this thread's own, either
         // just built or reused unchanged from an earlier call on this same

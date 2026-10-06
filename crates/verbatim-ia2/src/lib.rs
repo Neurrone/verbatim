@@ -20,8 +20,12 @@
 //!   objects, with the object kept behind each, sharing a mint counter with
 //!   UIA.
 //! - [`map`] — role and state mapping into the model.
+//! - [`calls`] — the per-thread count of the cross-process calls
+//!   [`acquire`] makes, which the outpost's worker takes around each entry
+//!   it handles.
 
 pub mod acquire;
+pub mod calls;
 mod com;
 mod hook;
 pub mod map;

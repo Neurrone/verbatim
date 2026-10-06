@@ -30,8 +30,11 @@
 //!   window an arbitrary element belongs to, for elements (menu items, list
 //!   items) that are not windows themselves. Also blocking; see its docs.
 //! - [`map`] — control-type and cached-property mapping into the model.
+//! - [`calls`] — the per-thread count of the cross-process calls this crate
+//!   makes, which the outpost's worker takes around each entry it handles.
 
 mod cache;
+pub mod calls;
 mod checks;
 mod client;
 mod com;

@@ -167,6 +167,19 @@ Public API:
   request, lazily built the first time a given thread calls it and reused
   after that, matching `Uia`'s one-client-per-thread rule so nothing COM
   here crosses a thread boundary.
+- `calls` — the count of the cross-process calls this crate makes, kept
+  per thread: `calls::count(kind)` counts one, and `calls::take()` returns
+  this thread's `CallCounts` since the last take and resets them. Every
+  call that reaches the application is counted where it is made: the
+  `*BuildCache` fetches and tree-walker steps, `BuildUpdatedCache`,
+  `FindFirst`, `CurrentControllerFor`, pattern fetches and methods,
+  `NormalizeElementBuildCache`, and the provider checks' text reads, as UIA
+  calls; the arbitration probe's `UiaHasServerSideProvider` and its
+  `WM_NULL` wait, as window messages. Cached reads, `GetRuntimeId`, and
+  creating clients, conditions, walkers, and cache requests are local and
+  not counted, nor are event subscriptions (`docs/performance.md`, "What
+  counts as a call"). The outpost's worker takes the count around each
+  entry it handles.
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
   live element behind each; takes an injected shared counter so the UIA and
   MSAA registries in one outpost never hand out the same id. Nodes stay

@@ -8,11 +8,13 @@
 //! serde derives exist so the same types travel over the Core-outpost pipe,
 //! the control plane, and the flight recorder unchanged.
 
+mod calls;
 mod event;
 mod gesture;
 mod speech;
 mod tree;
 
+pub use calls::{CallCounts, CallKind};
 pub use event::{
     ActionName, Earcon, Effect, FetchResult, Input, NormalizedEvent, Notification,
     NotificationKind, NotificationProcessing, Pid, PropertyChange, Query, QueryId, QueryKind,

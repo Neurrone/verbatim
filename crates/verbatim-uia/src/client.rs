@@ -20,9 +20,10 @@ use windows::Win32::UI::Accessibility::{
 
 use windows::core::Interface;
 
-use verbatim_model::{NodeSnapshot, QueryKind, TreeNode};
+use verbatim_model::{CallKind, NodeSnapshot, QueryKind, TreeNode};
 
 use crate::cache::base_cache_request;
+use crate::calls::count;
 use crate::com::init_mta;
 use crate::map::snapshot_from_cached_element;
 use crate::registry::NodeIdRegistry;
@@ -108,6 +109,7 @@ impl Uia {
         &self,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
+        count(CallKind::Uia);
         // SAFETY: `cache` is a live cache request from this client; the call is
         // a normal cross-process fetch.
         unsafe { self.client.GetFocusedElementBuildCache(cache) }
@@ -148,6 +150,7 @@ impl Uia {
         hwnd: isize,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
+        count(CallKind::Uia);
         // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandleBuildCache
         // tolerates an invalid handle by returning an error.
         unsafe {
@@ -193,6 +196,7 @@ impl Uia {
             let condition = self
                 .client
                 .CreatePropertyCondition(UIA_RuntimeIdPropertyId, &variant)?;
+            count(CallKind::Uia);
             match root.FindFirstBuildCache(TreeScope_Subtree, &condition, cache) {
                 Ok(element) => Ok(Some(element)),
                 // No match is a null element, which `windows` reports as an
@@ -225,11 +229,12 @@ impl Uia {
         runtime_id: &[i32],
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<Option<IUIAutomationElement>> {
+        count(CallKind::Uia);
         // SAFETY: `focused` is live per the caller's contract.
         let controlled = unsafe { focused.CurrentControllerFor() }?;
         // SAFETY: `controlled` is a live element array.
-        let count = unsafe { controlled.Length() }?;
-        for index in 0..count {
+        let length = unsafe { controlled.Length() }?;
+        for index in 0..length {
             // SAFETY: `index` is within the array's length.
             let root = unsafe { controlled.GetElement(index) }?;
             // A descendant, not the controlled element itself.
@@ -358,6 +363,7 @@ impl Uia {
                 return Ok((chain, None, AncestorWalk::OutOfTime));
             }
             hops += 1;
+            count(CallKind::Uia);
             // SAFETY: `current` is either the caller's `element` (per its
             // contract) or a parent built with `cache` by the previous hop.
             let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) }) else {
@@ -479,6 +485,7 @@ impl Uia {
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         // SAFETY: `self.client` is a live IUIAutomation instance.
         let walker = unsafe { self.client.RawViewWalker() }?;
+        count(CallKind::Uia);
         // SAFETY: `element` and `cache` are valid per the caller's contract.
         let neighbor = unsafe {
             match direction {
@@ -530,21 +537,27 @@ impl Uia {
         // SAFETY: `element` is live per the caller's contract; each pattern
         // fetch fails safely (an error) when the pattern is unsupported.
         unsafe {
+            count(CallKind::Uia);
             if let Ok(invoke) =
                 element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
             {
+                count(CallKind::Uia);
                 return invoke
                     .Invoke()
                     .map(|()| Some(verbatim_model::ActionName::Invoke));
             }
+            count(CallKind::Uia);
             if let Ok(toggle) =
                 element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
             {
+                count(CallKind::Uia);
                 return toggle.Toggle().map(|()| None);
             }
+            count(CallKind::Uia);
             if let Ok(item) = element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
                 UIA_SelectionItemPatternId,
             ) {
+                count(CallKind::Uia);
                 return item.Select().map(|()| None);
             }
         }
@@ -570,12 +583,14 @@ pub unsafe fn selected_element(
     element: &IUIAutomationElement,
     cache: &IUIAutomationCacheRequest,
 ) -> Option<IUIAutomationElement> {
+    count(CallKind::Uia);
     // SAFETY: `element` is live per the caller's contract; a missing
     // pattern surfaces as an error mapped to None.
     let pattern = unsafe {
         element.GetCurrentPatternAs::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
     }
     .ok()?;
+    count(CallKind::Uia);
     // SAFETY: `pattern` was just obtained from a live element.
     let selection = unsafe { pattern.GetCurrentSelection() }.ok()?;
     // SAFETY: `selection` is a live element array.
@@ -584,6 +599,7 @@ pub unsafe fn selected_element(
     }
     // SAFETY: index 0 exists per the length check above.
     let first = unsafe { selection.GetElement(0) }.ok()?;
+    count(CallKind::Uia);
     // SAFETY: `first` is live; rebuilding with `cache` prefetches the full
     // snapshot property set in one round trip.
     unsafe { first.BuildUpdatedCache(cache) }.ok()
@@ -720,6 +736,7 @@ unsafe fn walk_recursive(
 
     if depth >= limits.max_depth {
         // Peek only: is there a child we are declining to descend into?
+        count(CallKind::Uia);
         // SAFETY: forwarded to this function's contract.
         if unsafe { walker.GetFirstChildElementBuildCache(element, limits.cache) }.is_ok() {
             state.truncated = true;
@@ -731,6 +748,7 @@ unsafe fn walk_recursive(
     }
 
     let mut children = Vec::new();
+    count(CallKind::Uia);
     // SAFETY: forwarded to this function's contract; a `Err` here means "no
     // first child", the same convention `element_by_runtime_id` uses for
     // `FindFirstBuildCache`.
@@ -746,6 +764,7 @@ unsafe fn walk_recursive(
         // or below; forwarded to this function's own contract otherwise.
         let child_node = unsafe { walk_recursive(walker, &current, limits, depth + 1, state) };
         children.push(child_node);
+        count(CallKind::Uia);
         // SAFETY: forwarded; `Err` means "no next sibling".
         next_child = unsafe { walker.GetNextSiblingElementBuildCache(&current, limits.cache) }.ok();
     }

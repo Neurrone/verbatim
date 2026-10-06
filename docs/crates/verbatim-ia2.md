@@ -113,6 +113,18 @@ Public API:
   field inside a labelled combo box, and gives a list view or tree view
   item its position, from `LVM_GETITEMCOUNT` or by counting its siblings
   with `TVM_GETNEXTITEM`, as NVDA does.
+- `calls` — the count of the cross-process calls `acquire` makes, kept per
+  thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
+  Every `IAccessible` method, `IAccIdentity`'s identity string, the
+  acquisitions (`AccessibleObjectFromEvent`, `AccessibleObjectFromWindow`,
+  `AccessibleChildren`, `WindowFromAccessibleObject`), and a
+  `QueryInterface` for any interface but `IUnknown` on an object from the
+  application count as MSAA calls, one per API call however many round
+  trips it makes inside; the list view and tree view messages count as
+  window messages. A snapshot read is seven calls (six properties and the
+  location), plus the role and identity reads that match a sighting to a
+  kept node. Local window functions on the application's handles are not
+  counted (`docs/performance.md`, "What counts as a call").
 - `NodeIdRegistry` — the nodes the outpost has issued, each with its
   address (window handle, object id, and child id), the role read when it
   was issued, and the accessible object it was read from, kept as an agile

@@ -45,8 +45,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{AgileReference, IUnknown, Interface};
 
-use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Rect, Role, TreeNode};
+use verbatim_model::{
+    Backend, CallKind, NodeDetails, NodeId, NodeSnapshot, QueryKind, Rect, Role, TreeNode,
+};
 
+use crate::calls::count;
 use crate::com::{CHILDID_SELF, bstr_to_option, bstr_to_text, child_variant, variant_i32};
 use crate::map::{role_from_msaa, states_from_msaa};
 use crate::registry::{Found, Held, MsaaKey, NodeIdRegistry};
@@ -222,6 +225,7 @@ unsafe fn focus_event_names_list(
     id_child: i32,
 ) -> bool {
     if id_child == CHILDID_SELF {
+        count(CallKind::Msaa);
         // SAFETY: `acc`/`child` valid together per the contract; `variant_i32`
         // reads only the VARIANT `get_accRole` just returned.
         let role = unsafe {
@@ -256,6 +260,7 @@ unsafe fn accessible_and_child(
     unsafe {
         let mut acc: Option<IAccessible> = None;
         let mut child = VARIANT::default();
+        count(CallKind::Msaa);
         AccessibleObjectFromEvent(
             HWND(hwnd as *mut c_void),
             id_object.cast_unsigned(),
@@ -444,11 +449,12 @@ pub fn ancestor_chain_until(
             }
             continue;
         }
+        count(CallKind::Msaa);
         // SAFETY: `current` is a live IAccessible.
         let Ok(parent_dispatch) = (unsafe { current.accParent() }) else {
             break;
         };
-        let Ok(parent_acc) = parent_dispatch.cast::<IAccessible>() else {
+        let Ok(parent_acc) = cast_remote::<IAccessible>(&parent_dispatch) else {
             break;
         };
         // SAFETY: `parent_acc` was just acquired above.
@@ -524,6 +530,7 @@ unsafe fn send_tvm(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize 
     // this module's callers take plain integers (an acc id, an `HTREEITEM`
     // value, or a `TVGN_*` relation code) in `wparam`/`lparam`, never a
     // pointer that would need to stay valid beyond the call.
+    count(CallKind::WindowMessage);
     unsafe { SendMessageW(hwnd, msg, Some(WPARAM(wparam)), Some(LPARAM(lparam))).0 }
 }
 
@@ -712,13 +719,14 @@ pub fn navigate(
                 )
             }));
         }
+        count(CallKind::Msaa);
         // SAFETY: `acc` is live.
         let parent_dispatch = match unsafe { acc.accParent() } {
             Ok(parent) => parent,
             Err(error) if disconnected(&error) => return Err(AcquireError::Gone),
             Err(_) => return Ok(None),
         };
-        let Ok(parent_acc) = parent_dispatch.cast::<IAccessible>() else {
+        let Ok(parent_acc) = cast_remote::<IAccessible>(&parent_dispatch) else {
             return Ok(None);
         };
         // SAFETY: `parent_acc` was just acquired above.
@@ -774,6 +782,7 @@ pub fn navigate(
     // child's own object, with child 0.
     // SAFETY: `child` is the variant `locate` returned with `acc`.
     let source_child = unsafe { child_id_of(&child) };
+    count(CallKind::Msaa);
     // SAFETY: `acc` is live; `child` is valid for it.
     let navigated = match unsafe { acc.accNavigate(navdir.cast_signed(), &child) } {
         // SAFETY: reading the type of the VARIANT just returned.
@@ -870,11 +879,13 @@ pub fn activate(
     registry: &NodeIdRegistry,
 ) -> Result<Option<verbatim_model::ActionName>, AcquireError> {
     let (acc, child, _, _) = locate(node, registry)?;
+    count(CallKind::Msaa);
     // SAFETY: `acc` is live; `child` is valid for it.
     let name = unsafe { acc.get_accDefaultAction(&child) }
         .ok()
         .map(|name| name.to_string())
         .filter(|name| !name.trim().is_empty());
+    count(CallKind::Msaa);
     // SAFETY: as above.
     unsafe { acc.accDoDefaultAction(&child) }.map_err(|error| {
         if disconnected(&error) {
@@ -901,6 +912,7 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
     if unsafe { child_id_of(&child) } != CHILDID_SELF {
         return None;
     }
+    count(CallKind::Msaa);
     // SAFETY: `acc` is a live IAccessible.
     let selection = unsafe { acc.accSelection() }.ok()?;
     // SAFETY: the variant type is checked before any union field is read.
@@ -919,7 +931,7 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
         }
         if vt == VT_DISPATCH {
             let dispatch = selection.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()?;
-            let child_acc = dispatch.cast::<IAccessible>().ok()?;
+            let child_acc = cast_remote::<IAccessible>(dispatch).ok()?;
             let child_hwnd = window_of(&child_acc).unwrap_or(hwnd);
             let child_key = (child_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             return Some(read_snapshot(
@@ -1064,7 +1076,8 @@ unsafe fn walk_recursive(
     if depth >= limits.max_depth {
         // SAFETY: `acc` is live per the caller's contract; only peeks
         // whether there is a child we are declining to descend into.
-        let has_children = unsafe { acc.accChildCount() }.is_ok_and(|count| count > 0);
+        count(CallKind::Msaa);
+        let has_children = unsafe { acc.accChildCount() }.is_ok_and(|children| children > 0);
         if has_children {
             state.truncated = true;
         }
@@ -1074,9 +1087,10 @@ unsafe fn walk_recursive(
         };
     }
 
+    count(CallKind::Msaa);
     // SAFETY: `acc` is live per the caller's contract.
     let child_count = match unsafe { acc.accChildCount() } {
-        Ok(count) if count > 0 => count,
+        Ok(children) if children > 0 => children,
         _ => {
             return TreeNode {
                 snapshot,
@@ -1096,6 +1110,7 @@ unsafe fn walk_recursive(
     // SAFETY: `acc` is live; `buffer` holds exactly `child_count` freshly
     // zeroed VARIANTs, which is what AccessibleChildren fills (writing at
     // most that many entries and reporting the actual count in `obtained`).
+    count(CallKind::Msaa);
     if unsafe { AccessibleChildren(acc, 0, &mut buffer, &raw mut obtained) }.is_err() {
         return TreeNode {
             snapshot,
@@ -1160,7 +1175,7 @@ unsafe fn resolve_child(
         let vt = entry.Anonymous.Anonymous.vt;
         if vt == VT_DISPATCH {
             if let Some(dispatch) = entry.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()
-                && let Ok(child_acc) = dispatch.cast::<IAccessible>()
+                && let Ok(child_acc) = cast_remote::<IAccessible>(dispatch)
             {
                 let hwnd = window_of(&child_acc).unwrap_or(parent_hwnd);
                 return (child_acc, child_variant(CHILDID_SELF), hwnd);
@@ -1210,6 +1225,7 @@ unsafe fn first_accessible_child(acc: &IAccessible) -> Option<VARIANT> {
     let mut obtained = 0i32;
     // SAFETY: `acc` is live per the contract; `buffer` holds one zeroed
     // VARIANT, and `AccessibleChildren` writes at most that many.
+    count(CallKind::Msaa);
     unsafe { AccessibleChildren(acc, 0, &mut buffer, &raw mut obtained) }.ok()?;
     let [first] = buffer;
     (obtained > 0).then_some(first)
@@ -1343,6 +1359,10 @@ unsafe fn read_snapshot(
     // SAFETY: forwarded to the caller's contract; each accessor tolerates an
     // unsupported property by returning an error, mapped to a neutral default.
     unsafe {
+        // Name, value, role, state, description, and keyboard shortcut.
+        for _ in 0..6 {
+            count(CallKind::Msaa);
+        }
         let name = acc.get_accName(child).ok().and_then(|b| bstr_to_text(&b));
         let raw_value = acc.get_accValue(child).ok().and_then(|b| bstr_to_text(&b));
         let role = acc
@@ -1423,10 +1443,12 @@ unsafe fn read_snapshot(
 /// `acc` must be a live `IAccessible`.
 unsafe fn in_labelled_combo_box(acc: &IAccessible, child_id: i32) -> bool {
     let parent_of = |acc: &IAccessible| -> Option<IAccessible> {
+        count(CallKind::Msaa);
         // SAFETY: `acc` is live; a failed call is "no parent".
-        unsafe { acc.accParent() }.ok()?.cast().ok()
+        cast_remote(&unsafe { acc.accParent() }.ok()?).ok()
     };
     let role_of = |acc: &IAccessible| -> Role {
+        count(CallKind::Msaa);
         // SAFETY: `acc` is live; a failed read is an unknown role.
         unsafe { acc.get_accRole(&child_variant(CHILDID_SELF)) }
             .ok()
@@ -1448,12 +1470,15 @@ unsafe fn in_labelled_combo_box(acc: &IAccessible, child_id: i32) -> bool {
         };
         parent = grandparent;
     }
-    role_of(&parent) == Role::ComboBox
-        // SAFETY: `parent` is live; a failed read is "no name".
-        && unsafe { parent.get_accName(&child_variant(CHILDID_SELF)) }
-            .ok()
-            .and_then(|name| bstr_to_text(&name))
-            .is_some()
+    if role_of(&parent) != Role::ComboBox {
+        return false;
+    }
+    count(CallKind::Msaa);
+    // SAFETY: `parent` is live; a failed read is "no name".
+    unsafe { parent.get_accName(&child_variant(CHILDID_SELF)) }
+        .ok()
+        .and_then(|name| bstr_to_text(&name))
+        .is_some()
 }
 
 /// An item's position in its set and the set's size, for an item of a
@@ -1471,13 +1496,14 @@ fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u
     let window = HWND(hwnd as *mut c_void);
     match role {
         Role::ListItem if window_class_name(hwnd).contains("SysListView32") => {
+            count(CallKind::WindowMessage);
             // SAFETY: LVM_GETITEMCOUNT takes no pointers; a bad handle
             // fails safely, returning 0.
-            let count = unsafe { SendMessageW(window, LVM_GETITEMCOUNT, None, None) }.0;
-            let count = u32::try_from(count).ok().filter(|&count| count > 0);
+            let items = unsafe { SendMessageW(window, LVM_GETITEMCOUNT, None, None) }.0;
+            let items = u32::try_from(items).ok().filter(|&items| items > 0);
             (
-                u32::try_from(child_id).ok().filter(|_| count.is_some()),
-                count,
+                u32::try_from(child_id).ok().filter(|_| items.is_some()),
+                items,
             )
         }
         Role::TreeItem if is_systreeview32(hwnd) => {
@@ -1577,6 +1603,14 @@ unsafe fn node_for(
     registry.insert(key, held, role, at_address)
 }
 
+/// `object` as interface `T`, by a `QueryInterface` counted as a
+/// cross-process call: on an object from another process, COM answers it
+/// locally only when its proxy already holds `T` (see [`crate::calls`]).
+fn cast_remote<T: Interface>(object: &impl Interface) -> windows::core::Result<T> {
+    count(CallKind::Msaa);
+    object.cast::<T>()
+}
+
 /// The address of `acc`'s canonical `IUnknown`, which identifies the COM
 /// object while a reference to it is held.
 fn canonical(acc: &IAccessible) -> Option<usize> {
@@ -1593,6 +1627,7 @@ fn canonical(acc: &IAccessible) -> Option<usize> {
 unsafe fn role_of(acc: &IAccessible, child: i32) -> Option<Role> {
     // SAFETY: forwarded to the caller's contract; `variant_i32` reads only
     // the VARIANT `get_accRole` just returned.
+    count(CallKind::Msaa);
     unsafe {
         acc.get_accRole(&child_variant(child))
             .ok()
@@ -1608,11 +1643,12 @@ unsafe fn role_of(acc: &IAccessible, child: i32) -> Option<Role> {
 ///
 /// `acc` must be a live `IAccessible`.
 unsafe fn identity_string(acc: &IAccessible, child: i32) -> Option<Vec<u8>> {
-    let identity = acc.cast::<IAccIdentity>().ok()?;
+    let identity = cast_remote::<IAccIdentity>(acc).ok()?;
     let mut data: *mut u8 = std::ptr::null_mut();
     let mut length = 0u32;
     // SAFETY: the out-parameters are local; on success `data` holds `length`
     // bytes allocated with the COM allocator, freed below.
+    count(CallKind::Msaa);
     unsafe {
         identity
             .GetIdentityString(child.cast_unsigned(), &raw mut data, &raw mut length)
@@ -1642,6 +1678,7 @@ unsafe fn location_of(acc: &IAccessible, child: &VARIANT) -> Option<Rect> {
     let mut height = 0i32;
     // SAFETY: forwarded to the caller's contract; the four out-parameters are
     // local, fully owned `i32`s written by `accLocation` on success.
+    count(CallKind::Msaa);
     unsafe {
         acc.accLocation(
             &raw mut left,
@@ -1670,6 +1707,7 @@ unsafe fn accessible_from_window(hwnd: HWND) -> Option<IAccessible> {
     // failure; Option<IAccessible> is null-pointer-optimized.
     unsafe {
         let mut acc: Option<IAccessible> = None;
+        count(CallKind::Msaa);
         AccessibleObjectFromWindow(
             hwnd,
             OBJID_CLIENT.0.cast_unsigned(),
@@ -1704,6 +1742,7 @@ enum FocusTarget {
 unsafe fn read_acc_focus(client: &IAccessible) -> FocusTarget {
     // SAFETY: accFocus returns an owned VARIANT; its variant type is inspected
     // before any union field is read.
+    count(CallKind::Msaa);
     unsafe {
         let Ok(focus) = client.accFocus() else {
             return FocusTarget::None;
@@ -1711,7 +1750,7 @@ unsafe fn read_acc_focus(client: &IAccessible) -> FocusTarget {
         let vt = focus.Anonymous.Anonymous.vt;
         if vt == VT_DISPATCH {
             if let Some(dispatch) = focus.Anonymous.Anonymous.Anonymous.pdispVal.as_ref()
-                && let Ok(child_acc) = dispatch.cast::<IAccessible>()
+                && let Ok(child_acc) = cast_remote::<IAccessible>(dispatch)
             {
                 return FocusTarget::ChildObject(child_acc);
             }
@@ -1748,6 +1787,7 @@ unsafe fn child_id_of(child: &VARIANT) -> i32 {
 unsafe fn window_of(acc: &IAccessible) -> Option<isize> {
     // SAFETY: WindowFromAccessibleObject writes `hwnd` or fails; the handle is
     // read only on success.
+    count(CallKind::Msaa);
     unsafe {
         let mut hwnd = HWND::default();
         WindowFromAccessibleObject(acc, Some(&raw mut hwnd)).ok()?;

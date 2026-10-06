@@ -6,6 +6,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::UiaHasServerSideProvider;
 use windows::Win32::UI::WindowsAndMessaging::{SMTO_NORMAL, SendMessageTimeoutW, WM_NULL};
 
+use verbatim_model::CallKind;
+
 /// How quickly a window that answers says whether it has a provider. Live,
 /// every answer took 0 to 89 ms; `UiaHasServerSideProvider` instead gives up
 /// on a busy window after three to five seconds and reports no provider, as
@@ -44,6 +46,8 @@ pub fn probe_server_side_provider(hwnd: isize) -> Option<bool> {
     let started = Instant::now();
     let ask = || {
         let asked = Instant::now();
+        // One `WM_GETOBJECT`, sent to the window.
+        crate::calls::count(CallKind::WindowMessage);
         // SAFETY: UiaHasServerSideProvider tolerates any window handle,
         // returning false for invalid ones; the BOOL is converted, not
         // assumed.
@@ -76,6 +80,7 @@ pub fn has_server_side_provider(hwnd: isize) -> bool {
 /// Whether `window` processes a message within `wait`.
 fn responds(window: HWND, wait: Duration) -> bool {
     let timeout = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
+    crate::calls::count(CallKind::WindowMessage);
     // SAFETY: WM_NULL carries no data and does nothing; the call tolerates an
     // invalid window, returning 0.
     unsafe {
