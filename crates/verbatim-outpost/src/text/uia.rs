@@ -266,6 +266,13 @@ impl TextSource for UiaText {
         };
         let range = Self::collapsed(at)?;
         range.expand(uia_unit).map_err(failed)?;
+        // From the unit's start, collapsed, as NVDA moves its review
+        // position: moving the whole unit instead stops short of an empty
+        // last line, such as the one after a document's final line break,
+        // which a collapsed range reaches.
+        range
+            .move_endpoint_to(Endpoint::End, &range, Endpoint::Start)
+            .map_err(failed)?;
         let moved = range.move_by(uia_unit, count).map_err(failed)?;
         range
             .move_endpoint_to(Endpoint::End, &range, Endpoint::Start)

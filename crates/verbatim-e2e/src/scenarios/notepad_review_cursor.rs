@@ -65,6 +65,12 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     review(scenario, "kb:numpad9", "Banana  12");
     review(scenario, "kb:numpad2", "1");
 
+    // The empty line after the text's final line break is a line of its
+    // own, as in NVDA, and the bottom; back up to the last line of text.
+    review(scenario, "kb:numpad9", "blank");
+    review(scenario, "kb:numpad9", "Bottom blank");
+    review(scenario, "kb:numpad7", "Banana  12");
+
     // Back up a line, by character, and to the line's ends.
     review(scenario, "kb:numpad7", "Fig");
     review(scenario, "kb:numpad1", "i");
