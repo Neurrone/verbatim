@@ -159,11 +159,20 @@ pub enum Opcode {
     TextRangeScrollIntoView = 0x271E_0113,
     TextRangeGetChildren = 0x271E_0114,
     TextRangeShowContextMenu = 0x271E_0115,
+
+    // The text patterns, by Microsoft's formulas: a pattern getter's opcode
+    // is the pattern's id, and a pattern method's is
+    // `(patternId << 10) | vtableIndex` (`pattern_method`).
+    GetTextPattern = 10014,
+    GetTextPattern2 = 10024,
+    TextPatternGetSelection = (10014 << 10) | 5,
+    TextPatternGetDocumentRange = (10014 << 10) | 7,
+    TextPattern2GetCaretRange = (10024 << 10) | 0xA,
 }
 
 impl Opcode {
     /// Every opcode in the table.
-    pub const ALL: [Self; 104] = [
+    pub const ALL: [Self; 109] = [
         Self::Nop,
         Self::Set,
         Self::ForkIfTrue,
@@ -268,6 +277,11 @@ impl Opcode {
         Self::TextRangeScrollIntoView,
         Self::TextRangeGetChildren,
         Self::TextRangeShowContextMenu,
+        Self::GetTextPattern,
+        Self::GetTextPattern2,
+        Self::TextPatternGetSelection,
+        Self::TextPatternGetDocumentRange,
+        Self::TextPattern2GetCaretRange,
     ];
 
     /// The opcode's value as it is written into the bytecode.
@@ -286,6 +300,14 @@ pub const fn pattern_related_object_method(
     vtable_index: i32,
 ) -> i32 {
     (pattern_id << 16) | (related_object << 8) | vtable_index
+}
+
+/// The opcode of a method on a pattern itself, such as the text
+/// pattern's `GetSelection`: `(patternId << 10) | vtableIndex`, from
+/// Microsoft's `RemoteOperationInstructions.h`.
+#[must_use]
+pub const fn pattern_method(pattern_id: i32, vtable_index: i32) -> i32 {
+    (pattern_id << 10) | vtable_index
 }
 
 /// How [`Compare`](crate::Instruction::Compare) compares its operands.
@@ -369,7 +391,28 @@ impl Status {
 
 #[cfg(test)]
 mod tests {
-    use super::{Opcode, pattern_related_object_method};
+    use super::{Opcode, pattern_method, pattern_related_object_method};
+
+    #[test]
+    fn text_pattern_opcodes_follow_the_pattern_formulas() {
+        // `IUIAutomationTextPattern`'s vtable: `GetSelection` is 5 and
+        // `DocumentRange` 7; `IUIAutomationTextPattern2` adds
+        // `RangeFromAnnotation` at 9 and `GetCaretRange` at 10.
+        assert_eq!(Opcode::GetTextPattern.code(), 10014);
+        assert_eq!(Opcode::GetTextPattern2.code(), 10024);
+        assert_eq!(
+            Opcode::TextPatternGetSelection.code(),
+            pattern_method(10014, 5)
+        );
+        assert_eq!(
+            Opcode::TextPatternGetDocumentRange.code(),
+            pattern_method(10014, 7)
+        );
+        assert_eq!(
+            Opcode::TextPattern2GetCaretRange.code(),
+            pattern_method(10024, 10)
+        );
+    }
 
     #[test]
     fn text_range_opcodes_follow_the_pattern_method_formula() {

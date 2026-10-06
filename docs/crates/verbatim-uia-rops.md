@@ -13,16 +13,24 @@ ported file; where it follows Microsoft's MIT-licensed
 The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
-execution, and algorithms. The algorithms are the focus ancestry and,
-for milestone M4's terminals, `terminal_tail` (layer 3 below).
+execution, and algorithms. The algorithms are the focus ancestry,
+for milestone M4's terminals `terminal_tail`, and for caret reports
+`caret_read` (layer 3 below).
 
 ## Layer 1: instructions and the builder
 
-- `Opcode` is the full table NVDA uses, 104 opcodes (`Opcode::ALL`):
-  every general instruction from `0x00` to `0x54`, cache requests
-  (`0x4C` to `0x50`) included, and the 19 text range methods, whose
-  opcode is `(patternId << 16) | (relatedObject << 8) | vtableIndex`
-  (`pattern_related_object_method`). `Comparison`,
+- `Opcode` is the table NVDA uses and five more, 109 opcodes
+  (`Opcode::ALL`): every general instruction from `0x00` to `0x54`,
+  cache requests (`0x4C` to `0x50`) included, and the 19 text range
+  methods, whose opcode is
+  `(patternId << 16) | (relatedObject << 8) | vtableIndex`
+  (`pattern_related_object_method`); and, from Microsoft's
+  `RemoteOperationInstructions.h`, which NVDA does not use, the getters
+  of the text patterns (`GetTextPattern` and `GetTextPattern2`, whose
+  opcode is the pattern's id) and three of their methods
+  (`TextPatternGetSelection`, `TextPatternGetDocumentRange`, and
+  `TextPattern2GetCaretRange`, whose opcode is
+  `(patternId << 10) | vtableIndex`, `pattern_method`). `Comparison`,
   `NavigationDirection`, `PointProperty`, and `RectProperty` are the
   enumerations instructions carry; `Status` is a run's outcome.
 - `Instruction` is one instruction with its parameters, and
@@ -32,7 +40,8 @@ for milestone M4's terminals, `terminal_tail` (layer 3 below).
 - `Builder` writes a program. Each register is a `Reg<K>`, where `K` is a
   marker from `kind` saying what it holds: `Element`, `TextRange`, `Int`,
   `Uint`, `Bool`, `Double`, `Char`, `Str`, `Point`, `Rect`, `Array`,
-  `StringMap`, `CacheRequest`, `Guid`, or `Any` for a value whose type is
+  `StringMap`, `CacheRequest`, `Guid`, `TextPattern`, or `Any` for a
+  value whose type is
   known only at run time (a property value, an array item, a map entry),
   which `Reg::assume` names. Arithmetic takes only `Numeric` kinds,
   ordering comparisons only `Ordered` ones, and indexes only `Index`
@@ -310,6 +319,73 @@ two implementations give the same answer afresh, after lines written past
 the anchor, after the oldest lines were discarded beneath it, and after
 the text was cleared, and a read that finds new output costs one round
 trip remotely (`docs/performance.md`, "A terminal output line").
+
+## Layer 3: the caret read
+
+`caret_read_remote` and `caret_read_classic` share one signature
+(`CaretReadFn`), and `caret_read(query, remote)` chooses between them as
+`focus_ancestry` does, answering with a `Path` (milestone M4 items 3 and
+7; `phase6-design.md`, "Caret responsiveness"). One difference: a run
+that failed because the provider's process has gone or did not answer in
+time (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`) is returned as the
+error without running the classic reads, which would meet the same
+failure, a second wait for a stalled application. A `CaretQuery` gives
+the element with the text (a program starts from it), its text pattern
+and `TextPattern2` (the classic reads use them), where the caret was
+known to be (`since`, a `RangeEnd`: a range and which of its ends), the
+selection's ends as they were known, a unit to read at the caret besides
+the line (a word, a paragraph, a page), whose formatting to read
+(`FormatSpan`: the character at the caret, that unit, or the line), and
+which attributes (`Attributes`: the annotation types for spelling and
+grammar errors, the font's name and size, its weight, italic, and
+underline style, and the foreground color). The `CaretAnswer`:
+
+- `caret`, a range whose start is the caret, and whether it is known to
+  be collapsed; `selection`, the selected range when text is selected.
+  The caret is the selection's first range, collapsed, when nothing is
+  selected; with text selected, `TextPattern2`'s caret range where the
+  provider has it, else the selection's start; with no selection at all,
+  the start of the document range.
+- `moved`: the caret is not where `since` says; `selection_moved`: the
+  selection's ends (both the caret when nothing is selected) are not the
+  known ones.
+- `line` and `unit`: each a `UnitRead`, the unit's range, its text, and
+  how many UTF-16 code units of it come before the caret.
+- `runs`: the formatting, stretch by stretch from the span's start, each
+  a length in UTF-16 code units and its `RunAttributes`: whether it is a
+  spelling or a grammar error (annotation types 60001 and 60002, a single
+  integer or an array of them), and the font name, size, weight, italic,
+  underline style, and color, each `None` when not read, not supported,
+  mixed, or of another type. A character's one stretch covers it whole,
+  and its length is not read.
+
+The program imports the element and gets its text pattern with the
+pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode
+is the pattern's id, 10014), reads the selection with the text pattern's
+`GetSelection` and, only when text is selected, the caret with
+`TextPattern2`'s `GetCaretRange` (pattern methods, opcode
+`(patternId << 10) | vtableIndex`; both added to the instruction table
+from Microsoft's `RemoteOperationInstructions.h`). It compares the caret
+with the imported `since` range and the selection with the imported old
+ends, expands copies of the caret to the line and the unit, and reads
+their text and the text before the caret, whose length is the offset.
+Formatting is read by UIA's format unit, as NVDA reads it: from the
+span's start, a copy's end moved one format unit on, cut at the span's
+end, its text's length and each attribute read, until the span's end or
+`MAX_RUNS` (64) stretches. A value of the wrong type, UIA's "not
+supported" or "mixed" sentinel among them, is set to null before it is
+appended, so only plain values come back. Verified on Windows 11 26200
+against Windows 11 Notepad (`RichEditD2DPT`), whose provider runs
+programs and reports a misspelt word's annotation types as an array
+holding 60001, and splits its format units at the error's ends; the
+remote and classic reads gave the same answer there, and do against
+mockapp (`crates/mockapp/tests/text.rs`).
+
+The classic implementation makes the same reads one call at a time,
+except that a collapsed caret serves as its own point where the program
+copies it. Both read the whole answer on every call, so a caret key's
+wait for evidence costs one round trip per read remotely
+(`docs/performance.md`, "A caret move, UIA").
 
 ## Fallback rules
 

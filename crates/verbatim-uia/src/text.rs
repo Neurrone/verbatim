@@ -15,7 +15,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, IUIAutomationTextRangeArray, TextPatternRangeEndpoint,
     TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit, TextUnit_Character,
     TextUnit_Document, TextUnit_Line, TextUnit_Page, TextUnit_Paragraph, TextUnit_Word,
-    UIA_CultureAttributeId, UIA_TextPattern2Id, UIA_TextPatternId,
+    UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_TextPattern2Id, UIA_TextPatternId,
 };
 use windows::core::Interface;
 
@@ -24,6 +24,8 @@ use verbatim_model::CallKind;
 use crate::ElementExt;
 use crate::calls::count;
 use crate::com::{take_f64_safearray, variant_i32};
+
+pub use windows::Win32::System::Variant::VARIANT;
 
 /// A text range's end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,6 +231,15 @@ pub trait TextRangeExt {
     ///
     /// The COM error if the provider fails.
     fn culture(&self) -> windows::core::Result<Option<String>>;
+
+    /// A text attribute's value over the range: UIA's "not supported" or
+    /// "mixed" sentinel object when the range has none or several, which
+    /// the `variant_*` readers in this crate read as `None`.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails.
+    fn attribute(&self, attribute: UIA_TEXTATTRIBUTE_ID) -> windows::core::Result<VARIANT>;
 }
 
 impl TextRangeExt for IUIAutomationTextRange {
@@ -304,6 +315,12 @@ impl TextRangeExt for IUIAutomationTextRange {
         // SAFETY: `array` is the caller-owned SAFEARRAY of doubles the call
         // returned.
         Ok(unsafe { take_f64_safearray(array) })
+    }
+
+    fn attribute(&self, attribute: UIA_TEXTATTRIBUTE_ID) -> windows::core::Result<VARIANT> {
+        count(CallKind::Uia);
+        // SAFETY: as in `clone_range`; the attribute id is a plain value.
+        unsafe { self.GetAttributeValue(attribute) }
     }
 
     fn culture(&self) -> windows::core::Result<Option<String>> {

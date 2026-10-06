@@ -56,6 +56,9 @@ pub mod kind {
     /// A UIA text range (or null).
     #[derive(Debug)]
     pub enum TextRange {}
+    /// A UIA text pattern (or null), `TextPattern` or `TextPattern2`.
+    #[derive(Debug)]
+    pub enum TextPattern {}
     /// A signed 32-bit integer.
     #[derive(Debug)]
     pub enum Int {}
@@ -101,7 +104,7 @@ pub mod kind {
 
 use kind::{
     Any, Array, Bool, CacheRequest, Char, Double, Element, Guid, Int, Point, Rect, Str, StringMap,
-    TextRange, Uint,
+    TextPattern, TextRange, Uint,
 };
 
 /// The kinds that order: integers, doubles, and characters.
@@ -998,6 +1001,61 @@ impl Builder {
             result,
             target: target.id,
             extension: extension.id,
+        })
+    }
+
+    // Text patterns.
+
+    /// The element's text pattern, or null when it has none. With
+    /// `pattern2`, its `TextPattern2`, which also has the caret.
+    #[track_caller]
+    pub fn get_text_pattern(&mut self, element: Reg<Element>, pattern2: bool) -> Reg<TextPattern> {
+        self.produce(|result| {
+            if pattern2 {
+                Instruction::GetTextPattern2 {
+                    result,
+                    target: element.id,
+                }
+            } else {
+                Instruction::GetTextPattern {
+                    result,
+                    target: element.id,
+                }
+            }
+        })
+    }
+
+    /// The selected ranges, an array of text ranges: one collapsed at the
+    /// caret when nothing is selected, none when the text has no caret.
+    #[track_caller]
+    pub fn text_pattern_get_selection(&mut self, pattern: Reg<TextPattern>) -> Reg<Array> {
+        self.produce(|result| Instruction::TextPatternGetSelection {
+            result,
+            target: pattern.id,
+        })
+    }
+
+    /// The range of the whole text.
+    #[track_caller]
+    pub fn text_pattern_get_document_range(&mut self, pattern: Reg<TextPattern>) -> Reg<TextRange> {
+        self.produce(|result| Instruction::TextPatternGetDocumentRange {
+            result,
+            target: pattern.id,
+        })
+    }
+
+    /// The caret, a collapsed range, from a `TextPattern2`; `is_active` is
+    /// set to whether the text has the keyboard focus.
+    #[track_caller]
+    pub fn text_pattern2_get_caret_range(
+        &mut self,
+        pattern: Reg<TextPattern>,
+        is_active: Reg<Bool>,
+    ) -> Reg<TextRange> {
+        self.produce(|result| Instruction::TextPattern2GetCaretRange {
+            result,
+            target: pattern.id,
+            is_active: is_active.id,
         })
     }
 

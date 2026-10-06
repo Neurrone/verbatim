@@ -13,7 +13,9 @@ use windows::Win32::System::Ole::{
     SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetElement, SafeArrayGetElemsize,
     SafeArrayGetLBound, SafeArrayGetUBound,
 };
-use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_R8, VariantToStringAlloc};
+use windows::Win32::System::Variant::{
+    VARENUM, VARIANT, VT_ARRAY, VT_BOOL, VT_I4, VT_R8, VariantToStringAlloc,
+};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE};
 use windows::core::HRESULT;
 
@@ -122,6 +124,28 @@ pub fn variant_f64(value: &VARIANT) -> Option<f64> {
         .flatten()
 }
 
+/// Reads a `VARIANT` holding 32-bit integers, an array of them (a text
+/// range's annotation types) or a single one, `None` when it holds anything
+/// else, as UIA's "not supported" and "mixed" sentinels do. The array stays
+/// the variant's.
+#[must_use]
+pub fn variant_i32_array(value: &VARIANT) -> Option<Vec<i32>> {
+    if value.vt() == VT_I4 {
+        return variant_i32(value).map(|single| vec![single]);
+    }
+    if value.vt() != VARENUM(VT_ARRAY.0 | VT_I4.0) {
+        return None;
+    }
+    // SAFETY: every initialized variant holds its type tag and value in this
+    // member of the outer union.
+    let tagged = unsafe { &value.Anonymous.Anonymous };
+    // SAFETY: the variant's type says this union holds a SAFEARRAY pointer,
+    // which the variant owns and keeps alive while it is borrowed.
+    let array = unsafe { tagged.Anonymous.parray };
+    // SAFETY: `array` is the variant's valid SAFEARRAY (or null), only read.
+    Some(unsafe { read_safearray::<i32>(array.cast()) })
+}
+
 /// Reads a `VARIANT` boolean property, defaulting to `false` when the value is
 /// absent or not a boolean (an unsupported property reads as "not set").
 #[must_use]
@@ -178,6 +202,25 @@ unsafe fn take_safearray<T: Copy + Default>(array: *mut SAFEARRAY) -> Vec<T> {
     if array.is_null() {
         return Vec::new();
     }
+    // SAFETY: the caller's guarantee: `array` is valid.
+    let out = unsafe { read_safearray(array) };
+    // SAFETY: the caller handed over ownership; the array is destroyed
+    // exactly once, here, after its last read.
+    let _ = unsafe { SafeArrayDestroy(array) };
+    out
+}
+
+/// Copies a one-dimensional `SAFEARRAY` of `T` into a `Vec`, checked as
+/// [`take_safearray`] checks it, leaving the array to its owner.
+///
+/// # Safety
+///
+/// `array` must be null or a valid `SAFEARRAY`, alive for the call. `T`
+/// must be a plain value type for which every bit pattern is valid.
+unsafe fn read_safearray<T: Copy + Default>(array: *mut SAFEARRAY) -> Vec<T> {
+    if array.is_null() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     // SAFETY: `array` is a valid SAFEARRAY (the caller's guarantee).
     let dimensions = unsafe { SafeArrayGetDim(array) };
@@ -208,8 +251,5 @@ unsafe fn take_safearray<T: Copy + Default>(array: *mut SAFEARRAY) -> Vec<T> {
             }
         }
     }
-    // SAFETY: the caller handed over ownership; the array is destroyed
-    // exactly once, here, after its last read.
-    let _ = unsafe { SafeArrayDestroy(array) };
     out
 }

@@ -40,8 +40,18 @@ pub(crate) struct NodeData {
     /// The text's selection, start and end as UTF-16 offsets; the caret is
     /// at its start, and a collapsed selection is the caret alone.
     pub(crate) selection: (usize, usize),
+    /// The text's spelling errors and bold stretches, UTF-16 offsets.
+    pub(crate) formats: Formats,
     pub(crate) parent: Option<usize>,
     pub(crate) children: Vec<usize>,
+}
+
+/// A text's formatting: stretches that are spelling errors and that are
+/// bold, each a start and an end UTF-16 offset.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Formats {
+    pub(crate) spelling_errors: Vec<(usize, usize)>,
+    pub(crate) bold: Vec<(usize, usize)>,
 }
 
 /// The whole scripted tree: an arena of [`NodeData`] plus a lookup from
@@ -125,6 +135,10 @@ fn insert(
         controller_for: None,
         text: node.text.map(|text| text.encode_utf16().collect()),
         selection: (0, 0),
+        formats: Formats {
+            spelling_errors: node.spelling_errors,
+            bold: node.bold,
+        },
         parent,
         children: Vec::new(),
     });
@@ -165,6 +179,8 @@ mod tests {
             level: None,
             controller_for: None,
             text: None,
+            spelling_errors: Vec::new(),
+            bold: Vec::new(),
             children,
         }
     }
