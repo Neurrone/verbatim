@@ -103,7 +103,7 @@ use crate::scenarios::{
     demo_terminal_session, explorer_folder_window, lock_key_announcements,
     menu_and_settings_dialog, notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor,
     notepad_say_all, notepad_spelling_errors, object_navigation_in_settings,
-    rapid_tabbing_in_settings, settings_dialog_keys, settings_system_page, start_menu_search,
+    rapid_tabbing_in_settings, settings_dialog_keys, settings_system_page, spelling_errors, start_menu_search,
     switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
     terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
 };
@@ -359,13 +359,13 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: notepad_say_all::teardown,
     },
     ScenarioDef {
-        name: "notepad_spelling_errors",
+        name: "spelling_errors",
         group: Group::Text,
-        target_images: &[],
+        target_images: &["mockapp.exe"],
         settings: None,
-        setup: notepad_spelling_errors::setup,
-        body: notepad_spelling_errors::body,
-        teardown: notepad_spelling_errors::teardown,
+        setup: spelling_errors::setup,
+        body: spelling_errors::body,
+        teardown: spelling_errors::teardown,
     },
     ScenarioDef {
         name: "theme_panel",
@@ -483,10 +483,22 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: demo_settings_dialog_keys::setup,
         body: demo_settings_dialog_keys::body,
         teardown: demo_settings_dialog_keys::teardown,
+    },    // Windows 11 Notepad's own spell checker, which GitHub's Windows Server
+    // runners do not have; the suite's `spelling_errors` reads the same
+    // speech from mockapp's scripted text instead.
+    ScenarioDef {
+        name: "notepad_spelling_errors",
+        group: Group::Demo,
+        target_images: &[],
+        settings: None,
+        setup: notepad_spelling_errors::setup,
+        body: notepad_spelling_errors::body,
+        teardown: notepad_spelling_errors::teardown,
     },
 ];
 
-/// Looks up a scenario by [`ScenarioDef::name`].
+
+/// Looks up a scenario or a demonstration by [`ScenarioDef::name`].
 #[must_use]
 pub fn find(name: &str) -> Option<&'static ScenarioDef> {
     SCENARIOS.iter().find(|def| def.name == name)

@@ -162,6 +162,7 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
             scenario,
             "--",
             "--exact",
+            // A demonstration's test is ignored, so the suite never runs it.
             "--include-ignored",
             "--test-threads=1",
         ])

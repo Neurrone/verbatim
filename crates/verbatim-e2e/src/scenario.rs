@@ -211,8 +211,8 @@ impl Scenario {
     /// In runner-direct mode (the default — see [`REMOTE_ENV`]), first
     /// builds the default source binaries unless [`VERBATIM_EXE_ENV`]
     /// overrides them (see [`build_default_source_binaries`]), then
-    /// stages `verbatim.exe`, `verbatim-outpost.exe`, and
-    /// `verbatim-synth-host.exe` into
+    /// stages `verbatim.exe`, `verbatim-outpost.exe`,
+    /// `verbatim-synth-host.exe`, and `mockapp.exe` into
     /// `target/e2e-stage` under the workspace root (see [`stage_binaries`]),
     /// then writes [`verbatim_config::Settings::for_e2e`]'s fixed
     /// settings.toml there selecting eSpeak NG, and launches *that* staged
@@ -1392,6 +1392,8 @@ fn build_default_source_binaries() -> io::Result<()> {
                     "verbatim-outpost",
                     "-p",
                     "verbatim-synth-host",
+                    "-p",
+                    "mockapp",
                 ])
                 .current_dir(workspace_root())
                 .status()
@@ -1401,7 +1403,7 @@ fn build_default_source_binaries() -> io::Result<()> {
             } else {
                 Err(format!(
                     "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host \
-                     failed ({status}); set \
+                     -p mockapp failed ({status}); set \
                      {VERBATIM_EXE_ENV} to stage an existing build instead"
                 ))
             }
@@ -1435,12 +1437,15 @@ fn stage_binaries(source_dir: &Path) -> io::Result<PathBuf> {
     Ok(stage_dir)
 }
 
-/// The executables a Verbatim launch needs side by side: the app finds the
-/// outpost and the synthesizer host next to itself.
-const STAGED_BINARIES: [&str; 3] = [
+/// The executables a run needs side by side: the app finds the outpost and
+/// the synthesizer host next to itself, and a scenario reading scripted text
+/// launches `mockapp` from the run's directory
+/// ([`Scenario::run_directory`]).
+const STAGED_BINARIES: [&str; 4] = [
     "verbatim.exe",
     "verbatim-outpost.exe",
     "verbatim-synth-host.exe",
+    "mockapp.exe",
 ];
 
 /// The directory-parameterized core of [`stage_binaries`], split out so unit
@@ -1751,6 +1756,7 @@ mod tests {
             .expect("seed verbatim-outpost.exe");
         fs::write(source_dir.join("verbatim-synth-host.exe"), b"host v1")
             .expect("seed verbatim-synth-host.exe");
+        fs::write(source_dir.join("mockapp.exe"), b"mockapp v1").expect("seed mockapp.exe");
         fs::create_dir_all(source_dir.join(ESPEAK_DATA).join("voices"))
             .expect("seed the eSpeak NG data directory");
         fs::write(

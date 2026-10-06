@@ -22,11 +22,12 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::{
     IAccessible, LresultFromObject, UiaReturnRawElementProvider, UiaRootObjectId,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VIRTUAL_KEY, VK_CONTROL};
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
     GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_DESTROY,
-    WM_GETOBJECT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    RegisterClassExW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
+    WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
@@ -70,10 +71,15 @@ impl From<windows::core::Error> for WindowError {
     }
 }
 
-/// Creates the host window, prints `ready`, and runs the message loop until
-/// a `quit` command (or the window otherwise closes). `backend` decides how
-/// `WM_GETOBJECT` is answered.
-pub(crate) fn run(backend: Backend, tree: SharedTree, title: &str) -> Result<(), WindowError> {
+/// Creates the host window, shown when `show` is set, prints `ready`, and
+/// runs the message loop until a `quit` command (or the window otherwise
+/// closes). `backend` decides how `WM_GETOBJECT` is answered.
+pub(crate) fn run(
+    backend: Backend,
+    tree: SharedTree,
+    title: &str,
+    show: bool,
+) -> Result<(), WindowError> {
     // SAFETY: called once, before any window is created on this thread.
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok()?;
 
@@ -127,6 +133,11 @@ pub(crate) fn run(backend: Backend, tree: SharedTree, title: &str) -> Result<(),
     // pointer stays valid for every later `WM_GETOBJECT`/`WM_APP_COMMAND_READY`.
     unsafe {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, std::ptr::from_ref(context) as isize);
+    }
+    if show {
+        // SAFETY: `hwnd` is the window just created on this thread. The
+        // return value is only whether it was visible before.
+        let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
     }
 
     println!("ready");
@@ -212,6 +223,25 @@ unsafe extern "system" fn wnd_proc(
         WM_HITS_RESET => {
             hits::reset();
             return LRESULT(0);
+        }
+        // A key an editor moves its caret with, on the focused text
+        // (`uia::caret_key`), as the end-to-end suite presses them.
+        WM_KEYDOWN => {
+            // SAFETY: see above.
+            if let Some(context) = unsafe { context_for(hwnd) }
+                && context.backend == Backend::Uia
+            {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a key message's wParam is a 16-bit virtual-key code"
+                )]
+                let key = VIRTUAL_KEY(wparam.0 as u16);
+                // SAFETY: reads this thread's keyboard state; always sound.
+                let control = unsafe { GetKeyState(i32::from(VK_CONTROL.0)) } < 0;
+                if uia::caret_key(&context.tree, key, control) {
+                    return LRESULT(0);
+                }
+            }
         }
         WM_APP_COMMAND_READY => {
             // SAFETY: see above.

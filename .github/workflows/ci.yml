@@ -103,8 +103,10 @@ jobs:
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      - name: Build Verbatim, its child processes, and the agent (debug)
-        run: cargo build -p verbatim-app -p verbatim-agent -p verbatim-outpost -p verbatim-synth-host
+      # mockapp is the scripted application the spelling errors scenario
+      # reads, since the runner's classic Notepad has no spell checker.
+      - name: Build Verbatim, its child processes, the agent, and mockapp (debug)
+        run: cargo build -p verbatim-app -p verbatim-agent -p verbatim-outpost -p verbatim-synth-host -p mockapp
       # Every scenario is recorded, video and Verbatim's own audio, when
       # ffmpeg can be started (crates/verbatim-e2e/src/recording.rs).
       - name: Make sure ffmpeg is installed

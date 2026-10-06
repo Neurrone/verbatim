@@ -13,7 +13,8 @@
 //! are the whole text.
 //! Moving by a unit lands on a unit's start and never goes past the last
 //! unit, so a client sees the text's ends. The caret is the selection's
-//! start, as the edit controls report it. The language is English
+//! start, as the edit controls report it, and the focused node's caret
+//! moves with the keys [`caret_key`] lists. The language is English
 //! (`en-US`); the annotation types are the spelling error type for a range
 //! touching one of the fixture's spelling errors and unsupported
 //! otherwise, as Windows 11 Notepad reports them; the font is 11 point
@@ -48,6 +49,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsItalicAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
     UiaGetReservedMixedAttributeValue, UiaGetReservedNotSupportedValue, UiaPoint,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_DOWN, VK_RIGHT, VK_UP};
 use windows::core::{BSTR, Interface, Result as WinResult};
 use windows_core::{AsImpl, Error, IUnknown, implement};
 
@@ -573,6 +575,61 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
 fn range_array(range: &ITextRangeProvider) -> *mut SAFEARRAY {
     // SAFETY: the range's interface pointer, for a `VT_UNKNOWN` vector.
     unsafe { super::props::filled_vector(VT_UNKNOWN, &[range.as_raw().cast_const()]) }
+}
+
+/// Moves the focused node's caret for `key`, with Control held when
+/// `control` is set, as an editor moves its caret, by this module's units:
+/// Right Arrow to the next character, Control+Right Arrow to the next
+/// word's start, Down and Up Arrow to the same column of the next or the
+/// previous line (its end when the line is shorter). These are the keys the
+/// end-to-end suite presses.
+/// Returns whether the caret was moved; any other key, or a focus without
+/// text, is left alone.
+pub(crate) fn caret_key(tree: &SharedTree, key: VIRTUAL_KEY, control: bool) -> bool {
+    let mut guard = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(index) = guard.focused else {
+        return false;
+    };
+    let node = &mut guard.nodes[index];
+    let Some(text) = node.text.as_deref() else {
+        return false;
+    };
+    let caret = node.selection.0.min(text.len());
+    // A line's end, before its line feed.
+    let line_end = |(start, end): (usize, usize)| {
+        if end > start && text[end - 1] == u16::from(b'\n') {
+            end - 1
+        } else {
+            end
+        }
+    };
+    let to = match (key, control) {
+        (VK_RIGHT, false) => (caret + 1).min(text.len()),
+        (VK_RIGHT, true) => units(text, TextUnit_Word)
+            .iter()
+            .map(|&(start, _)| start)
+            .find(|&start| start > caret)
+            .unwrap_or(text.len()),
+        (VK_DOWN | VK_UP, false) => {
+            let lines = units(text, TextUnit_Line);
+            let line = containing(&lines, caret);
+            let target = if key == VK_DOWN {
+                Some(line + 1).filter(|&next| next < lines.len())
+            } else {
+                line.checked_sub(1)
+            };
+            let Some(target) = target else {
+                return true;
+            };
+            let column = caret - lines[line].0;
+            (lines[target].0 + column).min(line_end(lines[target]))
+        }
+        _ => return false,
+    };
+    node.selection = (to, to);
+    true
 }
 
 /// Whether the provider at `index` serves the text pattern: it has text.

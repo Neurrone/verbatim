@@ -38,6 +38,8 @@ pub(crate) use handler::{ChildProvider, RootProvider};
 
 mod text;
 
+pub(crate) use text::caret_key;
+
 /// Builds the root's provider, for answering `WM_GETOBJECT`.
 pub(crate) fn root_provider(tree: SharedTree, hwnd: HWND) -> RootProvider {
     RootProvider {

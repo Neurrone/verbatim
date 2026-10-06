@@ -12,10 +12,14 @@ client crates it is built to be tested against (`verbatim-uia`,
 own integration tests.
 
 CLI: `mockapp --fixture <path.json> --backend <uia|msaa> [--title
-<window title>]` (default title `mockapp`). It creates one real top-level
-Win32 window titled per `--title`, prints `ready` (flushed) once the window
-exists and the provider is answering, then processes stdin commands until
-`quit`.
+<window title>] [--show]` (default title `mockapp`). It creates one real
+top-level Win32 window titled per `--title`, hidden unless `--show` is
+given, prints `ready` (flushed) once the window exists and the provider is
+answering, then processes stdin commands until `quit`. The cross-process
+tests leave the window hidden; the end-to-end suite's `spelling_errors`
+scenario shows it and drives it with real keys (`docs/crates/verbatim-e2e.md`).
+The focus starts on the first node in the `focused` state, if the fixture
+has one, as an application opens with its focus on a control.
 
 Fixture format: one JSON object per node — `id` (unique string), `role` (a
 `Role` name in snake case, e.g. `check_box`), optional `name` and `value`
@@ -104,7 +108,11 @@ its crate-internal modules are the reviewable surface:
   start and never past the last unit, so a client sees the text's ends; a
   move back from inside a unit to its start counts as one, as UIA
   specifies. The caret (`GetCaretRange`) is the selection's start, as the
-  edit controls report it; the language (`Culture`) is `en-US`; the
+  edit controls report it, and on the UIA backend the keys pressed in the
+  window move the focused node's caret by these units (`caret_key`): Right
+  Arrow by a character, Control+Right Arrow to the next word's start, and
+  Down and Up Arrow to the same column of the next or previous line, or its
+  end when that line is shorter, raising no event; the language (`Culture`) is `en-US`; the
   annotation types are the spelling error type (60001) for a range
   touching one of the spelling errors and unsupported otherwise, as
   Windows 11 Notepad reports them; the font is 11 point Consolas in black,

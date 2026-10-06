@@ -50,6 +50,8 @@ pub(crate) struct BuiltArtifacts {
     verbatim: PathBuf,
     outpost: PathBuf,
     synth_host: PathBuf,
+    /// The scripted application a scenario reading scripted text launches.
+    mockapp: PathBuf,
     agent: PathBuf,
 }
 
@@ -67,7 +69,7 @@ pub(crate) struct BuiltArtifacts {
 pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
     println!(
         "xtask vm deploy: building verbatim-app, verbatim-agent, verbatim-outpost, \
-         verbatim-synth-host (debug)"
+         verbatim-synth-host, mockapp (debug)"
     );
     build_binaries(repo_root)?;
 
@@ -76,6 +78,7 @@ pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
         verbatim: require_artifact(&target_dir, "verbatim.exe")?,
         outpost: require_artifact(&target_dir, "verbatim-outpost.exe")?,
         synth_host: require_artifact(&target_dir, "verbatim-synth-host.exe")?,
+        mockapp: require_artifact(&target_dir, "mockapp.exe")?,
         agent: require_artifact(&target_dir, "verbatim-agent.exe")?,
     })
 }
@@ -128,6 +131,13 @@ pub(crate) fn stage_and_copy(
             label: "verbatim-synth-host.exe".to_owned(),
             local_path: built.synth_host,
             remote_path: format!(r"{VERBATIM_DIR}\verbatim-synth-host.exe"),
+            is_executable: true,
+            after_copy: None,
+        },
+        Artifact {
+            label: "mockapp.exe".to_owned(),
+            local_path: built.mockapp,
+            remote_path: format!(r"{VERBATIM_DIR}\mockapp.exe"),
             is_executable: true,
             after_copy: None,
         },
@@ -351,7 +361,7 @@ fn copy_mismatched_artifacts(
             VM_NAME,
             credentials,
             "Stop-ScheduledTask -TaskName 'VerbatimAgent' -ErrorAction SilentlyContinue\n\
-             Stop-Process -Name 'verbatim-agent','verbatim','verbatim-outpost','verbatim-synth-host' -Force -ErrorAction SilentlyContinue\n\
+             Stop-Process -Name 'verbatim-agent','verbatim','verbatim-outpost','verbatim-synth-host','mockapp' -Force -ErrorAction SilentlyContinue\n\
              Start-Sleep -Seconds 1",
         )?;
         stopped_guest = true;
@@ -470,6 +480,8 @@ fn build_binaries(repo_root: &Path) -> VmResult<()> {
             "verbatim-outpost",
             "-p",
             "verbatim-synth-host",
+            "-p",
+            "mockapp",
         ])
         .current_dir(repo_root);
     let status = command
