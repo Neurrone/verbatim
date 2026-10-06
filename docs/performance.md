@@ -355,27 +355,71 @@ Stopping speech when a key is pressed.
 
 A caret key the application has already handled (Right Arrow, the caret
 one character on), answered with the caret's line, its offset in it, and
-the character there, from the text pattern the outpost keeps for the node.
-Measured against mockapp's text provider (`tests/fixtures/text.json`).
+the character there with its formatting, from the text pattern the
+outpost keeps for the node, under the default theme, which reports
+spelling and grammar errors. Measured against mockapp's text provider
+(`tests/fixtures/text.json`), whose "beta" is a spelling error, by
+`crates/mockapp/tests/call_counts.rs`, both ways.
 
-- Minimum: 9 UIA calls one at a time: the selection (`GetSelection`),
-  whether it is empty (`CompareEndpoints` of its two ends), the evidence
-  (`CompareEndpoints` with the caret Core knew), the line (a copy of the
-  caret, `ExpandToEnclosingUnit`, `GetText`), and the caret's offset in it
-  (a copy of the line, `MoveEndpointByRange` to the caret, `GetText`). The
-  character is cut from the line's text, at no cost.
-- Today: 9 UIA calls, each one provider call.
-- Target: 1, one remote operations program doing all nine inside the
-  provider, as the focus ancestry does.
+- Minimum: 1 UIA call, one remote operations program
+  (`verbatim_uia_rops::caret_read`). Classically, 12 calls one at a time:
+  the selection (`GetSelection`), whether it is empty (`CompareEndpoints`
+  of its two ends), the evidence (`CompareEndpoints` with the caret Core
+  knew), the line (a copy of the caret, `ExpandToEnclosingUnit`,
+  `GetText`), the caret's offset in it (a copy of the line,
+  `MoveEndpointByRange` to the caret, `GetText`), and the character's
+  annotation types (a copy of the caret, `ExpandToEnclosingUnit`,
+  `GetAttributeValue`). The character is cut from the line's text, at no
+  cost.
+- Today: 1 remotely, 9 calls before remote operations (2026-10-06, with no
+  formatting). The program makes inside the provider the classic reads'
+  provider calls and one copy more (a `Clone` and a `MoveEndpointByRange`
+  collapsing the caret), plus the import of the element and its text
+  pattern (`GetPatternProvider` and four more provider calls UIA makes).
+  Classically, with remote operations off or a provider that cannot run
+  programs: 12, the 9 of before and 3 for the character's spelling error.
+  A theme with the font, its attributes, or the color on adds one
+  attribute read each classically, and nothing remotely.
+- Target: 1.
+
+### A caret wait that finds nothing, UIA
+
+A caret key that changed nothing (Left Arrow at the start of the text):
+the wait reads the caret every 10 milliseconds until its 100 run out,
+then answers.
+
+- Minimum: one round trip per read: 11 for a wait of 100 milliseconds.
+- Today: 11 remotely, each read the whole caret read above, so the read
+  that would find the evidence is the answer. Classically 132, 12 per
+  read; before remote operations each read was 9 calls (the caret, the
+  comparisons, and the line, whose characters at the caret are evidence
+  too).
+- Target: 11.
 
 ### A caret report, UIA
 
 The caret reported without a key: a caret event's report (`CaretMoved`),
-which follows every typed character, and the report after a text focus.
+which follows every typed character, and which nothing speaks.
 
-- Minimum: 8 UIA calls, a caret move's without the comparison.
-- Today: 8, each one provider call.
-- Target: 1, with remote operations.
+- Minimum: 1 UIA call remotely; classically 8, a caret move's without the
+  comparison or the formatting.
+- Today: 1 remotely, 8 before remote operations and classically.
+- Target: 1.
+
+### The caret report after a focus, UIA
+
+The report after a text focus, whose line Core speaks, with the line's
+formatting: mockapp's first line has four stretches (bold "alpha", a
+space, the misspelt "beta", the line feed).
+
+- Minimum: 1 UIA call remotely. Classically, a caret report's 8 and the
+  walk by UIA's format unit: a collapsed copy of the line (2), and for each
+  stretch a copy, `MoveEndpointByUnit`, two comparisons (with the line's
+  end, and of where the next starts), its text, its attribute, and moving
+  the walk on, 7 each, and a `MoveEndpointByRange` to cut a stretch that
+  runs past the line's end, here the last: 39 for four.
+- Today: 1 remotely, 39 classically (8 before formatting was read).
+- Target: 1.
 
 ### A caret move, Win32 edit control
 

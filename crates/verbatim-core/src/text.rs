@@ -10,7 +10,9 @@
 
 use std::ops::Range;
 
-use verbatim_model::{Message, SegmentContent, TextChunk, UtteranceSegment};
+use verbatim_model::{
+    FormatRun, Message, SegmentContent, TextAttributes, TextChunk, TextFormat, UtteranceSegment,
+};
 use verbatim_text::{Segmenter, WordRules, is_line_break};
 
 /// The text of a line without the line break that ends it. In a terminal
@@ -156,6 +158,20 @@ pub(crate) fn text_segments(text: &str, language: Option<&str>) -> Vec<Utterance
     }
 }
 
+/// The segments for a word read on its own: its text, or, for a word that
+/// is a single character (a full stop a provider counts as a word of its
+/// own), that character by its name, as NVDA speaks it
+/// (`docs/nvda/speech.md`, "A word of one character"): spoken as text, a
+/// punctuation mark would say nothing.
+pub(crate) fn word_segments(word: &str, language: Option<&str>) -> Vec<UtteranceSegment> {
+    let word = word.trim();
+    if verbatim_text::graphemes(word).len() == 1 {
+        character_segments(Some(word), language)
+    } else {
+        text_segments(word, language)
+    }
+}
+
 /// The segments for one character spoken on its own: by its name, raised
 /// in pitch when a capital (the presentation stage decides both), or
 /// "blank" for none or a line break.
@@ -203,6 +219,178 @@ pub(crate) fn spelled(
             in_language(content, language)
         })
         .collect()
+}
+
+/// The formatting changes from `old` to `new` that are spoken, in NVDA's
+/// order (`docs/nvda/document-formatting.md`, "The cache, attribute by
+/// attribute"): font name, size, and color when present and different;
+/// bold, italic, and underline starting, or ending after having been on;
+/// a spelling or grammar error starting, and, with `extra_detail` (a
+/// character or a word), ending.
+pub(crate) fn format_changes(
+    old: &TextAttributes,
+    new: &TextAttributes,
+    extra_detail: bool,
+) -> Vec<TextFormat> {
+    let mut changes = Vec::new();
+    let differs = |old: &Option<String>, new: &Option<String>| {
+        new.as_ref()
+            .filter(|value| Some(*value) != old.as_ref())
+            .cloned()
+    };
+    if let Some(name) = differs(&old.font_name, &new.font_name) {
+        changes.push(TextFormat::FontName(name));
+    }
+    if let Some(size) = differs(&old.font_size, &new.font_size) {
+        changes.push(TextFormat::FontSize(size));
+    }
+    if let Some(color) = differs(&old.color, &new.color) {
+        changes.push(TextFormat::Color(color));
+    }
+    for (old, new, on, off) in [
+        (old.bold, new.bold, TextFormat::Bold, TextFormat::NotBold),
+        (
+            old.italic,
+            new.italic,
+            TextFormat::Italic,
+            TextFormat::NotItalic,
+        ),
+        (
+            old.underline,
+            new.underline,
+            TextFormat::Underline,
+            TextFormat::NotUnderline,
+        ),
+    ] {
+        match (old, new) {
+            (Some(true), Some(false)) => changes.push(off),
+            (None | Some(false), Some(true)) => changes.push(on),
+            _ => {}
+        }
+    }
+    for (old, new, on, off) in [
+        (
+            old.spelling_error,
+            new.spelling_error,
+            TextFormat::SpellingError,
+            TextFormat::NotSpellingError,
+        ),
+        (
+            old.grammar_error,
+            new.grammar_error,
+            TextFormat::GrammarError,
+            TextFormat::NotGrammarError,
+        ),
+    ] {
+        if new && !old {
+            changes.push(on);
+        } else if old && !new && extra_detail {
+            changes.push(off);
+        }
+    }
+    changes
+}
+
+/// How a unit of text with formatting is spoken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Spoken {
+    /// As text, with each change of formatting where it happens.
+    Text,
+    /// As a word: text, or a single character by its name.
+    Word,
+    /// As one character, after the formatting at its start.
+    Character,
+}
+
+/// The stretches of `formats` within the byte range `span`, cut to it, in
+/// order.
+fn runs_within(formats: &[FormatRun], span: &Range<usize>) -> Vec<(Range<usize>, TextAttributes)> {
+    formats
+        .iter()
+        .filter_map(|run| {
+            let start = (run.start as usize).max(span.start);
+            let end = (run.end as usize).min(span.end);
+            (start < end).then(|| (start..end, run.attributes.clone()))
+        })
+        .collect()
+}
+
+/// The speech for `chunk`'s text from `span` (its content: the text without
+/// its line break), whose formatting the outpost read, as NVDA speaks a
+/// unit with formatting (`docs/nvda/document-formatting.md`): the changes
+/// from `reported` at the unit's start, then the text with each later
+/// change placed where it happens. `spoken` is the part of `span` read
+/// aloud (without surrounding white space for a word); white space outside
+/// it still changes the formatting, which is spoken. `reported` becomes
+/// the formatting at the end. `None` when the chunk carries no formatting,
+/// and `reported` is left as it was.
+pub(crate) fn formatted_segments(
+    chunk: &TextChunk,
+    (span, spoken): (Range<usize>, Range<usize>),
+    how: Spoken,
+    reported: &mut TextAttributes,
+    language: Option<&str>,
+) -> Option<Vec<UtteranceSegment>> {
+    let mut runs = runs_within(&chunk.formats, &span);
+    if runs.is_empty() {
+        // A character, or an empty unit, has its formatting at its start.
+        let at = chunk
+            .formats
+            .iter()
+            .find(|run| (run.start as usize) <= span.start && span.start <= run.end as usize)?;
+        runs.push((span.clone(), at.attributes.clone()));
+    }
+    let extra_detail = matches!(how, Spoken::Word | Spoken::Character);
+    let format = |change| UtteranceSegment::new(SegmentContent::Format(change));
+    let text = &chunk.text[spoken.clone()];
+    let mut segments: Vec<UtteranceSegment> = format_changes(reported, &runs[0].1, extra_detail)
+        .into_iter()
+        .map(format)
+        .collect();
+    *reported = runs[0].1.clone();
+    let single = how == Spoken::Character
+        || (how == Spoken::Word && verbatim_text::graphemes(text.trim()).len() == 1);
+    if single {
+        let character = if how == Spoken::Character {
+            text
+        } else {
+            text.trim()
+        };
+        segments.extend(character_segments(
+            (!character.is_empty()).then_some(character),
+            language,
+        ));
+        return Some(segments);
+    }
+    if is_blank(text) {
+        for (_, attributes) in &runs[1..] {
+            *reported = attributes.clone();
+        }
+        segments.extend(text_segments("", None));
+        return Some(segments);
+    }
+    for (index, (range, attributes)) in runs.iter().enumerate() {
+        if index > 0 {
+            segments.extend(
+                format_changes(reported, attributes, extra_detail)
+                    .into_iter()
+                    .map(format),
+            );
+            *reported = attributes.clone();
+        }
+        let start = range.start.max(spoken.start);
+        let end = range.end.min(spoken.end);
+        // Each stretch is its own piece of speech, without the white space
+        // around it, which the pieces are spoken apart by anyway.
+        let piece = chunk.text[start.min(end)..end].trim();
+        if !piece.is_empty() {
+            segments.push(in_language(
+                SegmentContent::Text(piece.to_owned()),
+                language,
+            ));
+        }
+    }
+    Some(segments)
 }
 
 /// Whether `text` is one uppercase letter.

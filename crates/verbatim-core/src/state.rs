@@ -10,8 +10,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
-    ReviewCommand, Selection, SpeechMark, TextChunk, TextPosition, TextUnit, WindowFacts,
-    WindowHandle,
+    ReviewCommand, Selection, SpeechMark, TextAttributes, TextChunk, TextPosition, TextUnit,
+    WindowFacts, WindowHandle,
 };
 
 /// The focused node and what the reducer knows about where it sits.
@@ -366,6 +366,11 @@ pub struct SrState {
     /// 9), bounded by the flood policy's limits.
     #[serde(default)]
     pub(crate) terminal: crate::terminal::TerminalSpeech,
+    /// The formatting last reported in a node's text (milestone M4 item 7):
+    /// NVDA's per-object cache, from which only changes are spoken
+    /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.
+    #[serde(default)]
+    pub(crate) reported_format: Option<(NodeId, TextAttributes)>,
 }
 
 impl SrState {

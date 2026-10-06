@@ -166,7 +166,13 @@ Public API:
   `move_endpoint_by_unit`, `text` (UTF-16, up to a limit), `select`,
   `bounding_rectangles`, and `culture` (the `Culture` attribute as a BCP 47
   tag through `LCIDToLocaleName`, `None` when the range mixes languages or
-  the provider does not say). `Endpoint` names a range's start or end, and
+  the provider does not say), and `attribute` (any text attribute's raw
+  `VARIANT`, UIA's "not supported" or "mixed" sentinel included, for
+  milestone M4's formatting). The `variant_*` readers (`variant_string`,
+  `variant_i32`, `variant_i32_array` for a range's annotation types, a
+  single integer or an array of them, `variant_f64`, and
+  `variant_optional_bool`) read a value and give `None` for a sentinel or
+  another type. `Endpoint` names a range's start or end, and
   `uia_text_unit` maps a model `TextUnit` to UIA's, `None` for the
   sentence, which UIA does not have. Every method is a cross-process call,
   counted once: a text range is a provider object in the application, so

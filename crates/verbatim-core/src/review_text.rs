@@ -216,7 +216,7 @@ fn execute(
             let word = text::word_at(&words, position.offset).map(|range| &content[range]);
             let segments = match (word, repeat) {
                 (None, _) => text::text_segments("", None),
-                (Some(word), 0) => text::text_segments(word, language),
+                (Some(word), 0) => text::word_segments(word, language),
                 (Some(word), 1) => text::spelled(word, false, language),
                 (Some(word), _) => text::spelled(word, true, language),
             };
@@ -300,7 +300,7 @@ fn execute(
                 set_position(state, position_at(line, start, grid));
                 return vec![speak(
                     trace_id,
-                    text::text_segments(&content[target.clone()], language),
+                    text::word_segments(&content[target.clone()], language),
                 )];
             }
             let at_edge = if forward { line.last } else { line.first };
@@ -313,7 +313,7 @@ fn execute(
                 let word = current.map(|range| &content[range]);
                 return vec![speak(
                     trace_id,
-                    with_edge(message, text::text_segments(word.unwrap_or(""), language)),
+                    with_edge(message, text::word_segments(word.unwrap_or(""), language)),
                 )];
             }
             read_line(
@@ -663,7 +663,7 @@ fn land(
                 let words = text::words(content, position.line.language_at(0));
                 let word =
                     text::word_at(&words, position.offset).map_or("", |range| &content[range]);
-                text::text_segments(word, language)
+                text::word_segments(word, language)
             }
             _ => text::text_segments(content, position.line.language_at(0)),
         };
@@ -701,7 +701,7 @@ fn land(
         TextUnit::Word => {
             let words = words();
             let word = text::word_at(&words, position.offset).map_or("", |range| &content[range]);
-            text::text_segments(word, language)
+            text::word_segments(word, language)
         }
         _ => text::text_segments(content, line.language_at(0)),
     };

@@ -378,6 +378,27 @@ pub enum Instruction {
         result: OperandId,
         target: OperandId,
     },
+    GetTextPattern {
+        result: OperandId,
+        target: OperandId,
+    },
+    GetTextPattern2 {
+        result: OperandId,
+        target: OperandId,
+    },
+    TextPatternGetSelection {
+        result: OperandId,
+        target: OperandId,
+    },
+    TextPatternGetDocumentRange {
+        result: OperandId,
+        target: OperandId,
+    },
+    TextPattern2GetCaretRange {
+        result: OperandId,
+        target: OperandId,
+        is_active: OperandId,
+    },
     TextRangeCompare {
         result: OperandId,
         target: OperandId,
@@ -544,6 +565,11 @@ impl Instruction {
             Self::CallExtension { .. } => Opcode::CallExtension,
             Self::IsExtensionSupported { .. } => Opcode::IsExtensionSupported,
             Self::TextRangeClone { .. } => Opcode::TextRangeClone,
+            Self::GetTextPattern { .. } => Opcode::GetTextPattern,
+            Self::GetTextPattern2 { .. } => Opcode::GetTextPattern2,
+            Self::TextPatternGetSelection { .. } => Opcode::TextPatternGetSelection,
+            Self::TextPatternGetDocumentRange { .. } => Opcode::TextPatternGetDocumentRange,
+            Self::TextPattern2GetCaretRange { .. } => Opcode::TextPattern2GetCaretRange,
             Self::TextRangeCompare { .. } => Opcode::TextRangeCompare,
             Self::TextRangeCompareEndpoints { .. } => Opcode::TextRangeCompareEndpoints,
             Self::TextRangeExpandToEnclosingUnit { .. } => Opcode::TextRangeExpandToEnclosingUnit,
@@ -677,6 +703,22 @@ impl Instruction {
                 result: a,
                 target: b,
             }
+            | I::GetTextPattern {
+                result: a,
+                target: b,
+            }
+            | I::GetTextPattern2 {
+                result: a,
+                target: b,
+            }
+            | I::TextPatternGetSelection {
+                result: a,
+                target: b,
+            }
+            | I::TextPatternGetDocumentRange {
+                result: a,
+                target: b,
+            }
             | I::TextRangeExpandToEnclosingUnit { target: a, unit: b }
             | I::TextRangeGetBoundingRectangles {
                 result: a,
@@ -793,6 +835,11 @@ impl Instruction {
                 result: a,
                 target: b,
                 max_length: c,
+            }
+            | I::TextPattern2GetCaretRange {
+                result: a,
+                target: b,
+                is_active: c,
             } => w.ids(&[*a, *b, *c]),
             I::StringSubstr {
                 result: a,
@@ -1616,6 +1663,48 @@ mod tests {
                 value: GUID::from_u128(0xC3A6_921B_4A99_44F1_BCA6_6118_7052_C431),
             },
             new_guid,
+        ));
+
+        // The text patterns.
+        for (instruction, opcode) in [
+            (
+                I::GetTextPattern {
+                    result: id(1),
+                    target: id(2),
+                },
+                10014,
+            ),
+            (
+                I::GetTextPattern2 {
+                    result: id(1),
+                    target: id(2),
+                },
+                10024,
+            ),
+            (
+                I::TextPatternGetSelection {
+                    result: id(1),
+                    target: id(2),
+                },
+                (10014 << 10) | 5,
+            ),
+            (
+                I::TextPatternGetDocumentRange {
+                    result: id(1),
+                    target: id(2),
+                },
+                (10014 << 10) | 7,
+            ),
+        ] {
+            table.push((instruction, words(&[opcode, 1, 2])));
+        }
+        table.push((
+            I::TextPattern2GetCaretRange {
+                result: id(1),
+                target: id(2),
+                is_active: id(3),
+            },
+            words(&[(10024 << 10) | 0xA, 1, 2, 3]),
         ));
 
         // The type tests share one layout.

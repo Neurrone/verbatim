@@ -8,7 +8,9 @@
       "role": "editable_text",
       "name": "Notes",
       "states": ["focusable"],
-      "text": "alpha beta\ngamma\n"
+      "text": "alpha beta\ngamma\n",
+      "spelling_errors": [[6, 10]],
+      "bold": [[0, 5]]
     }
   ]
 }

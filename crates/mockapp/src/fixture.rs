@@ -89,6 +89,10 @@ struct RawNode {
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
+    spelling_errors: Vec<(usize, usize)>,
+    #[serde(default)]
+    bold: Vec<(usize, usize)>,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -112,6 +116,11 @@ pub(crate) struct FixtureNode {
     /// The node's text, served through UIA's text pattern, or for the MSAA
     /// backend by a real Win32 edit control (milestone M4).
     pub(crate) text: Option<String>,
+    /// Stretches of the text that are spelling errors, as UTF-16 offsets
+    /// from a start up to an end, served as UIA's annotation types.
+    pub(crate) spelling_errors: Vec<(usize, usize)>,
+    /// Stretches of the text in bold, served as UIA's font weight.
+    pub(crate) bold: Vec<(usize, usize)>,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -185,6 +194,8 @@ fn convert(
         level: raw.level,
         controller_for: raw.controller_for,
         text: raw.text,
+        spelling_errors: raw.spelling_errors,
+        bold: raw.bold,
         children,
     })
 }

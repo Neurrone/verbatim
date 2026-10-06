@@ -23,13 +23,17 @@
 //!   [`terminal_tail_remote`], [`terminal_tail_classic`], and
 //!   [`terminal_tail`]: the line at an anchor checked against what it held,
 //!   searched for upward when the text scrolled beneath it, the count of
-//!   lines to the end, and the text of only the last lines.
+//!   lines to the end, and the text of only the last lines; and, for
+//!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
+//!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
+//!   and another unit at it, and the formatting of the text to be spoken.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
 //! `docs/crates/verbatim-uia-rops.md` is the reviewer's guide.
 
 mod builder;
+mod caret;
 mod error;
 mod focus;
 mod instruction;
@@ -38,6 +42,11 @@ mod operation;
 mod terminal;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
+pub use caret::{
+    ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, CaretAnswer, CaretQuery,
+    CaretReadFn, FormatSpan, MAX_RUNS, RangeEnd, Run, RunAttributes, UnitRead, caret_read,
+    caret_read_classic, caret_read_remote,
+};
 pub use error::{Error, Failure};
 pub use focus::{
     Ancestry, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED, Path,
@@ -45,7 +54,7 @@ pub use focus::{
 };
 pub use instruction::{Instruction, OperandId, TypeTest};
 pub use opcode::{
-    Comparison, NavigationDirection, Opcode, PointProperty, RectProperty, Status,
+    Comparison, NavigationDirection, Opcode, PointProperty, RectProperty, Status, pattern_method,
     pattern_related_object_method,
 };
 pub use operation::{Operation, Outcome, Read, Value};

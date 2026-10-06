@@ -47,6 +47,63 @@ cache-and-diff is why reading a fully bold paragraph says "bold"
 once, and why any implementation that re-announces per line sounds
 broken to NVDA users.
 
+### The cache, attribute by attribute
+
+What follows was read from `getTextInfoSpeech` and
+`getFormatFieldSpeech` in `speech/speech.py`, since the summary above
+does not settle what a caret movement says.
+
+- Where the cache lives. The formatting last spoken is kept per object
+  (on the NVDA object, through `SpeakTextInfoState`), not globally. A
+  focus change brings a new object with an empty cache, so the first line
+  read in a newly focused edit field reports whatever formatting is
+  enabled and present at its start, as a change from nothing.
+- What is compared. Each time a unit is spoken (a caret movement, a focus
+  line, a review command), the formatting at the unit's start (the
+  initial format) is compared with the cache, and each later change of
+  formatting inside the unit's text is compared with the cache as it
+  stands at that point. After each comparison the cache becomes that
+  formatting, whether or not anything was spoken, so the cache ends as
+  the formatting of the unit's last stretch of text, trailing white space
+  included.
+- Where changes are spoken. The initial format's changes come before the
+  unit's text; a change inside the text is spoken at the point in the
+  text where it happens, so a line with a misspelt word in the middle
+  says "hello spelling error wrold there". A unit of one character (a
+  caret movement by character, or a word that is one character) speaks
+  only its initial format and then the character.
+- Which unit's text. White space is part of the text the changes are
+  placed in, so a word read with the space after it ends with whatever
+  the space's formatting changes, even though white space itself says
+  nothing. When everything in the unit is white space, only the initial
+  format's changes are spoken, followed by "blank".
+- Spelling and grammar errors. Entering an error says "spelling error"
+  or "grammar error" (as words, as the error sound, or both, by the
+  setting). Leaving one says "out of spelling error" or "out of grammar
+  error" only for character and word units (the extra detail mode: caret
+  movement by character or word, and the review cursor's character and
+  word commands); a line or a say-all chunk leaving an error says
+  nothing. Caret movement by paragraph does not report spelling errors,
+  for speed.
+- Font name, size, and color. Spoken, as the value alone ("Calibri",
+  "11.0 pt", "dark red"), when present and different from the cache; an
+  attribute that becomes absent says nothing.
+- Bold, italic, and underline (the font attributes setting). "bold" when
+  it starts, "no bold" when it ends after having been reported as on;
+  likewise "italic" and "no italic", "underlined" and "not underlined".
+  A value that was never known (absent in the cache) and is off says
+  nothing.
+- The order within one change follows the setting groups: font name,
+  font size, color, then bold, italic, underline, then spelling error
+  and grammar error.
+- UIA providers. NVDA walks a range by UIA's format unit and reads each
+  stretch's attributes. A spelling error is the spelling error
+  annotation type in the range's `AnnotationTypes` attribute (grammar
+  error likewise); bold is a font weight of 700 or more; underline is
+  any underline style but none; the color is the foreground color,
+  named by its nearest hue, saturation, and brightness ("dark red",
+  "light pale blue", "grey"); the size is in points, "11.0 pt".
+
 Some attributes are not spoken as words at every level:
 line indentation can be *tones* (pitch encodes depth), spelling
 errors can be a sound rather than the word "spelling error"

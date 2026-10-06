@@ -871,6 +871,11 @@ fn preview_of(indication: Indication) -> Preview {
             span(SegmentContent::Format(TextFormat::Color(color))),
             UtteranceSegment::text(sample),
         ],
+        Indication::FontAttributes => vec![
+            span(SegmentContent::Format(TextFormat::Bold)),
+            UtteranceSegment::text(sample),
+            span(SegmentContent::Format(TextFormat::NotBold)),
+        ],
         Indication::Capital => vec![span(SegmentContent::SpelledCapital("A".to_owned()))],
         Indication::Blank => vec![span(SegmentContent::Message(Message::Blank))],
         Indication::SkippedLines => vec![span(SegmentContent::Phrase(Phrase::SkippedLines(12)))],

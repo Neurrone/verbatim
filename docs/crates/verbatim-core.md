@@ -362,6 +362,26 @@ then speaks, queued:
   unselected, NVDA's "selected hello" and "unselected hello", a single
   character by its name, 512 characters or more as their number.
 
+Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
+A caret key's character, word, or line, and a new focus's first line,
+carry the formatting the outpost read for them (`TextChunk::formats`).
+The state keeps the formatting last reported and the node it was in
+(`reported_format`, NVDA's per-object cache); a new focus starts with
+none. The unit is spoken with the formatting at its start that differs
+from that (`text::format_changes`: font name, size, and color when
+present and different; bold, italic, and underline starting, or ending
+after having been on; a spelling or grammar error starting), then its
+text, with each later change placed where it happens
+(`text::formatted_segments`), and the formatting at its end becomes the
+one reported. For a character or a word, the extra detail of NVDA's
+review and caret units, an error's end is also said ("out of spelling
+error"); a character, or a word of one character, says only the
+formatting at its start. A word's trailing white space is not spoken,
+but its formatting change is, so moving onto a misspelt word says
+"spelling error", the word, and "out of spelling error". Each change is
+a `Format` span, which the theme reports as words, a sound, both, or not
+at all. Review commands and say-all read no formatting yet.
+
 Typing echo. `Input::CharacterTyped` is echoed by the settings: a finished
 word first, when word echo applies and a character that is not a letter or
 digit ends it, then each printable character (a tab included), each in
@@ -386,7 +406,8 @@ pressed twice gives its description and three times its code; the current
 line or word pressed twice is spelled and three times spelled with
 descriptions; start and end of line speak the character there; previous
 and next word cross lines, landing on the next line's first word or the
-previous line's last; a unit the text does not have says "Not supported in
+previous line's last; a word of one character is spoken by its name, as
+the caret's word is; a unit the text does not have says "Not supported in
 this document". The column difference from NVDA (`docs/parity.md`, "Review
 cursor columns"): moving to another line keeps the column, a cell column in
 a terminal (where a column past a row's text is a blank cell and the cursor

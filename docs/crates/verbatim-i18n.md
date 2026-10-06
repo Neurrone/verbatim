@@ -34,8 +34,9 @@ Public API:
   formatting"); `presentation_name` ("speech and sound");
   `theme_default_name` and `theme_default_description`, since the built-in
   default theme has no name of its own; `format_text` for formatting spans
-  ("spelling error", "out of spelling error", and a font or color as the
-  application words it); `earcon_text`, an event's words when a theme
+  ("spelling error", "out of spelling error", NVDA's "bold" and "no bold",
+  "italic" and "no italic", "underlined" and "not underlined", and a font
+  or color as the application words it); `earcon_text`, an event's words when a theme
   speaks it ("browse mode", "40 percent"); and `theme_problem_text`, a
   problem found loading a theme. `phrase_text` also words "skipped 1 line"
   and "skipped 120 lines".
