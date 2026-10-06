@@ -346,7 +346,9 @@ then speaks, queued:
 - Left and Right Arrow, Home, and End: the character at the caret, a line
   break or the end of the text as "blank", a punctuation character by its
   name, a capital raised in pitch.
-- Control with Left or Right Arrow: the provider's word the outpost sent.
+- Control with Left or Right Arrow: the provider's word the outpost sent;
+  a word of one character, such as the full stop Notepad counts as a word,
+  as that character, by its name.
 - Up and Down Arrow, Page Up and Page Down, Control with Home or End: the
   line at the caret, "blank" when it has nothing to read.
 - Control with Up or Down Arrow: the provider's paragraph, or the line when

@@ -258,6 +258,26 @@ fn line_word_and_paragraph_keys_speak_their_unit() {
 }
 
 #[test]
+fn a_word_of_one_character_is_spoken_as_that_character() {
+    // Notepad's word unit makes a sentence's full stop a word of its own;
+    // spoken as text, it would say nothing.
+    let mut state = editing("the river bank.\r\n", 11);
+    let effects = reduce(&mut state, &key(CaretMotion::NextWord, false));
+    let word = TextChunk {
+        unit: TextUnit::Word,
+        ..line(".\r\n", 102, 0)
+    };
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("the river bank.\r\n", 101, 14), Some(word)),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character(".")]);
+}
+
+#[test]
 fn shift_movement_speaks_what_was_selected_and_unselected() {
     let mut state = editing("hello, world\n", 5);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));

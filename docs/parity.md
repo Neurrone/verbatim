@@ -1000,7 +1000,8 @@ verified.
   changing for Delete, or the selection changing), up to 100 milliseconds,
   300 in a terminal, then speaks NVDA's unit for the key: the character
   for Left and Right Arrow, Home, and End; the provider's word for Control
-  with Left or Right Arrow; the line for Up and Down Arrow, the page keys,
+  with Left or Right Arrow, a word of one character (Notepad's full stop)
+  by its name, as NVDA spells it; the line for Up and Down Arrow, the page keys,
   and Control with Home or End; the paragraph for Control with Up or Down
   Arrow; what Backspace deleted; what Delete left at the caret. A newer key
   supersedes a waiting one and a focus change drops it, NVDA's two

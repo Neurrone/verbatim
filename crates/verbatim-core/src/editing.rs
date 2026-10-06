@@ -235,7 +235,10 @@ fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment>
 
 /// The speech for the unit at the caret after a caret key: the character,
 /// the provider's word or paragraph when it sent one, and the line
-/// otherwise.
+/// otherwise. A word that is a single character, such as a full stop the
+/// provider counts as a word of its own, is spoken as that character, by
+/// its name, as NVDA speaks it (`docs/nvda/speech.md`, "A word of one
+/// character"): spoken as text, a punctuation mark would say nothing.
 fn unit_segments(
     caret: &CaretReport,
     unit_chunk: Option<&verbatim_model::TextChunk>,
@@ -251,10 +254,14 @@ fn unit_segments(
             text::character_segments(character, line.language_at(offset))
         }
         (TextUnit::Line, _) | (_, None) => text::text_segments(content, line.language_at(0)),
-        (_, Some(chunk)) => text::text_segments(
-            text::chunk_content(chunk, grid).trim(),
-            chunk.language_at(0),
-        ),
+        (unit, Some(chunk)) => {
+            let read = text::chunk_content(chunk, grid).trim();
+            if unit == TextUnit::Word && verbatim_text::graphemes(read).len() == 1 {
+                text::character_segments(Some(read), chunk.language_at(0))
+            } else {
+                text::text_segments(read, chunk.language_at(0))
+            }
+        }
     }
 }
 
