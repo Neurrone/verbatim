@@ -109,8 +109,10 @@ fn remote_and_classic_terminal_tails_agree() {
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(tail.found, Found::Afresh);
     assert_eq!(tail.count, 6);
-    assert_eq!(tail.lines, texts(&["four\n", "five\n", "ready>"]));
-    assert_eq!(tail.above, "three\n");
+    assert_eq!(tail.rows, 3);
+    assert_eq!(tail.lines, texts(&["four", "five", "ready>"]));
+    assert_eq!(tail.last_line, "ready>");
+    assert_eq!(tail.before_last, "five\n");
 
     // Lines written after the anchor: counted and read from it.
     common::apply(
@@ -122,7 +124,7 @@ fn remote_and_classic_terminal_tails_agree() {
     assert_eq!(tail.found, Found::AtAnchor);
     assert_eq!(tail.line, "ready> ls\n");
     assert_eq!(tail.count, 5);
-    assert_eq!(tail.lines, texts(&["c\n", "d\n", "ready>"]));
+    assert_eq!(tail.lines, texts(&["c", "d", "ready>"]));
 
     // The oldest lines discarded as more are written: the text moved up
     // beneath the anchor, and its fingerprint is found above it, the
@@ -135,7 +137,7 @@ fn remote_and_classic_terminal_tails_agree() {
     let (tail, _) = both(&uia, &anchored(&next, "ready>", "d\n"));
     assert_eq!(tail.found, Found::Moved(2));
     assert_eq!(tail.count, 3);
-    assert_eq!(tail.lines, texts(&["x\n", "y\n", "z"]));
+    assert_eq!(tail.lines, texts(&["x", "y", "z"]));
 
     // The screen cleared: the fingerprint is nowhere.
     common::apply(&mut app, hwnd, r"set-text term hello\nready>");
@@ -268,9 +270,9 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         ]
     } else {
         [
-            ("baseline", uia_calls(22), BASELINE_HITS),
-            ("typed", uia_calls(25), TYPED_HITS),
-            ("output line", uia_calls(32), LINE_HITS),
+            ("baseline", uia_calls(34), BASELINE_HITS),
+            ("typed", uia_calls(30), TYPED_HITS),
+            ("output line", uia_calls(43), LINE_HITS),
         ]
     };
     for ((name, calls, hits), (_, expected_calls, expected_hits)) in costs.iter().zip(expected) {
@@ -287,40 +289,42 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
 type Hits = &'static [(&'static str, u32)];
 
 /// The provider hits of the baseline read: the document range, then the
-/// last line found, all six lines counted, and the last three read.
+/// last line found, all six lines counted, the last three read in one
+/// call, the last line and the one before it read as lines, and the first
+/// line read before and after (the guard against text that moved during
+/// the read).
 const BASELINE_HITS: &[(&str, u32)] = &[
     ("DocumentRange", 1),
-    ("Clone", 4),
-    ("CompareEndpoints", 1),
+    ("Clone", 9),
+    ("CompareEndpoints", 2),
     ("ExpandToEnclosingUnit", 5),
-    ("GetText", 4),
+    ("GetText", 5),
     ("Move", 4),
-    ("MoveEndpointByUnit", 1),
-    ("MoveEndpointByRange", 2),
+    ("MoveEndpointByRange", 8),
 ];
 
 /// The provider hits of a read that finds the prompt grown: the anchor's
-/// line and the one before it checked, and no line after it.
+/// line and the one before it checked, no line after it, and the line
+/// before it read again at the end, the guard.
 const TYPED_HITS: &[(&str, u32)] = &[
-    ("Clone", 9),
-    ("CompareEndpoints", 1),
-    ("ExpandToEnclosingUnit", 4),
-    ("GetText", 2),
-    ("Move", 2),
-    ("MoveEndpointByUnit", 1),
-    ("MoveEndpointByRange", 6),
+    ("Clone", 10),
+    ("CompareEndpoints", 2),
+    ("ExpandToEnclosingUnit", 5),
+    ("GetText", 3),
+    ("Move", 3),
+    ("MoveEndpointByRange", 7),
 ];
 
 /// The provider hits of a read that finds an output line and a new prompt:
-/// as for the grown prompt, and the two lines read with the one above them.
+/// as for the grown prompt, and the two lines read in one call, and the
+/// last line and the one before it read as lines.
 const LINE_HITS: &[(&str, u32)] = &[
-    ("Clone", 9),
-    ("CompareEndpoints", 1),
+    ("Clone", 13),
+    ("CompareEndpoints", 2),
     ("ExpandToEnclosingUnit", 6),
-    ("GetText", 5),
-    ("Move", 4),
-    ("MoveEndpointByUnit", 1),
-    ("MoveEndpointByRange", 6),
+    ("GetText", 6),
+    ("Move", 5),
+    ("MoveEndpointByRange", 11),
 ];
 
 fn terminal_reads_cost_exactly_remote() {

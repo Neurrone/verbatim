@@ -67,12 +67,22 @@ pub struct TailText {
     pub line: String,
     /// The line before the anchor now.
     pub previous: String,
+    /// The line where the fingerprint was found, as it is now.
+    pub found_line: String,
     /// The lines after the anchor's line, or with no anchor, all of them.
     pub count: u32,
-    /// The last lines, oldest first.
+    /// How many of the last lines were read.
+    pub rows: u32,
+    /// The text of those lines, oldest first; a line the terminal wrapped
+    /// is one line here.
     pub lines: Vec<String>,
-    /// The line above the first of `lines`.
-    pub above: String,
+    /// The last line, read as a line: the next fingerprint's line.
+    pub last_line: String,
+    /// The line before it: the next fingerprint's line before.
+    pub before_last: String,
+    /// Whether the text held still while it was read; when it did not, the
+    /// read is set aside, and the change that disturbed it causes another.
+    pub settled: bool,
 }
 
 impl From<&Tail> for TailText {
@@ -81,9 +91,13 @@ impl From<&Tail> for TailText {
             found: tail.found,
             line: tail.line.clone(),
             previous: tail.previous.clone(),
+            found_line: tail.found_line.clone(),
             count: tail.count,
+            rows: tail.rows,
             lines: tail.lines.clone(),
-            above: tail.above.clone(),
+            last_line: tail.last_line.clone(),
+            before_last: tail.before_last.clone(),
+            settled: tail.settled,
         }
     }
 }
@@ -164,7 +178,13 @@ pub enum Next {
 #[must_use]
 pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
     let (changed, line_now) = match tail.found {
-        Found::Moved(_) => (None, memory.line.as_str()),
+        // Found above the anchor as it was read or grown since (the line
+        // output was still being written to), under a line that is not
+        // blank: what it gained is new.
+        Found::Moved(_) => (
+            line_change(&memory.line, &tail.found_line),
+            tail.found_line.as_str(),
+        ),
         Found::AtAnchor => {
             let changed = line_change(&memory.line, &tail.line);
             let trusted = changed.as_ref().is_none_or(|change| {
@@ -177,20 +197,18 @@ pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
         }
         Found::NotFound | Found::Afresh => return Next::Afresh,
     };
-    let count = usize::try_from(tail.count).unwrap_or(usize::MAX);
     let lines: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    let unread = count.saturating_sub(lines.len());
-    let skipped = (unread > 0).then(|| Skipped::Count(u32::try_from(unread).unwrap_or(u32::MAX)));
+    let unread = tail.count.saturating_sub(tail.rows);
+    let skipped = (unread > 0).then_some(Skipped::Count(unread));
     let previous_now = if matches!(tail.found, Found::Moved(_)) {
         memory.previous.as_str()
     } else {
         tail.previous.as_str()
     };
-    let (line, previous) = match tail.lines.as_slice() {
-        [] => (line_now.to_owned(), previous_now.to_owned()),
-        [only] if count == 1 => (only.clone(), line_now.to_owned()),
-        [only] => (only.clone(), tail.above.clone()),
-        [.., before, last] => (last.clone(), before.clone()),
+    let (line, previous) = if tail.rows == 0 {
+        (line_now.to_owned(), previous_now.to_owned())
+    } else {
+        (tail.last_line.clone(), tail.before_last.clone())
     };
     let mut screen = if skipped.is_some() {
         Vec::new()
@@ -234,10 +252,10 @@ pub fn after_fresh(
     wanted: usize,
 ) -> (TerminalOutput, Memory) {
     let screen: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    let (line, previous) = match tail.lines.as_slice() {
-        [] => (String::new(), String::new()),
-        [only] => (only.clone(), tail.above.clone()),
-        [.., before, last] => (last.clone(), before.clone()),
+    let (line, previous) = if tail.rows == 0 {
+        (String::new(), String::new())
+    } else {
+        (tail.last_line.clone(), tail.before_last.clone())
     };
     let mut remembered = Memory {
         previous,
@@ -251,15 +269,21 @@ pub fn after_fresh(
     let old = &memory.screen;
     let new = &remembered.screen;
     let blank = |lines: &[String]| lines.iter().all(|line| line.trim().is_empty());
+    // The old screen's end reappears at the new one's start, its last line
+    // as it was or grown since (the line output was still being written
+    // to when it was read).
+    let reappears = |m: usize| {
+        let (end, start) = (&old[old.len() - m..], &new[..m]);
+        end[..m - 1] == start[..m - 1]
+            && start[m - 1].starts_with(end[m - 1].as_str())
+            && !blank(start)
+    };
     let output = if old == new {
         TerminalOutput::default()
-    } else if let Some(overlap) = (1..=old.len().min(new.len()))
-        .rev()
-        .find(|&m| old[old.len() - m..] == new[..m] && !blank(&new[..m]))
-    {
-        // The old screen's end reappears at the new one's start: it
-        // scrolled, and what follows is new.
+    } else if let Some(overlap) = (1..=old.len().min(new.len())).rev().find(|&m| reappears(m)) {
+        // It scrolled: what the last line gained, and what follows, is new.
         TerminalOutput {
+            changed: line_change(&old[old.len() - 1], &new[overlap - 1]),
             lines: new[overlap..].to_vec(),
             ..TerminalOutput::default()
         }
@@ -271,7 +295,7 @@ pub fn after_fresh(
             .map(|(_, line)| line.clone())
             .collect();
         let none_kept = lines.len() == new.len();
-        let more = usize::try_from(tail.count).unwrap_or(usize::MAX) > new.len();
+        let more = tail.count > tail.rows;
         TerminalOutput {
             skipped: (none_kept && more).then_some(Skipped::Uncounted),
             lines,
@@ -309,7 +333,11 @@ pub trait TailSource {
 /// anchor no longer marks where the text was read to or found nothing new
 /// after it (a full-screen program redrawing a line above the anchor). With
 /// no memory, or with `baseline` (a focus arriving, whose earlier output is
-/// not new to the user), the text is read afresh and nothing is new.
+/// not new to the user), the text is read afresh and nothing is new. A read
+/// the text changed under ([`TailText::settled`] false: output scrolling a
+/// full scrollback while its lines were read one by one) finds nothing and
+/// keeps the memory and the anchor as they were, so the read that the
+/// change's own event causes finds everything since.
 ///
 /// # Errors
 ///
@@ -325,14 +353,27 @@ pub fn read_new<S: TailSource>(
     if !baseline
         && let Some(memory) = memory
         && let Some(tail) = source.anchored(memory, wanted)?
-        && let Next::Output(output, remembered) = after_anchor(memory, &tail, lines)
     {
-        if !output.is_empty() {
-            return Ok((output, remembered));
+        if !tail.settled {
+            return Ok((TerminalOutput::default(), memory.clone()));
         }
-        anchored = Some(remembered);
+        if let Next::Output(output, remembered) = after_anchor(memory, &tail, lines) {
+            if !output.is_empty() {
+                return Ok((output, remembered));
+            }
+            anchored = Some(remembered);
+        }
     }
     let tail = source.fresh(wanted)?;
+    if !tail.settled
+        && !baseline
+        && let Some(memory) = memory
+    {
+        return Ok((
+            TerminalOutput::default(),
+            anchored.unwrap_or_else(|| memory.clone()),
+        ));
+    }
     let earlier = if baseline {
         None
     } else {
@@ -391,7 +432,22 @@ impl UiaTail<'_> {
         let (tail, path) = terminal_tail(self.uia, query, self.remote)?;
         self.paths.push(path);
         let text = TailText::from(&tail);
-        self.last = Some(tail.last);
+        if !text.settled {
+            tracing::debug!("a terminal's text changed while it was read; the read is set aside");
+        }
+        tracing::debug!(
+            found = ?text.found,
+            count = text.count,
+            read = text.lines.len(),
+            line = trimmed(&text.line),
+            previous = trimmed(&text.previous),
+            first = text.lines.first().map(|line| trimmed(line)),
+            last = text.lines.last().map(|line| trimmed(line)),
+            "terminal tail read"
+        );
+        if tail.settled {
+            self.last = Some(tail.last);
+        }
         Ok(text)
     }
 }
