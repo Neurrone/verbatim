@@ -444,6 +444,12 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
             "phrase-speak-typed-words",
             mode = typing_echo_name(*mode)
         ),
+        Phrase::SkippedLines(1) => {
+            i18n_embed_fl::fl!(loader, "phrase-skipped-line", count = "1")
+        }
+        Phrase::SkippedLines(count) => {
+            i18n_embed_fl::fl!(loader, "phrase-skipped-lines", count = count.to_string())
+        }
         // `Phrase` is non_exhaustive; an unmapped future phrase speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -652,6 +658,208 @@ pub fn level(level: u32) -> String {
     i18n_embed_fl::fl!(loader(), "object-level", level = level.to_string())
 }
 
+/// The localized name of the built-in default theme, which has no name of
+/// its own in the theme model.
+#[must_use]
+pub fn theme_default_name() -> String {
+    i18n_embed_fl::fl!(loader(), "theme-default-name")
+}
+
+/// The localized description of the built-in default theme.
+#[must_use]
+pub fn theme_default_description() -> String {
+    i18n_embed_fl::fl!(loader(), "theme-default-description")
+}
+
+/// The localized name of an indication category, as the theme panel lists
+/// it ("Text formatting").
+#[must_use]
+pub fn indication_category_name(category: verbatim_model::IndicationCategory) -> String {
+    use verbatim_model::IndicationCategory;
+    let loader = loader();
+    match category {
+        IndicationCategory::Roles => i18n_embed_fl::fl!(loader, "indication-category-roles"),
+        IndicationCategory::States => i18n_embed_fl::fl!(loader, "indication-category-states"),
+        IndicationCategory::Properties => {
+            i18n_embed_fl::fl!(loader, "indication-category-properties")
+        }
+        IndicationCategory::TextFormatting => {
+            i18n_embed_fl::fl!(loader, "indication-category-text-formatting")
+        }
+        IndicationCategory::Structure => {
+            i18n_embed_fl::fl!(loader, "indication-category-structure")
+        }
+        IndicationCategory::Events => i18n_embed_fl::fl!(loader, "indication-category-events"),
+    }
+}
+
+/// The localized name of an indication, as the theme panel lists it: a
+/// role's or state's spoken name ("link", "not checked"), and the
+/// indication's own name otherwise ("spelling error").
+#[must_use]
+pub fn indication_name(indication: verbatim_model::Indication) -> String {
+    use verbatim_model::Indication;
+    let loader = loader();
+    match indication {
+        Indication::Role(role) => role_name(role),
+        Indication::State(state) => state_name(state).unwrap_or_else(|| indication.id()),
+        Indication::NegatedState(state) => {
+            negated_state_name(state).unwrap_or_else(|| indication.id())
+        }
+        Indication::Description => i18n_embed_fl::fl!(loader, "indication-description"),
+        Indication::Shortcut => i18n_embed_fl::fl!(loader, "indication-shortcut"),
+        Indication::Position => i18n_embed_fl::fl!(loader, "indication-position"),
+        Indication::Level => i18n_embed_fl::fl!(loader, "indication-level"),
+        Indication::SpellingError => i18n_embed_fl::fl!(loader, "indication-spelling-error"),
+        Indication::GrammarError => i18n_embed_fl::fl!(loader, "indication-grammar-error"),
+        Indication::FontName => i18n_embed_fl::fl!(loader, "indication-font-name"),
+        Indication::FontSize => i18n_embed_fl::fl!(loader, "indication-font-size"),
+        Indication::Color => i18n_embed_fl::fl!(loader, "indication-color"),
+        Indication::Capital => i18n_embed_fl::fl!(loader, "indication-capital"),
+        Indication::Blank => i18n_embed_fl::fl!(loader, "indication-blank"),
+        Indication::SkippedLines => i18n_embed_fl::fl!(loader, "indication-skipped-lines"),
+        Indication::AppNotResponding => {
+            i18n_embed_fl::fl!(loader, "indication-app-not-responding")
+        }
+        Indication::Start => i18n_embed_fl::fl!(loader, "indication-start"),
+        Indication::Exit => i18n_embed_fl::fl!(loader, "indication-exit"),
+        Indication::Error => i18n_embed_fl::fl!(loader, "indication-error"),
+        Indication::BrowseMode => i18n_embed_fl::fl!(loader, "indication-browse-mode"),
+        Indication::FocusMode => i18n_embed_fl::fl!(loader, "indication-focus-mode"),
+        Indication::SuggestionsOpened => {
+            i18n_embed_fl::fl!(loader, "indication-suggestions-opened")
+        }
+        Indication::SuggestionsClosed => {
+            i18n_embed_fl::fl!(loader, "indication-suggestions-closed")
+        }
+        Indication::Progress => i18n_embed_fl::fl!(loader, "indication-progress"),
+        // `Indication` is non_exhaustive; a future indication is listed by
+        // its id until it is given a name here.
+        other => other.id(),
+    }
+}
+
+/// The localized name of a way of reporting an indication ("speech and
+/// sound").
+#[must_use]
+pub fn presentation_name(presentation: verbatim_model::Presentation) -> String {
+    use verbatim_model::Presentation;
+    let loader = loader();
+    match presentation {
+        Presentation::Off => i18n_embed_fl::fl!(loader, "presentation-off"),
+        Presentation::Speech => i18n_embed_fl::fl!(loader, "presentation-speech"),
+        Presentation::Sound => i18n_embed_fl::fl!(loader, "presentation-sound"),
+        Presentation::SpeechAndSound => {
+            i18n_embed_fl::fl!(loader, "presentation-speech-and-sound")
+        }
+    }
+}
+
+/// The spoken words for a formatting span (`SegmentContent::Format`):
+/// NVDA's "spelling error" and "out of spelling error", and a font name,
+/// size, or color as the application words it.
+#[must_use]
+pub fn format_text(format: &verbatim_model::TextFormat) -> String {
+    use verbatim_model::TextFormat;
+    let loader = loader();
+    match format {
+        TextFormat::SpellingError => i18n_embed_fl::fl!(loader, "format-spelling-error"),
+        TextFormat::NotSpellingError => i18n_embed_fl::fl!(loader, "format-not-spelling-error"),
+        TextFormat::GrammarError => i18n_embed_fl::fl!(loader, "format-grammar-error"),
+        TextFormat::NotGrammarError => i18n_embed_fl::fl!(loader, "format-not-grammar-error"),
+        TextFormat::FontName(text) | TextFormat::FontSize(text) | TextFormat::Color(text) => {
+            text.clone()
+        }
+        // `TextFormat` is non_exhaustive; an unmapped future format speaks
+        // nothing rather than crashing the pipeline.
+        _ => String::new(),
+    }
+}
+
+/// The spoken words for an event a theme reports by speech ("browse
+/// mode", "40 percent").
+#[must_use]
+pub fn earcon_text(earcon: verbatim_model::Earcon) -> String {
+    use verbatim_model::Earcon;
+    let loader = loader();
+    match earcon {
+        Earcon::AppNotResponding => i18n_embed_fl::fl!(loader, "earcon-app-not-responding"),
+        Earcon::Start => i18n_embed_fl::fl!(loader, "earcon-start"),
+        Earcon::Exit => i18n_embed_fl::fl!(loader, "earcon-exit"),
+        Earcon::Error => i18n_embed_fl::fl!(loader, "earcon-error"),
+        Earcon::BrowseMode => i18n_embed_fl::fl!(loader, "earcon-browse-mode"),
+        Earcon::FocusMode => i18n_embed_fl::fl!(loader, "earcon-focus-mode"),
+        Earcon::SuggestionsOpened => i18n_embed_fl::fl!(loader, "earcon-suggestions-opened"),
+        Earcon::SuggestionsClosed => i18n_embed_fl::fl!(loader, "earcon-suggestions-closed"),
+        Earcon::Progress(percent) => {
+            i18n_embed_fl::fl!(loader, "earcon-progress", percent = percent.to_string())
+        }
+        // `Earcon` is non_exhaustive; an unmapped future earcon speaks
+        // nothing rather than crashing the pipeline.
+        _ => String::new(),
+    }
+}
+
+/// A problem found loading a theme, worded for the theme panel's
+/// description.
+#[must_use]
+pub fn theme_problem_text(problem: &verbatim_model::ThemeProblem) -> String {
+    use verbatim_model::ThemeProblem;
+    let loader = loader();
+    match problem {
+        ThemeProblem::UnknownIndication { id } => {
+            i18n_embed_fl::fl!(loader, "theme-problem-unknown-indication", id = id.as_str())
+        }
+        ThemeProblem::SoundOnlyWithoutSound { indication } => i18n_embed_fl::fl!(
+            loader,
+            "theme-problem-sound-only-without-sound",
+            indication = indication_name(*indication)
+        ),
+        ThemeProblem::MissingSound { indication, file } => i18n_embed_fl::fl!(
+            loader,
+            "theme-problem-missing-sound",
+            indication = indication_name(*indication),
+            file = file.as_str()
+        ),
+        ThemeProblem::UnreadableSound {
+            indication,
+            file,
+            reason,
+        } => i18n_embed_fl::fl!(
+            loader,
+            "theme-problem-unreadable-sound",
+            indication = indication_name(*indication),
+            file = file.as_str(),
+            reason = reason.as_str()
+        ),
+        ThemeProblem::InvalidSoundName { indication, file } => i18n_embed_fl::fl!(
+            loader,
+            "theme-problem-invalid-sound-name",
+            indication = indication_name(*indication),
+            file = file.as_str()
+        ),
+        ThemeProblem::UnknownVoiceStyle { indication, style } => i18n_embed_fl::fl!(
+            loader,
+            "theme-problem-unknown-voice-style",
+            indication = indication_name(*indication),
+            style = style.as_str()
+        ),
+        ThemeProblem::GainTooHigh {
+            indication: Some(indication),
+        } => i18n_embed_fl::fl!(
+            loader,
+            "theme-problem-gain-too-high",
+            indication = indication_name(*indication)
+        ),
+        ThemeProblem::GainTooHigh { indication: None } => {
+            i18n_embed_fl::fl!(loader, "theme-problem-theme-gain-too-high")
+        }
+        // `ThemeProblem` is non_exhaustive; a future problem is described
+        // in its diagnostic English until it is given wording here.
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,6 +1026,51 @@ mod tests {
             "Verbatim Settings: Speech",
             "no bidi isolation marks: the loader disables Fluent's argument \
              isolation because this output is primarily spoken (see new_loader)"
+        );
+    }
+
+    #[test]
+    fn every_indication_and_category_has_a_name() {
+        use verbatim_model::{Indication, IndicationCategory, Presentation, Role, State};
+        for indication in Indication::catalogue() {
+            let name = indication_name(indication);
+            // A name, not the id it falls back to: ids are kebab case.
+            assert!(
+                !name.is_empty() && !name.contains('-'),
+                "{indication}: {name}"
+            );
+        }
+        for category in IndicationCategory::ALL {
+            assert_ne!(indication_category_name(category), String::new());
+        }
+        assert_eq!(
+            presentation_name(Presentation::SpeechAndSound),
+            "speech and sound"
+        );
+        assert_eq!(indication_name(Indication::Role(Role::Link)), "link");
+        assert_eq!(
+            indication_name(Indication::NegatedState(State::Checked)),
+            "not checked"
+        );
+    }
+
+    #[test]
+    fn theme_words_are_worded() {
+        use verbatim_model::{Earcon, Indication, Phrase, TextFormat, ThemeProblem};
+        assert_eq!(format_text(&TextFormat::SpellingError), "spelling error");
+        assert_eq!(
+            format_text(&TextFormat::NotSpellingError),
+            "out of spelling error"
+        );
+        assert_eq!(earcon_text(Earcon::Progress(40)), "40 percent");
+        assert_eq!(phrase_text(&Phrase::SkippedLines(1)), "skipped 1 line");
+        assert_eq!(phrase_text(&Phrase::SkippedLines(120)), "skipped 120 lines");
+        assert_eq!(
+            theme_problem_text(&ThemeProblem::MissingSound {
+                indication: Indication::SpellingError,
+                file: "x.wav".to_owned()
+            }),
+            "spelling error: the sound x.wav is missing"
         );
     }
 

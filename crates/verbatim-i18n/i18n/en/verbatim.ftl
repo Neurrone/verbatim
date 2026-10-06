@@ -143,6 +143,8 @@ phrase-characters = { $count } characters
 phrase-positioned = Positioned at { $x }, { $y }
 phrase-speak-typed-characters = speak typed characters { $mode }
 phrase-speak-typed-words = speak typed words { $mode }
+phrase-skipped-line = skipped { $count } line
+phrase-skipped-lines = skipped { $count } lines
 typing-echo-off = off
 typing-echo-edit-controls = only in edit controls
 typing-echo-always = always
@@ -154,6 +156,66 @@ toggle-num-lock = num lock
 toggle-scroll-lock = scroll lock
 toggle-state-on = { $key } on
 toggle-state-off = { $key } off
+
+## Themes (phase6-design.md, "Themes: one model for verbosity, speech, and
+## sounds"): the indication catalogue's categories and entries as the theme
+## panel lists them, how each is reported, the words for formatting and
+## events, and the problems found loading a theme.
+
+theme-default-name = Default
+theme-default-description = Everything spoken as NVDA speaks it, with NVDA's sounds where NVDA plays them.
+indication-category-roles = Roles
+indication-category-states = States
+indication-category-properties = Properties
+indication-category-text-formatting = Text formatting
+indication-category-structure = Structure
+indication-category-events = Events
+presentation-off = off
+presentation-speech = speech
+presentation-sound = sound
+presentation-speech-and-sound = speech and sound
+indication-description = description
+indication-shortcut = shortcut key
+indication-position = position
+indication-level = level
+indication-spelling-error = spelling error
+indication-grammar-error = grammar error
+indication-font-name = font name
+indication-font-size = font size
+indication-color = color
+indication-capital = capital letter
+indication-blank = blank
+indication-skipped-lines = skipped lines
+indication-app-not-responding = application not responding
+indication-start = start
+indication-exit = exit
+indication-error = error
+indication-browse-mode = browse mode
+indication-focus-mode = focus mode
+indication-suggestions-opened = suggestions opened
+indication-suggestions-closed = suggestions closed
+indication-progress = progress bar
+format-spelling-error = spelling error
+format-not-spelling-error = out of spelling error
+format-grammar-error = grammar error
+format-not-grammar-error = out of grammar error
+earcon-app-not-responding = not responding
+earcon-start = Verbatim started
+earcon-exit = Exiting Verbatim
+earcon-error = error
+earcon-browse-mode = browse mode
+earcon-focus-mode = focus mode
+earcon-suggestions-opened = suggestions
+earcon-suggestions-closed = suggestions closed
+earcon-progress = { $percent } percent
+theme-problem-unknown-indication = Unknown indication { $id }
+theme-problem-sound-only-without-sound = { $indication } is reported by sound, but has no sound
+theme-problem-missing-sound = { $indication }: the sound { $file } is missing
+theme-problem-unreadable-sound = { $indication }: the sound { $file } cannot be played: { $reason }
+theme-problem-invalid-sound-name = { $indication }: { $file } is not a sound file name
+theme-problem-unknown-voice-style = { $indication }: there is no voice style named { $style }
+theme-problem-gain-too-high = { $indication }: the gain is above the most allowed
+theme-problem-theme-gain-too-high = The theme's gain is above the most allowed
 
 ## Spoken state names.
 
