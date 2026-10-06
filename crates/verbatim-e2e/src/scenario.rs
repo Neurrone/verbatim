@@ -488,7 +488,7 @@ impl Scenario {
         name: &str,
         contents: &str,
     ) -> io::Result<u32> {
-        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let marker = document_marker(name);
         let directory = Path::new(&self.stderr_log_path)
             .parent()
             .and_then(Path::to_str)
@@ -524,7 +524,7 @@ impl Scenario {
     /// Returns an error if a request fails or the title still marks unsaved
     /// changes after `timeout`.
     pub fn save_document(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
-        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let marker = document_marker(name);
         let unsaved_in_front = |agent: &mut AgentClient| -> io::Result<bool> {
             Ok(agent.foreground_info()?.foreground.is_some_and(|window| {
                 window.title.contains(&marker) && window.title.starts_with('*')
@@ -555,7 +555,7 @@ impl Scenario {
     /// Returns an error if a request fails or the title does not mark
     /// unsaved changes within `timeout`.
     pub fn expect_unsaved(&mut self, name: &str, timeout: Duration) -> io::Result<()> {
-        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let marker = document_marker(name);
         let deadline = Instant::now() + timeout;
         loop {
             let unsaved = self
@@ -590,7 +590,7 @@ impl Scenario {
     /// Returns an error if a request fails or the window does not take the
     /// foreground.
     pub fn open_folder(&mut self, name: &str, files: &[&str]) -> io::Result<String> {
-        let marker = format!("{DOCUMENT_MARKER}{name}");
+        let marker = document_marker(name);
         let directory = Path::new(&self.stderr_log_path)
             .parent()
             .and_then(Path::to_str)
@@ -1427,6 +1427,37 @@ fn describe_foreground(info: &ForegroundInfo) -> String {
         "foreground window {foreground}; visible windows: {}",
         windows.join(", ")
     )
+}
+
+/// The marker naming harness document `name` in this run: the shared
+/// [`DOCUMENT_MARKER`], `name`, and a token of this run. A document of a
+/// fixed name would let an application restore state saved by an earlier
+/// run, as Windows 11 Notepad restores a file's last selection, which a
+/// failed run can leave anywhere; a new name has none.
+fn document_marker(name: &str) -> String {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    format!(
+        "{DOCUMENT_MARKER}{name}-{}",
+        TOKEN.get_or_init(document_token)
+    )
+}
+
+/// A token unique to this run of the test binary: the milliseconds since the Unix epoch, in
+/// base 36, so a harness document's name stays short.
+fn document_token() -> String {
+    let mut value = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let mut digits = Vec::new();
+    loop {
+        let digit = u8::try_from(value % 36).unwrap_or(0);
+        digits.push(char::from_digit(u32::from(digit), 36).unwrap_or('0'));
+        value /= 36;
+        if value == 0 {
+            break;
+        }
+    }
+    digits.iter().rev().collect()
 }
 
 #[cfg(test)]
