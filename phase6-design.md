@@ -1736,3 +1736,32 @@ found, on 2026-10-06, and what changed:
   against the third, both into a full scrollback: a flood filling an
   empty one while it is read is slower in the console host whether its
   output is reported or not.
+### After M4 (scheduled with Dickson on 2026-10-07)
+
+In this order, once M4's remaining items (formatting spans, the caret
+remote operation, the Terminal page, the demonstrations) are merged:
+
+1. NVDA comparison captures for every M4 feature, taken with `cargo
+   xtask nvda capture` and kept in `docs/nvda-captures/`, then compared
+   with what Verbatim says for the same steps, each difference either
+   fixed or recorded in `docs/parity.md` as intended. This is how
+   Verbatim is shown to behave correctly, so it comes first: editing in
+   Notepad (caret by character, word, and line; selection; typed echo;
+   Backspace and Delete), the review cursor (including the column
+   difference), say-all, terminal output and typing in Windows Terminal
+   and the console host, the password prompt, a flood, and the settings
+   dialog's pages.
+2. Edit fields under object navigation and report current object read
+   their text, as on focus, rather than their whole value.
+3. A dialog's own text (a message box's question) is read when the
+   dialog opens.
+4. A state change of an object that has already lost the focus is not
+   spoken (the stray "unavailable" from Reset).
+5. The clipboard write frees its memory when it fails, and opens the
+   clipboard with an owner window.
+6. The GUI bridge's GUI-thread rule enforced by its types rather than
+   stated in a comment.
+7. A tray icon re-found before it is clicked.
+8. `cargo xtask demo` respects `CARGO_TARGET_DIR`.
+9. This document brought up to date with the run's decisions and each
+   step's outcome.
