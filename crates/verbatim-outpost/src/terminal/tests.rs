@@ -23,6 +23,8 @@ struct Sim {
     comparable: bool,
     /// How many of the next reads the text moves under.
     unsettled: usize,
+    /// Whether the text moving under them scrolls it.
+    scrolling: bool,
 }
 
 fn padded(text: &str) -> String {
@@ -37,6 +39,7 @@ impl Sim {
             anchor: None,
             comparable: true,
             unsettled: 0,
+            scrolling: false,
         };
         sim.push(rows);
         sim
@@ -93,7 +96,8 @@ impl Sim {
             .checked_sub(1)
             .map(|row| self.row(row))
             .unwrap_or_default();
-        if settled {
+        let scrolled = !settled && self.scrolling;
+        if settled || scrolled {
             self.anchor = Some(last);
             self.comparable = true;
         }
@@ -108,6 +112,7 @@ impl Sim {
             last_line: self.row(last),
             before_last,
             settled,
+            scrolled,
         }
     }
 }
@@ -230,6 +235,20 @@ fn a_read_the_text_moved_under_is_set_aside_for_the_next() {
 }
 
 #[test]
+fn a_read_the_text_scrolled_under_skips_lines_and_starts_again_from_there() {
+    let mut reader = Reader::new(Sim::new(4, &["ready>"]));
+    reader.sim.push(&["one", "two", "three", "four", "five"]);
+    reader.sim.unsettled = 1;
+    reader.sim.scrolling = true;
+    let output = reader.read();
+    assert_eq!(output.skipped, Some(Skipped::Uncounted));
+    assert_eq!(output.lines, Vec::<String>::new());
+    // What follows is read from where that read ended.
+    reader.sim.push(&["six"]);
+    assert_eq!(reader.read().lines, lines(&["six"]));
+}
+
+#[test]
 fn a_half_written_last_line_is_found_grown_when_the_text_moved() {
     let mut reader = Reader::new(Sim::new(5, &["one", "two", "three", "fo"]));
     reader.sim.rewrite_last("four");
@@ -265,6 +284,7 @@ fn screens_compared_after_more_output_find_the_last_line_grown() {
         last_line: rows[3].clone(),
         before_last: rows[2].clone(),
         settled: true,
+        scrolled: false,
     };
     let (output, _) = after_fresh(Some(&memory), &tail, 5);
     assert_eq!(
@@ -273,6 +293,38 @@ fn screens_compared_after_more_output_find_the_last_line_grown() {
     );
     assert_eq!(output.skipped, None);
     assert_eq!(output.lines, lines(&["c"]));
+}
+
+#[test]
+fn a_blank_last_line_alone_does_not_tie_two_screens() {
+    // Both screens end with the cursor's blank line; nothing else of the
+    // old one is left, and the text holds more than was read.
+    let memory = Memory {
+        previous: padded("two"),
+        line: padded(""),
+        screen: lines(&["one", "two", ""]),
+    };
+    let rows = ["six", "seven", ""].map(padded);
+    let tail = TailText {
+        found: Found::Afresh,
+        line: String::new(),
+        previous: String::new(),
+        found_line: String::new(),
+        count: 100,
+        rows: 3,
+        lines: rows
+            .iter()
+            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
+            .collect(),
+        last_line: rows[2].clone(),
+        before_last: rows[1].clone(),
+        settled: true,
+        scrolled: false,
+    };
+    let (output, _) = after_fresh(Some(&memory), &tail, 5);
+    assert_eq!(output.changed, None);
+    assert_eq!(output.skipped, Some(Skipped::Uncounted));
+    assert_eq!(output.lines, lines(&["six", "seven"]));
 }
 
 #[test]

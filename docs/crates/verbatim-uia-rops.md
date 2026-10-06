@@ -262,7 +262,9 @@ trims:
   `last_line` and `before_last`: the last line and the one before it, each
   read as a line, the next fingerprint.
 - `last`: the last line's range, the next anchor.
-- `settled`: whether the text held still while it was read.
+- `settled`: whether the text held still while it was read, and
+  `scrolled`: whether, if not, the line above where it started changed,
+  the text having scrolled beneath the ranges.
 
 The program reads the anchor's line and the one before it. When the one
 before it differs from the fingerprint, it walks up a line at a time,

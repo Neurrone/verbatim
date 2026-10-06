@@ -162,6 +162,11 @@ pub struct Tail {
     /// Whether the text held still while it was read ([`is_settled`]);
     /// when it did not, the lines and the count may mix two moments.
     pub settled: bool,
+    /// Whether the text above where the read started moved while it was
+    /// read: a full scrollback scrolled beneath the ranges, so text went by
+    /// that the read did not see, rather than only the last lines being
+    /// written to.
+    pub scrolled: bool,
 }
 
 impl Tail {
@@ -185,6 +190,7 @@ impl Tail {
             before_last: end.before_last,
             last,
             settled: end.settled,
+            scrolled: end.scrolled,
         }
     }
 }
@@ -409,6 +415,7 @@ struct TailEnd {
     last_line: String,
     before_last: String,
     settled: bool,
+    scrolled: bool,
 }
 
 impl TailRegisters {
@@ -418,9 +425,11 @@ impl TailRegisters {
         let block = string_of(outcome, self.block)?;
         let last_line = string_of(outcome, self.last_line)?;
         let before_last = string_of(outcome, self.before_last)?;
+        let guard_before = string_of(outcome, self.guard_before)?;
+        let guard_after = string_of(outcome, self.guard_after)?;
         let settled = is_settled(
-            &string_of(outcome, self.guard_before)?,
-            &string_of(outcome, self.guard_after)?,
+            &guard_before,
+            &guard_after,
             rows,
             &block,
             [before_last.as_str(), last_line.as_str()],
@@ -432,6 +441,7 @@ impl TailRegisters {
             last_line,
             before_last,
             settled,
+            scrolled: guard_before != guard_after,
         })
     }
 }
@@ -768,6 +778,7 @@ fn classic_tail(
             last_line,
             before_last,
             settled,
+            scrolled: guard_before != guard_after,
         },
         last,
     ))

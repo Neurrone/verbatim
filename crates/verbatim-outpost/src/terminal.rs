@@ -30,6 +30,12 @@
 //! nothing matched and the text holds more than was read. Trailing padding
 //! is removed from every line (`verbatim_text::trim_padding`, by Unicode's
 //! `White_Space` property, whatever the language).
+//!
+//! A read the text changed under while it was read is set aside: when only
+//! the last lines were being written to, it finds nothing and the next read
+//! finds everything since; when the text scrolled beneath it, lines went by
+//! unread, and it says so without a count and starts again from its own
+//! last line.
 
 use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, IUIAutomationTextRange};
 use windows::core::AgileReference;
@@ -83,6 +89,9 @@ pub struct TailText {
     /// Whether the text held still while it was read; when it did not, the
     /// read is set aside, and the change that disturbed it causes another.
     pub settled: bool,
+    /// Whether, unsettled, it was because the text scrolled beneath the
+    /// read's ranges, so lines went by unread.
+    pub scrolled: bool,
 }
 
 impl From<&Tail> for TailText {
@@ -98,6 +107,7 @@ impl From<&Tail> for TailText {
             last_line: tail.last_line.clone(),
             before_last: tail.before_last.clone(),
             settled: tail.settled,
+            scrolled: tail.scrolled,
         }
     }
 }
@@ -271,12 +281,17 @@ pub fn after_fresh(
     let blank = |lines: &[String]| lines.iter().all(|line| line.trim().is_empty());
     // The old screen's end reappears at the new one's start, its last line
     // as it was or grown since (the line output was still being written
-    // to when it was read).
+    // to when it was read). The lines that reappear as they were must not
+    // all be blank, or a blank last line, which any line starts with, would
+    // match anywhere.
     let reappears = |m: usize| {
         let (end, start) = (&old[old.len() - m..], &new[..m]);
-        end[..m - 1] == start[..m - 1]
-            && start[m - 1].starts_with(end[m - 1].as_str())
-            && !blank(start)
+        let (same, grown) = if end[m - 1] == start[m - 1] {
+            (m, true)
+        } else {
+            (m - 1, start[m - 1].starts_with(end[m - 1].as_str()))
+        };
+        grown && end[..same] == start[..same] && !blank(&start[..same])
     };
     let output = if old == new {
         TerminalOutput::default()
@@ -294,7 +309,12 @@ pub fn after_fresh(
             .filter(|&(index, line)| old.get(index) != Some(line))
             .map(|(_, line)| line.clone())
             .collect();
-        let none_kept = lines.len() == new.len();
+        // A blank line in its place (the cursor's line, at the end of both)
+        // says nothing about whether the text moved.
+        let none_kept = !new
+            .iter()
+            .enumerate()
+            .any(|(index, line)| !line.trim().is_empty() && old.get(index) == Some(line));
         let more = tail.count > tail.rows;
         TerminalOutput {
             skipped: (none_kept && more).then_some(Skipped::Uncounted),
@@ -303,6 +323,33 @@ pub fn after_fresh(
         }
     };
     (output, remembered)
+}
+
+/// What an unsettled read finds. When only the last lines were being written
+/// to, nothing, and what was remembered stays, so the read that the
+/// change's own event causes finds everything since. When the text scrolled
+/// beneath the read (a flood in a full scrollback, which may keep every
+/// read from settling until it ends), lines went by unread: "skipped lines"
+/// without a count, and the read's own last lines are remembered, so the
+/// next read starts from there rather than from an anchor the text has long
+/// left, which identical later output could match by accident.
+fn set_aside(tail: &TailText, memory: &Memory, wanted: usize) -> (TerminalOutput, Memory) {
+    if !tail.scrolled {
+        return (TerminalOutput::default(), memory.clone());
+    }
+    let mut screen: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
+    keep_last(&mut screen, wanted);
+    (
+        TerminalOutput {
+            skipped: Some(Skipped::Uncounted),
+            ..TerminalOutput::default()
+        },
+        Memory {
+            previous: tail.before_last.clone(),
+            line: tail.last_line.clone(),
+            screen,
+        },
+    )
 }
 
 /// Where a terminal's tail is read from: the provider, or simulated text in
@@ -337,7 +384,8 @@ pub trait TailSource {
 /// the text changed under ([`TailText::settled`] false: output scrolling a
 /// full scrollback while its lines were read one by one) finds nothing and
 /// keeps the memory and the anchor as they were, so the read that the
-/// change's own event causes finds everything since.
+/// change's own event causes finds everything since; one the text scrolled
+/// under says lines were skipped and starts again from it (`set_aside`).
 ///
 /// # Errors
 ///
@@ -355,7 +403,7 @@ pub fn read_new<S: TailSource>(
         && let Some(tail) = source.anchored(memory, wanted)?
     {
         if !tail.settled {
-            return Ok((TerminalOutput::default(), memory.clone()));
+            return Ok(set_aside(&tail, memory, lines));
         }
         if let Next::Output(output, remembered) = after_anchor(memory, &tail, lines) {
             if !output.is_empty() {
@@ -369,10 +417,7 @@ pub fn read_new<S: TailSource>(
         && !baseline
         && let Some(memory) = memory
     {
-        return Ok((
-            TerminalOutput::default(),
-            anchored.unwrap_or_else(|| memory.clone()),
-        ));
+        return Ok(set_aside(&tail, anchored.as_ref().unwrap_or(memory), lines));
     }
     let earlier = if baseline {
         None
@@ -445,7 +490,7 @@ impl UiaTail<'_> {
             last = text.lines.last().map(|line| trimmed(line)),
             "terminal tail read"
         );
-        if tail.settled {
+        if tail.settled || tail.scrolled {
             self.last = Some(tail.last);
         }
         Ok(text)

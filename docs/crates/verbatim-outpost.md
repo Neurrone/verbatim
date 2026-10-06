@@ -656,9 +656,16 @@ finds it.
   started read differently at its end, or the one read of its lines did
   not end with the last line and the one before it read on their own)
   finds nothing and keeps the memory and the anchor, and the text change
-  that disturbed it causes the next read. Live, a flood scrolling a full
-  scrollback beneath the ranges did this to most reads, and lines read
-  one by one came back twice or out of order before reads were checked.
+  that disturbed it causes the next read. When the text scrolled beneath
+  the read (`scrolled`: the line above where it started changed), lines
+  went by unread instead: the read says "skipped lines" without a count
+  (`Skipped::Uncounted`) and remembers its own last lines and last line
+  as the anchor, so the next read starts from there. Live, a flood in
+  Windows Terminal's full scrollback kept every read from settling until
+  it ended; kept back at an anchor from before it, a second, identical
+  flood's end matched the first's and nothing was spoken. Before reads
+  were checked at all, lines read one by one during such a flood came
+  back twice or out of order.
 - When the fingerprint is not found, the anchor no longer compares with
   the text (a full-screen program switched screens), or the anchored read
   found nothing new after the anchor (a full-screen program redrawing a
