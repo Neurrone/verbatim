@@ -398,9 +398,12 @@ More environment variables matter for less common cases:
 - `VERBATIM_E2E_REMOTE=1` marks a remote run, where the agent, Verbatim, and
   its configuration live on another machine (the Hyper-V guest) — set by
   `cargo xtask vm test`, not something you normally set by hand. It skips
-  the runner-direct staging step entirely (checking the source binaries
-  exist, copying them, and writing `settings.toml`), since `cargo xtask vm
-  deploy` already staged the guest-side equivalent.
+  the runner-direct staging step (checking the source binaries exist and
+  copying them), since `cargo xtask vm deploy` already staged the
+  guest-side equivalent; the same fixed `settings.toml` is still written
+  afresh for every scenario, through the agent, next to the guest's
+  Verbatim, so a scenario that changes a setting (`terminal_spoken_password`
+  turns "speak passwords" on) never leaves it changed for the next.
 - `VERBATIM_E2E_AUDIBLE=1` requests an audible run — see "Hearing and
   recording a run" below. Set by hand for a runner-direct audible run;
   `cargo xtask vm test` sets it automatically now, always, since a VM run
@@ -428,7 +431,7 @@ definition, and `crates/verbatim-e2e/tests/` holds one thin `#[test]`
 wrapper per scenario calling `registry::run_named("that scenario's name")`,
 plus `session_info` (the agent reports an interactive session — the
 precondition everything else depends on, not itself a scenario). The
-nine scenarios today: `menu_and_settings_dialog` (the scripted walk of
+M3 scenarios: `menu_and_settings_dialog` (the scripted walk of
 the M1 exit criteria through Verbatim's menu and Settings dialog, now
 asserting eSpeak NG's voices and its Max variant on the Speech page),
 `synth_host_crash_recovery` (the synthesizer host is killed from outside
@@ -451,6 +454,22 @@ Start/Search surface and Verbatim announces its search box), and
 reaches Verbatim, and logical object navigation works through its real
 Win32 tree view — the regression scenario for the flat MSAA tree-view
 exposure).
+Milestone M4's text scenarios add Notepad editing, the review cursor, and
+say-all, and the terminal scenarios: `windows_terminal_commands`,
+`conhost_commands`, and `terminal_spoken_password` (commands, typed echo,
+and a password prompt whose typing is spoken only with "speak passwords"
+on), `terminal_flood` (ten thousand lines of output, the skipped-lines
+policy, Verbatim+5, responsiveness, and the wall-time ratio, saved as
+`wall-time-ratio.txt` in its artifacts directory), and
+`terminal_review_grid` (the review cursor down a column of a text table).
+Each terminal scenario opens a window of its own titled
+`verbatim-e2e-<name>-<token>` and closes it by that title, so your own
+terminals are left alone; it uses Windows Terminal when `wt.exe` can be
+started and the console host otherwise (`conhost_commands` always uses the
+console host), and prints which. They type through the agent's `TypeText`,
+which maps each character with the foreground window's keyboard layout, so
+any layout that can type the commands works. `crates/verbatim-e2e/src/
+scenarios/` documents exactly what each asserts, at the top of its module.
 A real Explorer folder-window scenario is deliberately not among them — see
 the "Explorer" note in `docs/roadmap.md`'s M3 section for why it is verified
 by hand for now, and the same section's toggle-controls and Start-menu notes

@@ -71,11 +71,19 @@
 //!   [`system_information_tree`](crate::scenarios::system_information_tree)
 //!   against msinfo32's real Win32 tree view over MSAA, which is also the
 //!   suite's MSAA-only legacy application (the M3 exit item).
+//! - [`Group::Text`]: milestone M4's text — editing, the review cursor, and
+//!   say-all in Notepad, and the terminal scenarios
+//!   ([`terminal_commands`](crate::scenarios::terminal_commands)'s
+//!   `windows_terminal_commands`, `conhost_commands`, and
+//!   `terminal_spoken_password`,
+//!   [`terminal_flood`](crate::scenarios::terminal_flood), and
+//!   [`terminal_review_grid`](crate::scenarios::terminal_review_grid)).
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::time::Duration;
 
+use verbatim_config::Settings;
 use verbatim_control::protocol::LatencyRecord;
 
 use crate::artifacts::{self, ScenarioSummary};
@@ -85,7 +93,7 @@ use crate::scenarios::{
     notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor, notepad_say_all,
     object_navigation_in_settings, rapid_tabbing_in_settings, settings_dialog_keys,
     settings_system_page, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree, theme_panel,
+    system_information_tree, terminal_commands, terminal_flood, terminal_review_grid, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -102,8 +110,8 @@ pub enum Group {
     Shell,
     /// Object navigation and review-cursor commands.
     Navigation,
-    /// Text: editing, the review cursor over text, and say-all (milestone
-    /// M4).
+    /// Text: editing, the review cursor over text, say-all, and terminals
+    /// (milestone M4).
     Text,
 }
 
@@ -149,6 +157,17 @@ pub enum ScenarioState {
     /// The title of a window `setup` opened, such as a harness folder's
     /// ([`Scenario::open_folder`]), for the body to listen for.
     Title(String),
+    /// A window `setup` opened with a title of the run's own
+    /// ([`Scenario::launch_titled`]), such as a terminal's.
+    Window {
+        /// The launch that opened it, for `teardown` to close it by its
+        /// title ([`Scenario::kill_target`]).
+        pid: u32,
+        /// Its title.
+        title: String,
+        /// The folder, on the agent's machine, holding the files it uses.
+        directory: String,
+    },
 }
 
 /// One named, grouped scenario. See this module's own doc comment for the
@@ -171,6 +190,10 @@ pub struct ScenarioDef {
     /// listed: the user may have it open too, so leftovers are closed by the
     /// document's title instead.
     pub target_images: &'static [&'static str],
+    /// Changes the fixed settings this scenario's Verbatim is launched
+    /// with ([`Scenario::launch_with_settings`]), for a scenario that needs
+    /// a reader setting other than its default; `None` for most.
+    pub settings: Option<fn(&mut Settings)>,
     /// Declares and creates whatever state `body` needs beyond
     /// `Scenario::launch` itself.
     ///
@@ -196,6 +219,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "menu_and_settings_dialog",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: menu_and_settings_dialog::setup,
         body: menu_and_settings_dialog::body,
         teardown: menu_and_settings_dialog::teardown,
@@ -204,6 +228,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "notepad_and_verbatim_menu",
         group: Group::Shell,
         target_images: &[],
+        settings: None,
         setup: notepad_and_verbatim_menu::setup,
         body: notepad_and_verbatim_menu::body,
         teardown: notepad_and_verbatim_menu::teardown,
@@ -212,6 +237,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "rapid_tabbing_in_settings",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: rapid_tabbing_in_settings::setup,
         body: rapid_tabbing_in_settings::body,
         teardown: rapid_tabbing_in_settings::teardown,
@@ -220,6 +246,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "object_navigation_in_settings",
         group: Group::Navigation,
         target_images: &[],
+        settings: None,
         setup: object_navigation_in_settings::setup,
         body: object_navigation_in_settings::body,
         teardown: object_navigation_in_settings::teardown,
@@ -228,6 +255,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "switch_to_onecore",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: switch_to_onecore::setup,
         body: switch_to_onecore::body,
         teardown: switch_to_onecore::teardown,
@@ -236,6 +264,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "synth_host_crash_recovery",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: synth_host_crash_recovery::setup,
         body: synth_host_crash_recovery::body,
         teardown: synth_host_crash_recovery::teardown,
@@ -244,6 +273,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "lock_key_announcements",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: lock_key_announcements::setup,
         body: lock_key_announcements::body,
         teardown: lock_key_announcements::teardown,
@@ -252,6 +282,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "start_menu_search",
         group: Group::Shell,
         target_images: &[],
+        settings: None,
         setup: start_menu_search::setup,
         body: start_menu_search::body,
         teardown: start_menu_search::teardown,
@@ -260,6 +291,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "explorer_folder_window",
         group: Group::Shell,
         target_images: &[],
+        settings: None,
         setup: explorer_folder_window::setup,
         body: explorer_folder_window::body,
         teardown: explorer_folder_window::teardown,
@@ -268,6 +300,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_dialog_keys",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: settings_dialog_keys::setup,
         body: settings_dialog_keys::body,
         teardown: settings_dialog_keys::teardown,
@@ -276,6 +309,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_system_page",
         group: Group::Shell,
         target_images: &["SystemSettings.exe"],
+        settings: None,
         setup: settings_system_page::setup,
         body: settings_system_page::body,
         teardown: settings_system_page::teardown,
@@ -284,6 +318,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "notepad_editing",
         group: Group::Text,
         target_images: &[],
+        settings: None,
         setup: notepad_editing::setup,
         body: notepad_editing::body,
         teardown: notepad_editing::teardown,
@@ -292,6 +327,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "notepad_review_cursor",
         group: Group::Text,
         target_images: &[],
+        settings: None,
         setup: notepad_review_cursor::setup,
         body: notepad_review_cursor::body,
         teardown: notepad_review_cursor::teardown,
@@ -300,6 +336,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "notepad_say_all",
         group: Group::Text,
         target_images: &[],
+        settings: None,
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
@@ -308,14 +345,61 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "theme_panel",
         group: Group::Speech,
         target_images: &[],
+        settings: None,
         setup: theme_panel::setup,
         body: theme_panel::body,
         teardown: theme_panel::teardown,
     },
     ScenarioDef {
+        name: "windows_terminal_commands",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: terminal_commands::setup_windows_terminal,
+        body: terminal_commands::body,
+        teardown: terminal_commands::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_commands",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: terminal_commands::setup_console_host,
+        body: terminal_commands::body,
+        teardown: terminal_commands::teardown,
+    },
+    ScenarioDef {
+        name: "terminal_spoken_password",
+        group: Group::Text,
+        target_images: &[],
+        settings: Some(terminal_commands::speak_passwords),
+        setup: terminal_commands::setup_spoken_password,
+        body: terminal_commands::body_spoken_password,
+        teardown: terminal_commands::teardown,
+    },
+    ScenarioDef {
+        name: "terminal_flood",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: terminal_flood::setup,
+        body: terminal_flood::body,
+        teardown: terminal_flood::teardown,
+    },
+    ScenarioDef {
+        name: "terminal_review_grid",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: terminal_review_grid::setup,
+        body: terminal_review_grid::body,
+        teardown: terminal_review_grid::teardown,
+    },
+    ScenarioDef {
         name: "system_information_tree",
         group: Group::Navigation,
         target_images: &["msinfo32.exe"],
+        settings: None,
         setup: system_information_tree::setup,
         body: system_information_tree::body,
         teardown: system_information_tree::teardown,
@@ -432,7 +516,7 @@ fn run(def: &ScenarioDef) {
     // so a stale failure directory is never mistaken for this run's own.
     let _ = std::fs::remove_dir_all(&dir);
 
-    let mut scenario = Scenario::launch().unwrap_or_else(|error| {
+    let mut scenario = Scenario::launch_with_settings(def.settings).unwrap_or_else(|error| {
         panic!(
             "scenario {:?}: launching Verbatim through the agent failed: {error}",
             def.name
@@ -609,6 +693,7 @@ mod tests {
                 name: "alpha",
                 group: Group::Speech,
                 target_images: &["alpha.exe"],
+                settings: None,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -617,6 +702,7 @@ mod tests {
                 name: "beta",
                 group: Group::Shell,
                 target_images: &["beta.exe", "alpha.exe"],
+                settings: None,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -625,6 +711,7 @@ mod tests {
                 name: "gamma",
                 group: Group::Shell,
                 target_images: &[],
+                settings: None,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,

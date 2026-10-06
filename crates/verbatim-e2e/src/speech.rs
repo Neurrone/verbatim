@@ -58,6 +58,18 @@ struct Utterance {
     text: String,
 }
 
+/// An utterance handed to a scenario that reads speech as a sequence
+/// rather than matching it ([`SpeechCollector::take_heard`],
+/// [`SpeechCollector::take_until_quiet`]): its text, and a handle the
+/// collector answers how it ended for
+/// ([`SpeechCollector::ending_of`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Heard {
+    /// The utterance's full text at queue time.
+    pub text: String,
+    utterance: UtteranceId,
+}
+
 /// Subscribes to and collects speech frames on its own control-plane
 /// connection.
 pub struct SpeechCollector {
@@ -500,6 +512,18 @@ impl SpeechCollector {
     /// Panics with the full timeline if speech has not gone quiet within
     /// `timeout`, or if the speech connection fails outright.
     pub fn wait_until_quiet(&mut self, timeout: Duration) {
+        let _ = self.take_until_quiet(timeout);
+    }
+
+    /// [`wait_until_quiet`](Self::wait_until_quiet), returning every
+    /// utterance queued and not yet offered to an assertion, oldest first,
+    /// instead of discarding them: for a scenario that checks what was, or
+    /// was not, said up to the quiet.
+    ///
+    /// # Panics
+    ///
+    /// As [`wait_until_quiet`](Self::wait_until_quiet).
+    pub fn take_until_quiet(&mut self, timeout: Duration) -> Vec<Heard> {
         let deadline = Instant::now() + timeout;
         loop {
             match self.read_aside() {
@@ -515,8 +539,7 @@ underlying error: {error}",
             }
             // Nothing more is waiting on the connection.
             if self.unended.is_empty() {
-                self.pending.clear();
-                return;
+                return self.pending.drain(..).map(Heard::from).collect();
             }
             assert!(
                 Instant::now() < deadline,
@@ -529,6 +552,64 @@ underlying error: {error}",
                 self.timeline.render()
             );
         }
+    }
+
+    /// The utterances queued during the next `slice` (those held back by an
+    /// earlier wait first), oldest first, consumed, stopping early just
+    /// after one whose text is exactly `until`, which is then the last one
+    /// returned; anything after it is kept for the next read. For a
+    /// scenario that reads speech as a sequence while it checks something
+    /// else between reads, such as whether Verbatim still answers its
+    /// control plane. A read waits at most the connection's read timeout,
+    /// so a call can outlast `slice` by that much when nothing is said.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the timeline if the speech connection fails outright.
+    pub fn take_heard(&mut self, until: &str, slice: Duration) -> Vec<Heard> {
+        let deadline = Instant::now() + slice;
+        let mut heard = Vec::new();
+        loop {
+            let next = match self.next_utterance() {
+                Ok(next) => next,
+                Err(error) if is_read_timeout(&error) => None,
+                Err(error) => panic!(
+                    "speech connection failed while reading speech; timeline so far:\n{}\nunderlying error: {error}",
+                    self.timeline.render()
+                ),
+            };
+            if let Some(utterance) = next {
+                let last = utterance.text == until;
+                heard.push(Heard::from(utterance));
+                if last {
+                    return heard;
+                }
+            }
+            if Instant::now() >= deadline && self.pending.is_empty() {
+                return heard;
+            }
+        }
+    }
+
+    /// How `heard` ended, as far as the frames read so far tell; `None`
+    /// while it has not ended.
+    #[must_use]
+    pub fn ending_of(&self, heard: &Heard) -> Option<UtteranceEnding> {
+        self.endings.get(&heard.utterance).cloned()
+    }
+
+    /// Waits for `heard` to end, as every `expect_*` assertion waits for the
+    /// utterance it matched, and fails unless it completed.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the timeline if it was cut off, failed, or did not end
+    /// within the ending timeout.
+    pub fn expect_completed(&mut self, heard: &Heard) {
+        self.expect_heard(&Utterance {
+            utterance: heard.utterance,
+            text: heard.text.clone(),
+        });
     }
 
     /// The text of the last utterance queued so far, if any.
@@ -589,6 +670,15 @@ underlying error: {error}",
             .map(|(index, text)| format!("{index}: {text}"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+impl From<Utterance> for Heard {
+    fn from(utterance: Utterance) -> Self {
+        Self {
+            text: utterance.text,
+            utterance: utterance.utterance,
+        }
     }
 }
 
@@ -730,6 +820,49 @@ mod tests {
             ended(1, UtteranceEnding::Cancelled),
         ]);
         speech.wait_until_quiet(SHORT);
+    }
+
+    #[test]
+    fn taken_speech_is_handed_over_in_order_with_its_endings() {
+        let (mut speech, _) = collector(vec![
+            queued(1, "first"),
+            queued(2, "second"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Cancelled),
+            queued(3, "third"),
+            ended(3, UtteranceEnding::Completed),
+        ]);
+        let heard = speech.take_heard("second", SHORT);
+        let texts: Vec<&str> = heard.iter().map(|heard| heard.text.as_str()).collect();
+        assert_eq!(texts, ["first", "second"], "the read stops at the match");
+        let mut heard = heard;
+        heard.extend(speech.take_heard("never said", SHORT));
+        let texts: Vec<&str> = heard.iter().map(|heard| heard.text.as_str()).collect();
+        assert_eq!(texts, ["first", "second", "third"]);
+        assert_eq!(
+            speech.ending_of(&heard[0]),
+            Some(UtteranceEnding::Completed)
+        );
+        assert_eq!(
+            speech.ending_of(&heard[1]),
+            Some(UtteranceEnding::Cancelled)
+        );
+        speech.expect_completed(&heard[2]);
+        assert_eq!(speech.take_until_quiet(SHORT), Vec::new());
+    }
+
+    #[test]
+    fn speech_until_quiet_includes_what_an_assertion_held_back() {
+        let (mut speech, _) = collector(vec![
+            queued(1, "matched"),
+            queued(2, "later"),
+            ended(2, UtteranceEnding::Completed),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.expect_in_order(&["matched"], SHORT);
+        let rest = speech.take_until_quiet(SHORT);
+        let texts: Vec<&str> = rest.iter().map(|heard| heard.text.as_str()).collect();
+        assert_eq!(texts, ["later"]);
     }
 
     #[test]

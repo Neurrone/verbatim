@@ -277,6 +277,26 @@ impl AgentClient {
         }
     }
 
+    /// Types `text` on the guest as real key presses, each character mapped
+    /// to its key and shift state in the foreground window's keyboard
+    /// layout (`verbatim_agent::protocol::Request::TypeText`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when a character
+    /// cannot be typed in that layout, in which case nothing was typed.
+    pub fn type_text(&mut self, text: &str) -> io::Result<()> {
+        match self.request(Request::TypeText {
+            text: text.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::TextTyped,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("TypeText", &other)),
+        }
+    }
+
     /// Asks whether `pid` is still running on the guest.
     ///
     /// # Errors

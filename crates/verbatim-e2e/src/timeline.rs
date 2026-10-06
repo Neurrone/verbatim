@@ -17,7 +17,7 @@ use std::time::Instant;
 use verbatim_model::UtteranceEnding;
 
 /// One thing that happened during a scenario: an injected gesture, an
-/// injected key combination, or a heard utterance.
+/// injected key combination, typed text, or a heard utterance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TimelineKind {
     /// A gesture identifier routed through `Request::SendGesture` (for
@@ -26,6 +26,8 @@ enum TimelineKind {
     /// A key combination sent through `Request::SendKeys`, in the order
     /// they were sent to that single request.
     Keys(Vec<String>),
+    /// Text typed as real key presses through the agent's `TypeText`.
+    Text(String),
     /// An utterance's full rendered text, as heard on the speech
     /// connection at queue time — the frame assertions match against.
     Utterance(String),
@@ -80,6 +82,12 @@ impl Timeline {
         ));
     }
 
+    /// Records text typed through the agent's `TypeText` at the current
+    /// instant.
+    pub fn push_text(&self, text: &str) {
+        self.push(TimelineKind::Text(text.to_owned()));
+    }
+
     /// Records an utterance's full text at the current instant.
     pub fn push_utterance(&self, text: &str) {
         self.push(TimelineKind::Utterance(text.to_owned()));
@@ -119,6 +127,7 @@ impl Timeline {
                 TimelineKind::Utterance(text) => Some(text.clone()),
                 TimelineKind::Gesture(_)
                 | TimelineKind::Keys(_)
+                | TimelineKind::Text(_)
                 | TimelineKind::AudioStarted(_)
                 | TimelineKind::Ended(..) => None,
             })
@@ -147,6 +156,9 @@ impl Timeline {
                 }
                 TimelineKind::Keys(keys) => {
                     format!("+{elapsed}ms keys [{}]", keys.join(", "))
+                }
+                TimelineKind::Text(text) => {
+                    format!("+{elapsed}ms text {text:?}")
                 }
                 TimelineKind::Utterance(text) => {
                     format!("+{elapsed}ms speech {text:?}")
@@ -236,6 +248,16 @@ mod tests {
         let rendered = timeline.render();
         assert!(rendered.contains(r#"speech "one""#));
         assert!(rendered.contains(r#"audio "one""#));
+    }
+
+    #[test]
+    fn typed_text_renders_tagged_and_never_counts_as_an_utterance() {
+        let timeline = Timeline::new();
+        timeline.push_text("echo hello");
+        timeline.push_utterance("hello");
+
+        assert_eq!(timeline.utterances(), vec!["hello".to_owned()]);
+        assert!(timeline.render().contains(r#"text "echo hello""#));
     }
 
     #[test]
