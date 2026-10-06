@@ -265,6 +265,7 @@ mod tests {
         let held = |acknowledged| {
             Outgoing::NodesHeld(SupervisorToOutpost::NodesHeld {
                 nodes: Vec::new(),
+                anchors: Vec::new(),
                 acknowledged,
             })
         };

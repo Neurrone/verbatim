@@ -225,11 +225,18 @@ impl Supervisor {
         writer.push(writer::Outgoing::Other(command))
     }
 
-    /// Tells one outpost incarnation which of its nodes Core still holds, and
-    /// the position of the last of its messages the app has handled. A newer
-    /// list replaces one still waiting to be written, and gets through even
-    /// when the queue is full. Nothing happens if the incarnation has ended.
-    pub fn send_nodes_held(&self, outpost: OutpostId, nodes: Vec<u64>, acknowledged: u64) {
+    /// Tells one outpost incarnation which of its nodes and text anchors Core
+    /// still holds, and the position of the last of its messages the app has
+    /// handled. A newer list replaces one still waiting to be written, and
+    /// gets through even when the queue is full. Nothing happens if the
+    /// incarnation has ended.
+    pub fn send_nodes_held(
+        &self,
+        outpost: OutpostId,
+        nodes: Vec<u64>,
+        anchors: Vec<u64>,
+        acknowledged: u64,
+    ) {
         let writer = self
             .writers
             .lock()
@@ -240,6 +247,7 @@ impl Supervisor {
             let _ = writer.push(writer::Outgoing::NodesHeld(
                 SupervisorToOutpost::NodesHeld {
                     nodes,
+                    anchors,
                     acknowledged,
                 },
             ));

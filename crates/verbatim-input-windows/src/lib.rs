@@ -24,6 +24,14 @@
 //!
 //! Nothing that can wait belongs in the hook procedure. Gesture semantics run
 //! elsewhere (the reducer thread), reached only through the channel.
+//!
+//! Besides bound gestures the hook reports, through a callback that must not
+//! block either, what a passed key did that the reducer needs to know: an
+//! observed gesture (a caret key) and the text a key types
+//! ([`KeyReport`]). Before each key it tells the decision machine whether
+//! Num Lock is on.
+
+mod typed;
 
 use std::cell::RefCell;
 use std::io;
@@ -35,6 +43,7 @@ use crossbeam_channel::Sender;
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG,
     PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN,
@@ -54,7 +63,30 @@ pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 /// Carries out a key press's effect on speech; called on the hook thread,
 /// so it must not block.
 pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect) + Send>;
+
+/// Receives what a key passed to the application did; called on the hook
+/// thread, so it must not block.
+pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
 use verbatim_input::{KeyDecision, KeyEvent};
+use verbatim_model::TraceId;
+
+/// What a key the hook passed to the application did, reported after the
+/// key's effect on speech.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyReport {
+    /// The key completed an observed gesture (`Decision::observed`), a
+    /// caret key whose result the reducer speaks.
+    Observed(EmittedGesture),
+    /// The key types `text` into the focused application: the source of
+    /// `Input::CharacterTyped`. A tab is a tab character and Enter a
+    /// carriage return; a dead key types nothing until the key after it.
+    Typed {
+        /// Minted when the key was observed.
+        trace_id: TraceId,
+        /// The text typed.
+        text: String,
+    },
+}
 
 /// Per-hook-thread state reached by the hook procedure.
 ///
@@ -66,6 +98,8 @@ struct HookState {
     machine: DecisionMachine,
     events: Sender<EmittedGesture>,
     speech: SpeechEffectFn,
+    reports: KeyReportFn,
+    typing: typed::Typing,
 }
 
 thread_local! {
@@ -89,7 +123,8 @@ impl InputHook {
     /// bounded channel is a fine choice. `speech` carries out each key
     /// press's effect on speech (cancel, or pause and resume), before the
     /// press's gesture is sent, so speech the gesture causes is never the
-    /// speech it cancels.
+    /// speech it cancels. `reports` receives, after the speech effect, what
+    /// each passed key did ([`KeyReport`]).
     ///
     /// # Errors
     ///
@@ -100,6 +135,7 @@ impl InputHook {
         map: SharedGestureMap,
         events: Sender<EmittedGesture>,
         speech: SpeechEffectFn,
+        reports: KeyReportFn,
     ) -> io::Result<Self> {
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
@@ -107,7 +143,7 @@ impl InputHook {
 
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
-            .spawn(move || hook_thread(config, map, events, speech, &ready_tx))?;
+            .spawn(move || hook_thread(config, map, events, (speech, reports), &ready_tx))?;
 
         match ready_rx.recv() {
             Ok(Ok(thread_id)) => Ok(Self {
@@ -148,7 +184,7 @@ fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     events: Sender<EmittedGesture>,
-    speech: SpeechEffectFn,
+    (speech, reports): (SpeechEffectFn, KeyReportFn),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     // SAFETY: `GetModuleHandleW(None)` returns this process's module handle,
@@ -182,6 +218,8 @@ fn hook_thread(
             machine: DecisionMachine::new(config, map),
             events,
             speech,
+            reports,
+            typing: typed::Typing::default(),
         });
     });
 
@@ -251,15 +289,37 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             let Some(state) = state.as_mut() else {
                 return KeyDecision::Pass;
             };
+            // Num Lock decides what the numpad's operator keys are: the
+            // keyboard's own state, read locally before each key.
+            // SAFETY: GetKeyState takes any virtual-key code.
+            let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
+            state.machine.set_num_lock(num_lock);
             let decision = state.machine.on_key(event, Instant::now());
+            let own = kbd.dwExtraInfo == OWN_INPUT_TAG;
             if let Some(effect) = decision.speech
-                && kbd.dwExtraInfo != OWN_INPUT_TAG
+                && !own
             {
                 (state.speech)(effect);
             }
             if let Some(emitted) = decision.emitted {
                 // Never block: drop the gesture if the consumer is backed up.
                 let _ = state.events.try_send(emitted);
+            }
+            if let Some(observed) = decision.observed
+                && !own
+            {
+                (state.reports)(KeyReport::Observed(observed));
+            }
+            if event.pressed
+                && decision.decision == KeyDecision::Pass
+                && !decision.shared_modifier
+                && !own
+                && let Some(text) = state.typing.translate(event.vk, kbd.scanCode)
+            {
+                (state.reports)(KeyReport::Typed {
+                    trace_id: TraceId::mint(),
+                    text,
+                });
             }
             // A lock key reaching the operating system is reported, for its
             // new state to be announced, as NVDA announces it. The Verbatim

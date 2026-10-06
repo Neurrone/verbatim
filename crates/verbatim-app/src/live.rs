@@ -21,8 +21,9 @@ pub(crate) struct Live {
     pub(crate) ready: bool,
     /// The position of the last of its messages handled here.
     pub(crate) position: u64,
-    /// The held nodes last sent to it, and the position acknowledged then.
-    pub(crate) held_sent: (BTreeSet<u64>, u64),
+    /// The held nodes and text anchors last sent to it, and the position
+    /// acknowledged then.
+    pub(crate) held_sent: (BTreeSet<u64>, BTreeSet<u64>, u64),
 }
 
 /// The live outpost incarnations, by outpost id.
@@ -40,7 +41,7 @@ impl LiveOutposts {
                 target_pid,
                 ready: false,
                 position: 0,
-                held_sent: (BTreeSet::new(), 0),
+                held_sent: (BTreeSet::new(), BTreeSet::new(), 0),
             },
         );
     }

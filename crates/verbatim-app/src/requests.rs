@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
 use verbatim_model::{
-    FetchResult, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, QueryKind, TraceId,
-    TreeNode, WindowFacts,
+    FetchResult, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, QueryKind,
+    TextReply, TraceId, TreeNode, WindowFacts,
 };
 use verbatim_outpost::protocol::{FocusNow, QueryOutcome, QueryResult};
 
@@ -78,6 +78,15 @@ pub(crate) enum Asker {
     /// reducer, as NVDA's fake focus queues a focus on it and nothing for
     /// its window.
     FakeFocus { source: Pid, trace_id: TraceId },
+    /// The reducer's text request (`Effect::Text`): its outcome re-enters
+    /// the reducer as `Input::TextCompleted` under the reducer's own query
+    /// id, a failure of any kind as the protocol's "unanswered".
+    Text {
+        /// The reducer's id for the request.
+        query_id: QueryId,
+        /// The trace the request belongs to.
+        trace_id: TraceId,
+    },
 }
 
 struct Entry {
@@ -239,6 +248,21 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
                 Vec::new()
             }
         },
+        Asker::Text { query_id, trace_id } => {
+            let reply = match outcome {
+                QueryOutcome::Done(QueryResult::Text(reply)) => reply,
+                QueryOutcome::Gone => TextReply::Gone,
+                other => {
+                    tracing::debug!(reason = describe(&other), "a text request was not answered");
+                    TextReply::Unanswered
+                }
+            };
+            vec![Input::TextCompleted {
+                trace_id,
+                query_id,
+                reply,
+            }]
+        }
         Asker::FakeFocus { source, trace_id } => match outcome {
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
                 focus,
@@ -439,6 +463,42 @@ mod tests {
             0,
             "the abandoned outcome is still its one outcome"
         );
+    }
+
+    #[test]
+    fn a_text_reply_reaches_the_reducer_and_any_failure_reads_as_unanswered() {
+        let text = |outcome| {
+            let mut table = RequestTable::default();
+            let id = table.begin(
+                OutpostId(1),
+                Asker::Text {
+                    query_id: QueryId(4),
+                    trace_id: TraceId::mint(),
+                },
+            );
+            match table.finish(id, OutpostId(1), outcome).as_slice() {
+                [
+                    Input::TextCompleted {
+                        query_id: QueryId(4),
+                        reply,
+                        ..
+                    },
+                ] => reply.clone(),
+                other => panic!("one text completion, not {other:?}"),
+            }
+        };
+        assert_eq!(
+            text(QueryOutcome::Done(QueryResult::Text(TextReply::NoText))),
+            TextReply::NoText
+        );
+        assert_eq!(text(QueryOutcome::Gone), TextReply::Gone);
+        for failure in [
+            QueryOutcome::Abandoned,
+            QueryOutcome::NotStarted,
+            QueryOutcome::Failed("the read failed".to_owned()),
+        ] {
+            assert_eq!(text(failure), TextReply::Unanswered);
+        }
     }
 
     #[test]

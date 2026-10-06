@@ -14,6 +14,7 @@ mod latency;
 mod live;
 mod requests;
 mod single_instance;
+mod speech_events;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -35,10 +36,10 @@ use verbatim_input::{
     DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
     SharedGestureMap,
 };
-use verbatim_input_windows::InputHook;
+use verbatim_input_windows::{InputHook, KeyReport};
 use verbatim_model::{
-    Effect, GestureId, Input, OutpostId, Pid, ReviewCommand, SpeechPriority, TraceId, Utterance,
-    UtteranceSegment,
+    CaretKey, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
+    TextRequest, TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
 use verbatim_outpost::supervisor::EndReason;
@@ -181,12 +182,27 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         remote_operations: config.settings().uia.remote_operations,
     };
 
+    // The reader settings the reducer reads, handed to it first.
+    let reader_settings = config.settings().reader;
+
+    // Review and object-navigation commands from the router, the keys and
+    // typing the keyboard hook reports, the index marks speech reaches, and
+    // tree dumps from the control plane reach the reducer thread over this
+    // channel; it selects on it alongside the outpost stream (see
+    // `reducer_loop`). Unbounded, so no sender ever waits.
+    let (command_tx, command_rx) = unbounded::<ShellCommand>();
+
     // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
-    // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
-    // audio (see build_speech_manager). It reads each synthesizer's saved
-    // settings from the store whenever it starts one.
+    // latency ledger and reporting the marks it reaches to the reducer;
+    // VERBATIM_TEST_AUDIO=null swaps in device-free test audio (see
+    // build_speech_manager). It reads each synthesizer's saved settings from
+    // the store whenever it starts one.
     let store = Arc::new(Mutex::new(config));
-    let manager = build_speech_manager(&store, &ledger)?;
+    let speech_events = Arc::new(speech_events::ShellSpeechEvents {
+        ledger: Arc::clone(&ledger),
+        commands: command_tx.clone(),
+    });
+    let manager = build_speech_manager(&store, speech_events)?;
 
     // Settings host: the GUI's live handle; commit persists to the base
     // profile through the config store.
@@ -208,13 +224,8 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
-    // Review and object-navigation commands from the router, and tree dumps
-    // from the control plane, reach the reducer thread over this channel; it
-    // selects on it alongside the outpost stream (see `reducer_loop`).
-    let (command_tx, command_rx) = unbounded::<ShellCommand>();
-
     // The reducer thread: normalized events and review commands in, speech,
-    // fetches, activations, and clipboard copies out.
+    // fetches, text requests, activations, and clipboard copies out.
     {
         let context = ReducerContext {
             manager: Arc::clone(&manager),
@@ -224,10 +235,11 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             outposts: Arc::clone(&outposts),
             recorder: Arc::clone(&recorder),
             listener_ready: Arc::clone(&listener_ready),
+            store: Arc::clone(&store),
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
-            .spawn(move || reducer_loop(&outpost_rx, &command_rx, &context))?;
+            .spawn(move || reducer_loop(&outpost_rx, &command_rx, &context, reader_settings))?;
     }
 
     // The gesture router: bound gestures become GUI commands, direct speech,
@@ -284,15 +296,38 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "control server slot set twice")?;
 
     // Keyboard hook, last among the input paths so nothing is swallowed
-    // before there is somewhere to route it.
+    // before there is somewhere to route it. A key that cancels speech also
+    // tells the reducer, whose say-all stops; a caret key the hook passed and
+    // the text a key types go to the reducer as they are, on the same
+    // channel and so in the order the keys were pressed.
     let speech_control = manager.control();
+    let cancelled_tx = command_tx.clone();
+    let reports_tx = command_tx.clone();
+    let caret_keys: HashMap<GestureId, CaretKey> =
+        verbatim_input::caret_bindings().into_iter().collect();
     let _hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
         gesture_tx,
         Box::new(move |effect| match effect {
-            KeySpeechEffect::Cancel => speech_control.cancel(),
+            KeySpeechEffect::Cancel => {
+                speech_control.cancel();
+                let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
+            }
             KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
+        }),
+        Box::new(move |report| {
+            let input = match report {
+                KeyReport::Observed(observed) => match caret_keys.get(&observed.gesture) {
+                    Some(&key) => Input::CaretKey {
+                        trace_id: observed.trace_id,
+                        key,
+                    },
+                    None => return,
+                },
+                KeyReport::Typed { trace_id, text } => Input::CharacterTyped { trace_id, text },
+            };
+            let _ = reports_tx.send(ShellCommand::Input(Box::new(input)));
         }),
     )?;
 
@@ -403,7 +438,7 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 /// device cannot open.
 fn build_speech_manager(
     store: &Arc<Mutex<ConfigStore>>,
-    ledger: &Arc<LatencyLedger>,
+    events: Arc<dyn verbatim_speech::SpeechEvents>,
 ) -> Result<Arc<SpeechManager>, verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
     let mut registry = SynthRegistry::new();
@@ -453,7 +488,7 @@ fn build_speech_manager(
         initial_synth,
         saved_settings: saved_settings_fn(Arc::clone(store)),
         mixer: Arc::new(mixer),
-        events: Some(Arc::clone(ledger) as Arc<dyn verbatim_speech::SpeechEvents>),
+        events: Some(events),
         theme: None,
     })?))
 }
@@ -532,16 +567,50 @@ fn persist_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::PersistFn {
     })
 }
 
-/// The hook configuration from global settings.
+/// The hook configuration from global settings: the Verbatim modifier keys
+/// and NVDA's two speech interrupt settings.
 fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
     let store = store.lock().expect("config store lock");
     let keys = store.settings().verbatim_keys;
+    let keyboard = &store.settings().keyboard;
     DecisionConfig {
         caps_lock: keys.caps_lock,
         insert: keys.insert,
         numpad_insert: keys.numpad_insert,
         share_modifier: keys.share_modifier,
+        interrupt_for_characters: keyboard.speech_interrupt_for_characters,
+        interrupt_for_enter: keyboard.speech_interrupt_for_enter,
         ..DecisionConfig::default()
+    }
+}
+
+/// Saves reader settings the reducer changed with a toggle key
+/// (`Effect::SettingsChanged`) into the base profile.
+fn save_reader_settings(store: &Mutex<ConfigStore>, settings: ReaderSettings) {
+    let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
+    store.settings_mut().reader = settings;
+    if let Err(error) = store.save_settings() {
+        tracing::warn!(%error, "the reader settings could not be saved");
+    }
+}
+
+/// Keeps the display on while say-all reads, or lets it turn off again
+/// (`Effect::KeepDisplayOn`), NVDA's "Prevent display from turning off
+/// during say all". The request belongs to the calling thread, the reducer
+/// thread, which lives as long as Verbatim does.
+fn keep_display_on(on: bool) {
+    use windows::Win32::System::Power::{
+        ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
+    };
+    let flags = if on {
+        ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    // SAFETY: SetThreadExecutionState takes plain flags and only records
+    // the calling thread's request.
+    if unsafe { SetThreadExecutionState(flags) }.0 == 0 {
+        tracing::warn!(on, "the display could not be kept on");
     }
 }
 
@@ -603,12 +672,16 @@ struct ReducerContext {
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     recorder: SharedRecorder,
     listener_ready: Arc<AtomicBool>,
+    /// The configuration, where reader settings changed by a toggle key are
+    /// saved.
+    store: Arc<Mutex<ConfigStore>>,
 }
 
 /// Work handed to the reducer thread by other threads: a reducer input (a
-/// review or object-navigation command from the router), or a control-plane
-/// tree dump, answered on the given channel.
-enum ShellCommand {
+/// review or object-navigation command from the router, a caret key, typed
+/// text, or a cancelled speech from the keyboard hook, a mark speech
+/// reached), or a control-plane tree dump, answered on the given channel.
+pub(crate) enum ShellCommand {
     Input(Box<Input>),
     DumpTree(DumpTicket, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
@@ -895,7 +968,10 @@ impl ReducerThread<'_> {
         let trace_id = match &input {
             Input::Event { trace_id, .. }
             | Input::FetchCompleted { trace_id, .. }
-            | Input::Command { trace_id, .. } => *trace_id,
+            | Input::Command { trace_id, .. }
+            | Input::TextCompleted { trace_id, .. }
+            | Input::CaretKey { trace_id, .. }
+            | Input::CharacterTyped { trace_id, .. } => *trace_id,
             _ => TraceId::mint(),
         };
         let effects = reduce(&mut self.state, &input);
@@ -920,9 +996,11 @@ impl ReducerThread<'_> {
     /// it with the position of its last message handled here (outpost
     /// redesign, "Held objects"). The held nodes are also sent again every
     /// [`HELD_RESEND_INTERVAL`] messages, so an outpost whose held nodes do
-    /// not change still releases what it reported meanwhile.
+    /// not change still releases what it reported meanwhile. The text anchors
+    /// the state holds in each outpost go with its nodes.
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
+        let anchors = self.state.held_anchors();
         let views = (
             self.state.attention(),
             held.keys().copied().collect::<BTreeSet<_>>(),
@@ -936,14 +1014,22 @@ impl ReducerThread<'_> {
                 .get(outpost)
                 .map(|nodes| nodes.iter().map(|id| id.number()).collect())
                 .unwrap_or_default();
-            let (sent, acknowledged) = &live.held_sent;
-            if nodes != *sent || live.position >= acknowledged + HELD_RESEND_INTERVAL {
+            let outpost_anchors: BTreeSet<u64> = anchors
+                .get(outpost)
+                .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
+                .unwrap_or_default();
+            let (sent, sent_anchors, acknowledged) = &live.held_sent;
+            if nodes != *sent
+                || outpost_anchors != *sent_anchors
+                || live.position >= acknowledged + HELD_RESEND_INTERVAL
+            {
                 self.context.supervisor.send_nodes_held(
                     *outpost,
                     nodes.iter().copied().collect(),
+                    outpost_anchors.iter().copied().collect(),
                     live.position,
                 );
-                live.held_sent = (nodes, live.position);
+                live.held_sent = (nodes, outpost_anchors, live.position);
             }
         }
     }
@@ -987,8 +1073,33 @@ impl ReducerThread<'_> {
                 self.send(outpost, id, command);
             }
             Effect::CopyToClipboard(text) => clipboard::copy(&self.context.manager, &text),
+            Effect::Text(request) => self.text_request(trace_id, request),
+            Effect::KeepDisplayOn(on) => keep_display_on(on),
+            Effect::SettingsChanged(settings) => {
+                save_reader_settings(&self.context.store, settings);
+            }
             _ => {}
         }
+    }
+
+    /// Sends a text request to the outpost of the node it names; the answer
+    /// re-enters the reducer as `Input::TextCompleted`.
+    fn text_request(&mut self, trace_id: TraceId, request: TextRequest) {
+        let TextRequest {
+            query_id,
+            node_id,
+            op,
+        } = request;
+        let outpost = node_id.outpost();
+        let id = self
+            .requests
+            .begin(outpost, Asker::Text { query_id, trace_id });
+        let command = SupervisorToOutpost::Query {
+            trace_id,
+            request_id: id.0,
+            query: Query::Text { node_id, op },
+        };
+        self.send(outpost, id, command);
     }
 
     /// Sends request `id` to `outpost`, failing it at once when it cannot be
@@ -1047,6 +1158,7 @@ fn reducer_loop(
     outpost_rx: &Receiver<OutpostMessage>,
     command_rx: &Receiver<ShellCommand>,
     context: &ReducerContext,
+    settings: ReaderSettings,
 ) {
     let mut thread = ReducerThread {
         context,
@@ -1056,6 +1168,8 @@ fn reducer_loop(
         focus_now_wanted: HashSet::new(),
         views: (None, BTreeSet::new()),
     };
+    // The settings come first, before anything they govern.
+    thread.apply(Input::Settings(settings));
     loop {
         crossbeam_channel::select! {
             recv(outpost_rx) -> message => {
@@ -1131,7 +1245,7 @@ fn router_loop(
                 GuiCommand::OpenShellItemList(shell_list_kind(emitted.repeat)),
             ),
             other => {
-                if let Some(command) = review_command_of(*other) {
+                if let Some(command) = other.review_command() {
                     let input = Input::Command {
                         trace_id: emitted.trace_id,
                         command,
@@ -1149,46 +1263,13 @@ fn router_loop(
     }
 }
 
-/// Maps a keyboard [`ScriptAction`] to the reducer's [`ReviewCommand`], or
-/// `None` for the two actions the router handles itself (time and the tray
-/// list). The two enums are deliberately separate — the input crate owns
-/// key scripts, the model owns reducer commands — so this is the one place
-/// they meet.
-fn review_command_of(action: ScriptAction) -> Option<ReviewCommand> {
-    Some(match action {
-        ScriptAction::ReportCurrentObject => ReviewCommand::ReportObject,
-        ScriptAction::MoveToParent => ReviewCommand::Parent,
-        ScriptAction::MoveToNextSibling => ReviewCommand::NextSibling,
-        ScriptAction::MoveToPreviousSibling => ReviewCommand::PreviousSibling,
-        ScriptAction::MoveToFirstChild => ReviewCommand::FirstChild,
-        ScriptAction::MoveReviewCursorToFocus => ReviewCommand::ToFocus,
-        ScriptAction::ActivateCurrentObject => ReviewCommand::Activate,
-        ScriptAction::ReviewTop => ReviewCommand::ReviewTop,
-        ScriptAction::ReviewPreviousLine => ReviewCommand::ReviewPreviousLine,
-        ScriptAction::ReviewCurrentLine => ReviewCommand::ReviewCurrentLine,
-        ScriptAction::ReviewNextLine => ReviewCommand::ReviewNextLine,
-        ScriptAction::ReviewPreviousWord => ReviewCommand::ReviewPreviousWord,
-        ScriptAction::ReviewCurrentWord => ReviewCommand::ReviewCurrentWord,
-        ScriptAction::ReviewNextWord => ReviewCommand::ReviewNextWord,
-        ScriptAction::ReviewStartOfLine => ReviewCommand::ReviewStartOfLine,
-        ScriptAction::ReviewPreviousCharacter => ReviewCommand::ReviewPreviousCharacter,
-        ScriptAction::ReviewCurrentCharacter => ReviewCommand::ReviewCurrentCharacter,
-        ScriptAction::ReviewNextCharacter => ReviewCommand::ReviewNextCharacter,
-        ScriptAction::ReviewEndOfLine => ReviewCommand::ReviewEndOfLine,
-        ScriptAction::ReviewBottom => ReviewCommand::ReviewBottom,
-        // `SpeakTime` and `ShowTrayList` are handled by the router itself
-        // and never reach here; `ScriptAction` is also non-exhaustive, so an
-        // unmapped future action is simply not routed to the reducer until
-        // it is given a command.
-        _ => return None,
-    })
-}
-
 /// The keyboard bindings this milestone ships, as the shared gesture map the
 /// hook consults and the control plane validates against: the menu gesture
 /// plus every review and object-navigation binding for the active layout
 /// (roadmap M3). The layout's own table already carries the time and tray
-/// gestures, so they are not listed separately.
+/// gestures, so they are not listed separately. The caret keys are observed,
+/// not bound: they reach the application, and the hook reports them for the
+/// reducer to speak what they did (milestone M4).
 fn bound_gestures(layout: KeyboardLayout) -> SharedGestureMap {
     let mut gestures = vec![GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")];
     gestures.extend(
@@ -1196,7 +1277,13 @@ fn bound_gestures(layout: KeyboardLayout) -> SharedGestureMap {
             .into_iter()
             .map(|(gesture, _action)| gesture),
     );
-    GestureMap::new(gestures).into_shared()
+    GestureMap::new(gestures)
+        .with_observed(
+            verbatim_input::caret_bindings()
+                .into_iter()
+                .map(|(gesture, _key)| gesture),
+        )
+        .into_shared()
 }
 
 /// Sends one command to the GUI when it is up; during the startup window
@@ -1328,6 +1415,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         dumps_dir,
     } = config;
     let ready_handle = gui_handle.clone();
+    let cancelled_tx = command_tx.clone();
     ServerHandlers {
         status: Box::new(move || {
             let outposts: Vec<OutpostStatus> = outposts
@@ -1366,8 +1454,10 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 return Err(format!("gesture {gesture} is not bound"));
             }
             // Its keys never pass the hook, which cancels speech for every
-            // key press; executing a gesture cancels speech in NVDA too.
+            // key press; executing a gesture cancels speech in NVDA too, and
+            // stops say-all.
             speech_control.cancel();
+            let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
             gesture_tx
                 .send(EmittedGesture {
                     trace_id: TraceId::mint(),

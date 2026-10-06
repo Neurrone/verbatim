@@ -29,20 +29,23 @@
 mod intake;
 mod outbound;
 mod read;
+mod text_reads;
 pub(crate) mod window;
 mod worker;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
+};
 use windows::core::AgileReference;
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEventCallback};
-use verbatim_model::{Backend, Pid, TraceId};
+use verbatim_model::{Backend, NodeId, Pid, TraceId};
 use verbatim_uia::map::{cached_native_window_handle, snapshot_parts_from_cached_element};
 use verbatim_uia::{
     FOCUS_PROPERTIES, NodeIdRegistry as UiaRegistry, Registration, Scope, Subscription,
@@ -54,6 +57,8 @@ use crate::protocol::{
     EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaSnapshotFact,
     now_us, read_message,
 };
+use crate::text::Anchors;
+use crate::text::uia::UiaPos;
 
 use intake::{Entry, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
@@ -79,6 +84,21 @@ pub(crate) struct Context {
     /// operation (client-side proxies), read the classic way for the
     /// window's lifetime, since a window's provider does not change.
     classic_windows: Mutex<HashSet<isize>>,
+    /// The focus-following UIA subscription to a text focus's caret and
+    /// text changes, which the worker moves (milestone M4).
+    text_events: OnceLock<Registration>,
+    /// Caret events as they arrive, for a caret key's wait.
+    caret_events: text_reads::CaretEvents,
+    /// The text anchors minted in UIA text and in edit controls; both number
+    /// theirs from one counter.
+    uia_anchors: Mutex<Anchors<UiaPos>>,
+    edit_anchors: Mutex<Anchors<u32>>,
+    /// Each UIA node's text patterns, once fetched.
+    patterns: Mutex<HashMap<u64, text_reads::Patterns>>,
+    /// The node whose caret the worker last read, and when that read began,
+    /// in microseconds: a caret event observed before it changes nothing
+    /// the read did not see.
+    caret_read: Mutex<Option<(u64, u64)>>,
 }
 
 /// How an outpost reads its application, fixed for its whole life. The
@@ -115,6 +135,39 @@ impl Context {
         self.classic_windows
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn uia_anchors(&self) -> MutexGuard<'_, Anchors<UiaPos>> {
+        self.uia_anchors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn edit_anchors(&self) -> MutexGuard<'_, Anchors<u32>> {
+        self.edit_anchors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn patterns(&self) -> MutexGuard<'_, HashMap<u64, text_reads::Patterns>> {
+        self.patterns.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records that the worker is reading `node`'s caret now.
+    fn caret_read(&self, node: NodeId) {
+        *self
+            .caret_read
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((node.number(), now_us()));
+    }
+
+    /// Whether the worker has read `node`'s caret since `observed_us`, so
+    /// a caret event observed then needs no report of its own.
+    fn caret_read_since(&self, node: NodeId, observed_us: u64) -> bool {
+        self.caret_read
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some_and(|(read, at)| read == node.number() && at >= observed_us)
     }
 
     /// Whether a UIA read for an element of `hwnd` should try a remote
@@ -183,6 +236,7 @@ impl Outpost {
     ) -> Self {
         let (outbound, writer) = Outbound::start(pipe);
         let id_counter = Arc::new(AtomicU64::new(1));
+        let anchor_counter = Arc::new(AtomicU64::new(0));
         let context = Arc::new(Context {
             target_pid,
             outbound,
@@ -195,9 +249,18 @@ impl Outpost {
             focus_properties: OnceLock::new(),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashSet::new()),
+            text_events: OnceLock::new(),
+            caret_events: text_reads::CaretEvents::default(),
+            uia_anchors: Mutex::new(Anchors::new(Arc::clone(&anchor_counter))),
+            edit_anchors: Mutex::new(Anchors::new(anchor_counter)),
+            patterns: Mutex::new(HashMap::new()),
+            caret_read: Mutex::new(None),
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
+        }
+        if let Some(registration) = register_text_events(&context) {
+            let _ = context.text_events.set(registration);
         }
 
         worker::start(&context);
@@ -214,6 +277,13 @@ impl Outpost {
                         || id_child != verbatim_ia2::CHILDID_SELF)
                 {
                     return;
+                }
+                if matches!(
+                    kind,
+                    verbatim_ia2::WinEventKind::Caret
+                        | verbatim_ia2::WinEventKind::TextSelectionChange
+                ) {
+                    context.caret_events.arrived();
                 }
                 context.push(
                     Item::Msaa {
@@ -307,16 +377,22 @@ impl Outpost {
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,
+                anchors,
                 acknowledged,
-            } => context.push(
-                Item::NodesHeld {
-                    nodes: nodes.clone(),
-                    acknowledged: *acknowledged,
-                },
-                TraceId::mint(),
-                now_ms(),
-                EventTiming::default(),
-            ),
+            } => {
+                let held = anchors.iter().copied();
+                context.uia_anchors().set_held(held.clone());
+                context.edit_anchors().set_held(held);
+                context.push(
+                    Item::NodesHeld {
+                        nodes: nodes.clone(),
+                        acknowledged: *acknowledged,
+                    },
+                    TraceId::mint(),
+                    now_ms(),
+                    EventTiming::default(),
+                );
+            }
         }
     }
 }
@@ -334,6 +410,10 @@ fn unstamped(query: &Query) -> Query {
         },
         Query::Ancestors { node_id } => Query::Ancestors {
             node_id: node_id.unstamped(),
+        },
+        Query::Text { node_id, op } => Query::Text {
+            node_id: node_id.unstamped(),
+            op: op.clone(),
         },
         other => other.clone(),
     }
@@ -393,6 +473,45 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
                 context,
                 format!("UIA property subscription failed: {error}"),
             );
+            None
+        }
+    }
+}
+
+/// Starts the focus-following UIA subscription to a text focus's caret and
+/// text changes (`Text_TextSelectionChanged` and `Text_TextChanged`),
+/// listening nowhere until the worker reports a focus with text. A caret
+/// change also counts for a caret key's wait for evidence.
+fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
+    let callback_context = Arc::clone(context);
+    let callback = Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
+        let kind = if event_id == UIA_Text_TextSelectionChangedEventId.0 {
+            callback_context.caret_events.arrived();
+            UiaKind::TextSelection
+        } else {
+            UiaKind::TextChanged
+        };
+        callback_context.push(
+            Item::Uia(capture(element, kind)),
+            TraceId::mint(),
+            now_ms(),
+            EventTiming {
+                observed_at_us: now_us(),
+                ..EventTiming::default()
+            },
+        );
+    });
+    let subscription = Subscription::Events {
+        events: vec![
+            UIA_Text_TextSelectionChangedEventId,
+            UIA_Text_TextChangedEventId,
+        ],
+        callback,
+    };
+    match Registration::new(subscription, Scope::Nothing) {
+        Ok(registration) => Some(registration),
+        Err(error) => {
+            fault(context, format!("UIA text subscription failed: {error}"));
             None
         }
     }
