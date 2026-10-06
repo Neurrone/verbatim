@@ -31,8 +31,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GW_OWNER, GetForegroundWindow, GetWindow, GetWindowTextLengthW,
-    GetWindowThreadProcessId, IsWindowVisible, SW_SHOW, SetForegroundWindow, ShowWindow,
+    AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GW_OWNER, GetForegroundWindow,
+    GetWindow, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible, SW_SHOW,
+    SetForegroundWindow, ShowWindow,
 };
 use windows::core::BOOL;
 
@@ -243,6 +244,28 @@ fn send_keys(keys: &[(VIRTUAL_KEY, bool)]) {
 /// `verbatim-gui`'s `foreground` module for why Control and not Alt).
 fn nudge_foreground_lock() {
     send_keys(&[(VK_CONTROL, false), (VK_CONTROL, true)]);
+}
+
+/// Lets the process `pid`, just created and not yet running, take the
+/// foreground with its first window, as a program a user starts does. A
+/// program the agent starts would otherwise open its window under the
+/// foreground lock: refused the foreground, it still announces itself (the
+/// console host raises its focus events), and when the harness then brings
+/// the window forward no new event says so, so a screen reader that, like
+/// NVDA, dropped the refused window's events never hears of it. The right
+/// is granted at once when the agent may set the foreground itself, and
+/// otherwise after the nudge that lets it.
+pub(crate) fn allow_foreground(pid: u32) {
+    // SAFETY: plain calls taking a process id; failure is reported by the
+    // return value alone.
+    if unsafe { AllowSetForegroundWindow(pid) }.is_ok() {
+        return;
+    }
+    nudge_foreground_lock();
+    // SAFETY: as above.
+    if let Err(error) = unsafe { AllowSetForegroundWindow(pid) } {
+        tracing::debug!(pid, %error, "the launched process may not take the foreground");
+    }
 }
 
 /// Brings `window` to the foreground: directly after the nudge, else while

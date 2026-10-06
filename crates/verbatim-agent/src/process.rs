@@ -1,6 +1,6 @@
 //! Process management on behalf of host-side E2E tests: launch, status,
-//! and kill. Every launch goes through `std::process::Command` from inside
-//! the agent's own process, so a spawned Verbatim or Notepad inherits the
+//! and kill. Every launch goes through `CreateProcessW` from inside the
+//! agent's own process, so a spawned Verbatim or Notepad inherits the
 //! agent's interactive session — the reason this exists at all rather than
 //! something reachable over `WinRM` or PowerShell Direct, both of which hand
 //! a process a non-interactive window station that can never host a
@@ -23,25 +23,25 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-use std::os::windows::process::CommandExt;
-use std::process::{Child, Command};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use tracing::warn;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, STILL_ACTIVE};
+use windows::Win32::Foundation::{
+    CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, STILL_ACTIVE, SetHandleInformation,
+};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
-    TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     JobObjectBasicAccountingInformation, QueryInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
-    CREATE_SUSPENDED, GetExitCodeProcess, OpenProcess, OpenThread, PROCESS_ACCESS_RIGHTS,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-    QueryFullProcessImageNameW, ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, GetExitCodeProcess, OpenProcess,
+    PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, QueryFullProcessImageNameW, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -50,14 +50,22 @@ use crate::protocol::{KillOutcome, ProcessState};
 /// Spawns `command` with `args`, and environment (extended, not replaced,
 /// by `env`).
 ///
-/// When `stderr_to` is `None`, stdio is inherited from the agent exactly as
-/// before (never captured). When it is `Some(path)`, `path` is created
-/// (truncating any existing content, so each launch starts its own fresh
-/// log) and the child's stderr is redirected into it; stdout is redirected
-/// to the same file too, via a cloned handle — a single `File` cannot back
-/// two separate `Stdio` conversions, since each takes ownership of it — so
-/// a panic message on stderr and any surrounding stdout diagnostics land
-/// together in one combined, chronologically ordered log rather than two.
+/// When `stderr_to` is `None`, the child is given no standard handles at
+/// all, as a program a user starts from the shell is: the agent's own,
+/// often redirected to a log, are never passed on. This matters for the
+/// console host: `conhost.exe` started with standard handles takes them as
+/// a pseudoconsole's input and output, opens no window, and exits when they
+/// close, so an explicit `conhost.exe` would never show a console window.
+/// When it is `Some(path)`, `path` is created (truncating any existing
+/// content, so each launch starts its own fresh log) and the child's stdout
+/// and stderr both go to it, so a panic message on stderr and any
+/// surrounding stdout diagnostics land together in one combined,
+/// chronologically ordered log rather than two.
+///
+/// The command line is built from `command` and `args` by the quoting rules
+/// of the Microsoft C runtime, which `CommandLineToArgvW` and Rust's own
+/// argument parsing follow; `command` is found as `CreateProcessW` finds a
+/// program, adding `.exe` when it has no extension and searching `PATH`.
 ///
 /// # Errors
 ///
@@ -71,26 +79,56 @@ pub fn launch(
     env: &[(String, String)],
     stderr_to: Option<&str>,
 ) -> io::Result<u32> {
-    let mut cmd = Command::new(command);
-    cmd.args(args);
-    if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
+    let capture = stderr_to
+        .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
+        .transpose()?;
+    let mut command_line = wide(&command_line(command, args));
+    let environment = (!env.is_empty()).then(|| environment_block(env));
+    let directory = working_dir.map(wide);
+    let mut startup = STARTUPINFOW {
+        cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(u32::MAX),
+        ..STARTUPINFOW::default()
+    };
+    if let Some(capture) = &capture {
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdOutput = HANDLE(capture.as_raw_handle());
+        startup.hStdError = HANDLE(capture.as_raw_handle());
     }
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
-    if let Some(path) = stderr_to {
-        let capture_file = std::fs::File::create(path)?;
-        let stdout_handle = capture_file.try_clone()?;
-        cmd.stderr(capture_file);
-        cmd.stdout(stdout_handle);
-    }
-    cmd.creation_flags(CREATE_SUSPENDED.0);
     let job = create_job()?;
-    let mut child = cmd.spawn()?;
-    let pid = child.id();
-    if let Err(error) = assign_to_job(&job, &child).and_then(|()| resume(pid)) {
-        let _ = child.kill();
+    let mut info = PROCESS_INFORMATION::default();
+    // SAFETY: every pointer passed points into a buffer that outlives the
+    // call: the command line is writable and nul-terminated, as the
+    // directory is, and the environment block is UTF-16 ending in two
+    // nuls, as `CREATE_UNICODE_ENVIRONMENT` declares. The capture handle,
+    // when there is one, is open and inheritable.
+    unsafe {
+        CreateProcessW(
+            PCWSTR::null(),
+            Some(PWSTR(command_line.as_mut_ptr())),
+            None,
+            None,
+            capture.is_some(),
+            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+            environment.as_ref().map(|block| block.as_ptr().cast()),
+            directory
+                .as_ref()
+                .map_or(PCWSTR::null(), |directory| PCWSTR(directory.as_ptr())),
+            &raw const startup,
+            &raw mut info,
+        )
+    }
+    .map_err(io::Error::other)?;
+    // SAFETY: both handles were just returned by CreateProcessW, and are
+    // owned here alone.
+    let child = unsafe { OwnedHandle::from_raw_handle(info.hProcess.0) };
+    // SAFETY: as above.
+    let thread = unsafe { OwnedHandle::from_raw_handle(info.hThread.0) };
+    let pid = info.dwProcessId;
+    crate::foreground::allow_foreground(pid);
+    if let Err(error) = assign_to_job(&job, &child).and_then(|()| resume(&thread)) {
+        // SAFETY: `child` is open, with the full access CreateProcessW
+        // grants.
+        let _ = unsafe { TerminateProcess(HANDLE(child.as_raw_handle()), 1) };
         return Err(error);
     }
     let mut launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
@@ -119,10 +157,95 @@ pub fn launch(
     Ok(pid)
 }
 
+/// `text` as UTF-16, nul-terminated.
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// An inheritable duplicate of `file`'s handle, for a child's standard
+/// output and error.
+fn inheritable(file: &std::fs::File) -> io::Result<OwnedHandle> {
+    let handle = OwnedHandle::from(file.try_clone()?);
+    // SAFETY: `handle` is open; only its inheritance flag changes.
+    unsafe {
+        SetHandleInformation(
+            HANDLE(handle.as_raw_handle()),
+            HANDLE_FLAG_INHERIT.0,
+            HANDLE_FLAG_INHERIT,
+        )
+    }
+    .map_err(io::Error::other)?;
+    Ok(handle)
+}
+
+/// The command line for `command` and `args`: the program quoted when it
+/// holds a space or tab, and each argument quoted by the Microsoft C
+/// runtime's rules, so the child parses back exactly `args`.
+fn command_line(command: &str, args: &[String]) -> String {
+    let mut line = if command.contains([' ', '\t']) {
+        format!("\"{command}\"")
+    } else {
+        command.to_owned()
+    };
+    for arg in args {
+        line.push(' ');
+        quote_argument(arg, &mut line);
+    }
+    line
+}
+
+/// Appends `arg` to `line`, quoted when it is empty or holds a space, tab,
+/// or quote: a quote is escaped with a backslash, and the backslashes
+/// before a quote, or before the closing quote, are doubled.
+fn quote_argument(arg: &str, line: &mut String) {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        line.push_str(arg);
+        return;
+    }
+    line.push('"');
+    let mut backslashes = 0;
+    for character in arg.chars() {
+        if character == '\\' {
+            backslashes += 1;
+            continue;
+        }
+        let escapes = if character == '"' {
+            backslashes * 2 + 1
+        } else {
+            backslashes
+        };
+        line.extend(std::iter::repeat_n('\\', escapes));
+        backslashes = 0;
+        line.push(character);
+    }
+    line.extend(std::iter::repeat_n('\\', backslashes * 2));
+    line.push('"');
+}
+
+/// The agent's environment with `env` set over it, as a block for
+/// `CreateProcessW`: `NAME=value` entries sorted by name without regard to
+/// case, as Windows requires, each nul-terminated, and a final nul.
+fn environment_block(env: &[(String, String)]) -> Vec<u16> {
+    let mut variables: BTreeMap<String, (String, String)> = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .map(|(name, value)| (name.to_uppercase(), (name, value)))
+        .collect();
+    for (name, value) in env {
+        variables.insert(name.to_uppercase(), (name.clone(), value.clone()));
+    }
+    let mut block: Vec<u16> = Vec::new();
+    for (name, value) in variables.values() {
+        block.extend(format!("{name}={value}").encode_utf16());
+        block.push(0);
+    }
+    block.push(0);
+    block
+}
+
 /// A child [`launch`] started.
 struct Launched {
-    /// Its handle, kept with the entry.
-    child: Child,
+    /// Its process handle, kept with the entry.
+    child: OwnedHandle,
     /// The job holding it and everything it started.
     job: OwnedHandle,
     /// When a later launch first found the child exited and its job empty.
@@ -143,49 +266,21 @@ fn create_job() -> io::Result<OwnedHandle> {
     Ok(unsafe { OwnedHandle::from_raw_handle(job.0) })
 }
 
-fn assign_to_job(job: &OwnedHandle, child: &Child) -> io::Result<()> {
+fn assign_to_job(job: &OwnedHandle, child: &OwnedHandle) -> io::Result<()> {
     // SAFETY: both handles are open for the duration of the call.
     unsafe { AssignProcessToJobObject(HANDLE(job.as_raw_handle()), HANDLE(child.as_raw_handle())) }
         .map_err(io::Error::other)
 }
 
 /// Resumes the only thread of a process created suspended.
-fn resume(pid: u32) -> io::Result<()> {
-    // SAFETY: CreateToolhelp32Snapshot has no preconditions.
-    let snapshot =
-        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }.map_err(io::Error::other)?;
-    let mut entry = THREADENTRY32 {
-        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).unwrap_or(u32::MAX),
-        ..THREADENTRY32::default()
-    };
-    // SAFETY: `snapshot` is open and `entry` has its size set.
-    let mut has_entry = unsafe { Thread32First(snapshot, &raw mut entry) }.is_ok();
-    let mut result = Err(io::Error::other(format!(
-        "the suspended process {pid} has no thread to resume"
-    )));
-    while has_entry {
-        if entry.th32OwnerProcessID == pid {
-            // SAFETY: OpenThread tolerates any thread id.
-            result = match unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) } {
-                Ok(thread) => {
-                    // SAFETY: `thread` was just opened with resume access.
-                    let resumed = unsafe { ResumeThread(thread) };
-                    close(thread);
-                    if resumed == u32::MAX {
-                        Err(io::Error::last_os_error())
-                    } else {
-                        Ok(())
-                    }
-                }
-                Err(error) => Err(io::Error::other(error)),
-            };
-            break;
-        }
-        // SAFETY: as for Thread32First.
-        has_entry = unsafe { Thread32Next(snapshot, &raw mut entry) }.is_ok();
+fn resume(thread: &OwnedHandle) -> io::Result<()> {
+    // SAFETY: `thread` is open, with the resume access CreateProcessW
+    // grants.
+    if unsafe { ResumeThread(HANDLE(thread.as_raw_handle())) } == u32::MAX {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
     }
-    close(snapshot);
-    result
 }
 
 /// Whether any process is still running in `job`.
@@ -641,6 +736,23 @@ mod tests {
         }
         close(snapshot);
         children
+    }
+
+    #[test]
+    fn arguments_are_quoted_by_the_c_runtime_s_rules() {
+        let args = [
+            "plain",
+            "",
+            "two words",
+            r#"say "hi""#,
+            r"C:\dir with space\",
+            r"a\b",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            command_line(r"C:\Program Files\x.exe", &args),
+            r#""C:\Program Files\x.exe" plain "" "two words" "say \"hi\"" "C:\dir with space\\" a\b"#
+        );
     }
 
     #[test]
