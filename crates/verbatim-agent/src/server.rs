@@ -15,7 +15,7 @@ use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
 use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
-use crate::{desktop, files, foreground, process, session, tunnel};
+use crate::{desktop, files, foreground, process, session, tunnel, typing};
 
 /// Accepts connections on `listener` until it errors, spawning a thread
 /// per connection. Each connection is pointed at `pipe_name` for
@@ -259,6 +259,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
             Err(error) => error_frame(id, &error),
         },
         Request::SendKeys { keys } => send_keys(id, &keys),
+        Request::TypeText { text } => type_text(id, &text),
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
@@ -275,6 +276,18 @@ fn send_keys(id: u64, keys: &[String]) -> Frame {
         Ok(()) => Frame::Reply {
             to: id,
             payload: ReplyPayload::KeysSent,
+        },
+        Err(error) => error_frame(id, &error),
+    }
+}
+
+/// Answers [`Request::TypeText`], typing nothing unless every character can
+/// be typed.
+fn type_text(id: u64, text: &str) -> Frame {
+    match typing::type_text(text) {
+        Ok(()) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::TextTyped,
         },
         Err(error) => error_frame(id, &error),
     }
@@ -582,6 +595,25 @@ mod tests {
             ),
             "expected a SessionInfo reply, got {frame:?}"
         );
+    }
+
+    /// A line break is a named key, never typed text, so the request fails
+    /// before any key is sent; nothing reaches the desktop the test runs on.
+    #[test]
+    fn type_text_refuses_text_it_cannot_type_over_the_wire() {
+        let addr = start_agent(r"\\.\pipe\verbatim-agent-test-unused-h");
+        let mut client = TestClient::connect(addr);
+        client.hello();
+        let frame = client.request(Request::TypeText {
+            text: "echo\n".to_owned(),
+        });
+        match frame {
+            Frame::Error { message, .. } => assert!(
+                message.contains("control character"),
+                "the error names the reason: {message}"
+            ),
+            other @ Frame::Reply { .. } => panic!("expected an error, got {other:?}"),
+        }
     }
 
     #[test]
