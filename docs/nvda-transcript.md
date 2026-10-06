@@ -44,10 +44,24 @@ person at the machine is away or has agreed.
    `target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001`.
    The capture asks the agent for its session id to find NVDA's port.
 2. Put the application under test in the state the scenario starts from.
-3. Run `cargo xtask nvda capture` followed by the keys to press, for
+3. Run `cargo xtask nvda capture` followed by the steps to take, for
    example `cargo xtask nvda capture tab tab insert+t`.
 
-Each key is pressed separately. After each one, the capture waits until
+A step is a key to press, or one of these:
+
+- `--launch <program>`, followed by any number of `--arg <argument>`,
+  starts a program through the agent, so its first announcement is
+  recorded too; `--launch explorer.exe --arg ms-settings:clipboard`
+  opens a page of the Settings app.
+- `--front <image>[=<title>]` brings a window of that program, with a
+  title containing the text if given, to the foreground through the
+  agent, as the end-to-end suite does.
+- `--gesture <identifier>` sends a gesture such as `kb:verbatim+v` to
+  the Verbatim running on this machine through its control pipe, so
+  Verbatim's own commands can be used without pressing a modifier key
+  NVDA also uses.
+
+Steps run one at a time, in order. After each one, the capture waits until
 NVDA has queued no new speech for one second, which is the settling rule
 of NVDA's own system tests, and then prints what was queued. Each line
 gives the time since the key was sent, the speech priority, and the
@@ -71,10 +85,17 @@ The options are:
   10000.
 
 To record NVDA reading Verbatim's own GUI, run Verbatim with test audio so
-that it is silent (see the test-audio section of the tooling guide). Give
-the two screen readers different modifier keys, using Verbatim's
-share-modifier setting, which exists so that a second screen reader can
-run behind Verbatim.
+that it is silent (see the test-audio section of the tooling guide), open
+its menu with `--gesture kb:verbatim+v`, and move through the menu and
+dialogs with plain keys, which both screen readers let through. The
+recorded readings are in `docs/nvda-captures/`.
+
+Two traps found on 2026-10-06. NVDA's automatic update check can open an
+"NVDA Update" dialog that takes the foreground, and every key then goes
+to it, so check the foreground (the agent's `ForegroundInfo`) before a
+capture. And a Settings app page can take a few seconds to appear after
+`--launch`; give `--front` a long enough `--timeout-ms` before pressing
+keys meant for it.
 
 ## Changing the add-on
 

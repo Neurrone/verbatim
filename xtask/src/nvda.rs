@@ -10,9 +10,10 @@
 //! with line endings normalized to LF, so the same source gives the same
 //! bytes on every machine and checkout.
 //!
-//! `capture` drives the NVDA running in the agent's session: it sends each
-//! key through the agent's real OS input, waits for NVDA's speech to
-//! settle, and prints what NVDA queued for speech after that key.
+//! `capture` drives the NVDA running in the agent's session: it runs each
+//! step through the agent (a key pressed through real OS input, a program
+//! launched, or a window brought to the foreground), waits for NVDA's
+//! speech to settle, and prints what NVDA queued for speech after it.
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
@@ -23,6 +24,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use verbatim_control::client::Client as ControlClient;
+use verbatim_control::protocol::{Frame, Request};
 use verbatim_e2e::agent_client::AgentClient;
 
 /// The add-on's source directory, relative to the workspace root.
@@ -47,8 +50,9 @@ pub fn run(args: &[String]) -> ExitCode {
             eprintln!("verbs:");
             eprintln!("  build    write {PACKAGE} from {SOURCE_DIR}");
             eprintln!(
-                "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] <key>...: \
-                 press each key through the agent and print what NVDA speaks"
+                "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] <step>...: \
+                 run each step through the agent and print what NVDA speaks after it; a step \
+                 is a key, --launch <program> [--arg <arg>]..., --front <image>[=<title>], or                  --gesture <id> (sent to the local Verbatim)"
             );
             return ExitCode::from(2);
         }
@@ -185,11 +189,44 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+/// One thing `capture` does, in the order given, before waiting for NVDA's
+/// speech to settle and printing it.
+enum Step {
+    /// Press a key combination through the agent.
+    Key(String),
+    /// Start a program through the agent, in its session.
+    Launch { program: String, args: Vec<String> },
+    /// Bring a window of an image, optionally with a title containing some
+    /// text, to the foreground through the agent.
+    Front {
+        image: String,
+        title: Option<String>,
+    },
+    /// Send a gesture, such as `kb:verbatim+v`, to the Verbatim running on
+    /// this machine through its control pipe, so Verbatim's own commands
+    /// can be used without pressing a modifier key NVDA also uses.
+    Gesture(String),
+}
+
+impl Step {
+    fn label(&self) -> String {
+        match self {
+            Self::Key(key) => key.clone(),
+            Self::Gesture(identifier) => format!("gesture {identifier}"),
+            Self::Launch { program, args } => format!("launch {program} {}", args.join(" ")),
+            Self::Front { image, title } => match title {
+                Some(title) => format!("front {image} \"{title}\""),
+                None => format!("front {image}"),
+            },
+        }
+    }
+}
+
 struct CaptureOptions {
     agent: String,
     quiet: Duration,
     timeout: Duration,
-    keys: Vec<String>,
+    steps: Vec<Step>,
 }
 
 fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
@@ -197,7 +234,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
         agent: format!("127.0.0.1:{}", verbatim_agent::protocol::DEFAULT_PORT),
         quiet: Duration::from_secs(1),
         timeout: Duration::from_secs(10),
-        keys: Vec::new(),
+        steps: Vec::new(),
     };
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -214,11 +251,33 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
             "--agent" => options.agent.clone_from(value()?),
             "--quiet-ms" => options.quiet = millis(value()?)?,
             "--timeout-ms" => options.timeout = millis(value()?)?,
-            key => options.keys.push(key.to_owned()),
+            "--launch" => options.steps.push(Step::Launch {
+                program: value()?.clone(),
+                args: Vec::new(),
+            }),
+            "--arg" => {
+                let arg = value()?.clone();
+                match options.steps.last_mut() {
+                    Some(Step::Launch { args, .. }) => args.push(arg),
+                    _ => return Err(io::Error::other("--arg must follow --launch")),
+                }
+            }
+            "--gesture" => options.steps.push(Step::Gesture(value()?.clone())),
+            "--front" => {
+                let target = value()?;
+                let (image, title) = match target.split_once('=') {
+                    Some((image, title)) => (image.to_owned(), Some(title.to_owned())),
+                    None => (target.clone(), None),
+                };
+                options.steps.push(Step::Front { image, title });
+            }
+            key => options.steps.push(Step::Key(key.to_owned())),
         }
     }
-    if options.keys.is_empty() {
-        return Err(io::Error::other("capture needs at least one key"));
+    if options.steps.is_empty() {
+        return Err(io::Error::other(
+            "capture needs at least one key, launch, or front",
+        ));
     }
     Ok(options)
 }
@@ -292,10 +351,21 @@ fn capture(args: &[String]) -> io::Result<()> {
         hello["session_id"]
     );
     let mut last_seq = 0;
-    for key in &options.keys {
+    for step in &options.steps {
         let sent_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-        agent.send_keys(std::slice::from_ref(key))?;
-        println!("> {key}");
+        match step {
+            Step::Key(key) => agent.send_keys(std::slice::from_ref(key))?,
+            Step::Launch { program, args } => {
+                agent.launch_process(program, args, None, &[], None)?;
+            }
+            Step::Front { image, title } => {
+                if !agent.bring_to_foreground(image, title.as_deref(), options.timeout)? {
+                    println!("  (no matching window took the foreground)");
+                }
+            }
+            Step::Gesture(identifier) => send_gesture(identifier)?,
+        }
+        println!("> {}", step.label());
         let mut last_activity = Instant::now();
         let deadline = last_activity + options.timeout;
         loop {
@@ -320,6 +390,19 @@ fn capture(args: &[String]) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Sends one gesture to the local Verbatim's control pipe.
+fn send_gesture(identifier: &str) -> io::Result<()> {
+    let mut control = ControlClient::connect_pipe()?;
+    match control.request(Request::SendGesture {
+        identifier: identifier.to_owned(),
+    })? {
+        Frame::Error { message, .. } => Err(io::Error::other(format!(
+            "Verbatim refused the gesture {identifier}: {message}"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// One line for an entry's event: the speech text with its priority, or a
