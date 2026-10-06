@@ -109,8 +109,8 @@ knowing for review:
   command newest first. Core-originated speech with no event reports its
   queue time as the timeline start.
 - `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` clones the
-  shared `Arc<Mutex<ReducerRecorder>>`'s retained entries under a brief
-  lock (recovering a poisoned lock rather than propagating it, since the
+  shared `Arc<Mutex<ReducerRecorder>>`'s retained entries and the
+  checkpoint state they start from under a brief lock (recovering a poisoned lock rather than propagating it, since the
   reducer thread panicking while holding it is exactly the case the panic
   hook below exists for), then writes them through
   `verbatim_core::dump::write_dump` to `dumps_dir` as
@@ -125,7 +125,9 @@ knowing for review:
   localizes per the user's regional preferences, so no Fluent message is
   involved for the values. It lives here because the composition root owns
   command routing and nothing else needs the pair.
-- `run` wires everything: the flight recorder (`Arc<Mutex<ReducerRecorder>>`,
+- `run` wires everything: the flight recorder (`Arc<Mutex<ReducerRecorder>>`
+  with the default bounds of 1,024 inputs and 8 MiB, to which the reducer
+  thread hands the state after each input for the recorder's checkpoints,
   shared by the reducer thread, the control plane's `DumpRecorder` handler,
   and the panic hook installed as early as possible so it covers every
   thread spawned after it), the speech pipeline (`build_speech_manager`:

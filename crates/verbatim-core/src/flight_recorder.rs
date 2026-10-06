@@ -2,71 +2,173 @@
 //! section 9).
 //!
 //! The recorder runs continuously on the reducer thread, so it must never
-//! block, never touch disk, and never grow: it holds a fixed number of
-//! recent entries in memory, overwriting the oldest as new ones arrive.
+//! block, never touch disk, and never grow: it holds a bounded window of
+//! recent entries in memory, bounded both by entry count and by an estimate
+//! of the bytes the entries hold, dropping the oldest as new ones arrive.
 //! Nothing is persisted until a crash handler or an explicit user gesture
-//! takes a snapshot; the resulting dump replays deterministically against
-//! the pure reducer, turning field bugs into regression tests.
+//! takes a dump; the dump replays deterministically against the reducer,
+//! turning field bugs into regression tests.
 //!
-//! M0 scope: the ring itself. Rotating state snapshots (so a dump always
-//! carries a base state at least as old as its oldest input) and the dump
-//! format arrive with the real reducer in M1.
+//! A window of inputs replays only from the state it started in, because
+//! the inputs that built that state have already been dropped. So the
+//! recorder keeps, with its entries, a checkpoint: a snapshot of the state
+//! taken just before the oldest entry it keeps.
+//!
+//! # The checkpoint rule
+//!
+//! The window is a list of segments, each starting with a checkpoint and
+//! holding the entries recorded after it.
+//!
+//! - Each entry is appended to the newest segment.
+//! - When the newest segment holds half the entry bound, or half the byte
+//!   bound, a new segment is started with a checkpoint taken right after
+//!   that entry.
+//! - While the window holds more than either bound, its oldest segment is
+//!   dropped whole, so the window always starts at a checkpoint.
+//!
+//! So the window always starts exactly at a checkpoint, normally holds
+//! between half and all of each bound, and a checkpoint is taken once per
+//! half window, never per entry. At most three checkpoints are alive at
+//! once. Their own size is not counted against the byte bound: the reducer
+//! state holds everything that grows behind shared pointers, so a
+//! checkpoint costs the same however large the application is.
 
 use std::collections::VecDeque;
 
-/// Fixed-capacity ring buffer over recent reducer inputs (and, later,
-/// tracing spans).
+/// One run of entries recorded after a checkpoint.
 #[derive(Debug)]
-pub struct FlightRecorder<T> {
-    entries: VecDeque<T>,
-    capacity: usize,
+struct Segment<T, S> {
+    /// The state just before this segment's first entry.
+    checkpoint: S,
+    /// The entries, oldest first, each with its estimated size in bytes.
+    entries: Vec<(T, usize)>,
+    /// The sum of the entries' estimated sizes.
+    bytes: usize,
 }
 
-impl<T> FlightRecorder<T> {
-    /// Creates a recorder retaining at most `capacity` entries.
+impl<T, S> Segment<T, S> {
+    /// An empty segment starting at `checkpoint`.
+    fn starting_at(checkpoint: S) -> Self {
+        Self {
+            checkpoint,
+            entries: Vec::new(),
+            bytes: 0,
+        }
+    }
+}
+
+/// A bounded window of recent entries of type `T`, replayable from the
+/// checkpoint of type `S` it starts at (see the module documentation for
+/// the checkpoint rule).
+#[derive(Debug)]
+pub struct FlightRecorder<T, S> {
+    /// The oldest segment, whose checkpoint is the window's start.
+    oldest: Segment<T, S>,
+    /// The segments after it, oldest first; the last is the one entries
+    /// are appended to, or `oldest` while this is empty.
+    newer: VecDeque<Segment<T, S>>,
+    max_entries: usize,
+    max_bytes: usize,
+    entries: usize,
+    bytes: usize,
+}
+
+impl<T, S> FlightRecorder<T, S> {
+    /// Creates a recorder keeping at most `max_entries` entries and at most
+    /// `max_bytes` estimated bytes of entries, starting from `initial`, the
+    /// state before anything is recorded.
     ///
     /// # Panics
     ///
-    /// Panics if `capacity` is zero: a recorder that can hold nothing would
+    /// Panics if either bound is zero: a recorder that can hold nothing would
     /// silently discard every entry, which is never intended.
     #[must_use]
-    pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "flight recorder capacity must be non-zero");
+    pub fn new(max_entries: usize, max_bytes: usize, initial: S) -> Self {
+        assert!(
+            max_entries > 0 && max_bytes > 0,
+            "flight recorder capacity must be non-zero"
+        );
         Self {
-            entries: VecDeque::with_capacity(capacity),
-            capacity,
+            oldest: Segment::starting_at(initial),
+            newer: VecDeque::with_capacity(2),
+            max_entries,
+            max_bytes,
+            entries: 0,
+            bytes: 0,
         }
     }
 
-    /// Records one entry, evicting the oldest when the buffer is full.
-    pub fn record(&mut self, entry: T) {
-        if self.entries.len() == self.capacity {
-            self.entries.pop_front();
+    /// Records one entry whose estimated size is `bytes`, dropping the
+    /// oldest segments while the window is over either bound.
+    /// `checkpoint` is called, at most once, when this entry closes its
+    /// segment: it returns the state right after this entry, which starts
+    /// the next segment.
+    ///
+    /// An entry larger than the whole byte bound is not kept, so the bound
+    /// always holds.
+    pub fn record(&mut self, entry: T, bytes: usize, checkpoint: impl FnOnce() -> S) {
+        let newest = self.newer.back_mut().unwrap_or(&mut self.oldest);
+        newest.entries.push((entry, bytes));
+        newest.bytes += bytes;
+        self.entries += 1;
+        self.bytes += bytes;
+        if newest.entries.len() >= self.max_entries.div_ceil(2)
+            || newest.bytes >= self.max_bytes.div_ceil(2)
+        {
+            self.newer.push_back(Segment::starting_at(checkpoint()));
         }
-        self.entries.push_back(entry);
+        while self.entries > self.max_entries || self.bytes > self.max_bytes {
+            let Some(next) = self.newer.pop_front() else {
+                break;
+            };
+            let dropped = std::mem::replace(&mut self.oldest, next);
+            self.entries -= dropped.entries.len();
+            self.bytes -= dropped.bytes;
+        }
     }
 
-    /// The retained entries, oldest first.
-    pub fn snapshot(&self) -> impl Iterator<Item = &T> {
-        self.entries.iter()
+    /// The state just before the oldest kept entry: where a replay of
+    /// [`Self::entries`] starts.
+    #[must_use]
+    pub fn checkpoint(&self) -> &S {
+        &self.oldest.checkpoint
     }
 
-    /// Number of entries currently retained.
+    /// The kept entries, oldest first.
+    pub fn entries(&self) -> impl Iterator<Item = &T> {
+        std::iter::once(&self.oldest)
+            .chain(&self.newer)
+            .flat_map(|segment| segment.entries.iter().map(|(entry, _)| entry))
+    }
+
+    /// Number of entries currently kept.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries
     }
 
-    /// True while nothing has been recorded yet.
+    /// True while no entry is kept.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries == 0
     }
 
-    /// Maximum number of entries the recorder retains.
+    /// The estimated bytes of the entries currently kept.
     #[must_use]
-    pub fn capacity(&self) -> usize {
-        self.capacity
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Maximum number of entries the recorder keeps.
+    #[must_use]
+    pub fn max_entries(&self) -> usize {
+        self.max_entries
+    }
+
+    /// Maximum estimated bytes of entries the recorder keeps.
+    #[must_use]
+    pub fn max_bytes(&self) -> usize {
+        self.max_bytes
     }
 }
 
@@ -74,38 +176,86 @@ impl<T> FlightRecorder<T> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn retains_everything_below_capacity() {
-        let mut recorder = FlightRecorder::new(4);
-        recorder.record(1);
-        recorder.record(2);
-        assert_eq!(recorder.len(), 2);
-        assert_eq!(recorder.snapshot().copied().collect::<Vec<_>>(), [1, 2]);
+    /// A recorder of numbers whose checkpoint is the last number recorded
+    /// before the window, so a test can check that the window starts at
+    /// its checkpoint.
+    fn record_all(recorder: &mut FlightRecorder<i32, i32>, values: impl Iterator<Item = i32>) {
+        for value in values {
+            recorder.record(value, 1, || value);
+        }
+    }
+
+    fn kept(recorder: &FlightRecorder<i32, i32>) -> Vec<i32> {
+        recorder.entries().copied().collect()
     }
 
     #[test]
-    fn evicts_oldest_first_once_full() {
-        let mut recorder = FlightRecorder::new(3);
-        for value in 1..=5 {
-            recorder.record(value);
+    fn retains_everything_below_capacity() {
+        let mut recorder = FlightRecorder::new(4, 100, 0);
+        record_all(&mut recorder, 1..=2);
+        assert_eq!(recorder.len(), 2);
+        assert_eq!(kept(&recorder), [1, 2]);
+        assert_eq!(*recorder.checkpoint(), 0);
+    }
+
+    #[test]
+    fn drops_oldest_first_once_full_and_starts_at_a_checkpoint() {
+        let mut recorder = FlightRecorder::new(4, 100, 0);
+        record_all(&mut recorder, 1..=5);
+        assert_eq!(kept(&recorder), [3, 4, 5]);
+        assert_eq!(*recorder.checkpoint(), 2, "the state just before 3");
+    }
+
+    #[test]
+    fn the_window_always_starts_at_its_checkpoint() {
+        let mut recorder = FlightRecorder::new(6, 100, 0);
+        for last in 1..=50 {
+            record_all(&mut recorder, last..=last);
+            let entries = kept(&recorder);
+            assert_eq!(*recorder.checkpoint(), entries[0] - 1);
+            assert!(entries.len() <= 6);
+            if last >= 6 {
+                assert!(entries.len() >= 3, "at least half the window is kept");
+            }
         }
-        assert_eq!(recorder.len(), 3);
-        assert_eq!(recorder.snapshot().copied().collect::<Vec<_>>(), [3, 4, 5]);
     }
 
     #[test]
     fn memory_use_is_bounded_by_capacity() {
-        let mut recorder = FlightRecorder::new(2);
-        for value in 0..1000 {
-            recorder.record(value);
+        let mut recorder = FlightRecorder::new(2, 100, 0);
+        record_all(&mut recorder, 0..1000);
+        assert!(recorder.newer.len() <= 2);
+        assert!(recorder.len() <= 2);
+        assert_eq!(kept(&recorder).last(), Some(&999));
+    }
+
+    #[test]
+    fn large_entries_are_bounded_by_bytes() {
+        let mut recorder = FlightRecorder::new(1000, 10_000, String::new());
+        for index in 0..100 {
+            let text = "x".repeat(3_000 + index);
+            let bytes = text.len();
+            recorder.record(text, bytes, String::new);
+            assert!(recorder.bytes() <= 10_000);
+            let actual: usize = recorder.entries().map(String::len).sum();
+            assert_eq!(actual, recorder.bytes());
         }
-        assert!(recorder.entries.capacity() < 1000);
-        assert_eq!(recorder.snapshot().copied().collect::<Vec<_>>(), [998, 999]);
+        assert!(!recorder.is_empty(), "the newest entries are kept");
+    }
+
+    #[test]
+    fn an_entry_larger_than_the_byte_bound_is_not_kept() {
+        let mut recorder = FlightRecorder::new(10, 100, 0);
+        recorder.record(1, 10, || 1);
+        recorder.record(2, 1_000, || 2);
+        assert!(recorder.bytes() <= 100);
+        assert_eq!(*recorder.checkpoint(), 2);
+        assert!(recorder.is_empty());
     }
 
     #[test]
     #[should_panic(expected = "capacity must be non-zero")]
     fn zero_capacity_is_rejected() {
-        let _ = FlightRecorder::<i32>::new(0);
+        let _ = FlightRecorder::<i32, ()>::new(0, 1, ());
     }
 }

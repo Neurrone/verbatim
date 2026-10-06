@@ -3,8 +3,10 @@
 //! control-plane request) writes to disk, and [`crate::replay`] later
 //! replays as a regression test.
 //!
-//! A dump is a header line followed by one compact-JSON [`RecordedInput`]
-//! per line, in the order the flight recorder captured them. The header
+//! A dump is a header line, then the reducer state the recording starts
+//! from (the flight recorder's checkpoint, see [`crate::flight_recorder`]),
+//! then one compact-JSON [`RecordedInput`] per line, in the order the flight
+//! recorder captured them. The header
 //! carries a format version this module checks on read, the crate version
 //! that wrote it (informational only), and a timestamp string supplied by
 //! the caller rather than read from a clock here, so this crate stays free
@@ -17,12 +19,14 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 
 use crate::recorder::RecordedInput;
+use crate::state::SrState;
 
 /// Format version this module reads and writes. Bumped whenever the header
 /// or per-line shape changes in a way that is not backward compatible.
 /// Version 1: node ids carry their outpost, events carry window facts, and
-/// snapshot versions are gone.
-pub const DUMP_FORMAT_VERSION: u32 = 1;
+/// snapshot versions are gone. Version 2: the line after the header is the
+/// reducer state the inputs start from.
+pub const DUMP_FORMAT_VERSION: u32 = 2;
 
 /// The first line of a dump: format version, the crate version that wrote
 /// it, and a caller-supplied timestamp string.
@@ -39,13 +43,16 @@ pub struct DumpHeader {
     pub timestamp: String,
 }
 
-/// The result of reading a dump: its header, every input line that parsed
-/// completely, and whether the file ended before a final line finished
-/// writing.
+/// The result of reading a dump: its header, the state its inputs start
+/// from, every input line that parsed completely, and whether the file
+/// ended before a final line finished writing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DumpContents {
     /// The dump's header.
     pub header: DumpHeader,
+    /// The reducer state just before the first input: what
+    /// [`crate::replay`] starts from.
+    pub base: SrState,
     /// Every fully parsed input, in recorded order.
     pub inputs: Vec<RecordedInput>,
     /// True when the file ended mid-line: a crash-time dump cut off before
@@ -61,6 +68,9 @@ pub enum DumpReadError {
     Io(io::Error),
     /// The file was empty: no header line at all.
     MissingHeader,
+    /// The file ended before the base state line after the header was
+    /// complete, so nothing in it can be replayed.
+    MissingBaseState,
     /// The header line was not valid JSON or not a [`DumpHeader`].
     MalformedHeader(serde_json::Error),
     /// The header parsed but named a format version this build does not
@@ -89,6 +99,10 @@ impl std::fmt::Display for DumpReadError {
         match self {
             Self::Io(error) => write!(f, "flight-recorder dump I/O error: {error}"),
             Self::MissingHeader => write!(f, "flight-recorder dump is empty: no header line"),
+            Self::MissingBaseState => write!(
+                f,
+                "flight-recorder dump ends before its base state line is complete"
+            ),
             Self::MalformedHeader(error) => {
                 write!(f, "flight-recorder dump header is malformed: {error}")
             }
@@ -112,7 +126,7 @@ impl std::error::Error for DumpReadError {
         match self {
             Self::Io(error) => Some(error),
             Self::MalformedHeader(error) | Self::MalformedLine { source: error, .. } => Some(error),
-            Self::MissingHeader | Self::UnsupportedVersion { .. } => None,
+            Self::MissingHeader | Self::MissingBaseState | Self::UnsupportedVersion { .. } => None,
         }
     }
 }
@@ -123,9 +137,10 @@ impl From<io::Error> for DumpReadError {
     }
 }
 
-/// Writes a dump: a header line, then one compact-JSON [`RecordedInput`] per
-/// line, each newline-terminated. `crate_version` and `timestamp` are
-/// recorded verbatim in the header.
+/// Writes a dump: a header line, then `base`, the reducer state the inputs
+/// start from, then one compact-JSON [`RecordedInput`] per line, each
+/// newline-terminated. `crate_version` and `timestamp` are recorded verbatim
+/// in the header.
 ///
 /// # Errors
 ///
@@ -134,6 +149,7 @@ pub fn write_dump<W: Write>(
     writer: &mut W,
     crate_version: &str,
     timestamp: &str,
+    base: &SrState,
     inputs: &[RecordedInput],
 ) -> io::Result<()> {
     write_line(
@@ -144,6 +160,7 @@ pub fn write_dump<W: Write>(
             timestamp: timestamp.to_owned(),
         },
     )?;
+    write_line(writer, base)?;
     for input in inputs {
         write_line(writer, input)?;
     }
@@ -156,8 +173,9 @@ fn write_line<W: Write, T: Serialize>(writer: &mut W, value: &T) -> io::Result<(
     writer.write_all(b"\n")
 }
 
-/// Reads a dump: the header, every fully-written [`RecordedInput`] line, and
-/// whether the file's last line was cut off mid-write.
+/// Reads a dump: the header, the base state, every fully-written
+/// [`RecordedInput`] line, and whether the file's last line was cut off
+/// mid-write.
 ///
 /// A version mismatch or a malformed *complete* line is a hard error; an
 /// incomplete final line (no trailing newline, and the content on it does
@@ -168,7 +186,8 @@ fn write_line<W: Write, T: Serialize>(writer: &mut W, value: &T) -> io::Result<(
 /// # Errors
 ///
 /// Returns [`DumpReadError`] for I/O failures, a missing or malformed
-/// header, an unsupported format version, or a malformed complete line.
+/// header, an unsupported format version, a base state line that is
+/// missing or cut off, or a malformed complete line.
 pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadError> {
     let mut line = String::new();
     if reader.read_line(&mut line)? == 0 {
@@ -183,9 +202,19 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
         });
     }
 
+    let mut line = String::new();
+    if reader.read_line(&mut line)? == 0 || !line.ends_with('\n') {
+        return Err(DumpReadError::MissingBaseState);
+    }
+    let base: SrState =
+        serde_json::from_str(line.trim_end()).map_err(|source| DumpReadError::MalformedLine {
+            line_number: 2,
+            source,
+        })?;
+
     let mut inputs = Vec::new();
     let mut truncated = false;
-    let mut line_number = 1usize;
+    let mut line_number = 2usize;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
@@ -223,6 +252,7 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 
     Ok(DumpContents {
         header,
+        base,
         inputs,
         truncated,
     })
@@ -270,11 +300,20 @@ mod tests {
         ]
     }
 
+    /// A state with a focus, so the base state line carries something.
+    fn sample_base() -> SrState {
+        let mut state = SrState::new();
+        let _ = crate::reduce(&mut state, &sample_inputs()[0].input);
+        state
+    }
+
     #[test]
-    fn round_trips_header_and_inputs() {
+    fn round_trips_header_base_state_and_inputs() {
         let inputs = sample_inputs();
+        let base = sample_base();
+        assert!(base.focused().is_some());
         let mut buffer = Vec::new();
-        write_dump(&mut buffer, "9.9.9", "2026-07-14T00:00:00Z", &inputs).expect("writes");
+        write_dump(&mut buffer, "9.9.9", "2026-07-14T00:00:00Z", &base, &inputs).expect("writes");
 
         let mut reader = buffer.as_slice();
         let contents = read_dump(&mut reader).expect("reads");
@@ -282,6 +321,7 @@ mod tests {
         assert_eq!(contents.header.format_version, DUMP_FORMAT_VERSION);
         assert_eq!(contents.header.crate_version, "9.9.9");
         assert_eq!(contents.header.timestamp, "2026-07-14T00:00:00Z");
+        assert_eq!(contents.base, base);
         assert_eq!(contents.inputs, inputs);
         assert!(!contents.truncated);
     }
@@ -316,10 +356,37 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_dump_cut_off_in_its_base_state() {
+        let mut buffer = Vec::new();
+        write_dump(
+            &mut buffer,
+            "9.9.9",
+            "2026-07-14T00:00:00Z",
+            &sample_base(),
+            &[],
+        )
+        .expect("writes");
+        buffer.truncate(buffer.len() - 5);
+
+        let mut reader = buffer.as_slice();
+        match read_dump(&mut reader) {
+            Err(DumpReadError::MissingBaseState) => {}
+            other => panic!("expected MissingBaseState, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn tolerates_a_truncated_trailing_line() {
         let inputs = sample_inputs();
         let mut buffer = Vec::new();
-        write_dump(&mut buffer, "9.9.9", "2026-07-14T00:00:00Z", &inputs).expect("writes");
+        write_dump(
+            &mut buffer,
+            "9.9.9",
+            "2026-07-14T00:00:00Z",
+            &SrState::new(),
+            &inputs,
+        )
+        .expect("writes");
 
         let third = RecordedInput {
             input: Input::Event {
@@ -359,11 +426,12 @@ mod tests {
             },
         )
         .expect("writes header");
+        write_line(&mut buffer, &SrState::new()).expect("writes the base state");
         buffer.extend_from_slice(b"not json at all\n");
 
         let mut reader = buffer.as_slice();
         match read_dump(&mut reader) {
-            Err(DumpReadError::MalformedLine { line_number, .. }) => assert_eq!(line_number, 2),
+            Err(DumpReadError::MalformedLine { line_number, .. }) => assert_eq!(line_number, 3),
             other => panic!("expected MalformedLine, got {other:?}"),
         }
     }

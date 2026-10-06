@@ -151,7 +151,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // The flight recorder, and its panic-time dump trigger: installed as
     // early as possible, chaining the previous hook, so a panic on any
     // thread from here on writes a dump before the process dies.
-    let recorder: SharedRecorder = Arc::new(Mutex::new(ReducerRecorder::new(1024)));
+    let recorder: SharedRecorder = Arc::new(Mutex::new(ReducerRecorder::with_default_bounds(
+        SrState::new(),
+    )));
     let dumps_dir = exe_dir().join(DUMPS_FOLDER);
     flight_dump::install_panic_hook(Arc::clone(&recorder), dumps_dir.clone());
 
@@ -875,7 +877,7 @@ impl ReducerThread<'_> {
                 .recorder
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            recorder.record_input(input, effects.len());
+            recorder.record_input(input, effects.len(), &self.state);
         }
         for effect in effects {
             self.execute(trace_id, effect);

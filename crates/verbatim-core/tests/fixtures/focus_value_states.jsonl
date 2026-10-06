@@ -1,4 +1,5 @@
-{"format_version":1,"crate_version":"0.1.0","timestamp":"2026-07-14T00:00:00Z"}
+{"format_version":2,"crate_version":"0.1.0","timestamp":"2026-07-14T00:00:00Z"}
+{"focus":null,"attention":null,"next_query_id":0,"navigator":null,"latest_navigation":null,"latest_focus":null,"foreground":null}
 {"input":{"Event":{"trace_id":1,"observed_at_ms":0,"source":700,"backend":"Uia","window":null,"event":{"FocusChanged":{"node":{"id":{"outpost":0,"number":1},"backend":"Uia","role":"Slider","name":"Rate","value":"50","states":0,"details":{"description":null,"keyboard_shortcut":null,"position_in_set":null,"set_size":null,"level":null,"rect":null}},"foreground":false,"ancestors":[],"ancestors_unknown":false,"selected_child":null}}}},"effect_count":2}
 {"input":{"Event":{"trace_id":2,"observed_at_ms":0,"source":700,"backend":"Uia","window":null,"event":{"ValueChanged":{"node_id":{"outpost":0,"number":1},"value":"55"}}}},"effect_count":1}
 {"input":{"Event":{"trace_id":3,"observed_at_ms":0,"source":700,"backend":"Uia","window":null,"event":{"PropertyChanged":{"node_id":{"outpost":0,"number":1},"change":{"States":64}}}}},"effect_count":1}

@@ -1,7 +1,7 @@
 # verbatim-core
 
-The deterministic reducer (architecture section 2), the flight recorder, and its
-on-disk dump format.
+The deterministic reducer (architecture section 2), the flight recorder,
+and its on-disk dump format.
 
 Public API:
 
@@ -13,20 +13,42 @@ Public API:
   every node id the state refers to grouped by the outpost that issued it.
   The last two are the views the shell derives and sends out: attention to
   the supervisor, and each outpost's held nodes to that outpost.
-- `FlightRecorder<T>` — a bounded ring buffer; `ReducerRecorder` and
-  `RecordedInput` specialize it for reducer inputs; `replay(initial,
-  inputs)` re-runs a recorded sequence and returns the effects per step,
-  proven deterministic by test. `RecordedInput` derives `Serialize` and
-  `Deserialize` so it survives the trip to disk.
+- `FlightRecorder<T, S>` — a window of recent entries bounded both by
+  count and by estimated bytes, kept with a checkpoint of type `S` taken
+  just before its oldest entry, so the window always replays from its
+  start. The window is a list of segments, each starting at a checkpoint:
+  `record(entry, bytes, checkpoint)` appends to the newest segment, starts
+  a new segment (calling `checkpoint` for the state right after this entry)
+  once the newest holds half of either bound, and drops the oldest segment
+  whole while the window is over either bound. So the window holds between
+  half and all of each bound, a checkpoint is taken once per half window,
+  and at most three are alive; an entry larger than the whole byte bound
+  is not kept. `checkpoint()` and `entries()` read the window.
+  `ReducerRecorder` is `FlightRecorder<RecordedInput, SrState>`:
+  `with_default_bounds(initial)` uses the shell's bounds,
+  `DEFAULT_MAX_ENTRIES` (1,024 inputs) and `DEFAULT_MAX_BYTES` (8 MiB,
+  which ordinary inputs never reach, so text-bearing inputs are what it
+  caps), and `record_input(input, effect_count, &state_after)` clones the
+  state only when a checkpoint is due, which is cheap because the state
+  shares everything that grows. `RecordedInput::estimated_bytes()` is the
+  entry's inline size plus the length of its compact JSON, counted without
+  building the JSON. `replay(initial, inputs)` re-runs a recorded sequence
+  and returns the effects per step, proven deterministic by test, and a
+  test proves a window that has dropped its start replays from its
+  checkpoint to the effects the live session produced. `RecordedInput` and
+  `SrState` derive `Serialize` and `Deserialize` so they survive the trip
+  to disk.
 - `dump` — the flight-recorder dump format (milestone M2): a versioned
   JSON-lines file, a header line (`DumpHeader`: format version, the writing
   crate's version, and a caller-supplied timestamp string — this module
-  never reads a clock itself) followed by one compact-JSON `RecordedInput`
-  per line. `write_dump(writer, crate_version, timestamp, inputs)` writes
-  one; `read_dump(reader)` reads one back as `DumpContents` (header, the
-  inputs that parsed completely, and whether the file ended mid-line).
+  never reads a clock itself), then the `SrState` the inputs start from
+  (format version 2), then one compact-JSON `RecordedInput` per line.
+  `write_dump(writer, crate_version, timestamp, base, inputs)` writes one;
+  `read_dump(reader)` reads one back as `DumpContents` (header, base state,
+  the inputs that parsed completely, and whether the file ended mid-line).
   `DumpReadError` distinguishes a missing header, a malformed header, an
-  unsupported format version, and a malformed *complete* line — a
+  unsupported format version, a base state line that is missing or cut
+  off, and a malformed *complete* line — a
   malformed final line with no trailing newline is not an error: the
   writer always terminates a complete line with a newline, so an
   unterminated tail can only be a crash-time dump cut off mid-write, and

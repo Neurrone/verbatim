@@ -764,9 +764,14 @@ display model (M14) as further text sources behind the same review commands.
   reducer, the speech queue, the synth, and audio submission. For any
   utterance, the timeline — event observed, speech queued, audio started —
   is a single query.
-- A ring-buffer **flight recorder** persists recent reducer inputs (the
-  replayable triples of section 2) and spans; a crash or user-triggered
-  snapshot dumps it for offline replay.
+- A **flight recorder** keeps a window of recent reducer inputs, bounded by
+  count and by bytes, with a snapshot of the state taken at a checkpoint
+  just before the window's oldest input (the replayable triples of
+  section 2), and later spans; a crash or user-triggered request dumps it
+  for offline replay. The window advances a segment at a time, each
+  starting at a checkpoint, so every recorded window replays from its
+  start; the snapshot is cheap because the state shares everything that
+  grows.
 - `verbatim-inspect`: dev tool over the control plane — live event stream,
   tree dumps, gesture injection, speech capture, latency histograms.
 

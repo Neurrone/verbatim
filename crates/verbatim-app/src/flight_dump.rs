@@ -6,8 +6,9 @@
 //! The recorder itself lives behind `Arc<Mutex<ReducerRecorder>>`, shared
 //! between the reducer thread (which records each input as it processes it)
 //! and both dump triggers here. Locking is brief in every case: recording
-//! is a bounded ring push, and dumping only clones the retained entries
-//! before releasing the lock and doing file I/O.
+//! is a bounded push, and dumping only clones the retained entries and the
+//! checkpoint they start from before releasing the lock and doing file
+//! I/O.
 
 use std::fs;
 use std::io;
@@ -109,16 +110,25 @@ fn to_utc_systemtime(unix_ms: u64) -> Option<SYSTEMTIME> {
 /// Returns an error if the `dumps` folder cannot be created or the file
 /// cannot be written.
 pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io::Result<PathBuf> {
-    let inputs: Vec<_> = {
+    let (base, inputs): (_, Vec<_>) = {
         let recorder = recorder.lock().unwrap_or_else(PoisonError::into_inner);
-        recorder.snapshot().cloned().collect()
+        (
+            recorder.checkpoint().clone(),
+            recorder.entries().cloned().collect(),
+        )
     };
 
     fs::create_dir_all(dumps_dir)?;
     let now = utc_now();
     let path = dumps_dir.join(format!("flight-{}.jsonl", now.filename_safe));
     let mut file = fs::File::create(&path)?;
-    dump::write_dump(&mut file, env!("CARGO_PKG_VERSION"), &now.header, &inputs)?;
+    dump::write_dump(
+        &mut file,
+        env!("CARGO_PKG_VERSION"),
+        &now.header,
+        &base,
+        &inputs,
+    )?;
     Ok(path)
 }
 
@@ -154,6 +164,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use verbatim_core::SrState;
     use verbatim_model::Input;
 
     /// A fresh temp directory per test invocation, so parallel test threads
@@ -171,8 +182,13 @@ mod tests {
     #[test]
     fn dump_now_writes_a_readable_dump_and_returns_its_path() {
         let dir = unique_temp_dir("flight-dump-test");
-        let recorder = Arc::new(Mutex::new(ReducerRecorder::new(8)));
-        recorder.lock().expect("lock").record_input(Input::Tick, 0);
+        let recorder = Arc::new(Mutex::new(ReducerRecorder::with_default_bounds(
+            SrState::new(),
+        )));
+        recorder
+            .lock()
+            .expect("lock")
+            .record_input(Input::Tick, 0, &SrState::new());
 
         let path = dump_now(&recorder, &dir).expect("dump succeeds");
         assert!(path.exists());
@@ -191,7 +207,9 @@ mod tests {
     #[test]
     fn dump_now_recovers_from_a_poisoned_recorder_lock() {
         let dir = unique_temp_dir("flight-dump-poison-test");
-        let recorder = Arc::new(Mutex::new(ReducerRecorder::new(8)));
+        let recorder = Arc::new(Mutex::new(ReducerRecorder::with_default_bounds(
+            SrState::new(),
+        )));
 
         // Poison the lock the way a panicking reducer thread would.
         let poisoning_recorder = Arc::clone(&recorder);

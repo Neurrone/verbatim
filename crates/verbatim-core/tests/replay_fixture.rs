@@ -86,8 +86,8 @@ fn replays_the_committed_fixture_deterministically_and_matches_recorded_effect_c
 
     let inputs: Vec<Input> = contents.inputs.iter().map(|r| r.input.clone()).collect();
 
-    let first = replay(&SrState::new(), &inputs);
-    let second = replay(&SrState::new(), &inputs);
+    let first = replay(&contents.base, &inputs);
+    let second = replay(&contents.base, &inputs);
     assert_eq!(first, second, "replay is deterministic");
 
     assert_eq!(first.len(), contents.inputs.len());
@@ -125,6 +125,7 @@ fn regenerate_fixture() {
         &mut buffer,
         env!("CARGO_PKG_VERSION"),
         "2026-07-14T00:00:00Z",
+        &SrState::new(),
         &recorded,
     )
     .expect("writes");

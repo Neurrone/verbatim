@@ -776,22 +776,59 @@ fn replay_is_deterministic() {
 
 #[test]
 fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
-    let mut recorder = ReducerRecorder::new(16);
+    let mut recorder = ReducerRecorder::with_default_bounds(SrState::new());
     let mut state = SrState::new();
     let script = sample_script();
 
     let mut live_effects = Vec::new();
     for input in &script {
         let effects = verbatim_core::reduce(&mut state, input);
-        recorder.record_input(input.clone(), effects.len());
+        recorder.record_input(input.clone(), effects.len(), &state);
         live_effects.push(effects);
     }
 
     let dumped = recorder.dump_inputs();
     assert_eq!(dumped, script);
 
-    let replayed = replay(&SrState::new(), &dumped);
+    let replayed = replay(recorder.checkpoint(), &dumped);
     assert_eq!(replayed, live_effects);
+}
+
+/// A window that has dropped its oldest inputs replays from the checkpoint
+/// the recorder keeps with it, through a dump written and read back, to
+/// exactly the effects the live session produced for the inputs it kept.
+/// The focus that makes the kept value changes speak was set by an input
+/// long since dropped, so a replay from an empty state would say nothing.
+#[test]
+fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
+    let slider = node(1, Role::Slider, Some("Rate"), Some("0"), StateSet::new());
+    let mut script = vec![focus_event(TraceId::mint(), Pid(1), slider)];
+    script.extend((1..=20).map(|value| value_changed(1, &value.to_string())));
+
+    let mut recorder = ReducerRecorder::new(4, 1 << 20, SrState::new());
+    let mut state = SrState::new();
+    let mut live_effects = Vec::new();
+    for input in &script {
+        let effects = verbatim_core::reduce(&mut state, input);
+        recorder.record_input(input.clone(), effects.len(), &state);
+        live_effects.push(effects);
+    }
+    let kept = recorder.dump_inputs();
+    assert!(
+        kept.len() < script.len(),
+        "the window has dropped its start"
+    );
+    let live_tail = &live_effects[script.len() - kept.len()..];
+    assert!(live_tail.iter().all(|effects| !effects.is_empty()));
+
+    let entries: Vec<_> = recorder.entries().cloned().collect();
+    let mut buffer = Vec::new();
+    verbatim_core::write_dump(&mut buffer, "test", "now", recorder.checkpoint(), &entries)
+        .expect("writes");
+    let contents = verbatim_core::read_dump(&mut buffer.as_slice()).expect("reads");
+
+    assert_eq!(replay(&contents.base, &kept), live_tail);
+    assert_ne!(replay(&SrState::new(), &kept), live_tail);
 }
 
 /// A focus event whose snapshot arrives with an ancestor chain, outermost
