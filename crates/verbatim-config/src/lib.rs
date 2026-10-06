@@ -92,6 +92,29 @@ pub struct KeyboardConfig {
     pub layout: KeyboardLayout,
 }
 
+/// UIA configuration within `settings.toml`, for developers: the defaults
+/// are what Verbatim should do, and a setting here is for diagnosing a
+/// provider or measuring. Global, like [`KeyboardConfig`]. Read at startup
+/// and handed to each outpost as it is spawned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiaConfig {
+    /// Whether outposts read a UIA focus's ancestors with a remote
+    /// operation, one round trip run inside the application's provider,
+    /// where the provider supports one (`verbatim-uia-rops`). On by
+    /// default; off forces the classic walk, one round trip per ancestor,
+    /// for diagnosing a provider and for before-and-after measurements.
+    pub remote_operations: bool,
+}
+
+impl Default for UiaConfig {
+    fn default() -> Self {
+        Self {
+            remote_operations: true,
+        }
+    }
+}
+
 /// The speech rate the E2E suite runs at, on every synthesizer's shared
 /// `0..=100` numeric scale. Deliberately brisk so a recorded run is quick to
 /// review; applied uniformly by [`Settings::for_e2e`] so the VM (`OneCore`)
@@ -166,6 +189,8 @@ pub struct Settings {
     pub verbatim_keys: VerbatimKeys,
     /// The active keyboard layout. Global.
     pub keyboard: KeyboardConfig,
+    /// Developer settings for the UIA client. Global.
+    pub uia: UiaConfig,
     /// The base profile's speech configuration; named profiles override it
     /// per setting.
     pub speech: SpeechConfig,
@@ -485,6 +510,14 @@ mod tests {
     #[test]
     fn keyboard_layout_defaults_to_desktop() {
         assert_eq!(Settings::default().keyboard.layout, KeyboardLayout::Desktop);
+    }
+
+    #[test]
+    fn uia_remote_operations_default_on_and_a_file_can_turn_them_off() {
+        assert!(Settings::default().uia.remote_operations);
+        let settings: Settings =
+            toml::from_str("[uia]\nremote_operations = false\n").expect("parses");
+        assert!(!settings.uia.remote_operations);
     }
 
     #[test]
