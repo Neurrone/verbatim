@@ -125,6 +125,41 @@ Public API:
   location), plus the role and identity reads that match a sighting to a
   kept node. Local window functions on the application's handles are not
   counted (`docs/performance.md`, "What counts as a call").
+- `accessible` and `window` (private) — the safe wrappers `acquire` is
+  written against, so that `acquire` holds no `unsafe` code. `unsafe`
+  lives only in these two modules and in `hook`, the WinEvent hook's install,
+  removal, and callback; each block carries a `SAFETY` comment. `Accessible` is an
+  `IAccessible` with the child id it is read at, and each of its methods
+  holds one `IAccessible` or `oleacc` call and counts it as one MSAA call,
+  so a caller never counts anything itself:
+  - `from_event` (`AccessibleObjectFromEvent`) and `client_of_window`
+    (`AccessibleObjectFromWindow` for `OBJID_CLIENT`) acquire one;
+    `new`, `with_child`, and `child` build and inspect one without a call.
+  - `name`, `value`, `description`, `keyboard_shortcut`, and
+    `default_action` read the text properties; `role` and `state` the raw
+    role number and state word; `location` the screen rectangle; and
+    `do_default_action` activates.
+  - `parent` (`accParent`, then a counted `QueryInterface` for
+    `IAccessible`), `child_count`, `children` (`AccessibleChildren`),
+    `navigate` (`accNavigate`), `focus` (`accFocus`), `selection`
+    (`accSelection`), `window` (`WindowFromAccessibleObject`), and
+    `identity_string` (a counted `QueryInterface` for `IAccIdentity`, then
+    `GetIdentityString`).
+  - `canonical` (the `IUnknown` identity) and `agile` (an agile reference
+    for the registry) are local and not counted.
+
+  The methods that name another object answer a `Related`: nothing, a
+  child id, an object, or another form. Its `object` method asks an
+  object for `IAccessible`, a counted `QueryInterface`, only when the
+  caller uses it, so walking `AccessibleChildren`'s entries casts only the
+  entries it visits. The `VARIANT` union reads behind `Related` stay in
+  `accessible`. `window` wraps the local window functions (`IsWindow`,
+  `GetClassNameW`, `GetAncestor`, `GetWindow`, `GetTopWindow`, `IsChild`,
+  `IsWindowVisible`, `GetDesktopWindow`, `GetGUIThreadInfo`), which are not
+  counted, and sends the list view and tree view messages
+  (`LVM_GETITEMCOUNT`, `TVM_GETNEXTITEM`, and the two child-id mapping
+  messages), each counted as a window message; it offers only messages
+  whose parameters are plain integers.
 - `NodeIdRegistry` — the nodes the outpost has issued, each with its
   address (window handle, object id, and child id), the role read when it
   was issued, and the accessible object it was read from, kept as an agile
