@@ -31,6 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
 
+use crate::hits::{self, WM_HITS_READ, WM_HITS_RESET};
 use crate::stdin::{self, Command};
 use crate::tree::SharedTree;
 use crate::{msaa, uia};
@@ -178,12 +179,24 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_GETOBJECT => {
+            hits::hit(hits::Method::GetObject);
             // SAFETY: `GWLP_USERDATA` was set right after `CreateWindowExW`
             // and never cleared, so any `WM_GETOBJECT` reaching this window
             // has a valid context pointer.
             if let Some(context) = unsafe { context_for(hwnd) } {
                 return handle_get_object(hwnd, wparam, lparam, context);
             }
+        }
+        // The hit counters' readout (see `crate::hits`), answered here so a
+        // test's read is in order with every provider call, which this
+        // thread also runs.
+        WM_HITS_READ => {
+            let count = hits::read(wparam.0);
+            return LRESULT(isize::try_from(count).unwrap_or(isize::MAX));
+        }
+        WM_HITS_RESET => {
+            hits::reset();
+            return LRESULT(0);
         }
         WM_APP_COMMAND_READY => {
             // SAFETY: see above.
@@ -285,12 +298,15 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
         }
         if let Command::Stall(ms) = command {
             std::thread::sleep(std::time::Duration::from_millis(ms));
-            continue;
+        } else {
+            match context.backend {
+                Backend::Uia => uia::apply_command(&context.tree, hwnd, command),
+                Backend::Msaa => msaa::apply_command(&context.tree, hwnd, command),
+            }
         }
-        match context.backend {
-            Backend::Uia => uia::apply_command(&context.tree, hwnd, command),
-            Backend::Msaa => msaa::apply_command(&context.tree, hwnd, command),
-        }
+        // Counted once applied, so a test that waits for the count knows
+        // the command has taken effect.
+        hits::hit(hits::Method::CommandApplied);
     }
 }
 

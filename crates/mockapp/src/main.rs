@@ -12,6 +12,7 @@
 //! command reference.
 
 mod fixture;
+mod hits;
 mod msaa;
 mod stdin;
 mod tree;

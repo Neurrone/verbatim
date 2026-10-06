@@ -58,6 +58,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
                 notify(hwnd, EVENT_OBJECT_FOCUS, index);
             }
         }
+        Command::SetFocus(id) => {
+            focus_node(tree, &id);
+        }
         Command::SetName(id, text) => {
             if let Some(index) = set_name(tree, &id, text) {
                 notify(hwnd, EVENT_OBJECT_NAMECHANGE, index);
@@ -255,6 +258,7 @@ mod handler {
     use windows_core::{Error, implement};
 
     use super::{role_to_msaa, states_to_msaa};
+    use crate::hits;
     use crate::tree::SharedTree;
 
     /// The accessible object for one node. Every node in the tree is its own
@@ -325,6 +329,7 @@ mod handler {
 
     impl IAccessible_Impl for NodeAccessible_Impl {
         fn accParent(&self) -> WinResult<IDispatch> {
+            hits::hit(hits::Method::AccParent);
             let parent = self
                 .tree
                 .lock()
@@ -346,6 +351,7 @@ mod handler {
         }
 
         fn accChildCount(&self) -> WinResult<i32> {
+            hits::hit(hits::Method::AccChildCount);
             let guard = self
                 .tree
                 .lock()
@@ -355,6 +361,7 @@ mod handler {
         }
 
         fn get_accChild(&self, varchild: &VARIANT) -> WinResult<IDispatch> {
+            hits::hit(hits::Method::AccChild);
             // SAFETY: `varchild` is caller-supplied, as always; only its type
             // and, if VT_I4, integer field are read.
             let child_id = unsafe {
@@ -383,6 +390,7 @@ mod handler {
         }
 
         fn get_accName(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            hits::hit(hits::Method::AccName);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -398,6 +406,7 @@ mod handler {
         }
 
         fn get_accValue(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            hits::hit(hits::Method::AccValue);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -413,6 +422,7 @@ mod handler {
         }
 
         fn get_accDescription(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            hits::hit(hits::Method::AccDescription);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -428,6 +438,7 @@ mod handler {
         }
 
         fn get_accRole(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::AccRole);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -451,6 +462,7 @@ mod handler {
         }
 
         fn get_accState(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::AccState);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -474,14 +486,17 @@ mod handler {
         }
 
         fn get_accHelp(&self, _varchild: &VARIANT) -> WinResult<BSTR> {
+            hits::hit(hits::Method::AccHelp);
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn get_accHelpTopic(&self, _pszhelpfile: *mut BSTR, _varchild: &VARIANT) -> WinResult<i32> {
+            hits::hit(hits::Method::AccHelpTopic);
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn get_accKeyboardShortcut(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            hits::hit(hits::Method::AccKeyboardShortcut);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -496,6 +511,7 @@ mod handler {
         }
 
         fn accFocus(&self) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::AccFocus);
             let focused = self
                 .tree
                 .lock()
@@ -518,6 +534,7 @@ mod handler {
         }
 
         fn accSelection(&self) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::AccSelection);
             // The selected child, as its own object, as a real container
             // reports it; an empty variant when none of the children is
             // selected.
@@ -549,6 +566,7 @@ mod handler {
         }
 
         fn get_accDefaultAction(&self, varchild: &VARIANT) -> WinResult<BSTR> {
+            hits::hit(hits::Method::AccDefaultAction);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -563,6 +581,7 @@ mod handler {
         }
 
         fn accSelect(&self, _flagsselect: i32, _varchild: &VARIANT) -> WinResult<()> {
+            hits::hit(hits::Method::AccSelect);
             Ok(())
         }
 
@@ -574,6 +593,7 @@ mod handler {
             pcyheight: *mut i32,
             _varchild: &VARIANT,
         ) -> WinResult<()> {
+            hits::hit(hits::Method::AccLocation);
             // SAFETY: the four pointers are caller-owned out-parameters, as
             // every `accLocation` caller supplies; mockapp never lays out
             // real control geometry, so they are always zeroed.
@@ -590,6 +610,7 @@ mod handler {
             use windows::Win32::UI::Accessibility::{
                 NAVDIR_FIRSTCHILD, NAVDIR_LASTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS,
             };
+            hits::hit(hits::Method::AccNavigate);
             let Some(start) = resolve_child(&self.tree, self.index, varstart) else {
                 return Err(Error::from_hresult(S_FALSE));
             };
@@ -626,10 +647,12 @@ mod handler {
         }
 
         fn accHitTest(&self, _xleft: i32, _ytop: i32) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::AccHitTest);
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn accDoDefaultAction(&self, varchild: &VARIANT) -> WinResult<()> {
+            hits::hit(hits::Method::AccDoDefaultAction);
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -644,20 +667,24 @@ mod handler {
         }
 
         fn put_accName(&self, _varchild: &VARIANT, _szname: &BSTR) -> WinResult<()> {
+            hits::hit(hits::Method::PutAccName);
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
 
         fn put_accValue(&self, _varchild: &VARIANT, _szvalue: &BSTR) -> WinResult<()> {
+            hits::hit(hits::Method::PutAccValue);
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
     }
 
     impl windows::Win32::System::Com::IDispatch_Impl for NodeAccessible_Impl {
         fn GetTypeInfoCount(&self) -> WinResult<u32> {
+            hits::hit(hits::Method::GetTypeInfoCount);
             Ok(0)
         }
 
         fn GetTypeInfo(&self, _itinfo: u32, _lcid: u32) -> WinResult<ITypeInfo> {
+            hits::hit(hits::Method::GetTypeInfo);
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
 
@@ -669,6 +696,7 @@ mod handler {
             _lcid: u32,
             _rgdispid: *mut i32,
         ) -> WinResult<()> {
+            hits::hit(hits::Method::GetIdsOfNames);
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
 
@@ -683,6 +711,7 @@ mod handler {
             _pexcepinfo: *mut EXCEPINFO,
             _puargerr: *mut u32,
         ) -> WinResult<()> {
+            hits::hit(hits::Method::DispatchInvoke);
             Err(Error::from_hresult(
                 windows::Win32::Foundation::DISP_E_MEMBERNOTFOUND,
             ))

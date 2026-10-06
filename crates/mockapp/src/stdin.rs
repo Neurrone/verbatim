@@ -1,8 +1,8 @@
 //! Stdin command parsing and the reader thread.
 //!
-//! Commands are one per line: `focus <id>`, `set-name <id> <text>`,
-//! `set-value <id> <text>`, `select <id>`, `notify <text>`, `stall <ms>`,
-//! and `quit`.
+//! Commands are one per line: `focus <id>`, `set-focus <id>`,
+//! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
+//! `notify <text>`, `stall <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -15,6 +15,11 @@ use std::sync::mpsc::Sender;
 pub(crate) enum Command {
     /// `focus <id>`.
     Focus(String),
+    /// `set-focus <id>`: moves the focused state as `focus` does, raising no
+    /// event, so no client anywhere reacts to it: for the tests that count
+    /// an operation's provider calls exactly, which then hand the focus to
+    /// the outpost themselves.
+    SetFocus(String),
     /// `set-name <id> <text>`. `text` is empty when the command clears the
     /// name (`set-name <id>` with nothing after the id).
     SetName(String, String),
@@ -51,6 +56,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     match verb {
         "quit" => Some(Command::Quit),
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
+        "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
@@ -103,6 +109,10 @@ mod tests {
         match parse_command("focus btn1") {
             Some(Command::Focus(id)) => assert_eq!(id, "btn1"),
             _ => panic!("expected Focus"),
+        }
+        match parse_command("set-focus btn1") {
+            Some(Command::SetFocus(id)) => assert_eq!(id, "btn1"),
+            _ => panic!("expected SetFocus"),
         }
     }
 

@@ -54,6 +54,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
                 raise_focus(tree, hwnd, index);
             }
         }
+        Command::SetFocus(id) => {
+            focus_node(tree, &id);
+        }
         Command::SetName(id, text) => {
             if let Some(index) = set_name(tree, &id, text) {
                 raise_property_changed(tree, hwnd, index, UIA_NamePropertyId);
@@ -344,6 +347,44 @@ mod props {
                     }),
                 },
             }
+        }
+    }
+
+    /// The children of `index` that have the selected state, as an array of
+    /// their providers: what a list's `Selection` pattern answers.
+    pub(super) fn selected_children(
+        tree: &SharedTree,
+        hwnd: HWND,
+        index: usize,
+    ) -> WinResult<*mut SAFEARRAY> {
+        let selected: Vec<usize> = {
+            let guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.nodes[index]
+                .children
+                .iter()
+                .copied()
+                .filter(|&child| guard.nodes[child].states.contains(State::Selected))
+                .collect()
+        };
+        let length = u32::try_from(selected.len()).map_err(|_| Error::empty())?;
+        // SAFETY: a `VT_UNKNOWN` vector of exactly `length` elements, each
+        // filled within bounds; `SafeArrayPutElement` takes its own reference
+        // to each provider, and ownership of the array passes to the caller,
+        // as `GetSelection`'s contract says.
+        unsafe {
+            let array = SafeArrayCreateVector(VT_UNKNOWN, 0, length);
+            if array.is_null() {
+                return Err(Error::empty());
+            }
+            for (position, child) in selected.into_iter().enumerate() {
+                let element = provider_for(std::sync::Arc::clone(tree), hwnd, child)
+                    .cast::<IRawElementProviderSimple>()?;
+                let position = i32::try_from(position).map_err(|_| Error::empty())?;
+                SafeArrayPutElement(array, &raw const position, element.as_raw())?;
+            }
+            Ok(array)
         }
     }
 
@@ -664,6 +705,7 @@ mod handler {
     use windows_core::{Error, IUnknown, implement};
 
     use super::props;
+    use crate::hits;
     use crate::tree::SharedTree;
 
     /// The provider for the root node (index 0), which also answers as the
@@ -691,12 +733,15 @@ mod handler {
 
     impl IRawElementProviderSimple_Impl for RootProvider_Impl {
         fn ProviderOptions(&self) -> WinResult<ProviderOptions> {
+            hits::hit(hits::Method::ProviderOptions);
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
+            hits::hit(hits::Method::GetPatternProvider);
             get_pattern_provider(&self.tree, self.hwnd, self.index, pattern_id)
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::GetPropertyValue);
             Ok(props::get_property_value(
                 &self.tree,
                 self.hwnd,
@@ -705,27 +750,34 @@ mod handler {
             ))
         }
         fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::HostRawElementProvider);
             props::host_raw_element_provider(self.hwnd, self.index)
         }
     }
 
     impl IRawElementProviderFragment_Impl for RootProvider_Impl {
         fn Navigate(&self, direction: NavigateDirection) -> WinResult<IRawElementProviderFragment> {
+            hits::hit(hits::Method::Navigate);
             props::navigate(&self.tree, self.hwnd, self.index, direction)
         }
         fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetRuntimeId);
             props::get_runtime_id(self.index)
         }
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
+            hits::hit(hits::Method::BoundingRectangle);
             Ok(bounding_rectangle())
         }
         fn GetEmbeddedFragmentRoots(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetEmbeddedFragmentRoots);
             Ok(std::ptr::null_mut())
         }
         fn SetFocus(&self) -> WinResult<()> {
+            hits::hit(hits::Method::SetFocus);
             Ok(())
         }
         fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
+            hits::hit(hits::Method::FragmentRoot);
             Ok(RootProvider {
                 tree: self.tree.clone(),
                 hwnd: self.hwnd,
@@ -741,24 +793,29 @@ mod handler {
             _x: f64,
             _y: f64,
         ) -> WinResult<IRawElementProviderFragment> {
+            hits::hit(hits::Method::ElementProviderFromPoint);
             // Bounding rectangles are always zero (mockapp never shows real
             // control layout), so point-based hit testing has nothing
             // meaningful to answer.
             Err(Error::empty())
         }
         fn GetFocus(&self) -> WinResult<IRawElementProviderFragment> {
+            hits::hit(hits::Method::GetFocus);
             props::get_focus(&self.tree, self.hwnd)
         }
     }
 
     impl IRawElementProviderSimple_Impl for ChildProvider_Impl {
         fn ProviderOptions(&self) -> WinResult<ProviderOptions> {
+            hits::hit(hits::Method::ProviderOptions);
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
+            hits::hit(hits::Method::GetPatternProvider);
             get_pattern_provider(&self.tree, self.hwnd, self.index, pattern_id)
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
+            hits::hit(hits::Method::GetPropertyValue);
             Ok(props::get_property_value(
                 &self.tree,
                 self.hwnd,
@@ -767,27 +824,34 @@ mod handler {
             ))
         }
         fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::HostRawElementProvider);
             props::host_raw_element_provider(self.hwnd, self.index)
         }
     }
 
     impl IRawElementProviderFragment_Impl for ChildProvider_Impl {
         fn Navigate(&self, direction: NavigateDirection) -> WinResult<IRawElementProviderFragment> {
+            hits::hit(hits::Method::Navigate);
             props::navigate(&self.tree, self.hwnd, self.index, direction)
         }
         fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetRuntimeId);
             props::get_runtime_id(self.index)
         }
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
+            hits::hit(hits::Method::BoundingRectangle);
             Ok(bounding_rectangle())
         }
         fn GetEmbeddedFragmentRoots(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetEmbeddedFragmentRoots);
             Ok(std::ptr::null_mut())
         }
         fn SetFocus(&self) -> WinResult<()> {
+            hits::hit(hits::Method::SetFocus);
             Ok(())
         }
         fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
+            hits::hit(hits::Method::FragmentRoot);
             Ok(RootProvider {
                 tree: self.tree.clone(),
                 hwnd: self.hwnd,
@@ -809,7 +873,8 @@ mod handler {
     /// expand-collapse patterns before trusting a cached state, so a real
     /// pattern object is required for cached property fetches (which is what
     /// `verbatim-uia`'s base cache request always does) to see the current
-    /// state at all.
+    /// state at all. A list also answers the `Selection` pattern, for
+    /// reading its selected item.
     fn get_pattern_provider(
         tree: &SharedTree,
         hwnd: HWND,
@@ -864,6 +929,15 @@ mod handler {
             .into();
             return Ok(provider);
         }
+        if pattern_id == UIA_SelectionPatternId && role == verbatim_model::Role::List {
+            let provider: IUnknown = SelectionProvider {
+                tree: tree.clone(),
+                hwnd,
+                index,
+            }
+            .into();
+            return Ok(provider);
+        }
         Err(Error::empty())
     }
 
@@ -888,9 +962,11 @@ mod handler {
 
     impl IToggleProvider_Impl for ToggleProvider_Impl {
         fn Toggle(&self) -> WinResult<()> {
+            hits::hit(hits::Method::Toggle);
             Ok(())
         }
         fn ToggleState(&self) -> WinResult<windows::Win32::UI::Accessibility::ToggleState> {
+            hits::hit(hits::Method::ToggleState);
             let states = self
                 .tree
                 .lock()
@@ -912,14 +988,17 @@ mod handler {
 
     impl IExpandCollapseProvider_Impl for ExpandCollapseProvider_Impl {
         fn Expand(&self) -> WinResult<()> {
+            hits::hit(hits::Method::Expand);
             Ok(())
         }
         fn Collapse(&self) -> WinResult<()> {
+            hits::hit(hits::Method::Collapse);
             Ok(())
         }
         fn ExpandCollapseState(
             &self,
         ) -> WinResult<windows::Win32::UI::Accessibility::ExpandCollapseState> {
+            hits::hit(hits::Method::ExpandCollapseState);
             let states = self
                 .tree
                 .lock()
@@ -940,9 +1019,11 @@ mod handler {
 
     impl windows::Win32::UI::Accessibility::IValueProvider_Impl for ValueProvider_Impl {
         fn SetValue(&self, _val: &windows_core::PCWSTR) -> WinResult<()> {
+            hits::hit(hits::Method::SetValue);
             Ok(())
         }
         fn Value(&self) -> WinResult<windows_core::BSTR> {
+            hits::hit(hits::Method::Value);
             let guard = self
                 .tree
                 .lock()
@@ -954,6 +1035,7 @@ mod handler {
                 .into())
         }
         fn IsReadOnly(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::IsReadOnly);
             let read_only = self
                 .tree
                 .lock()
@@ -962,6 +1044,31 @@ mod handler {
                 .states
                 .contains(verbatim_model::State::ReadOnly);
             Ok(read_only.into())
+        }
+    }
+
+    /// The `SelectionPattern` provider for a list: its selection is its
+    /// children that have the selected state, the single-selection model
+    /// the `select` command scripts.
+    #[implement(ISelectionProvider, Agile = false)]
+    struct SelectionProvider {
+        tree: SharedTree,
+        hwnd: HWND,
+        index: usize,
+    }
+
+    impl ISelectionProvider_Impl for SelectionProvider_Impl {
+        fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetSelection);
+            props::selected_children(&self.tree, self.hwnd, self.index)
+        }
+        fn CanSelectMultiple(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::CanSelectMultiple);
+            Ok(false.into())
+        }
+        fn IsSelectionRequired(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::IsSelectionRequired);
+            Ok(false.into())
         }
     }
 
@@ -981,15 +1088,19 @@ mod handler {
 
     impl ISelectionItemProvider_Impl for SelectionItemProvider_Impl {
         fn Select(&self) -> WinResult<()> {
+            hits::hit(hits::Method::Select);
             Ok(())
         }
         fn AddToSelection(&self) -> WinResult<()> {
+            hits::hit(hits::Method::AddToSelection);
             Ok(())
         }
         fn RemoveFromSelection(&self) -> WinResult<()> {
+            hits::hit(hits::Method::RemoveFromSelection);
             Ok(())
         }
         fn IsSelected(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::IsSelected);
             let selected = self
                 .tree
                 .lock()
@@ -1000,6 +1111,7 @@ mod handler {
             Ok(selected.into())
         }
         fn SelectionContainer(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::SelectionContainer);
             // The containing list is reachable through ordinary navigation;
             // a null container is the UIA contract for "not exposed", same
             // as the other legitimate-null results this module documents.
