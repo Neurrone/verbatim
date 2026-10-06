@@ -8,7 +8,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use verbatim_audio::{
-    AudioDevice, AudioError, AudioTap, DeviceFormat, Mixer, PcmFormat, PlaybackEvent, Source, Waker,
+    AudioDevice, AudioError, AudioTap, DeviceFormat, Mixer, PcmFormat, PlaybackEvent, Sound,
+    Source, Waker,
 };
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
@@ -117,7 +118,7 @@ struct Harness {
     device: ManualDevice,
     source: Source,
     events: Receiver<PlaybackEvent>,
-    _mixer: Mixer,
+    mixer: Mixer,
 }
 
 fn harness() -> Harness {
@@ -132,7 +133,7 @@ fn harness() -> Harness {
         device,
         source,
         events,
-        _mixer: mixer,
+        mixer,
     }
 }
 
@@ -431,7 +432,7 @@ fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
         device,
         source,
         events,
-        _mixer: mixer,
+        mixer,
     };
     let trace = harness.speak(1, 20);
     harness.play(5);
@@ -486,4 +487,176 @@ fn a_device_reopened_between_polls_is_not_given_again_what_it_played() {
         16,
         "only the six frames not played are written again"
     );
+}
+
+/// A sound of `frames` frames, every sample `value`, in the test's PCM
+/// format.
+fn sound(frames: usize, value: i16) -> Sound {
+    Sound::from_pcm(PCM, samples(frames, value)).expect("a usable sound")
+}
+
+/// A sample of `value` as the mixer writes it.
+fn level(value: i16) -> f32 {
+    f32::from(value) / 32_768.0
+}
+
+fn assert_frames(actual: &[f32], expected: &[f32]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?}");
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "frame {index}: {actual} where {expected} was expected"
+        );
+    }
+}
+
+#[test]
+fn a_sound_in_an_utterance_starts_at_its_place_and_plays_over_what_follows() {
+    let harness = harness();
+    let trace = TraceId::mint();
+    harness.source.register(utterance(1), trace);
+    let _ = harness.source.write(utterance(1), PCM, &samples(3, 1_000));
+    harness
+        .source
+        .sound(utterance(1), &sound(5, 2_000), 1.0)
+        .expect("the sound converts");
+    let _ = harness.source.write(utterance(1), PCM, &samples(4, 1_000));
+    harness.source.finish(utterance(1));
+
+    harness.play(1);
+    assert_eq!(harness.next(), started(1, trace));
+    harness.play(6);
+    // The utterance's own audio has played; the sound plays on past it,
+    // without holding back the ending.
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+    harness.play(1);
+    let (speech, both, alone) = (level(1_000), level(1_000) + level(2_000), level(2_000));
+    assert_frames(
+        &harness.device.written(),
+        &[speech, speech, speech, both, both, both, both, alone],
+    );
+}
+
+#[test]
+fn a_sound_is_cancelled_with_its_utterance() {
+    let harness = harness();
+    let trace = TraceId::mint();
+    harness.source.register(utterance(1), trace);
+    let _ = harness.source.write(utterance(1), PCM, &samples(3, 1_000));
+    harness
+        .source
+        .sound(utterance(1), &sound(40, 2_000), 0.5)
+        .expect("the sound converts");
+    let _ = harness.source.write(utterance(1), PCM, &samples(30, 1_000));
+    harness.source.finish(utterance(1));
+    harness.play(5);
+    assert_eq!(harness.next(), started(1, trace));
+
+    harness.source.cancel_all();
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
+    let cut = harness.device.written().len();
+
+    // What follows the cut is the next utterance alone: the sound went with
+    // the utterance it belonged to.
+    let next = harness.speak(2, 4);
+    harness.play(1);
+    assert_eq!(harness.next(), started(2, next));
+    harness.play(3);
+    assert_eq!(harness.next(), ended(2, next, UtteranceEnding::Completed));
+    assert_frames(&harness.device.written()[cut..], &[level(1_000); 4]);
+}
+
+#[test]
+fn a_sound_not_yet_reached_is_dropped_when_its_utterance_is_cancelled() {
+    let harness = harness();
+    let trace = TraceId::mint();
+    harness.source.register(utterance(1), trace);
+    let _ = harness.source.write(utterance(1), PCM, &samples(30, 1_000));
+    harness
+        .source
+        .sound(utterance(1), &sound(3, 2_000), 1.0)
+        .expect("the sound converts");
+    harness.source.finish(utterance(1));
+    harness.play(2);
+    assert_eq!(harness.next(), started(1, trace));
+    harness.source.cancel_all();
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
+    let speech = level(1_000);
+    assert!(
+        harness
+            .device
+            .written()
+            .iter()
+            .all(|frame| (frame - speech).abs() < 1e-6),
+        "the sound was never mixed"
+    );
+}
+
+#[test]
+fn a_sound_played_at_once_is_mixed_over_speech_from_another_source() {
+    let harness = harness();
+    let earcons = harness.mixer.add_source(Arc::new(|_| {}));
+    let trace = harness.speak(1, 30);
+    harness.play(5);
+    assert_eq!(harness.next(), started(1, trace));
+
+    earcons
+        .play(&sound(3, 2_000), 1.0)
+        .expect("the sound converts");
+    harness.play(25);
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+
+    let written = harness.device.written();
+    let both = level(1_000) + level(2_000);
+    let mixed: Vec<usize> = written
+        .iter()
+        .enumerate()
+        .filter(|(_, frame)| (*frame - both).abs() < 1e-6)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(mixed.len(), 3, "the sound is mixed in once: {written:?}");
+    assert_eq!(mixed[2] - mixed[0], 2, "over three frames in a row");
+    assert_eq!(written.len(), 30);
+}
+
+#[test]
+fn a_sound_played_at_once_on_a_quiet_device_plays_alone() {
+    let harness = harness();
+    harness
+        .source
+        .play(&sound(4, 2_000), 2.0)
+        .expect("the sound converts");
+    harness.play(4);
+    assert_frames(&harness.device.written(), &[level(2_000) * 2.0; 4]);
+}
+
+#[test]
+fn a_partly_heard_sound_goes_on_where_it_was_after_the_device_reopens() {
+    let harness = harness();
+    // Ten frames, the device's whole queue, each a different level.
+    let ramp: Vec<i16> = (1..=10).map(|frame| frame * 100).collect();
+    let ramp_sound = Sound::from_pcm(PCM, ramp.clone()).expect("a usable sound");
+    harness
+        .source
+        .play(&ramp_sound, 1.0)
+        .expect("the sound converts");
+    harness.play(4);
+
+    // Six frames were queued when the device asked to be reopened; the
+    // sound goes on from its fifth frame, so all of it is heard once.
+    harness.device.reopen.store(true, Ordering::SeqCst);
+    harness.device.play(0);
+    let deadline = std::time::Instant::now() + WAIT;
+    while harness.device.written().len() < 16 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the unplayed frames are written again"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    harness.play(6);
+    let expected: Vec<f32> = ramp.iter().map(|value| level(*value)).collect();
+    let written = harness.device.written();
+    assert_frames(&written[..10], &expected);
+    assert_frames(&written[10..], &expected[4..]);
 }

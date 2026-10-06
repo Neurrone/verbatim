@@ -17,6 +17,7 @@
 mod convert;
 mod mixer;
 mod silent;
+mod sound;
 mod wav;
 
 use std::fmt;
@@ -25,6 +26,7 @@ use std::time::Duration;
 
 pub use mixer::{AudioTap, Mixer, PlaybackEvent, PlaybackListener, Source};
 pub use silent::SilentDevice;
+pub use sound::Sound;
 pub use wav::WavRecorder;
 
 /// The PCM format a synthesizer produces: signed 16-bit, interleaved.

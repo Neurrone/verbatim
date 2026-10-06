@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+hound.workspace = true
 rubato.workspace = true
 tracing.workspace = true
 verbatim-model.workspace = true

@@ -16,6 +16,8 @@ clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 # The bridge between verbatim-gui and its C++ wxWidgets layer (decision D4).
 cxx = "1"
+# WAV decoding for the sounds of themes (phase6-design.md, "Earcons").
+hound = "3"
 i18n-embed = { version = "0.16", features = ["fluent-system"] }
 i18n-embed-fl = "0.10"
 # debug-embed: without it, debug builds do not embed at all — rust-embed

@@ -19,6 +19,15 @@
 //! [`PlaybackEvent::Ended`]: completed when the device has played its last
 //! frame, cancelled by [`Source::cancel_all`], or failed by
 //! [`Source::fail`] or by the device changing format under it.
+//!
+//! Sounds (`phase6-design.md`, "Earcons"). A source also mixes sounds over
+//! its own audio, each a *voice*: one placed in an utterance
+//! ([`Source::sound`]) starts when the source's audio reaches its place
+//! and plays on over what follows, and one played at once
+//! ([`Source::play`]) starts with the next frames mixed. A voice is
+//! counted in mix positions from the frame it started at, so it rewinds
+//! with everything else when the device's queue is discarded, resuming
+//! where it had been heard, and a cancel ends every voice of the source.
 
 use std::collections::{HashMap, VecDeque};
 use std::ops::ControlFlow;
@@ -31,7 +40,7 @@ use tracing::warn;
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
 use crate::convert::Converter;
-use crate::{AudioDevice, AudioError, DeviceFormat, PcmFormat, Waker};
+use crate::{AudioDevice, AudioError, DeviceFormat, PcmFormat, Sound, Waker};
 
 /// How far ahead of the device a source may write, beyond the device's own
 /// queue: 40 ms. This is the backpressure that keeps a fast synthesizer
@@ -194,6 +203,30 @@ struct Segment {
     len: u64,
 }
 
+/// A sound mixed over a source's audio.
+struct Voice {
+    /// The utterance it belongs to, ended with it; `None` for a sound
+    /// played at once.
+    utterance: Option<UtteranceId>,
+    /// The source position it starts at.
+    trigger: u64,
+    /// Interleaved device-format frames.
+    frames: Arc<[f32]>,
+    gain: f32,
+    state: VoiceState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VoiceState {
+    /// Waiting for the source's audio to reach its start.
+    Waiting,
+    /// Started and partly heard, then rewound: it goes on from frame
+    /// `heard` at the next frames mixed.
+    Resume { heard: u64 },
+    /// Playing: frame `n` of it is at mix position `start + n`.
+    Playing { start: u64 },
+}
+
 struct SourceState {
     listener: PlaybackListener,
     /// Channels per frame of the device format the data is in.
@@ -214,6 +247,8 @@ struct SourceState {
     /// Resumed from a pause, and not mixed from since: the device running
     /// dry meanwhile was the pause, not an underrun.
     resumed: bool,
+    /// Sounds mixed over the source's audio, until they have played.
+    voices: Vec<Voice>,
 }
 
 impl Mixer {
@@ -319,6 +354,7 @@ impl Mixer {
                 tracked: Vec::new(),
                 paused: false,
                 resumed: false,
+                voices: Vec::new(),
             },
         );
         Source {
@@ -469,6 +505,79 @@ impl Source {
                 kind: Kind::Mark(mark),
             });
         }
+    }
+
+    /// Places `sound` at the current end of `utterance`'s audio, as
+    /// [`mark`](Self::mark) places a mark: it starts when playback reaches
+    /// that place and plays on over the audio that follows, at `gain` (1.0
+    /// for as recorded). It belongs to the utterance: failing the utterance
+    /// drops it, and [`cancel_all`](Self::cancel_all) stops it. It does not
+    /// delay the utterance's ending, which comes when its own audio has
+    /// played.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::Stream`] when the sound cannot be converted to
+    /// the device's format.
+    pub fn sound(
+        &self,
+        utterance: UtteranceId,
+        sound: &Sound,
+        gain: f32,
+    ) -> Result<(), AudioError> {
+        self.add_voice(Some(utterance), sound, gain)
+    }
+
+    /// Plays `sound` at once, mixed over whatever else is playing, at `gain`
+    /// (1.0 for as recorded): for a source that carries only sounds, such as
+    /// the earcons of events. [`cancel_all`](Self::cancel_all) stops it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::Stream`] when the sound cannot be converted to
+    /// the device's format.
+    pub fn play(&self, sound: &Sound, gain: f32) -> Result<(), AudioError> {
+        self.add_voice(None, sound, gain)
+    }
+
+    fn add_voice(
+        &self,
+        utterance: Option<UtteranceId>,
+        sound: &Sound,
+        gain: f32,
+    ) -> Result<(), AudioError> {
+        let (generation, format) = {
+            let state = self.shared.lock();
+            (state.generation, state.format)
+        };
+        // Converted outside the lock, which the audio thread needs.
+        let frames = sound.frames_for(format)?;
+        {
+            let mut state = self.shared.lock();
+            if state.shutdown || state.generation != generation {
+                // The device changed format meanwhile: these frames cannot
+                // be played, and the utterance has failed anyway.
+                return Ok(());
+            }
+            let Some(source) = state.sources.get_mut(&self.id) else {
+                return Ok(());
+            };
+            if let Some(utterance) = utterance
+                && source.writing(utterance).is_none()
+            {
+                return Ok(());
+            }
+            let trigger = source.write_end;
+            source.voices.push(Voice {
+                utterance,
+                trigger,
+                frames,
+                gain,
+                state: VoiceState::Waiting,
+            });
+        }
+        (self.shared.waker)();
+        Ok(())
     }
 
     /// Ends `utterance`'s audio: it completes once the device has played
@@ -652,9 +761,14 @@ impl SourceState {
         self.release(played);
     }
 
-    /// Drops frames that have played.
+    /// Drops frames that have played, and voices that have played to their
+    /// end.
     fn release(&mut self, played: u64) {
         let channels = self.channels;
+        self.voices.retain(|voice| match voice.state {
+            VoiceState::Playing { start } => start + voice_len(voice, channels) > played,
+            VoiceState::Waiting | VoiceState::Resume { .. } => true,
+        });
         while let Some(segment) = self.segments.front_mut() {
             let done = played.saturating_sub(segment.mix_start).min(segment.len);
             if done == 0 {
@@ -674,8 +788,25 @@ impl SourceState {
     }
 
     /// Forgets mixing done at or after mix position `played`, so those
-    /// frames are mixed again.
+    /// frames are mixed again: a voice not yet heard waits for its place
+    /// again, and one partly heard goes on from where it was.
     fn rewind(&mut self, played: u64) {
+        let channels = self.channels;
+        self.voices.retain_mut(|voice| {
+            if let VoiceState::Playing { start } = voice.state {
+                let len = voice_len(voice, channels);
+                if start >= played {
+                    voice.state = VoiceState::Waiting;
+                } else {
+                    let heard = (played - start).min(len);
+                    if heard == len {
+                        return false;
+                    }
+                    voice.state = VoiceState::Resume { heard };
+                }
+            }
+            true
+        });
         while let Some(segment) = self.segments.back_mut() {
             if segment.mix_start >= played {
                 self.mixed_end -= segment.len;
@@ -704,9 +835,84 @@ impl SourceState {
         self.write_end - self.mixed_end
     }
 
-    /// Frames that may be mixed now: none while paused.
-    fn mixable(&self) -> u64 {
-        if self.paused { 0 } else { self.unmixed() }
+    /// Frames that may be mixed now, with the next mix written at mix
+    /// position `written`: the audio written and not yet mixed, or further
+    /// while a voice it has reached plays on; none while paused.
+    fn mixable(&self, written: u64) -> u64 {
+        if self.paused {
+            return 0;
+        }
+        let channels = self.channels;
+        self.voices
+            .iter()
+            .map(|voice| {
+                let len = voice_len(voice, channels);
+                match voice.state {
+                    VoiceState::Waiting
+                        if voice.trigger >= self.mixed_end && voice.trigger <= self.write_end =>
+                    {
+                        voice.trigger - self.mixed_end + len
+                    }
+                    VoiceState::Waiting => 0,
+                    VoiceState::Resume { heard } => len - heard,
+                    VoiceState::Playing { start } => (start + len).saturating_sub(written),
+                }
+            })
+            .fold(self.unmixed(), u64::max)
+    }
+
+    /// Starts the voices the next mix reaches, which takes `data` frames of
+    /// the source's own audio to mix position `written` onward: a voice
+    /// resuming starts with the first of them, and a waiting voice where its
+    /// place is among them, or at their end when that is all the audio
+    /// written.
+    fn start_voices(&mut self, written: u64, data: u64) {
+        let (mixed_end, write_end) = (self.mixed_end, self.write_end);
+        for voice in &mut self.voices {
+            match voice.state {
+                VoiceState::Resume { heard } => {
+                    voice.state = VoiceState::Playing {
+                        start: written.saturating_sub(heard),
+                    };
+                }
+                VoiceState::Waiting
+                    if voice.trigger >= mixed_end
+                        && (voice.trigger < mixed_end + data
+                            || (voice.trigger == write_end && mixed_end + data == write_end)) =>
+                {
+                    voice.state = VoiceState::Playing {
+                        start: written + (voice.trigger - mixed_end),
+                    };
+                }
+                VoiceState::Waiting | VoiceState::Playing { .. } => {}
+            }
+        }
+    }
+
+    /// Adds the playing voices' frames for mix positions `written` onward
+    /// to `mix`.
+    fn mix_voices(&self, written: u64, mix: &mut [f32]) {
+        let channels = self.channels;
+        let end = written + (mix.len() / channels.max(1)) as u64;
+        for voice in &self.voices {
+            let VoiceState::Playing { start } = voice.state else {
+                continue;
+            };
+            let from = start.max(written);
+            let to = (start + voice_len(voice, channels)).min(end);
+            if from >= to {
+                continue;
+            }
+            let out = usize::try_from(from - written).unwrap_or(usize::MAX) * channels;
+            let input = usize::try_from(from - start).unwrap_or(usize::MAX) * channels;
+            let count = usize::try_from(to - from).unwrap_or(usize::MAX) * channels;
+            for (sample, frame) in mix[out..out + count]
+                .iter_mut()
+                .zip(&voice.frames[input..input + count])
+            {
+                *sample += frame * voice.gain;
+            }
+        }
     }
 
     /// Whether an utterance is in the middle of playing: some of its frames
@@ -721,6 +927,11 @@ impl SourceState {
             self.mixed_end > tracked.start && (tracked.writing || self.unmixed() > 0)
         })
     }
+}
+
+/// A voice's length in frames of `channels` channels.
+fn voice_len(voice: &Voice, channels: usize) -> u64 {
+    (voice.frames.len() / channels.max(1)) as u64
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -795,7 +1006,7 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
             source.fire(played, &mut notes);
         }
 
-        let frames = frames_to_mix(&state, queued, running);
+        let frames = frames_to_mix(&state, queued, running, written);
         if frames > 0 {
             if ran_dry && state.sources.values().any(SourceState::mid_utterance) {
                 state.underruns += 1;
@@ -839,20 +1050,19 @@ fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn Au
 /// source has, except that a stopped device waits for [`START_MS`] of audio
 /// unless what it has is complete (zero then means wait; each write wakes
 /// the audio thread).
-fn frames_to_mix(state: &State, queued: u64, running: bool) -> u64 {
+fn frames_to_mix(state: &State, queued: u64, running: bool, written: u64) -> u64 {
     let room = u64::from(state.format.buffer_frames).saturating_sub(queued);
     let available = state
         .sources
         .values()
-        .map(SourceState::mixable)
+        .map(|source| source.mixable(written))
         .max()
         .unwrap_or(0);
     let frames = room.min(available);
     let start_frames = u64::from(state.format.sample_rate * START_MS / 1_000);
-    let still_writing = state
-        .sources
-        .values()
-        .any(|source| source.mixable() > 0 && source.tracked.iter().any(|tracked| tracked.writing));
+    let still_writing = state.sources.values().any(|source| {
+        source.mixable(written) > 0 && source.tracked.iter().any(|tracked| tracked.writing)
+    });
     if !running && frames < start_frames && still_writing {
         0
     } else {
@@ -903,11 +1113,16 @@ fn mix_sources(state: &mut State, frames: u64, written: u64, mix: &mut Vec<f32>)
     mix.clear();
     mix.resize(frame_count * channels, 0.0);
     for source in state.sources.values_mut() {
-        let take = source.mixable().min(frames);
-        if take == 0 {
+        if source.mixable(written) == 0 {
             continue;
         }
         source.resumed = false;
+        let take = source.unmixed().min(frames);
+        source.start_voices(written, take);
+        source.mix_voices(written, mix);
+        if take == 0 {
+            continue;
+        }
         let offset =
             usize::try_from(source.mixed_end - source.data_start).unwrap_or(usize::MAX) * channels;
         let count = usize::try_from(take).unwrap_or(usize::MAX) * channels;
@@ -951,6 +1166,7 @@ fn carry_out(
                 let cut = source.mixed_end;
                 source.truncate(cut);
                 source.events.clear();
+                source.voices.clear();
                 for tracked in source.tracked.drain(..) {
                     notes.push((
                         Arc::clone(&source.listener),
@@ -988,6 +1204,9 @@ fn carry_out(
                 source
                     .events
                     .retain(|pending| pending.utterance != utterance);
+                source
+                    .voices
+                    .retain(|voice| voice.utterance != Some(utterance));
                 notes.push((
                     Arc::clone(&source.listener),
                     PlaybackEvent::Ended {
@@ -1085,6 +1304,7 @@ fn end_all(
         let cut = source.mixed_end;
         source.truncate(cut);
         source.events.clear();
+        source.voices.clear();
         for tracked in source.tracked.drain(..) {
             notes.push((
                 Arc::clone(&source.listener),
