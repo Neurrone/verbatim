@@ -173,6 +173,20 @@ spoken with a space between one line's last word and the next line's
 first, never as one run-together word. A text made only of spaces
 and line breaks is blank.
 
+### A word of one character
+
+When NVDA speaks a word or a character of text, such as the word at the
+caret after Control with Left or Right Arrow, or the review cursor's
+word, and that text is a single character once surrounding white space
+is set aside, it spells it rather than speaking it as text: the
+character is spoken by its name, as a character is when the caret moves
+over it. A full stop that the application's word unit counts as a word of
+its own (Windows 11 Notepad's does, after the last word of a sentence)
+is therefore spoken "dot", where as text, at the default symbol level,
+it would say nothing. A word of two or more characters is spoken as
+text. (`getTextInfoSpeech` and `_getTextInfoSpeech_considerSpelling` in
+`speech/speech.py`.)
+
 ### Capitals when spelling
 
 When NVDA spells, whether spelling a word or line on request or speaking
