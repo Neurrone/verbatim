@@ -7,9 +7,9 @@ use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, Effect, Input, Message,
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PreviousSelection,
-    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, SelectionChange, SelectionText,
-    SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
+    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
+    SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
     UtteranceSegment,
 };
 
@@ -1021,4 +1021,136 @@ fn held_anchors_name_every_position_the_state_keeps() {
     assert!(anchors.contains(&TextAnchor(100)));
     assert_eq!(anchors.len(), 1);
     assert!(state.held_nodes()[&OUTPOST].contains(&id(5)));
+}
+
+/// Focuses a document holding `value`, returning what the focus
+/// announcement spoke.
+fn focus_with_value(state: &mut SrState, states: StateSet, value: &str) -> Vec<UtteranceSegment> {
+    let snapshot = NodeSnapshot {
+        value: Some(value.to_owned()),
+        ..node(5, Role::Document, states)
+    };
+    spoken(&reduce(
+        state,
+        &event(NormalizedEvent::FocusChanged {
+            node: snapshot,
+            foreground: false,
+            ancestors: Vec::new(),
+            ancestors_unknown: false,
+            selected_child: None,
+        }),
+    ))
+}
+
+fn caret_moved(selection: Option<Selection>, text: &str) -> Input {
+    event(NormalizedEvent::CaretMoved {
+        node_id: id(5),
+        caret: CaretReport {
+            line: line(text, 100, 0),
+            selection,
+        },
+    })
+}
+
+#[test]
+fn a_focused_document_says_its_caret_line_and_not_its_value() {
+    let mut state = SrState::new();
+    let announced = focus_with_value(&mut state, StateSet::new(), "gamma\rdelta\r");
+    assert_eq!(
+        announced,
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Document)),
+        ]
+    );
+    // The first caret report ends the announcement with the caret's line.
+    let effects = reduce(&mut state, &caret_moved(None, "gamma\r"));
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("gamma")]);
+    // A later one says nothing by itself.
+    assert_eq!(
+        spoken(&reduce(&mut state, &caret_moved(None, "delta\r"))),
+        []
+    );
+}
+
+#[test]
+fn an_empty_focused_field_is_blank() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "");
+    assert_eq!(
+        spoken(&reduce(&mut state, &caret_moved(None, ""))),
+        vec![message(Message::Blank)]
+    );
+}
+
+#[test]
+fn a_focused_field_with_text_selected_says_the_selection() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "alpha\rdelta epsilon\r");
+    let selection = Selection {
+        start: TextPosition::at(TextAnchor(101)),
+        end: TextPosition::at(TextAnchor(102)),
+    };
+    let effects = reduce(&mut state, &caret_moved(Some(selection), "delta epsilon\r"));
+    assert_eq!(spoken(&effects), []);
+    let asked = request(&effects);
+    assert_eq!(
+        asked.op,
+        TextOp::ReadRange {
+            start: TextPoint::At(selection.start),
+            end: TextPoint::At(selection.end),
+        }
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            asked.query_id,
+            TextReply::Range {
+                text: "delta epsilon".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("delta epsilon".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn a_focus_without_text_says_its_value_instead() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "plain value");
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::NoText { node_id: id(5) }),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::value("plain value")]
+    );
+}
+
+#[test]
+fn a_protected_field_never_says_its_text() {
+    let mut state = SrState::new();
+    let protected = StateSet::new().with(State::Protected);
+    let announced = focus_with_value(&mut state, protected, "secret");
+    assert!(
+        !announced
+            .iter()
+            .any(|segment| matches!(segment.content, SegmentContent::Value(_))),
+        "{announced:?}"
+    );
+    assert_eq!(
+        spoken(&reduce(&mut state, &caret_moved(None, "secret"))),
+        []
+    );
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::NoText { node_id: id(5) }),
+    );
+    assert_eq!(spoken(&effects), []);
 }

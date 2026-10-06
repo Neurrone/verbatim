@@ -242,7 +242,8 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
 /// Speaks an activation's outcome, as NVDA's review activate does: the
 /// action ("Activate") when something was activated, else "No action".
 /// Routes the answer to a text request to whatever made it: a caret key
-/// waiting for evidence, a review or text command, or say-all. An answer
+/// waiting for evidence, a focus's selected text, a review or text command,
+/// or say-all. An answer
 /// nothing waits for any more (superseded by a newer request, or a
 /// say-all's caret movement) is dropped.
 fn reduce_text_completed(
@@ -256,6 +257,12 @@ fn reduce_text_completed(
         .take_if(|pending| pending.query_id == query_id)
     {
         return editing::caret_reply(state, trace_id, &pending, reply);
+    }
+    if let Some(focus_text) = state
+        .focus_text
+        .take_if(|pending| pending.selection_query == Some(query_id))
+    {
+        return editing::focus_selection(state, trace_id, focus_text.node, reply);
     }
     if let Some(pending) = state
         .pending_text
@@ -363,8 +370,9 @@ fn reduce_event(
         }
         NormalizedEvent::CaretMoved { node_id, caret } => {
             editing::update_caret(state, *node_id, caret.clone());
-            Vec::new()
+            editing::focus_caret(state, trace_id, *node_id)
         }
+        NormalizedEvent::NoText { node_id } => editing::focus_value(state, trace_id, *node_id),
         NormalizedEvent::TextChanged { node_id } => {
             editing::text_changed(state, trace_id, *node_id)
         }
@@ -610,6 +618,7 @@ fn reduce_focus_changed(
         return effects;
     }
 
+    editing::await_focus_text(state, report.node);
     effects.extend(focus_speech(trace_id, report, foreground_window, entered));
     effects
 }
@@ -627,6 +636,7 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
         effects.push(Effect::StopSpeech);
     }
     state.pending_caret = None;
+    state.focus_text = None;
     state.typed_word.clear();
     state.held_typing.clear();
     if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
@@ -685,13 +695,16 @@ fn foreground_changed(
 
 /// The speech for a new focus: an unannounced foreground window, then each
 /// entered container as its own utterance, valid while the focus is inside
-/// it, then the focus, valid while it is the focus.
+/// it, then the focus, valid while it is the focus. A focus that may have
+/// text leaves its value out, since its text follows
+/// (`editing::await_focus_text`).
 fn focus_speech(
     trace_id: TraceId,
     report: &FocusReport<'_>,
     foreground_window: Option<&NodeSnapshot>,
     entered: Vec<&NodeSnapshot>,
 ) -> Vec<Effect> {
+    let reads_text = editing::may_have_text(report.node.role);
     let mut effects = Vec::new();
     if let Some(top) = foreground_window {
         effects.push(Effect::Speak(Utterance {
@@ -724,7 +737,13 @@ fn focus_speech(
             }),
         }));
     }
-    let mut segments = node_segments(report.node, Reason::Focus);
+    let mut segments = if reads_text && report.node.value.is_some() {
+        let mut node = report.node.clone();
+        node.value = None;
+        node_segments(&node, Reason::Focus)
+    } else {
+        node_segments(report.node, Reason::Focus)
+    };
     // A selection container introduces its selected item right after
     // itself — the roadmap's "announce a focused list's selected item".
     if let Some(selected) = report.selected_child {
@@ -797,6 +816,12 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
         .is_some_and(|pending| pending.node.outpost() == outpost)
     {
         state.pending_caret = None;
+    }
+    if state
+        .focus_text
+        .is_some_and(|pending| pending.node.outpost() == outpost)
+    {
+        state.focus_text = None;
     }
     if state
         .pending_text
@@ -1194,14 +1219,10 @@ pub(crate) fn flat_review_command(
             }
             None => (line.0, line, Some(Message::Top)),
         },
-        ReviewCommand::ReviewNextLine => {
-            if line.1 >= text.len() {
-                (line.0, line, Some(Message::Bottom))
-            } else {
-                let span = review::line_span(&text, line.1 + 1);
-                (span.0, span, None)
-            }
-        }
+        ReviewCommand::ReviewNextLine => match review::next_line_span(&text, line.0) {
+            Some(span) => (span.0, span, None),
+            None => (line.0, line, Some(Message::Bottom)),
+        },
         // Current-line and start-of-line both land the cursor at the line
         // start and read the whole line; the only difference a text model
         // (M4) will draw between them is the reported position, not the
@@ -1551,7 +1572,7 @@ fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
 
 /// The utterance-source metadata describing `node`, for presentation
 /// themes (decision D12).
-fn source_of(node: &NodeSnapshot) -> UtteranceSource {
+pub(crate) fn source_of(node: &NodeSnapshot) -> UtteranceSource {
     UtteranceSource {
         role: node.role,
         rect: node.details.rect,

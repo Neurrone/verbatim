@@ -639,7 +639,7 @@ impl Worker<'_> {
                 attempt,
                 held,
             } => self.resolve_focus(&runtime_id, trace, attempt, held),
-            Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms),
+            Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
         }
     }
 
@@ -658,7 +658,16 @@ impl Worker<'_> {
     /// Reports the caret of `node_id` as `CaretMoved`, when it is still the
     /// focus and the worker has not read its caret since the event that
     /// asked: a caret key's answer, read after the event, already told Core.
-    fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+    /// For the report that follows a new focus (`after_focus`), a focus with
+    /// no text to read, or whose caret could not be read, is reported as
+    /// `NoText`, and Core speaks its value instead of a line.
+    fn caret_of(
+        &mut self,
+        node_id: NodeId,
+        trace: TraceId,
+        observed_at_ms: u64,
+        after_focus: bool,
+    ) {
         if !self.is_focus(node_id)
             || self
                 .context
@@ -666,8 +675,10 @@ impl Worker<'_> {
         {
             return;
         }
-        let Some(caret) = text_reads::report_caret(self.context, node_id) else {
-            return;
+        let event = match text_reads::report_caret(self.context, node_id) {
+            Some(caret) => NormalizedEvent::CaretMoved { node_id, caret },
+            None if after_focus => NormalizedEvent::NoText { node_id },
+            None => return,
         };
         let backend = if self.context.uia_registry.runtime_id_of(node_id).is_some() {
             Backend::Uia
@@ -675,21 +686,20 @@ impl Worker<'_> {
             Backend::Msaa
         };
         let window = self.context.tracking().window;
-        self.emit(
-            trace,
-            observed_at_ms,
-            backend,
-            window,
-            NormalizedEvent::CaretMoved { node_id, caret },
-        );
+        self.emit(trace, observed_at_ms, backend, window, event);
     }
 
-    /// Asks for the caret of a newly reported focus that may have text, and
-    /// moves the subscription to caret and text changes to it (to nothing
-    /// for a focus without text, or one read through MSAA, whose caret
-    /// events come from the hooks).
+    /// Asks for the caret of a newly reported focus that may have text, or
+    /// whose role says it may (Core waits to hear which before it speaks
+    /// the line or the value), and moves the subscription to caret and text
+    /// changes to it (to nothing for a focus without text, or one read
+    /// through MSAA, whose caret events come from the hooks).
     fn follow_text(&self, node: &NodeSnapshot, trace: TraceId) {
         let has_text = text_reads::may_have_text(self.context, node);
+        let role_has_text = matches!(
+            node.role,
+            Role::EditableText | Role::Document | Role::Terminal
+        );
         if let Some(subscription) = self.context.text_events.get() {
             let element = has_text
                 .then(|| self.context.uia_registry.element_of(node.id))
@@ -699,7 +709,7 @@ impl Worker<'_> {
                 None => verbatim_uia::Scope::Nothing,
             });
         }
-        if has_text {
+        if has_text || role_has_text {
             self.context.intake.push(Entry {
                 item: Item::CaretOf { node_id: node.id },
                 trace,
@@ -905,7 +915,7 @@ impl Worker<'_> {
                         self.context
                             .msaa_registry
                             .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                    self.caret_of(node_id, trace, observed_at_ms);
+                    self.caret_of(node_id, trace, observed_at_ms, false);
                 }
                 return;
             }
@@ -1001,7 +1011,7 @@ impl Worker<'_> {
                     .uia_registry
                     .existing_id(&event.parts.runtime_id)
                 {
-                    self.caret_of(node_id, trace, observed_at_ms);
+                    self.caret_of(node_id, trace, observed_at_ms, false);
                 }
                 return;
             }

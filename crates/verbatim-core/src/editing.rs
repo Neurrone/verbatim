@@ -18,13 +18,13 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, NodeId,
-    NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, SelectionChange, SelectionText,
-    SpeechPriority, State, TextOp, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
-    Utterance, UtteranceSegment,
+    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, FocusValidity,
+    NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, SelectionChange,
+    SelectionText, SpeechPriority, State, TextOp, TextPoint, TextReply, TextRequest, TextUnit,
+    TraceId, TypingEcho, Utterance, UtteranceSegment,
 };
 
-use crate::state::{CaretContext, PendingCaret, ReviewPosition, ReviewText, SrState};
+use crate::state::{CaretContext, FocusText, PendingCaret, ReviewPosition, ReviewText, SrState};
 use crate::text;
 
 /// The most bytes of a word typed so far that word echo keeps; a longer
@@ -80,6 +80,9 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 pub(crate) fn caret_key(state: &mut SrState, key: CaretKey) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
     state.typed_word.clear();
+    // The key's own report says where the caret went; the focus's text at
+    // the caret before it is no longer worth hearing.
+    state.focus_text = None;
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };
@@ -303,6 +306,150 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: CaretReport
         line,
         selection: caret.selection,
     });
+}
+
+/// Sets the state to wait for a new focus's text at the caret, which it
+/// says in place of its value (`docs/nvda/speech.md`, "What an object with
+/// text says"): an object that may have text does, once the outpost's first
+/// caret report tells Core what that text is. Its name and role are not held
+/// back for it. A protected field leaves its value out and never has its
+/// text read.
+pub(crate) fn await_focus_text(state: &mut SrState, node: &NodeSnapshot) {
+    if may_have_text(node.role) && !node.states.contains(State::Protected) {
+        state.focus_text = Some(FocusText {
+            node: node.id,
+            selection_query: None,
+        });
+    }
+}
+
+/// Ends the announcement of a focus with text once its first caret report
+/// has arrived (`docs/nvda/speech.md`, "What an object with text says"):
+/// the caret's line, or, when text is selected, asks the outpost for the
+/// selected text, which [`focus_selection`] speaks.
+pub(crate) fn focus_caret(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
+    let Some(pending) = state
+        .focus_text
+        .filter(|pending| pending.node == node && pending.selection_query.is_none())
+    else {
+        return Vec::new();
+    };
+    let Some(caret) = state.caret.as_ref().filter(|caret| caret.node == node) else {
+        return Vec::new();
+    };
+    if let Some(selection) = caret.selection {
+        let query_id = state.allocate_query_id();
+        state.focus_text = Some(FocusText {
+            selection_query: Some(query_id),
+            ..pending
+        });
+        return vec![Effect::Text(TextRequest {
+            query_id,
+            node_id: node,
+            op: TextOp::ReadRange {
+                start: TextPoint::At(selection.start),
+                end: TextPoint::At(selection.end),
+            },
+        })];
+    }
+    state.focus_text = None;
+    focus_line(state, trace_id, node)
+}
+
+/// Speaks the selected text a focus had when it gained the focus, read for
+/// [`focus_caret`]: "selected" and the text, or its number of characters
+/// when there are 512 or more. With no selected text after all, or no
+/// answer, the caret's line is spoken instead.
+pub(crate) fn focus_selection(
+    state: &SrState,
+    trace_id: TraceId,
+    node: NodeId,
+    reply: TextReply,
+) -> Vec<Effect> {
+    let text = match reply {
+        TextReply::Range { text, .. } => text,
+        TextReply::Gone => return Vec::new(),
+        _ => String::new(),
+    };
+    let characters = u32::try_from(verbatim_text::graphemes(&text).len()).unwrap_or(u32::MAX);
+    if characters == 0 {
+        return focus_line(state, trace_id, node);
+    }
+    let selected = if characters >= SELECTION_SPOKEN_AS_COUNT {
+        SelectionText::Characters(characters)
+    } else {
+        SelectionText::Text(text)
+    };
+    focus_speech(
+        state,
+        trace_id,
+        node,
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(selected),
+        ))],
+    )
+}
+
+/// Speaks the value of a focus that turned out to have no text to read, as
+/// any object without text speaks its value.
+pub(crate) fn focus_value(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
+    if state.focus_text.is_none_or(|pending| pending.node != node) {
+        return Vec::new();
+    }
+    state.focus_text = None;
+    let Some(value) = state
+        .focus
+        .as_ref()
+        .and_then(|focus| focus.snapshot.value.clone())
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    focus_speech(state, trace_id, node, vec![UtteranceSegment::value(value)])
+}
+
+/// Speaks the caret's line of the focus `node`, "blank" when it has nothing
+/// to read.
+fn focus_line(state: &SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
+    let Some(caret) = state.caret.as_ref().filter(|caret| caret.node == node) else {
+        return Vec::new();
+    };
+    let grid = state
+        .focus
+        .as_ref()
+        .is_some_and(|focus| is_grid(focus.snapshot.role));
+    let segments = text::text_segments(
+        text::line_content(&caret.line.text, grid),
+        caret.line.language_at(0),
+    );
+    focus_speech(state, trace_id, node, segments)
+}
+
+/// The rest of a focus announcement, queued and valid while `node` is the
+/// focus, as the announcement itself is.
+fn focus_speech(
+    state: &SrState,
+    trace_id: TraceId,
+    node: NodeId,
+    segments: Vec<UtteranceSegment>,
+) -> Vec<Effect> {
+    let Some(focus) = state
+        .focus
+        .as_ref()
+        .filter(|focus| focus.alive && focus.snapshot.id == node)
+    else {
+        return Vec::new();
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments,
+        source: Some(crate::reduce::source_of(&focus.snapshot)),
+        validity: Some(FocusValidity {
+            node,
+            had_focus: true,
+        }),
+    })]
 }
 
 /// Handles text typed into the focused application: echoes characters and

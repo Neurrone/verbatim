@@ -20,6 +20,13 @@ Windows API, and `cargo xtask ci` checks that it does not.
   tag when the provider gives one, and otherwise from its characters (Han
   without kana is Chinese; Japanese mixes kanji with kana).
 - `Segmenter::sentences`: sentences by Unicode's sentence rules.
+- `is_line_break`, `lines`, and `line_at`: lines of text Core holds whole,
+  such as an object's value reviewed as flat text. Any line break ends a
+  line: a carriage return and line feed together are one break, and a
+  carriage return alone (Windows 11 Notepad's), a line feed alone, the
+  vertical tab, the form feed, the next-line control, and Unicode's line
+  and paragraph separators are each one. An offset in a break belongs to
+  the line the break ends.
 - `cell_width`: how many terminal cells text takes, two for wide East Asian
   characters and none for combining marks.
 - `trim_padding`: a terminal line without its trailing padding, whatever

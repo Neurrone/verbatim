@@ -519,8 +519,30 @@ fn is_capital(text: &str) -> bool {
 /// without a set size (which has no useful spoken form), and any future
 /// variant until it is given a spoken form here (`SegmentContent` is
 /// non-exhaustive). `language` is the segment's language, for the
-/// character table.
+/// character table. A line break, or a null character, inside the text is
+/// spoken as a space, as NVDA speaks it (`docs/nvda/speech.md`, "Line
+/// breaks in spoken text"), so the last word of one line never runs into
+/// the first of the next.
 fn spoken_form(content: &SegmentContent, language: Option<&str>) -> Option<String> {
+    let mut text = words_of(content, language)?;
+    if text.contains(is_break) {
+        text = text.replace(is_break, " ");
+    }
+    Some(text)
+}
+
+/// A character spoken as a space inside text: a line break of any kind, or
+/// a null character.
+fn is_break(c: char) -> bool {
+    matches!(
+        c,
+        '\0' | '\r' | '\n' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// The words for one span, as [`spoken_form`] describes, before line breaks
+/// become spaces.
+fn words_of(content: &SegmentContent, language: Option<&str>) -> Option<String> {
     match content {
         SegmentContent::Text(text)
         | SegmentContent::Label(text)
@@ -682,6 +704,16 @@ mod tests {
         let sequence = plain().flatten(&utterance, UtteranceId(1));
         assert_eq!(sequence.text(), "Settings menu item");
         assert!(!sequence.has_marks());
+    }
+
+    #[test]
+    fn line_breaks_inside_text_are_spoken_as_spaces() {
+        let utterance = utterance_of(vec![
+            UtteranceSegment::text("gamma\rdelta\r\nepsilon\u{2028}zeta"),
+            UtteranceSegment::value("one\ntwo"),
+        ]);
+        let sequence = plain().flatten(&utterance, UtteranceId(1));
+        assert_eq!(sequence.text(), "gamma delta  epsilon zeta one two");
     }
 
     #[test]

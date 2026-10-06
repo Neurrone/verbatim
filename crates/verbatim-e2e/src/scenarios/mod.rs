@@ -25,6 +25,30 @@ pub(crate) mod switch_to_onecore;
 pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
 
+/// Waits for Notepad's window, then its text area, then the text the text
+/// area's announcement ends with, and returns that text once heard in full.
+///
+/// The text area is Windows 11 Notepad's UIA document, "Text editor
+/// document", or classic Notepad's Win32 edit control, "Text Editor edit",
+/// as GitHub's Windows Server runners have it; both hold. Either way the
+/// announcement leaves the text's value out and is followed by the caret's
+/// line, or the selection, as its own utterance (`docs/nvda/speech.md`,
+/// "What an object with text says"): the next utterance after the text
+/// area, which is what is returned. Waiting for it to be heard means the
+/// caller's next key cannot cut it off.
+pub(crate) fn expect_notepad_text(scenario: &mut Scenario, timeout: Duration) -> String {
+    let text_area = scenario
+        .speech()
+        .expect_in_order_capturing(&["Notepad", "Text "], timeout);
+    assert!(
+        ["Text editor document", "Text Editor edit"].contains(&text_area.as_str()),
+        "Notepad's text area was announced as {text_area:?}, not by its name and role alone"
+    );
+    scenario
+        .speech()
+        .expect_change_capturing(&text_area, timeout)
+}
+
 /// Opens the Verbatim menu with Verbatim+V and waits for the popup to be
 /// announced before returning, so the caller's very next arrow key lands
 /// inside a menu that actually exists.

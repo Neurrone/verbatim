@@ -5,8 +5,8 @@
 //! with no text-pattern support yet (that arrives in M4). An object's review
 //! text is therefore its flat presentation: its value when it has one (an
 //! edit control's content), otherwise its name (a button's or list item's
-//! label). Navigation is ordinary Unicode string work: lines split on `\n`,
-//! words on whitespace runs, characters by `char`. Grapheme-cluster
+//! label). Navigation is ordinary Unicode string work: lines split on any
+//! line break (`verbatim_text::lines`), words on whitespace runs, characters by `char`. Grapheme-cluster
 //! characters and word-boundary segmentation are deliberately left for M4,
 //! where the character-description table and text model land; M3 walks
 //! `char`s and whitespace, which reads correctly for the plain labels and
@@ -24,18 +24,26 @@ pub(crate) fn text_of(node: &NodeSnapshot) -> String {
     node.name.clone().unwrap_or_default()
 }
 
-/// The `[start, end)` character-offset span of the line containing `offset`.
-/// Lines are separated by `\n`; the separator itself belongs to no line. An
-/// offset at or past the end clamps to the last line. Empty text is one
-/// empty line, `[0, 0)`.
+/// The `[start, end)` byte span of the line containing `offset`, without
+/// its line break. Any line break ends a line (`verbatim_text::lines`): a
+/// carriage return and line feed together, either alone, or Unicode's line
+/// and paragraph separators. An offset in a break belongs to the line the
+/// break ends, and one at or past the end to the last line. Empty text is
+/// one empty line, `[0, 0)`.
 #[must_use]
 pub(crate) fn line_span(text: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(text.len());
-    let start = text[..offset].rfind('\n').map_or(0, |index| index + 1);
-    let end = text[offset..]
-        .find('\n')
-        .map_or(text.len(), |index| offset + index);
-    (start, end)
+    let line = verbatim_text::line_at(text, offset);
+    (line.start, line.end)
+}
+
+/// The span of the line after the one containing `offset`, or `None` on the
+/// last line.
+#[must_use]
+pub(crate) fn next_line_span(text: &str, offset: usize) -> Option<(usize, usize)> {
+    verbatim_text::lines(text)
+        .into_iter()
+        .find(|line| line.start > offset)
+        .map(|line| (line.start, line.end))
 }
 
 /// The span of the word containing `offset`: a run of non-whitespace
@@ -165,6 +173,20 @@ mod tests {
         assert_eq!(line_span(text, 13), (13, 18));
         // Past the end clamps to the last line.
         assert_eq!(line_span(text, 99), (13, 18));
+    }
+
+    #[test]
+    fn a_carriage_return_alone_or_with_a_line_feed_ends_a_line() {
+        // Windows 11 Notepad's text ends its lines with a bare carriage
+        // return; gamma and delta are two lines, not one.
+        let text = "gamma\rdelta\r\nepsilon";
+        assert_eq!(line_span(text, 0), (0, 5));
+        assert_eq!(next_line_span(text, 0), Some((6, 11)));
+        assert_eq!(next_line_span(text, 6), Some((13, 20)));
+        assert_eq!(next_line_span(text, 13), None);
+        // The line feed of a carriage return and line feed is still the
+        // line it ends, so the previous line is found from it.
+        assert_eq!(line_span(text, 12), (6, 11));
     }
 
     #[test]

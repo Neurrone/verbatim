@@ -16,6 +16,9 @@
 //!   tabs is one segment, so a position anywhere in it belongs to the same
 //!   word, as in NVDA.
 //! - Sentences ([`Segmenter::sentences`]) follow Unicode's sentence rules.
+//! - Lines ([`lines`], [`line_at`]) end at any line break
+//!   ([`is_line_break`]): a carriage return and line feed together, either
+//!   alone, or Unicode's line and paragraph separators.
 //! - [`cell_width`] is how many terminal cells text takes; [`trim_padding`]
 //!   removes a terminal line's trailing padding, whatever whitespace it is.
 //!
@@ -62,6 +65,55 @@ pub fn cell_width(text: &str) -> usize {
 #[must_use]
 pub fn trim_padding(line: &str) -> &str {
     line.trim_end_matches(char::is_whitespace)
+}
+
+/// Whether `c` ends a line: a carriage return, a line feed, the vertical
+/// tab, the form feed, the next-line control, or Unicode's line or
+/// paragraph separator. A carriage return on its own is a line break, as
+/// Windows 11 Notepad's text gives it; a carriage return followed by a line
+/// feed is one break ([`lines`]).
+#[must_use]
+pub fn is_line_break(c: char) -> bool {
+    matches!(
+        c,
+        '\r' | '\n' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// The lines of `text`, each as the byte range of its content without the
+/// break that ends it, in order. A carriage return followed by a line feed
+/// is one break; any other [`is_line_break`] character is a break of its
+/// own, so two in a row end an empty line. Text that ends with a break has
+/// an empty last line after it, and empty text is one empty line.
+#[must_use]
+pub fn lines(text: &str) -> Vec<Range<usize>> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
+        if !is_line_break(c) {
+            continue;
+        }
+        lines.push(start..index);
+        start = index + c.len_utf8();
+        if c == '\r' && chars.next_if(|&(_, next)| next == '\n').is_some() {
+            start += 1;
+        }
+    }
+    lines.push(start..text.len());
+    lines
+}
+
+/// The content of the line containing byte `offset`, without its break.
+/// An offset in a line's break belongs to the line the break ends, and an
+/// offset past the end to the last line.
+#[must_use]
+pub fn line_at(text: &str, offset: usize) -> Range<usize> {
+    lines(text)
+        .into_iter()
+        .take_while(|line| line.start <= offset)
+        .last()
+        .unwrap_or(0..0)
 }
 
 /// Which word segmentation to use for a text.
@@ -233,6 +285,40 @@ mod tests {
         let text = "ae\u{301}b";
         assert_eq!(grapheme_at(text, 2), Some(1..4));
         assert_eq!(grapheme_at(text, text.len()), None);
+    }
+
+    #[test]
+    fn every_kind_of_line_break_ends_a_line() {
+        for text in [
+            "alpha\r\nbeta",
+            "alpha\rbeta",
+            "alpha\nbeta",
+            "alpha\u{2028}beta",
+            "alpha\u{2029}beta",
+        ] {
+            assert_eq!(texts(text, &lines(text)), ["alpha", "beta"], "{text:?}");
+        }
+        // A carriage return and a line feed the other way round are two
+        // breaks, with an empty line between them.
+        let text = "a\n\rb";
+        assert_eq!(texts(text, &lines(text)), ["a", "", "b"]);
+        // Text ending in a break has an empty last line; empty text is one
+        // empty line.
+        let text = "gamma\rdelta\r";
+        assert_eq!(texts(text, &lines(text)), ["gamma", "delta", ""]);
+        assert_eq!(texts("", &lines("")), [""]);
+    }
+
+    #[test]
+    fn an_offset_in_a_break_belongs_to_the_line_it_ends() {
+        let text = "gamma\r\ndelta\repsilon";
+        assert_eq!(line_at(text, 0), 0..5);
+        assert_eq!(line_at(text, 5), 0..5);
+        assert_eq!(line_at(text, 6), 0..5);
+        assert_eq!(line_at(text, 7), 7..12);
+        assert_eq!(line_at(text, 12), 7..12);
+        assert_eq!(line_at(text, 13), 13..20);
+        assert_eq!(line_at(text, 99), 13..20);
     }
 
     #[test]

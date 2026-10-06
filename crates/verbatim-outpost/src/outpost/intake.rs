@@ -83,8 +83,9 @@ pub(super) enum Item {
     /// The nodes Core still holds, and the position of the last message it
     /// has handled: release the rest.
     NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
-    /// Report the caret of the focus `node_id` names, which has text: just
-    /// after it was reported, or after an MSAA caret event on it.
+    /// Report the caret of the focus `node_id` names, which has text or
+    /// whose role says it may, just after it was reported: as `CaretMoved`,
+    /// or as `NoText` when there is no caret to report.
     CaretOf { node_id: verbatim_model::NodeId },
     /// A follow-up finding the live element of a focus reported from its
     /// event alone, for the focus-following property subscription.

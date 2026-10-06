@@ -232,7 +232,13 @@ the contract the Windows side implements.
   possible, and on every later caret or selection change in the focus,
   coalesced so a burst sends only the latest. It keeps Core's copy of the
   caret current (Backspace knows what it deleted, the review cursor
-  follows the caret); it speaks nothing by itself.
+  follows the caret). The first one after a focus ends the focus
+  announcement with the selected text or the caret's line, in place of the
+  value the announcement left out; any later one speaks nothing by itself.
+- `NormalizedEvent::NoText { node_id }`: sent in place of that first
+  `CaretMoved` when a focus whose role may have text (edit field, document,
+  terminal) has no text the outpost can read, or its caret could not be
+  read. Core then speaks the focus's value, as for any object without text.
 - `NormalizedEvent::TextChanged { node_id }`: the node's text changed.
   Characters typed into a terminal wait for this before Core echoes them.
 

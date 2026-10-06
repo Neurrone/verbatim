@@ -39,9 +39,9 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    scenario
-        .speech()
-        .expect_in_order(&["Notepad", "Text editor"], STEP_TIMEOUT);
+    // Notepad's text area, and the line at its caret, wherever Notepad put
+    // the caret on opening.
+    let _ = super::expect_notepad_text(scenario, STEP_TIMEOUT);
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
