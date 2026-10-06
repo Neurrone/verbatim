@@ -80,11 +80,15 @@ tables), and a title that tracks the active category. The Speech panel is
 generated from the settings host's descriptors; every control change
 applies live, OK and Apply persist, and Cancel reverts when clicked or
 pressed with Space. Escape and window close follow the dialog's escape id.
-Two known defects (audit item 7) wait for the GUI port, which rewrites this
-logic: Enter on Cancel or Apply is handled as Enter on the dialog, so it
-commits the changes and closes; and Enter, Ctrl+S, and Ctrl+Tab are bound
-only to the dialog and its three buttons, so they do nothing while focus is
-inside the Speech panel.
+What a key does is decided by the pure `keys` module (`route_key`, from
+the key and the focused control, with tests): Enter on a button
+activates that button, so Enter on Cancel cancels and Enter on Apply
+applies; Enter on the synthesizer's name opens Change; Enter elsewhere is
+OK; Control+Tab changes category and Control+S applies. One known defect
+(audit item 7) waits for the GUI port's dialog-wide key hook: the
+handlers are bound only to the dialog and its three buttons, so Enter,
+Control+S, and Control+Tab do nothing while focus is inside the Speech
+panel.
 
 The systrayList replica (M3) composes the two new modules:
 `OpenShellItemList` focuses the existing dialog when one is open (the

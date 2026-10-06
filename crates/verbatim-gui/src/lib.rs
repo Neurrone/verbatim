@@ -19,6 +19,7 @@
 mod dialog;
 mod foreground;
 mod hidden_frame;
+mod keys;
 pub mod list_dialog;
 mod plan;
 pub mod shell_items;

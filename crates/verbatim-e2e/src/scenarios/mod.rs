@@ -15,6 +15,7 @@ pub(crate) mod menu_and_settings_dialog;
 pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod rapid_tabbing_in_settings;
+pub(crate) mod settings_dialog_keys;
 pub(crate) mod settings_toggle;
 pub(crate) mod start_menu_search;
 pub(crate) mod switch_to_onecore;

@@ -80,8 +80,8 @@ use crate::scenario::Scenario;
 use crate::scenarios::{
     explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
     notepad_and_verbatim_menu, object_navigation_in_settings, rapid_tabbing_in_settings,
-    settings_toggle, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree,
+    settings_dialog_keys, settings_toggle, start_menu_search, switch_to_onecore,
+    synth_host_crash_recovery, system_information_tree,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -254,6 +254,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: explorer_folder_window::setup,
         body: explorer_folder_window::body,
         teardown: explorer_folder_window::teardown,
+    },
+    ScenarioDef {
+        name: "settings_dialog_keys",
+        group: Group::Speech,
+        target_images: &[],
+        setup: settings_dialog_keys::setup,
+        body: settings_dialog_keys::body,
+        teardown: settings_dialog_keys::teardown,
     },
     ScenarioDef {
         name: "settings_toggle",

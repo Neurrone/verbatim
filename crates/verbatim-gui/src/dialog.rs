@@ -19,12 +19,15 @@ use wxdragon::prelude::*;
 use verbatim_i18n::messages;
 use verbatim_speech::{SettingValue, SpeechSettingsHost};
 
+use crate::keys::{DialogButton, FocusedControl, Key, KeyAction, KeyPress, route_key};
 use crate::plan::{ControlPlan, accessible_name, cycle_index, plan_for};
 
 /// Virtual-key codes reported by wxWidgets key-down events. wxWidgets does not
 /// expose these as constants through wxdragon, so we name the few we route.
 const KEY_TAB: i32 = 9;
 const KEY_ENTER: i32 = 13;
+/// wxWidgets' `WXK_NUMPAD_ENTER`.
+const KEY_NUMPAD_ENTER: i32 = 370;
 const KEY_S: i32 = 83;
 
 /// One settings category: its display name and a constructor that builds its
@@ -260,6 +263,7 @@ fn install_all_shortcuts(
     let (ok, cancel, apply) = buttons;
     bind_shortcuts(
         &dialog,
+        FocusedControl::Other,
         dialog,
         list,
         activate.clone(),
@@ -269,6 +273,7 @@ fn install_all_shortcuts(
     );
     bind_shortcuts(
         &ok,
+        FocusedControl::Button(DialogButton::Ok),
         dialog,
         list,
         activate.clone(),
@@ -278,6 +283,7 @@ fn install_all_shortcuts(
     );
     bind_shortcuts(
         &cancel,
+        FocusedControl::Button(DialogButton::Cancel),
         dialog,
         list,
         activate.clone(),
@@ -287,6 +293,7 @@ fn install_all_shortcuts(
     );
     bind_shortcuts(
         &apply,
+        FocusedControl::Button(DialogButton::Apply),
         dialog,
         list,
         activate.clone(),
@@ -296,10 +303,13 @@ fn install_all_shortcuts(
     );
 }
 
-/// Installs the dialog-wide shortcut key-down handler on one widget.
+/// Installs the dialog-wide shortcut key-down handler on one widget,
+/// `focused` saying which control it is, and carries out what
+/// [`route_key`] decides.
 #[allow(clippy::too_many_arguments)]
 fn bind_shortcuts<W: WindowEvents>(
     widget: &W,
+    focused: FocusedControl,
     dialog: Dialog,
     list: ListCtrl,
     activate: Activator,
@@ -309,26 +319,40 @@ fn bind_shortcuts<W: WindowEvents>(
 ) {
     widget.on_key_down(move |event| {
         if let WindowEventData::Keyboard(key) = &event {
-            let code = key.get_key_code().unwrap_or(0);
-            if key.control_down() {
-                match code {
-                    KEY_TAB => {
-                        let next = cycle_index(selected.get(), category_count, !key.shift_down());
-                        activate(next, true);
-                        list.set_focus();
-                        return;
-                    }
-                    KEY_S => {
-                        let _ = host.commit();
-                        return;
-                    }
-                    _ => {}
+            let press = KeyPress {
+                key: match key.get_key_code().unwrap_or(0) {
+                    KEY_ENTER | KEY_NUMPAD_ENTER => Key::Enter,
+                    KEY_TAB => Key::Tab,
+                    KEY_S => Key::S,
+                    _ => Key::Other,
+                },
+                control: key.control_down(),
+                shift: key.shift_down(),
+            };
+            match route_key(press, focused) {
+                KeyAction::CycleCategory { forward } => {
+                    let next = cycle_index(selected.get(), category_count, forward);
+                    activate(next, true);
+                    list.set_focus();
+                    return;
                 }
-            } else if code == KEY_ENTER {
-                // Enter anywhere not consumed by a control activates OK.
-                let _ = host.commit();
-                crate::close_settings(dialog);
-                return;
+                KeyAction::Activate(DialogButton::Ok) => {
+                    let _ = host.commit();
+                    crate::close_settings(dialog);
+                    return;
+                }
+                KeyAction::Activate(DialogButton::Cancel) => {
+                    host.revert();
+                    crate::close_settings(dialog);
+                    return;
+                }
+                KeyAction::Activate(DialogButton::Apply) => {
+                    let _ = host.commit();
+                    return;
+                }
+                // The Change button and the synthesizer's name field have
+                // their own handlers and never carry this one.
+                KeyAction::Activate(DialogButton::ChangeSynthesizer) | KeyAction::PassThrough => {}
             }
         }
         event.skip(true);
@@ -405,7 +429,15 @@ fn build_speech_panel(
         let rebuild = rebuild.clone();
         name.on_key_down(move |event| {
             if let WindowEventData::Keyboard(key) = &event
-                && key.get_key_code() == Some(KEY_ENTER)
+                && matches!(key.get_key_code(), Some(KEY_ENTER | KEY_NUMPAD_ENTER))
+                && route_key(
+                    KeyPress {
+                        key: Key::Enter,
+                        control: key.control_down(),
+                        shift: key.shift_down(),
+                    },
+                    FocusedControl::SynthesizerName,
+                ) == KeyAction::Activate(DialogButton::ChangeSynthesizer)
             {
                 rebuild();
                 return;
