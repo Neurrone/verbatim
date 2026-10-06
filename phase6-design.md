@@ -413,19 +413,98 @@ How each would work in Verbatim:
   buffers. In those cases the outpost falls back to comparing the visible
   screen with the one it read last.
 
-Can the notifications' redraw problem be mitigated? Partly. Full-screen
-programs (`vim`, `less`, `htop`) draw on the alternate screen buffer,
-which has no scrollback, so the outpost could detect that the document is
-no larger than the screen and stop speaking notifications there; a line
-rewritten in place would need its repeated text collapsed within a short
-window. Each mitigation is a heuristic that ends by checking what is on
-screen, which is what diffing does directly, and the password problem
-and conhost's lack of notifications remain.
+### Why notifications exist, and what went wrong with them
 
-Proposed: diffing as described, one code path for both terminals, with
-notifications not used. Windows Terminal's notifications could later
-serve as a cheaper trigger for the same diff, if measurement shows the
-text-change events are the bottleneck.
+From NVDA's history and the Windows Terminal repository, researched
+2026-10-06:
+
+- Windows Terminal added output notifications in 2022
+  (microsoft/terminal#12358) to spare screen readers the cost of diffing
+  the buffer on every text change, after NVDA froze under console floods
+  (nvaccess/nvda#11002). NVDA's author of console support hoped they
+  would avoid text-change floods altogether.
+- NVDA shipped them only behind a flag (nvaccess/nvda#14047), still off by
+  default; the tracking issue (#13781) is open. The problems, none fixed
+  upstream:
+  - Windows Terminal cuts each frame's output into 1,000-character pieces
+    because of a speech API limit, and since its pass-through console
+    mode the pieces follow how the program writes, so a word can arrive
+    in two halves; the terminal cannot know whether more text is coming
+    and its maintainers decline to add timeouts.
+  - Everything a program prints counts as new, including a prompt redrawn
+    in place, with no position and no deletions.
+  - Windows Terminal filters echoed typing by matching recent key presses
+    in upper case, so shifted punctuation is spoken twice and passwords
+    leak; one release announced the whole command line on every key.
+  - Output from an unfocused tab is discarded, not delivered later.
+  - There is no way to detect support; only Windows Terminal's control
+    raises them, and the console host never will.
+- NVDA's diffing troubles were what it read, not diffing as such: the
+  whole buffer every change, and thousands of blank rows on older
+  consoles (#14689). The flood freezes were fixed by coalescing events in
+  C++ (#14888). Diffing only the visible screen made output choppy when
+  it scrolled (#12974), so NVDA compares by line there.
+- NVDA's cap on flood output was reverted because skipped output made
+  terminals unusable (#20888, #20898).
+
+Lessons applied to the design:
+
+- The outpost needs a diff engine whatever else it does, because the
+  console host has no notifications, so notifications are not used.
+  Windows Terminal's notifications are blocked while diffing, or output
+  is reported twice.
+- The anchor is the start of the last line read, not the end of the
+  text: the last line is where prompts, progress bars, and line editing
+  rewrite in place, and it is compared character by character so only
+  what changed is spoken. Lines above it are compared by line.
+- A range does not report its own invalidation: once the scrollback is
+  full, ranges keep their row numbers while the text moves up beneath
+  them. The outpost keeps the anchor line's text and checks it on every
+  read, and treats an error comparing ranges (the alternate screen) as
+  invalidation.
+- Trailing blank lines and padding are trimmed before counting or
+  speaking.
+- Text-change events stay the trigger and the gate for the password
+  rule, coalesced in the outpost with no fixed delay. Windows Terminal
+  has missed text-change events before (microsoft/terminal#10911), so its
+  notification may serve purely as an extra signal that something
+  changed, never as text.
+- The fallback for an invalidated anchor compares the visible screen by
+  line.
+
+### Full-screen programs and the alternate screen
+
+The detection floated earlier, treating a document no larger than the
+screen as the alternate screen, would misfire: a new terminal with a few
+lines of output, or one just cleared, also has a document no larger than
+the screen, and would go silent. Some full-screen programs also draw on
+the main screen (`less -X`). With diffing it is not needed: a full-screen
+program's redraw is a change on the visible screen, compared by line, so
+only lines that changed are spoken.
+
+### The flood policy, reconsidered
+
+NVDA tried what the Terminal panel proposes (speak the tail of a large
+burst, with a sound for the skipped lines) and reverted it within a
+release because users found terminals unusable. NVDA's users could also
+have reviewed the skipped lines with the review cursor, so "nothing is
+lost" did not make the cap acceptable. Before the settings' defaults are
+fixed, Dickson should decide whether the default is to speak every line,
+as NVDA does now, with "skipped N lines" available as an option, or the
+cap of 5 as agreed.
+
+### Generic, not an app module
+
+NVDA's support for the console host and Windows Terminal is in its core,
+not in app modules: an overlay class chosen by the control's UIA class
+name (`TermControl`, and `WPFTermControl` for the terminal embedded in
+Visual Studio) or the console's window class
+(`NVDAObjects/UIA/__init__.py`, `winConsoleUIA.py`); only other terminals
+such as Tera Term get app modules. Verbatim does the same: terminal
+behavior is a generic behavior keyed by the control, so the terminal
+embedded in Visual Studio gets it too, and app modules (M5) adjust only
+one application's quirks. Architecture section 7's sentence placing
+"Terminal-specific behavior" in app modules is amended accordingly.
 
 ## Earcons
 
@@ -473,11 +552,93 @@ first sounds.
 
 ### Sounds
 
-Agreed 2026-10-06: NVDA's sounds for now (`nvda/source/waves`), copied
-into the repository with their provenance noted. Under the provenance
-rule they live with the Windows-specific code (the application crate's
-assets), never in a platform-neutral crate. Generated tones cover beeps
-and progress tones.
+Agreed 2026-10-06: NVDA's sounds for now (`nvda/source/waves`). They are
+data, not code, so the provenance rule for code does not apply to them;
+they live in a top-level `sounds/` directory shared by every platform,
+with a note of their origin and licence (NVDA distributes them under its
+GPL), and are installed beside the program. The platform-neutral code
+only loads files from that directory, so a macOS build would use the same
+sounds. Generated tones cover beeps and progress tones.
+
+### Audio themes
+
+Dickson asked for the abstraction behind earcons to be a theme. Research
+of 2026-10-06 covered JAWS's Speech and Sounds Manager, NVDA's Audio
+Themes and Unspoken add-ons, Earcons and Speech Rules, Emacspeak,
+VoiceOver, and Narrator.
+
+What the others do:
+
+- JAWS: a scheme maps control types, states, text attributes, fonts,
+  colors, indentation, and HTML elements to one behavior each (say
+  nothing, speak replacement text in a voice, play a sound, speak the
+  text in a voice or language). Schemes are chosen per application, cycled
+  with a key, and stored as INI files. Complaints: hard to discover (a
+  dialog of ten tabs and wizards); one behavior per item, so a sound for
+  "check box" and a sound for "checked" conflict; voice aliases must
+  exist in every voice profile; editing a scheme silently copies it as
+  "modified". It has a training mode that plays the sound and then says
+  the word.
+- NVDA add-ons map roles to sound files only, as a folder of files named
+  after the role, may leave roles out and fall back to the default,
+  normalize loudness, preview a theme as you arrow through the list, and
+  all grew an option for sounds during say-all.
+- Emacspeak maps text properties to voice changes defined as relative
+  overlays on the current voice, independent of the synthesizer; sounds
+  are a separate layer. VoiceOver lets each item speak, change pitch, or
+  play a tone, and bundles settings per application as "activities".
+  Narrator has one checkbox, "play sounds instead of announcements", for
+  five cues.
+
+Proposed for Verbatim:
+
+- **Name.** "Audio theme" in the interface and documentation, since
+  "theme" alone reads as a visual theme in Windows and "sound scheme" is
+  Windows' own name for system sounds; `Theme` in code.
+- **What a theme maps.** Semantic keys from D12's spans and from events,
+  never patterns over text: a role (with qualifiers such as heading
+  level), a state and its negation, a text attribute (each attribute on
+  its own, so bold and underline do not need a rule for the pair),
+  structure (entering or leaving a list or table, blank line, skipped
+  lines), and a fixed list of event cues (browse or focus mode, not
+  responding, error, suggestions, progress, start, exit).
+- **What a key maps to.** A record, not a choice of one behavior: a sound
+  (a file, with gain), the speech (the default words, replacement words,
+  or nothing), and a voice style (relative pitch, rate, and volume, as in
+  Emacspeak, defined in the theme rather than per voice). A sound can
+  accompany the words or replace them, which removes JAWS's conflict.
+- **What a theme cannot do.** Verbosity settings and the reducer decide
+  whether something is reported; the theme decides only how it sounds. A
+  theme that silences a word never removes it from braille or review.
+- **Scheduling belongs to the key**, not the theme: span keys are played
+  in the speech stream and cancelled with it; event cues play
+  immediately. The theme chooses whether a role's sound comes at the
+  start of the utterance or where the word would be.
+- **Layers.** A theme may be sparse and names a base theme it falls back
+  to, ending at the plain default, which reproduces speech exactly. The
+  user's changes are stored as a layer over the installed theme, never as
+  a copy. M8's configuration profiles choose the theme per application
+  and may add their own layer.
+- **Packaging.** A theme is a directory holding a TOML manifest (id, name,
+  author, description, version, base, gain, voice styles, mappings) and
+  its sound files; it is shared as that directory zipped. Import installs
+  one; Export writes the active theme with the user's changes as a new
+  one.
+- **Settings.** An "Audio themes" panel: the theme, previewed as you
+  arrow through the list and reverted by Cancel; its description; sound
+  volume; "Also speak what sounds replace" (JAWS's training mode); "Play
+  sounds during say all"; and Customize, New based on this, Import,
+  Export, and Remove. Customize opens a tree of categories (roles,
+  states, text formatting, structure, events) whose items read as a
+  summary ("slider: sound slider.wav, speech silent, voice default"),
+  with a sound choice that plays on Space, a gain, the speech choice, the
+  voice style, "Reset to theme default", and a Preview button that speaks
+  a sample utterance through the edited theme. No wizards and no nested
+  dialogs.
+- **Scope.** This milestone builds the theme model, the plain default,
+  one theme using NVDA's sounds, the settings panel's theme choice,
+  volume, and the two checkboxes. The Customize editor, Import, and Export
+  could follow in M11; Dickson to decide.
 
 ## Core's state
 
