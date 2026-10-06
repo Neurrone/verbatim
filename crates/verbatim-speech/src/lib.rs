@@ -1,8 +1,9 @@
 //! Speech pipeline (architecture section 6).
 //!
-//! Stages in order: utterance, presentation (a theme flattens it to a
-//! [`SpeechSequence`]), silence trimming, synth driver, PCM, and the audio
-//! mixer, which reports when each utterance is heard (decision D17). The
+//! Stages in order: utterance, presentation (the active theme flattens it
+//! to a [`SpeechSequence`] of words and sounds), silence trimming, synth
+//! driver, PCM, and the audio mixer, which plays the sounds at their places
+//! and reports when each utterance is heard (decision D17). The
 //! seams are the synchronous [`SynthDriver`] contract, the data-driven
 //! [`SettingDescriptor`] model mirroring NVDA's driver settings, the
 //! [`SpeechEvents`] observer, and the [`SpeechSettingsHost`] handle the GUI
@@ -20,13 +21,15 @@ mod settings;
 mod theme;
 mod trim;
 
-pub use driver::{IndexMark, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink};
+pub use driver::{
+    IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink,
+};
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};
 pub use manager::{SavedSettingsFn, SpeechControl, SpeechManager, SpeechManagerConfig};
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
-pub use theme::{PlainTheme, Theme};
+pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
 
 /// The live handle the settings GUI uses to inspect and adjust speech.
 ///

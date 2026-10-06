@@ -14,9 +14,10 @@
 
 use std::fmt;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use verbatim_audio::PcmFormat;
+use verbatim_audio::{PcmFormat, Sound};
 use verbatim_model::{TraceId, UtteranceId};
 
 use crate::settings::{SettingDescriptor, SettingId, SettingValue, SynthId};
@@ -28,9 +29,6 @@ use crate::settings::{SettingDescriptor, SettingId, SettingValue, SynthId};
 pub struct IndexMark(pub u64);
 
 /// One item of a [`SpeechSequence`].
-///
-/// Sounds will join as a further variant when earcons arrive (decision
-/// D17); a driver never sees them, since the speech manager plays them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SpeechItem {
@@ -44,7 +42,36 @@ pub enum SpeechItem {
     /// for any other, the manager splits the sequence at them and changes
     /// the driver's `pitch` setting between the pieces.
     Pitch(i32),
+    /// A sound that starts when playback reaches this place and plays on
+    /// over the speech that follows, ended with the utterance (decision
+    /// D17). A driver never sees one: the speech manager places it in the
+    /// mixer itself, so it is never serialized either.
+    #[serde(skip)]
+    Sound(SoundCue),
 }
+
+/// A sound in a [`SpeechSequence`]: which indication it reports, the
+/// decoded sound, and its gain.
+#[derive(Clone, Debug)]
+pub struct SoundCue {
+    /// The id of the indication the sound reports, such as
+    /// `spelling-error`; the queued text names the sound by it.
+    pub indication: String,
+    /// The sound.
+    pub sound: Arc<Sound>,
+    /// Its gain, 1.0 for as recorded.
+    pub gain: f32,
+}
+
+impl PartialEq for SoundCue {
+    fn eq(&self, other: &Self) -> bool {
+        self.indication == other.indication
+            && Arc::ptr_eq(&self.sound, &other.sound)
+            && self.gain.to_bits() == other.gain.to_bits()
+    }
+}
+
+impl Eq for SoundCue {}
 
 /// What a synthesizer is asked to speak: the flattened form of one
 /// utterance, after the theme (decision D12) and before synthesis. Plain
@@ -64,17 +91,29 @@ pub struct SpeechSequence {
 
 impl SpeechSequence {
     /// The sequence's text alone, every text item joined in order with
-    /// single spaces: what is reported as queued, not what is synthesized.
+    /// single spaces, with each sound in its place as `sound:` and its
+    /// indication's id (`sound: spelling-error`): what is reported as
+    /// queued, so the control plane and the end-to-end suite see sounds in
+    /// the stream like words, not what is synthesized.
     #[must_use]
     pub fn text(&self) -> String {
         self.items
             .iter()
             .filter_map(|item| match item {
-                SpeechItem::Text(text) => Some(text.as_str()),
+                SpeechItem::Text(text) => Some(text.clone()),
+                SpeechItem::Sound(cue) => Some(format!("sound: {}", cue.indication)),
                 SpeechItem::Mark(_) | SpeechItem::Pitch(_) => None,
             })
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// Whether the sequence holds any text to speak.
+    #[must_use]
+    pub fn has_text(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, SpeechItem::Text(text) if !text.is_empty()))
     }
 
     /// Whether the sequence holds any index mark.

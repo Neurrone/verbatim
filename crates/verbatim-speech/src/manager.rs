@@ -48,14 +48,17 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use tracing::{info, trace, warn};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, Source};
 use verbatim_model::{
-    FocusNow, FocusValidity, SpeechPriority, Utterance, UtteranceEnding, UtteranceId,
+    Earcon, FocusNow, FocusValidity, Indication, SpeechPriority, TraceId, Utterance,
+    UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 
-use crate::driver::{IndexMark, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink};
+use crate::driver::{
+    IndexMark, SoundCue, SpeechItem, SpeechSequence, SynthDriver, SynthError, SynthSink,
+};
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
 use crate::settings::{SettingId, SettingValue, SynthChoice, SynthId};
-use crate::theme::{PlainTheme, Theme};
+use crate::theme::{Presenter, ThemeHandle, ThemePresenter};
 use crate::trim::{Piece, Trimmer};
 
 /// The mint counter for utterance ids, process-wide.
@@ -117,9 +120,11 @@ pub struct SpeechManagerConfig {
     pub mixer: Arc<Mixer>,
     /// Optional observer for each utterance's milestones and ending.
     pub events: Option<Arc<dyn SpeechEvents>>,
-    /// The presentation theme flattening utterances (decision D12);
-    /// `None` selects [`PlainTheme`], plain speech.
-    pub theme: Option<Box<dyn Theme>>,
+    /// The presentation stage flattening utterances (decision D12);
+    /// `None` selects a [`ThemePresenter`] of the manager's own
+    /// [`ThemeHandle`] ([`SpeechManager::themes`]), which starts with the
+    /// built-in default theme and no sounds until one is set.
+    pub theme: Option<Box<dyn Presenter>>,
 }
 
 /// Commands the queue thread accepts, from the manager, the settings host, and
@@ -217,6 +222,11 @@ pub struct SpeechManager {
     queue_tx: Sender<QueueEvent>,
     /// Kept so the mixer outlives the threads writing to it.
     _mixer: Arc<Mixer>,
+    /// The active theme, which presents speech and events.
+    themes: ThemeHandle,
+    /// The mixer source events' sounds play on at once.
+    earcons: Source,
+    events: Option<Arc<dyn SpeechEvents>>,
     initial_state: DriverState,
     /// The synthesizer the configuration asked for, which a fallback at
     /// startup may not be.
@@ -247,9 +257,11 @@ impl SpeechManager {
             events,
             theme,
         } = config;
-        let theme = theme.unwrap_or_else(|| Box::new(PlainTheme));
+        let themes = ThemeHandle::default();
+        let theme = theme.unwrap_or_else(|| Box::new(ThemePresenter::new(themes.clone())));
         let (queue_tx, queue_rx) = unbounded::<QueueEvent>();
         let source = mixer.add_source(playback_listener(events.clone(), queue_tx.clone()));
+        let earcons = mixer.add_source(Arc::new(|_| {}));
 
         let (synth_tx, synth_rx) = unbounded::<SynthCommand>();
         let (startup_tx, startup_rx) = bounded::<Result<StartupInfo, SynthError>>(1);
@@ -300,13 +312,14 @@ impl SpeechManager {
             choices,
         } = startup;
 
+        let queue_events = events.clone();
         let queue_handle = std::thread::Builder::new()
             .name("verbatim-speech-queue".to_owned())
             .spawn(move || {
                 QueueThread {
                     synth_tx,
                     source,
-                    events,
+                    events: queue_events,
                     theme,
                     next_lane: VecDeque::new(),
                     queued_lane: VecDeque::new(),
@@ -324,6 +337,9 @@ impl SpeechManager {
         Ok(Self {
             queue_tx,
             _mixer: mixer,
+            themes,
+            earcons,
+            events,
             initial_state,
             configured,
             choices,
@@ -343,6 +359,43 @@ impl SpeechManager {
             .queue_tx
             .send(QueueEvent::Speak(id, Box::new(utterance)));
         id
+    }
+
+    /// The handle on the active theme, which the settings dialog switches
+    /// and the shell sets at startup (an [`ActiveTheme`](crate::ActiveTheme)
+    /// made from the theme the configuration names).
+    #[must_use]
+    pub fn themes(&self) -> ThemeHandle {
+        self.themes.clone()
+    }
+
+    /// Reports an event at once, as the active theme says
+    /// (`Effect::PlayEarcon`): its sound plays now on its own mixer source,
+    /// mixed over any speech and never cancelled by it, and its words, when
+    /// the theme speaks it, are queued as speech. Non-blocking.
+    pub fn play_earcon(&self, earcon: Earcon) {
+        let (sound, words) = self.themes.get().earcon(earcon);
+        if let Some((sound, gain)) = sound {
+            match self.earcons.play(&sound, gain) {
+                Ok(()) => {
+                    if let Some(events) = &self.events {
+                        events.sound_played(Indication::of_earcon(earcon), Instant::now());
+                    }
+                }
+                Err(error) => {
+                    warn!(target: "verbatim::speech", ?earcon, %error, "playing an earcon failed");
+                }
+            }
+        }
+        if let Some(words) = words {
+            self.speak(Utterance {
+                trace_id: TraceId::mint(),
+                priority: SpeechPriority::Queued,
+                segments: vec![UtteranceSegment::text(words)],
+                source: None,
+                validity: None,
+            });
+        }
     }
 
     /// A handle for cancelling, pausing, and dropping expired speech.
@@ -431,7 +484,7 @@ struct QueueThread {
     synth_tx: Sender<SynthCommand>,
     source: Source,
     events: Option<Arc<dyn SpeechEvents>>,
-    theme: Box<dyn Theme>,
+    theme: Box<dyn Presenter>,
     next_lane: VecDeque<Waiting>,
     queued_lane: VecDeque<Waiting>,
     /// The cancellation flag of the job the synth thread is working on.
@@ -765,7 +818,10 @@ fn apply_saved_settings(driver: &mut dyn SynthDriver, saved: &[(SettingId, Setti
 /// mixer when the audio is complete or that synthesis failed.
 fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
     let Output { source, events } = output;
-    let sequence = &job.sequence;
+    // Sounds become marks the sink places them at, so they keep their
+    // places in the audio however the driver handles marks.
+    let (sequence, sounds) = sounds_as_marks(&job.sequence);
+    let sequence = &sequence;
     let utterance = sequence.utterance;
     if job.cancel.load(Ordering::Acquire) {
         // Cancelled before it started; the mixer has already ended it.
@@ -801,6 +857,7 @@ fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
         source,
         utterance,
         trace_id: sequence.trace_id,
+        sounds: &sounds,
         events,
         cancel: &job.cancel,
         trimmer: Trimmer::default(),
@@ -810,10 +867,18 @@ fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
     };
     let mut result = Ok(());
     for (piece, mark) in pieces {
-        if !piece.items.is_empty() {
+        if piece.has_text() {
             result = driver.speak(&piece, &mut sink);
             if result.is_err() || sink.stopped || job.cancel.load(Ordering::Acquire) {
                 break;
+            }
+        } else {
+            // Nothing to synthesize, as in a sound with no words: its marks,
+            // and the sounds standing as marks, are placed where it stands.
+            for item in &piece.items {
+                if let SpeechItem::Mark(mark) = item {
+                    sink.index_reached(*mark);
+                }
             }
         }
         match mark {
@@ -842,6 +907,36 @@ fn run_job(driver: &mut dyn SynthDriver, output: Output<'_>, job: &Job) {
     }
 }
 
+/// The marks standing for sounds have this bit set; the reducer's marks
+/// never reach it.
+const SOUND_MARK: u64 = 1 << 63;
+
+/// `sequence` with each sound replaced by a mark with [`SOUND_MARK`] set
+/// and the sound's index, and the sounds in order.
+fn sounds_as_marks(sequence: &SpeechSequence) -> (SpeechSequence, Vec<SoundCue>) {
+    let mut sounds = Vec::new();
+    let items = sequence
+        .items
+        .iter()
+        .map(|item| match item {
+            SpeechItem::Sound(cue) => {
+                sounds.push(cue.clone());
+                SpeechItem::Mark(IndexMark(SOUND_MARK | (sounds.len() as u64 - 1)))
+            }
+            other => other.clone(),
+        })
+        .collect();
+    (
+        SpeechSequence {
+            utterance: sequence.utterance,
+            trace_id: sequence.trace_id,
+            language: sequence.language.clone(),
+            items,
+        },
+        sounds,
+    )
+}
+
 /// The setting a [`SpeechItem::Pitch`] changes.
 static PITCH: std::sync::LazyLock<SettingId> = std::sync::LazyLock::new(|| SettingId::new("pitch"));
 
@@ -859,6 +954,9 @@ struct PipelineSink<'a> {
     source: &'a Source,
     utterance: UtteranceId,
     trace_id: verbatim_model::TraceId,
+    /// The sequence's sounds, placed where the marks standing for them
+    /// arrive.
+    sounds: &'a [SoundCue],
     events: Option<&'a dyn SpeechEvents>,
     /// The driver has given audio, and the trimmer has passed audio on.
     driver_audio: bool,
@@ -887,6 +985,14 @@ impl PipelineSink<'_> {
                     {
                         self.stopped = true;
                         return ControlFlow::Break(());
+                    }
+                }
+                Piece::Mark(mark) if mark.0 & SOUND_MARK != 0 => {
+                    let index = usize::try_from(mark.0 & !SOUND_MARK).unwrap_or(usize::MAX);
+                    if let Some(cue) = self.sounds.get(index)
+                        && let Err(error) = self.source.sound(self.utterance, &cue.sound, cue.gain)
+                    {
+                        warn!(target: "verbatim::speech", utterance = %self.utterance, %error, "placing a sound failed");
                     }
                 }
                 Piece::Mark(mark) => self.source.mark(self.utterance, mark.0),

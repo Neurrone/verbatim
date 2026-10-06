@@ -16,9 +16,9 @@ use verbatim_model::{
     UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
-    IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechEvents, SpeechItem, SpeechManager,
-    SpeechManagerConfig, SpeechSequence, SpeechSettingsHost, SynthDriver, SynthError, SynthFactory,
-    SynthId, SynthRegistry, SynthSink, Theme,
+    IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents, SpeechItem,
+    SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsHost, SynthDriver,
+    SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -204,7 +204,9 @@ fn recv_started(started: &Receiver<String>) -> String {
     started.recv_timeout(STEP_TIMEOUT).expect("synth started")
 }
 
-fn capture_manager(theme: Option<Box<dyn Theme>>) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
+fn capture_manager(
+    theme: Option<Box<dyn Presenter>>,
+) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
     let log: CaptureLog = CaptureSynth::new().log();
     let log_for_factory = Arc::clone(&log);
     let mut registry = SynthRegistry::new();
@@ -342,7 +344,7 @@ fn renders_tokens_through_capture_synth() {
 /// A theme that puts a mark after each segment.
 struct MarkingTheme;
 
-impl Theme for MarkingTheme {
+impl Presenter for MarkingTheme {
     fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
         let mut items = Vec::new();
         for (index, segment) in utterance.segments.iter().enumerate() {

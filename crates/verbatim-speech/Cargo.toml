@@ -17,6 +17,7 @@ verbatim-model.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+hound.workspace = true
 verbatim-synth-capture.workspace = true
 
 [lints]

@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 
-use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
+use verbatim_model::{Indication, TraceId, UtteranceEnding, UtteranceId};
 
 use crate::driver::IndexMark;
 
@@ -47,6 +47,15 @@ pub trait SpeechEvents: Send + Sync {
         at: Instant,
     ) {
         let _ = (utterance, trace_id, mark, at);
+    }
+
+    /// A sound was played at once for an event, outside any utterance
+    /// (`SpeechManager::play_earcon`), reporting `indication`: what the
+    /// control plane reports as `sound:` and the indication's id, as the
+    /// queued text of an utterance names its sounds. Called on the thread
+    /// that asked for the earcon.
+    fn sound_played(&self, indication: Indication, at: Instant) {
+        let _ = (indication, at);
     }
 
     /// The utterance has ended, once, as `ending` says.
