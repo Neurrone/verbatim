@@ -67,8 +67,12 @@ screen reader in both rendered and source form.
   build, deploy, and the end-to-end suite unchanged;
   the static wxWidgets build recipe for both architectures is adapted from
   the wxdragon-sys build script rather than written fresh. The C++ layer
-  is widget glue only: typed page models are pulled from Rust, and a
-  callbacks object owned by Rust drives the dialogs.
+  is widget glue only: Rust calls C++ functions to run the event loop and
+  to build, show, raise, and close widgets from typed page models, and C++
+  calls an opaque Rust `GuiCore` when the user acts. Every string crosses
+  already resolved, so C++ never sees a Fluent message id. Amended
+  2026-10-06, when the port was built; the earlier wording had a
+  callbacks object owned by Rust drive the dialogs.
 - **D5 — Audio backend is WASAPI behind an `AudioSink` trait.** Rationale:
   allows alternate backends without touching the speech pipeline. Since
   D17 the seam is the `AudioDevice` trait behind the mixer: the mixer

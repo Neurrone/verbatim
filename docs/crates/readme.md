@@ -66,7 +66,7 @@ commit updated only the changed crate's own guide.
   control tunnel.
 - [verbatim-e2e](verbatim-e2e.md) — the end-to-end scenario registry.
 - [xtask VM harness](xtask-vm-harness.md) — `cargo xtask vm` implementation.
-- [verbatim-gui](verbatim-gui.md) — the wxDragon GUI (D4).
+- [verbatim-gui](verbatim-gui.md) — the wxWidgets GUI through a small C++ layer (D4).
 - [verbatim-app](verbatim-app.md) — `verbatim.exe`: wiring it all together.
 - [Placeholders and tooling](placeholders-and-tooling.md) — stub crates and
   xtask itself.
