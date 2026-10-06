@@ -432,8 +432,8 @@ verified.
     interrupt for Enter" (both on by default) are **implemented since
     2026-10-06** in the keyboard decision machine and stored in
     `settings.toml`'s keyboard section, with NVDA's rules for what counts
-    as a typed character ([Keyboard input](nvda/input.md)); **not yet**
-    wired from the settings into the running hook. NVDA's advanced setting
+    as a typed character ([Keyboard input](nvda/input.md)), and wired from
+    the settings into the running hook since 2026-10-06. NVDA's advanced setting
     to turn the culling of expired focus speech off is not offered.
 - Menu popup announcements. NVDA: menu events with fake-focus
   fallback ([MSAA and winevent handling](nvda/msaa.md)). Verbatim:
@@ -817,17 +817,19 @@ verified.
   Verbatim: **matched (unverified)** — the mixer reports each mark
   when the device has played it, for every synthesizer (D17). Since
   2026-10-06 utterances carry marks (`SegmentContent::Mark`) and Core's
-  say-all moves the caret or review cursor by them; the shell still has to
-  turn each reported mark into `Input::MarkReached`.
+  say-all moves the caret or review cursor by them; the shell turns each
+  reported mark into `Input::MarkReached`. OneCore places marks itself;
+  eSpeak NG's are split out by the speech manager, so both drive say-all.
 - Say-all. NVDA: reads by "Say all reads by" (sentence where possible,
   paragraph, or line; UIA by line), moves the caret or review cursor as
   audio plays, keeps a bounded lookahead, stops on any key, and keeps the
   display on ([Speech](nvda/speech.md), "Say-all"). Verbatim:
-  **implemented in Core since 2026-10-06, unverified** until the outpost
-  reads chunks and the shell delivers marks: sentences are split by
+  **matched since 2026-10-06** (the `notepad_say_all` scenario): sentences are split by
   Unicode's rules over a paragraph the provider sends when it has no
   sentence unit of its own, UIA answers that it has no sentences and
-  reading goes by line, and terminals read by line. Skim reading is **not
+  reading goes by line, and terminals read by line; a standard edit
+  control's sentence read is its line, which Core splits. The display is
+  kept on through `SetThreadExecutionState`. Skim reading is **not
   offered**.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
@@ -924,11 +926,16 @@ verified.
   a protected field echoes only the protected character ("star") and no
   words; typing into a terminal waits until the terminal's text changes
   unless "Speak passwords" is on, so a password prompt speaks nothing, and
-  Enter drops what was held. The source of `Input::CharacterTyped` is
-  **not yet** decided (the hook translating keys to text, or the
-  application's text-edit events), against [Keyboard input](nvda/input.md).
+  Enter drops what was held. **Different:** the characters come from the
+  keyboard hook's own translation of each key (decided 2026-10-06,
+  `docs/crates/verbatim-input-windows.md`), not from inside the
+  application; dead keys compose correctly, a letter typed before the
+  application has handled the dead key aside, against
+  [Keyboard input](nvda/input.md).
 - IME/composition reporting. Verbatim: **not yet** (unscheduled;
   needs a decision — NVDA's implementation is injection-dependent).
+  **Different:** with an input method's layout active, text committed from
+  a composition is not echoed; NVDA echoes it from inside the application.
 - Mouse tracking (text-unit speech, audio coordinates, injection
   filtering) and touch interaction. NVDA:
   [Mouse and touch](nvda/mouse-and-touch.md). Verbatim: **not yet**
@@ -942,8 +949,10 @@ verified.
   [TextInfo](nvda/text-infos.md) and
   [Editable text and terminals](nvda/editable-text-and-terminals.md).
   Verbatim: the text protocol (`docs/crates/verbatim-model.md`, "The text
-  protocol") and Core's side are **implemented since 2026-10-06,
-  unverified** until the outpost implements the protocol. Caret keys pass
+  protocol") is **matched since 2026-10-06** for UIA text and the Win32
+  edit and rich edit controls (the `notepad_editing` and
+  `notepad_review_cursor` scenarios); an MSAA object that is neither has
+  no text. Caret keys pass
   to the application and Core asks the outpost to wait for evidence (a
   caret event, the caret leaving where Core knew it, the text at the caret
   changing for Delete, or the selection changing), up to 100 milliseconds,
@@ -958,8 +967,13 @@ verified.
   their number. **Different:** Verbatim never swallows and resends the key,
   so what Backspace deleted is worked out from Core's copy of the caret's
   line rather than read before the key; a backspace over a line break says
-  nothing. NVDA's `caretMovementFailed` event is not offered. Terminal
-  diffing is **not yet (M4)**.
+  nothing. NVDA's `caretMovementFailed` event is not offered. **Different:**
+  a caret event alone is not evidence when the caret's position is known,
+  since an application's late caret event can belong to an earlier key; the
+  position, the characters either side of the caret, or the selection must
+  change, polled every 10 ms. Terminals are recognized by their UIA class
+  (`TermControl`, `WPFTermControl`) and the console host's window class,
+  never by title. Terminal diffing is **not yet (M4)**.
 - Word and character segmentation (Uniscribe grapheme clusters and
   word stops) and the three-way paragraph-style setting. NVDA:
   [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched

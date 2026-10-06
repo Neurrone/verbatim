@@ -13,7 +13,12 @@ Public API:
   installs — value, state, name, and selection changes
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
   remove, and within events are reported as `WinEventKind::StateChange`, as
-  NVDA handles them); and `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
+  NVDA handles them), and since milestone M4 the caret
+  (`WinEventKind::Caret`: `EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET`,
+  the system caret NVDA follows in edit controls; every other object's
+  location change, which windows raise constantly, is dropped at the hook)
+  and text selection changes (`WinEventKind::TextSelectionChange`,
+  `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
   globally — focus (`EVENT_OBJECT_FOCUS`), foreground
   (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
   absorbs Core's old foreground trigger), menu-popup opens
@@ -28,6 +33,36 @@ Public API:
   announces second. Callbacks are delivered on the installing thread's
   message loop and must never make blocking calls into the target.
   `WinEventKind` names the event; drop unhooks.
+- `edit` (milestone M4) — the standard Win32 edit and rich edit controls'
+  text through their window messages, ported from NVDA's `EditTextInfo`
+  (this crate is GPL like NVDA). `edit_api_version(normalized_class)`
+  gives NVDA's edit API version for a class name normalized by NVDA's
+  class map: 0 for `Edit`, 1 for `RichEdit`, 2 for `RichEdit20` and
+  `REComboBox20W`, 5 for `RICHEDIT50W`. `EditControl::new(hwnd, version)`
+  then answers `selection`, `set_selection`, `line_from_offset`,
+  `line_start`, `line_length`, `line_count`, `text_length`, `line_text`,
+  `text_range`, `find_word_break`, `position_of` (screen coordinates), and
+  `is_password`, each an `EditResult` whose `EditError` is `Gone` when the
+  window no longer exists and `Failed` otherwise. Offsets are the
+  control's UTF-16 code units. Which message is sent follows the version,
+  as in NVDA: a plain edit control answers `EM_GETSEL` (two `DWORD`
+  pointers Windows marshals across processes), `EM_SETSEL`,
+  `EM_LINEFROMCHAR`, `EM_GETLINE` (a buffer Windows marshals, its size in
+  the first word), and, for a range, `WM_GETTEXT` of the whole text cut
+  down, as NVDA reads it; a rich edit control answers `EM_EXGETSEL`,
+  `EM_EXSETSEL`, and `EM_EXLINEFROMCHAR`, and from version 2
+  `EM_GETTEXTRANGE`, `EM_GETTEXTLENGTHEX`, and `EM_FINDWORDBREAK`, with
+  `EM_POSFROMCHAR` taking a point structure from version 1 and from 3 on.
+  Windows does not marshal those structures (`CHARRANGE`, `TEXTRANGEW`,
+  `GETTEXTLENGTHEX`, `POINTL`), so they are written into memory allocated
+  in the control's process (`VirtualAllocEx`, `WriteProcessMemory`,
+  `ReadProcessMemory`, freed on drop), with the text range's pointer field
+  sized for that process: four bytes for a 32-bit (WOW64) process, by
+  `IsWow64Process2`. An ANSI rich edit window's text is converted from the
+  system code page. Every message goes through `SendMessageTimeoutW` with
+  `SMTO_ABORTIFHUNG` and half a second's wait, and counts as one window
+  message; the memory calls are the kernel's and are not counted. A
+  password field (`ES_PASSWORD`) reads as stars, as NVDA reads it.
 - `acquire` — the query-pool side: `snapshot_from_event` (from
   `AccessibleObjectFromEvent` through name, role, value, state,
   description, keyboard-shortcut, and location reads to a `NodeSnapshot` —

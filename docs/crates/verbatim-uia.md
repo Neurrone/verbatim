@@ -148,6 +148,28 @@ Public API:
   remains only in the wrapper module (`element.rs`), the `VARIANT` and
   `SAFEARRAY` helpers (`com.rs`), the event handler registrations, the
   provider probe's window messages, client creation, and apartment setup.
+- `text` (milestone M4) — the same kind of safe wrappers over the text
+  pattern, which the outpost's text protocol reads with:
+  `text_pattern(element)` fetches a node's `TextPattern2` where the
+  provider has it (the caret's own range) and else its `TextPattern`, one
+  UIA call or two; `TextPatternExt` on a pattern has `selection` and
+  `document_range`; `caret_range(pattern2)` is `GetCaretRange`; and
+  `TextRangeExt` on a range has `clone_range`, `compare_endpoints`,
+  `expand`, `move_by`, `move_endpoint_to` (by another range's end),
+  `move_endpoint_by_unit`, `text` (UTF-16, up to a limit), `select`,
+  `bounding_rectangles`, and `culture` (the `Culture` attribute as a BCP 47
+  tag through `LCIDToLocaleName`, `None` when the range mixes languages or
+  the provider does not say). `Endpoint` names a range's start or end, and
+  `uia_text_unit` maps a model `TextUnit` to UIA's, `None` for the
+  sentence, which UIA does not have. Every method is a cross-process call,
+  counted once: a text range is a provider object in the application, so
+  even copying one is a round trip.
+- `map::is_terminal_class(class)` — Windows Terminal's text control
+  (`TermControl`) and the one embedded in .NET applications
+  (`WPFTermControl`) are terminals, by their UIA class as NVDA recognizes
+  them, never by a window's title; the snapshot mapping gives them
+  `Role::Terminal`. The console host's text area is recognized by its
+  window, in the outpost.
 - `FocusRegistration::new(callback)` — the self-contained, desktop-global
   UIA focus registration; drop unregisters and tears down its own thread.
   UIA's focus registration is desktop-global and unscopeable, so exactly one
@@ -160,7 +182,10 @@ Public API:
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
   toggle state, enabled, and expand/collapse), `Subscription::Event` (an
   automation event id, such as `SelectionItem_ElementSelected` or
-  `MenuOpened`), or `Subscription::Notifications`
+  `MenuOpened`), `Subscription::Events` (several automation event ids
+  through one handler whose callback receives the event id, such as a text
+  control's `Text_TextSelectionChanged` and `Text_TextChanged`), or
+  `Subscription::Notifications`
   (`IUIAutomation5::AddNotificationEventHandler`, delivering the raising
   element plus kind, processing, display string, and activity id). The
   `Scope` is nothing yet, the subtree of given top-level windows, the whole
@@ -172,7 +197,8 @@ Public API:
   running callbacks). Elements that fail to resolve are skipped. Dropping a
   registration unregisters and ends its thread. The focus listener holds the
   desktop-wide selection, menu-opened, and notification subscriptions; each
-  outpost holds one focus-following property subscription.
+  outpost holds one focus-following property subscription and one
+  focus-following subscription to a text focus's caret and text changes.
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
   as callable only from deadline-guarded query threads. Only the window's

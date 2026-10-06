@@ -71,6 +71,14 @@ Public API:
   same for a File Explorer window on a folder of empty files it writes,
   never sweeping `explorer.exe`, which is also the shell, and returns the
   window's title for the body (`ScenarioState::Title`);
+  `open_document_with` does the same on a file holding given contents,
+  for a scenario that reads or edits text; `save_document` saves such a
+  document when its window is in front with unsaved changes and waits
+  until its title no longer marks them, since Windows 11 Notepad restores
+  an edited document left unsaved and then asks whether to keep the
+  changes when the harness writes the file afresh; and `expect_unsaved`
+  waits until the document's title marks unsaved changes, the evidence
+  that an edit with nothing to hear, such as a paste, has reached it;
   `open_settings_page` opens a page of the Settings app by its
   `ms-settings:` URI, and the scenario lists `SystemSettings.exe` among
   its target images; `establish_baseline` makes sure an uncloaked window holds the
@@ -111,7 +119,13 @@ Public API:
   the matched utterance's ending and fail unless it completed, so a
   passing assertion means the speech was heard in full and the next input
   cannot cut it off. Utterances queued while an assertion waits are kept
-  for the next assertion. `wait_until_quiet(timeout)` waits until every
+  for the next assertion. `expect_exactly` is `expect_in_order` with each
+  utterance equal to its text rather than containing it, for speech as
+  short as one character. `expect_playing` waits for an utterance
+  containing a text to start playing and returns without waiting for its
+  end, for a key pressed while it plays, and `has_played` says whether an
+  utterance exactly equal to a text started playing, for showing that one
+  never did. `wait_until_quiet(timeout)` waits until every
   utterance queued so far has ended, never for a stretch of silence, and
   panics with the timeline if that does not happen within `timeout`.
   `last_heard` gives the last utterance queued so far.
@@ -123,7 +137,7 @@ Public API:
   grouped scenario: `name` (also its `#[test]` function name, its
   `cargo xtask vm test --scenario` selector, its artifacts directory name,
   and its video's file name, `<name>.mp4` — one identifier, everywhere),
-  `group` (a `Group`: `Speech`, `Shell`, or `Navigation`, a
+  `group` (a `Group`: `Speech`, `Shell`, `Navigation`, or `Text`, a
   coarse `--group` selector, not a strict taxonomy — see
   the module's own doc comment for what each currently holds),
   `target_images` (image names its `setup` may launch with
@@ -131,12 +145,14 @@ Public API:
   opened with `open_document` is closed by title instead and not listed),
   and `setup`/`body`/`teardown`
   function pointers. `SCENARIOS` is the fixed, ordered list of every
-  registered scenario — today eight. The Speech group holds
+  registered scenario. The Speech group holds
   `menu_and_settings_dialog`, `rapid_tabbing_in_settings`,
   `switch_to_onecore`, and `synth_host_crash_recovery`; the Shell group
   holds `notepad_and_verbatim_menu` and `start_menu_search`; the
   Navigation group holds `object_navigation_in_settings` and
-  `system_information_tree`. Each is implemented in
+  `system_information_tree`; the Text group (milestone M4) holds
+  `notepad_editing`, `notepad_review_cursor`, and `notepad_say_all`. Each
+  is implemented in
   `crates/verbatim-e2e/src/scenarios/`. `find` looks one up by name;
   `select` resolves `--scenario`/`--group` filters (both repeatable,
   unioned, deduplicated, registry order preserved; no filters means every
@@ -228,6 +244,19 @@ and runs every one of them exactly as before the restructuring.
 Speech page, the default voice English (Great Britain), English
 (Scotland) listed after it, and the variant Max. The others are
 described in `registry`'s own `Group` doc comment above.
+The Text group's three run in Notepad on a document of their own, start by
+taking the caret to the top (Notepad can restore a caret position from an
+earlier session), and save what they edited, in the teardown too.
+`notepad_editing` moves the caret by character, word, and line, selects
+and unselects with Shift, types with character echo, and deletes with
+Backspace and Delete, each step's speech asserted exactly.
+`notepad_review_cursor` reads by line, word, and character with the numpad
+review keys, keeps column 8 down a text table through a shorter row,
+reaches a line's ends and the text's top, and copies a range with
+Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
+`notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
+the second line plays, and checks that the caret was left on that line and
+that the third was never heard.
 `synth_host_crash_recovery` opens the Verbatim menu, kills
 `verbatim-synth-host.exe` with `kill_processes_by_name` (expecting
 exactly one), and expects the next menu item to be heard in full from

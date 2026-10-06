@@ -27,8 +27,13 @@ the subset its API can express), an optional `default_action` (MSAA's
 `accDefaultAction`, which `accDoDefaultAction` then succeeds for), an
 optional `controller_for` (the `id`
 of a node this one controls, served on the UIA backend as the
-`ControllerFor` relation, as a search box names its suggestion list), and
-`children` (nested nodes). The root
+`ControllerFor` relation, as a search box names its suggestion list), an
+optional `text` (milestone M4: the node's text, with bare line feeds; on
+the UIA backend the node serves the text pattern over it, and on the MSAA
+backend, since MSAA has no text interface, mockapp creates a real
+multi-line Win32 `EDIT` control holding the first such text, its line
+feeds made carriage return and line feed pairs, read through the edit
+control's own messages), and `children` (nested nodes). The root
 node conceptually corresponds to the window itself.
 `fixture::role_from_fixture_str` and `state_from_fixture_str` hold the
 complete name tables.
@@ -47,7 +52,12 @@ the node selected, moving the state off any previous selection, and raises
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
 root provider with `text` as the display string, kind `Other`, processing
 `All`, and a fixed `mockapp-notify` activity id; reported as unsupported
-on the MSAA backend, which has no notification event), `stall <ms>`
+on the MSAA backend, which has no notification event), `caret <id> <start>
+[<end>]` (selects the text node's text from `start` to `end`, UTF-16
+offsets, the caret alone at `start` when `end` is left out, raising no
+event, as an application's caret moves before a client asks where it is;
+on the MSAA backend the offsets are the edit control's, with its carriage
+returns, sent as `EM_SETSEL`), `stall <ms>`
 (blocks the window thread for that long, so every cross-process call into
 the window waits, as with an application that is starting up or busy),
 and `quit`.
@@ -76,10 +86,30 @@ its crate-internal modules are the reviewable surface:
   Deliberately never answers the UIA root object id, so the arbitration
   probe finds nothing and the window arbitrates to MSAA. Role and state
   mapping is the inverse of `verbatim_ia2::map`.
+- `uia::text` — the UIA text pattern for a node with `text`
+  (`ITextProvider2` and `ITextRangeProvider`, both answered for either
+  pattern id). A range is two UTF-16 offsets into the node's text, read
+  afresh on every call, so the `caret` command shows through at once. The
+  units are simple and fixed: a character is one code unit; a word is a run
+  of letters and digits with the spaces after it, or one other character;
+  a line ends after its line feed, and a text ending in one has an empty
+  last line, as an editor shows; a paragraph is a line; the format unit,
+  the page, and the document are the whole text. Moving lands on a unit's
+  start and never past the last unit, so a client sees the text's ends; a
+  move back from inside a unit to its start counts as one, as UIA
+  specifies. The caret (`GetCaretRange`) is the selection's start, as the
+  edit controls report it; the language (`Culture`) is `en-US`, and every
+  other attribute unsupported. A range handed back by a client
+  (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
+  offsets are read from its implementation.
+- `edit` — the MSAA backend's real edit control: created inside the host
+  window, found by class, and selected with `EM_SETSEL` on the window
+  thread.
 - `stdin` — command parsing and the reader thread.
 - `hits` — the provider-side hit counters: one atomic per provider method
   (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,
-  `IRawElementProviderFragmentRoot`, and pattern-provider method, every
+  `IRawElementProviderFragmentRoot`, and pattern-provider method, the text
+  pattern's and text range's methods a client reads with, every
   `IAccessible` and `IDispatch` method), one for `WM_GETOBJECT`, and one
   for stdin commands applied. A test reads them with two synchronous
   window messages to the host window, answered by the same thread that
@@ -152,7 +182,7 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
-`events.rs`, `remote_ops.rs`, `uia_tree.rs`)
+`events.rs`, `remote_ops.rs`, `text.rs`, `uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
@@ -191,6 +221,17 @@ and a tab control with selected children) and asserts they return the
 same ancestors with the same cached properties, that an element that
 lost the focus returns early, and how both behave against a stalled
 mockapp and one that has exited; the crate's guide records the findings.
+`text.rs` drives `verbatim-outpost`'s text module over `text.json`'s text
+on both stacks, as the outpost's worker does once it has a node's text
+(the worker finds a UIA focus by reading the keyboard focus, which a test
+must not take): lines, words, and characters read; movement stopping at
+the empty last line; a position inside a chunk resolved through its text;
+UIA's missing sentence unit and the edit control's paragraph in its place;
+a page unsupported; UIA's language on a chunk; and a caret key answered
+with the word it reached and with a selection reported as selected. Its
+caret wait never waits: every test moves mockapp's caret first, and the
+wait panics if called. `call_counts.rs` pins a caret move and a caret
+report on both stacks this way too (`docs/performance.md`).
 `slow_application.rs` runs a real
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,
