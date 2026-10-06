@@ -626,10 +626,8 @@ indications and their settings: for every kind of thing Verbatim can
 report, whether it is reported, and if so how, with the sounds, words,
 and voice styles that go with it. It is not audio-only: it decides what
 is spoken for a user who wants speech alone, and braille joins it in
-M15. So the name is not "audio theme". Proposed: "theme", the name D12
-already uses, since the concept now covers all presentation; the
-collision with Windows' visual themes matters less once it is not about
-sound. ("Scheme", JAWS's word, is the alternative.)
+M15. So the name is not "audio theme": it is "theme" (agreed
+2026-10-06), the name D12 already uses.
 
 NVDA's precedent: "Report spelling errors" takes speech, sound, both, or
 off (and braille, as a flag set, `reportSpellingErrors2` with
@@ -652,10 +650,15 @@ The parts:
 - **A theme**: for each indication in the catalogue, how it is reported
   (off, speech, sound, or speech and sound; braille joins the set in
   M15), the sound and its gain, replacement words if any, and a voice
-  style if any; plus the theme's own name, description, base theme, and
-  overall gain. A theme may leave indications out and name a base theme
-  it falls back to; the chain ends at the built-in default theme, so
-  every indication always has a setting.
+  style if any; plus the theme's own name, description, and overall
+  gain.
+- **No base chains** (agreed 2026-10-06). The built-in default theme is
+  complete. Every other theme stores only the indications where it
+  differs from the default, and anything it does not mention falls back
+  to the default theme, including indications that later versions of
+  Verbatim add to the catalogue. A theme never builds on another user
+  theme, so changing or removing one theme never changes another, and a
+  shared theme is self-contained.
 - **The default theme** uses speech and sounds, matching NVDA's defaults:
   everything is spoken as NVDA speaks it, and sounds play where NVDA
   plays them by default (the browse and focus mode sounds, suggestions
@@ -666,8 +669,8 @@ The parts:
 How "sound only" without a sound works: a theme says both how an
 indication is reported and which sound it uses, so a theme that sets an
 indication to sound only names its sound. The gap appears only when the
-two come apart: the sound file is missing or cannot be decoded, a base
-theme's sound was removed, or the user chooses sound only for an
+two come apart: the sound file is missing or cannot be decoded, or the
+user chooses sound only for an
 indication that has no sound. Loading a theme reports these as problems
 (listed in the theme panel and the log), and at playback an indication
 whose sound is unavailable is spoken instead, so information is never
@@ -696,7 +699,8 @@ which theme applies, along with everything else a profile can change.
   are ordinary settings that a profile may also change.
 - Profiles do not hold per-indication settings. To present something
   differently in one application, the user makes a theme for it (usually
-  "New based on" the current one, changing a few indications) and
+  "New theme based on this", which copies the current theme's settings,
+  then changes a few indications) and
   selects it in that application's profile. That keeps one place to look
   for how something is presented: the theme.
 - Editing a theme changes that theme everywhere it is used. The built-in
@@ -728,8 +732,8 @@ two panels proposed earlier:
    Events); their children are the indications. Each indication's name
    summarizes its setting, such as "Link: speech and sound", "Checked:
    sound (check.wav)", or "Description: off", so arrowing through the
-   tree reads the whole theme; an indication that differs from the base
-   theme ends with "changed". A "Find" field above the tree filters it.
+   tree reads the whole theme; an indication that differs from the
+   default theme ends with "changed". A "Find" field above the tree filters it.
 7. Below the tree, the selected indication's settings:
    - "Report as", a combo box: off, speech, sound, speech and sound.
    - "Sound", a combo box: none, each sound in the theme, and "Browse..."
@@ -739,8 +743,8 @@ two panels proposed earlier:
    - "Voice", a combo box: default, or one of the theme's voice styles.
    - "Preview", a button that speaks a sample through the theme, such as
      a link inside a sentence, so the sound is heard in context.
-   - "Reset", a button that returns the indication to the base theme's
-     setting.
+   - "Reset", a button that returns the indication to the default
+     theme's setting.
    Controls that do not apply are disabled: with "Report as" off or
    speech, "Sound" is disabled; with sound only, "Words" and "Voice" are
    disabled. Changing a built-in theme's indication first asks for a name
@@ -761,7 +765,8 @@ synthesizer and voice settings.
 ### Packaging
 
 A theme is a directory: a TOML manifest (id, name, author, description,
-version, base, gain, voice styles, and the indications it sets) and its
+version, gain, voice styles, and the indications where it differs from
+the default theme) and its
 sound files. It is shared as that directory zipped. Import installs one;
 Export writes one. The built-in themes ship in the top-level `sounds/`
 and `themes/` directories, shared by every platform.
