@@ -10,4 +10,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+verbatim-uia.workspace = true
+windows.workspace = true
+windows-collections.workspace = true
+windows-core.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }

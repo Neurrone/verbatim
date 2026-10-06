@@ -2302,6 +2302,10 @@ dependencies = [
 name = "verbatim-uia-rops"
 version = "0.1.0"
 dependencies = [
+ "verbatim-uia",
+ "windows",
+ "windows-collections",
+ "windows-core",
  "workspace-hack",
 ]
 

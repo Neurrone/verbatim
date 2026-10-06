@@ -66,14 +66,17 @@ verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
 # `#[implement]` macro emits `::windows_core` paths that only resolve when
 # the implementing crate depends on it directly.
 #
-# This and `windows-future` are asked for exactly as the `windows` crate asks
-# for them, with only `std`. Their default feature is the same `std`, but
-# asking for it gives a different feature set, which cargo builds apart, and
-# then `windows` and everything above it are built apart too, whenever a
-# command selects packages that do or do not use these directly. They are
-# kept out of the workspace-hack crate, which would otherwise unify them
-# (`.config/hakari.toml`).
+# This, `windows-collections`, and `windows-future` are asked for exactly
+# as the `windows` crate asks for them, with only `std`. Their default
+# feature is the same `std`, but asking for it gives a different feature
+# set, which cargo builds apart, and then `windows` and everything above it
+# are built apart too, whenever a command selects packages that do or do
+# not use these directly. They are kept out of the workspace-hack crate,
+# which would otherwise unify them (`.config/hakari.toml`).
 windows-core = { version = "0.62", default-features = false, features = ["std"] }
+# The WinRT collection interfaces (`IVector`), which moved out of the
+# `windows` crate; UIA remote operations return arrays through them.
+windows-collections = { version = "0.3", default-features = false, features = ["std"] }
 # The `windows` crate's WinRT async operation types, named directly
 # where a driver waits on one.
 windows-future = { version = "0.3", default-features = false, features = ["std"] }
@@ -92,6 +95,8 @@ features = [
     "Media_Core",
     "Media_SpeechSynthesis",
     "Storage_Streams",
+    "UI_UIAutomation",
+    "UI_UIAutomation_Core",
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Dwm",
