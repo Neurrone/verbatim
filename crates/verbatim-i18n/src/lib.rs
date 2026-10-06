@@ -11,6 +11,8 @@
 //! through [`loader`], and message lookups go through the compile-time
 //! checked `fl!` macro so a typo in a message ID fails the build.
 
+#![forbid(unsafe_code)]
+
 use std::borrow::Cow;
 use std::fmt;
 use std::path::{Path, PathBuf};

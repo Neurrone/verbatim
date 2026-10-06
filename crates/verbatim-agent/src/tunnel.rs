@@ -173,6 +173,7 @@ pub(crate) struct OverlappedPipe {
 // those threads; `stop_event` is only signalled and waited on, which any
 // thread may do.
 unsafe impl Send for OverlappedPipe {}
+// SAFETY: as above.
 unsafe impl Sync for OverlappedPipe {}
 
 impl OverlappedPipe {

@@ -138,7 +138,7 @@ pub fn inject(combos: &[ParsedCombo]) -> io::Result<()> {
     }
     let input_size =
         i32::try_from(std::mem::size_of::<INPUT>()).expect("INPUT's size fits comfortably in i32");
-    // Safety: `inputs` is a valid, live slice of properly initialized
+    // SAFETY: `inputs` is a valid, live slice of properly initialized
     // `INPUT` values for the duration of this call; `SendInput` does not
     // retain the pointer afterward.
     let sent = unsafe { SendInput(&inputs, input_size) };

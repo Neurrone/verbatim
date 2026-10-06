@@ -15,6 +15,8 @@
 //! through [`CaptureSynth::log`], or supply your own handle with
 //! [`CaptureSynth::with_log`].
 
+#![forbid(unsafe_code)]
+
 use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

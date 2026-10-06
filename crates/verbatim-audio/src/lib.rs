@@ -12,6 +12,8 @@
 //! depends on Windows. [`SilentDevice`] plays at real-time speed without a
 //! sound card, for machines that have none and for test audio.
 
+#![forbid(unsafe_code)]
+
 mod convert;
 mod mixer;
 mod silent;

@@ -8,6 +8,8 @@
 //! serde derives exist so the same types travel over the Core-outpost pipe,
 //! the control plane, and the flight recorder unchanged.
 
+#![forbid(unsafe_code)]
+
 mod calls;
 mod event;
 mod gesture;

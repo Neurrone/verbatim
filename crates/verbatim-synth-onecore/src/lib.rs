@@ -93,7 +93,7 @@ pub struct OneCoreSynth {
 /// Initializes COM for this thread as MTA, tolerating a prior init in another
 /// mode (`RPC_E_CHANGED_MODE`).
 fn ensure_com() -> Result<(), SynthError> {
-    // Safe: no reserved parameter; we never uninitialize.
+    // SAFETY: no reserved parameter; we never uninitialize.
     let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     if hr.is_err() && hr != RPC_E_CHANGED_MODE {
         return Err(SynthError::Unavailable(format!(

@@ -70,13 +70,15 @@ fn device_error(context: &str, error: &windows::core::Error) -> AudioError {
 /// thread-safe, which is what lets the waker run on any thread.
 struct Event(HANDLE);
 
-// The handle is a kernel object, usable from any thread.
+// SAFETY: the handle is a kernel event object, which may be waited on,
+// signalled, and closed from any thread.
 unsafe impl Send for Event {}
+// SAFETY: as above; waiting and signalling are thread-safe operations.
 unsafe impl Sync for Event {}
 
 impl Event {
     fn new() -> Result<Self, AudioError> {
-        // Safe: an unnamed auto-reset event with default security.
+        // SAFETY: an unnamed auto-reset event with default security.
         unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .map(Self)
             .map_err(|error| device_error("create event", &error))
@@ -85,7 +87,7 @@ impl Event {
 
 impl Drop for Event {
     fn drop(&mut self) {
-        // Safe: the handle is owned and closed once.
+        // SAFETY: the handle is owned and closed once.
         unsafe {
             let _ = CloseHandle(self.0);
         }
@@ -146,7 +148,7 @@ mod watcher {
         ) -> windows::core::Result<()> {
             if flow == eRender && role == eConsole {
                 self.changed.store(true, Ordering::SeqCst);
-                // Safe: the event outlives the watcher, which holds it.
+                // SAFETY: the event outlives the watcher, which holds it.
                 unsafe {
                     let _ = SetEvent(self.wake.0);
                 }
@@ -209,8 +211,9 @@ pub struct WasapiDevice {
     wake: Arc<Event>,
 }
 
-// The COM objects are created and used only on the mixer's audio thread,
-// which owns the device; the struct is moved there before first use.
+// SAFETY: the COM objects are created and used only on the mixer's audio
+// thread, which owns the device; the struct is moved there before first
+// use, and never shared.
 unsafe impl Send for WasapiDevice {}
 
 impl WasapiDevice {
@@ -236,7 +239,7 @@ impl WasapiDevice {
         if let Some(enumerator) = &self.enumerator {
             return Ok(enumerator.clone());
         }
-        // Safe: no reserved parameter. WASAPI works from either apartment,
+        // SAFETY: no reserved parameter. WASAPI works from either apartment,
         // and COM is never uninitialized on this thread.
         let hr: HRESULT = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
         if hr.is_err() && hr != RPC_E_CHANGED_MODE {
@@ -251,13 +254,13 @@ impl WasapiDevice {
         // while Verbatim or the system is busy (decision D15). The thread
         // keeps the registration for its life.
         let mut task_index = 0u32;
-        // Safe: a constant task name and a valid out-pointer.
-        if let Err(error) =
-            unsafe { AvSetMmThreadCharacteristicsW(w!("Pro Audio"), &raw mut task_index) }
-        {
+        // SAFETY: a constant task name and a valid out-pointer.
+        let registered =
+            unsafe { AvSetMmThreadCharacteristicsW(w!("Pro Audio"), &raw mut task_index) };
+        if let Err(error) = registered {
             warn!(target: "verbatim::audio", %error, "the audio thread could not be registered with MMCSS");
         }
-        // Safe: standard activation of the system device enumerator.
+        // SAFETY: standard activation of the system device enumerator.
         let enumerator: IMMDeviceEnumerator =
             unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
                 .map_err(|error| device_error("create device enumerator", &error))?;
@@ -266,7 +269,7 @@ impl WasapiDevice {
             wake: Arc::clone(&self.wake),
         }
         .into();
-        // Safe: the watcher is kept alive in `self` for as long as the
+        // SAFETY: the watcher is kept alive in `self` for as long as the
         // enumerator it is registered with.
         if let Err(error) = unsafe { enumerator.RegisterEndpointNotificationCallback(&watcher) } {
             warn!(target: "verbatim::audio", %error, "default device changes will not be followed");
@@ -279,7 +282,7 @@ impl WasapiDevice {
     /// Opens a shared-mode stream on the current default render device.
     fn open_stream(&mut self) -> Result<(Stream, DeviceFormat), OpenFailure> {
         let enumerator = self.enumerator().map_err(OpenFailure::Failed)?;
-        // Safe: plain COM calls on objects this thread owns; the mix format
+        // SAFETY: plain COM calls on objects this thread owns; the mix format
         // pointer is read once and freed with CoTaskMemFree below.
         unsafe {
             let device = enumerator
@@ -367,7 +370,7 @@ impl WasapiDevice {
 impl Drop for WasapiDevice {
     fn drop(&mut self) {
         if let (Some(enumerator), Some(watcher)) = (&self.enumerator, &self.watcher) {
-            // Safe: unregistering the callback registered in `enumerator`.
+            // SAFETY: unregistering the callback registered in `enumerator`.
             unsafe {
                 let _ = enumerator.UnregisterEndpointNotificationCallback(watcher);
             }
@@ -418,7 +421,7 @@ impl AudioDevice for WasapiDevice {
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
         match &mut self.output {
             Output::Closed => Err(AudioError::Device("the device is not open".to_owned())),
-            // Safe: a plain COM call on the stream this device owns.
+            // SAFETY: a plain COM call on the stream this device owns.
             Output::Stream(stream) => unsafe { stream.client.GetCurrentPadding() }
                 .map_err(|error| device_error("read the queue length", &error)),
             Output::Silent(silent) => silent.queued_frames(),
@@ -432,13 +435,13 @@ impl AudioDevice for WasapiDevice {
                 let frames = samples.len() / stream.channels;
                 let frame_count = u32::try_from(frames)
                     .map_err(|_| AudioError::Stream("write larger than the buffer".to_owned()))?;
-                // Safe: GetBuffer returns room for `frames` frames of the
-                // stream's float format, which is exactly what is copied; the
-                // buffer is aligned for its format, so for f32.
                 #[expect(
                     clippy::cast_ptr_alignment,
                     reason = "WASAPI buffers are aligned for their sample format"
                 )]
+                // SAFETY: GetBuffer returns room for `frames` frames of the
+                // stream's float format, which is exactly what is copied; the
+                // buffer is aligned for its format, so for f32.
                 unsafe {
                     let buffer = stream
                         .render
@@ -464,7 +467,7 @@ impl AudioDevice for WasapiDevice {
             Output::Closed => Err(AudioError::Device("the device is not open".to_owned())),
             Output::Stream(stream) => {
                 if !stream.running {
-                    // Safe: a plain COM call on the stream this device owns.
+                    // SAFETY: a plain COM call on the stream this device owns.
                     unsafe { stream.client.Start() }
                         .map_err(|error| device_error("start the stream", &error))?;
                     stream.running = true;
@@ -479,7 +482,7 @@ impl AudioDevice for WasapiDevice {
         match &mut self.output {
             Output::Closed => {}
             Output::Stream(stream) => {
-                // Safe: plain COM calls on the stream this device owns. A
+                // SAFETY: plain COM calls on the stream this device owns. A
                 // stream that fails these is already broken, and the mixer
                 // reopens it on the next error it sees.
                 unsafe {
@@ -494,7 +497,7 @@ impl AudioDevice for WasapiDevice {
 
     fn wait(&mut self, timeout: Duration) {
         let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(INFINITE - 1);
-        // Safe: waiting on event handles this device owns.
+        // SAFETY: waiting on event handles this device owns.
         unsafe {
             match &self.output {
                 Output::Stream(stream) if stream.running => {
@@ -514,7 +517,7 @@ impl AudioDevice for WasapiDevice {
     fn waker(&self) -> Waker {
         let wake = Arc::clone(&self.wake);
         Arc::new(move || {
-            // Safe: signalling an event this closure keeps alive.
+            // SAFETY: signalling an event this closure keeps alive.
             unsafe {
                 let _ = SetEvent(wake.0);
             }

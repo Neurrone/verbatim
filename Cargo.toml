@@ -132,6 +132,8 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+# Every unsafe block states why it is sound (phase 6's unsafe-code work).
+undocumented_unsafe_blocks = "warn"
 
 # The audio mixer's resampler runs on every utterance in real time; an
 # unoptimized build of it takes about a tenth of real time, enough to run

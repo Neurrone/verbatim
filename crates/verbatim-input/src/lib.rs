@@ -14,6 +14,8 @@
 //! streams. The thin, never-blocking hook thread that installs the real
 //! `WH_KEYBOARD_LL` hook and drives the machine is `verbatim-input-windows`.
 
+#![forbid(unsafe_code)]
+
 pub mod keys;
 pub mod map;
 pub mod scripts;

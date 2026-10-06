@@ -92,6 +92,8 @@ fn nudge_foreground_lock() {
 /// process.
 pub(crate) fn force_foreground(hwnd: HWND) {
     nudge_foreground_lock();
+    // SAFETY: plain Win32 window calls on a handle of this process's own
+    // frame; a handle that has gone makes them fail, which is ignored.
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = BringWindowToTop(hwnd);

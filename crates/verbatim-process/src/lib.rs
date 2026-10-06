@@ -195,9 +195,9 @@ fn anonymous_pipe(inherit: PipeInherit, buffer: u32) -> io::Result<(HANDLE, HAND
         PipeInherit::Write => (write, read),
     };
     // SAFETY: `parent_end` is a valid handle just created.
-    if let Err(error) =
-        unsafe { SetHandleInformation(parent_end, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) }
-    {
+    let cleared =
+        unsafe { SetHandleInformation(parent_end, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) };
+    if let Err(error) = cleared {
         close_handle(child_end);
         close_handle(parent_end);
         return Err(to_io(error));

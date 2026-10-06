@@ -7,3 +7,5 @@
 //! choice is ratified in milestone M5.
 //!
 //! Skeleton only in M0.
+
+#![forbid(unsafe_code)]

@@ -147,12 +147,12 @@ struct Synthesis<'a> {
 
 /// Receives each chunk of audio from `espeak_Synth`.
 unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEvent) -> c_int {
-    // SAFETY: eSpeak NG passes the user data given to `espeak_Synth` in
-    // every event, and the first event is always present; the pointer is to
-    // the `Synthesis` alive for the whole synchronous `espeak_Synth` call.
     if events.is_null() {
         return 0;
     }
+    // SAFETY: eSpeak NG passes the user data given to `espeak_Synth` in
+    // every event, and the first event is always present; the pointer is to
+    // the `Synthesis` alive for the whole synchronous `espeak_Synth` call.
     let synthesis = unsafe {
         let user_data = (*events).user_data;
         if user_data.is_null() {

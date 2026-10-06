@@ -18,6 +18,8 @@
 //!
 //! Writes are atomic — write a temporary file, then rename over the target.
 
+#![forbid(unsafe_code)]
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;

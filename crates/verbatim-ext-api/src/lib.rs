@@ -6,3 +6,5 @@
 //! and add-ons: no host-API additions without a consumer.
 //!
 //! Skeleton only in M0; v0 of the API lands with milestone M5.
+
+#![forbid(unsafe_code)]

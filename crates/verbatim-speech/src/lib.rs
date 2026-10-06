@@ -8,6 +8,8 @@
 //! [`SpeechEvents`] observer, and the [`SpeechSettingsHost`] handle the GUI
 //! talks to.
 
+#![forbid(unsafe_code)]
+
 mod driver;
 mod events;
 mod host;

@@ -323,7 +323,7 @@ struct RawPipe {
     write_event: HANDLE,
 }
 
-// Safety: `HANDLE` is a plain kernel handle value. `handle` is used from
+// SAFETY: `HANDLE` is a plain kernel handle value. `handle` is used from
 // two threads (the connection's reader and writer), but each issues only
 // its own direction of I/O (`ReadFile`/`ConnectNamedPipe` versus
 // `WriteFile`) with its own `OVERLAPPED`/event — Microsoft's documented
@@ -331,6 +331,7 @@ struct RawPipe {
 // kind of operation on it. `read_event` and `write_event` are likewise
 // used from exactly one of those threads each.
 unsafe impl Send for RawPipe {}
+// SAFETY: as above.
 unsafe impl Sync for RawPipe {}
 
 impl RawPipe {
@@ -342,7 +343,7 @@ impl RawPipe {
             hEvent: self.read_event,
             ..OVERLAPPED::default()
         };
-        // Safety: `overlapped` is valid for the duration of this call and
+        // SAFETY: `overlapped` is valid for the duration of this call and
         // is not read again after `wait_overlapped` returns.
         let result = unsafe { ConnectNamedPipe(self.handle, Some(&raw mut overlapped)) };
         match result {
@@ -350,7 +351,7 @@ impl RawPipe {
             Err(error) if error.code() == HRESULT::from_win32(ERROR_PIPE_CONNECTED.0) => Ok(()),
             Err(error) if error.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => {
                 let mut transferred = 0u32;
-                // Safety: `overlapped` is still valid (same stack frame,
+                // SAFETY: `overlapped` is still valid (same stack frame,
                 // not yet returned); blocks until the pending connect
                 // completes.
                 unsafe {
@@ -372,7 +373,7 @@ impl RawPipe {
             ..OVERLAPPED::default()
         };
         let mut read = 0u32;
-        // Safety: `buf` and `overlapped` are valid, exclusively-borrowed
+        // SAFETY: `buf` and `overlapped` are valid, exclusively-borrowed
         // for the duration of this call (including the blocking wait
         // below); this thread is the only one that ever issues `ReadFile`
         // on this handle.
@@ -393,7 +394,7 @@ impl RawPipe {
             }
         }
         let mut transferred = 0u32;
-        // Safety: `overlapped` is still valid; blocks until the read (which
+        // SAFETY: `overlapped` is still valid; blocks until the read (which
         // may have already completed above) finishes.
         match unsafe {
             GetOverlappedResult(
@@ -416,7 +417,7 @@ impl RawPipe {
                 ..OVERLAPPED::default()
             };
             let mut written = 0u32;
-            // Safety: `buf` and `overlapped` are valid for the duration of
+            // SAFETY: `buf` and `overlapped` are valid for the duration of
             // this call (including the blocking wait below); this thread
             // is the only one that ever issues `WriteFile` on this handle.
             let result = unsafe {
@@ -433,7 +434,7 @@ impl RawPipe {
                 return Err(io::Error::other(error.clone()));
             }
             let mut transferred = 0u32;
-            // Safety: `overlapped` is still valid; blocks until the write
+            // SAFETY: `overlapped` is still valid; blocks until the write
             // (which may have already completed above) finishes.
             unsafe {
                 GetOverlappedResult(
@@ -452,7 +453,7 @@ impl RawPipe {
     /// Forces any blocked `ReadFile`/`WriteFile` on this instance (on any
     /// thread) to fail, and disconnects the client.
     fn disconnect(&self) {
-        // Safety: `self.handle` is a valid named-pipe server handle.
+        // SAFETY: `self.handle` is a valid named-pipe server handle.
         unsafe {
             let _ = DisconnectNamedPipe(self.handle);
         }
@@ -462,7 +463,7 @@ impl RawPipe {
 impl Drop for RawPipe {
     fn drop(&mut self) {
         self.disconnect();
-        // Safety: `handle`, `read_event`, and `write_event` are all owned
+        // SAFETY: `handle`, `read_event`, and `write_event` are all owned
         // exclusively by this `RawPipe` and not used again after this
         // point.
         unsafe {
@@ -501,14 +502,14 @@ impl Write for PipeWriter {
 /// `LocalFree` on drop.
 struct SecurityDescriptor(PSECURITY_DESCRIPTOR);
 
-// Safety: the underlying block is heap memory with no thread affinity; it
+// SAFETY: the underlying block is heap memory with no thread affinity; it
 // is only ever read by `CreateNamedPipeW`.
 unsafe impl Send for SecurityDescriptor {}
 
 impl Drop for SecurityDescriptor {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
-            // Safety: `self.0` was allocated by
+            // SAFETY: `self.0` was allocated by
             // `ConvertStringSecurityDescriptorToSecurityDescriptorW`, which
             // documents `LocalFree` as the correct release call.
             unsafe {
@@ -521,16 +522,16 @@ impl Drop for SecurityDescriptor {
 /// Renders the current process token's user SID as a string, for building
 /// the owner-only SDDL security descriptor below.
 fn current_user_sid_string() -> io::Result<String> {
-    // Safety: `GetCurrentProcess` returns a pseudo-handle valid for the
+    // SAFETY: `GetCurrentProcess` returns a pseudo-handle valid for the
     // lifetime of the process; no cleanup is required for it.
     let process = unsafe { GetCurrentProcess() };
     let mut token = HANDLE::default();
-    // Safety: `token` is a valid out-pointer for the duration of the call.
+    // SAFETY: `token` is a valid out-pointer for the duration of the call.
     unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) }.map_err(io::Error::other)?;
 
     let result = (|| {
         let mut needed = 0u32;
-        // Safety: a null buffer with `needed` as the size out-pointer is
+        // SAFETY: a null buffer with `needed` as the size out-pointer is
         // the documented way to ask `GetTokenInformation` for the required
         // buffer size; it is expected to report `ERROR_INSUFFICIENT_BUFFER`.
         let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &raw mut needed) };
@@ -538,7 +539,7 @@ fn current_user_sid_string() -> io::Result<String> {
         // read back below as a `TOKEN_USER`, which contains a pointer-sized
         // field and would otherwise be under-aligned.
         let mut buffer = vec![0u64; needed.div_ceil(8) as usize];
-        // Safety: `buffer` is sized to `needed` (rounded up) as reported
+        // SAFETY: `buffer` is sized to `needed` (rounded up) as reported
         // above, and valid for writes of that length.
         unsafe {
             GetTokenInformation(
@@ -551,20 +552,20 @@ fn current_user_sid_string() -> io::Result<String> {
         }
         .map_err(io::Error::other)?;
 
-        // Safety: `buffer` was filled by `GetTokenInformation` above with a
+        // SAFETY: `buffer` was filled by `GetTokenInformation` above with a
         // `TOKEN_USER` (guaranteed by the `TokenUser` information class),
         // is large enough because we sized it from that same call, and is
         // suitably aligned because it is backed by a `Vec<u64>`.
         let token_user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
         let mut sid_string = PWSTR::null();
-        // Safety: `token_user.User.Sid` is a valid SID for as long as
+        // SAFETY: `token_user.User.Sid` is a valid SID for as long as
         // `buffer` is alive, which outlives this call.
         unsafe { ConvertSidToStringSidW(token_user.User.Sid, &raw mut sid_string) }
             .map_err(io::Error::other)?;
-        // Safety: `sid_string` was just allocated by the call above and is
+        // SAFETY: `sid_string` was just allocated by the call above and is
         // a valid, null-terminated wide string.
         let rendered = unsafe { sid_string.to_string() }.map_err(io::Error::other);
-        // Safety: `sid_string` was allocated by `ConvertSidToStringSidW`,
+        // SAFETY: `sid_string` was allocated by `ConvertSidToStringSidW`,
         // which documents `LocalFree` as the correct release call.
         unsafe {
             let _ = LocalFree(Some(HLOCAL(sid_string.0.cast())));
@@ -572,7 +573,7 @@ fn current_user_sid_string() -> io::Result<String> {
         rendered
     })();
 
-    // Safety: `token` was opened by `OpenProcessToken` above and is not
+    // SAFETY: `token` was opened by `OpenProcessToken` above and is not
     // used again after this point.
     unsafe {
         let _ = CloseHandle(token);
@@ -591,7 +592,7 @@ fn build_owner_only_security_descriptor() -> io::Result<SecurityDescriptor> {
     let sddl = format!("D:P(A;;GA;;;{sid})");
     let wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
-    // Safety: `wide` is a valid, null-terminated wide string for the
+    // SAFETY: `wide` is a valid, null-terminated wide string for the
     // duration of this call; `descriptor` is a valid out-pointer.
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -614,14 +615,14 @@ fn create_pipe_instance(pipe_name: &str, security: &SecurityDescriptor) -> io::R
         lpSecurityDescriptor: security.0.0,
         bInheritHandle: false.into(),
     };
-    // Safety: `wide` is a valid, null-terminated wide string; `attributes`
-    // is valid for the duration of this call and points at a security
-    // descriptor kept alive by the caller. `FILE_FLAG_OVERLAPPED` is set
-    // (see this module's doc comment for why: a synchronous handle
-    // serializes reads and writes at the driver level even across
-    // independent handles to the same instance).
+    // `FILE_FLAG_OVERLAPPED` is set (see this module's doc comment for why:
+    // a synchronous handle serializes reads and writes at the driver level
+    // even across independent handles to the same instance).
     let mut open_mode = PIPE_ACCESS_DUPLEX;
     open_mode.0 |= FILE_FLAG_OVERLAPPED.0;
+    // SAFETY: `wide` is a valid, null-terminated wide string; `attributes`
+    // is valid for the duration of this call and points at a security
+    // descriptor kept alive by the caller.
     let handle = unsafe {
         CreateNamedPipeW(
             PCWSTR(wide.as_ptr()),
@@ -635,7 +636,7 @@ fn create_pipe_instance(pipe_name: &str, security: &SecurityDescriptor) -> io::R
         )
     };
     if handle.is_invalid() {
-        // Safety: trivially safe; no preconditions.
+        // SAFETY: trivially safe; no preconditions.
         let error = unsafe { GetLastError() };
         return Err(io::Error::other(format!(
             "CreateNamedPipeW failed: {error:?}"
@@ -643,14 +644,14 @@ fn create_pipe_instance(pipe_name: &str, security: &SecurityDescriptor) -> io::R
     }
 
     let create_event = || -> io::Result<HANDLE> {
-        // Safety: manual-reset, initially-unsignaled, unnamed event; no
+        // SAFETY: manual-reset, initially-unsignaled, unnamed event; no
         // preconditions.
         unsafe { CreateEventW(None, true, false, PCWSTR::null()) }.map_err(io::Error::other)
     };
     let read_event = match create_event() {
         Ok(event) => event,
         Err(error) => {
-            // Safety: `handle` is not used again on this path.
+            // SAFETY: `handle` is not used again on this path.
             unsafe {
                 let _ = CloseHandle(handle);
             }
@@ -660,7 +661,7 @@ fn create_pipe_instance(pipe_name: &str, security: &SecurityDescriptor) -> io::R
     let write_event = match create_event() {
         Ok(event) => event,
         Err(error) => {
-            // Safety: neither handle is used again on this path.
+            // SAFETY: neither handle is used again on this path.
             unsafe {
                 let _ = CloseHandle(handle);
                 let _ = CloseHandle(read_event);

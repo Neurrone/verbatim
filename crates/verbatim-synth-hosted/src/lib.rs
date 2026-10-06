@@ -22,6 +22,8 @@
 //! channel and a small pipe buffer, so the host's synthesizer waits when
 //! the audio device is behind.
 
+#![forbid(unsafe_code)]
+
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;

@@ -1497,6 +1497,27 @@ lands on column 10, reading the cell there or "blank".
    after; the exit criterion is two round trips per steady-state UIA
    focus change against mockapp, asserted exactly.
 
+### Unsafe code (added with Dickson on 2026-10-06)
+
+No dedicated safety review of the crates' `unsafe` code has been done:
+about 470 sites across the Windows crates, most of them `windows` crate COM
+calls marked `unsafe` only because the bindings are generated. In order:
+
+1. Lints, before more code is written: `#![forbid(unsafe_code)]` on every
+   crate with no `unsafe` today (the platform-neutral crates among them),
+   and `clippy::undocumented_unsafe_blocks` across the workspace, adding
+   the missing `SAFETY` comments.
+2. Safe wrappers for UIA and MSAA in `verbatim-uia` and `verbatim-ia2`:
+   small newtypes whose methods hold one documented `unsafe` call each, so
+   the outpost's logic and the remote operations algorithms are safe
+   code. Done with step 2's remote operations wiring, which touches the
+   same code.
+3. A safety audit of what remains (step 2b, after step 2 and before step
+   3): raw pointers, `SAFEARRAY` and `VARIANT` handling, COM apartments
+   and agile references, callbacks and reentrancy, cross-process
+   `SendMessage`, window-handle reuse, and the eSpeak and WASAPI FFI, with
+   a written report and fixes; then `clippy::multiple_unsafe_ops_per_block`.
+
 ### Step 3: the GUI port
 
 1. On wxDragon still: extract the pure Rust parts (key routing, the

@@ -11,6 +11,8 @@
 //! [`dump`], the on-disk format that turns a live flight-recorder ring into
 //! a committed replay fixture.
 
+#![forbid(unsafe_code)]
+
 pub mod dump;
 pub mod flight_recorder;
 mod recorder;

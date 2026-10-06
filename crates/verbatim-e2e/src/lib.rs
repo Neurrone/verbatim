@@ -41,6 +41,8 @@
 //! launches a real Verbatim on the developer's live desktop, and
 //! `--test-threads=1` is how both a local run and CI honor that.
 
+#![forbid(unsafe_code)]
+
 pub mod agent_client;
 pub mod artifacts;
 pub mod latency;
