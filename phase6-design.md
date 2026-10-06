@@ -1145,6 +1145,16 @@ The program reads raw-view parents, which is the view the classic walk
 uses (`RawViewWalker` in `verbatim-uia`'s client), so the two return the
 same tree.
 
+Where remote operations are used: for every operation that would
+otherwise take several round trips (the focus ancestry, terminal reads,
+and later text attribute runs and M6's buffer fetches), whenever the
+window's provider is native. Not for a single read that is already one
+round trip, since a program cannot make it cheaper, and never for event
+subscriptions, which are not calls. Each choice is justified by the
+operation ledger's counts. A developer setting in `settings.toml`
+(`uia.remote_operations`, on by default) forces the classic path, for
+diagnosing a provider and for the before-and-after measurements.
+
 Dependencies: the `UI_UIAutomation` and `UI_UIAutomation_Core` features
 of `windows`, and the `windows-collections` crate (the WinRT vector type
 moved there), which means rerunning hakari.
@@ -1308,6 +1318,79 @@ M4:
     its controls: change "Report as", play a sound from the Sound list,
     press Preview, press Reset; then Cancel, and hear that nothing
     changed.
+
+### Terminal end-to-end scenarios
+
+The terminal scenarios share a setup, so their results do not depend on
+the user's own terminal settings or on timing:
+
+- **Their own windows.** Each scenario starts its own window with a title
+  unique to the run: Windows Terminal with `wt.exe -w new --title <title>
+  --size 120,30`, and the console host with `conhost.exe`, its size set
+  by `mode con cols=120 lines=30`. The fixed size fixes line wrapping. The
+  scenario finds, brings forward, and closes its window by that title,
+  never by class, so the user's own terminals are never touched.
+- **A fixed shell.** PowerShell started with `-NoProfile -NoLogo` and a
+  one-word prompt set at startup, or `cmd` with `prompt $G`, so the
+  prompt's text is known and assertions do not depend on the working
+  directory or a user's profile.
+- **Scripts written by the agent.** Anything a scenario runs (a flood, a
+  text table, a password prompt) is a small script the agent writes into
+  the run's directory with `WriteFile` before the window opens, so the
+  typed command is short and the output is exactly known.
+- **Typing text.** A new agent request, `TypeText`, types a string as
+  real key presses: each character is mapped to its key and Shift state
+  in the active keyboard layout (`VkKeyScanEx`), so Verbatim's keyboard
+  hook sees ordinary typing, which typed-character echo needs. A
+  character the layout cannot type fails the request before any key is
+  sent. `SendKeys` stays for named keys.
+- **Assertions on speech.** As in every scenario, on the speech frames
+  from Verbatim's control plane: what was spoken, in what order, and when.
+
+The password scenario (`windows_terminal_commands`, repeated in
+`conhost_commands`):
+
+1. Type `echo hello` and Enter: each typed character is spoken, then the
+   output "hello", then the prompt. This first shows that echo works in
+   this window, so the silence that follows means something.
+2. Run the written script, which calls
+   `Read-Host -AsSecureString "Password"`: "Password" is spoken.
+3. Type `secret` and Enter. The terminal shows nothing for these keys,
+   so with "speak passwords" off (the default) Verbatim speaks none of
+   them: no speech frame between the prompt and the next output contains
+   any of the typed characters or the word.
+4. The script then prints "done": it is spoken, which shows Verbatim did
+   not go silent for another reason.
+5. The same steps with "speak passwords" on: the characters are spoken.
+
+The flood scenario (`terminal_flood`):
+
+1. Run a written script that prints ten thousand numbered lines ("flood
+   line 1" to "flood line 10000") as fast as the shell can, then the
+   prompt returns. Ten thousand lines also exceed Windows Terminal's
+   default scrollback of 9,001 lines, so the oldest lines are discarded
+   during the run, which exercises the anchor's invalidation.
+2. Assertions: the spoken lines are in increasing order with no line
+   twice; "skipped N lines" is spoken; the last 30 lines and the prompt
+   are spoken; nothing is spoken out of order after the prompt. N itself
+   is not asserted exactly, because how many lines are spoken before the
+   backlog fills depends on the speech rate; the assertion is that the
+   skipped count plus the lines spoken accounts for every line.
+3. Responsiveness: during the flood, the scenario presses a Verbatim
+   command (report the title) and asserts it is answered within a bound,
+   and the control plane's status answers throughout, so a hang fails the
+   scenario rather than stalling it.
+4. Verbatim+5 turns output reporting off: a second flood speaks nothing
+   but the confirmation; Verbatim+5 again turns it back on, and the next
+   command's output is spoken.
+5. The wall-time ratio for the M4 exit criterion is computed from the
+   trace stages and the run's calibration, and saved with the
+   artifacts.
+
+`terminal_review_grid` prints a written text table whose column 10 is
+the start of a column on every row, with some rows shorter than 10
+characters, then moves the review cursor down through it: every step
+lands on column 10, reading the cell there or "blank".
 
 ### Step 1: NVDA as the reference
 
