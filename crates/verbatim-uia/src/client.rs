@@ -124,6 +124,18 @@ impl Uia {
         unsafe { self.client.RawViewWalker() }
     }
 
+    /// A tree walker over UIA's control view, which leaves out elements
+    /// that are only layout. Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the walker cannot be created.
+    pub fn control_view_walker(&self) -> windows::core::Result<IUIAutomationTreeWalker> {
+        // SAFETY: `self.client` is a live IUIAutomation; creating a walker
+        // takes no arguments.
+        unsafe { self.client.ControlViewWalker() }
+    }
+
     /// The desktop's root element, which UIA serves in this process, so the
     /// call is local.
     ///

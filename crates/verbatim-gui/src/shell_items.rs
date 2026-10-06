@@ -30,13 +30,14 @@ use crossbeam_channel::{RecvTimeoutError, bounded};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationTreeWalker,
-    UIA_BoundingRectanglePropertyId, UIA_ButtonControlTypeId,
+    UIA_ButtonControlTypeId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, IsWindowVisible};
 use windows::core::{HSTRING, PCWSTR};
 
 use verbatim_model::Rect;
-use verbatim_uia::Uia;
+use verbatim_uia::map::cached_native_window_handle;
+use verbatim_uia::{ElementExt, Uia, WalkerExt};
 
 /// Which shell surface to enumerate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,15 +132,15 @@ fn enumerate(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
             return None;
         }
     };
-    let cache = match extended_cache_request(&uia) {
+    // The base cache request carries the bounding rectangle the list needs.
+    let cache = match uia.base_cache_request() {
         Ok(cache) => cache,
         Err(error) => {
             tracing::warn!(%error, "shell enumeration could not build its cache request");
             return None;
         }
     };
-    // SAFETY: the client is a live IUIAutomation on this thread.
-    let walker = match unsafe { uia.client().ControlViewWalker() } {
+    let walker = match uia.control_view_walker() {
         Ok(walker) => walker,
         Err(error) => {
             tracing::warn!(%error, "shell enumeration could not create a tree walker");
@@ -178,16 +179,6 @@ fn enumerate(kind: ShellItemKind) -> Option<Vec<ShellItem>> {
         }
     }
     Some(items)
-}
-
-/// The base cache request extended with the bounding rectangle, which the
-/// base set does not carry (events never need it; this dialog does).
-fn extended_cache_request(uia: &Uia) -> windows::core::Result<IUIAutomationCacheRequest> {
-    let cache = uia.base_cache_request()?;
-    // SAFETY: adding a property to a freshly built, not-yet-used cache
-    // request; the property id is a valid UIA constant.
-    unsafe { cache.AddProperty(UIA_BoundingRectanglePropertyId) }?;
-    Ok(cache)
 }
 
 /// The notification area window: the `TrayNotifyWnd` child of
@@ -266,31 +257,26 @@ fn collect_recursive(
     items: &mut Vec<ShellItem>,
 ) {
     if let Some(exclude) = exclude
-        // SAFETY: reading a cached property of a live element.
-        && unsafe { element.CachedNativeWindowHandle() }.is_ok_and(|hwnd| hwnd == exclude)
+        && cached_native_window_handle(element) == exclude.0 as isize
     {
         return;
     }
 
-    // SAFETY: reading cached properties of a live element built with a
-    // cache request carrying all of them.
-    let control_type = unsafe { element.CachedControlType() }.unwrap_or_default();
+    // Every property read here was prefetched by the cache request.
+    let control_type = element.cached_control_type().unwrap_or_default();
     if control_type == UIA_ButtonControlTypeId {
-        // SAFETY: as above; every property read here was prefetched.
-        let (name, offscreen, rect) = unsafe {
-            (
-                element.CachedName().ok().map(|name| name.to_string()),
-                element
-                    .CachedIsOffscreen()
-                    .is_ok_and(windows::core::BOOL::as_bool),
-                element.CachedBoundingRectangle().ok().map(|rect| Rect {
-                    left: rect.left,
-                    top: rect.top,
-                    width: rect.right - rect.left,
-                    height: rect.bottom - rect.top,
-                }),
-            )
-        };
+        let name = element.cached_string(UIA_NamePropertyId);
+        let offscreen = element.cached_bool(UIA_IsOffscreenPropertyId);
+        // The rectangle comes from the shell's provider in another process;
+        // one whose size does not fit is dropped rather than overflowing.
+        let rect = element.cached_bounding_rectangle().and_then(|rect| {
+            Some(Rect {
+                left: rect.left,
+                top: rect.top,
+                width: rect.right.checked_sub(rect.left)?,
+                height: rect.bottom.checked_sub(rect.top)?,
+            })
+        });
         if let Some(item) = item_from_parts(name, offscreen, rect) {
             items.push(item);
         }
@@ -301,10 +287,9 @@ fn collect_recursive(
     if depth >= MAX_DEPTH {
         return;
     }
-    // SAFETY: walker, element, and cache are live and from this thread's
-    // client; an Err from the walker means "no child / no sibling", the
-    // same convention Uia::walk_tree relies on.
-    let mut next = unsafe { walker.GetFirstChildElementBuildCache(element, cache) }.ok();
+    // An Err from the walker means "no child / no sibling", the same
+    // convention Uia::walk_tree relies on.
+    let mut next = walker.first_child(element, cache).ok();
     while let Some(current) = next {
         *visited += 1;
         if *visited >= MAX_NODES {
@@ -312,8 +297,7 @@ fn collect_recursive(
             return;
         }
         collect_recursive(walker, cache, &current, exclude, depth + 1, visited, items);
-        // SAFETY: as above.
-        next = unsafe { walker.GetNextSiblingElementBuildCache(&current, cache) }.ok();
+        next = walker.next_sibling(&current, cache).ok();
     }
 }
 
@@ -333,7 +317,11 @@ fn item_from_parts(name: Option<String>, offscreen: bool, rect: Option<Rect>) ->
 /// The screen point click actions target: the center of `rect`.
 #[must_use]
 pub fn center_of(rect: Rect) -> (i32, i32) {
-    (rect.left + rect.width / 2, rect.top + rect.height / 2)
+    // Saturating, since the rectangle came from another process.
+    (
+        rect.left.saturating_add(rect.width / 2),
+        rect.top.saturating_add(rect.height / 2),
+    )
 }
 
 #[cfg(test)]
