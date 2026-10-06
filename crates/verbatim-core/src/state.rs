@@ -201,6 +201,13 @@ pub(crate) enum TextFollowUp {
     Copy,
     /// A location report.
     Location,
+    /// The selected text of the navigator object was read for its
+    /// announcement: speak it, or with nothing selected read the caret's
+    /// line.
+    NavigatorSelection,
+    /// The caret's line in the navigator object was read for its
+    /// announcement: speak it.
+    NavigatorLine,
 }
 
 /// Where the review cursor lands on a line it moved to, and what it says.

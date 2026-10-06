@@ -1419,3 +1419,168 @@ fn bold_starts_and_ends_and_a_font_change_is_named() {
         vec![format(TextFormat::NotBold), UtteranceSegment::text("next")]
     );
 }
+
+/// Moves the navigator from the focus to its next sibling, `object`, and
+/// returns the effects of landing there.
+fn navigate_to(state: &mut SrState, object: NodeSnapshot) -> Vec<Effect> {
+    let effects = reduce(state, &command(ReviewCommand::NextSibling, 0));
+    let Some(Effect::Fetch(query)) = effects.first() else {
+        panic!("expected a navigation fetch, got {effects:?}");
+    };
+    reduce(
+        state,
+        &Input::FetchCompleted {
+            trace_id: TraceId::mint(),
+            query_id: query.query_id,
+            kind: query.kind,
+            result: verbatim_model::FetchResult::Node(object),
+        },
+    )
+}
+
+/// An edit field without the focus, with a value, as navigation finds it.
+fn unfocused_edit() -> NodeSnapshot {
+    let mut edit = node(30, Role::EditableText, StateSet::new());
+    edit.name = Some("Notes".to_owned());
+    edit.value = Some("first line second line".to_owned());
+    edit
+}
+
+#[test]
+fn navigating_to_an_edit_field_reads_the_caret_line_in_place_of_its_value() {
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::Button, StateSet::new()));
+    let effects = navigate_to(&mut state, unfocused_edit());
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Notes"),
+            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
+        ],
+        "the value is left out"
+    );
+    let selection = request(&effects);
+    assert_eq!(selection.node_id, id(30));
+    assert_eq!(
+        selection.op,
+        TextOp::ReadRange {
+            start: TextPoint::SelectionStart,
+            end: TextPoint::SelectionEnd,
+        }
+    );
+    // Nothing selected: the caret's line is read next.
+    let effects = reduce(
+        &mut state,
+        &completed(
+            selection.query_id,
+            TextReply::Range {
+                text: String::new(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(spoken(&effects), Vec::new());
+    let line_request = request(&effects);
+    assert_eq!(
+        line_request.op,
+        TextOp::Read(TextRead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Line,
+        })
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            line_request.query_id,
+            TextReply::Read {
+                moved: 0,
+                chunk: line("second line\r\n", 200, 3),
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::text("second line")]
+    );
+}
+
+#[test]
+fn navigating_to_an_edit_field_with_a_selection_says_it_is_selected() {
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::Button, StateSet::new()));
+    let effects = navigate_to(&mut state, unfocused_edit());
+    let selection = request(&effects);
+    let effects = reduce(
+        &mut state,
+        &completed(
+            selection.query_id,
+            TextReply::Range {
+                text: "second".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("second".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn a_navigator_edit_field_without_text_says_its_value_and_a_late_answer_is_dropped() {
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::Button, StateSet::new()));
+    let effects = navigate_to(&mut state, unfocused_edit());
+    let selection = request(&effects);
+    let effects = reduce(
+        &mut state,
+        &completed(selection.query_id, TextReply::NoText),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::value("first line second line")]
+    );
+
+    // An answer for an object the navigator has left says nothing.
+    let effects = navigate_to(&mut state, unfocused_edit());
+    let selection = request(&effects);
+    let _ = navigate_to(&mut state, node(31, Role::Button, StateSet::new()));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            selection.query_id,
+            TextReply::Range {
+                text: "second".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(effects, Vec::new());
+}
+
+#[test]
+fn reporting_the_focused_edit_field_reads_its_known_caret_line() {
+    let mut state = SrState::new();
+    let mut edit = node(5, Role::EditableText, StateSet::new());
+    edit.value = Some("one two".to_owned());
+    focus(&mut state, edit);
+    caret_event(&mut state, 5, line("one two\n", 100, 4));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportObject, 0));
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Text(_))),
+        "the known caret needs no request: {effects:?}"
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
+            UtteranceSegment::text("one two"),
+        ]
+    );
+}

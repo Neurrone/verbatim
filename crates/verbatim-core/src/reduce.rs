@@ -21,7 +21,7 @@ use verbatim_model::{
 };
 use verbatim_model::{FocusNow, FocusValidity};
 
-use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState};
+use crate::state::{Attention, FocusContext, Navigator, PendingNavigation, SrState, TextFollowUp};
 use crate::{editing, review, review_text, say_all, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -291,6 +291,12 @@ fn reduce_text_completed(
         .pending_text
         .take_if(|pending| pending.query_id == query_id)
     {
+        if matches!(
+            pending.then,
+            TextFollowUp::NavigatorSelection | TextFollowUp::NavigatorLine
+        ) {
+            return editing::navigator_text_reply(state, trace_id, &pending, reply);
+        }
         return review_text::reply(state, trace_id, pending, reply);
     }
     if say_all::is_pending(state, query_id) {
@@ -1092,7 +1098,7 @@ fn navigator_command(
 
     match command {
         ReviewCommand::ToFocus => unreachable!("handled above"),
-        ReviewCommand::ReportObject => report_object(navigator, trace_id, repeat),
+        ReviewCommand::ReportObject => report_object(state, trace_id, repeat),
         ReviewCommand::Activate => vec![Effect::Activate {
             node_id: navigator.object.id,
         }],
@@ -1123,22 +1129,44 @@ fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         return Vec::new();
     };
     let object = focus.snapshot.clone();
-    let utterance = announce_node(trace_id, SpeechPriority::Queued, &object, Reason::Focus);
-    state.navigator = Some(Navigator::on(object));
-    vec![Effect::Speak(utterance)]
+    state.navigator = Some(Navigator::on(object.clone()));
+    announce_navigator(state, trace_id, &object, Reason::Focus)
+}
+
+/// Announces the navigator object `object` after object navigation or on
+/// request: its full announcement, except that an object that may have
+/// text leaves its value out and says its text after the rest
+/// ([`editing::navigator_text`]), as a focus does.
+fn announce_navigator(
+    state: &mut SrState,
+    trace_id: TraceId,
+    object: &NodeSnapshot,
+    reason: Reason,
+) -> Vec<Effect> {
+    let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
+        let mut announced = object.clone();
+        announced.value = None;
+        announce_node(trace_id, SpeechPriority::Queued, &announced, reason)
+    } else {
+        announce_node(trace_id, SpeechPriority::Queued, object, reason)
+    };
+    let mut effects = vec![Effect::Speak(utterance)];
+    effects.extend(editing::navigator_text(state, trace_id, object));
+    effects
 }
 
 /// Reports the navigator object: on the first press its full announcement,
 /// on the second its text spelled character by character, on the third its
 /// name and value copied to the clipboard (NVDA's multi-press semantics).
-fn report_object(navigator: &Navigator, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+    let Some(navigator) = state.navigator.as_ref() else {
+        return Vec::new();
+    };
     match repeat {
-        0 => vec![Effect::Speak(announce_node(
-            trace_id,
-            SpeechPriority::Queued,
-            &navigator.object,
-            Reason::Query,
-        ))],
+        0 => {
+            let object = navigator.object.clone();
+            announce_navigator(state, trace_id, &object, Reason::Query)
+        }
         1 => {
             // NVDA spells the name and value joined by a space.
             let segments = spelled(&clipboard_text(&navigator.object));
@@ -1566,10 +1594,8 @@ fn reduce_navigate_completed(
     match result {
         FetchResult::Node(snapshot) => {
             state.latest_navigation = None;
-            let utterance =
-                announce_node(trace_id, SpeechPriority::Queued, snapshot, Reason::Focus);
             state.navigator = Some(Navigator::on(snapshot.clone()));
-            vec![Effect::Speak(utterance)]
+            announce_navigator(state, trace_id, snapshot, Reason::Focus)
         }
         FetchResult::Gone => navigator_to_focus(state, trace_id),
         // The application did not answer: the navigator stays where it is,

@@ -202,14 +202,15 @@ fn switch_to(state: &SrState, source: Pid) -> SrState {
 }
 
 /// The utterances among `effects`. A focus change also tells the speech
-/// manager where the focus is, and may cancel speech; those effects are
-/// left out here and checked by their own tests.
+/// manager where the focus is, and may cancel speech, and an object with
+/// text asks for the text it says next; those effects are left out here and
+/// checked by their own tests.
 fn speak_effects(effects: &[Effect]) -> Vec<&Utterance> {
     effects
         .iter()
         .filter_map(|effect| match effect {
             Effect::Speak(utterance) => Some(utterance),
-            Effect::DropExpiredSpeech(_) | Effect::StopSpeech => None,
+            Effect::DropExpiredSpeech(_) | Effect::StopSpeech | Effect::Text(_) => None,
             other => panic!("expected Speak effect, got {other:?}"),
         })
         .collect()

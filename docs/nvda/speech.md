@@ -163,6 +163,25 @@ read through its text interface, which gives the masked characters the
 control shows. (`getObjectSpeech` and `_objectSpeech_calculateAllowedProps`
 in `speech/speech.py`; `_hasNavigableText` on the base NVDA object.)
 
+The object does not need the focus. Object navigation and reporting the
+current object read the same text for an edit field the user has not
+focused, through the same calls: the selection is asked of the control
+itself, which keeps its selection, and so its caret, while it does not
+have the focus. A Win32 edit control answers from its own selection; a UI
+Automation control answers from its text pattern's selection, which most
+providers report without the focus. When the control reports no selection
+at all (UI Automation gives an empty array, or the call fails), the first
+line is read instead, so a field the user never entered usually reads its
+first line. (`UIATextInfo` for `POSITION_SELECTION` in
+`NVDAObjects/UIA/__init__.py`.)
+
+Reporting the current object a second and third time spells and copies
+the same text for such an object: the name followed by the selected text,
+or by the line at the caret when nothing is selected, rather than the name
+and the value. An object without a real text interface spells and copies
+its name and value. (`script_navigatorObject_current` in
+`globalCommands.py`.)
+
 ### Line breaks in spoken text
 
 Before any text reaches the synthesizer, NVDA replaces every carriage

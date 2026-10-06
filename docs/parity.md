@@ -158,9 +158,14 @@ verified.
     announcement rather than between the role and the states.
     **Different:** a protected field's text is never read on focus, where
     NVDA reads whatever masked text the control gives; and an empty field
-    has no placeholder to speak. **Not yet:** object navigation and
-    reporting the current object still speak the value, where NVDA reads
-    the text there too.
+    has no placeholder to speak. Object navigation, to-focus, and
+    reporting the current object read the text the same way, **matched
+    since 2026-10-07**, whether or not the object has the focus: the
+    selected text, else the line at the caret, else the first line of a
+    control that reports no caret, and the value when it has no text
+    interface. **Not yet:** reporting the current object a second and
+    third time still spells and copies the name and value, where NVDA
+    spells and copies the name and the same text.
   - A multi-column list view item (a report view, such as msinfo32's
     right pane) is named by NVDA from its column texts, with no value
     or description; Verbatim keeps MSAA's name and description, since
