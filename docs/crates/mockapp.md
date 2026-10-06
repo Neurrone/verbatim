@@ -117,6 +117,11 @@ Implementation notes:
   or presence of a `value` for the middle two, and on its
   `selectable`/`selected` states for selection) alongside the
   `GetPropertyValue` overrides, rather than relying on the shortcut alone.
+  A list or tab control also serves an `ISelectionProvider` whose
+  selection is its children in the `selected` state, so a fixture's
+  initial selection and the `select` command both show through the
+  Selection pattern and its `Selection` property, as a real list reports
+  its selected item.
 - **Raw-view host furniture.** A real `hwnd`'s UIA raw tree (`TreeScope_Children`
   with a true condition) can include host-provided native elements — for
   example window-chrome furniture merged in via `HostRawElementProvider` —
@@ -131,7 +136,8 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). The test files that use UIA as a
-client (`arbitration.rs`, `controller_for.rs`, `events.rs`, `uia_tree.rs`)
+client (`arbitration.rs`, `controller_for.rs`, `events.rs`, `remote_ops.rs`,
+`uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
@@ -164,7 +170,13 @@ or `SetForegroundWindow` succeeding, and pass headless on GitHub
 and asserts that `verbatim_uia::Uia::controlled_descendant` finds a
 result inside the list the search box's `ControllerFor` names, and
 nothing for an item elsewhere, for the list itself, or from a box that
-controls nothing. `slow_application.rs` runs a real
+controls nothing. `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
+classic focus ancestry over `ancestry.json` (a five-level chain, a list
+and a tab control with selected children) and asserts they return the
+same ancestors with the same cached properties, that an element that
+lost the focus returns early, and how both behave against a stalled
+mockapp and one that has exited; the crate's guide records the findings.
+`slow_application.rs` runs a real
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,
 stalls mockapp's window thread with `stall`, delivers the focus as a

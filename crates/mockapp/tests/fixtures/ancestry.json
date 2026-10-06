@@ -1,0 +1,98 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Ancestry Fixture",
+  "children": [
+    {
+      "id": "pane1",
+      "role": "pane",
+      "children": [
+        {
+          "id": "group1",
+          "role": "group",
+          "name": "Outer group",
+          "children": [
+            {
+              "id": "toolbar1",
+              "role": "tool_bar",
+              "name": "Tools",
+              "children": [
+                {
+                  "id": "group2",
+                  "role": "group",
+                  "name": "Inner group",
+                  "description": "The innermost container",
+                  "children": [
+                    {
+                      "id": "deep",
+                      "role": "button",
+                      "name": "Deep button",
+                      "states": ["focusable"]
+                    },
+                    {
+                      "id": "notes",
+                      "role": "editable_text",
+                      "name": "Notes",
+                      "value": "hello",
+                      "states": ["focusable"]
+                    },
+                    {
+                      "id": "check",
+                      "role": "check_box",
+                      "name": "Remember",
+                      "states": ["focusable", "checked"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fruits",
+      "role": "list",
+      "name": "Fruits",
+      "states": ["focusable"],
+      "children": [
+        {
+          "id": "apple",
+          "role": "list_item",
+          "name": "Apple",
+          "states": ["focusable", "selectable"],
+          "position_in_set": 1,
+          "set_size": 2
+        },
+        {
+          "id": "banana",
+          "role": "list_item",
+          "name": "Banana",
+          "states": ["focusable", "selectable", "selected"],
+          "position_in_set": 2,
+          "set_size": 2
+        }
+      ]
+    },
+    {
+      "id": "pages",
+      "role": "tab_control",
+      "name": "Pages",
+      "states": ["focusable"],
+      "children": [
+        {
+          "id": "general",
+          "role": "tab",
+          "name": "General",
+          "states": ["focusable", "selectable", "selected"]
+        },
+        {
+          "id": "advanced",
+          "role": "tab",
+          "name": "Advanced",
+          "states": ["focusable", "selectable"]
+        }
+      ]
+    }
+  ]
+}

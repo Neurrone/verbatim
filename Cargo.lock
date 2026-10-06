@@ -1021,6 +1021,7 @@ dependencies = [
  "verbatim-model",
  "verbatim-outpost",
  "verbatim-uia",
+ "verbatim-uia-rops",
  "windows",
  "windows-core",
  "workspace-hack",

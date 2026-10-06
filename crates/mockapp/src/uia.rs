@@ -390,6 +390,54 @@ mod props {
         states.contains(State::Selectable) || states.contains(State::Selected)
     }
 
+    /// Whether `role` serves the `SelectionPattern`: a list or a tab
+    /// control, the containers whose selected child the focus reports.
+    pub(super) fn selection_container(role: verbatim_model::Role) -> bool {
+        matches!(
+            role,
+            verbatim_model::Role::List | verbatim_model::Role::TabControl
+        )
+    }
+
+    /// The children of `index` in the `selected` state, as a `VT_UNKNOWN`
+    /// array of their providers, which the caller owns.
+    pub(super) fn selected_children(tree: &SharedTree, hwnd: HWND, index: usize) -> *mut SAFEARRAY {
+        let selected: Vec<usize> = {
+            let guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.nodes[index]
+                .children
+                .iter()
+                .copied()
+                .filter(|&child| guard.nodes[child].states.contains(State::Selected))
+                .collect()
+        };
+        let providers: Vec<IRawElementProviderSimple> = selected
+            .into_iter()
+            .filter_map(|child| provider_for(tree.clone(), hwnd, child).cast().ok())
+            .collect();
+        provider_array(&providers)
+    }
+
+    /// A `VT_UNKNOWN` vector of `providers`, or null when it cannot be
+    /// built. `SafeArrayPutElement` takes its own reference to each.
+    fn provider_array(providers: &[IRawElementProviderSimple]) -> *mut SAFEARRAY {
+        let count = u32::try_from(providers.len()).unwrap_or(0);
+        // SAFETY: a `VT_UNKNOWN` vector of `count` elements, filled by index
+        // within its bounds.
+        unsafe {
+            let array = SafeArrayCreateVector(VT_UNKNOWN, 0, count);
+            if array.is_null() {
+                return array;
+            }
+            for (index, provider) in (0i32..).zip(providers) {
+                let _ = SafeArrayPutElement(array, &raw const index, provider.as_raw());
+            }
+            array
+        }
+    }
+
     pub(super) fn get_property_value(
         tree: &SharedTree,
         hwnd: HWND,
@@ -606,10 +654,11 @@ mod handler {
         IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
         IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
         IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl,
-        IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
-        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
-        UIA_ExpandCollapsePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionItemPatternId,
-        UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
+        ISelectionProvider, ISelectionProvider_Impl, IToggleProvider, IToggleProvider_Impl,
+        NavigateDirection, ProviderOptions, ProviderOptions_ServerSideProvider,
+        ProviderOptions_UseComThreading, UIA_ExpandCollapsePatternId, UIA_PATTERN_ID,
+        UIA_PROPERTY_ID, UIA_SelectionItemPatternId, UIA_SelectionPatternId, UIA_TogglePatternId,
+        UIA_ValuePatternId, UiaRect,
     };
     use windows::core::Result as WinResult;
     use windows_core::{Error, IUnknown, implement};
@@ -645,7 +694,7 @@ mod handler {
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
-            get_pattern_provider(&self.tree, self.index, pattern_id)
+            get_pattern_provider(&self.tree, self.hwnd, self.index, pattern_id)
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
             Ok(props::get_property_value(
@@ -707,7 +756,7 @@ mod handler {
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
-            get_pattern_provider(&self.tree, self.index, pattern_id)
+            get_pattern_provider(&self.tree, self.hwnd, self.index, pattern_id)
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
             Ok(props::get_property_value(
@@ -763,6 +812,7 @@ mod handler {
     /// state at all.
     fn get_pattern_provider(
         tree: &SharedTree,
+        hwnd: HWND,
         index: usize,
         pattern_id: UIA_PATTERN_ID,
     ) -> WinResult<IUnknown> {
@@ -792,6 +842,15 @@ mod handler {
         if pattern_id == UIA_ValuePatternId && has_value {
             let provider: IUnknown = ValueProvider {
                 tree: tree.clone(),
+                index,
+            }
+            .into();
+            return Ok(provider);
+        }
+        if pattern_id == UIA_SelectionPatternId && props::selection_container(role) {
+            let provider: IUnknown = SelectionProvider {
+                tree: tree.clone(),
+                hwnd,
                 index,
             }
             .into();
@@ -945,6 +1004,29 @@ mod handler {
             // a null container is the UIA contract for "not exposed", same
             // as the other legitimate-null results this module documents.
             Err(Error::empty())
+        }
+    }
+
+    /// The `SelectionPattern` provider for a list or tab control: its
+    /// selection is its children in the `selected` state, so a fixture's
+    /// initial `selected` states and the `select` command both show
+    /// through it, as a real list reports its selected item.
+    #[implement(ISelectionProvider, Agile = false)]
+    struct SelectionProvider {
+        tree: SharedTree,
+        hwnd: HWND,
+        index: usize,
+    }
+
+    impl ISelectionProvider_Impl for SelectionProvider_Impl {
+        fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
+            Ok(props::selected_children(&self.tree, self.hwnd, self.index))
+        }
+        fn CanSelectMultiple(&self) -> WinResult<windows_core::BOOL> {
+            Ok(false.into())
+        }
+        fn IsSelectionRequired(&self) -> WinResult<windows_core::BOOL> {
+            Ok(false.into())
         }
     }
 }
