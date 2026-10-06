@@ -15,7 +15,10 @@
 //!
 //! A probe that finds a UIA provider is kept for the window's lifetime and
 //! forgotten when the window is destroyed ([`Arbitrator::forget`]), as
-//! decision D15 specifies: a server-side provider does not go away. A probe
+//! decision D15 specifies: a server-side provider does not go away. Each
+//! kept verdict also records the thread that owned the window, and a
+//! window now owned by another thread is probed afresh, so a reused window
+//! handle does not inherit a verdict when its destroy event was lost. A probe
 //! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
 //! cache period, and then probed again. The probe itself counts only the
 //! window's own answer, so a busy window that has a provider is not
@@ -30,6 +33,8 @@ use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, GetClassNameW};
+
+use crate::outpost::window::window_thread;
 
 /// How long a probe that found no UIA provider is trusted before the window
 /// is probed again: NVDA's `isUIAWindow` cache period.
@@ -61,9 +66,10 @@ enum ClassVerdict {
 pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
-    /// Probe results: a UIA verdict until the window is destroyed, a non-UIA
+    /// Probe results, each with the thread that owned the window when it
+    /// was recorded: a UIA verdict until the window is destroyed, a non-UIA
     /// verdict for [`NEGATIVE_VERDICT_LIFETIME`].
-    cache: HashMap<isize, Probed>,
+    cache: HashMap<isize, (u32, Probed)>,
     /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
     /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
@@ -114,7 +120,7 @@ impl Arbitrator {
         } else {
             Probed::NotUia(now)
         };
-        self.cache.insert(hwnd, probed);
+        self.cache.insert(hwnd, (window_thread(hwnd), probed));
     }
 
     /// Restarts, from `now`, the lifetime of every non-UIA verdict probed at
@@ -124,7 +130,7 @@ impl Arbitrator {
     /// both see the same verdict, or a re-probe between them lets both
     /// backends announce it.
     pub fn renew_probes_since(&mut self, since: Instant, now: Instant) {
-        for probed in self.cache.values_mut() {
+        for (_, probed) in self.cache.values_mut() {
             if let Probed::NotUia(at) = probed
                 && *at >= since
             {
@@ -142,7 +148,8 @@ impl Arbitrator {
     /// Records that `hwnd` has a UIA provider NVDA does not use
     /// ([`post_probe_check`]): it is MSAA until the window is destroyed.
     pub fn record_excluded(&mut self, hwnd: isize) {
-        self.cache.insert(hwnd, Probed::Excluded);
+        self.cache
+            .insert(hwnd, (window_thread(hwnd), Probed::Excluded));
     }
 
     fn classify(&self, classes: &WindowClasses) -> ClassVerdict {
@@ -171,7 +178,7 @@ impl Arbitrator {
         match self.classify(classes) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
-            ClassVerdict::Unknown => match self.cache.get(&hwnd)? {
+            ClassVerdict::Unknown => match self.kept(hwnd)? {
                 Probed::Uia => Some(true),
                 Probed::Excluded => Some(false),
                 Probed::NotUia(at) => (now.saturating_duration_since(*at)
@@ -179,6 +186,16 @@ impl Arbitrator {
                     .then_some(false),
             },
         }
+    }
+}
+
+impl Arbitrator {
+    /// The kept verdict for `hwnd`, `None` when there is none or the window
+    /// is now owned by another thread than the one it was recorded for: the
+    /// handle has been reused by another window.
+    fn kept(&self, hwnd: isize) -> Option<&Probed> {
+        let (owner, probed) = self.cache.get(&hwnd)?;
+        (*owner == window_thread(hwnd)).then_some(probed)
     }
 }
 

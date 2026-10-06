@@ -167,7 +167,7 @@ pub(crate) fn window_is_hung(handle: isize) -> bool {
 
 /// The id of the thread that owns `handle`, or 0 for none. Batch limits are
 /// counted per application UI thread, as NVDA counts them.
-pub(super) fn window_thread(handle: isize) -> u32 {
+pub(crate) fn window_thread(handle: isize) -> u32 {
     if handle == 0 {
         return 0;
     }
