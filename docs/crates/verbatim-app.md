@@ -95,7 +95,10 @@ knowing for review:
   `FetchResult::Gone`) and when the outpost ends ("gone"), so an old reply or a timed-out request can never satisfy or
   clear a newer one.
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
-  ID, fed from three threads across two processes: the reducer thread
+  ID, bounded both by count (`DEFAULT_CAPACITY`, 256) and by an estimate of
+  the bytes they hold (`DEFAULT_MAX_BYTES`, 1 MiB; each timeline counts its
+  inline size plus its utterance text), dropping the oldest first and
+  always keeping the newest, fed from three threads across two processes: the reducer thread
   records event observation (using the outpost's own timestamp), and the
   pipeline observer callbacks record queue and audio start (when several
   utterances share a trace, the first to be heard counts). It also keeps

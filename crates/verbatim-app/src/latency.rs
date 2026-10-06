@@ -59,6 +59,14 @@ struct Stages {
     audio_started: Option<u64>,
 }
 
+impl Entry {
+    /// An estimate of the memory this entry holds, in bytes: its inline size
+    /// plus its utterance text's buffer, the only part that grows.
+    fn estimated_bytes(&self) -> usize {
+        size_of::<Self>() + self.stages.text.capacity()
+    }
+}
+
 impl Stages {
     /// The announcement's latency line, or `None` when it was not spoken.
     fn line(&self) -> Option<String> {
@@ -125,14 +133,26 @@ impl Stages {
     }
 }
 
-/// A bounded ring of recent timelines.
+/// The ledger's timelines, oldest first, with their estimated total size.
+#[derive(Default)]
+struct Timelines {
+    entries: VecDeque<Entry>,
+    bytes: usize,
+}
+
+/// A bounded ring of recent timelines, bounded both by count and by an
+/// estimate of the bytes they hold (see `Entry::estimated_bytes`), dropping
+/// the oldest first. The newest timeline is always kept, so a single
+/// utterance larger than the byte bound is held until the next trace
+/// arrives.
 ///
 /// Also implements [`SpeechEvents`], so the speech pipeline reports queue and
 /// audio-start milestones directly into it; those callbacks run on pipeline
 /// threads, so everything here is a quick map update under one mutex.
 pub struct LatencyLedger {
-    entries: Mutex<VecDeque<Entry>>,
+    timelines: Mutex<Timelines>,
     capacity: usize,
+    max_bytes: usize,
     /// The control server, once it exists, for mirroring speech frames to
     /// subscribers. A `OnceLock` because the server is constructed after the
     /// speech pipeline that owns this observer.
@@ -140,11 +160,24 @@ pub struct LatencyLedger {
 }
 
 impl LatencyLedger {
-    /// A ledger holding up to `capacity` recent timelines.
-    pub fn new(capacity: usize, server: Arc<OnceLock<ControlServer>>) -> Self {
+    /// The timeline bound the shell uses: 256, enough for `verbatim-inspect
+    /// latency` to look back over a few minutes of announcements.
+    pub const DEFAULT_CAPACITY: usize = 256;
+
+    /// The byte bound the shell uses: 1 MiB. An ordinary timeline, whose
+    /// utterance is a control's name and role, is under half a kilobyte, so
+    /// 256 of them stay far below it and the count governs normal use; long
+    /// utterances (a say-all chunk, a terminal's output) reach this bound
+    /// first, which keeps the ledger's memory fixed whatever is spoken.
+    pub const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
+
+    /// A ledger holding up to `capacity` recent timelines and about
+    /// `max_bytes` of them.
+    pub fn new(capacity: usize, max_bytes: usize, server: Arc<OnceLock<ControlServer>>) -> Self {
         Self {
-            entries: Mutex::new(VecDeque::new()),
+            timelines: Mutex::new(Timelines::default()),
             capacity,
+            max_bytes,
             server,
         }
     }
@@ -192,8 +225,9 @@ impl LatencyLedger {
 
     /// The most recent timelines, newest first, at most `n`.
     pub fn recent(&self, n: u32) -> Vec<LatencyRecord> {
-        let entries = self.entries.lock().expect("ledger lock");
-        entries
+        let timelines = self.timelines.lock().expect("ledger lock");
+        timelines
+            .entries
             .iter()
             .rev()
             .take(n as usize)
@@ -213,24 +247,35 @@ impl LatencyLedger {
     }
 
     /// Applies `apply` to the entry for `trace_id`, creating it when new and
-    /// evicting the oldest entry beyond capacity; returns `apply`'s result,
-    /// so callers can read fields under the same lock they write under.
+    /// evicting the oldest entries beyond either bound; returns `apply`'s
+    /// result, so callers can read fields under the same lock they write
+    /// under.
     fn update<R>(&self, trace_id: TraceId, apply: impl FnOnce(&mut Entry) -> R) -> R {
-        let mut entries = self.entries.lock().expect("ledger lock");
-        if let Some(entry) = entries.iter_mut().rev().find(|e| e.trace_id == trace_id) {
-            return apply(entry);
-        }
-        let mut entry = Entry {
-            trace_id,
-            event_observed_at_ms: None,
-            speech_queued_at_ms: None,
-            audio_started_at_ms: None,
-            stages: Stages::default(),
+        let mut timelines = self.timelines.lock().expect("ledger lock");
+        let Timelines { entries, bytes } = &mut *timelines;
+        let result = if let Some(entry) = entries.iter_mut().rev().find(|e| e.trace_id == trace_id)
+        {
+            let before = entry.estimated_bytes();
+            let result = apply(entry);
+            *bytes = *bytes - before + entry.estimated_bytes();
+            result
+        } else {
+            let mut entry = Entry {
+                trace_id,
+                event_observed_at_ms: None,
+                speech_queued_at_ms: None,
+                audio_started_at_ms: None,
+                stages: Stages::default(),
+            };
+            let result = apply(&mut entry);
+            *bytes += entry.estimated_bytes();
+            entries.push_back(entry);
+            result
         };
-        let result = apply(&mut entry);
-        entries.push_back(entry);
-        while entries.len() > self.capacity {
-            entries.pop_front();
+        while entries.len() > 1 && (entries.len() > self.capacity || *bytes > self.max_bytes) {
+            if let Some(oldest) = entries.pop_front() {
+                *bytes -= oldest.estimated_bytes();
+            }
         }
         result
     }
@@ -332,7 +377,56 @@ mod tests {
     use super::*;
 
     fn ledger() -> LatencyLedger {
-        LatencyLedger::new(3, Arc::new(OnceLock::new()))
+        LatencyLedger::new(
+            3,
+            LatencyLedger::DEFAULT_MAX_BYTES,
+            Arc::new(OnceLock::new()),
+        )
+    }
+
+    #[test]
+    fn long_utterances_are_bounded_by_bytes_oldest_first() {
+        let max_bytes = 100_000;
+        let ledger = LatencyLedger::new(256, max_bytes, Arc::new(OnceLock::new()));
+        let mut traces = Vec::new();
+        for index in 0..100 {
+            let trace = TraceId::mint();
+            traces.push(trace);
+            let text = "x".repeat(10_000 + index);
+            ledger.utterance_queued(
+                UtteranceId(index as u64),
+                trace,
+                &text,
+                std::time::Instant::now(),
+            );
+            let timelines = ledger.timelines.lock().expect("ledger lock");
+            let actual: usize = timelines.entries.iter().map(Entry::estimated_bytes).sum();
+            assert_eq!(timelines.bytes, actual, "the running total is exact");
+            assert!(timelines.bytes <= max_bytes);
+        }
+        let records = ledger.recent(256);
+        assert!(records.len() < 100, "the byte bound dropped timelines");
+        assert_eq!(records[0].trace_id, traces[99], "the newest is kept");
+        assert_eq!(
+            records.last().map(|record| record.trace_id),
+            Some(traces[100 - records.len()]),
+            "the oldest were dropped first"
+        );
+    }
+
+    #[test]
+    fn a_single_utterance_over_the_byte_bound_is_kept_until_the_next_trace() {
+        let ledger = LatencyLedger::new(256, 1_000, Arc::new(OnceLock::new()));
+        let first = TraceId::mint();
+        let text = "x".repeat(5_000);
+        ledger.utterance_queued(UtteranceId(1), first, &text, std::time::Instant::now());
+        assert_eq!(ledger.recent(10)[0].trace_id, first);
+
+        let second = TraceId::mint();
+        ledger.event_observed(second, 1);
+        let records = ledger.recent(10);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].trace_id, second);
     }
 
     #[test]

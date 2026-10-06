@@ -146,7 +146,11 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // The control server is created late (it needs the other pieces'
     // handlers), but earlier pieces need to reach it for broadcasting.
     let server_slot: Arc<OnceLock<ControlServer>> = Arc::new(OnceLock::new());
-    let ledger = Arc::new(LatencyLedger::new(256, Arc::clone(&server_slot)));
+    let ledger = Arc::new(LatencyLedger::new(
+        LatencyLedger::DEFAULT_CAPACITY,
+        LatencyLedger::DEFAULT_MAX_BYTES,
+        Arc::clone(&server_slot),
+    ));
 
     // The flight recorder, and its panic-time dump trigger: installed as
     // early as possible, chaining the previous hook, so a panic on any
