@@ -154,6 +154,17 @@ the injected side ([Process injection](process-injection.md)):
 - `inputLangChange.cpp` reports keyboard layout switches
   (`..._inputLangChangeNotify`), announced as language changes.
 
+What is echoed: a typed character is spelled only when it is not a
+control character (code points below the space character), so Tab,
+Enter, Backspace, and the Delete character some applications insert
+for Control+Backspace are never spoken by typed-character echo. Letters,
+marks, and numbers build the current word; Backspace removes its last
+character; any other character, control characters included, ends the
+word, which typed-word echo then speaks. Echo of either kind applies
+everywhere ("always") or only when the focus is editable ("edit
+controls"), and a protected field echoes each character as a star and
+never echoes words.
+
 Modern (UIA-era) IME candidate UI additionally arrives through UIA
 events; the MSAA-side menu events from the candidate window are
 deliberately dropped to avoid double handling ([MSAA and winevent handling](msaa.md)).

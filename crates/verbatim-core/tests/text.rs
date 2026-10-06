@@ -449,6 +449,28 @@ fn word_echo_speaks_a_word_when_it_ends() {
 }
 
 #[test]
+fn control_characters_end_a_word_but_are_never_spelled() {
+    let mut state = editing("", 0);
+    let _ = reduce(
+        &mut state,
+        &Input::Settings(ReaderSettings {
+            speak_typed_words: TypingEcho::Always,
+            ..ReaderSettings::default()
+        }),
+    );
+    assert_eq!(
+        spoken(&reduce(&mut state, &typed("a"))),
+        vec![character("a")]
+    );
+    // Tab ends the word, which is spoken, and is not spelled itself.
+    assert_eq!(
+        spoken(&reduce(&mut state, &typed("\t"))),
+        vec![UtteranceSegment::text("a")]
+    );
+    assert_eq!(spoken(&reduce(&mut state, &typed("\r"))), []);
+}
+
+#[test]
 fn echo_only_in_edit_controls_stays_quiet_elsewhere() {
     let mut state = SrState::new();
     let _ = reduce(

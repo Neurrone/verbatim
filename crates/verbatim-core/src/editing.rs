@@ -368,7 +368,11 @@ fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
                 effects.push(speak(trace_id, vec![UtteranceSegment::text(word)]));
             }
         }
-        let printable = !character.chars().any(char::is_control) || character == "\t";
+        // A control character, Tab, Enter, or Backspace among them, ends a
+        // word but is never spelled, as in NVDA (docs/nvda/input.md, "Typed
+        // characters, IME, and composition"): Tab in a dialog moves focus,
+        // and saying "tab" there would cut off the control it reached.
+        let printable = !character.chars().any(char::is_control);
         if echo_characters && printable {
             let spoken = if protected {
                 PROTECTED_CHARACTER
