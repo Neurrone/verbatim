@@ -23,7 +23,7 @@ pub mod state;
 pub mod toggle;
 
 pub use map::{GestureMap, SharedGestureMap};
-pub use scripts::{KeyboardLayout, ScriptAction, bindings_for, gesture_map_for};
+pub use scripts::{KeyboardLayout, ScriptAction, bindings_for, caret_bindings, gesture_map_for};
 pub use state::{Decision, DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
 pub use toggle::ToggleKey;
 
