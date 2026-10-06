@@ -170,9 +170,9 @@ fn register_class(hinstance: windows::Win32::Foundation::HINSTANCE) -> windows::
         lpszClassName: CLASS_NAME,
         ..Default::default()
     };
-    // SAFETY: `class` is fully initialized above; registering the same class
-    // name twice in one process is harmless (mockapp only ever calls this
-    // once), and a real failure surfaces as `RegisterClassExW` returning 0.
+    // SAFETY: `class` is fully initialized above and outlives the call. A
+    // second registration of the same name would fail, returning 0, which
+    // is reported as an error; mockapp registers the class only once.
     let atom = unsafe { RegisterClassExW(&raw const class) };
     if atom == 0 {
         Err(windows::core::Error::from_thread())
