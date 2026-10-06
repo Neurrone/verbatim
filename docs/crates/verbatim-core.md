@@ -61,6 +61,16 @@ Public API:
   future live-dump regression follows; its `regenerate_fixture` test
   (`#[ignore]`d) is how the fixture was produced and how an intentional
   change to the scripted shapes regenerates it.
+- `tests/alloc.rs` — Core's allocation invariant, a test binary with its
+  own global allocator counting the bytes each thread requests. It asserts
+  that a focus step, a navigation command, and its completion each
+  allocate the same number of bytes against a state whose previous focus
+  has 10 ancestors and one with 10,000, with the same input, and that
+  cloning the state for a flight-recorder checkpoint allocates the same
+  small amount (under 1 KB) for both. It holds because `reduce` changes the
+  state in place and `SrState` holds the ancestor chain as a shared
+  `Arc<[NodeSnapshot]>`; anything later added to the state that grows with
+  the application must be held the same way.
 
 Implementation notes, `reduce`:
 
