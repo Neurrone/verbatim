@@ -59,12 +59,16 @@ fn assert_checked(heard: &str) {
     );
 }
 
-/// Closes the settings dialog with Escape and waits until it has gone.
+/// Closes the settings dialog with Escape, waits until it has gone, and
+/// hears out the announcement of the window the focus returns to, so that
+/// announcement cannot cut off what the next step expects to hear.
 fn close_dialog(scenario: &mut Scenario) {
     scenario.send_keys(&["escape"]).expect("sends escape");
     scenario
         .wait_for_window_to_close("Verbatim Settings", STEP_TIMEOUT)
         .expect("the settings dialog closes on Escape");
+    let _ = scenario.speech().expect_change_capturing("", STEP_TIMEOUT);
+    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
