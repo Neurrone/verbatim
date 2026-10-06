@@ -108,6 +108,7 @@ pub(crate) fn stage_and_copy(
     ensure_vendored_ffmpeg(&ffmpeg_dir)?;
 
     let data_dir = built.synth_host.with_file_name(ESPEAK_DATA);
+    let sounds_dir = built.verbatim.with_file_name(SOUNDS);
     let mut artifacts = vec![
         Artifact {
             label: "verbatim.exe".to_owned(),
@@ -165,25 +166,22 @@ pub(crate) fn stage_and_copy(
     // about 380 files, shipped as one archive so it is hashed and copied
     // once, then unpacked in the guest. Marked executable because a running
     // host may hold the files open.
-    let archive = archive_espeak_data(repo_root, &data_dir)?;
-    artifacts.push(Artifact {
-        label: ESPEAK_ARCHIVE.to_owned(),
-        local_path: archive,
-        remote_path: format!(r"{VERBATIM_DIR}\{ESPEAK_ARCHIVE}"),
-        is_executable: true,
-        after_copy: Some(
-            [
-                format!(
-                    r"Remove-Item -Recurse -Force -LiteralPath '{VERBATIM_DIR}\{ESPEAK_DATA}' -ErrorAction SilentlyContinue"
-                ),
-                format!(r"tar -xf '{VERBATIM_DIR}\{ESPEAK_ARCHIVE}' -C '{VERBATIM_DIR}'"),
-                format!(
-                    r#"if ($LASTEXITCODE -ne 0) {{ throw "unpacking {ESPEAK_ARCHIVE} failed" }}"#
-                ),
-            ]
-            .join("\n"),
-        ),
-    });
+    artifacts.push(directory_archive(
+        repo_root,
+        &data_dir,
+        ESPEAK_DATA,
+        ESPEAK_ARCHIVE,
+    )?);
+    // The shared sounds the default theme plays, which Verbatim reads next
+    // to itself; verbatim-app's build puts them next to the executables.
+    // Shipped the same way; marked executable because a running Verbatim
+    // may hold one open while it decodes it.
+    artifacts.push(directory_archive(
+        repo_root,
+        &sounds_dir,
+        SOUNDS,
+        SOUNDS_ARCHIVE,
+    )?);
 
     let needs_copy = artifacts_needing_copy(host, credentials, &artifacts)?;
     if needs_copy.is_empty() {
@@ -200,16 +198,55 @@ const ESPEAK_DATA: &str = "espeak-ng-data";
 /// The archive eSpeak NG's data is shipped to the guest as.
 const ESPEAK_ARCHIVE: &str = "espeak-ng-data.tar";
 
-/// Archives eSpeak NG's data directory (next to the built executables) with
-/// Windows' own `tar`, into the deploy staging directory.
-fn archive_espeak_data(repo_root: &Path, data_dir: &Path) -> VmResult<PathBuf> {
+/// The shared sounds' directory, next to `verbatim.exe`.
+const SOUNDS: &str = "sounds";
+
+/// The archive the sounds are shipped to the guest as.
+const SOUNDS_ARCHIVE: &str = "sounds.tar";
+
+/// The artifact shipping the directory `dir`, named `name` next to the
+/// built executables, to the same place in the guest: archived as
+/// `archive_name`, copied, and unpacked there over whatever was there
+/// before. Marked executable, since a running process may hold its files
+/// open.
+fn directory_archive(
+    repo_root: &Path,
+    dir: &Path,
+    name: &str,
+    archive_name: &str,
+) -> VmResult<Artifact> {
+    let archive = archive_dir(repo_root, dir, archive_name)?;
+    Ok(Artifact {
+        label: archive_name.to_owned(),
+        local_path: archive,
+        remote_path: format!(r"{VERBATIM_DIR}\{archive_name}"),
+        is_executable: true,
+        after_copy: Some(
+            [
+                format!(
+                    r"Remove-Item -Recurse -Force -LiteralPath '{VERBATIM_DIR}\{name}' -ErrorAction SilentlyContinue"
+                ),
+                format!(r"tar -xf '{VERBATIM_DIR}\{archive_name}' -C '{VERBATIM_DIR}'"),
+                format!(r#"if ($LASTEXITCODE -ne 0) {{ throw "unpacking {archive_name} failed" }}"#),
+            ]
+            .join("\n"),
+        ),
+    })
+}
+
+/// Archives the directory `dir` (next to the built executables) with
+/// Windows' own `tar`, as `archive_name` in the deploy staging directory.
+fn archive_dir(repo_root: &Path, dir: &Path, archive_name: &str) -> VmResult<PathBuf> {
     let staging_dir = repo_root.join("target").join("xtask-vm-staging");
     fs::create_dir_all(&staging_dir)
         .map_err(|error| format!("could not create {}: {error}", staging_dir.display()))?;
-    let archive = staging_dir.join(ESPEAK_ARCHIVE);
-    let parent = data_dir
+    let archive = staging_dir.join(archive_name);
+    let parent = dir
         .parent()
-        .ok_or_else(|| format!("{} has no parent directory", data_dir.display()))?;
+        .ok_or_else(|| format!("{} has no parent directory", dir.display()))?;
+    let name = dir
+        .file_name()
+        .ok_or_else(|| format!("{} has no directory name", dir.display()))?;
     // Windows' own tar, by its full path: under Git Bash a bare `tar` is
     // GNU tar, which reads `C:\...` as a remote host.
     let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
@@ -219,11 +256,11 @@ fn archive_espeak_data(repo_root: &Path, data_dir: &Path) -> VmResult<PathBuf> {
         .arg(&archive)
         .arg("-C")
         .arg(parent)
-        .arg(ESPEAK_DATA)
+        .arg(name)
         .status()
         .map_err(|error| format!("could not run tar: {error}"))?;
     if !status.success() {
-        return Err(format!("archiving {} failed: {status}", data_dir.display()));
+        return Err(format!("archiving {} failed: {status}", dir.display()));
     }
     Ok(archive)
 }
@@ -531,7 +568,7 @@ mod tests {
         fs::create_dir_all(data.join("voices")).expect("creates the data");
         fs::write(data.join("voices").join("en"), b"voice").expect("writes a file");
 
-        let archive = archive_espeak_data(&root, &data).expect("archives");
+        let archive = archive_dir(&root, &data, ESPEAK_ARCHIVE).expect("archives");
         let listing = std::process::Command::new(
             Path::new(&std::env::var_os("SystemRoot").expect("set on Windows"))
                 .join("System32")

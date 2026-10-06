@@ -85,6 +85,10 @@ Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
   (`QueryOutcome::Abandoned`), once per stall: `LiveOutposts` marks the
   outpost stalled and clears the mark when it answers a query or reports
   an event.
+- The build script copies the top-level `sounds` folder next to the
+  executables in the cargo target directory, so `target\debug` holds
+  everything a run needs, and the end-to-end staging and the VM deploy
+  copy it from there.
 - `error_sound` is a tracing layer: every event logged at error level, on
   any thread, sends `ShellCommand::PlayEarcon(Earcon::Error)` to the
   reducer thread, which plays the error sound, as NVDA plays one for a

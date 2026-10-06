@@ -93,7 +93,10 @@ to its own executable; without the synthesizer host, no synthesizer can
 start. Building `verbatim-synth-host` also puts eSpeak NG's compiled
 data, the `espeak-ng-data` directory, in `target\debug`, where the host
 looks for it; a copy of Verbatim run from another folder needs that
-directory beside the host.
+directory beside the host. Building `verbatim-app` likewise copies the
+top-level `sounds` folder, the default theme's sounds, into
+`target\debug`; a copy run without it speaks each sound's indication
+instead.
 
 Then, in a second terminal, run `verbatim-inspect` subcommands against it.
 Every subcommand accepts a global `--connect <ADDRESS>` option before the
@@ -371,10 +374,11 @@ a run can never stage an executable older than the source under test
 (`cargo test -p verbatim-e2e` alone builds only this crate and its
 libraries, not Verbatim's executables). That build is a no-op when
 nothing changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`,
-`verbatim-synth-host.exe`, and the `espeak-ng-data` directory into
+`verbatim-synth-host.exe`, and the `espeak-ng-data` and `sounds`
+directories into
 `target/e2e-stage` under the workspace root (skipping a copy when the
-destination already matches byte-for-byte, file by file for the data
-directory) and writes a fresh `settings.toml` there — `Settings::for_e2e`
+destination already matches byte-for-byte, file by file for the
+directories) and writes a fresh `settings.toml` there — `Settings::for_e2e`
 selecting eSpeak NG — before launching that staged copy.
 Your own `target/debug/verbatim.exe` and its `settings.toml` are never read
 or mutated by a test run. Against the VM, `cargo xtask vm deploy` stages the

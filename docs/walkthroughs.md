@@ -681,7 +681,7 @@ same suite on GitHub's runner or against a Hyper-V guest
    `verbatim.exe` would replace the first.
 3. **Launch.** `Scenario::launch` builds `verbatim-app`,
    `verbatim-outpost`, and `verbatim-synth-host` once per test binary,
-   copies them and `espeak-ng-data` into `target/e2e-stage`, and writes a
+   copies them, `espeak-ng-data`, and `sounds` into `target/e2e-stage`, and writes a
    fixed `settings.toml` (`Settings::for_e2e`, eSpeak NG). A run is silent
    by default: `VERBATIM_TEST_AUDIO=null` makes Verbatim play through the
    silent real-time device, so every utterance still takes its real

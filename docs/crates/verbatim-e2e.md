@@ -32,9 +32,11 @@ Public API:
   and `verbatim-synth-host` (once per test binary, skipped when
   `VERBATIM_E2E_VERBATIM_EXE` names a build to stage instead), then
   copies `verbatim.exe`, `verbatim-outpost.exe`,
-  `verbatim-synth-host.exe`, and eSpeak NG's `espeak-ng-data` directory
-  into `target/e2e-stage` (staging fails if the data directory is
-  missing, which building `verbatim-synth-host` creates) and writes
+  `verbatim-synth-host.exe`, eSpeak NG's `espeak-ng-data` directory, and
+  the default theme's `sounds` directory
+  into `target/e2e-stage` (staging fails if either directory is
+  missing; building `verbatim-synth-host` creates the first and building
+  `verbatim-app` the second) and writes
   `Settings::for_e2e`'s fixed `settings.toml` there; in remote mode
   `cargo xtask vm deploy` has already staged the guest side. Every run
   selects eSpeak NG, the default synthesizer, which is built with

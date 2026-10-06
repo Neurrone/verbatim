@@ -31,7 +31,9 @@ module tree, not a library):
   `cargo xtask vm <verb>` to them. `deploy::stage_and_copy` always stages a
   `settings.toml` selecting eSpeak NG (`Settings::for_e2e("espeak")`),
   the same synthesizer `verbatim_e2e::scenario` selects for runner-direct
-  runs, and copies every file of the `espeak-ng-data` directory found
+  runs, ships the `sounds` directory next to the built `verbatim.exe` the
+  same way as the eSpeak NG data (one archive, unpacked in the guest), and
+  copies every file of the `espeak-ng-data` directory found
   next to the built `verbatim-synth-host.exe` into the guest's Verbatim
   folder, one artifact per file so each hash-skips on its own; the data
   files count as executables for stopping the guest, since a running
