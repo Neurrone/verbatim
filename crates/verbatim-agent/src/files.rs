@@ -68,6 +68,19 @@ pub fn write_base64(path: &str, data_base64: &str) -> io::Result<()> {
     std::fs::write(path, bytes)
 }
 
+/// Deletes the file at `path`; a file that is already gone is not an
+/// error.
+///
+/// # Errors
+///
+/// Returns an error if the file exists and cannot be deleted.
+pub fn delete(path: &str) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
 /// The names of the files directly inside `path`, sorted.
 ///
 /// # Errors

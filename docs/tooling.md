@@ -808,7 +808,12 @@ Notepad) through the agent — this runs even if the test panicked partway
 through. Notepad is opened on a harness document whose title holds
 `verbatim-e2e-`, as NVDA's system tests open it on a uniquely named file,
 and is closed by that title, never killed by program name, so a Notepad
-you have open yourself is left alone. It cannot run at all, though, if the test process itself is
+you have open yourself is left alone. Windows 11 Notepad keeps every tab
+of a window that closes for its next session, so the harness closes its
+document's tab with Control+W, saving it first when it has unsaved
+changes, and then closes the window only when no Notepad window was open
+before; the tabs Notepad restored from your last session are left as they
+were. It then deletes the document. It cannot run at all, though, if the test process itself is
 killed outright (Ctrl+C, a CI job cancellation, or the whole `cargo test`
 process being terminated). Runner-direct stray processes are usually
 self-healing on the *next* run regardless:

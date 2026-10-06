@@ -23,9 +23,10 @@ use serde::{Deserialize, Serialize};
 /// [`Request::CloseWindows`], [`Request::WriteFile`], and
 /// `BringToForeground`'s title filter; version 4 added
 /// [`Request::ReadFileChunk`]; version 5 added [`Request::SendKeys`];
-/// version 6 added [`Request::TypeText`]. A test run against an older agent
-/// is refused at `Hello` instead of losing its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 6;
+/// version 6 added [`Request::TypeText`]; version 7 added
+/// [`Request::DeleteFile`]. A test run against an older agent is refused at
+/// `Hello` instead of losing its connection mid-run.
+pub const AGENT_PROTOCOL_VERSION: u32 = 7;
 
 /// The default TCP port the agent listens on.
 ///
@@ -146,6 +147,13 @@ pub enum Request {
         path: String,
         /// The contents, base64 encoded.
         data_base64: String,
+    },
+    /// Deletes a file a test wrote with [`Request::WriteFile`], such as a
+    /// harness document once its window has closed. A file that does not
+    /// exist is not an error. Answered by [`ReplyPayload::FileDeleted`].
+    DeleteFile {
+        /// Path to the file, agent-local.
+        path: String,
     },
     /// Asks whether a process is still running.
     ProcessStatus {
@@ -283,6 +291,8 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::WriteFile`].
     FileWritten,
+    /// Answer to [`Request::DeleteFile`].
+    FileDeleted,
     /// Answer to [`Request::ListFiles`]: the names of the files directly
     /// inside the directory, sorted; subdirectories are left out.
     FileNames {

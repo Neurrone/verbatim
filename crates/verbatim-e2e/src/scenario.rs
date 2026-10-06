@@ -78,6 +78,13 @@ struct Launched {
     /// user's own windows share, such as Windows Terminal's `wt.exe`:
     /// terminating its job could end that process.
     kill_if_open: bool,
+    /// The harness document it opened, deleted once its window has gone.
+    document: Option<String>,
+    /// Whether no window of the application was open before the harness
+    /// opened its document, so the window left behind once the document's
+    /// tab has closed, holding only tabs Notepad restored from its last
+    /// session, is closed too.
+    close_application: bool,
 }
 const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 
@@ -327,7 +334,7 @@ impl Scenario {
         if remote {
             write_remote_settings(&mut process_agent, exe_dir_str, run_settings(configure))?;
         }
-        sweep_leftovers(&mut process_agent);
+        sweep_leftovers(&mut process_agent, exe_dir_str);
         // The capture starts before Verbatim, so the video shows it start.
         let mut recording = start_recording(&mut process_agent, exe_dir_str);
         if let Some(recording) = &recording {
@@ -544,6 +551,8 @@ impl Scenario {
             image: image_name(command),
             marker: Some(title.to_owned()),
             kill_if_open,
+            document: None,
+            close_application: false,
         });
         Ok(pid)
     }
@@ -614,6 +623,8 @@ impl Scenario {
             image: image.clone(),
             marker: None,
             kill_if_open: true,
+            document: None,
+            close_application: false,
         });
         self.require_window_in_front(&image, None)?;
         Ok(pid)
@@ -625,7 +636,10 @@ impl Scenario {
     /// application on it, and brings the window whose title names it to the
     /// foreground, as NVDA's system tests open Notepad on a uniquely named
     /// file and wait for that window. The application is closed by that
-    /// title at cleanup, so the user's own windows of it are never touched.
+    /// title at cleanup, so the user's own windows of it are never touched;
+    /// in Notepad, the document's tab is closed rather than its window, so
+    /// Notepad does not keep it for its next session, and the window too
+    /// only when the harness opened it. The document is then deleted.
     ///
     /// # Errors
     ///
@@ -655,6 +669,13 @@ impl Scenario {
             .ok_or_else(|| io::Error::other("no directory for the harness document"))?;
         let path = format!("{directory}\\{marker}.txt");
         self.process_agent.write_file(&path, contents.as_bytes())?;
+        let image = image_name(application);
+        let already_open = self
+            .process_agent
+            .foreground_info()?
+            .windows
+            .iter()
+            .any(|window| window.image.eq_ignore_ascii_case(&image));
         let pid = self.process_agent.launch_process(
             application,
             std::slice::from_ref(&path),
@@ -662,12 +683,13 @@ impl Scenario {
             &[],
             None,
         )?;
-        let image = image_name(application);
         self.launched.push(Launched {
             pid,
             image: image.clone(),
             marker: Some(marker.clone()),
             kill_if_open: true,
+            document: Some(path),
+            close_application: !already_open,
         });
         self.require_window_in_front(&image, Some(&marker))?;
         Ok(pid)
@@ -773,6 +795,8 @@ impl Scenario {
             image: "explorer.exe".to_owned(),
             marker: Some(marker.clone()),
             kill_if_open: true,
+            document: None,
+            close_application: false,
         });
         self.require_window_in_front("explorer.exe", Some(&marker))?;
         Ok(marker)
@@ -802,6 +826,8 @@ impl Scenario {
             image: "SystemSettings.exe".to_owned(),
             marker: None,
             kill_if_open: true,
+            document: None,
+            close_application: false,
         });
         self.require_window_in_front("ApplicationFrameHost.exe", Some("Settings"))
     }
@@ -936,17 +962,13 @@ impl Scenario {
 
     fn end(&mut self, launched: &Launched) -> io::Result<KillOutcome> {
         if let Some(marker) = &launched.marker {
-            let remaining = self.process_agent.close_windows(marker, CLOSE_TIMEOUT)?;
-            if remaining == 0 {
-                return Ok(KillOutcome::AlreadyExited);
+            let outcome = self.close_marked(launched, marker);
+            if let Some(path) = &launched.document
+                && let Err(error) = self.process_agent.delete_file(path)
+            {
+                tracing::warn!(path, %error, "failed to delete a harness document");
             }
-            if !launched.kill_if_open {
-                return Err(io::Error::other(format!(
-                    "{remaining} window(s) titled {marker:?} did not close, and are left open"
-                )));
-            }
-            tracing::warn!(marker, remaining, "a harness document window did not close");
-            return self.process_agent.kill_process(launched.pid);
+            return outcome;
         }
         let outcome = self.process_agent.kill_process(launched.pid)?;
         if let Err(error) = self.process_agent.kill_processes_by_name(&launched.image) {
@@ -958,6 +980,31 @@ impl Scenario {
             );
         }
         Ok(outcome)
+    }
+
+    /// Closes an application opened on a harness document or window, by
+    /// its title: Notepad's harness tab first (see [`close_notepad_tabs`]),
+    /// then, when the harness opened Notepad's window, the window it leaves.
+    fn close_marked(&mut self, launched: &Launched, marker: &str) -> io::Result<KillOutcome> {
+        if is_notepad(&launched.image) {
+            if let Err(error) = close_notepad_tabs(&mut self.process_agent, marker) {
+                tracing::warn!(marker, %error, "a harness tab did not close; closing its window");
+            }
+            if launched.close_application {
+                close_notepad_windows(&mut self.process_agent)?;
+            }
+        }
+        let remaining = self.process_agent.close_windows(marker, CLOSE_TIMEOUT)?;
+        if remaining == 0 {
+            return Ok(KillOutcome::AlreadyExited);
+        }
+        if !launched.kill_if_open {
+            return Err(io::Error::other(format!(
+                "{remaining} window(s) titled {marker:?} did not close, and are left open"
+            )));
+        }
+        tracing::warn!(marker, remaining, "a harness document window did not close");
+        self.process_agent.kill_process(launched.pid)
     }
 
     /// Asks the agent whether `pid` is still running.
@@ -1240,17 +1287,133 @@ impl Drop for Scenario {
 /// windows of the same application are left alone), so a scenario starts
 /// from as clean a state as possible even after a prior run aborted without
 /// running its own Drop cleanup (a killed test process, a Ctrl+C, a panic
-/// that unwound past Scenario somehow). Best-effort: a failure is logged,
-/// not fatal to the launch.
-fn sweep_leftovers(agent: &mut AgentClient) {
+/// that unwound past Scenario somehow). A harness tab left in Notepad is
+/// closed as a tab ([`close_notepad_tabs`]), and the harness documents left
+/// in `directory`, Verbatim's launch directory, are deleted. Best-effort: a
+/// failure is logged, not fatal to the launch.
+fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
     for name in crate::registry::swept_target_image_names() {
         if let Err(error) = agent.kill_processes_by_name(name) {
             tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
         }
     }
+    if let Err(error) = close_notepad_tabs(agent, DOCUMENT_MARKER) {
+        tracing::warn!(%error, "failed to close leftover harness tabs in Notepad");
+    }
     if let Err(error) = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT) {
         tracing::warn!(%error, "failed to close leftover harness documents");
     }
+    match agent.list_files(directory) {
+        Ok(names) => {
+            for name in names.iter().filter(|name| {
+                name.starts_with(DOCUMENT_MARKER)
+                    && Path::new(name)
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+            }) {
+                if let Err(error) = agent.delete_file(&format!("{directory}\\{name}")) {
+                    tracing::warn!(name, %error, "failed to delete a leftover harness document");
+                }
+            }
+        }
+        Err(error) => tracing::warn!(%error, "failed to list leftover harness documents"),
+    }
+}
+
+/// Whether `image` is Windows 11 Notepad's.
+fn is_notepad(image: &str) -> bool {
+    image.eq_ignore_ascii_case("notepad.exe")
+}
+
+/// Closes every Notepad tab whose title holds `marker`, one at a time, by
+/// bringing its window to the foreground and pressing Control+W, saving it
+/// first when its title marks unsaved changes. Windows 11 Notepad keeps
+/// every tab of a window that closes for its next session, so closing the
+/// harness document's window would leave its tab behind for good, while a
+/// closed tab is forgotten; a window whose last tab closes closes with it.
+/// The window's title names its selected tab, so only a harness tab ever
+/// gets the key, and the user's own tabs in the same window are left as
+/// they were. Each step waits for its evidence, the title the window had
+/// going away, within [`CLOSE_TIMEOUT`] in all.
+fn close_notepad_tabs(agent: &mut AgentClient, marker: &str) -> io::Result<()> {
+    let deadline = Instant::now() + CLOSE_TIMEOUT;
+    loop {
+        let Some(window) = agent
+            .foreground_info()?
+            .windows
+            .into_iter()
+            .find(|window| is_notepad(&window.image) && window.title.contains(marker))
+        else {
+            return Ok(());
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::other(format!(
+                "Notepad's tab {:?} did not close within {CLOSE_TIMEOUT:?}",
+                window.title
+            )));
+        }
+        agent.bring_to_foreground(&window.image, Some(marker), remaining)?;
+        // Checked again just before the key: Control+W closes whichever tab
+        // the window in front has selected.
+        let Some(front) = agent
+            .foreground_info()?
+            .foreground
+            .filter(|front| is_notepad(&front.image) && front.title.contains(marker))
+        else {
+            return Err(io::Error::other(format!(
+                "Notepad's tab {:?} could not be brought to the foreground",
+                window.title
+            )));
+        };
+        let key = if front.title.starts_with('*') {
+            "control+s"
+        } else {
+            "control+w"
+        };
+        agent.send_keys(&[key.to_owned()])?;
+        wait_for_title_gone(agent, &front.title, deadline)?;
+    }
+}
+
+/// Waits until no visible top-level window is titled exactly `title`.
+fn wait_for_title_gone(agent: &mut AgentClient, title: &str, deadline: Instant) -> io::Result<()> {
+    loop {
+        let present = agent
+            .foreground_info()?
+            .windows
+            .iter()
+            .any(|window| window.title == title);
+        if !present {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::other(format!(
+                "the window titled {title:?} was still there after {CLOSE_TIMEOUT:?}"
+            )));
+        }
+        thread::sleep(SAVE_POLL);
+    }
+}
+
+/// Closes every Notepad window, each by its own title, once the harness's
+/// tab has closed in a window the harness opened: what is left holds only
+/// the tabs Notepad restored from its last session, which it keeps again.
+fn close_notepad_windows(agent: &mut AgentClient) -> io::Result<()> {
+    let titles: Vec<String> = agent
+        .foreground_info()?
+        .windows
+        .into_iter()
+        .filter(|window| is_notepad(&window.image))
+        .map(|window| window.title)
+        .collect();
+    for title in titles {
+        let remaining = agent.close_windows(&title, CLOSE_TIMEOUT)?;
+        if remaining > 0 {
+            tracing::warn!(title, remaining, "a Notepad window did not close");
+        }
+    }
+    Ok(())
 }
 
 /// Starts this run's video, when recording (see [`crate::recording`]).

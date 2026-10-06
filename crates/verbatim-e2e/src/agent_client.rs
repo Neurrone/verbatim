@@ -258,6 +258,23 @@ impl AgentClient {
         }
     }
 
+    /// Deletes a file on the guest; one already gone is not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn delete_file(&mut self, path: &str) -> io::Result<()> {
+        match self.request(Request::DeleteFile {
+            path: path.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::FileDeleted,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("DeleteFile", &other)),
+        }
+    }
+
     /// Injects real OS key strokes on the guest, each a plus-joined
     /// combination such as `shift+tab`.
     ///

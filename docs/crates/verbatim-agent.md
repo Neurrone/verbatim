@@ -60,7 +60,9 @@ Public API:
   character, such as a line break, or a character the layout cannot type
   fails the request before any key is sent, and named keys stay with
   `SendKeys`; from the private `typing` module; protocol version 6),
-  `OpenControlTunnel`. `KillOutcome` makes
+  `DeleteFile` (removes a file a test wrote, such as a harness document
+  once its window has closed, a file already gone counting as success;
+  protocol version 7), `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` gives the launched child no standard handles by

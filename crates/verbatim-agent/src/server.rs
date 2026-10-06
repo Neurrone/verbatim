@@ -250,7 +250,8 @@ fn dispatch(id: u64, request: Request) -> Frame {
         },
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
-        | Request::WriteFile { .. }) => desktop_request(id, request),
+        | Request::WriteFile { .. }
+        | Request::DeleteFile { .. }) => desktop_request(id, request),
         Request::ListFiles { path } => match files::list(&path) {
             Ok(names) => Frame::Reply {
                 to: id,
@@ -294,7 +295,8 @@ fn type_text(id: u64, text: &str) -> Frame {
 }
 
 /// Answers the requests that read or change the desktop and its files for a
-/// test: the foreground report, closing windows, and writing a file.
+/// test: the foreground report, closing windows, and writing and deleting a
+/// file.
 fn desktop_request(id: u64, request: Request) -> Frame {
     match request {
         Request::ForegroundInfo => Frame::Reply {
@@ -322,6 +324,13 @@ fn desktop_request(id: u64, request: Request) -> Frame {
                 Err(error) => error_frame(id, &error),
             }
         }
+        Request::DeleteFile { path } => match files::delete(&path) {
+            Ok(()) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::FileDeleted,
+            },
+            Err(error) => error_frame(id, &error),
+        },
         other => Frame::Error {
             to: id,
             message: format!("not a desktop request: {other:?}"),
