@@ -10,13 +10,17 @@
 //! deadline-guarded worker; each counts as one window message. Only messages
 //! whose parameters are plain integers are offered, never one that carries a
 //! pointer, so sending them cannot make a window procedure in this process
-//! read memory it does not own.
+//! read memory it does not own. A tree view's `HTREEITEM` is such an
+//! integer here, but the control treats it as a pointer into its own
+//! process, so only item handles the control itself produced are sent
+//! back to it.
 
 use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{
-    LVM_GETITEMCOUNT, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
+    CCM_GETVERSION, LVM_GETITEMCOUNT, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM,
+    TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GetAncestor, GetClassNameW, GetDesktopWindow,
@@ -143,6 +147,13 @@ pub(crate) fn list_view_item_count(hwnd: isize) -> isize {
     unsafe { send(hwnd, LVM_GETITEMCOUNT, 0, 0) }
 }
 
+/// Whether a common control is comctl32 version 6 or later
+/// (`CCM_GETVERSION`), whose tree view maps MSAA child ids to items.
+pub(crate) fn is_common_control_6(hwnd: isize) -> bool {
+    // SAFETY: CCM_GETVERSION takes no parameters.
+    unsafe { send(hwnd, CCM_GETVERSION, 0, 0) >= 6 }
+}
+
 /// A tree view item's `HTREEITEM` for an MSAA child id
 /// (`TVM_MAPACCIDTOHTREEITEM`), zero when the control does not map it.
 pub(crate) fn tree_view_item_for_acc_id(hwnd: isize, acc_id: usize) -> isize {
@@ -153,8 +164,9 @@ pub(crate) fn tree_view_item_for_acc_id(hwnd: isize, acc_id: usize) -> isize {
 /// A tree view item's MSAA child id for an `HTREEITEM`
 /// (`TVM_MAPHTREEITEMTOACCID`), zero when the control does not map it.
 pub(crate) fn tree_view_acc_id_for_item(hwnd: isize, item: usize) -> isize {
-    // SAFETY: TVM_MAPHTREEITEMTOACCID takes the item handle as an integer,
-    // which the control only looks up.
+    // SAFETY: TVM_MAPHTREEITEMTOACCID takes the item handle as an integer;
+    // nothing in this process is read. The control dereferences the handle
+    // in its own process, so callers pass only handles it produced.
     unsafe { send(hwnd, TVM_MAPHTREEITEMTOACCID, item, 0) }
 }
 
@@ -162,6 +174,8 @@ pub(crate) fn tree_view_acc_id_for_item(hwnd: isize, item: usize) -> isize {
 /// (`TVM_GETNEXTITEM`), zero for none.
 pub(crate) fn tree_view_next_item(hwnd: isize, relation: u32, item: isize) -> isize {
     // SAFETY: TVM_GETNEXTITEM takes a relation code and an item handle as
-    // integers, which the control only looks up.
+    // integers; nothing in this process is read. The control dereferences
+    // the handle in its own process, so callers pass only handles it
+    // produced.
     unsafe { send(hwnd, TVM_GETNEXTITEM, relation as usize, item) }
 }
