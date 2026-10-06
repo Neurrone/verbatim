@@ -74,9 +74,15 @@ The private modules:
   change to an indication; and for the Terminal page `TerminalPage`. Every
   string crosses resolved, so
   C++ never sees a Fluent message id; text is UTF-8 and C++ converts it
-  explicitly, keeping its own narrow literals ASCII.
+  explicitly, keeping its own narrow literals ASCII. The thread rule is
+  enforced by types: every C++ function except `wake_event_loop` is
+  declared `unsafe fn`, and Rust calls them only through the safe methods
+  of `GuiThread`, a token of the same names that is neither `Send` nor
+  `Sync`. `run_gui` makes the one token, by an `unsafe` constructor whose
+  contract is being on the GUI thread, before it runs the loop there.
 - `GuiCore` (in `lib.rs`) — the GUI's Rust half. It lives on `run_gui`'s
-  stack for the whole loop and is used only on the GUI thread. Menus and
+  stack for the whole loop and is used only on the GUI thread; it keeps
+  the `GuiThread` token, which also keeps it on that thread. Menus and
   modal dialogs run nested event loops that call back into it, so every
   method takes `&self`, its state sits in `RefCell`s, and no borrow is
   ever held across a call into C++.
