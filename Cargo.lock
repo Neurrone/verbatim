@@ -2429,6 +2429,7 @@ dependencies = [
  "verbatim-model",
  "verbatim-process",
  "verbatim-uia",
+ "verbatim-uia-rops",
  "windows",
  "workspace-hack",
 ]
@@ -2547,6 +2548,7 @@ dependencies = [
 name = "verbatim-uia-rops"
 version = "0.1.0"
 dependencies = [
+ "verbatim-model",
  "verbatim-uia",
  "windows",
  "windows-collections",

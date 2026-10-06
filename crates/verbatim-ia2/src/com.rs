@@ -1,12 +1,9 @@
-//! Small COM helpers for the MSAA client: building child-id `VARIANT`s and
-//! reading scalars out of the `VARIANT`s that `IAccessible` returns.
+//! Small helpers for the MSAA client: building child-id `VARIANT`s and
+//! tidying the text that `IAccessible` reads answer.
 
 use std::mem::ManuallyDrop;
 
-use windows::Win32::System::Variant::{
-    VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4, VariantToInt32,
-};
-use windows::core::BSTR;
+use windows::Win32::System::Variant::{VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4};
 
 /// The `CHILDID_SELF` child identifier, addressing the object itself.
 pub const CHILDID_SELF: i32 = 0;
@@ -29,28 +26,17 @@ pub fn child_variant(child_id: i32) -> VARIANT {
     }
 }
 
-/// Reads a `VARIANT` as an `i32` (MSAA roles and state masks arrive this way).
-///
-/// # Safety
-///
-/// `value` must be a valid `VARIANT`.
+/// A name, description, or other text an `IAccessible` read answered, with
+/// the empty string mapped to `None` so absent names and values stay
+/// faithful.
 #[must_use]
-pub unsafe fn variant_i32(value: &VARIANT) -> Option<i32> {
-    // SAFETY: forwarded to the caller's contract.
-    unsafe { VariantToInt32(value).ok() }
+pub fn non_empty(text: Option<String>) -> Option<String> {
+    text.filter(|text| !text.is_empty())
 }
 
-/// Converts an `IAccessible` `BSTR` result to an owned `String`, mapping the
-/// empty string to `None` so absent names and values stay faithful.
-#[must_use]
-pub fn bstr_to_option(text: &BSTR) -> Option<String> {
-    let text = text.to_string();
-    if text.is_empty() { None } else { Some(text) }
-}
-
-/// [`bstr_to_option`] for a name or value, which NVDA also treats as absent
+/// [`non_empty`] for a name or value, which NVDA also treats as absent
 /// when it is only whitespace.
 #[must_use]
-pub fn bstr_to_text(text: &BSTR) -> Option<String> {
-    bstr_to_option(text).filter(|text| !text.trim().is_empty())
+pub fn visible_text(text: Option<String>) -> Option<String> {
+    text.filter(|text| !text.trim().is_empty())
 }

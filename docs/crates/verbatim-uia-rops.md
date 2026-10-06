@@ -88,9 +88,11 @@ to the WinRT `AutomationElement` by `QueryInterface`), checks with
 `IsOpcodeSupported` that the provider supports every opcode the program
 uses (support is known only once something is imported, since it depends
 on the provider's process), registers the requested results, and runs
-`Execute`, the one cross-process round trip. Creating the operation and
+`Execute`, the one cross-process round trip, which counts as one UIA call
+on the thread's `verbatim_uia::calls` count. Creating the operation and
 importing took about half a microsecond and each support check 18
-nanoseconds in a release build: both are answered in Verbatim's process.
+nanoseconds in a release build: both are answered in Verbatim's process,
+and neither is counted.
 
 A failed run is an `Error`:
 
@@ -128,10 +130,12 @@ as an integer array, and a null register as a null object.
 
 `focus_ancestry_remote` and `focus_ancestry_classic` share one signature
 (`FocusAncestryFn`): a `&Uia` and a `FocusQuery`, which holds the focused
-element (the focus event's sender, already cached), the runtime ids the
-caller already knows, a depth limit, and the properties to cache on every
-returned element (`verbatim_uia::CACHED_PROPERTIES`, so they match what
-the snapshot code reads). Both answer `FocusAncestry::NotFocused` when a
+element (with its cache filled; the outpost passes the focused element it
+read), the runtime ids the caller already knows, a depth limit, the
+properties to cache on every returned element
+(`verbatim_uia::CACHED_PROPERTIES`, so they match what the snapshot code
+reads), and a deadline, which only the classic walk checks, between hops.
+Both answer `FocusAncestry::NotFocused` when a
 live read of the element's `HasKeyboardFocus` is false (NVDA's check
 that a focus event is not stale), and otherwise an `Ancestry`:
 
@@ -143,8 +147,15 @@ that a focus event is not stale), and otherwise an `Ancestry`:
   the walk stopped there.
 - `depth_limited`: whether the walk stopped at the depth limit with
   ancestors left.
+- `out_of_time`: whether the classic walk stopped at the deadline with
+  ancestors left; never set by the program.
 - `selected_child`: for a list or tab control (by the element's cached
   control type), the first selected child, with the properties cached.
+- `window`: the native window handle of the element or of its nearest
+  raw-view ancestor that has one, which `verbatim_uia::nearest_window_handle`
+  would find (NVDA's `getNearestWindowHandle`). The outpost needs it to
+  arbitrate and report a focus whose event names no window, and reading
+  it here saves that separate call.
 
 The remote program is one round trip. It reads `HasKeyboardFocus` and
 halts when it is false. For a list or tab control it reads the element's
@@ -158,7 +169,11 @@ stopping at the first one found in a string map of the known ids.
 separated, in square brackets (`[42,14681214,4,5]`); `runtime_id_key`
 makes the same string on Verbatim's side. Setting the walking register
 to the parent does not disturb the elements already appended to the
-results array, though both are held by reference (verified).
+results array, though both are held by reference (verified). The window
+starts as the element's own cached handle; while it is zero, each
+ancestor's `NativeWindowHandle` is read as the walk passes it, and a walk
+that stopped at a known ancestor or the depth limit before finding one
+goes on up, returning nothing more, until it does.
 
 The classic implementation is the reference and the fallback: the same
 live read, the selected child through the Selection pattern
@@ -168,7 +183,29 @@ the raw view, the walk `Uia::ancestor_chain` makes. `ancestor_chain`
 itself is not called, because it returns filtered snapshots, not
 elements: the presentable-ancestor filter, the switch to MSAA, and the
 splice with the previous focus's chain stay with the outpost, which
-applies them to either implementation's elements.
+applies them to either implementation's elements with
+`Uia::ancestor_chain_from`. Its window comes from the walked ancestors'
+caches, or, when it stopped before reaching one, from
+`nearest_window_handle`, one more call. Every call it makes goes through
+`verbatim-uia`'s safe wrappers, so it is counted, and the module has no
+`unsafe` code.
+
+### The entry point
+
+`focus_ancestry(uia, query, remote)` is what call sites use. With `remote`
+true it runs the program and, when that fails for any reason, runs the
+classic walk for the same call; with `remote` false it runs the classic
+walk alone. It returns the answer with a `Path`: `Remote`, `Classic`, or
+`Fallback(error)`, the program's error, so the caller can log it (an
+`Error::Failed` prints the failing instruction, its opcode, and the Rust
+line that emitted it) and stop trying for a window whose import failed.
+Only the classic walk's own failure is returned as an error.
+
+NVDA makes each call site choose instead: code that can use remote
+operations asks `remote.isSupported()` before building a program and
+otherwise runs its own classic code. Here the choice and the fallback live
+in one function, and a call site decides only whether to try, so a
+failure is handled the same way everywhere.
 
 ### Cached properties filled remotely
 
@@ -198,20 +235,28 @@ are equal.
 
 ## Fallback rules
 
-These are the design's rules for the outpost, which chooses an
-implementation per call:
+How the outpost chooses, per UIA focus (`uia_remote_enrichment` in its
+`read.rs`):
 
 - A window without a native UIA provider (arbitration's
-  `UiaHasServerSideProvider` verdict) uses the classic implementation
-  without trying. An import that fails anyway (`Error::Import`) marks the
-  window the same way for its lifetime.
-- A run that fails otherwise runs the classic implementation for that
-  call and is logged with the failing instruction's index and source
-  line; repeated failures for one window mark it like a failed import.
-- A run that exceeds the instruction limit is retried once with a smaller
-  depth limit, then falls back.
-- A developer setting (`uia.remote_operations`, on by default) forces the
-  classic path.
+  `UiaHasServerSideProvider` verdict) is read through MSAA, so its focus
+  never reaches this choice.
+- An import that fails (`Error::Import`, a client-side proxy) marks the
+  window the focus is in for its lifetime, and the outpost then reads it
+  with its own classic walk, without trying; the mark is forgotten when
+  the window is destroyed, since its handle may be reused. The window is
+  the one known without a call: the focus event's own window, else the
+  application's keyboard focus window when the listener captured it.
+- A run that fails otherwise is answered by the classic walk for that
+  call (`Path::Fallback`) and logged as a warning with the failing
+  instruction and its source line.
+- A developer setting (`uia.remote_operations` in `settings.toml`, on by
+  default) forces the outpost's classic walk; the supervisor passes it to
+  each outpost as `--classic-uia`.
+
+Two of the design's rules are not implemented yet: marking a window after
+repeated run failures, and retrying a run that exceeds the instruction
+limit with a smaller depth limit. Neither has been seen to happen.
 
 A provider whose process has gone and one that times out
 (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`, both as an
@@ -272,6 +317,9 @@ runs both implementations against mockapp's `ancestry.json` fixture and
 asserts the same ancestors with the same cached properties and snapshots
 for a deep chain, controls with a value and a checked state, a list and
 a tab control with selected children (including one selected after
-start), a stop at a known ancestor, and the depth limit; that an element
-that lost the focus returns early; and the stalled and exited provider
-findings above.
+start), a stop at a known ancestor, and the depth limit, with the same
+nearest window; that an element that lost the focus returns early; and
+the stalled and exited provider findings above.
+`crates/mockapp/tests/call_counts.rs` pins the calls and provider hits of
+a UIA focus through `focus_ancestry` as the outpost makes it, remotely and
+classically.

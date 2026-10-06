@@ -21,6 +21,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_NativeWindowHandlePropertyId,
 };
 
+use crate::element::WalkerExt;
 use crate::map::cached_native_window_handle;
 
 /// The walker and cache request bound to one thread's own `IUIAutomation`
@@ -36,23 +37,22 @@ struct Context {
 impl Context {
     fn build() -> windows::core::Result<Self> {
         let client = crate::client::create_client()?;
-        // SAFETY: every call below is a local, same-thread COM call against
-        // the client just created:
-        // build the "has no native window handle" condition, negate it, hand
+        // Build the "has no native window handle" condition, negate it, hand
         // the negation to a fresh tree walker, and build a cache request
         // that prefetches just the one property `NormalizeElementBuildCache`
         // needs to answer — exactly NVDA's `windowTreeWalker` and
         // `windowCacheRequest`.
-        unsafe {
-            let zero = VARIANT::from(0i32);
+        let zero = VARIANT::from(0i32);
+        // SAFETY: local, same-thread COM calls against the client just
+        // created, each taking only live COM objects or plain values.
+        let walker = unsafe {
             let has_no_handle =
                 client.CreatePropertyCondition(UIA_NativeWindowHandlePropertyId, &zero)?;
             let is_a_window = client.CreateNotCondition(&has_no_handle)?;
-            let walker = client.CreateTreeWalker(&is_a_window)?;
-            let cache = client.CreateCacheRequest()?;
-            cache.AddProperty(UIA_NativeWindowHandlePropertyId)?;
-            Ok(Self { walker, cache })
-        }
+            client.CreateTreeWalker(&is_a_window)?
+        };
+        let cache = crate::cache::cache_request(&client, &[UIA_NativeWindowHandlePropertyId])?;
+        Ok(Self { walker, cache })
     }
 }
 
@@ -90,20 +90,13 @@ pub fn nearest_window_handle(element: &IUIAutomationElement) -> Option<isize> {
             *slot = Context::build().ok();
         }
         let context = slot.as_ref()?;
-        crate::calls::count(verbatim_model::CallKind::Uia);
-        // SAFETY: `element` is a live element per the caller's contract;
         // `context.walker` and `context.cache` are this thread's own, either
         // just built or reused unchanged from an earlier call on this same
         // thread.
-        let normalized = unsafe {
-            context
-                .walker
-                .NormalizeElementBuildCache(element, &context.cache)
-        }
-        .ok()?;
-        // SAFETY: `normalized` was just built with `context.cache`, which
-        // caches exactly the native window handle property this reads.
-        let hwnd = unsafe { cached_native_window_handle(&normalized) };
+        let normalized = context.walker.normalize(element, &context.cache).ok()?;
+        // `normalized` was just built with `context.cache`, which caches
+        // exactly the native window handle property this reads.
+        let hwnd = cached_native_window_handle(&normalized);
         (hwnd != 0).then_some(hwnd)
     })
 }

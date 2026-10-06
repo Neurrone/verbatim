@@ -9,11 +9,12 @@
 
 use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
-use windows::Win32::System::Variant::InitVariantFromInt32Array;
+use windows::Win32::System::Variant::{InitVariantFromInt32Array, VARIANT};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern,
-    IUIAutomationTogglePattern, IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId,
+    CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest,
+    IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
+    IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
+    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
     UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
     UIA_TogglePatternId,
 };
@@ -25,6 +26,7 @@ use verbatim_model::{CallKind, NodeSnapshot, QueryKind, TreeNode};
 use crate::cache::base_cache_request;
 use crate::calls::count;
 use crate::com::init_mta;
+use crate::element::{ElementExt, WalkerExt, current_selection, invoke, select, toggle};
 use crate::map::snapshot_from_cached_element;
 use crate::registry::NodeIdRegistry;
 
@@ -98,6 +100,58 @@ impl Uia {
         base_cache_request(&self.client)
     }
 
+    /// Builds a cache request for exactly `properties`. Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the cache request cannot be built.
+    pub fn cache_request(
+        &self,
+        properties: &[UIA_PROPERTY_ID],
+    ) -> windows::core::Result<IUIAutomationCacheRequest> {
+        crate::cache::cache_request(&self.client, properties)
+    }
+
+    /// The raw-view tree walker, the full tree NVDA's own walker uses.
+    /// Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the walker cannot be created.
+    pub fn raw_view_walker(&self) -> windows::core::Result<IUIAutomationTreeWalker> {
+        // SAFETY: `self.client` is a live IUIAutomation; creating a walker
+        // takes no arguments.
+        unsafe { self.client.RawViewWalker() }
+    }
+
+    /// The desktop's root element, which UIA serves in this process, so the
+    /// call is local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the root cannot be read.
+    pub fn root_element(&self) -> windows::core::Result<IUIAutomationElement> {
+        // SAFETY: `self.client` is a live IUIAutomation; the call takes no
+        // arguments.
+        unsafe { self.client.GetRootElement() }
+    }
+
+    /// A condition matching elements whose `property` equals `value`.
+    /// Local.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the condition cannot be built.
+    pub fn property_condition(
+        &self,
+        property: UIA_PROPERTY_ID,
+        value: &VARIANT,
+    ) -> windows::core::Result<IUIAutomationCondition> {
+        // SAFETY: `self.client` is a live IUIAutomation and `value` a VARIANT
+        // the caller owns, which the condition copies.
+        unsafe { self.client.CreatePropertyCondition(property, value) }
+    }
+
     /// Fetches the currently focused element with the M1 properties prefetched.
     /// Runs a cross-process call, so callers must invoke it only on a
     /// deadline-guarded worker.
@@ -131,11 +185,9 @@ impl Uia {
     ) -> windows::core::Result<T> {
         let client = self.client.cast::<IUIAutomation2>()?;
         let wait = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
-        // SAFETY: setting a timeout takes a plain integer.
-        unsafe { client.SetConnectionTimeout(wait) }?;
+        set_connection_timeout(&client, wait)?;
         let result = read(self);
-        // SAFETY: as above.
-        unsafe { client.SetConnectionTimeout(CONNECTION_TIMEOUT_MS) }?;
+        set_connection_timeout(&client, CONNECTION_TIMEOUT_MS)?;
         Ok(result)
     }
 
@@ -189,22 +241,11 @@ impl Uia {
         // in its `Drop`, after `CreatePropertyCondition` has copied it into
         // the condition. Nothing else may destroy the array: doing so as well
         // was a double free, the heap corruption an outpost crash-loop traced
-        // to this spot under the M3 focus-enrichment query. The search walks
-        // the subtree under the caller's `root`.
-        unsafe {
-            let variant = InitVariantFromInt32Array(runtime_id)?;
-            let condition = self
-                .client
-                .CreatePropertyCondition(UIA_RuntimeIdPropertyId, &variant)?;
-            count(CallKind::Uia);
-            match root.FindFirstBuildCache(TreeScope_Subtree, &condition, cache) {
-                Ok(element) => Ok(Some(element)),
-                // No match is a null element, which `windows` reports as an
-                // error carrying no failure code.
-                Err(error) if error.code().is_ok() => Ok(None),
-                Err(error) => Err(error),
-            }
-        }
+        // to this spot under the M3 focus-enrichment query.
+        let variant = unsafe { InitVariantFromInt32Array(runtime_id) }?;
+        let condition = self.property_condition(UIA_RuntimeIdPropertyId, &variant)?;
+        // The search walks the subtree under the caller's `root`.
+        root.find_first_build_cache(TreeScope_Subtree, &condition, cache)
     }
 
     /// The element `runtime_id` names, rebuilt with `cache`, when it is a
@@ -219,24 +260,13 @@ impl Uia {
     ///
     /// Returns the COM error if the relation cannot be read or a search
     /// fails for a reason other than the element being absent.
-    ///
-    /// # Safety
-    ///
-    /// `focused` must be a live element.
-    pub unsafe fn controlled_descendant(
+    pub fn controlled_descendant(
         &self,
         focused: &IUIAutomationElement,
         runtime_id: &[i32],
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<Option<IUIAutomationElement>> {
-        count(CallKind::Uia);
-        // SAFETY: `focused` is live per the caller's contract.
-        let controlled = unsafe { focused.CurrentControllerFor() }?;
-        // SAFETY: `controlled` is a live element array.
-        let length = unsafe { controlled.Length() }?;
-        for index in 0..length {
-            // SAFETY: `index` is within the array's length.
-            let root = unsafe { controlled.GetElement(index) }?;
+        for root in focused.controller_for()? {
             // A descendant, not the controlled element itself.
             // A failed read is no runtime id.
             let root_id = crate::com::runtime_id(&root);
@@ -263,11 +293,7 @@ impl Uia {
     /// # Errors
     ///
     /// Returns the COM error if the tree walker cannot be created.
-    ///
-    /// # Safety
-    ///
-    /// `element` must be a live element built with `cache`.
-    pub unsafe fn walk_tree(
+    pub fn walk_tree(
         &self,
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
@@ -275,8 +301,7 @@ impl Uia {
         max_depth: u32,
         max_nodes: usize,
     ) -> windows::core::Result<(TreeNode, bool)> {
-        // SAFETY: `self.client` is a live IUIAutomation instance.
-        let walker = unsafe { self.client.RawViewWalker() }?;
+        let walker = self.raw_view_walker()?;
         let limits = WalkLimits {
             cache,
             registry,
@@ -287,9 +312,7 @@ impl Uia {
             visited: 1, // the root counts as one node.
             truncated: false,
         };
-        // SAFETY: `element` and `cache` are valid per the caller's contract;
-        // `walker` was just created and is used only within this call.
-        let root = unsafe { walk_recursive(&walker, element, &limits, 0, &mut state) };
+        let root = walk_recursive(&walker, element, &limits, 0, &mut state);
         Ok((root, state.truncated))
     }
 
@@ -322,11 +345,7 @@ impl Uia {
     ///
     /// Returns the COM error if the tree walker itself cannot be created;
     /// a hop that finds no parent is not an error, it simply ends the walk.
-    ///
-    /// # Safety
-    ///
-    /// `element` must be a live element built with `cache`.
-    pub unsafe fn ancestor_chain(
+    pub fn ancestor_chain(
         &self,
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
@@ -341,8 +360,7 @@ impl Uia {
         } = *stops;
         // The raw view, the same parent chain NVDA's own object hierarchy
         // walks; what gets *reported* out of it is filtered below.
-        // SAFETY: `self.client` is a live IUIAutomation instance.
-        let walker = unsafe { self.client.RawViewWalker() }?;
+        let walker = self.raw_view_walker()?;
         let mut chain = Vec::new();
         let mut current = element.clone();
         let started = std::time::Instant::now();
@@ -363,10 +381,7 @@ impl Uia {
                 return Ok((chain, None, AncestorWalk::OutOfTime));
             }
             hops += 1;
-            count(CallKind::Uia);
-            // SAFETY: `current` is either the caller's `element` (per its
-            // contract) or a parent built with `cache` by the previous hop.
-            let Ok(parent) = (unsafe { walker.GetParentElementBuildCache(&current, cache) }) else {
+            let Ok(parent) = walker.parent(&current, cache) else {
                 // A hop that fails because the deadline passed while it
                 // waited is an incomplete chain, not the root. Any other
                 // failure ends the chain as the root, as NVDA's does: its
@@ -380,9 +395,7 @@ impl Uia {
                 log(hops, "root");
                 return Ok((chain, None, ending));
             };
-            // SAFETY: `parent` was just built with `cache`.
-            match unsafe { take_ancestor(&parent, registry, read_by_other_api, known, &mut chain) }
-            {
+            match take_ancestor(&parent, registry, read_by_other_api, known, &mut chain) {
                 Taken::Continue => current = parent,
                 Taken::Crossed(hwnd) => {
                     chain.reverse();
@@ -407,30 +420,24 @@ impl Uia {
     /// the other API and at a known ancestor, and the same filtering of
     /// what is reported. `complete` says whether `parents` ends at the
     /// root; a fetch cut short by a depth limit is reported as complete
-    /// up to there, like the classic walk's hop limit.
-    ///
-    /// # Safety
-    ///
-    /// Every element of `parents` must be live and carry a cache with the
-    /// properties [`snapshot_from_cached_element`] reads.
+    /// up to there, like the classic walk's hop limit. Each element of
+    /// `parents` should carry a cache with the properties
+    /// [`snapshot_from_cached_element`] reads.
     #[must_use]
-    pub unsafe fn ancestor_chain_from(
+    pub fn ancestor_chain_from(
         parents: &[IUIAutomationElement],
         registry: &NodeIdRegistry,
         stops: &AncestorStops<'_>,
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
         let mut chain = Vec::new();
         for parent in parents {
-            // SAFETY: forwarded to this function's contract.
-            match unsafe {
-                take_ancestor(
-                    parent,
-                    registry,
-                    stops.read_by_other_api,
-                    stops.known,
-                    &mut chain,
-                )
-            } {
+            match take_ancestor(
+                parent,
+                registry,
+                stops.read_by_other_api,
+                stops.known,
+                &mut chain,
+            ) {
                 Taken::Continue => {}
                 Taken::Crossed(hwnd) => {
                     chain.reverse();
@@ -462,20 +469,14 @@ impl Uia {
     /// `Ok(None)` because "no reportable selection" is the correct reading
     /// of each. The `Result` stays in the signature so a genuinely
     /// distinguishable failure can surface later without breaking callers.
-    ///
-    /// # Safety
-    ///
-    /// `element` must be a live element built with `cache`.
-    pub unsafe fn selected_child(
+    pub fn selected_child(
         &self,
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
-        // SAFETY: forwarded to this function's contract.
-        let selected = unsafe { selected_element(element, cache) };
-        // SAFETY: `selected` was built with `cache`.
-        Ok(selected.map(|selected| unsafe { snapshot_from_cached_element(&selected, registry) }))
+        let selected = selected_element(element, cache);
+        Ok(selected.map(|selected| snapshot_from_cached_element(&selected, registry)))
     }
 
     /// Navigates one step from `element` in `direction`, via the raw-view
@@ -503,38 +504,24 @@ impl Uia {
     /// Returns the COM error if the tree walker cannot be created, or the
     /// step's error when it says the element is gone
     /// ([`element_is_gone`](crate::element_is_gone)).
-    ///
-    /// # Safety
-    ///
-    /// `element` must be a live element built with `cache`.
-    pub unsafe fn navigate(
+    pub fn navigate(
         &self,
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
         direction: QueryKind,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
-        // SAFETY: `self.client` is a live IUIAutomation instance.
-        let walker = unsafe { self.client.RawViewWalker() }?;
-        count(CallKind::Uia);
-        // SAFETY: `element` and `cache` are valid per the caller's contract.
-        let neighbor = unsafe {
-            match direction {
-                QueryKind::Parent => walker.GetParentElementBuildCache(element, cache),
-                QueryKind::NextSibling => walker.GetNextSiblingElementBuildCache(element, cache),
-                QueryKind::PreviousSibling => {
-                    walker.GetPreviousSiblingElementBuildCache(element, cache)
-                }
-                QueryKind::FirstChild => walker.GetFirstChildElementBuildCache(element, cache),
-                // Not a navigation direction.
-                _ => return Err(windows::core::Error::from(E_INVALIDARG)),
-            }
+        let walker = self.raw_view_walker()?;
+        let neighbor = match direction {
+            QueryKind::Parent => walker.parent(element, cache),
+            QueryKind::NextSibling => walker.next_sibling(element, cache),
+            QueryKind::PreviousSibling => walker.previous_sibling(element, cache),
+            QueryKind::FirstChild => walker.first_child(element, cache),
+            // Not a navigation direction.
+            _ => return Err(windows::core::Error::from(E_INVALIDARG)),
         };
         match neighbor {
-            // SAFETY: `neighbor` was just built with `cache`.
-            Ok(neighbor) => Ok(Some(unsafe {
-                snapshot_from_cached_element(&neighbor, registry)
-            })),
+            Ok(neighbor) => Ok(Some(snapshot_from_cached_element(&neighbor, registry))),
             // A dead element is reported as such; any other failure reads as
             // no neighbor, as NVDA's tree-walker failures do, and so does the
             // null element `windows` reports for a genuine edge.
@@ -557,40 +544,26 @@ impl Uia {
     /// Returns the COM error from whichever pattern fetch or invocation
     /// failed, or a "not implemented" error if `element` exposes none of the
     /// three patterns.
-    ///
-    /// # Safety
-    ///
-    /// `element` must be a live element.
-    pub unsafe fn activate(
+    pub fn activate(
         &self,
         element: &IUIAutomationElement,
     ) -> windows::core::Result<Option<verbatim_model::ActionName>> {
-        // SAFETY: `element` is live per the caller's contract; each pattern
-        // fetch fails safely (an error) when the pattern is unsupported.
-        unsafe {
-            count(CallKind::Uia);
-            if let Ok(invoke) =
-                element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
-            {
-                count(CallKind::Uia);
-                return invoke
-                    .Invoke()
-                    .map(|()| Some(verbatim_model::ActionName::Invoke));
-            }
-            count(CallKind::Uia);
-            if let Ok(toggle) =
-                element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
-            {
-                count(CallKind::Uia);
-                return toggle.Toggle().map(|()| None);
-            }
-            count(CallKind::Uia);
-            if let Ok(item) = element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
-                UIA_SelectionItemPatternId,
-            ) {
-                count(CallKind::Uia);
-                return item.Select().map(|()| None);
-            }
+        // Each pattern fetch fails (an error) when the pattern is
+        // unsupported.
+        if let Ok(pattern) =
+            element.current_pattern::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+        {
+            return invoke(&pattern).map(|()| Some(verbatim_model::ActionName::Invoke));
+        }
+        if let Ok(pattern) =
+            element.current_pattern::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+        {
+            return toggle(&pattern).map(|()| None);
+        }
+        if let Ok(pattern) =
+            element.current_pattern::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+        {
+            return select(&pattern).map(|()| None);
         }
         Err(windows::core::Error::new(
             windows::Win32::Foundation::E_NOTIMPL,
@@ -605,35 +578,19 @@ impl Uia {
 /// call). Two cross-process round trips after the pattern fetch: the
 /// selection, then the cache rebuild. `verbatim-uia-rops` calls it for the
 /// classic focus ancestry.
-///
-/// # Safety
-///
-/// `element` must be a live element.
 #[must_use]
-pub unsafe fn selected_element(
+pub fn selected_element(
     element: &IUIAutomationElement,
     cache: &IUIAutomationCacheRequest,
 ) -> Option<IUIAutomationElement> {
-    count(CallKind::Uia);
-    // SAFETY: `element` is live per the caller's contract; a missing
-    // pattern surfaces as an error mapped to None.
-    let pattern = unsafe {
-        element.GetCurrentPatternAs::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
-    }
-    .ok()?;
-    count(CallKind::Uia);
-    // SAFETY: `pattern` was just obtained from a live element.
-    let selection = unsafe { pattern.GetCurrentSelection() }.ok()?;
-    // SAFETY: `selection` is a live element array.
-    if unsafe { selection.Length() }.unwrap_or(0) == 0 {
-        return None;
-    }
-    // SAFETY: index 0 exists per the length check above.
-    let first = unsafe { selection.GetElement(0) }.ok()?;
-    count(CallKind::Uia);
-    // SAFETY: `first` is live; rebuilding with `cache` prefetches the full
-    // snapshot property set in one round trip.
-    unsafe { first.BuildUpdatedCache(cache) }.ok()
+    // A missing pattern surfaces as an error mapped to None.
+    let pattern = element
+        .current_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
+        .ok()?;
+    let first = current_selection(&pattern).ok()?.into_iter().next()?;
+    // Rebuilding with `cache` prefetches the full snapshot property set in
+    // one round trip.
+    first.build_updated_cache(cache).ok()
 }
 
 /// What one ancestor did to a walk ([`take_ancestor`]).
@@ -653,28 +610,21 @@ enum Taken {
 /// focus context regardless of its review-mode setting (object navigation,
 /// by contrast, sees the full tree; see [`Uia::navigate`]); a UIA element
 /// is content only when UIA counts it both a control and content, as NVDA
-/// requires.
-///
-/// # Safety
-///
-/// `parent` must be live and built with a cache holding the snapshot's
+/// requires. `parent` should carry a cache holding the snapshot's
 /// properties.
-unsafe fn take_ancestor(
+fn take_ancestor(
     parent: &IUIAutomationElement,
     registry: &NodeIdRegistry,
     read_by_other_api: &dyn Fn(isize) -> bool,
     known: &dyn Fn(verbatim_model::NodeId) -> bool,
     chain: &mut Vec<NodeSnapshot>,
 ) -> Taken {
-    // SAFETY: forwarded to this function's contract.
-    let hwnd = unsafe { crate::map::cached_native_window_handle(parent) };
+    let hwnd = crate::map::cached_native_window_handle(parent);
     if hwnd != 0 && read_by_other_api(hwnd) {
         return Taken::Crossed(hwnd);
     }
-    // SAFETY: forwarded to this function's contract.
-    let snapshot = unsafe { snapshot_from_cached_element(parent, registry) };
-    // SAFETY: forwarded to this function's contract; a cached read.
-    let content = unsafe { crate::map::cached_is_control_and_content(parent) };
+    let snapshot = snapshot_from_cached_element(parent, registry);
+    let content = crate::map::cached_is_control_and_content(parent);
     if is_presentable_focus_ancestor(&snapshot) && content {
         let id = snapshot.id;
         chain.push(snapshot);
@@ -766,14 +716,16 @@ pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
     // live; NVDA likewise creates CUIAutomation8).
     let client: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
-    // SAFETY: CUIAutomation8 objects implement IUIAutomation2; setting the
-    // timeout takes a plain integer.
-    unsafe {
-        client
-            .cast::<IUIAutomation2>()?
-            .SetConnectionTimeout(CONNECTION_TIMEOUT_MS)?;
-    }
+    // CUIAutomation8 objects implement IUIAutomation2.
+    set_connection_timeout(&client.cast::<IUIAutomation2>()?, CONNECTION_TIMEOUT_MS)?;
     Ok(client)
+}
+
+/// Sets how long `client` waits for an application's provider to answer.
+fn set_connection_timeout(client: &IUIAutomation2, wait_ms: u32) -> windows::core::Result<()> {
+    // SAFETY: `client` is a live IUIAutomation2; the timeout is a plain
+    // integer.
+    unsafe { client.SetConnectionTimeout(wait_ms) }
 }
 
 /// The per-walk parameters threaded through every level of
@@ -796,29 +748,21 @@ struct WalkState {
 /// Recursive worker for [`Uia::walk_tree`]. `state.visited` already counts
 /// `element` itself; children are counted as they are accepted into the
 /// walk, before recursing into them.
-///
-/// # Safety
-///
-/// `walker` must be a live tree walker; `element` and `limits.cache` must
-/// satisfy [`Uia::walk_tree`]'s contract.
-unsafe fn walk_recursive(
+fn walk_recursive(
     walker: &IUIAutomationTreeWalker,
     element: &IUIAutomationElement,
     limits: &WalkLimits<'_>,
     depth: u32,
     state: &mut WalkState,
 ) -> TreeNode {
-    // SAFETY: `element` carries every base-cache-request property, either as
-    // the walk's root (caller's contract) or because every child reached
-    // below is fetched with a `*BuildCache` call using the same cache
-    // request.
-    let snapshot = unsafe { snapshot_from_cached_element(element, limits.registry) };
+    // `element` carries every base-cache-request property, either as the
+    // walk's root or because every child reached below is fetched with a
+    // `*BuildCache` call using the same cache request.
+    let snapshot = snapshot_from_cached_element(element, limits.registry);
 
     if depth >= limits.max_depth {
         // Peek only: is there a child we are declining to descend into?
-        count(CallKind::Uia);
-        // SAFETY: forwarded to this function's contract.
-        if unsafe { walker.GetFirstChildElementBuildCache(element, limits.cache) }.is_ok() {
+        if walker.first_child(element, limits.cache).is_ok() {
             state.truncated = true;
         }
         return TreeNode {
@@ -828,25 +772,18 @@ unsafe fn walk_recursive(
     }
 
     let mut children = Vec::new();
-    count(CallKind::Uia);
-    // SAFETY: forwarded to this function's contract; a `Err` here means "no
-    // first child", the same convention `element_by_runtime_id` uses for
-    // `FindFirstBuildCache`.
-    let mut next_child =
-        unsafe { walker.GetFirstChildElementBuildCache(element, limits.cache) }.ok();
+    // An `Err` here means "no first child".
+    let mut next_child = walker.first_child(element, limits.cache).ok();
     while let Some(current) = next_child {
         if state.visited >= limits.max_nodes {
             state.truncated = true;
             break;
         }
         state.visited += 1;
-        // SAFETY: `current` was built with `limits.cache` by the call above
-        // or below; forwarded to this function's own contract otherwise.
-        let child_node = unsafe { walk_recursive(walker, &current, limits, depth + 1, state) };
+        let child_node = walk_recursive(walker, &current, limits, depth + 1, state);
         children.push(child_node);
-        count(CallKind::Uia);
-        // SAFETY: forwarded; `Err` means "no next sibling".
-        next_child = unsafe { walker.GetNextSiblingElementBuildCache(&current, limits.cache) }.ok();
+        // `Err` means "no next sibling".
+        next_child = walker.next_sibling(&current, limits.cache).ok();
     }
 
     TreeNode { snapshot, children }

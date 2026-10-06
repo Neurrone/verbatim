@@ -43,8 +43,20 @@ pub(super) struct Launched {
 }
 
 /// Launches `verbatim-outpost.exe` from `exe_path` in `role`, contained in
-/// a kill-on-close job with the memory cap (see `verbatim-process`).
-pub(super) fn launch(exe_path: &Path, role: Role) -> io::Result<(Launched, ChildPipes)> {
+/// a kill-on-close job with the memory cap (see `verbatim-process`). An
+/// outpost is told `options` on its command line (`--classic-uia` when
+/// remote operations are off); the listener reads no application and takes
+/// none.
+pub(super) fn launch(
+    exe_path: &Path,
+    role: Role,
+    options: crate::OutpostOptions,
+) -> io::Result<(Launched, ChildPipes)> {
+    let classic_uia = if options.remote_operations {
+        ""
+    } else {
+        " --classic-uia"
+    };
     let (log_stem, arguments): (String, Box<dyn Fn(usize, usize) -> String>) = match role {
         Role::Outpost(pid) => (
             match image_stem(pid) {
@@ -53,7 +65,7 @@ pub(super) fn launch(exe_path: &Path, role: Role) -> io::Result<(Launched, Child
             },
             Box::new(move |pipe_in, pipe_out| {
                 format!(
-                    "--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {}",
+                    "--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {}{classic_uia}",
                     pid.0
                 )
             }),

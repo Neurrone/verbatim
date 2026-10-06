@@ -248,31 +248,24 @@ impl Listener {
 
 /// What a UIA callback captures from a cached element: its owning pid, its
 /// cached window handle, and its cached snapshot parts. `None` for an element
-/// with no owning process.
-///
-/// # Safety
-///
-/// `element` must be a cached element from the registration's base cache
-/// request, so every read is a cached local read.
-unsafe fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFact)> {
-    // SAFETY: forwarded to the caller's contract.
-    unsafe {
-        let pid = cached_process_id(element).filter(|&pid| pid != 0)?;
-        let hwnd = cached_native_window_handle(element);
-        let parts = snapshot_parts_from_cached_element(element);
-        Some((
-            Pid(pid),
-            hwnd,
-            UiaSnapshotFact {
-                runtime_id: parts.runtime_id,
-                role: parts.role,
-                name: parts.name,
-                value: parts.value,
-                states: parts.states,
-                details: parts.details,
-            },
-        ))
-    }
+/// with no owning process. `element` comes with the registration's base
+/// cache request, so every read is a cached local read.
+fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFact)> {
+    let pid = cached_process_id(element).filter(|&pid| pid != 0)?;
+    let hwnd = cached_native_window_handle(element);
+    let parts = snapshot_parts_from_cached_element(element);
+    Some((
+        Pid(pid),
+        hwnd,
+        UiaSnapshotFact {
+            runtime_id: parts.runtime_id,
+            role: parts.role,
+            name: parts.name,
+            value: parts.value,
+            states: parts.states,
+            details: parts.details,
+        },
+    ))
 }
 
 /// Installs the desktop-global UIA focus registration. A failure is reported
@@ -280,9 +273,8 @@ unsafe fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnap
 fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistration> {
     let callback_outgoing = Arc::clone(outgoing);
     let callback = Arc::new(move |element: &IUIAutomationElement| {
-        // SAFETY: a cached focus element from the registration's base cache
-        // request.
-        if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+        // A cached focus element from the registration's base cache request.
+        if let Some((pid, hwnd, snapshot)) = capture(element) {
             // A windowless element is in the keyboard focus window of its own
             // process, if that process still has the focus: a local read.
             let focus_window = if hwnd == 0 {
@@ -319,8 +311,8 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
     let selection = Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
         callback: Arc::new(move |element: &IUIAutomationElement| {
-            // SAFETY: a cached element from the registration's cache request.
-            if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+            // A cached element from the registration's cache request.
+            if let Some((pid, hwnd, snapshot)) = capture(element) {
                 selection_outgoing.fact(pid, DeliveredFact::UiaSelection { hwnd, snapshot }, None);
             }
         }),
@@ -330,8 +322,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
     let menu = Subscription::Event {
         event: UIA_MenuOpenedEventId,
         callback: Arc::new(move |element: &IUIAutomationElement| {
-            // SAFETY: as above.
-            if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+            if let Some((pid, hwnd, snapshot)) = capture(element) {
                 menu_outgoing.fact(pid, DeliveredFact::UiaMenuOpened { hwnd, snapshot }, None);
             }
         }),
@@ -345,8 +336,7 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
                   processing: NotificationProcessing,
                   display_string: Option<String>,
                   activity_id: Option<String>| {
-                // SAFETY: as above.
-                if let Some((pid, hwnd, snapshot)) = unsafe { capture(element) } {
+                if let Some((pid, hwnd, snapshot)) = capture(element) {
                     let notification = Notification {
                         kind: notification_kind_from_uia(kind),
                         processing: notification_processing_from_uia(processing),

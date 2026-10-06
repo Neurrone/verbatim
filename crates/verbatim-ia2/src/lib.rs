@@ -23,13 +23,22 @@
 //! - [`calls`] — the per-thread count of the cross-process calls
 //!   [`acquire`] makes, which the outpost's worker takes around each entry
 //!   it handles.
+//!
+//! `unsafe` code lives only in the private modules that wrap the platform:
+//! `accessible`, the safe MSAA wrappers (an `IAccessible` with its child id,
+//! and the `oleacc` acquisition functions) that [`acquire`] is written
+//! against; `window`, the window functions and the list view and tree view
+//! messages; and `hook`, the `WinEvent` hooks.
+//! [`acquire`] itself is safe code.
 
+mod accessible;
 pub mod acquire;
 pub mod calls;
 mod com;
 mod hook;
 pub mod map;
 mod registry;
+mod window;
 
 pub use com::CHILDID_SELF;
 pub use hook::{

@@ -15,10 +15,14 @@
 //! focus's element by reading the system's keyboard focus
 //! (`GetFocusedElement`), and a test must not take the keyboard focus from
 //! the desktop it runs on. They run on this thread instead, making the
-//! same `verbatim-uia` calls in the same order as the outpost's worker does
-//! once it has the element in hand ([`uia_focus`] and [`uia_navigate`] say
-//! which code each follows), and read this thread's count. The outpost's
-//! one read of the focused element is then the only call they leave out.
+//! same `verbatim-uia` and `verbatim-uia-rops` calls in the same order as
+//! the outpost's worker does once it has the element in hand
+//! ([`uia_focus`] and [`uia_navigate`] say which code each follows), and
+//! read this thread's count. The outpost's one read of the focused element
+//! is counted where the outpost makes it; its provider hits are the only
+//! cost they leave out. A UIA focus is measured both ways the outpost reads
+//! it: with remote operations, as it does by default, and with the classic
+//! walk, as it does with `uia.remote_operations` off.
 //!
 //! mockapp's focus moves with `set-focus`, which raises no event, so no
 //! other client on the machine (a running screen reader, say) calls into
@@ -43,8 +47,11 @@ use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
     SupervisorToOutpost, read_message,
 };
-use verbatim_uia::map::snapshot_from_cached_element;
-use verbatim_uia::{AncestorStops, AncestorWalk, NodeIdRegistry, Uia};
+use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state};
+use verbatim_uia::{
+    AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia,
+};
+use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
 
@@ -391,9 +398,9 @@ impl UiaUnderTest {
         let root = uia
             .element_from_handle(hwnd.0 as isize, &cache)
             .expect("mockapp's root element");
-        // SAFETY: `root` was just built with `cache`.
-        let (tree, _) =
-            unsafe { uia.walk_tree(&root, &cache, &registry, 8, 64) }.expect("mockapp's tree");
+        let (tree, _) = uia
+            .walk_tree(&root, &cache, &registry, 8, 64)
+            .expect("mockapp's tree");
         let mut elements = HashMap::new();
         collect(&tree, &registry, &mut elements);
         Self {
@@ -439,20 +446,26 @@ fn collect(
     }
 }
 
-/// The calls the outpost's worker makes for a UIA focus once it has the
-/// focused element in hand, in the same order: `Worker::uia_focus` in
-/// `verbatim-outpost`'s `worker.rs` finds the nearest window of an element
-/// with none of its own and, the first time, probes that window's provider
-/// for arbitration; `uia_enrichment` and `uia_ancestors` in its `read.rs`
-/// walk the ancestors, stopping at one the previous focus's chain holds,
-/// and read a list's selected child. Returns the new focus's chain,
-/// outermost first, ending with the focus, as the worker keeps it.
+/// The calls the outpost's worker makes for a UIA focus, in the same order:
+/// `Worker::uia_focus` in `verbatim-outpost`'s `worker.rs` reads the
+/// focused element (`GetFocusedElement`, which a test cannot make, so it is
+/// counted here where the outpost makes it), then, with remote operations
+/// on, `uia_remote_enrichment` in its `read.rs` reads the ancestors, the
+/// selected child, and the nearest window in one `Execute`
+/// (`verbatim_uia_rops::focus_ancestry`) and turns them into the chain
+/// (`Uia::ancestor_chain_from`), reusing the previous chain from where it
+/// meets it; with them off, the worker finds the nearest window of an
+/// element with none of its own, and `uia_enrichment` and `uia_ancestors`
+/// walk the ancestors hop by hop, stopping at one the previous focus's
+/// chain holds, and read a list's selected child. The first time, the
+/// window's provider is probed for arbitration. Returns the new focus's
+/// chain, outermost first, ending with the focus, as the worker keeps it.
 fn uia_focus(
     under_test: &UiaUnderTest,
     hwnd: HWND,
     element: &IUIAutomationElement,
     previous: &[NodeSnapshot],
-    first_in_window: bool,
+    (first_in_window, remote): (bool, bool),
 ) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
     let UiaUnderTest {
         uia,
@@ -460,37 +473,69 @@ fn uia_focus(
         registry,
         ..
     } = under_test;
-    assert_eq!(
-        verbatim_uia::nearest_window_handle(element),
-        Some(hwnd.0 as isize)
-    );
+    // The outpost's read of the focused element.
+    verbatim_uia::calls::count(CallKind::Uia);
+    // A menu item without the Toggle pattern would read its legacy state
+    // here; the fixture has none, so no call is made.
+    let node = with_legacy_checked_state(element, snapshot_from_cached_element(element, registry));
+    let known = |id: NodeId| previous.iter().any(|known| known.id == id);
+    // mockapp's window is read through UIA, so the walk crosses into no
+    // other API.
+    let read_by_other_api = |_: isize| false;
+    let stops = AncestorStops {
+        read_by_other_api: &read_by_other_api,
+        known: &known,
+        deadline: None,
+    };
+    let (chain, crossed, walked, selected) = if remote {
+        let (known_ids, known_runtime_ids): (Vec<NodeId>, Vec<Vec<i32>>) = previous
+            .iter()
+            .filter_map(|node| Some((node.id, registry.runtime_id_of(node.id)?)))
+            .unzip();
+        let query = FocusQuery {
+            element,
+            known: &known_runtime_ids,
+            depth_limit: 64,
+            properties: CACHED_PROPERTIES,
+            deadline: None,
+        };
+        let (answer, path) = focus_ancestry(uia, &query, true).expect("the focus ancestry");
+        assert!(matches!(path, Path::Remote), "answered by {path:?}");
+        let FocusAncestry::Focused(ancestry) = answer else {
+            panic!("the element has the keyboard focus");
+        };
+        assert_eq!(ancestry.window, Some(hwnd.0 as isize), "the nearest window");
+        let (chain, crossed, mut walked) =
+            Uia::ancestor_chain_from(&ancestry.ancestors, registry, &stops);
+        if let (AncestorWalk::Complete, Some(index)) = (walked, ancestry.met_known) {
+            walked = AncestorWalk::MetKnown(known_ids[index]);
+        }
+        let selected = ancestry
+            .selected_child
+            .map(|child| snapshot_from_cached_element(&child, registry));
+        (chain, crossed, walked, selected)
+    } else {
+        assert_eq!(
+            verbatim_uia::nearest_window_handle(element),
+            Some(hwnd.0 as isize)
+        );
+        let (chain, crossed, walked) = uia
+            .ancestor_chain(element, cache, registry, 64, &stops)
+            .expect("the ancestor walk");
+        let selected = (node.role == Role::List)
+            .then(|| {
+                uia.selected_child(element, cache, registry)
+                    .expect("no error")
+            })
+            .flatten();
+        (chain, crossed, walked, selected)
+    };
     if first_in_window {
         assert_eq!(
             verbatim_uia::probe_server_side_provider(hwnd.0 as isize),
             Some(true)
         );
     }
-    // SAFETY: every element here was built with `cache`.
-    let node = unsafe { snapshot_from_cached_element(element, registry) };
-    let known = |id: NodeId| previous.iter().any(|known| known.id == id);
-    // mockapp's window is read through UIA, so the walk crosses into no
-    // other API.
-    let read_by_other_api = |_: isize| false;
-    // SAFETY: as above.
-    let (chain, crossed, walked) = unsafe {
-        uia.ancestor_chain(
-            element,
-            cache,
-            registry,
-            64,
-            &AncestorStops {
-                read_by_other_api: &read_by_other_api,
-                known: &known,
-                deadline: None,
-            },
-        )
-    }
-    .expect("the ancestor walk");
     assert_eq!(crossed, None);
     // The walk met the previous chain: reuse what lies above, as the
     // outpost's `splice` does.
@@ -505,10 +550,6 @@ fn uia_focus(
         AncestorWalk::Complete => chain,
         AncestorWalk::OutOfTime => panic!("the walk has no deadline"),
     };
-    let selected = (node.role == Role::List)
-        // SAFETY: as above.
-        .then(|| unsafe { uia.selected_child(element, cache, registry) }.expect("no error"))
-        .flatten();
     (
         ancestors.into_iter().chain(std::iter::once(node)).collect(),
         selected,
@@ -532,31 +573,70 @@ fn uia_navigate(
         registry,
         ..
     } = under_test;
-    // The outpost counts this read where it makes it.
-    verbatim_uia::calls::count(CallKind::Uia);
-    // SAFETY: `element` is live.
-    let fresh = unsafe { element.BuildUpdatedCache(cache) }.expect("the element answers");
+    let fresh = element
+        .build_updated_cache(cache)
+        .expect("the element answers");
     assert!(verbatim_uia::nearest_window_handle(&fresh).is_some());
-    // SAFETY: `fresh` was just built with `cache`.
-    unsafe { uia.navigate(&fresh, cache, registry, kind) }
+    uia.navigate(&fresh, cache, registry, kind)
         .expect("the step")
         .expect("a neighbor")
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one focus change after another, each with its expected cost"
-)]
-fn uia_focus_changes_cost_exactly() {
-    let title = common::unique_title("mockapp-counts-uia-focus");
-    let app = common::spawn("counts.json", "uia", &title);
+/// What each UIA focus change in [`uia_focus_changes`] is expected to cost.
+struct FocusCosts<'a> {
+    cold: (CallCounts, &'a [(&'a str, u32)]),
+    steady: (CallCounts, &'a [(&'a str, u32)]),
+    into_list: (CallCounts, &'a [(&'a str, u32)]),
+    next_item: (CallCounts, &'a [(&'a str, u32)]),
+}
+
+/// Moves mockapp's focus to `id` and measures the outpost's handling of a
+/// focus on the element named `name`, the way `remote` says.
+fn measure_uia_focus(
+    (app, under_test, hwnd): (&mut common::MockApp, &UiaUnderTest, HWND),
+    (id, name): (&str, &str),
+    previous: &[NodeSnapshot],
+    (first_in_window, remote): (bool, bool),
+) -> ((Vec<NodeSnapshot>, Option<NodeSnapshot>), Cost) {
+    common::apply(app, hwnd, &format!("set-focus {id}"));
+    under_test.measure(hwnd, |under_test| {
+        uia_focus(
+            under_test,
+            hwnd,
+            under_test.element(name),
+            previous,
+            (first_in_window, remote),
+        )
+    })
+}
+
+/// The same focus changes, through the remote operation or the classic
+/// walk as `remote` says, each checked against `expected`.
+fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-counts-uia-focus-{path}"));
+    let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
+    let check = |ratchet: &mut Ratchet,
+                 label: &str,
+                 cost: &Cost,
+                 expected: &(CallCounts, &[(&str, u32)])| {
+        ratchet.check(
+            &format!("UIA focus ({path}), {label}"),
+            cost,
+            expected.0,
+            expected.1,
+        );
+    };
 
-    let ((chain, _), cost) = under_test.measure(hwnd, |under_test| {
-        uia_focus(under_test, hwnd, under_test.element("First"), &[], true)
-    });
+    let ((chain, _), cost) = measure_uia_focus(
+        (&mut app, &under_test, hwnd),
+        ("first", "First"),
+        &[],
+        (true, remote),
+    );
     let names: Vec<_> = chain.iter().map(|node| node.name.as_deref()).collect();
     assert_eq!(
         names,
@@ -566,107 +646,196 @@ fn uia_focus_changes_cost_exactly() {
             Some("First")
         ]
     );
-    ratchet.check(
-        "UIA focus, cold",
-        &cost,
-        calls(5, 0, 1),
-        &[
-            ("WM_GETOBJECT", 4),
-            ("ProviderOptions", 44),
-            ("GetPatternProvider", 22),
-            ("GetPropertyValue", 51),
-            ("HostRawElementProvider", 15),
-            ("Navigate", 12),
-            ("GetRuntimeId", 3),
-            ("BoundingRectangle", 2),
-            ("FragmentRoot", 7),
-        ],
-    );
+    check(&mut ratchet, "cold", &cost, &expected.cold);
 
-    let ((chain, _), cost) = under_test.measure(hwnd, |under_test| {
-        uia_focus(
-            under_test,
-            hwnd,
-            under_test.element("Second"),
-            &chain,
-            false,
-        )
-    });
-    ratchet.check(
-        "UIA focus, steady state",
-        &cost,
-        calls(2, 0, 0),
-        &[
-            ("WM_GETOBJECT", 1),
-            ("ProviderOptions", 27),
-            ("GetPatternProvider", 11),
-            ("GetPropertyValue", 29),
-            ("HostRawElementProvider", 10),
-            ("Navigate", 7),
-            ("GetRuntimeId", 3),
-            ("BoundingRectangle", 1),
-            ("FragmentRoot", 6),
-        ],
+    let ((chain, _), cost) = measure_uia_focus(
+        (&mut app, &under_test, hwnd),
+        ("second", "Second"),
+        &chain,
+        (false, remote),
     );
+    let names: Vec<_> = chain.iter().map(|node| node.name.as_deref()).collect();
+    assert_eq!(
+        names,
+        [
+            Some("Mockapp Counts Fixture"),
+            Some("Settings"),
+            Some("Second")
+        ]
+    );
+    check(&mut ratchet, "steady state", &cost, &expected.steady);
 
-    let ((chain, selected), cost) = under_test.measure(hwnd, |under_test| {
-        uia_focus(
-            under_test,
-            hwnd,
-            under_test.element("Options"),
-            &chain,
-            false,
-        )
-    });
+    let ((chain, selected), cost) = measure_uia_focus(
+        (&mut app, &under_test, hwnd),
+        ("list", "Options"),
+        &chain,
+        (false, remote),
+    );
     assert_eq!(
         selected.and_then(|node| node.name).as_deref(),
         Some("One"),
         "the list's selected item"
     );
-    ratchet.check(
-        "UIA focus into a list",
-        &cost,
-        calls(5, 0, 0),
-        &[
-            ("WM_GETOBJECT", 2),
-            ("ProviderOptions", 30),
-            ("GetPatternProvider", 24),
-            ("GetPropertyValue", 49),
-            ("HostRawElementProvider", 14),
-            ("Navigate", 7),
-            ("GetRuntimeId", 4),
-            ("BoundingRectangle", 2),
-            ("FragmentRoot", 9),
-            ("IsSelected", 1),
-            ("GetSelection", 1),
-        ],
-    );
+    check(&mut ratchet, "into a list", &cost, &expected.into_list);
 
-    let ((chain, _), _) = under_test.measure(hwnd, |under_test| {
-        uia_focus(under_test, hwnd, under_test.element("One"), &chain, false)
-    });
-    let (_, cost) = under_test.measure(hwnd, |under_test| {
-        uia_focus(under_test, hwnd, under_test.element("Two"), &chain, false)
-    });
-    ratchet.check(
-        "UIA arrow to the next list item",
+    let ((chain, _), _) = measure_uia_focus(
+        (&mut app, &under_test, hwnd),
+        ("item1", "One"),
+        &chain,
+        (false, remote),
+    );
+    let ((chain, _), cost) = measure_uia_focus(
+        (&mut app, &under_test, hwnd),
+        ("item2", "Two"),
+        &chain,
+        (false, remote),
+    );
+    let names: Vec<_> = chain.iter().map(|node| node.name.as_deref()).collect();
+    assert_eq!(
+        names,
+        [Some("Mockapp Counts Fixture"), Some("Options"), Some("Two")]
+    );
+    check(
+        &mut ratchet,
+        "arrow to the next list item",
         &cost,
-        calls(2, 0, 0),
-        &[
-            ("WM_GETOBJECT", 1),
-            ("ProviderOptions", 27),
-            ("GetPatternProvider", 11),
-            ("GetPropertyValue", 29),
-            ("HostRawElementProvider", 10),
-            ("Navigate", 7),
-            ("GetRuntimeId", 3),
-            ("BoundingRectangle", 1),
-            ("FragmentRoot", 6),
-        ],
+        &expected.next_item,
     );
 
     ratchet.finish();
     drop(app);
+}
+
+fn uia_focus_changes_cost_exactly_remote() {
+    uia_focus_changes(
+        true,
+        &FocusCosts {
+            cold: (
+                calls(2, 0, 1),
+                &[
+                    ("WM_GETOBJECT", 4),
+                    ("ProviderOptions", 36),
+                    ("GetPatternProvider", 22),
+                    ("GetPropertyValue", 50),
+                    ("HostRawElementProvider", 13),
+                    ("Navigate", 11),
+                    ("GetRuntimeId", 4),
+                    ("BoundingRectangle", 2),
+                    ("FragmentRoot", 4),
+                ],
+            ),
+            steady: (
+                calls(2, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 1),
+                    ("ProviderOptions", 22),
+                    ("GetPatternProvider", 11),
+                    ("GetPropertyValue", 29),
+                    ("HostRawElementProvider", 9),
+                    ("Navigate", 7),
+                    ("GetRuntimeId", 4),
+                    ("BoundingRectangle", 1),
+                    ("FragmentRoot", 4),
+                ],
+            ),
+            into_list: (
+                calls(2, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 2),
+                    ("ProviderOptions", 24),
+                    ("GetPatternProvider", 23),
+                    ("GetPropertyValue", 49),
+                    ("HostRawElementProvider", 10),
+                    ("Navigate", 8),
+                    ("GetRuntimeId", 3),
+                    ("BoundingRectangle", 2),
+                    ("FragmentRoot", 3),
+                    ("IsSelected", 1),
+                    ("GetSelection", 1),
+                ],
+            ),
+            next_item: (
+                calls(2, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 1),
+                    ("ProviderOptions", 22),
+                    ("GetPatternProvider", 11),
+                    ("GetPropertyValue", 29),
+                    ("HostRawElementProvider", 9),
+                    ("Navigate", 7),
+                    ("GetRuntimeId", 4),
+                    ("BoundingRectangle", 1),
+                    ("FragmentRoot", 4),
+                ],
+            ),
+        },
+    );
+}
+
+fn uia_focus_changes_cost_exactly_classic() {
+    uia_focus_changes(
+        false,
+        &FocusCosts {
+            cold: (
+                calls(6, 0, 1),
+                &[
+                    ("WM_GETOBJECT", 4),
+                    ("ProviderOptions", 44),
+                    ("GetPatternProvider", 22),
+                    ("GetPropertyValue", 51),
+                    ("HostRawElementProvider", 15),
+                    ("Navigate", 12),
+                    ("GetRuntimeId", 3),
+                    ("BoundingRectangle", 2),
+                    ("FragmentRoot", 7),
+                ],
+            ),
+            steady: (
+                calls(3, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 1),
+                    ("ProviderOptions", 27),
+                    ("GetPatternProvider", 11),
+                    ("GetPropertyValue", 29),
+                    ("HostRawElementProvider", 10),
+                    ("Navigate", 7),
+                    ("GetRuntimeId", 3),
+                    ("BoundingRectangle", 1),
+                    ("FragmentRoot", 6),
+                ],
+            ),
+            into_list: (
+                calls(6, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 2),
+                    ("ProviderOptions", 30),
+                    ("GetPatternProvider", 24),
+                    ("GetPropertyValue", 49),
+                    ("HostRawElementProvider", 14),
+                    ("Navigate", 7),
+                    ("GetRuntimeId", 4),
+                    ("BoundingRectangle", 2),
+                    ("FragmentRoot", 9),
+                    ("IsSelected", 1),
+                    ("GetSelection", 1),
+                ],
+            ),
+            next_item: (
+                calls(3, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 1),
+                    ("ProviderOptions", 27),
+                    ("GetPatternProvider", 11),
+                    ("GetPropertyValue", 29),
+                    ("HostRawElementProvider", 10),
+                    ("Navigate", 7),
+                    ("GetRuntimeId", 3),
+                    ("BoundingRectangle", 1),
+                    ("FragmentRoot", 6),
+                ],
+            ),
+        },
+    );
 }
 
 fn uia_navigation_steps_cost_exactly() {
@@ -739,8 +908,12 @@ fn main() {
             msaa_navigation_steps_cost_exactly,
         ),
         (
-            "uia_focus_changes_cost_exactly",
-            uia_focus_changes_cost_exactly,
+            "uia_focus_changes_cost_exactly_remote",
+            uia_focus_changes_cost_exactly_remote,
+        ),
+        (
+            "uia_focus_changes_cost_exactly_classic",
+            uia_focus_changes_cost_exactly_classic,
         ),
         (
             "uia_navigation_steps_cost_exactly",

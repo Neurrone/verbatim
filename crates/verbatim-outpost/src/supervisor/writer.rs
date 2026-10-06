@@ -15,6 +15,8 @@
 //! - anything else, a query above all, fails at once, so its asker gets an
 //!   outcome straight away instead of waiting behind a stuck outpost.
 
+#![forbid(unsafe_code)]
+
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Write};

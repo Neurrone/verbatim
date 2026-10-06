@@ -12,7 +12,7 @@ mod harness;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use verbatim_uia::{CACHED_PROPERTIES, NodeIdRegistry, Uia, map};
+use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
 use verbatim_uia_rops::{
     Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED, Status,
     focus_ancestry_classic, focus_ancestry_remote,
@@ -86,6 +86,7 @@ fn query<'a>(element: &'a IUIAutomationElement, known: &'a [Vec<i32>]) -> FocusQ
         known,
         depth_limit: 50,
         properties: CACHED_PROPERTIES,
+        deadline: None,
     }
 }
 
@@ -122,8 +123,7 @@ fn cached_view(element: &IUIAutomationElement, registry: &NodeIdRegistry) -> Str
             value.map(|value| format!("{value:?}"))
         );
     }
-    // SAFETY: as above.
-    let snapshot = unsafe { map::snapshot_from_cached_element(element, registry) };
+    let snapshot = map::snapshot_from_cached_element(element, registry);
     let _ = write!(view, "\n{snapshot:?}");
     view
 }
@@ -170,6 +170,11 @@ fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
         remote.depth_limited, classic.depth_limited,
         "the depth limit"
     );
+    assert_eq!(remote.window, classic.window, "the nearest window");
+    assert!(
+        remote.window.is_some(),
+        "every fixture element has a window"
+    );
     assert_eq!(
         remote
             .selected_child
@@ -187,9 +192,10 @@ fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
 fn names(elements: &[IUIAutomationElement]) -> Vec<String> {
     elements
         .iter()
-        // SAFETY: live elements with the name cached.
         .map(|element| {
-            unsafe { element.CachedName() }.map_or_else(|_| "?".into(), |n| n.to_string())
+            element
+                .cached_string(UIA_NamePropertyId)
+                .unwrap_or_default()
         })
         .collect()
 }
@@ -237,14 +243,8 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
     fixture.app.send("select apple");
     let fruits = fixture.find("Fruits");
     common::wait_until("Apple is selected", || {
-        // SAFETY: a live element; the cached properties stay readable.
-        unsafe {
-            verbatim_uia::selected_element(
-                &fruits,
-                &fixture.uia.base_cache_request().expect("cache"),
-            )
-        }
-        .is_some_and(|child| names(&[child]) == ["Apple"])
+        verbatim_uia::selected_element(&fruits, &fixture.uia.base_cache_request().expect("cache"))
+            .is_some_and(|child| names(&[child]) == ["Apple"])
     });
     fixture.app.send("focus fruits");
     let ancestry = both_agree(&fixture.uia, &query(&fruits, &[]));

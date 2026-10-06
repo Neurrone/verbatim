@@ -42,7 +42,7 @@ use verbatim_model::{
 };
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost};
 use verbatim_outpost::supervisor::EndReason;
-use verbatim_outpost::{OutpostMessage, Supervisor};
+use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
@@ -175,6 +175,11 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         verbatim_config::KeyboardLayout::Desktop => KeyboardLayout::Desktop,
         verbatim_config::KeyboardLayout::Laptop => KeyboardLayout::Laptop,
     };
+    // How every outpost reads UIA, fixed for their lives: a developer
+    // setting, read once like the layout.
+    let outpost_options = OutpostOptions {
+        remote_operations: config.settings().uia.remote_operations,
+    };
 
     // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
     // latency ledger; VERBATIM_TEST_AUDIO=null swaps in device-free test
@@ -195,7 +200,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // change reaches the reducer as a focus on the window, which moves its
     // attention.
     let (outpost_tx, outpost_rx) = unbounded::<OutpostMessage>();
-    let supervisor = Arc::new(Supervisor::new(outpost_tx)?);
+    let supervisor = Arc::new(Supervisor::new(outpost_tx, outpost_options)?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // Set once the focus listener first reports ready; part of the
     // readiness the control plane's status reports.

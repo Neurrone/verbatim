@@ -69,10 +69,7 @@ fn a_busy_uia_window_is_read_once_it_answers() {
     let cache = uia.base_cache_request().expect("base cache request");
     let name = |uia: &verbatim_uia::Uia| {
         uia.element_from_handle(hwnd, &cache)
-            // SAFETY: built with the base cache request.
-            .map(
-                |root| unsafe { verbatim_uia::map::snapshot_parts_from_cached_element(&root) }.name,
-            )
+            .map(|root| verbatim_uia::map::snapshot_parts_from_cached_element(&root).name)
     };
     assert_eq!(
         name(&uia).ok().flatten().as_deref(),

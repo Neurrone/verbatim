@@ -14,7 +14,9 @@ Public API:
   `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation), plus the M3
   node-relative operations `ancestor_chain`, `navigate`, and `activate`
-  described below. The coclass is `CUIAutomation8`, not the
+  described below, and the local helpers `cache_request(properties)`,
+  `raw_view_walker`, `root_element`, and `property_condition`. Every one of
+  them is safe to call. The coclass is `CUIAutomation8`, not the
   older `CUIAutomation`: only the former's objects implement the newer
   client interfaces, and querying `IUIAutomation5` (the notification-event
   registration) on a plain `CUIAutomation` object fails with
@@ -45,10 +47,12 @@ Public API:
   nameless windows, property pages, and groupings) plus list items, tree
   items, and editable text — are crossed but never reported, matching
   what NVDA speaks as entered containers regardless of its review-mode
-  setting. Deliberately the simplest correct implementation behind this
-  method as a seam: `verbatim-uia-rops`'s `focus_ancestry_remote` reads
-  the same raw-view ancestors in a single round trip inside the provider
-  process, so callers must depend only on the resulting list.
+  setting. `Uia::ancestor_chain_from(parents, registry, stops)` gives the
+  same result from ancestors already fetched, nearest first, with their
+  caches filled: what `verbatim-uia-rops`'s `focus_ancestry` returns after
+  reading the same raw-view ancestors in one round trip inside the
+  provider process. The outpost uses that for a UIA focus and keeps the
+  per-hop walk for windows read the classic way.
 - `selected_element(element, cache)` — the first element of a selection
   container's current selection, rebuilt with `cache`, or `None`;
   `Uia::selected_child` maps it to a snapshot, and `verbatim-uia-rops`'s
@@ -105,9 +109,45 @@ Public API:
   is focus context only when both hold). The list is public as
   `CACHED_PROPERTIES`, so `verbatim-uia-rops` caches the same set, and
   `runtime_id(element)` reads an element's runtime id.
+- `map::with_legacy_checked_state(element, node)` — a menu item that no
+  pattern makes checkable (`map::wants_legacy_checked_state`) is checkable
+  and checked when its legacy MSAA state (`LegacyIAccessibleState`, read
+  ignoring its default) has the checked bit, as NVDA 2027.1 reads Windows
+  Forms menu items. The state is read live, one counted UIA call, and only
+  for such a menu item, as NVDA reads it lazily for its menu item class:
+  caching it for every element made UIA ask every provider for the
+  `LegacyIAccessible` pattern, roughly doubling a focus change's provider
+  work. The outpost applies it to the focus it reports, the focus-now
+  answer, and a navigation step's neighbor; `map::add_legacy_checked_state`
+  is the rule alone, for tests.
   A selected radio button is checked rather than selected, and a
   toggleable element other than a check box or toggle button is
   checkable.
+- `ElementExt`, `WalkerExt`, and `elements_of` — the safe wrappers. The
+  `windows` crate marks every COM method `unsafe` only because its
+  bindings are generated; an interface value is a counted reference to a
+  live object, and a gone provider or unsupported property comes back as
+  an error. So each wrapper method holds one documented `unsafe` call and
+  is safe to call. `ElementExt`, on `IUIAutomationElement`, has the cached
+  reads (`cached_value`, `cached_value_ignoring_default`, `cached_i32`,
+  `cached_bool`, `cached_optional_bool`,
+  `cached_f64`, `cached_string`, `cached_bounding_rectangle`,
+  `cached_control_type`, `cached_framework_id`), which are local, and the
+  live calls (`current_control_type`, `current_i32_ignoring_default`,
+  `has_keyboard_focus`,
+  `build_updated_cache`, `current_pattern`, `controller_for`,
+  `find_first`, `find_first_build_cache`), each of which counts one UIA
+  call. `WalkerExt`, on `IUIAutomationTreeWalker`, has `parent`,
+  `next_sibling`, `previous_sibling`, `first_child`, and `normalize`, each
+  built with a cache and counted. `elements_of` reads an element array,
+  locally. The pattern methods the crate calls (a selection's current
+  selection, invoke, toggle, select, a text pattern's visible ranges, and
+  a range's attribute) are crate-private wrappers of the same kind. The
+  snapshot mapping, the walks, navigation, activation, and the provider
+  checks are written against these, so they are safe code; `unsafe`
+  remains only in the wrapper module (`element.rs`), the `VARIANT` and
+  `SAFEARRAY` helpers (`com.rs`), the event handler registrations, the
+  provider probe's window messages, client creation, and apartment setup.
 - `FocusRegistration::new(callback)` — the self-contained, desktop-global
   UIA focus registration; drop unregisters and tears down its own thread.
   UIA's focus registration is desktop-global and unscopeable, so exactly one
@@ -170,7 +210,8 @@ Public API:
 - `calls` — the count of the cross-process calls this crate makes, kept
   per thread: `calls::count(kind)` counts one, and `calls::take()` returns
   this thread's `CallCounts` since the last take and resets them. Every
-  call that reaches the application is counted where it is made: the
+  call that reaches the application is counted where it is made, inside
+  the client method or wrapper that makes it: the
   `*BuildCache` fetches and tree-walker steps, `BuildUpdatedCache`,
   `FindFirst`, `CurrentControllerFor`, pattern fetches and methods,
   `NormalizeElementBuildCache`, and the provider checks' text reads, as UIA

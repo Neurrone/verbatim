@@ -354,15 +354,20 @@ fn walk(
         .ok()
         .map(|b| b.to_string())
         .unwrap_or_default();
+    // SAFETY: as above.
     let value = unsafe { acc.get_accValue(&self_var) }
         .ok()
         .map(|b| b.to_string());
+    // SAFETY: as above.
     let role = unsafe { acc.get_accRole(&self_var) }
         .ok()
+        // SAFETY: `v` is the VARIANT the read returned, owned here.
         .and_then(|v| unsafe { windows::Win32::System::Variant::VariantToInt32(&raw const v) }.ok())
         .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
+    // SAFETY: as above.
     let states = unsafe { acc.get_accState(&self_var) }
         .ok()
+        // SAFETY: `v` is the VARIANT the read returned, owned here.
         .and_then(|v| unsafe { windows::Win32::System::Variant::VariantToInt32(&raw const v) }.ok())
         .map(|s| states_from_msaa(s.cast_unsigned()))
         .unwrap_or_default();
@@ -403,6 +408,7 @@ fn walk(
         .ok()
         .map(|b| b.to_string())
         .filter(|s| !s.is_empty());
+    // SAFETY: as above.
     let shortcut = unsafe { acc.get_accKeyboardShortcut(&self_var) }
         .ok()
         .map(|b| b.to_string())

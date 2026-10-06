@@ -6,6 +6,8 @@
 //! full the worker waits, which is safe because the intake queue's own
 //! limits bound what accumulates behind it.
 
+#![forbid(unsafe_code)]
+
 use std::io::Write;
 use std::thread::{self, JoinHandle};
 

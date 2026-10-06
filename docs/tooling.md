@@ -146,7 +146,12 @@ The subcommands:
   cross-process calls, by kind, and says the ratio to the floor needs
   calibration: the floor, an operation's minimum call count times the
   cost of one call, is defined in `docs/performance.md`, and only the
-  end-to-end suite measures that cost.
+  end-to-end suite measures that cost. To compare a UIA application's
+  focus reads with and without remote operations, set
+  `remote_operations = false` under `[uia]` in `settings.toml` next to
+  `verbatim.exe` and restart Verbatim: its outposts then read every UIA
+  focus's ancestors with the classic walk, one call per ancestor. The
+  default is on.
 
 Verbatim's own log also carries one line per announcement, always, at
 `info` on the `verbatim::latency` target, written when its audio starts.

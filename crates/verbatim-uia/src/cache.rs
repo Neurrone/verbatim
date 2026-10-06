@@ -104,13 +104,25 @@ pub const CACHED_PROPERTIES: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_I
 pub fn base_cache_request(
     client: &IUIAutomation,
 ) -> windows::core::Result<IUIAutomationCacheRequest> {
-    // SAFETY: `client` is a live IUIAutomation; CreateCacheRequest and
-    // AddProperty take only a valid property id and cannot alias.
-    unsafe {
-        let request = client.CreateCacheRequest()?;
-        for &property in CACHED_PROPERTIES {
-            request.AddProperty(property)?;
-        }
-        Ok(request)
+    cache_request(client, CACHED_PROPERTIES)
+}
+
+/// Builds a cache request for exactly `properties`. Local.
+///
+/// # Errors
+///
+/// Returns the COM error if the client cannot create or populate the cache
+/// request.
+pub(crate) fn cache_request(
+    client: &IUIAutomation,
+    properties: &[windows::Win32::UI::Accessibility::UIA_PROPERTY_ID],
+) -> windows::core::Result<IUIAutomationCacheRequest> {
+    // SAFETY: `client` is a live IUIAutomation; CreateCacheRequest takes no
+    // arguments.
+    let request = unsafe { client.CreateCacheRequest() }?;
+    for &property in properties {
+        // SAFETY: `request` was just created; a property id is a plain value.
+        unsafe { request.AddProperty(property) }?;
     }
+    Ok(request)
 }
