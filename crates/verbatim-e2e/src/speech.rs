@@ -400,6 +400,27 @@ underlying error: {error}",
         }
     }
 
+    /// The text of the first utterance containing `matcher` heard within
+    /// `timeout`, or `None` when none was, for a scenario that searches by
+    /// pressing keys until it hears what it is looking for. Utterances that
+    /// do not match are consumed.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the timeline so far if the speech connection fails
+    /// outright.
+    pub fn heard_within(&mut self, matcher: &str, timeout: Duration) -> Option<String> {
+        match self.advance_through(&[matcher], timeout) {
+            (_, Some(error), _) => panic!(
+                "speech connection failed while listening for {matcher:?}; timeline so far:
+{}
+underlying error: {error}",
+                self.timeline.render()
+            ),
+            (_, None, utterance) => utterance.map(|utterance| utterance.text),
+        }
+    }
+
     /// Shared loop behind the `expect_*` methods: reads utterances until
     /// every matcher is satisfied, `timeout` elapses, or the connection
     /// fails outright. Returns how many matchers were satisfied, on a fatal
