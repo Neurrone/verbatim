@@ -558,6 +558,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     let held = harness.manager.speak(queued("held"));
     assert_eq!(recv_started(&harness.started), "held");
     harness.manager.control().toggle_pause();
+    // The pause reaches the mixer through the queue thread, the audio
+    // through the synth thread; once the pause is applied, audio sent after
+    // it is ordered after it at the mixer.
+    wait_for_pause(&harness.manager, true);
     harness.finish.send(()).unwrap();
     assert_eq!(
         harness
@@ -593,6 +597,20 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
         harness.recorder.ending_of(next),
         Some(UtteranceEnding::Completed)
     );
+}
+
+/// Waits until `manager` reports speech `paused`, or fails at
+/// [`STEP_TIMEOUT`].
+fn wait_for_pause(manager: &SpeechManager, paused: bool) {
+    let deadline = std::time::Instant::now() + STEP_TIMEOUT;
+    while manager.paused() != paused {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "speech never became {}",
+            if paused { "paused" } else { "unpaused" }
+        );
+        std::thread::yield_now();
+    }
 }
 
 /// Plays `length` of quiet tone through a source of its own on `mixer` and
