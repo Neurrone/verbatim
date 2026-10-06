@@ -79,9 +79,10 @@ use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     explorer_folder_window, lock_key_announcements, menu_and_settings_dialog,
-    notepad_and_verbatim_menu, object_navigation_in_settings, rapid_tabbing_in_settings,
-    settings_dialog_keys, settings_system_page, start_menu_search, switch_to_onecore,
-    synth_host_crash_recovery, system_information_tree,
+    notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor, notepad_say_all,
+    object_navigation_in_settings, rapid_tabbing_in_settings, settings_dialog_keys,
+    settings_system_page, start_menu_search, switch_to_onecore, synth_host_crash_recovery,
+    system_information_tree,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -98,6 +99,9 @@ pub enum Group {
     Shell,
     /// Object navigation and review-cursor commands.
     Navigation,
+    /// Text: editing, the review cursor over text, and say-all (milestone
+    /// M4).
+    Text,
 }
 
 impl Group {
@@ -110,6 +114,7 @@ impl Group {
             Self::Speech => "speech",
             Self::Shell => "shell",
             Self::Navigation => "navigation",
+            Self::Text => "text",
         }
     }
 
@@ -121,6 +126,7 @@ impl Group {
             "speech" => Some(Self::Speech),
             "shell" => Some(Self::Shell),
             "navigation" => Some(Self::Navigation),
+            "text" => Some(Self::Text),
             _ => None,
         }
     }
@@ -270,6 +276,30 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: settings_system_page::setup,
         body: settings_system_page::body,
         teardown: settings_system_page::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_editing",
+        group: Group::Text,
+        target_images: &[],
+        setup: notepad_editing::setup,
+        body: notepad_editing::body,
+        teardown: notepad_editing::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_review_cursor",
+        group: Group::Text,
+        target_images: &[],
+        setup: notepad_review_cursor::setup,
+        body: notepad_review_cursor::body,
+        teardown: notepad_review_cursor::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_say_all",
+        group: Group::Text,
+        target_images: &[],
+        setup: notepad_say_all::setup,
+        body: notepad_say_all::body,
+        teardown: notepad_say_all::teardown,
     },
     ScenarioDef {
         name: "system_information_tree",
