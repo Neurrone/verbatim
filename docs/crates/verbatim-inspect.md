@@ -25,6 +25,12 @@ event and is labelled with the utterance id; a follow-up line appears
 when the utterance's first frame plays, and another when it ends, with
 its ending (completed, cancelled, or failed). An utterance cancelled
 before it played gets no audio-started line, only its ending. The true
-event-to-audio latency per trace is what `latency` reports. Timestamps
+event-to-audio latency per trace is what `latency` reports, with one
+indented line per stage the trace passed: its time and, for the outpost's
+read, how many cross-process calls it made, by kind. The ratio of that
+time to the operation's floor (`docs/performance.md`) needs the cost of
+one call calibrated against the same application, which only the
+end-to-end suite measures, so `latency` says the floor needs calibration
+rather than printing a ratio. Timestamps
 render as local wall-clock time (`2026-07-14T10:42:32.158`, no zone suffix) via the Win32 conversion that
 is correct across DST transitions.

@@ -1,4 +1,5 @@
-//! Control-plane protocol v0.
+//! Control-plane protocol v1: v0 with each latency timeline's stages and
+//! cross-process call counts ([`LatencyRecord::stages`]).
 //!
 //! Newline-delimited compact JSON over the named pipe
 //! `\\.\pipe\verbatim-control`. Clients send [`RequestEnvelope`]s; the
@@ -12,11 +13,13 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding, UtteranceId, WindowFacts,
+    Backend, CallCounts, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding, UtteranceId,
+    WindowFacts,
 };
 
-/// The protocol version this vocabulary defines.
-pub const PROTOCOL_VERSION: u32 = 0;
+/// The protocol version this vocabulary defines. Version 1 added
+/// [`LatencyRecord::stages`]; a v0 peer's records read with no stages.
+pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The pipe name clients connect to.
 pub const PIPE_NAME: &str = r"\\.\pipe\verbatim-control";
@@ -237,6 +240,84 @@ pub struct LatencyRecord {
     pub speech_queued_at_ms: Option<u64>,
     /// When the first audio buffer reached the device.
     pub audio_started_at_ms: Option<u64>,
+    /// How long each stage the timeline passed took, in pipeline order,
+    /// with the cross-process calls made in it for the stage that makes them
+    /// (the outpost's read). A stage the timeline did not pass, or has not
+    /// reached yet, is left out. Empty from a v0 peer.
+    #[serde(default)]
+    pub stages: Vec<LatencyStage>,
+}
+
+/// One stage of a [`LatencyRecord`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatencyStage {
+    /// Which stage.
+    pub kind: LatencyStageKind,
+    /// How long it took, in microseconds.
+    pub duration_us: u64,
+    /// The cross-process calls made in it, by kind, for the stage that makes
+    /// them; `None` for every other stage.
+    pub calls: Option<CallCounts>,
+}
+
+/// The stages of a latency timeline, in pipeline order (architecture
+/// section 9). Time spent waiting behind earlier speech is not a stage: it
+/// is the queue doing its job, not latency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum LatencyStageKind {
+    /// From Windows raising the event to the listener or outpost observing
+    /// it; only `WinEvents` carry the time they were raised.
+    Windows,
+    /// From the listener observing a focus to its outpost receiving it.
+    ListenerToOutpost,
+    /// Waiting in the outpost's queue.
+    OutpostQueue,
+    /// The outpost's worker reading the application: the stage that makes
+    /// cross-process calls.
+    OutpostRead,
+    /// From the outpost publishing to Core receiving it.
+    ToCore,
+    /// The reducer.
+    Reducer,
+    /// From the reducer to the speech queue.
+    ToSpeech,
+    /// From synthesis starting to the synthesizer's first audio.
+    Synthesis,
+    /// The synthesizer's leading silence, skipped before the mixer.
+    LeadingSilence,
+    /// From the mixer to the audio device starting.
+    MixerAndDevice,
+}
+
+impl LatencyStageKind {
+    /// The stage's developer-facing name, as the latency log line and
+    /// `verbatim-inspect latency` print it.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::ListenerToOutpost => "listener to outpost",
+            Self::OutpostQueue => "outpost queue",
+            Self::OutpostRead => "outpost read",
+            Self::ToCore => "to Core",
+            Self::Reducer => "reducer",
+            Self::ToSpeech => "to speech",
+            Self::Synthesis => "synthesis",
+            Self::LeadingSilence => "leading silence",
+            Self::MixerAndDevice => "mixer and device",
+        }
+    }
+
+    /// Whether the stage is on the event side, before the speech queue;
+    /// the others are on the speech side.
+    #[must_use]
+    pub fn is_event_side(self) -> bool {
+        !matches!(
+            self,
+            Self::Synthesis | Self::LeadingSilence | Self::MixerAndDevice
+        )
+    }
 }
 
 /// Writes one frame or request as a single JSON line and flushes.

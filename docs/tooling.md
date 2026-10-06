@@ -140,13 +140,19 @@ The subcommands:
   cancels speech, and a lone `shift` pauses or resumes it.
 - `latency --last N` prints the N most recent end-to-end latency timelines
   (default 10), newest first: event-observed time, and the millisecond
-  deltas to speech-queued and audio-started when each is known.
+  deltas to speech-queued and audio-started when each is known, then one
+  indented line per stage the timeline passed, the stages the log line
+  below names. The outpost read's line also gives its count of
+  cross-process calls, by kind, and says the ratio to the floor needs
+  calibration: the floor, an operation's minimum call count times the
+  cost of one call, is defined in `docs/performance.md`, and only the
+  end-to-end suite measures that cost.
 
 Verbatim's own log also carries one line per announcement, always, at
 `info` on the `verbatim::latency` target, written when its audio starts.
 For example:
 
-`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to outpost 0.2, outpost queue 3.5, outpost read 5.5, to Core 0.2, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
+`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener to outpost 0.2, outpost queue 3.5, outpost read 5.5 (4 calls), to Core 0.2, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
 
 The total is everything from Windows raising the event to the audio engine
 taking the first sample, except time spent waiting behind earlier speech,
@@ -158,7 +164,8 @@ which is reported separately. The stages, in milliseconds:
   Core, to the application's outpost, for focus the listener sees.
 - Outpost queue: waiting for the outpost's worker, behind the
   application's other events.
-- Outpost read: the worker's cross-process UIA and MSAA calls.
+- Outpost read: the worker's cross-process UIA and MSAA calls, with how
+  many it made when it made any (`docs/performance.md` says what counts).
 - To Core, reducer, to speech: the pipe to Core, the reducer, and the
   hand-off to the speech manager.
 - Synthesis: from synthesis starting to the synthesizer's first audio,

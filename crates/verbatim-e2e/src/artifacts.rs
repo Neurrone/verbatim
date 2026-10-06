@@ -506,6 +506,7 @@ mod tests {
             event_observed_at_ms: 0,
             speech_queued_at_ms: Some(5),
             audio_started_at_ms,
+            stages: Vec::new(),
         }
     }
 }

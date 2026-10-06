@@ -1,6 +1,6 @@
 # verbatim-control
 
-The control plane (architecture section 10, decision D8): protocol v0 and
+The control plane (architecture section 10, decision D8): protocol v1 and
 the named-pipe server. Pulled forward from M2 so every M1 change is
 verifiable live.
 
@@ -36,6 +36,15 @@ Public API:
   back as `Frame::Error`, the same convention `SendGesture` uses.
   `ReplyPayload::DumpRecorder` answers `Request::DumpRecorder` (milestone
   M2) with the path Core wrote its flight recorder's contents to.
+  A `LatencyRecord` carries a timeline's three times and, since protocol
+  version 1, its `stages`: one `LatencyStage` per stage it has passed, in
+  pipeline order, each with its `LatencyStageKind` (Windows, listener to
+  outpost, outpost queue, outpost read, to Core, reducer, to speech,
+  synthesis, leading silence, mixer and device; `label` names each as the
+  latency log does), its time in microseconds, and, for the outpost read,
+  the cross-process calls made in it. Version 1 only adds fields, which a
+  version 0 peer ignores and reads as empty, so the server answers every
+  client in the same vocabulary.
 - `client` — the control-plane client, promoted here from
   `verbatim-inspect` so any client, not just the CLI, can share it:
   `Client::connect_pipe()` on the well-known pipe, `connect_pipe_named(name)`

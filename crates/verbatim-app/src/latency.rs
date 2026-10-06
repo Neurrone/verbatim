@@ -7,15 +7,17 @@
 //! It also logs one line per announcement, at `info` on the
 //! `verbatim::latency` target, when its audio starts: how long each stage
 //! took, from Windows raising the event to the audio engine taking the first
-//! sample, in milliseconds. Time spent waiting behind earlier speech is
+//! sample, in milliseconds, with the cross-process calls the outpost's read
+//! made (`docs/performance.md`). Time spent waiting behind earlier speech is
 //! reported but not counted, since it is not latency but the queue doing its
-//! job.
+//! job. The same stages and counts travel to `verbatim-inspect latency` in
+//! each record.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use verbatim_control::protocol::LatencyRecord;
+use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 use verbatim_outpost::protocol::{EventTiming, now_us};
@@ -67,58 +69,101 @@ impl Entry {
     }
 }
 
+/// Microseconds as milliseconds; microseconds between two stages fit an
+/// f64 exactly.
+fn us_to_ms(us: u64) -> f64 {
+    f64::from(u32::try_from(us).unwrap_or(u32::MAX)) / 1_000.0
+}
+
 impl Stages {
+    /// How long each stage the announcement has passed took, in pipeline
+    /// order, with the outpost read's cross-process calls.
+    fn breakdown(&self) -> Vec<LatencyStage> {
+        let event = self.event.unwrap_or_default();
+        let at = |us: u64| (us != 0).then_some(us);
+        let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
+        let observed = at(event.observed_at_us);
+        let received_by_outpost = at(event.relayed_at_us).or(observed);
+        [
+            (
+                LatencyStageKind::Windows,
+                event.raised_ms_ago.map(|ms| u64::from(ms) * 1_000),
+            ),
+            (
+                LatencyStageKind::ListenerToOutpost,
+                span(observed, at(event.relayed_at_us)),
+            ),
+            (
+                LatencyStageKind::OutpostQueue,
+                span(received_by_outpost, at(event.dequeued_at_us)),
+            ),
+            (
+                LatencyStageKind::OutpostRead,
+                span(at(event.dequeued_at_us), at(event.published_at_us)),
+            ),
+            (
+                LatencyStageKind::ToCore,
+                span(at(event.published_at_us), self.core_received),
+            ),
+            (
+                LatencyStageKind::Reducer,
+                span(self.core_received, self.reduced),
+            ),
+            (LatencyStageKind::ToSpeech, span(self.reduced, self.queued)),
+            (
+                LatencyStageKind::Synthesis,
+                span(self.synthesis_started, self.synthesizer_audio),
+            ),
+            (
+                LatencyStageKind::LeadingSilence,
+                span(self.synthesizer_audio, self.audio_to_mixer),
+            ),
+            (
+                LatencyStageKind::MixerAndDevice,
+                span(self.audio_to_mixer, self.audio_started),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(kind, duration_us)| {
+            Some(LatencyStage {
+                kind,
+                duration_us: duration_us?,
+                calls: (kind == LatencyStageKind::OutpostRead).then_some(event.calls),
+            })
+        })
+        .collect()
+    }
+
     /// The announcement's latency line, or `None` when it was not spoken.
     fn line(&self) -> Option<String> {
         let queued = self.queued?;
         let heard = self.audio_started?;
         let event = self.event.unwrap_or_default();
-        let at = |us: u64| (us != 0).then_some(us);
-        let ms = |from: Option<u64>, to: Option<u64>| match (from, to) {
-            // Microseconds between two stages fit an f64 exactly.
-            (Some(from), Some(to)) => Some(
-                f64::from(u32::try_from(to.saturating_sub(from)).unwrap_or(u32::MAX)) / 1_000.0,
-            ),
-            _ => None,
-        };
-        let observed = at(event.observed_at_us);
-        let received_by_outpost = at(event.relayed_at_us).or(observed);
-        let windows = event.raised_ms_ago.map(f64::from);
-        let parts = [
-            ("Windows", windows),
-            ("listener to outpost", ms(observed, at(event.relayed_at_us))),
-            (
-                "outpost queue",
-                ms(received_by_outpost, at(event.dequeued_at_us)),
-            ),
-            (
-                "outpost read",
-                ms(at(event.dequeued_at_us), at(event.published_at_us)),
-            ),
-            ("to Core", ms(at(event.published_at_us), self.core_received)),
-            ("reducer", ms(self.core_received, self.reduced)),
-            ("to speech", ms(self.reduced, Some(queued))),
-        ];
+        let ms = |from: u64, to: u64| us_to_ms(to.saturating_sub(from));
+        let observed = (event.observed_at_us != 0).then_some(event.observed_at_us);
+        let windows = event.raised_ms_ago.map_or(0.0, f64::from);
         let start = observed.or(self.core_received).unwrap_or(queued);
-        let event_side = ms(Some(start), Some(queued)).unwrap_or(0.0) + windows.unwrap_or(0.0);
+        let event_side = ms(start, queued) + windows;
         let started = self.synthesis_started.unwrap_or(queued);
-        let waited = ms(Some(queued), Some(started)).unwrap_or(0.0);
-        let speech_side = ms(Some(started), Some(heard)).unwrap_or(0.0);
-        let speech = [
-            (
-                "synthesis",
-                ms(self.synthesis_started, self.synthesizer_audio),
-            ),
-            (
-                "leading silence",
-                ms(self.synthesizer_audio, self.audio_to_mixer),
-            ),
-            ("mixer and device", ms(self.audio_to_mixer, Some(heard))),
-        ];
-        let list = |parts: &[(&str, Option<f64>)]| {
-            parts
+        let waited = ms(queued, started);
+        let speech_side = ms(started, heard);
+        let stages = self.breakdown();
+        let list = |event_side: bool| {
+            stages
                 .iter()
-                .filter_map(|(name, value)| value.map(|value| format!("{name} {value:.1}")))
+                .filter(|stage| stage.kind.is_event_side() == event_side)
+                .map(|stage| {
+                    let calls = stage
+                        .calls
+                        .filter(|calls| !calls.is_empty())
+                        .map(|calls| format!(" ({} calls)", calls.total()))
+                        .unwrap_or_default();
+                    format!(
+                        "{} {:.1}{calls}",
+                        stage.kind.label(),
+                        us_to_ms(stage.duration_us)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -127,8 +172,8 @@ impl Stages {
              not counting {waited:.1} ms waiting behind earlier speech. Event: {}. Speech: {}.",
             event_side + speech_side,
             self.text,
-            list(&parts),
-            list(&speech),
+            list(true),
+            list(false),
         ))
     }
 }
@@ -189,8 +234,9 @@ impl LatencyLedger {
         });
     }
 
-    /// Records that Core received the event behind `trace_id` from its
-    /// outpost, with when it passed each point there.
+    /// Records that Core received the event or query reply behind
+    /// `trace_id` from its outpost, with when it passed each point there and
+    /// the cross-process calls the outpost made for it.
     pub fn event_received(&self, trace_id: TraceId, timing: EventTiming) {
         let now = now_us();
         self.update(trace_id, |entry| {
@@ -242,6 +288,7 @@ impl LatencyLedger {
                     .unwrap_or(0),
                 speech_queued_at_ms: entry.speech_queued_at_ms,
                 audio_started_at_ms: entry.audio_started_at_ms,
+                stages: entry.stages.breakdown(),
             })
             .collect()
     }
@@ -487,6 +534,7 @@ mod tests {
                 relayed_at_us: 1_500,
                 dequeued_at_us: 2_000,
                 published_at_us: 9_000,
+                ..EventTiming::default()
             }),
             core_received: Some(9_300),
             reduced: Some(9_400),
@@ -503,11 +551,63 @@ mod tests {
             line.starts_with("12.5 ms for \"OK button\": 9.5 ms to speech and 3.0 ms to sound, not counting 50.0 ms waiting"),
             "{line}"
         );
-        assert!(line.contains("outpost read 7.0"), "{line}");
+        assert!(line.contains("outpost read 7.0, to Core"), "{line}");
         assert!(
             line.contains("synthesis 1.0, leading silence 0.2, mixer and device 1.8"),
             "{line}"
         );
+    }
+
+    #[test]
+    fn a_record_carries_each_stage_and_the_outpost_reads_calls() {
+        let ledger = ledger();
+        let trace = TraceId::mint();
+        let calls = verbatim_model::CallCounts {
+            uia: 3,
+            msaa: 0,
+            window_messages: 1,
+        };
+        ledger.event_received(
+            trace,
+            EventTiming {
+                observed_at_us: 1_000,
+                dequeued_at_us: 2_000,
+                published_at_us: 9_000,
+                calls,
+                ..EventTiming::default()
+            },
+        );
+        let record = &ledger.recent(1)[0];
+        let kinds: Vec<_> = record.stages.iter().map(|stage| stage.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                LatencyStageKind::OutpostQueue,
+                LatencyStageKind::OutpostRead,
+                LatencyStageKind::ToCore,
+            ],
+            "only the stages the trace has passed"
+        );
+        let read = record.stages[1];
+        assert_eq!(read.duration_us, 7_000);
+        assert_eq!(read.calls, Some(calls));
+        assert_eq!(record.stages[0].calls, None);
+
+        let stages = Stages {
+            event: Some(EventTiming {
+                observed_at_us: 1_000,
+                dequeued_at_us: 2_000,
+                published_at_us: 9_000,
+                calls,
+                ..EventTiming::default()
+            }),
+            core_received: Some(9_300),
+            queued: Some(9_500),
+            audio_started: Some(10_000),
+            ..Stages::default()
+        };
+        let line = stages.line().expect("spoken");
+        assert!(line.contains("outpost read 7.0 (4 calls)"), "{line}");
     }
 
     #[test]

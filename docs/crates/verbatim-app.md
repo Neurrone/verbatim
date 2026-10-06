@@ -106,7 +106,11 @@ knowing for review:
   each announcement's stages in microseconds (the outpost's
   `EventTiming`, Core's receipt and reduction, and the speech milestones
   of the trace's first utterance) and logs them as one `verbatim::latency`
-  line when its audio starts (see `docs/tooling.md`). It mirrors
+  line when its audio starts (see `docs/tooling.md`), the outpost read
+  with its count of cross-process calls. A query reply the worker answered
+  feeds it the same way as an event, so a navigation keypress's trace has
+  its outpost stages and calls too. `recent` returns each timeline's
+  stages and calls in its `LatencyRecord`. It mirrors
   each utterance's milestones to speech subscribers as a `Speech` frame at
   queue time, a `SpeechStarted` frame when its first frame plays, and a
   `SpeechEnded` frame with its ending, and it answers the `latency`

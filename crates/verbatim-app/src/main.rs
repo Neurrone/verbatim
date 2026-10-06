@@ -828,10 +828,18 @@ impl ReducerThread<'_> {
                 });
             }
             OutpostToSupervisor::Reply {
+                trace_id,
                 request_id,
                 outcome,
-                ..
-            } => self.finish(RequestId(request_id), outpost, outcome),
+                timing,
+            } => {
+                // A reply the worker answered carries its timing and calls;
+                // a withdrawn or abandoned query's carries none.
+                if timing.dequeued_at_us != 0 {
+                    self.context.ledger.event_received(trace_id, timing);
+                }
+                self.finish(RequestId(request_id), outpost, outcome);
+            }
             OutpostToSupervisor::Ready {
                 outpost_pid,
                 target_pid,

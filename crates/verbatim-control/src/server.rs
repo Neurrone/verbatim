@@ -210,14 +210,9 @@ fn run_session<R: BufRead>(
 }
 
 /// Negotiates the protocol version for a connection: the lower of what the
-/// client offers and what this build speaks. `PROTOCOL_VERSION` is `0`
-/// today, so this always resolves to `0` and trips clippy's
-/// `unnecessary_min_or_max`; the `min` is kept anyway because it becomes
-/// real negotiation the moment the protocol version is bumped.
-#[expect(
-    clippy::unnecessary_min_or_max,
-    reason = "PROTOCOL_VERSION is 0 today; this becomes real negotiation once it is bumped"
-)]
+/// client offers and what this build speaks. Every version so far only adds
+/// fields, which an older peer ignores and a newer one reads as empty, so
+/// the server speaks the same vocabulary whatever the client offers.
 fn negotiate_protocol_version(client_version: u32) -> u32 {
     client_version.min(PROTOCOL_VERSION)
 }
