@@ -3311,6 +3311,37 @@ fn read_only_is_spoken_only_for_edit_fields_and_check_boxes() {
 }
 
 #[test]
+fn multi_line_is_spoken_after_read_only_and_only_for_edit_fields() {
+    let edit = node(
+        38,
+        Role::EditableText,
+        Some("Description"),
+        None,
+        states(&[State::Multiline, State::ReadOnly]),
+    );
+    assert_eq!(
+        focus_segments(edit),
+        vec![
+            UtteranceSegment::label("Description"),
+            role(Role::EditableText),
+            state(State::ReadOnly),
+            state(State::Multiline),
+        ]
+    );
+    let document = node(
+        39,
+        Role::Document,
+        Some("Text editor"),
+        None,
+        states(&[State::Multiline]),
+    );
+    assert_eq!(
+        focus_segments(document),
+        vec![UtteranceSegment::label("Text editor"), role(Role::Document)]
+    );
+}
+
+#[test]
 fn a_selected_tab_says_selected_and_an_unselected_one_says_nothing() {
     let selectable = [State::Focusable, State::Selectable];
     let selected = node(

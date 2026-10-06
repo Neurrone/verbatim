@@ -869,6 +869,7 @@ pub fn state_name(state: verbatim_model::State) -> Option<String> {
         State::Mixed => i18n_embed_fl::fl!(loader, "state-mixed"),
         State::Disabled => i18n_embed_fl::fl!(loader, "state-disabled"),
         State::ReadOnly => i18n_embed_fl::fl!(loader, "state-read-only"),
+        State::Multiline => i18n_embed_fl::fl!(loader, "state-multi-line"),
         State::Expanded => i18n_embed_fl::fl!(loader, "state-expanded"),
         State::Collapsed => i18n_embed_fl::fl!(loader, "state-collapsed"),
         State::Pressed => i18n_embed_fl::fl!(loader, "state-pressed"),

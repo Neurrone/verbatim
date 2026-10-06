@@ -237,11 +237,14 @@ pub enum State {
     /// Can be checked, though its role does not say so (a list item or
     /// menu item with a check box).
     Checkable,
+    /// Edits more than one line: a standard edit control made multi-line,
+    /// spoken "multi line" as NVDA speaks it.
+    Multiline,
 }
 
 impl State {
     /// Every state, in declaration order; the basis for [`StateSet::iter`].
-    pub const ALL: [State; 18] = [
+    pub const ALL: [State; 19] = [
         State::Focused,
         State::Focusable,
         State::Selected,
@@ -260,6 +263,7 @@ impl State {
         State::Required,
         State::InvalidEntry,
         State::Checkable,
+        State::Multiline,
     ];
 
     const fn bit(self) -> u32 {

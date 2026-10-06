@@ -23,9 +23,9 @@ use windows::Win32::UI::Controls::{
     TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GetAncestor, GetClassNameW, GetDesktopWindow,
-    GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowThreadProcessId, IsChild, IsWindow,
-    IsWindowVisible, SendMessageW,
+    ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
+    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowLongPtrW,
+    GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SendMessageW,
 };
 
 use verbatim_model::CallKind;
@@ -71,6 +71,19 @@ pub(crate) fn class_name(hwnd: isize) -> String {
         return String::new();
     };
     String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
+}
+
+/// Whether the window is a standard or rich edit control made multi-line
+/// (`ES_MULTILINE`), which NVDA's edit control class reports as the
+/// multi-line state. Any class with "edit" in its name counts, so the
+/// Windows Forms and rich edit classes do too. Local.
+pub(crate) fn is_multiline_edit(hwnd: isize) -> bool {
+    if !class_name(hwnd).to_ascii_lowercase().contains("edit") {
+        return false;
+    }
+    // SAFETY: a local read of the window's style; any handle is tolerated.
+    let style = unsafe { GetWindowLongPtrW(handle(hwnd), GWL_STYLE) };
+    style & ES_MULTILINE as isize != 0
 }
 
 /// The window's parent (`GA_PARENT`), zero for none.

@@ -301,6 +301,7 @@ state-not-checked = not checked
 state-mixed = half checked
 state-disabled = unavailable
 state-read-only = read only
+state-multi-line = multi line
 state-expanded = expanded
 state-collapsed = collapsed
 state-pressed = pressed

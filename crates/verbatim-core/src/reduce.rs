@@ -1924,7 +1924,7 @@ impl From<Reason> for StateReason {
 }
 
 /// The order states are spoken in, positive or negated alike.
-const STATE_ORDER: [State; 15] = [
+const STATE_ORDER: [State; 16] = [
     State::Disabled,
     State::Focused,
     State::Selected,
@@ -1933,6 +1933,7 @@ const STATE_ORDER: [State; 15] = [
     State::Checked,
     State::Mixed,
     State::ReadOnly,
+    State::Multiline,
     State::Expanded,
     State::Collapsed,
     State::HasPopup,
@@ -1975,6 +1976,9 @@ fn spoken_states(role: Role, states: StateSet, reason: StateReason) -> StateSet 
     }
     if !matches!(role, Role::EditableText | Role::CheckBox) {
         spoken.remove(State::ReadOnly);
+    }
+    if role != Role::EditableText {
+        spoken.remove(State::Multiline);
     }
     if role == Role::CheckBox {
         spoken.remove(State::Pressed);

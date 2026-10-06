@@ -62,12 +62,13 @@ impl IndicationCategory {
 /// The states that are spoken, and so are indications: a state the reducer
 /// never speaks (focused, focusable, selectable, offscreen, checkable) is
 /// not in the catalogue.
-const SPOKEN_STATES: [State; 13] = [
+const SPOKEN_STATES: [State; 14] = [
     State::Selected,
     State::Checked,
     State::Mixed,
     State::Disabled,
     State::ReadOnly,
+    State::Multiline,
     State::Expanded,
     State::Collapsed,
     State::Pressed,

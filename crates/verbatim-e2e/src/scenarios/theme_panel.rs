@@ -91,6 +91,15 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, &["downarrow"], &["Theme"]);
     press(scenario, &["tab"], &["Default"]);
 
+    // The theme's description, a read-only multi-line edit field, as NVDA
+    // reads it; its text follows as an utterance of its own.
+    press(
+        scenario,
+        &["tab"],
+        &["Description: edit read only multi line"],
+    );
+    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
+
     // The tree, after the find field: its first category is selected. Each
     // category is expanded to hear its first indication, then left by going
     // back to it, collapsing it, and moving down to the next.
