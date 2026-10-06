@@ -456,6 +456,9 @@ pub fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> Cac
     let toggle_available = element.cached_bool(UIA_IsTogglePatternAvailablePropertyId);
     let class_name = element.cached_string(UIA_ClassNamePropertyId);
     let mut role = refine_button_role(role_from_control_type(control_type), toggle_available);
+    if is_terminal_class(class_name.as_deref()) {
+        role = Role::Terminal;
+    }
     if is_dialog(
         element.cached_bool(UIA_IsDialogPropertyId),
         cached_native_window_handle(element) != 0,
@@ -480,6 +483,17 @@ pub fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> Cac
         states: states_from_cached(element, role),
         details: details_from_cached(element),
     }
+}
+
+/// Whether an element of UIA class `class_name` is a terminal's text: Windows
+/// Terminal's control (`TermControl`) and the one embedded in .NET
+/// applications such as Visual Studio (`WPFTermControl`), as NVDA's UIA
+/// support recognizes them by class, never by a window's title. The console
+/// host's text area is recognized by its window instead
+/// (`verbatim-outpost`).
+#[must_use]
+pub fn is_terminal_class(class_name: Option<&str>) -> bool {
+    matches!(class_name, Some("TermControl" | "WPFTermControl"))
 }
 
 /// Whether an element of UIA class `class_name` reports no value. The
