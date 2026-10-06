@@ -4,7 +4,8 @@
 //! and a demonstration's, one in the registry's demo group, into
 //! `videos/demos`.
 //!
-//! It builds and starts its own agent on a port of its own, runs the
+//! It builds and starts its own agent on a port of its own, from the
+//! target directory cargo builds into (`CARGO_TARGET_DIR` when set), runs the
 //! scenario the way the end-to-end suite does, with the recording's demo
 //! quality (`verbatim_e2e::recording::QUALITY_ENV`), and copies the
 //! scenario's video to `<folder>/<name>.mp4`. The name defaults to the
@@ -138,17 +139,20 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
         return Err(format!("building the agent failed ({status})"));
     }
 
-    let agent = Command::new(repo_root.join("target/debug/verbatim-agent.exe"))
-        .args([
-            "--bind-address",
-            "127.0.0.1",
-            "--port",
-            &AGENT_PORT.to_string(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("could not start the agent: {error}"))?;
+    let agent = Command::new(
+        target_dir(&repo_root, std::env::var_os("CARGO_TARGET_DIR").as_deref())
+            .join("debug/verbatim-agent.exe"),
+    )
+    .args([
+        "--bind-address",
+        "127.0.0.1",
+        "--port",
+        &AGENT_PORT.to_string(),
+    ])
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map_err(|error| format!("could not start the agent: {error}"))?;
     let mut agent = KillOnDrop(agent);
     wait_for_port(AGENT_PORT)?;
 
@@ -196,6 +200,13 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
     Ok(destination)
 }
 
+/// The directory cargo builds into: `target_env`, the `CARGO_TARGET_DIR`
+/// value, when set, resolved against the workspace root as cargo resolves
+/// a relative one from the root it runs in, else `target` under the root.
+fn target_dir(repo_root: &Path, target_env: Option<&std::ffi::OsStr>) -> PathBuf {
+    target_env.map_or_else(|| repo_root.join("target"), |dir| repo_root.join(dir))
+}
+
 fn wait_for_port(port: u16) -> Result<(), String> {
     let deadline = Instant::now() + AGENT_TIMEOUT;
     while Instant::now() < deadline {
@@ -235,6 +246,20 @@ mod tests {
         assert_eq!(name, "reading-settings");
         assert!(parse(&args(&[scenario, "--name", "../escape"])).is_err());
         assert!(parse(&args(&["no_such_scenario"])).is_err());
+    }
+
+    #[test]
+    fn the_agent_comes_from_cargo_target_dir_when_set() {
+        let root = Path::new(r"C:\repo");
+        assert_eq!(target_dir(root, None), root.join("target"));
+        assert_eq!(
+            target_dir(root, Some(std::ffi::OsStr::new(r"D:\builds"))),
+            Path::new(r"D:\builds")
+        );
+        assert_eq!(
+            target_dir(root, Some(std::ffi::OsStr::new("out"))),
+            root.join("out")
+        );
     }
 
     #[test]

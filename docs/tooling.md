@@ -513,7 +513,7 @@ they show, so a broken feature fails the recording rather than producing a
 misleading video. `demo_terminal_session` needs Windows Terminal and fails
 saying so when `wt.exe` cannot be started. `cargo xtask demo <scenario>
 [--name <name>]` records one scenario on this machine: it builds and
-starts an agent of its own, runs the scenario with `--include-ignored` and
+starts an agent of its own, from `CARGO_TARGET_DIR` when that is set, runs the scenario with `--include-ignored` and
 the recording's demo quality, and copies the video to `videos/demos` for
 a demonstration or `videos/tests` for a test scenario (`videos/readme.md`
 describes every video). Like any local run, it takes over the desktop.
