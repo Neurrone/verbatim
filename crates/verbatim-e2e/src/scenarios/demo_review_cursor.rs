@@ -9,7 +9,7 @@
 //!
 //! 1. The caret moves to the top, and the review cursor, following it,
 //!    reads the header row (numpad 8), then across it by word: "Fruit"
-//!    (numpad 5), "Colour" and "Price" (numpad 6).
+//!    (numpad 5), "Color" and "Price" (numpad 6).
 //! 2. Down the Price column: numpad 9 reads each next row and numpad 2 the
 //!    character in the kept column, "1" on the Apple row, "e" on the
 //!    shorter Fig row (its last character), and "0" and "3" on the rows
@@ -17,8 +17,11 @@
 //!    the Fig row to the Apple row, the column kept all the way.
 //! 3. On the Apple row, Shift+numpad 1 moves to its start ("A"), numpad 5
 //!    reads the word "Apple", and numpad 5 pressed twice spells it.
-//!    Numpad 2 pressed twice describes the character ("Alpha"), and
-//!    pressed three times gives its character code, 65.
+//!    Numpad 2 pressed twice describes the character ("Alpha"). Numpad 3
+//!    and numpad 1 move to the next character ("p") and back ("A"), and
+//!    numpad 2 pressed three times gives the character code, 65; the move
+//!    between them keeps the third press from counting with the earlier
+//!    two, which a press within half a second of them would.
 //! 4. Verbatim+F9 marks the start of the row, Shift+numpad 3 moves to its
 //!    end, and Verbatim+F10 pressed twice copies the row. Pasted at the end
 //!    of the text, the copy is read back with numpad 8.
@@ -43,7 +46,7 @@ const NAME: &str = "demo-review";
 /// The table's rows, each with the character the review cursor reads in
 /// the Price column, column 16, or on the last character of a shorter row.
 const ROWS: [(&str, &str); 5] = [
-    ("Fruit   Colour  Price", "P"),
+    ("Fruit   Color   Price", "P"),
     ("Apple   red     1.20", "1"),
     ("Fig     purple", "e"),
     ("Banana  yellow  0.50", "0"),
@@ -89,7 +92,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Across the header row by word.
     review(scenario, "kb:numpad8", ROWS[0].0);
     review_text(scenario, "kb:numpad5", "Fruit");
-    review_text(scenario, "kb:numpad6", "Colour");
+    review_text(scenario, "kb:numpad6", "Color");
     review_text(scenario, "kb:numpad6", "Price");
 
     // Down the Price column, past the shorter row and back into the
@@ -108,6 +111,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     review_text(scenario, "kb:numpad5", "Apple");
     press_hearing(scenario, &["numpad5", "numpad5"], "p p l e");
     press_hearing(scenario, &["numpad2", "numpad2"], "Alpha");
+    press_hearing(scenario, &["numpad3"], "p");
+    press_hearing(scenario, &["numpad1"], "A");
     press_hearing(scenario, &["numpad2", "numpad2", "numpad2"], "65");
 
     // The row marked, copied, pasted at the end, and read back.

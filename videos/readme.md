@@ -65,10 +65,10 @@ Editing a short paragraph in Windows 11 Notepad.
    speaks the words "reads" and "this"; Down Arrow and Up Arrow speak the
    second line and the first again.
 3. Home speaks "V". Shift+Control+Right Arrow selects the first word, and
-   Verbatim says "selected Verbatim"; Shift+End extends the selection to
-   the end of the line, "selected reads this short note"; and
-   Shift+Control+Left Arrow takes the last word out of it, "unselected
-   note".
+   Verbatim says "selected Verbatim", then the second, "selected reads";
+   Shift+Control+Left Arrow takes the second word out again, "unselected
+   reads"; and Shift+End extends the selection to the end of the line,
+   "selected reads this short note".
 4. Control+End moves to the empty last line ("blank"), and the sentence
    "Typing is echoed." is typed. Each character is spoken as it is typed,
    the spaces as "space". It is first typed with a typo, "echoef":
@@ -83,12 +83,12 @@ Editing a short paragraph in Windows 11 Notepad.
 ### review-cursor.mp4, from demo_review_cursor
 
 The review cursor over a plain-text table in Notepad. The table has
-three columns, Fruit, Colour, and Price, and five rows; the Fig row has no
+three columns, Fruit, Color, and Price, and five rows; the Fig row has no
 price, so it is shorter than the Price column.
 
 1. Control+Home moves the caret to the top, and the review cursor follows
    it. Numpad 8 reads the header row; numpad 5 reads the current word,
-   "Fruit", and numpad 6 the next words, "Colour" and "Price".
+   "Fruit", and numpad 6 the next words, "Color" and "Price".
 2. Down the Price column: numpad 9 reads each next row, and numpad 2 the
    character in the column the review cursor keeps. On the Apple row it
    is "1", the start of the price. The Fig row is too short, so the
@@ -99,8 +99,9 @@ price, so it is shorter than the Price column.
 3. On the Apple row, Shift+numpad 1 moves to the start of the line ("A")
    and numpad 5 reads the word "Apple". Numpad 5 pressed twice spells it,
    letter by letter. Numpad 2 pressed twice describes the character,
-   "Alpha", and pressed three times gives its character code, 65, then in
-   hexadecimal.
+   "Alpha". Numpad 3 and numpad 1 move to the next character, "p", and
+   back, "A", and numpad 2 pressed three times gives the character code,
+   65, then in hexadecimal.
 4. Verbatim+F9 marks the start of the Apple row ("Start marked"),
    Shift+numpad 3 moves to its last character ("0"), and Verbatim+F10
    pressed twice copies from the mark to the review cursor: "Copied to

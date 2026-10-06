@@ -22,7 +22,9 @@
 //!    there reads by sentence, the setting's default: each sentence is
 //!    spoken, and heard in full, as an utterance of its own, never with
 //!    the next one. Say-all reads to the end of the text, and the window is
-//!    closed.
+//!    closed. The text box does not wrap, and is wide enough to show each
+//!    paragraph on one line, since a sentence is also cut where a line
+//!    wraps.
 //!
 //! Every step waits for evidence, with a deadline that only bounds a
 //! failure: speech heard in full, or a window taking the foreground.
@@ -94,11 +96,12 @@ fn edit_script(title: &str, story: &str) -> String {
          [System.Windows.Forms.Application]::EnableVisualStyles()\r\n\
          $form = New-Object System.Windows.Forms.Form\r\n\
          $form.Text = '{title}'\r\n\
-         $form.ClientSize = New-Object System.Drawing.Size(900, 400)\r\n\
+         $form.ClientSize = New-Object System.Drawing.Size(1100, 400)\r\n\
          $form.StartPosition = 'CenterScreen'\r\n\
          $box = New-Object System.Windows.Forms.TextBox\r\n\
          $box.Multiline = $true\r\n\
-         $box.ScrollBars = 'Vertical'\r\n\
+         $box.ScrollBars = 'Both'\r\n\
+         $box.WordWrap = $false\r\n\
          $box.Dock = 'Fill'\r\n\
          $box.Font = New-Object System.Drawing.Font('Segoe UI', 16)\r\n\
          $box.AccessibleName = '{BOX_NAME}'\r\n\

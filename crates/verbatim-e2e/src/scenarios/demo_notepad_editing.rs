@@ -9,10 +9,10 @@
 //!    character ("e", "r"), by word ("reads", "this"), and by line, down
 //!    and back up.
 //! 2. From the start of the line, Shift+Control+Right Arrow selects the
-//!    first word ("selected Verbatim"), Shift+End extends the selection to
-//!    the end of the line ("selected reads this short note"), and
-//!    Shift+Control+Left Arrow unselects the last word ("unselected
-//!    note").
+//!    first word ("selected Verbatim") and then the second ("selected
+//!    reads"), Shift+Control+Left Arrow unselects the second again
+//!    ("unselected reads"), and Shift+End extends the selection to the end
+//!    of the line ("selected reads this short note").
 //! 3. At the end of the text, a sentence is typed with typed-character
 //!    echo, each character spoken as it is typed. A typo in it is fixed
 //!    with Backspace, which speaks the character it deleted.
@@ -78,12 +78,15 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "downarrow", SECOND);
     press(scenario, "uparrow", FIRST);
 
-    // Selecting a word, then the rest of the line, then unselecting the
-    // last word.
+    // Selecting two words, unselecting the second, then selecting the rest
+    // of the line. Unselecting comes before Shift+End because Notepad's
+    // Shift+End takes the line break in, which Shift+Control+Left Arrow
+    // would then unselect first.
     press(scenario, "home", "V");
     press_hearing(scenario, "shift+control+rightarrow", "selected Verbatim");
+    press_hearing(scenario, "shift+control+rightarrow", "selected reads");
+    press_hearing(scenario, "shift+control+leftarrow", "unselected reads");
     press_hearing(scenario, "shift+end", "selected reads this short note");
-    press_hearing(scenario, "shift+control+leftarrow", "unselected note");
 
     // A sentence typed with typed-character echo, with a typo fixed by
     // Backspace, which speaks the character it deleted.

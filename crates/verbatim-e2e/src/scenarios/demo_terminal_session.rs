@@ -117,10 +117,35 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_windows_terminal_only(scenario, "demo-session", &scripts)
 }
 
+/// Types `text` a character at a time, each echo heard in full before the
+/// next is typed. Verbatim holds a character typed into a terminal until
+/// the terminal shows it, and a space at the end of the line shows as
+/// nothing, so a space is typed together with the character after it, and
+/// the two echoes are heard in order.
+fn type_in_terminal(scenario: &mut Scenario, text: &str) {
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == ' '
+            && let Some(next) = characters.next()
+        {
+            scenario
+                .type_text(&format!(" {next}"))
+                .expect("types the space and the character after it");
+            let next = super::character_name(next);
+            for heard in ["space", next.as_str()] {
+                scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
+            }
+        } else {
+            let name = super::character_name(character);
+            super::type_and_hear(scenario, character, &[&name], STEP_TIMEOUT);
+        }
+    }
+}
+
 /// Types `command` a character at a time, each echo heard in full, and
 /// presses Enter.
 fn enter_command(scenario: &mut Scenario, command: &str) {
-    super::type_slowly(scenario, command, STEP_TIMEOUT);
+    type_in_terminal(scenario, command);
     scenario.send_keys(&["enter"]).expect("presses enter");
 }
 
@@ -161,7 +186,7 @@ fn table(scenario: &mut Scenario) {
 
 /// Step 4: a typo corrected with Backspace.
 fn corrected_command(scenario: &mut Scenario) {
-    super::type_slowly(scenario, "echo helo", STEP_TIMEOUT);
+    type_in_terminal(scenario, "echo helo");
     scenario.send_keys(&["backspace"]).expect("sends backspace");
     scenario.speech().expect_exactly(&["o"], STEP_TIMEOUT);
     enter_command(scenario, "lo");
