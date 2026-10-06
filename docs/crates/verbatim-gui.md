@@ -10,8 +10,8 @@ Public API:
   (`QuitRequested`) — the two seams to the application. The GUI never exits
   the process; Exit raises `QuitRequested` and the app decides.
 - `GuiHandle::send(command)` — cloneable, callable from any thread;
-  internally enqueues through wxDragon's call-after queue and wakes the
-  idle loop.
+  sends the command down the GUI's own channel and wakes the GUI thread,
+  which drains the channel.
 - `run_gui(settings_host, events, on_ready)` — runs the event loop on the
   calling thread (the app calls it from the process main thread); once the
   frame and tray exist, `on_ready` hands out the `GuiHandle`.
@@ -27,9 +27,9 @@ Public API:
   it and M6's elements list will present through the same one. GUI thread
   only, like all widget code.
 - `shell_items` — system tray and taskbar item enumeration for the
-  systrayList replica: `request_shell_items(kind, present)` enumerates on
-  a short-lived worker thread and hands `present` the outcome on the GUI
-  thread through the call-after queue. `ShellItemKind` picks the surface
+  systrayList replica: `request_shell_items(kind, deliver)` enumerates on
+  a short-lived worker thread and hands `deliver` the outcome on its guard
+  thread; the GUI sends it down its channel to the GUI thread. `ShellItemKind` picks the surface
   (the notification area plus the overflow flyout window while visible,
   or the taskbar with the notification area's subtree excluded);
   `ShellItem` is a name plus screen rectangle, and `center_of` is the
@@ -41,13 +41,17 @@ Public API:
   deadline (the outpost watchdog's discipline, kept local and simple
   for a one-shot query) and the request just logs and presents nothing.
 - `plan` — the pure, unit-tested layer, private to the crate except for
-  the re-exported `ControlPlan`, `DialogGuard`, and `OpenAction`: `plan_for(descriptor, value)` maps
+  the re-exported `ControlPlan`: `plan_for(descriptor, value)` maps
   a `SettingDescriptor` to a `ControlPlan` (slider, choice, or check box
   with clamped initial value), `accessible_name` strips ampersand
   mnemonics for accessible names (a check box otherwise announces as a
   bare "check"), `cycle_index` implements category wraparound,
-  `initial_list_selection` picks the list dialog's starting selection, and
-  `DialogGuard` is the settings-dialog singleton state machine.
+  and `initial_list_selection` picks the list dialog's starting selection.
+- `lifecycle` (private) — the dialogs' lifecycle as one tested state
+  machine: the settings dialog and the shell item list are singletons, a
+  list request during an enumeration is dropped, requests and results
+  after shutdown are ignored, and the hidden frame is hidden after a popup
+  only once no open dialog needs it as its visible owner.
 
 Implementation notes: the hidden one-by-one frame titled "Verbatim" is the
 single-instance rendezvous and dialog parent. It is stamped, right after

@@ -18,9 +18,9 @@
 //! on expiry (a blocked cross-process COM call cannot be safely cancelled —
 //! the same reasoning as `verbatim-outpost`'s watchdog, kept local and
 //! simple here because this is a one-shot query, not an outpost). Either
-//! way the outcome is handed to the GUI thread through wxDragon's
-//! call-after queue, the same channel [`GuiHandle`](crate::GuiHandle)
-//! posts commands through.
+//! way the guard thread hands the outcome to a delivery callback, which the
+//! GUI uses to send it down the same channel
+//! [`GuiHandle`](crate::GuiHandle) posts commands through.
 
 use std::thread;
 use std::time::Duration;
@@ -73,23 +73,20 @@ const MAX_DEPTH: u32 = 16;
 /// adversarially deep or wide provider.
 const MAX_NODES: usize = 1024;
 
-/// Enumerates `kind` on a worker thread and hands the outcome to the GUI
-/// thread through wxDragon's call-after queue.
+/// Enumerates `kind` on a worker thread and hands the outcome to `deliver`.
 ///
-/// `present` runs on the GUI thread with `Some(items)` on success (possibly
-/// empty) or `None` when enumeration failed or exceeded its deadline (both
-/// already logged); it is invoked exactly once. Callable from any thread.
-pub fn request_shell_items<F>(kind: ShellItemKind, present: F)
+/// `deliver` runs on the guard thread, not the GUI thread, with
+/// `Some(items)` on success (possibly empty) or `None` when enumeration
+/// failed or exceeded its deadline (both already logged); it is invoked
+/// exactly once, unless the guard thread cannot be started (logged).
+/// Callable from any thread.
+pub fn request_shell_items<F>(kind: ShellItemKind, deliver: F)
 where
     F: FnOnce(Option<Vec<ShellItem>>) + Send + 'static,
 {
     let guard = thread::Builder::new()
         .name("verbatim-shell-guard".to_owned())
-        .spawn(move || {
-            let outcome = enumerate_with_deadline(kind);
-            wxdragon::call_after(Box::new(move || present(outcome)));
-            wxdragon::wake_up_idle();
-        });
+        .spawn(move || deliver(enumerate_with_deadline(kind)));
     if let Err(error) = guard {
         tracing::warn!(%error, "could not spawn the shell enumeration guard thread");
     }
