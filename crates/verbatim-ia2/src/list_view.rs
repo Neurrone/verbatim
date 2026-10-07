@@ -276,3 +276,19 @@ fn read_text(
         .collect();
     Ok(Some(String::from_utf16_lossy(&units)).filter(|text| !text.is_empty()))
 }
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod tests {
+    use std::mem::offset_of;
+
+    use windows::Win32::UI::Controls::{LVCOLUMNW, LVITEMW};
+
+    /// The offsets written into a 64-bit process are the structures' own.
+    #[test]
+    fn the_structures_are_laid_out_as_windows_lays_them_out() {
+        assert_eq!(offset_of!(LVITEMW, pszText), 24);
+        assert_eq!(offset_of!(LVITEMW, cchTextMax), 32);
+        assert_eq!(offset_of!(LVCOLUMNW, pszText), 16);
+        assert_eq!(offset_of!(LVCOLUMNW, cchTextMax), 24);
+    }
+}
