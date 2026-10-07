@@ -5,7 +5,9 @@
   <!--
     Common Controls v6, as real applications declare it: its tree view maps
     MSAA child ids to items (TVM_MAPACCIDTOHTREEITEM), which Verbatim reads
-    a tree view through, and its partial check boxes.
+    a tree view through. Embedded as resource 2, so it is not the process's
+    own manifest: mockapp makes only its tree view in an activation context
+    built from it.
   -->
   <dependency>
     <dependentAssembly>

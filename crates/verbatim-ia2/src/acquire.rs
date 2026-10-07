@@ -88,27 +88,171 @@ pub(crate) fn locate(
     }
 }
 
-/// Acquires the object named by a `WinEvent` and maps it to a [`NodeSnapshot`].
-/// Returns `None` if the object cannot be acquired. Blocking; worker only.
+/// Why an object is read, which decides whether the details that cost
+/// more calls are read too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Purpose {
+    /// The object is spoken: a focus, a navigation step's neighbor, a
+    /// selected item. Its position in its set is counted.
+    #[default]
+    Announce,
+    /// The object is read for what it is, not to be spoken in full: an
+    /// ancestor of the focus, or the object of a name, value, or state
+    /// change. A list view or tree view item's position, which costs a
+    /// window message per sibling, is not counted, as NVDA counts it only
+    /// when it speaks the object.
+    Context,
+}
+
+/// How [`read_snapshot_with`] reads an object: whether it was acquired at
+/// its address, why it is read, and the role and state words already read
+/// for it, which are not read again.
+#[derive(Clone, Copy, Debug, Default)]
+struct Reading {
+    at_address: bool,
+    purpose: Purpose,
+    role: Prefetched,
+    state: Prefetched,
+}
+
+/// A role or state word that may have been read already.
+#[derive(Clone, Copy, Debug, Default)]
+enum Prefetched {
+    /// Not read yet.
+    #[default]
+    Unread,
+    /// Read, with what the read answered.
+    Read(Option<i32>),
+}
+
+impl Prefetched {
+    /// The word, read by `read` if it was not read yet.
+    fn or_read(self, read: impl FnOnce() -> Option<i32>) -> Option<i32> {
+        match self {
+            Self::Unread => read(),
+            Self::Read(word) => word,
+        }
+    }
+}
+
+/// Acquires the object named by a `WinEvent` and maps it to a [`NodeSnapshot`]
+/// read for `purpose`. Returns `None` if the object cannot be acquired.
+/// Blocking; worker only.
 #[must_use]
 pub fn snapshot_from_event(
     hwnd: isize,
     id_object: i32,
     id_child: i32,
     registry: &NodeIdRegistry,
+    purpose: Purpose,
 ) -> Option<NodeSnapshot> {
     let acc = Accessible::from_event(hwnd, id_object, id_child)?;
-    Some(read_snapshot(
+    Some(read_snapshot_with(
         &acc,
         (hwnd, id_object, id_child),
-        true,
+        Reading {
+            at_address: true,
+            purpose,
+            ..Reading::default()
+        },
         registry,
     ))
+}
+
+/// The object a `WinEvent` names, acquired but not yet read, so the
+/// outpost can find out cheaply whether it is an object the event matters
+/// for before reading it in full.
+pub struct EventObject {
+    acc: Accessible,
+    key: MsaaKey,
+}
+
+/// Acquires the object a `WinEvent` names, reading nothing of it. `None`
+/// if it cannot be acquired. Blocking; worker only.
+#[must_use]
+pub fn event_object(hwnd: isize, id_object: i32, id_child: i32) -> Option<EventObject> {
+    Some(EventObject {
+        acc: Accessible::from_event(hwnd, id_object, id_child)?,
+        key: (hwnd, id_object, id_child),
+    })
+}
+
+impl EventObject {
+    /// Which of `nodes` the object is, by its identity, reading none of its
+    /// properties: the node issued for the address the event names, else
+    /// the node kept for the same COM object with the same child id in the
+    /// same window. `None` when it is none of them.
+    #[must_use]
+    pub fn which_of(&self, nodes: &[NodeId], registry: &NodeIdRegistry) -> Option<NodeId> {
+        if let Some(&node) = nodes
+            .iter()
+            .find(|&&node| registry.key_of(node) == Some(self.key))
+        {
+            return Some(node);
+        }
+        let identity = self.acc.canonical()?;
+        match registry.find(self.key, Some(identity), self.acc.child(), false) {
+            Found::Object(node, _) if nodes.contains(&node) => Some(node),
+            _ => None,
+        }
+    }
+
+    /// The object's role, one call.
+    #[must_use]
+    pub fn role(&self) -> Role {
+        self.acc
+            .role()
+            .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
+    }
+
+    /// Reads the object for `purpose`, as [`snapshot_from_event`] does.
+    #[must_use]
+    pub fn read(self, registry: &NodeIdRegistry, purpose: Purpose) -> NodeSnapshot {
+        read_snapshot_with(
+            &self.acc,
+            self.key,
+            Reading {
+                at_address: true,
+                purpose,
+                ..Reading::default()
+            },
+            registry,
+        )
+    }
 }
 
 /// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent`, applying
 /// NVDA's child-0-on-a-list redirect before mapping to a [`NodeSnapshot`].
 /// Returns `None` if the object cannot be acquired. Blocking; worker only.
+/// The same as [`focus_candidate`] read at once, without NVDA's checks
+/// before the read.
+#[must_use]
+pub fn snapshot_from_focus_event(
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+    registry: &NodeIdRegistry,
+) -> Option<NodeSnapshot> {
+    Some(focus_candidate(hwnd, id_object, id_child)?.read(registry))
+}
+
+/// The object an `EVENT_OBJECT_FOCUS` names, acquired and redirected but
+/// not yet read, so the outpost can make NVDA's checks on it first: whether
+/// it is the focus already, and whether it or an ancestor has the focused
+/// state. The role and state words read for the checks are kept and not
+/// read again.
+pub struct FocusCandidate {
+    acc: Accessible,
+    key: MsaaKey,
+    role: Prefetched,
+    state: Prefetched,
+}
+
+/// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent` and
+/// applies NVDA's child-0-on-a-list redirect, reading no more than the
+/// redirect needs: the role of an object named by child id 0, and
+/// `accFocus` of a list. `None` if the object cannot be acquired.
+/// Blocking; worker only.
 ///
 /// NVDA's `processFocusWinEvent`
 /// (`nvda/source/IAccessibleHandler/__init__.py`): some controls fire
@@ -119,34 +263,105 @@ pub fn snapshot_from_event(
 /// NVDA reads `accFocus` and redirects the focus object to the named child if
 /// it is a real, different child. This mirrors that condition exactly — no
 /// broader — so a focus event on such a container announces the focused item,
-/// not the container, and the navigator lands on the item. Every other focus
-/// event maps directly, the same as [`snapshot_from_event`], which is what the
-/// menu-popup and other non-focus paths keep using.
+/// not the container, and the navigator lands on the item.
 #[must_use]
-pub fn snapshot_from_focus_event(
-    hwnd: isize,
-    id_object: i32,
-    id_child: i32,
-    registry: &NodeIdRegistry,
-) -> Option<NodeSnapshot> {
+pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<FocusCandidate> {
     let acc = Accessible::from_event(hwnd, id_object, id_child)?;
-    if let Some((focus_acc, key)) = redirect_focus_to_child(&acc, hwnd, id_object, id_child) {
-        return Some(read_snapshot(&focus_acc, key, true, registry));
+    let role = if id_child == CHILDID_SELF {
+        Prefetched::Read(acc.role())
+    } else {
+        Prefetched::Unread
+    };
+    let read_role = match role {
+        Prefetched::Read(role) => role,
+        Prefetched::Unread => None,
+    };
+    if let Some((focus_acc, key)) =
+        redirect_focus_to_child(&acc, (hwnd, id_object, id_child), read_role)
+    {
+        return Some(FocusCandidate {
+            acc: focus_acc,
+            key,
+            role: Prefetched::Unread,
+            state: Prefetched::Unread,
+        });
     }
-    Some(read_snapshot(
-        &acc,
-        (hwnd, id_object, id_child),
-        true,
-        registry,
-    ))
+    Some(FocusCandidate {
+        acc,
+        key: (hwnd, id_object, id_child),
+        role,
+        state: Prefetched::Unread,
+    })
+}
+
+impl FocusCandidate {
+    /// The address the focus is at, after the redirect.
+    #[must_use]
+    pub fn key(&self) -> MsaaKey {
+        self.key
+    }
+
+    /// Whether the object or one of its ancestors has the focused state,
+    /// NVDA's `shouldAllowIAccessibleFocusEvent`, which weeds out stale and
+    /// spurious focus events: the object's own state first, then each
+    /// ancestor's, read live through `accParent`, up to `max_hops` of them.
+    /// A simple child's first ancestor is the object it is a child of. The
+    /// object's own state word is kept for the read that follows.
+    pub fn has_focused_state(&mut self, max_hops: u32) -> bool {
+        let focused = |state: Option<i32>| {
+            state.is_some_and(|state| {
+                states_from_msaa(state.cast_unsigned()).contains(verbatim_model::State::Focused)
+            })
+        };
+        let state = self.state.or_read(|| self.acc.state());
+        self.state = Prefetched::Read(state);
+        if focused(state) {
+            return true;
+        }
+        let mut current = if self.acc.child() == CHILDID_SELF {
+            match self.acc.parent() {
+                Ok(Some(parent)) => parent,
+                Ok(None) | Err(_) => return false,
+            }
+        } else {
+            self.acc.with_child(CHILDID_SELF)
+        };
+        for _ in 0..max_hops {
+            if focused(current.state()) {
+                return true;
+            }
+            current = match current.parent() {
+                Ok(Some(parent)) => parent,
+                Ok(None) | Err(_) => return false,
+            };
+        }
+        false
+    }
+
+    /// Reads the object, as a focus is read to be announced.
+    #[must_use]
+    pub fn read(self, registry: &NodeIdRegistry) -> NodeSnapshot {
+        read_snapshot_with(
+            &self.acc,
+            self.key,
+            Reading {
+                at_address: true,
+                purpose: Purpose::Announce,
+                role: self.role,
+                state: self.state,
+            },
+            registry,
+        )
+    }
 }
 
 /// NVDA's `processFocusWinEvent` redirect: when a focus event names a list
-/// container on child id 0 (MSAA role `ROLE_SYSTEM_LIST`) or the client of a
-/// `SysListView32` window, and `accFocus` names a real, different child *by
-/// id*, return that child's accessible and [`MsaaKey`]. `None`
-/// when the condition does not hold or `accFocus` names no distinct child, so
-/// the caller keeps the event's own object.
+/// container on child id 0 (MSAA role `ROLE_SYSTEM_LIST`, from `role`, read
+/// for a child id 0) or the client of a `SysListView32` window, and
+/// `accFocus` names a real, different child *by id*, return that child's
+/// accessible and [`MsaaKey`]. `None` when the condition does not hold or
+/// `accFocus` names no distinct child, so the caller keeps the event's own
+/// object.
 ///
 /// The child-object (`VT_DISPATCH`) form of `accFocus` deliberately does not
 /// redirect: NVDA's guard is `isinstance(realChildID, int) and realChildID > 0
@@ -158,11 +373,10 @@ pub fn snapshot_from_focus_event(
 /// node identity, so a later refetch of that node id would read the container.
 fn redirect_focus_to_child(
     acc: &Accessible,
-    hwnd: isize,
-    id_object: i32,
-    id_child: i32,
+    (hwnd, id_object, id_child): MsaaKey,
+    role: Option<i32>,
 ) -> Option<(Accessible, MsaaKey)> {
-    if !focus_event_names_list(acc, hwnd, id_object, id_child) {
+    if !focus_event_names_list((hwnd, id_object, id_child), role) {
         return None;
     }
     match read_acc_focus(acc) {
@@ -179,16 +393,13 @@ fn redirect_focus_to_child(
 }
 
 /// Whether an `EVENT_OBJECT_FOCUS` address matches NVDA's redirect condition:
-/// a list on its own object (child id 0, MSAA role `ROLE_SYSTEM_LIST`), or the
-/// client of a `SysListView32` window.
-fn focus_event_names_list(acc: &Accessible, hwnd: isize, id_object: i32, id_child: i32) -> bool {
-    if id_child == CHILDID_SELF {
-        let role = acc
-            .role()
-            .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
-        if role == Role::List {
-            return true;
-        }
+/// a list on its own object (child id 0, MSAA role `ROLE_SYSTEM_LIST`, from
+/// `role`), or the client of a `SysListView32` window.
+fn focus_event_names_list((hwnd, id_object, id_child): MsaaKey, role: Option<i32>) -> bool {
+    if id_child == CHILDID_SELF
+        && role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned())) == Role::List
+    {
+        return true;
     }
     id_object == OBJID_CLIENT.0 && window::class_name(hwnd).contains("SysListView32")
 }
@@ -280,6 +491,12 @@ pub fn ancestor_chain_until(
     limits: &AncestorLimits<'_>,
 ) -> Result<(Vec<NodeSnapshot>, Walked), AcquireError> {
     let max_hops = limits.max_hops;
+    // An ancestor is read for what it is, not spoken in full.
+    let context = |at_address| Reading {
+        at_address,
+        purpose: Purpose::Context,
+        ..Reading::default()
+    };
     let out_of_time = || {
         limits
             .deadline
@@ -302,7 +519,12 @@ pub fn ancestor_chain_until(
             };
             let parent_key = (hwnd, id_object, parent_acc_id);
             // The tree control's own object, at one of its simple children.
-            let snapshot = read_snapshot(&acc.with_child(parent_acc_id), parent_key, at, registry);
+            let snapshot = read_snapshot_with(
+                &acc.with_child(parent_acc_id),
+                parent_key,
+                context(at),
+                registry,
+            );
             let id = snapshot.id;
             chain.push(snapshot);
             hops_used += 1;
@@ -332,7 +554,7 @@ pub fn ancestor_chain_until(
             // The object a simple child belongs to sits at the client address
             // of the child's own window, when the child was acquired there.
             let self_at = at && id_object == OBJID_CLIENT.0 && self_hwnd == hwnd;
-            let snapshot = read_snapshot(&current, self_key, self_at, registry);
+            let snapshot = read_snapshot_with(&current, self_key, context(self_at), registry);
             let id = snapshot.id;
             chain.push(snapshot);
             current_hwnd = self_hwnd;
@@ -370,7 +592,7 @@ pub fn ancestor_chain_until(
             Some(address) if address.0 == parent_hwnd => (address, true),
             _ => ((parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF), false),
         };
-        let snapshot = read_snapshot(&parent_acc, parent_key, parent_at, registry);
+        let snapshot = read_snapshot_with(&parent_acc, parent_key, context(parent_at), registry);
         let id = snapshot.id;
         chain.push(snapshot);
         hops_used += 1;
@@ -1051,15 +1273,37 @@ fn read_snapshot(
     at_address: bool,
     registry: &NodeIdRegistry,
 ) -> NodeSnapshot {
+    read_snapshot_with(
+        acc,
+        key,
+        Reading {
+            at_address,
+            ..Reading::default()
+        },
+        registry,
+    )
+}
+
+/// [`read_snapshot`] as `reading` says: for its purpose, and without
+/// reading again the role and state words already read.
+fn read_snapshot_with(
+    acc: &Accessible,
+    key: MsaaKey,
+    reading: Reading,
+    registry: &NodeIdRegistry,
+) -> NodeSnapshot {
+    let at_address = reading.at_address;
     // Each read tolerates an unsupported property by failing, mapped to a
     // neutral default.
     let name = visible_text(acc.name());
     let raw_value = visible_text(acc.value());
-    let role = acc
-        .role()
+    let role = reading
+        .role
+        .or_read(|| acc.role())
         .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
-    let mut states = acc
-        .state()
+    let mut states = reading
+        .state
+        .or_read(|| acc.state())
         .map(|s| states_from_msaa(s.cast_unsigned()))
         .unwrap_or_default();
     // An edit control's client object says whether it edits more than one
@@ -1097,7 +1341,7 @@ fn read_snapshot(
     // The edit field of a combo box takes the combo box's label, so it
     // has none of its own when the combo box is labelled, as in NVDA.
     let name = name.filter(|_| role != Role::EditableText || !in_labelled_combo_box(acc));
-    let (position_in_set, set_size) = if fetches.position {
+    let (position_in_set, set_size) = if fetches.position && reading.purpose == Purpose::Announce {
         position_of(key.0, acc.child(), role, tree_item)
     } else {
         (None, None)

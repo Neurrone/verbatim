@@ -965,6 +965,16 @@ verified.
     back; NVDA waits.
   - An MSAA focus is accepted only when the object or one of its
     ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`).
+    Since 2026-10-07 the states are checked first and read live, as NVDA
+    reads them, ancestors included; Verbatim had read the focus and its
+    ancestors in full first, and had checked ancestors reused from the
+    previous focus's chain as last read. A focus event naming the address
+    of the focus last reported, a whole object, is dropped before it is
+    read, as NVDA's `isDuplicateIAccessibleEvent` drops it; **different**
+    only in that a reported foreground change makes the next such event no
+    duplicate, since an outpost does not see focus in other applications,
+    which is how NVDA knows the focus left. (`msaa_focus_changes_cost_exactly`
+    pins both.)
   - When the newest focus event of a batch cannot be reported (unreadable,
     destroyed, refused), the next older one is tried, up to three, as
     NVDA's event pump falls back.

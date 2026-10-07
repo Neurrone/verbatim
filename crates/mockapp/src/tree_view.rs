@@ -18,8 +18,10 @@
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::Foundation::{
+    HANDLE, HMODULE, HWND, INVALID_HANDLE_VALUE, LPARAM, LRESULT, WPARAM,
+};
+use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::UI::Accessibility::{
     CreateStdAccessibleProxyW, IAccessible, LresultFromObject,
 };
@@ -52,6 +54,14 @@ static TREE_VIEW_PROC: AtomicIsize = AtomicIsize::new(0);
 ///
 /// The class registration's or window creation's error.
 pub(crate) fn create(parent: HWND, node: &FixtureNode) -> windows::core::Result<HWND> {
+    let context = CommonControls6::activate()?;
+    let created = create_in_context(parent, node);
+    drop(context);
+    created
+}
+
+/// [`create`], with Common Controls version 6 active.
+fn create_in_context(parent: HWND, node: &FixtureNode) -> windows::core::Result<HWND> {
     let controls = INITCOMMONCONTROLSEX {
         dwSize: u32::try_from(size_of::<INITCOMMONCONTROLSEX>()).unwrap_or(0),
         dwICC: ICC_TREEVIEW_CLASSES,
@@ -92,6 +102,96 @@ pub(crate) fn create(parent: HWND, node: &FixtureNode) -> windows::core::Result<
     }?;
     insert_items(tree, TVI_ROOT, &node.children, node.state_images);
     Ok(tree)
+}
+
+/// The layout of `ACTCTXW`, declared here so mockapp needs no further
+/// feature of the `windows` crate.
+#[repr(C)]
+struct ActCtx {
+    size: u32,
+    flags: u32,
+    source: PCWSTR,
+    processor_architecture: u16,
+    language: u16,
+    assembly_directory: PCWSTR,
+    resource_name: PCWSTR,
+    application_name: PCWSTR,
+    module: HMODULE,
+}
+
+/// `ACTCTX_FLAG_RESOURCE_NAME_VALID`.
+const RESOURCE_NAME_VALID: u32 = 0x8;
+
+/// `ACTCTX_FLAG_HMODULE_VALID`.
+const HMODULE_VALID: u32 = 0x80;
+
+/// The manifest's resource id in mockapp's executable (`build.rs`).
+const MANIFEST_RESOURCE: usize = 2;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CreateActCtxW(context: *const ActCtx) -> HANDLE;
+    fn ActivateActCtx(context: HANDLE, cookie: *mut usize) -> i32;
+    fn DeactivateActCtx(flags: u32, cookie: usize) -> i32;
+    fn ReleaseActCtx(context: HANDLE);
+}
+
+/// Common Controls version 6, active on this thread while this lives:
+/// mockapp's manifest (`mockapp.exe.manifest`, resource 2) as an
+/// activation context. Only the tree view is made in it; the rest of the
+/// process keeps the classic controls.
+struct CommonControls6 {
+    context: HANDLE,
+    cookie: usize,
+}
+
+impl CommonControls6 {
+    fn activate() -> windows::core::Result<Self> {
+        let mut path = [0u16; 1024];
+        // SAFETY: writes at most the local buffer's length.
+        let length = unsafe { GetModuleFileNameW(None, &mut path) } as usize;
+        if length == 0 || length >= path.len() {
+            return Err(windows::core::Error::from_thread());
+        }
+        // SAFETY: retrieves this module's own instance handle.
+        let module = unsafe { GetModuleHandleW(None) }?;
+        let request = ActCtx {
+            size: u32::try_from(size_of::<ActCtx>()).unwrap_or(0),
+            flags: RESOURCE_NAME_VALID | HMODULE_VALID,
+            source: PCWSTR(path.as_ptr()),
+            processor_architecture: 0,
+            language: 0,
+            assembly_directory: PCWSTR::null(),
+            // A resource id, as `MAKEINTRESOURCE` makes one.
+            resource_name: PCWSTR(MANIFEST_RESOURCE as *const u16),
+            application_name: PCWSTR::null(),
+            module,
+        };
+        // SAFETY: `request` is fully initialized, and the path it names
+        // outlives the call.
+        let context = unsafe { CreateActCtxW(&raw const request) };
+        if context == INVALID_HANDLE_VALUE {
+            return Err(windows::core::Error::from_thread());
+        }
+        let mut cookie = 0usize;
+        // SAFETY: a context just created, and a local cookie.
+        if unsafe { ActivateActCtx(context, &raw mut cookie) } == 0 {
+            let error = windows::core::Error::from_thread();
+            // SAFETY: the context created above, released once.
+            unsafe { ReleaseActCtx(context) };
+            return Err(error);
+        }
+        Ok(Self { context, cookie })
+    }
+}
+
+impl Drop for CommonControls6 {
+    fn drop(&mut self) {
+        // SAFETY: the cookie `activate` made, on its thread.
+        unsafe { DeactivateActCtx(0, self.cookie) };
+        // SAFETY: the context `activate` made, released once.
+        unsafe { ReleaseActCtx(self.context) };
+    }
 }
 
 /// Inserts `items` under `parent`, depth first, then expands and selects

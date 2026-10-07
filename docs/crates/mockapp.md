@@ -56,8 +56,13 @@ unchecked, or checked or partly checked by the item's `checked` or
 `mixed` state. (A tree view with comctl32's own check boxes,
 `TVS_CHECKBOXES`, reports its items to MSAA as check boxes instead.) An
 item's `expanded` state expands it, and `selected` selects it. mockapp's
-manifest (`mockapp.exe.manifest`, embedded by `build.rs`) declares Common
-Controls version 6, whose tree view maps MSAA child ids to items. A test
+manifest (`mockapp.exe.manifest`, embedded by `build.rs` as resource 2,
+not the process's own) declares Common Controls version 6, whose tree
+view maps MSAA child ids to items; the tree view alone is made in an
+activation context built from it, so the edit control stays the classic
+one its tests were written against (the version 6 edit control answered
+a line read past the last line break differently, which those tests did
+not cover and which is left for a test of its own). A test
 reaches the items through the control's messages, which take plain
 integers (`tests/common/tree_view.rs`), and gives the scripted root the
 focused state, so a focus handed to an outpost passes NVDA's

@@ -100,7 +100,24 @@ Public API:
   generic list, announces the focused item rather than the container; the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_snapshot` also uses, so the child-id and child-object forms are
-  handled once), `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
+  handled once), `focus_candidate` (the same acquisition and redirect,
+  reading no more than the redirect needs, so the outpost can make NVDA's
+  checks before the read: `key()` is the address after the redirect, for
+  NVDA's duplicate check; `has_focused_state(max_hops)` is NVDA's
+  `shouldAllowIAccessibleFocusEvent`, the object's state and then each
+  ancestor's read live through `accParent`; `read(registry)` reads it
+  without reading again the role and state words the checks read;
+  `snapshot_from_focus_event` is a candidate read at once),
+  `event_object` (an event's object acquired and nothing read:
+  `which_of(nodes, registry)` tells whether it is one of the given nodes by
+  the address the node was issued for or by the same COM object and child
+  id, reading no property; `role()` reads its role alone; `read(registry,
+  purpose)` reads it), `Purpose` (`Announce` or `Context`, passed to
+  `snapshot_from_event` and `EventObject::read`: an object read for
+  context, such as an ancestor or the object of a change, has no list view
+  or tree view position counted, as NVDA counts it only when it speaks the
+  object; ancestor walks read for context too),
+  `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
   for the synthetic focus event an outpost emits after a foreground
   change), and the node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from

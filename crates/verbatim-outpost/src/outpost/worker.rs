@@ -32,10 +32,11 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
     Backend, CallCounts, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State,
-    TraceId,
+    StateSet, TraceId,
 };
 use verbatim_uia::map::{
     cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
@@ -254,8 +255,18 @@ pub(super) struct Tracking {
     /// that focus, which then need no call to find their window.
     window: Option<isize>,
     /// How many focuses (not foreground changes) this outpost has reported,
-    /// so the worker can tell when a focus candidate was reported.
+    /// or recognized as the focus already, so the worker can tell when a
+    /// focus candidate was settled.
     reported: u64,
+    /// The node of the last focus this outpost reported.
+    focus: Option<NodeId>,
+    /// That focus's states, as last read, so a state change tells whether
+    /// it newly expanded the focus.
+    focus_states: Option<StateSet>,
+    /// Whether a foreground change was reported after the last focus: the
+    /// focus may then have been elsewhere meanwhile, so a focus event that
+    /// repeats it is not a duplicate.
+    foreground_since_focus: bool,
     /// The dialog the last foreground report gathered text for, which the
     /// focus that follows it reuses.
     dialog: read::DialogMemo,
@@ -992,6 +1003,7 @@ impl Worker<'_> {
         self.context.tracking().dialog = memo;
         let role = node.role;
         let node_id = node.id;
+        let states = node.states;
         let text_node = (!foreground).then(|| node.clone());
         tracing::debug!(
             ?role,
@@ -1032,8 +1044,11 @@ impl Worker<'_> {
             let mut tracking = self.context.tracking();
             tracking.role = Some(role);
             tracking.batch = Some(self.batch);
+            tracking.foreground_since_focus = foreground;
             if !foreground {
                 tracking.reported += 1;
+                tracking.focus = Some(node_id);
+                tracking.focus_states = Some(states);
                 tracking.window = window;
                 // Unknown ancestors leave the previous chain, as the reducer
                 // keeps it.
@@ -1115,14 +1130,26 @@ impl Worker<'_> {
             }
             _ => {}
         }
-        let Some(node) = verbatim_ia2::acquire::snapshot_from_event(
-            hwnd,
-            id_object,
-            id_child,
-            &self.context.msaa_registry,
-        ) else {
+        let Some(object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child) else {
             return;
         };
+        let registry = &self.context.msaa_registry;
+        if kind == WinEventKind::Selection {
+            let node = object.read(registry, Purpose::Announce);
+            let event = NormalizedEvent::SelectionChanged { node };
+            self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+            return;
+        }
+        // A name, value, or state change is spoken only for the focus, as
+        // NVDA speaks it, so an object that is not the focus is not read:
+        // it is told from the focus by its identity first, without reading
+        // any of its properties.
+        let focus = self.context.tracking().focus;
+        let Some(focus) = focus.filter(|&focus| object.which_of(&[focus], registry).is_some())
+        else {
+            return;
+        };
+        let node = object.read(registry, Purpose::Context);
         let event = match kind {
             WinEventKind::ValueChange => NormalizedEvent::ValueChanged {
                 node_id: node.id,
@@ -1134,17 +1161,29 @@ impl Worker<'_> {
                 child_count: None,
             },
             // An expanded Win32 tree view item's children are counted with
-            // its change, for Core to say how many it holds once it has
-            // been expanded ("How many items an expanded tree view item
+            // its change, when the change expands the focus, for Core to say
+            // how many it holds ("How many items an expanded tree view item
             // holds" in docs/nvda/speech.md).
-            WinEventKind::StateChange => NormalizedEvent::PropertyChanged {
-                node_id: node.id,
-                child_count: (node.role == Role::TreeItem && node.states.contains(State::Expanded))
-                    .then(|| verbatim_ia2::acquire::tree_view_child_count(hwnd, id_child))
-                    .flatten(),
-                change: PropertyChange::States(node.states),
-            },
-            WinEventKind::Selection => NormalizedEvent::SelectionChanged { node },
+            WinEventKind::StateChange => {
+                let expanded = node.states.contains(State::Expanded);
+                let was_expanded = {
+                    let mut tracking = self.context.tracking();
+                    let was = tracking
+                        .focus_states
+                        .is_some_and(|states| states.contains(State::Expanded));
+                    if node.id == focus {
+                        tracking.focus_states = Some(node.states);
+                    }
+                    was
+                };
+                NormalizedEvent::PropertyChanged {
+                    node_id: node.id,
+                    child_count: (node.role == Role::TreeItem && expanded && !was_expanded)
+                        .then(|| verbatim_ia2::acquire::tree_view_child_count(hwnd, id_child))
+                        .flatten(),
+                    change: PropertyChange::States(node.states),
+                }
+            }
             _ => return,
         };
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
@@ -1427,6 +1466,7 @@ impl Worker<'_> {
             id_object,
             id_child,
             &self.context.msaa_registry,
+            verbatim_ia2::acquire::Purpose::Announce,
         ) else {
             return;
         };
@@ -1497,26 +1537,37 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "MSAA focus dropped: UIA owns the window");
             return;
         }
-        let Some(node) = verbatim_ia2::acquire::snapshot_from_focus_event(
-            hwnd,
-            id_object,
-            id_child,
-            &self.context.msaa_registry,
-        ) else {
+        let Some(mut candidate) = verbatim_ia2::acquire::focus_candidate(hwnd, id_object, id_child)
+        else {
             tracing::debug!(hwnd, id_object, id_child, "MSAA focus dropped: unreadable");
             return;
         };
-        let previous = self.focus_chain();
-        let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
+        // NVDA drops a focus event naming the address of the focus it last
+        // queued, unless that focus was a child by id, whose id can be
+        // reused (`isDuplicateIAccessibleEvent`), before reading anything
+        // of it. The focus may have been in another application since a
+        // foreground change, which this outpost does not see, so a focus
+        // after one is never a duplicate.
+        let (address_hwnd, address_object, address_child) = candidate.key();
+        let repeated = address_child == CHILDID_SELF
+            && !self.context.tracking().foreground_since_focus
+            && self.context.intake.focused()
+                == Some(Object::Msaa(address_hwnd, address_object, address_child));
+        if repeated {
+            tracing::debug!(
+                hwnd,
+                id_object,
+                id_child,
+                "MSAA focus dropped: the focus already"
+            );
+            self.context.tracking().reported += 1;
+            return;
+        }
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
-        // which weeds out stale and spurious focus events. Ancestors that
-        // could not be read in time leave the event accepted.
-        if let (false, Some(ancestors)) = (node.states.contains(State::Focused), &enrichment.0)
-            && !ancestors
-                .iter()
-                .any(|ancestor| ancestor.states.contains(State::Focused))
-        {
+        // which weeds out stale and spurious focus events. It checks the
+        // states first, reading them live, before anything else.
+        if !candidate.has_focused_state(read::MAX_ANCESTOR_HOPS) {
             tracing::debug!(
                 hwnd,
                 id_object,
@@ -1525,6 +1576,9 @@ impl Worker<'_> {
             );
             return;
         }
+        let node = candidate.read(&self.context.msaa_registry);
+        let previous = self.focus_chain();
+        let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
         let object = self
             .context
             .msaa_registry
@@ -1975,6 +2029,7 @@ impl Worker<'_> {
             id_object,
             id_child,
             &self.context.msaa_registry,
+            verbatim_ia2::acquire::Purpose::Announce,
         ) else {
             return;
         };

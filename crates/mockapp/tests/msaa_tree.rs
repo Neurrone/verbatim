@@ -348,8 +348,14 @@ fn msaa_sightings_of_one_live_object_are_one_node() {
         std::sync::atomic::AtomicU64::new(1),
     ));
     let sight = |id_object: i32| {
-        verbatim_ia2::acquire::snapshot_from_event(hwnd, id_object, 0, &registry)
-            .expect("the object is acquired")
+        verbatim_ia2::acquire::snapshot_from_event(
+            hwnd,
+            id_object,
+            0,
+            &registry,
+            verbatim_ia2::acquire::Purpose::Announce,
+        )
+        .expect("the object is acquired")
     };
 
     let first = sight(OBJID_CLIENT.0);
