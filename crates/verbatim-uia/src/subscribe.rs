@@ -1,6 +1,6 @@
 //! UIA event subscriptions: property changes, automation events (an element
-//! selected, a menu opened), and notifications, over a [`Scope`] that can be
-//! moved later.
+//! selected, a menu opened), notifications, and active text position
+//! changes, over a [`Scope`] that can be moved later.
 //!
 //! Each [`Registration`] owns its own thread, apartment, client, and
 //! handlers, and registers all of its subscriptions as one event handler
