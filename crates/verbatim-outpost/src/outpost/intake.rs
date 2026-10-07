@@ -300,6 +300,14 @@ impl Intake {
         before != state.waiting.len() + state.batch.len()
     }
 
+    /// Whether an MSAA focus in window `hwnd` is waiting for a later batch:
+    /// one that arrived while an older focus there was being read.
+    pub(super) fn msaa_focus_waiting(&self, hwnd: isize) -> bool {
+        self.lock().waiting.iter().any(
+            |waiting| matches!(waiting.key, Some(Key::MsaaFocus(window, _, _)) if window == hwnd),
+        )
+    }
+
     /// Records the object the worker last reported as the focus: its events
     /// are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
@@ -855,5 +863,20 @@ mod tests {
             vec![30, 5, 4, 2, 60],
             "the group takes the newest focus's place"
         );
+    }
+
+    #[test]
+    fn an_msaa_focus_waiting_in_a_window_is_found_until_its_batch_is_planned() {
+        let intake = Intake::default();
+        let focus = DeliveredFact::MsaaFocus {
+            hwnd: 9,
+            id_object: -4,
+            id_child: 1,
+        };
+        intake.push(fact(focus, 1).entry);
+        assert!(intake.msaa_focus_waiting(9));
+        assert!(!intake.msaa_focus_waiting(8));
+        let _ = intake.next();
+        assert!(!intake.msaa_focus_waiting(9));
     }
 }

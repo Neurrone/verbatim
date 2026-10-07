@@ -840,7 +840,15 @@ impl Worker<'_> {
         // are dropped, can never report a node that is about to vanish.
         let (objects, released) = {
             let mut state = self.context.watch.lock();
+            let position = state.position;
             let released = state.take_releasable(&held, acknowledged);
+            tracing::debug!(
+                ?held,
+                acknowledged,
+                position,
+                ?released,
+                "releasing the nodes Core no longer holds"
+            );
             if released.is_empty() {
                 return;
             }
@@ -1461,6 +1469,20 @@ impl Worker<'_> {
                 id_object,
                 id_child,
                 "MSAA focus dropped: nothing has the focused state"
+            );
+            return;
+        }
+        // NVDA's limiter handles only the newest focus of everything that
+        // arrived since it last ran. A focus in the same window that arrived
+        // while this one was read would have been in its batch, as a tree
+        // view's focus on its item follows the window's own focus by a
+        // moment, and the newer one is what the focus is now.
+        if self.context.intake.msaa_focus_waiting(hwnd) {
+            tracing::debug!(
+                hwnd,
+                id_object,
+                id_child,
+                "MSAA focus dropped: a newer focus in its window is waiting"
             );
             return;
         }
