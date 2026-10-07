@@ -85,7 +85,11 @@ Public API:
   there named with the marker, deleted with its contents when the scenario
   is dropped, after the applications it launched have ended (a folder a
   closing program still holds is tried again until a deadline), and by the
-  next launch's sweep when an aborted run left it; `write_agent_file`
+  next launch's sweep when an aborted run left it; `harness_file(name,
+  extension)` is the path of a file there named with the marker, such as
+  the spelling errors scenario's `mockapp` fixture, deleted the same way
+  (the sweep deletes leftover harness files ending `.txt` or `.json`);
+  `write_agent_file`
   writes a file, creating any folder it names, and
   `wait_for_agent_file` waits for a file to appear and returns it, the
   evidence a script reached the point that writes it; `subscribe_events`
@@ -317,10 +321,12 @@ taking the caret to the top (Notepad can restore a caret position from an
 earlier session), and save what they edited, in the teardown too.
 `notepad_editing` moves the caret by character, word, and line, selects
 and unselects with Shift, types with character echo, and deletes with
-Backspace and Delete, each step's speech asserted exactly.
+Backspace and Delete, and hears End and Backspace name the line break
+they meet, each step's speech asserted exactly.
 `notepad_review_cursor` reads by line, word, and character with the numpad
 review keys, keeps column 8 down a text table through a shorter row,
-reaches a line's ends and the text's top, and copies a range with
+reaches a line's ends, the end being its named line break, and the
+text's top, and copies a range with
 Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
 `notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
 the second line plays, and checks that the caret was left on that line and

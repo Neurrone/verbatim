@@ -100,6 +100,12 @@ pub(super) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
     root != 0 && root != handle && window_is_hidden_frame(root)
 }
 
+/// The system's foreground window, or 0 when no window has the foreground.
+pub(super) fn foreground_window_handle() -> isize {
+    // SAFETY: GetForegroundWindow has no preconditions.
+    unsafe { GetForegroundWindow() }.0 as isize
+}
+
 /// `handle`'s top-level window (`GetAncestor` with `GA_ROOT`), or 0 for an
 /// invalid handle.
 pub(crate) fn top_level_of(handle: isize) -> isize {

@@ -54,8 +54,8 @@ use super::intake::{Entry, HeldFocus, Item, Object, Planned, UiaEvent, UiaKind, 
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CONSOLE_WINDOW_CLASS};
 use super::window::{
-    focus_window_of, front_is_another_thread_of_its_application, now_ms,
-    window_belongs_to_hidden_frame, window_facts, window_is_foreground,
+    focus_window_of, foreground_window_handle, front_is_another_thread_of_its_application, now_ms,
+    window_belongs_to_hidden_frame, window_facts, window_is_foreground, window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
@@ -1775,15 +1775,30 @@ impl Worker<'_> {
         if node.role != Role::Menu {
             return;
         }
+        // Verbatim's own menu opens from Core's hidden frame, shown and
+        // brought to the foreground for it, whose own foreground report is
+        // dropped because the frame transits focus. NVDA announces the
+        // foreground window a menu opens from before the menu, so the menu
+        // is reported in the frame's window, the foreground window, with the
+        // frame, titled "Verbatim", as its ancestor: the reducer names a new
+        // foreground window from the top of the focus's ancestry when no
+        // foreground report named it, then the menu.
+        let foreground = foreground_window_handle();
+        let (window, ancestors) = if window_is_hidden_frame(foreground) {
+            let (_, frame) = read::foreground_window(self.context, self.client, foreground);
+            (foreground, vec![frame])
+        } else {
+            (hwnd, Vec::new())
+        };
         self.emit_focus(
             entry.trace,
             entry.observed_at_ms,
             Backend::Msaa,
-            Some(hwnd),
+            Some(window),
             node,
             false,
             Some(Object::Msaa(hwnd, id_object, id_child)),
-            (Some(Vec::new()), None),
+            (Some(ancestors), None),
         );
     }
 

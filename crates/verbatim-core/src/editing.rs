@@ -163,15 +163,21 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
 
 /// What a Backspace is about to delete, from the caret before the key: the
 /// character before the caret, or for Control+Backspace the text from the
-/// start of the word before the caret up to the caret. `None` at the
-/// line's start, where what goes is the line break, and for other keys.
+/// start of the word before the caret up to the caret. At the start of a
+/// line other than a terminal's, a Backspace deletes the line break before
+/// it, the kind of break the text uses ([`CaretContext::line_break`]),
+/// which NVDA names (`docs/nvda/editable-text-and-terminals.md`, "A line
+/// break as a character"). `None` when that is not known, and for other
+/// keys.
 fn deleted_text(caret: &CaretContext, motion: CaretMotion, grid: bool) -> Option<String> {
     let content = text::line_content(&caret.line.text, grid);
     let offset = text::boundary(content, caret.line.offset as usize);
     match motion {
-        CaretMotion::Backspace => {
-            text::previous_grapheme(content, offset).map(|range| content[range].to_owned())
-        }
+        CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
+            Some(range) => Some(content[range].to_owned()),
+            None if !grid && !caret.line.first => caret.line_break.clone(),
+            None => None,
+        },
         CaretMotion::BackspaceWord => {
             let words = text::words(content, caret.line.language_at(0));
             let start = words.iter().rev().find(|range| range.start < offset)?.start;
@@ -261,9 +267,11 @@ pub(crate) fn caret_reply(
     effects
 }
 
-/// The speech for text a Backspace deleted.
+/// The speech for text a Backspace deleted. A carriage return and line feed
+/// deleted together are spoken as the line feed, as NVDA speaks them.
 fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment> {
     if motion == CaretMotion::Backspace {
+        let deleted = if deleted == "\r\n" { "\n" } else { deleted };
         text::character_segments(Some(deleted), None)
     } else {
         text::text_segments(deleted.trim(), None)
@@ -293,11 +301,17 @@ fn formatted(
     reported: &mut TextAttributes,
 ) -> Option<Vec<UtteranceSegment>> {
     let content = text::chunk_content(chunk, grid);
-    let spoken = if how == text::Spoken::Word {
-        let start = content.len() - content.trim_start().len();
-        start..content.trim_end().len().max(start)
-    } else {
-        0..content.len()
+    let spoken = match how {
+        text::Spoken::Word => {
+            let start = content.len() - content.trim_start().len();
+            start..content.trim_end().len().max(start)
+        }
+        // The character the chunk starts with, a line break included.
+        text::Spoken::Character => text::characters(&chunk.text, grid)
+            .into_iter()
+            .next()
+            .unwrap_or(0..0),
+        text::Spoken::Text => 0..content.len(),
     };
     text::formatted_segments(
         chunk,
@@ -329,7 +343,7 @@ fn unit_segments(
             {
                 return segments;
             }
-            let character = text::grapheme_at(content, offset).map(|range| &content[range]);
+            let character = text::character_at(&line.text, offset, grid);
             text::character_segments(character, line.language_at(offset))
         }
         (TextUnit::Line, _) | (_, None) => formatted(line, grid, text::Spoken::Text, reported)
@@ -396,10 +410,18 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: CaretReport
             column: text::column_of(content, offset, grid),
         });
     }
+    let line_break = text::line_break(&line.text).map(str::to_owned).or_else(|| {
+        state
+            .caret
+            .take()
+            .filter(|caret| caret.node == node)
+            .and_then(|caret| caret.line_break)
+    });
     state.caret = Some(CaretContext {
         node,
         line,
         selection: caret.selection,
+        line_break,
     });
 }
 
