@@ -36,7 +36,9 @@ serde_json = "1"
 # text model"): ICU4X's segmenters with their compiled data (Unicode's
 # rules plus dictionaries for Chinese, Japanese, Thai, Lao, Khmer, and
 # Burmese), jieba for Chinese words as NVDA uses cppjieba, and terminal
-# cell widths by East Asian Width.
+# cell widths by East Asian Width. ICU4X's general categories tell a word
+# character (a letter, mark, or number) from the rest.
+icu_properties = "2"
 icu_segmenter = "2"
 jieba-rs = "0.11"
 unicode-width = "0.2"

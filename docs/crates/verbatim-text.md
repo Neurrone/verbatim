@@ -44,6 +44,9 @@ Windows API, and `cargo xtask ci` checks that it does not.
   characters and none for combining marks.
 - `trim_padding`: a terminal line without its trailing padding, whatever
   whitespace characters it is made of.
+- `is_word_grapheme`: whether a grapheme cluster continues a typed word:
+  every code point a letter, mark, or number by its general category
+  (ICU4X's `icu_properties`), or the zero-width non-joiner or joiner.
 - `is_bidi_control` and `strip_bidi_controls`: the bidirectional
   formatting characters (the left-to-right and right-to-left marks, the
   embeddings and overrides, the isolates, and the pops that end them),

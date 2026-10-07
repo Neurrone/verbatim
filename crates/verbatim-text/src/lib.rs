@@ -33,6 +33,8 @@
 use std::ops::Range;
 use std::sync::OnceLock;
 
+use icu_properties::CodePointMapData;
+use icu_properties::props::{GeneralCategory, GeneralCategoryGroup};
 use icu_segmenter::options::{SentenceBreakInvariantOptions, WordBreakInvariantOptions};
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
@@ -67,6 +69,23 @@ pub fn cell_width(text: &str) -> usize {
 #[must_use]
 pub fn trim_padding(line: &str) -> &str {
     line.trim_end_matches(char::is_whitespace)
+}
+
+/// Whether the grapheme cluster `grapheme` belongs in a word: every code
+/// point in it is a letter, a mark, or a number by its general category,
+/// or the zero-width non-joiner or joiner, which shape the letters around
+/// them. So a virama, a Thai tone mark, or a Persian zero-width non-joiner
+/// typed on its own continues the word it is typed into.
+#[must_use]
+pub fn is_word_grapheme(grapheme: &str) -> bool {
+    let categories = CodePointMapData::<GeneralCategory>::new();
+    let word = GeneralCategoryGroup::Letter
+        .union(GeneralCategoryGroup::Mark)
+        .union(GeneralCategoryGroup::Number);
+    !grapheme.is_empty()
+        && grapheme
+            .chars()
+            .all(|c| matches!(c, '\u{200C}' | '\u{200D}') || word.contains(categories.get(c)))
 }
 
 /// Whether `c` is a bidirectional formatting character: the left-to-right
@@ -611,6 +630,18 @@ mod tests {
         assert_eq!(cell_width("ab"), 2);
         assert_eq!(cell_width("中文"), 4);
         assert_eq!(cell_width("e\u{301}"), 1);
+    }
+
+    #[test]
+    fn letters_marks_numbers_and_joiners_are_word_characters() {
+        for grapheme in [
+            "a", "É", "7", "\u{94D}", "\u{E48}", "\u{200C}", "\u{200D}", "ก่",
+        ] {
+            assert!(is_word_grapheme(grapheme), "{grapheme:?}");
+        }
+        for grapheme in [" ", ",", "\t", "-", "😀", ""] {
+            assert!(!is_word_grapheme(grapheme), "{grapheme:?}");
+        }
     }
 
     #[test]

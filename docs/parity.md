@@ -1452,7 +1452,12 @@ verified.
   Core since 2026-10-06**: "Speak typed characters" (only in edit controls, by default)
   and "Speak typed words" (off), each off, only in edit controls, or
   always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
-  character that is not a letter or digit ends it, before that character;
+  character that is not a letter, mark, or number by its general category
+  ends it, before that character (matched since 2026-10-08, so a virama or
+  a Thai tone mark continues the word, as in NVDA; before then any mark
+  ended it), and the zero-width non-joiner and joiner also continue it,
+  which NVDA's rule does not (**different**, deliberately: Persian and
+  Indic words are typed with them);
   a protected field echoes only the protected character ("star") and no
   words; typing into a terminal waits until the terminal's text changes
   unless "Speak passwords" is on, so a password prompt speaks nothing, and

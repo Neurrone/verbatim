@@ -463,8 +463,9 @@ a `Format` span, which the theme reports as words, a sound, both, or not
 at all. Review commands and say-all read no formatting yet.
 
 Typing echo. `Input::CharacterTyped` is echoed by the settings: a finished
-word first, when word echo applies and a character that is not a letter or
-digit ends it, then each printable character (a tab included), each in
+word first, when word echo applies and a character that is not a letter,
+mark, number, or zero-width joiner or non-joiner ends it
+(`verbatim_text::is_word_grapheme`), then each printable character (a tab included), each in
 its own queued utterance. "Only in edit controls" means a focus that is an
 edit field, a terminal, or a document that is not read-only. A protected
 field echoes only the protected character, spoken "star", and no words.

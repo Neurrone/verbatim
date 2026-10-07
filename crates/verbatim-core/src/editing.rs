@@ -961,7 +961,10 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
     let mut effects = Vec::new();
     for range in verbatim_text::graphemes(typed) {
         let character = &typed[range];
-        let word_character = character.chars().all(char::is_alphanumeric);
+        // A letter, mark, or number continues the word, so a virama, a
+        // Thai tone mark, or a zero-width non-joiner typed on its own does
+        // not end it.
+        let word_character = verbatim_text::is_word_grapheme(character);
         if word_character {
             if echo_words && state.typed_word.len() + character.len() <= MAX_TYPED_WORD {
                 state.typed_word.push_str(character);
