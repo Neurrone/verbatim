@@ -1926,3 +1926,11 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      both paths and the wall-clock gain measured. NVDA uses remote
      operations only for browse mode's heading search and some Word
      operations.
+  8. Local-only scenarios (Dickson, 2026-10-07): scenarios that need
+     Windows 11 Notepad (its spell checker and its UIA document) are
+     marked local-only in the registry; the GitHub e2e job skips them
+     through an explicit setting in its configuration, and every local
+     run includes them. `notepad_spelling_errors` becomes such a test
+     again rather than a demonstration.
+  9. GitHub's runner installs Windows Terminal (Dickson, 2026-10-07), so
+     the terminal scenarios run against it there as well as here.
