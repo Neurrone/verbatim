@@ -967,10 +967,65 @@ fn edit_control_text_reads_moves_and_answers_caret_keys() {
     app.quit();
 }
 
+/// A provider whose backward moves answer with a positive count
+/// (`backward_moves.json`), as some do: the count is corrected to a
+/// negative one, as NVDA corrects it, the same remotely and classically.
+fn a_backward_move_is_counted_backward_both_ways() {
+    common::init_com();
+    let title = common::unique_title("mockapp-backward-moves");
+    let mut app = common::spawn("backward_moves.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let target = TextTarget {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+    };
+    let units = |unit, count| {
+        let query = UnitsQuery {
+            target,
+            from: TextFrom::Caret,
+            movement: Some(Movement::By(unit, count)),
+            unit,
+            count: 1,
+            max_text: 1024,
+            max_total: 1024,
+            culture: false,
+        };
+        let remote = text_units_remote(&query).expect("the remote program runs");
+        let classic = text_units_classic(&query).expect("the classic reads run");
+        let remote = units_summary(&remote);
+        assert_eq!(remote, units_summary(&classic));
+        remote
+    };
+    common::apply(&mut app, hwnd, "caret doc 6");
+    assert_eq!(
+        units(TextUnit_Word, -1),
+        (-1, vec![("alpha ".to_owned(), 0, None)], false),
+        "from \"beta\" back to \"alpha\""
+    );
+    common::apply(&mut app, hwnd, "caret doc 13");
+    assert_eq!(
+        units(TextUnit_Line, -1),
+        (-1, vec![("alpha beta\n".to_owned(), 0, None)], false)
+    );
+    assert_eq!(
+        units(TextUnit_Line, 1),
+        (1, vec![(String::new(), 0, None)], false),
+        "forward moves are as they were"
+    );
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        (
+            "a_backward_move_is_counted_backward_both_ways",
+            a_backward_move_is_counted_backward_both_ways,
+        ),
         (
             "a_failing_attribute_is_not_supported",
             a_failing_attribute_is_not_supported,

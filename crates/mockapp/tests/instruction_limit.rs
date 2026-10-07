@@ -455,7 +455,7 @@ fn terminal_tails_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [worst, typical],
-        [1126, 99],
+        [1128, 101],
         "terminal tail worst and typical"
     );
     assert!(worst < LIMIT / 2);

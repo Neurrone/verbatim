@@ -101,6 +101,8 @@ struct RawNode {
     #[serde(default)]
     cultures: Vec<(usize, usize, i32)>,
     #[serde(default)]
+    backward_moves_positive: bool,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -143,6 +145,9 @@ pub(crate) struct FixtureNode {
     /// start and an end UTF-16 offset and a Windows locale id, served as
     /// UIA's `Culture` attribute.
     pub(crate) cultures: Vec<(usize, usize, i32)>,
+    /// Whether a backward `Move` or `MoveEndpointByUnit` answers with a
+    /// positive count, as some providers do.
+    pub(crate) backward_moves_positive: bool,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -222,6 +227,7 @@ fn convert(
         italic_fails: raw.italic_fails,
         find_text_fails: raw.find_text_fails,
         cultures: raw.cultures,
+        backward_moves_positive: raw.backward_moves_positive,
         children,
     })
 }

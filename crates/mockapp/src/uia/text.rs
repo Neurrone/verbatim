@@ -25,7 +25,9 @@
 //! fixture's bold stretches, 400 elsewhere, and mixed across both; every
 //! other text attribute is unsupported. A fixture can make the `IsItalic`
 //! read fail (`italic_fails`), as a provider that fails an attribute read,
-//! and its `FindText` fail (`find_text_fails`), as Windows Terminal's has.
+//! its `FindText` fail (`find_text_fails`), as Windows Terminal's has, and
+//! its backward moves answer with a positive count
+//! (`backward_moves_positive`), as some providers do.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -341,6 +343,17 @@ impl TextRange {
     }
 }
 
+/// The count a move answers for having moved `moved` units: as it is, or,
+/// for a fixture whose backward moves answer with a positive count, as
+/// some providers do, without its sign.
+fn signed(tree: &SharedTree, index: usize, moved: i32) -> i32 {
+    if formats_of(tree, index).backward_moves_positive {
+        moved.abs()
+    } else {
+        moved
+    }
+}
+
 /// The offsets of the range behind `range`, one of this module's.
 fn offsets_of(range: &ITextRangeProvider) -> (usize, usize) {
     // SAFETY: every range a client hands back to this provider is one this
@@ -602,7 +615,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         let (start, end) = spans[at];
         self.start.set(start);
         self.end.set(if collapsed { start } else { end });
-        Ok(moved)
+        Ok(signed(&self.tree, self.index, moved))
     }
     fn MoveEndpointByUnit(
         &self,
@@ -635,7 +648,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             moved -= 1;
         }
         self.set_endpoint(endpoint, at);
-        Ok(moved)
+        Ok(signed(&self.tree, self.index, moved))
     }
     fn MoveEndpointByRange(
         &self,
