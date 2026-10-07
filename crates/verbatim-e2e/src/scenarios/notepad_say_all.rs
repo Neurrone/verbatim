@@ -7,7 +7,8 @@
 //! line, one line per piece. The second line is long, so it is still
 //! playing when the scenario presses Control, which cuts speech off as any
 //! key does. Home then speaks the first character of the caret's line,
-//! the second line's, and the third line is never heard. The key is
+//! the second line's, numpad 8 reads that line, since the review cursor
+//! follows the caret, and the third line is never heard. The key is
 //! pressed once the second line is heard starting, which is the evidence
 //! that its index mark was reached; there is no other wait.
 
@@ -61,6 +62,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The caret is on the line speech stopped in.
     scenario.send_keys(&["home"]).expect("sends home");
     scenario.speech().expect_exactly(&["M"], STEP_TIMEOUT);
+    // The review cursor follows the caret there: numpad 8 reads that line.
+    scenario.send_gesture("kb:numpad8").expect("sends numpad 8");
+    scenario
+        .speech()
+        .expect_in_order(&["Mostly this second line"], STEP_TIMEOUT);
     scenario.speech().wait_until_quiet(STEP_TIMEOUT);
     assert!(
         !scenario.speech().has_played(THIRD),
