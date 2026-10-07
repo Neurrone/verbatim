@@ -258,8 +258,9 @@ verified.
     alerts, and UIA elements added to or removed from a selection. MSAA
     description changes (`EVENT_OBJECT_DESCRIPTIONCHANGE`) on the focus,
     and state changes, a selection included, on the focus's ancestors:
-    **matched since 2026-10-07** (reducer tests and the `msaa_events`
-    mockapp test, an ancestor in a real tree view collapsed). An ancestor
+    **matched since 2026-10-07** (reducer tests; the `msaa_events`
+    mockapp test pins that a real tree view item's logical parent is not
+    such an ancestor). An ancestor
     is recognized by the address it was reported at or by its COM object,
     so an event on a windowless ancestor reached through `accParent`, at
     an address made up for it, is not recognized unless the application

@@ -1,12 +1,13 @@
 //! MSAA change events from mockapp's scripted provider, handled by a real
 //! outpost in this process through its own hooks and spoken by the reducer:
-//! what NVDA's base handlers speak for a description change on the focus
-//! and a state change on one of its ancestors, and that a change on any
-//! other object says nothing (`docs/nvda/events.md`, "The focus gate").
-//! The ancestor is an item of mockapp's real tree view: a scripted
-//! ancestor, reached through `accParent`, which mockapp answers with a new
-//! object each time, is recognized only by its COM identity, which an
-//! event's object never shares.
+//! what NVDA's base handlers speak for a description change on the focus,
+//! and that a change on any other object says nothing (`docs/nvda/events.md`,
+//! "The focus gate"), a tree view item's logical parent included: NVDA's
+//! ancestors are those reached through `accParent`. A scripted ancestor,
+//! reached through `accParent`, which mockapp answers with a new object
+//! each time, is recognized only by its COM identity, which an event's
+//! object never shares, so a state change on an ancestor is pinned in the
+//! reducer's tests.
 //!
 //! mockapp's focus moves with `set-focus`, which raises no event; the
 //! test hands the outpost the focus itself, as `call_counts.rs` does.
@@ -127,11 +128,14 @@ fn a_description_change_on_the_focus_is_spoken() {
     app.quit();
 }
 
-/// A state change on an ancestor of the focus is spoken: in the real tree
-/// view, the item the focused item is in is collapsed, and says so. The
-/// ancestor is the item at its own address, found through the control's
-/// messages, so the control's event names it.
-fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
+/// Collapsing the item the focused tree item is in says nothing of the
+/// collapsed item until it has the focus. It is the focused item's logical
+/// parent, read through the control's messages, not an ancestor NVDA has:
+/// NVDA's ancestors are those reached through `accParent`, and a tree view
+/// item's is the control, so neither the control moving its selection to
+/// the collapsed item nor the item's state change is spoken. The control's
+/// focus on it then says its announcement, collapsed.
+fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
     use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVM_EXPAND};
     common::init_com();
     let title = common::unique_title("mockapp-msaa-ancestor-state");
@@ -144,23 +148,21 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
     let _ = spoken(&mut state, focus_event(&reported));
     let hardware = common::tree_view::item(tree, "Hardware");
     common::tree_view::send(tree, TVM_EXPAND, TVE_COLLAPSE.0 as usize, hardware);
-    // Collapsing hides the selected item, so the control moves its
-    // selection to the collapsed item first, and selecting an ancestor is a
-    // change of its states, spoken whole; the state change after it finds
-    // nothing new.
-    let selected = next_event(&outpost);
-    let collapsed = next_event(&outpost);
-    outpost.settled();
+    // The selection and the state change say nothing: the parent's focus
+    // is the first thing the outpost says.
+    let focus = common::tree_view::focus_item(&outpost, tree, "Hardware");
     assert_eq!(
-        spoken(&mut state, selected),
+        spoken(&mut state, focus_event(&focus)),
         [vec![
-            SegmentContent::State(State::Selected),
-            SegmentContent::State(State::Collapsed)
+            SegmentContent::Level(0),
+            SegmentContent::Label("Hardware".to_owned()),
+            SegmentContent::State(State::Mixed),
+            SegmentContent::State(State::Collapsed),
+            SegmentContent::Position {
+                position: 1,
+                set_size: Some(3)
+            },
         ]]
-    );
-    assert_eq!(
-        spoken(&mut state, collapsed),
-        Vec::<Vec<SegmentContent>>::new()
     );
     app.quit();
 }
@@ -259,8 +261,8 @@ fn main() {
             a_description_change_on_the_focus_is_spoken,
         ),
         (
-            "a_state_change_on_an_ancestor_of_the_focus_is_spoken",
-            a_state_change_on_an_ancestor_of_the_focus_is_spoken,
+            "collapsing_a_tree_items_parent_says_nothing_until_its_focus",
+            collapsing_a_tree_items_parent_says_nothing_until_its_focus,
         ),
     ]);
 }
