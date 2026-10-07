@@ -360,7 +360,7 @@ impl TextSource for UiaText {
         let Some(uia_unit) = self.unit(unit) else {
             return Ok(None);
         };
-        let range = Self::collapsed(at)?;
+        let range = Self::starting_at(at)?;
         range.expand(uia_unit).map_err(failed)?;
         let limit = i32::try_from(max_units.saturating_add(1)).unwrap_or(i32::MAX);
         let mut text = range.text(limit).map_err(failed)?;
@@ -383,7 +383,7 @@ impl TextSource for UiaText {
         let Some(uia_unit) = self.unit(unit) else {
             return Ok(None);
         };
-        let range = Self::collapsed(at)?;
+        let range = Self::starting_at(at)?;
         range.expand(uia_unit).map_err(failed)?;
         // From the unit's start, collapsed, as NVDA moves its review
         // position: moving the whole unit instead stops short of an empty
@@ -392,10 +392,8 @@ impl TextSource for UiaText {
         range
             .move_endpoint_to(Endpoint::End, &range, Endpoint::Start)
             .map_err(failed)?;
+        // A collapsed range stays collapsed when it moves.
         let moved = range.move_by(uia_unit, count).map_err(failed)?;
-        range
-            .move_endpoint_to(Endpoint::End, &range, Endpoint::Start)
-            .map_err(failed)?;
         Ok(Some((UiaPos::new(&range, Endpoint::Start, true)?, moved)))
     }
 
@@ -486,7 +484,7 @@ impl TextSource for UiaText {
     }
 
     fn location(&mut self, at: &UiaPos) -> TextResult<Option<(i32, i32)>> {
-        let range = Self::collapsed(at)?;
+        let range = Self::starting_at(at)?;
         range.expand(TextUnit_Character).map_err(failed)?;
         let rectangles = range.bounding_rectangles().map_err(failed)?;
         Ok(match rectangles.as_slice() {

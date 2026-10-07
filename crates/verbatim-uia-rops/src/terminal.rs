@@ -311,9 +311,11 @@ impl Constants {
         copy
     }
 
-    /// Emits the text of the line containing `range`'s start.
+    /// Emits the text of the line containing `range`'s start: a copy
+    /// expanded to its line, which normalizes the range from its start
+    /// alone, so it needs no collapsing first.
     fn line_text(&self, b: &mut Builder, range: Reg<kind::TextRange>) -> Reg<kind::Str> {
-        let copy = self.collapsed(b, range);
+        let copy = b.text_range_clone(range);
         b.text_range_expand_to_enclosing_unit(copy, self.line);
         b.text_range_get_text(copy, self.all)
     }
@@ -809,9 +811,10 @@ fn collapsed(range: &IUIAutomationTextRange) -> Result<IUIAutomationTextRange, E
     Ok(copy)
 }
 
-/// The text of the line containing `range`'s start. Four calls.
+/// The text of the line containing `range`'s start, as
+/// [`Constants::line_text`] emits it. Three calls.
 fn line_text(range: &IUIAutomationTextRange) -> Result<String, Error> {
-    let copy = collapsed(range)?;
+    let copy = range.clone_range()?;
     copy.expand(TextUnit_Line)?;
     Ok(String::from_utf16_lossy(&copy.text(-1)?))
 }

@@ -741,16 +741,19 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   document range read first); so is a terminal's first read when it gains
   the focus, the baseline (1 call, 2 before). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
-  call per provider method: 34 for the baseline of a six-line text, 30 for
-  a grown prompt, 43 for an output line and a new prompt, 43 for more
-  lines than a read takes, 64 for a read that finds nothing new and reads
-  afresh, and 67 for a cleared screen, whose classic read also finds the
+  call per provider method: 31 for the baseline of a six-line text, 27 for
+  a grown prompt, 39 for an output line and a new prompt, 39 for more
+  lines than a read takes, 58 for a read that finds nothing new and reads
+  afresh, and 61 for a cleared screen (34, 30, 43, 43, 64, and 67 before
+  the text range audit of 2026-10-07, which reads a line's text from a
+  copy expanded to its line without collapsing the copy first, since
+  expanding normalizes a range from its start alone), whose classic read also finds the
   last line by its text (`FindText`), as the remote program now does too
   (it walked up line by line before 2026-10-07). Every one of these is
   pinned, both ways. The provider's
   own work is the same either way, and pinned too: 13 clones, 6 line
-  expansions, 6 reads, 5 moves, and 13 other range calls for the output
-  line. The lines spoken are read in one call, however many there are, so
+  expansions, 6 reads, 5 moves, and 9 other range calls for the output
+  line (13 before the audit). The lines spoken are read in one call, however many there are, so
   the cost does not grow with them. Of these calls, the line above where
   the read started, read again at the end, and the last line and the one
   before it, compared with the end of that one read, tell whether the
@@ -859,9 +862,11 @@ made, about 4 in all, wherever the fingerprint is, where its walk took
 
 Against mockapp (`a_fingerprint_far_up_is_found_and_costs_exactly` in
 `crates/mockapp/tests/terminal.rs`), a fingerprint 300 lines up, which
-the bound of 256 missed, is found in 1 call remotely and 63 classically,
+the bound of 256 missed, is found in 1 call remotely and 58 classically,
 with one `FindText` either way, and the provider calls of both are
-pinned. In a console
+pinned.
+
+In a console
 host whose scrollback is not yet full the text does not move beneath the
 anchor, so no search runs there; but its lines are slow to walk (about
 1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), and
@@ -1036,3 +1041,18 @@ mixed test is made on values already read.
   twelve stretches (the line's, four words, seven characters) inside the
   provider with 84 attribute reads. Before, the line was read as one
   stretch whose italics were none.
+
+### Expanding without collapsing first
+
+`ExpandToEnclosingUnit` normalizes a range from its start alone: a range
+that starts inside a unit becomes that unit, however far its end reaches.
+A copy collapsed before it was expanded made one call more for nothing.
+The terminal's reads of a line's text (`line_text`, both ways) now expand
+a plain copy: a terminal read costs 3 to 6 calls fewer classically ("A
+terminal output line" above) and as many endpoint moves fewer inside the
+provider remotely. The text source's own reads of a unit, a move, and a
+location from a held position (`UiaText`'s `unit_at`, `move_by`, and
+`location`), and the classic location read, do the same, and a move no
+longer collapses the range after it moves, since UIA keeps a collapsed
+range collapsed when it moves; the ledger's operations above do not reach
+those reads, so their counts are unchanged.

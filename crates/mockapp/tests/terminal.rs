@@ -280,9 +280,9 @@ fn a_fingerprint_far_up_is_found_and_costs_exactly() {
         ("GetText", 8),
         ("Move", 7),
         ("MoveEndpointByUnit", 1),
-        ("MoveEndpointByRange", 14),
+        ("MoveEndpointByRange", 9),
     ];
-    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(63), hits)];
+    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(58), hits)];
     for ((calls, hits), (expected_calls, expected_hits)) in costs.iter().zip(expected) {
         assert_eq!(
             (*calls, hits.as_slice()),
@@ -535,12 +535,12 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         ]
     } else {
         [
-            ("baseline", uia_calls(34), BASELINE_HITS),
-            ("typed", uia_calls(30), TYPED_HITS),
-            ("output line", uia_calls(43), LINE_HITS),
-            ("overflow", uia_calls(43), LINE_HITS),
-            ("redraw", uia_calls(64), REDRAW_HITS),
-            ("cleared", uia_calls(67), CLEARED_HITS),
+            ("baseline", uia_calls(31), BASELINE_HITS),
+            ("typed", uia_calls(27), TYPED_HITS),
+            ("output line", uia_calls(39), LINE_HITS),
+            ("overflow", uia_calls(39), LINE_HITS),
+            ("redraw", uia_calls(58), REDRAW_HITS),
+            ("cleared", uia_calls(61), CLEARED_HITS),
         ]
     };
     for ((name, calls, hits), (_, expected_calls, expected_hits)) in costs.iter().zip(expected) {
@@ -568,7 +568,7 @@ const BASELINE_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 5),
     ("Move", 4),
-    ("MoveEndpointByRange", 8),
+    ("MoveEndpointByRange", 5),
 ];
 
 /// The provider hits of the baseline read remotely: the classic read's,
@@ -585,7 +585,7 @@ const REMOTE_BASELINE_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 5),
     ("Move", 4),
-    ("MoveEndpointByRange", 8),
+    ("MoveEndpointByRange", 5),
 ];
 
 /// The provider hits of a read that finds the prompt grown: the anchor's
@@ -597,7 +597,7 @@ const TYPED_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 3),
     ("Move", 3),
-    ("MoveEndpointByRange", 7),
+    ("MoveEndpointByRange", 4),
 ];
 
 /// The provider hits of a read that finds an output line and a new prompt:
@@ -609,7 +609,7 @@ const LINE_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 6),
     ("GetText", 6),
     ("Move", 5),
-    ("MoveEndpointByRange", 11),
+    ("MoveEndpointByRange", 7),
 ];
 
 /// The provider hits of a read that found nothing new after a skip,
@@ -621,7 +621,7 @@ const REDRAW_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 10),
     ("GetText", 8),
     ("Move", 7),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// [`REDRAW_HITS`] remotely, with the import of the element and its text
@@ -638,7 +638,7 @@ const REMOTE_REDRAW_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 10),
     ("GetText", 8),
     ("Move", 7),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// The provider hits of a read that finds the screen cleared, classically:
@@ -653,7 +653,7 @@ const CLEARED_HITS: &[(&str, u32)] = &[
     ("GetText", 8),
     ("Move", 7),
     ("MoveEndpointByUnit", 1),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// The provider hits of a read that finds the screen cleared, remotely: the
@@ -674,7 +674,7 @@ const REMOTE_CLEARED_HITS: &[(&str, u32)] = &[
     ("GetText", 8),
     ("Move", 7),
     ("MoveEndpointByUnit", 1),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
 fn terminal_reads_cost_exactly_remote() {

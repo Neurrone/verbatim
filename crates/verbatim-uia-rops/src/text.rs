@@ -1107,7 +1107,7 @@ pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> 
 /// [`Error::Uia`] when a call fails.
 pub fn text_location_classic(query: &LocationQuery<'_>) -> Result<LocationAnswer, Error> {
     let at = classic_point(query.target, query.at, &mut None)?;
-    let range = collapsed_copy(&at)?;
+    let range = starting_at(&at)?;
     range.expand(TextUnit_Character)?;
     let rectangles = range.bounding_rectangles()?;
     let location = match rectangles.as_slice() {
