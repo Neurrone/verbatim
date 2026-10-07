@@ -2,8 +2,10 @@
 //! provider (`verbatim-uia-rops`): the remote focus ancestry must return
 //! exactly what the classic walk returns, the same ancestors with the same
 //! cached properties, and the two must fail the same way when the provider
-//! is stalled or gone. mockapp's providers are server-side, so programs run
-//! in its process.
+//! is stalled or gone. A walk that hits UIA's transaction timeout is a
+//! failure either way, which the outpost reports as a focus whose
+//! containers are unknown. mockapp's providers are server-side, so
+//! programs run in its process.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -13,11 +15,16 @@ use std::fmt::Write as _;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
+use common::outpost::OutpostUnderTest;
+use verbatim_model::NormalizedEvent;
+use verbatim_outpost::OutpostOptions;
+use verbatim_outpost::listener::uia_focus_fact;
+use verbatim_outpost::protocol::{ListenerFact, OutpostToSupervisor};
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
 use verbatim_uia_rops::{
     Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
-    NavigationDirection, Status, StepQuery, focus_ancestry_classic, focus_ancestry_remote,
-    navigation_step_classic, navigation_step_remote,
+    NavigationDirection, Status, StepQuery, focus_ancestry, focus_ancestry_classic,
+    focus_ancestry_remote, navigation_step_classic, navigation_step_remote,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -467,6 +474,122 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     fixture.app.quit();
 }
 
+/// The HRESULT a run failed with, `None` when it answered.
+fn failure(answer: &Result<impl std::fmt::Debug, Error>) -> Option<windows::core::HRESULT> {
+    answer.as_ref().err().and_then(Error::hresult)
+}
+
+/// A focus walk that hits UIA's transaction timeout is a failure, never a
+/// success with what it read before: the classic walk's hop that times out
+/// is not the root, and a remote program that times out is not answered
+/// by the classic walk, which would wait on the application a second time
+/// (`docs/crates/verbatim-uia-rops.md`, "Fallback rules"). With every
+/// provider call slow (`slow`), the live focus read answers in time but a
+/// hop that fills an ancestor's cache, many calls, does not; with the
+/// window thread stalled (`stall`) for less than two timeouts, the classic
+/// walk after the program's timeout would have waited the stall out and
+/// read the ancestors.
+fn a_focus_walk_that_times_out_fails() {
+    const TIMEOUT: Duration = Duration::from_millis(1000);
+    const SLOW_CALL: Duration = Duration::from_millis(50);
+    const STALL: Duration = Duration::from_millis(1500);
+    let mut fixture = Fixture::start_alone("mockapp-rops-timed-out");
+    let deep = fixture.focus("deep", "Deep button");
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let _restored = TransactionTimeout::set(&client, TIMEOUT);
+
+    fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
+    let classic = focus_ancestry_classic(&fixture.uia, &query(&deep, &[]));
+    assert_eq!(
+        failure(&classic),
+        Some(hresult(UIA_E_TIMEOUT)),
+        "classic: {classic:?}"
+    );
+    let picked = focus_ancestry(&fixture.uia, &query(&deep, &[]), true);
+    assert_eq!(
+        failure(&picked),
+        Some(hresult(UIA_E_TIMEOUT)),
+        "remote: {picked:?}"
+    );
+    assert!(
+        picked.as_ref().err().and_then(execution_failure).is_some(),
+        "the program's own failure: {picked:?}"
+    );
+    fixture.app.send("slow 0");
+
+    fixture.app.stall(STALL);
+    let picked = focus_ancestry(&fixture.uia, &query(&deep, &[]), true);
+    let returned = common::now_us();
+    let ended = fixture.app.stall_ended(STALL);
+    assert_eq!(
+        failure(&picked),
+        Some(hresult(UIA_E_TIMEOUT)),
+        "stalled: {picked:?}"
+    );
+    assert!(
+        returned < ended,
+        "the program's timeout was answered without waiting again: it returned at {returned} us, after the stall ended at {ended} us"
+    );
+    fixture.app.quit();
+}
+
+/// The outpost, the focus walk's caller, handles a walk that timed out:
+/// with every provider call slow (`slow`), so that a hop filling an
+/// ancestor's cache outlasts UIA's transaction timeout while each read of
+/// the focus itself does not, the focus is reported with its containers
+/// unknown, never as having none, whether remote operations are on or off.
+/// The timeout is short, and the calls only a little slow, since mockapp
+/// goes on answering a timed-out program's calls, each that much late,
+/// before it takes the next command.
+fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SLOW_CALL: Duration = Duration::from_millis(15);
+    for remote in [true, false] {
+        let path = if remote { "remote" } else { "classic" };
+        let mut fixture = Fixture::start_alone(&format!("mockapp-rops-unknown-{path}"));
+        let deep = fixture.focus("deep", "Deep button");
+        let outpost = OutpostUnderTest::with_options(
+            fixture.app.pid(),
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        let ListenerFact { fact, .. } =
+            uia_focus_fact(&deep).expect("mockapp's element has its process");
+        outpost.read_focus_as(&deep);
+        let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+        let restored = TransactionTimeout::set(&client, TIMEOUT);
+
+        fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
+        outpost.deliver(fact);
+        let said = outpost.next();
+        // Acknowledged once mockapp has answered the calls still queued,
+        // among them the rest of a program UIA stopped waiting for.
+        fixture.app.send("slow 0");
+        drop(restored);
+        match said {
+            OutpostToSupervisor::Event {
+                event:
+                    NormalizedEvent::FocusChanged {
+                        node,
+                        ancestors,
+                        ancestors_unknown,
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(node.name.as_deref(), Some("Deep button"), "{path}");
+                assert!(ancestors_unknown, "{path}: the containers are unknown");
+                assert_eq!(ancestors, [], "{path}");
+            }
+            other => panic!("{path}: the outpost said {other:?}, not the focus"),
+        }
+        outpost.settled();
+        drop(outpost);
+        fixture.app.quit();
+    }
+}
+
 /// UIA's transaction timeout, set for a while and restored when dropped,
 /// whether the test passed or not.
 struct TransactionTimeout {
@@ -552,6 +675,14 @@ fn main() {
         (
             "a_provider_that_has_exited_fails_at_once",
             a_provider_that_has_exited_fails_at_once,
+        ),
+        (
+            "a_focus_walk_that_times_out_fails",
+            a_focus_walk_that_times_out_fails,
+        ),
+        (
+            "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",
+            a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown,
         ),
     ]);
 }

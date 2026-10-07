@@ -400,8 +400,9 @@ impl Uia {
     /// (`correctAPIForRelation`). It also stops at the first reported
     /// ancestor `known` recognizes, from the previous focus's chain, with that
     /// ancestor outermost, as NVDA's focus ancestry stops where it meets the
-    /// previous focus's ancestors; and when `deadline` passes, reporting the
-    /// chain as incomplete.
+    /// previous focus's ancestors; and when `deadline` passes, or a hop
+    /// finds the provider did not answer within UIA's transaction timeout,
+    /// reporting the chain as incomplete.
     ///
     /// # Errors
     ///
@@ -443,12 +444,19 @@ impl Uia {
                 return Ok((chain, None, AncestorWalk::OutOfTime));
             }
             hops += 1;
-            let Ok(parent) = walker.parent(&current, cache) else {
+            let parent = walker.parent(&current, cache);
+            let Ok(parent) = parent else {
                 // A hop that fails because the deadline passed while it
-                // waited is an incomplete chain, not the root. Any other
-                // failure ends the chain as the root, as NVDA's does: its
-                // parent read answers no parent when the call fails.
-                let ending = if out_of_time() {
+                // waited, or because the provider did not answer within
+                // UIA's transaction timeout, is an incomplete chain, not the
+                // root. Any other failure ends the chain as the root, as
+                // NVDA's does: its parent read answers no parent when the
+                // call fails.
+                let timed_out = parent.as_ref().is_err_and(|error| {
+                    error.code().0.cast_unsigned()
+                        == windows::Win32::UI::Accessibility::UIA_E_TIMEOUT
+                });
+                let ending = if timed_out || out_of_time() {
                     AncestorWalk::OutOfTime
                 } else {
                     AncestorWalk::Complete

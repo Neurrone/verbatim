@@ -294,6 +294,10 @@ and a tab control with selected children) and asserts they return the
 same ancestors with the same cached properties, that an element that
 lost the focus returns early, and how both behave against a stalled
 mockapp and one that has exited; the crate's guide records the findings.
+It also pins that a walk that hits UIA's transaction timeout, made slow
+with `slow` or stalled with `stall`, is a failure both ways and never
+answered by the classic walk after the program's timeout, and that a
+real outpost then reports the focus with its containers unknown.
 `text.rs` drives `verbatim-outpost`'s text module over `text.json`'s text
 on both stacks, as the outpost's worker does once it has a node's text
 (the worker finds a UIA focus by reading the keyboard focus, which a test

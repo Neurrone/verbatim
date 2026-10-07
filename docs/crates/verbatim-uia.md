@@ -48,7 +48,8 @@ Public API:
   NVDA shipped for years), capped by the caller, and stopped by
   `AncestorStops`: at a window read through the other API, at an ancestor
   the caller already knows (reporting `AncestorWalk::MetKnown`), or at a
-  deadline (`AncestorWalk::OutOfTime`). `Uia::within(wait, read)` runs a
+  deadline or a hop that UIA's transaction timeout ended
+  (`AncestorWalk::OutOfTime`); any other failed hop is the root. `Uia::within(wait, read)` runs a
   read with a shorter connection timeout, for reads that are only extras;
   verified with `verbatim-uia-rops`'s stall test, the connection timeout
   does not bound a call on an element already fetched, which UIA's
