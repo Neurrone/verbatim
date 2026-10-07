@@ -2014,7 +2014,8 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       Performance Issues When Using the Text and TextRange Control
       Patterns", "Using IUIAutomationTextRange", the text units and
       embedded objects topics), fixing or adopting with tests:
-      `GetText` always with a length limit (the terminal reads pass -1);
+      `GetText` with a length limit where a range is unbounded (the
+      terminal's line-bounded reads keep -1, which Dickson judged fine);
       how an unsupported unit is detected, since providers silently use
       the next larger unit; ranges after the text changes; the mixed and
       not-supported attribute tokens on both paths; `FindAttribute` to
