@@ -178,12 +178,23 @@ fn a_foreground_report_does_not_replace_a_focus_that_came_without_a_window() {
         StateSet::new(),
     );
     let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), app, edit));
-    assert_eq!(speak_effects(&effects).len(), 1, "the control is announced");
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(7), 7001, &[], Some((OutpostId(7), 7000))),
+            vec![vec![
+                UtteranceSegment::label("Name"),
+                role(Role::EditableText)
+            ]]
+        ),
+        "the control is announced"
+    );
 
     let window_node = node(7000, Role::Window, Some("App"), None, StateSet::new());
     let (state, effects) = reduce(&state, &foreground_in(app, window(7000), window_node));
-    assert!(
-        speak_effects(&effects).is_empty(),
+    assert_eq!(
+        heard(&effects),
+        vec![],
         "the window is not announced over it"
     );
     assert_eq!(
@@ -202,27 +213,83 @@ fn switch_to(state: &SrState, source: Pid) -> SrState {
     reduce(state, &foreground_in(source, window(handle), window_node)).0
 }
 
-/// The utterances among `effects`. A focus change also tells the speech
-/// manager where the focus is, and may cancel speech, and an object with
-/// text asks for the text it says next; those effects are left out here and
-/// checked by their own tests.
-fn speak_effects(effects: &[Effect]) -> Vec<&Utterance> {
+/// One effect as these tests compare it. Every effect the reducer returns
+/// becomes exactly one of these, so comparing the whole list checks every
+/// effect an input produces, in order: an utterance by its priority and
+/// segments, and every other effect whole.
+#[derive(Debug, Clone, PartialEq)]
+enum Heard {
+    /// `Effect::DropExpiredSpeech`, with where the focus now is.
+    Expire(FocusNow),
+    /// `Effect::StopSpeech`.
+    Stop,
+    /// `Effect::Speak`: the utterance's priority and segments.
+    Say(SpeechPriority, Vec<UtteranceSegment>),
+    /// Any other effect, compared whole.
+    Other(Effect),
+}
+
+/// Every effect in `effects`, in order, as [`Heard`].
+fn heard(effects: &[Effect]) -> Vec<Heard> {
     effects
         .iter()
-        .filter_map(|effect| match effect {
-            Effect::Speak(utterance) => Some(utterance),
-            Effect::DropExpiredSpeech(_) | Effect::StopSpeech | Effect::Text(_) => None,
-            other => panic!("expected Speak effect, got {other:?}"),
+        .map(|effect| match effect {
+            Effect::DropExpiredSpeech(now) => Heard::Expire(now.clone()),
+            Effect::StopSpeech => Heard::Stop,
+            Effect::Speak(utterance) => Heard::Say(utterance.priority, utterance.segments.clone()),
+            other => Heard::Other(other.clone()),
         })
         .collect()
 }
 
-/// Every segment spoken by `effects`, in order, across utterances: an
-/// entered container is its own utterance, before the focus's.
-fn spoken_segments(effects: &[Effect]) -> Vec<UtteranceSegment> {
-    speak_effects(effects)
-        .into_iter()
-        .flat_map(|utterance| utterance.segments.clone())
+/// A queued utterance of `segments`.
+fn queued(segments: Vec<UtteranceSegment>) -> Heard {
+    Heard::Say(SpeechPriority::Queued, segments)
+}
+
+/// Where the focus is, as a focus change tells the speech manager: node
+/// `focus` and its `ancestors` (outermost first) in `outpost`, and the
+/// foreground window, each a node number in the outpost named.
+fn focus_now(
+    outpost: OutpostId,
+    focus: u64,
+    ancestors: &[u64],
+    foreground: Option<(OutpostId, u64)>,
+) -> FocusNow {
+    FocusNow {
+        focus: NodeId::in_outpost(outpost, focus),
+        ancestors: ancestors
+            .iter()
+            .map(|&ancestor| NodeId::in_outpost(outpost, ancestor))
+            .collect(),
+        foreground: foreground.map(|(outpost, node)| NodeId::in_outpost(outpost, node)),
+    }
+}
+
+/// Where the focus is when it moves to node `focus` of application 1 with
+/// no ancestors and no foreground window known: the plain focus change
+/// most of these tests make.
+fn plain_focus(focus: u64) -> FocusNow {
+    focus_now(OutpostId(1), focus, &[], None)
+}
+
+/// The effects of the focus moving to `now`, announced by the utterances
+/// `said`, each queued, with no speech cut off.
+fn focus_heard(now: FocusNow, said: Vec<Vec<UtteranceSegment>>) -> Vec<Heard> {
+    let mut expected = vec![Heard::Expire(now)];
+    expected.extend(said.into_iter().map(queued));
+    expected
+}
+
+/// The utterances among `effects`, after asserting that `effects` holds
+/// nothing else.
+fn only_speech(effects: &[Effect]) -> Vec<&Utterance> {
+    effects
+        .iter()
+        .map(|effect| match effect {
+            Effect::Speak(utterance) => utterance,
+            other => panic!("expected only Speak effects, got {other:?} in {effects:?}"),
+        })
         .collect()
 }
 
@@ -241,17 +308,20 @@ fn focus_menu_item_with_popup_speaks_name_and_submenu() {
 
     let (next, effects) = reduce(&state, &focus_event(trace_id, source, snapshot));
 
-    assert_eq!(speak_effects(&effects).len(), 1);
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Settings..."),
-            UtteranceSegment::new(SegmentContent::State(State::HasPopup)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(100), 1, &[], None),
+            vec![vec![
+                UtteranceSegment::label("Settings..."),
+                UtteranceSegment::new(SegmentContent::State(State::HasPopup)),
+            ]]
+        )
     );
+    let Effect::Speak(utterance) = &effects[1] else {
+        panic!("the announcement follows the drop of expired speech");
+    };
+    assert_eq!(utterance.trace_id, trace_id);
     assert_eq!(next.focused().map(|(pid, _)| pid), Some(source));
 }
 
@@ -263,14 +333,16 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     let slider = node(2, Role::Slider, Some("Rate"), Some("50"), StateSet::new());
 
     let (state, effects) = reduce(&state, &focus_event(trace_1, source, slider));
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Rate"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Slider)),
-            UtteranceSegment::value("50"),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(200), 2, &[], None),
+            vec![vec![
+                UtteranceSegment::label("Rate"),
+                UtteranceSegment::new(SegmentContent::Role(Role::Slider)),
+                UtteranceSegment::value("50"),
+            ]]
+        )
     );
 
     let trace_2 = TraceId::mint();
@@ -287,11 +359,11 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     };
     let (state, effects) = reduce(&state, &value_changed);
 
-    assert_eq!(effects.len(), 1);
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].trace_id, trace_2);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
-    assert_eq!(utterances[0].segments, vec![UtteranceSegment::value("55")]);
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("55")])]
+    );
+    assert_eq!(only_speech(&effects)[0].trace_id, trace_2);
     assert_eq!(
         state.focused().map(|(_, n)| n.value.clone()),
         Some(Some("55".to_string()))
@@ -300,7 +372,6 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
 
 #[test]
 fn unchecked_checkbox_announces_negated_checked() {
-    let state = SrState::new();
     let checkbox = node(
         3,
         Role::CheckBox,
@@ -309,11 +380,8 @@ fn unchecked_checkbox_announces_negated_checked() {
         StateSet::new(),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), checkbox));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(checkbox),
         vec![
             UtteranceSegment::label("Remember me"),
             UtteranceSegment::new(SegmentContent::Role(Role::CheckBox)),
@@ -324,7 +392,6 @@ fn unchecked_checkbox_announces_negated_checked() {
 
 #[test]
 fn checked_checkbox_announces_checked() {
-    let state = SrState::new();
     let checkbox = node(
         4,
         Role::CheckBox,
@@ -333,11 +400,8 @@ fn checked_checkbox_announces_checked() {
         StateSet::new().with(State::Checked),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), checkbox));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(checkbox),
         vec![
             UtteranceSegment::label("Remember me"),
             UtteranceSegment::new(SegmentContent::Role(Role::CheckBox)),
@@ -348,7 +412,6 @@ fn checked_checkbox_announces_checked() {
 
 #[test]
 fn mixed_checkbox_does_not_announce_negated_checked() {
-    let state = SrState::new();
     let checkbox = node(
         5,
         Role::CheckBox,
@@ -357,11 +420,8 @@ fn mixed_checkbox_does_not_announce_negated_checked() {
         StateSet::new().with(State::Mixed),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), checkbox));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(checkbox),
         vec![
             UtteranceSegment::label("Some of these"),
             UtteranceSegment::new(SegmentContent::Role(Role::CheckBox)),
@@ -372,14 +432,10 @@ fn mixed_checkbox_does_not_announce_negated_checked() {
 
 #[test]
 fn unpressed_toggle_button_announces_negated_pressed() {
-    let state = SrState::new();
     let toggle_button = node(900, Role::ToggleButton, Some("Bold"), None, StateSet::new());
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), toggle_button));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(toggle_button),
         vec![
             UtteranceSegment::label("Bold"),
             UtteranceSegment::new(SegmentContent::Role(Role::ToggleButton)),
@@ -390,7 +446,6 @@ fn unpressed_toggle_button_announces_negated_pressed() {
 
 #[test]
 fn pressed_toggle_button_announces_pressed() {
-    let state = SrState::new();
     let toggle_button = node(
         901,
         Role::ToggleButton,
@@ -399,11 +454,8 @@ fn pressed_toggle_button_announces_pressed() {
         StateSet::new().with(State::Pressed),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), toggle_button));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(toggle_button),
         vec![
             UtteranceSegment::label("Bold"),
             UtteranceSegment::new(SegmentContent::Role(Role::ToggleButton)),
@@ -414,7 +466,6 @@ fn pressed_toggle_button_announces_pressed() {
 
 #[test]
 fn disabled_button_announces_unavailable_state() {
-    let state = SrState::new();
     let button = node(
         6,
         Role::Button,
@@ -423,11 +474,8 @@ fn disabled_button_announces_unavailable_state() {
         StateSet::new().with(State::Disabled),
     );
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(button),
         vec![
             UtteranceSegment::label("OK"),
             UtteranceSegment::new(SegmentContent::Role(Role::Button)),
@@ -438,7 +486,6 @@ fn disabled_button_announces_unavailable_state() {
 
 #[test]
 fn focus_related_states_are_never_announced_but_unselected_is() {
-    let state = SrState::new();
     let mut states = StateSet::new();
     states.insert(State::Focused);
     states.insert(State::Focusable);
@@ -446,11 +493,8 @@ fn focus_related_states_are_never_announced_but_unselected_is() {
     states.insert(State::Offscreen);
     let item = node(7, Role::ListItem, Some("Row"), None, states);
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(item),
         vec![
             UtteranceSegment::label("Row"),
             // NVDA's rule: a selectable item that is not selected announces
@@ -462,17 +506,13 @@ fn focus_related_states_are_never_announced_but_unselected_is() {
 
 #[test]
 fn selected_items_do_not_announce_positive_selected_on_focus() {
-    let state = SrState::new();
     let mut states = StateSet::new();
     states.insert(State::Selectable);
     states.insert(State::Selected);
     let item = node(7, Role::ListItem, Some("Row"), None, states);
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
-
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(item),
         vec![UtteranceSegment::label("Row"),],
         "a focused item being selected is the expected default and stays silent"
     );
@@ -541,12 +581,9 @@ fn a_name_change_on_the_focus_speaks_the_new_name_alone_queued() {
     };
     let (state, effects) = reduce(&state, &name_changed);
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances.len(), 1);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::label("New name")],
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::label("New name")])],
         "the new name alone, as NVDA speaks it"
     );
     assert_eq!(
@@ -602,34 +639,29 @@ fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
         &state,
         &states_changed_with_children(TraceId::mint(), source, node_id, expanded, Some(52)),
     );
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances.len(), 2, "the state, then the count on its own");
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::State(
-            State::Expanded
-        ))]
-    );
-    assert_eq!(utterances[1].priority, SpeechPriority::Queued);
-    assert_eq!(
-        utterances[1].segments,
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Items(52)
-        ))]
+        heard(&effects),
+        vec![
+            queued(vec![UtteranceSegment::new(SegmentContent::State(
+                State::Expanded
+            ))]),
+            queued(vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::Items(52)
+            ))]),
+        ],
+        "the state, then the count on its own"
     );
 
     // A further change while it stays expanded says no count, even with
-    // one on the event.
+    // one on the event: losing the selection says "not selected" alone.
     let unselected = focusable.with(State::Expanded);
     let (_, effects) = reduce(
         &state,
         &states_changed_with_children(TraceId::mint(), source, node_id, unselected, Some(52)),
     );
-    assert!(
-        speak_effects(&effects).iter().all(|utterance| !utterance
-            .segments
-            .iter()
-            .any(|segment| matches!(segment.content, SegmentContent::Phrase(Phrase::Items(_))))),
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![not(State::Selected)])],
         "only a change that makes the item expanded says the count"
     );
 }
@@ -647,17 +679,12 @@ fn expanding_without_a_count_says_only_expanded() {
         &state,
         &states_changed_input(TraceId::mint(), source, node_id, expanded),
     );
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances.len(),
-        1,
-        "a tree item read through UIA says no count"
-    );
-    assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::State(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(SegmentContent::State(
             State::Expanded
-        ))]
+        ))])],
+        "a tree item read through UIA says no count"
     );
 }
 
@@ -680,14 +707,13 @@ fn states_changed_checkbox_toggle_on_announces_checked() {
     );
     let (state, effects) = reduce(&state, &toggled_on);
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances.len(), 1);
-    assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::State(State::Checked))]
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(SegmentContent::State(
+            State::Checked
+        ))])]
     );
+    assert_eq!(only_speech(&effects)[0].trace_id, trace_id);
     assert_eq!(
         state.focused().map(|(_, n)| n.states),
         Some(StateSet::new().with(State::Checked))
@@ -719,16 +745,13 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
     );
     let (state, effects) = reduce(&state, &toggled_off);
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances.len(), 1);
-    assert_eq!(utterances[0].trace_id, trace_id);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Checked
-        ))]
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(
+            SegmentContent::NegatedState(State::Checked)
+        )])]
     );
+    assert_eq!(only_speech(&effects)[0].trace_id, trace_id);
     assert_eq!(
         state.focused().map(|(_, n)| n.states),
         Some(StateSet::new().with(State::Focused))
@@ -780,13 +803,7 @@ fn states_changed_unselecting_the_focused_item_announces_not_selected() {
     let unselected = states_changed_input(TraceId::mint(), source, node_id, focused);
     let (_, effects) = reduce(&state, &unselected);
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::NegatedState(
-            State::Selected
-        ))]
-    );
+    assert_eq!(heard(&effects), vec![queued(vec![not(State::Selected)])]);
 }
 
 #[test]
@@ -807,12 +824,11 @@ fn states_changed_disabled_appearing_announces_unavailable() {
     );
     let (_, effects) = reduce(&state, &disabled);
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::State(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(SegmentContent::State(
             State::Disabled
-        ))]
+        ))])]
     );
 }
 
@@ -873,10 +889,10 @@ fn a_button_disabled_while_still_focused_says_unavailable() {
         ),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::new(SegmentContent::State(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(SegmentContent::State(
             State::Disabled
-        ))]
+        ))])]
     );
 }
 
@@ -1032,7 +1048,18 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
         "the window has dropped its start"
     );
     let live_tail = &live_effects[script.len() - kept.len()..];
-    assert!(live_tail.iter().all(|effects| !effects.is_empty()));
+    // Input `index` of the script sets the slider to `index`, which is
+    // spoken as the new value alone.
+    let expected_tail: Vec<Vec<Heard>> = (script.len() - kept.len()..script.len())
+        .map(|index| vec![queued(vec![UtteranceSegment::value(index.to_string())])])
+        .collect();
+    assert_eq!(
+        live_tail
+            .iter()
+            .map(|effects| heard(effects))
+            .collect::<Vec<_>>(),
+        expected_tail
+    );
 
     let entries: Vec<_> = recorder.entries().cloned().collect();
     let mut buffer = Vec::new();
@@ -1045,7 +1072,7 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
 }
 
 /// A focus event whose snapshot arrives with an ancestor chain, outermost
-/// first — the enriched form outposts emit from M3 on.
+/// first â€” the enriched form outposts emit from M3 on.
 fn focus_event_with_ancestors(
     trace_id: TraceId,
     source: Pid,
@@ -1094,17 +1121,26 @@ fn entering_a_dialog_announces_it_before_the_control() {
     );
 
     assert_eq!(
-        spoken_segments(&effects),
-        vec![
-            // The named window and then the dialog introduce themselves,
-            // outermost first.
-            UtteranceSegment::label("Settings - App"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
-            UtteranceSegment::label("Save changes"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Dialog)),
-            UtteranceSegment::label("Save"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 102, &[100, 101], None),
+            vec![
+                // The named window and then the dialog introduce themselves,
+                // outermost first, each in an utterance of its own.
+                vec![
+                    UtteranceSegment::label("Settings - App"),
+                    UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+                ],
+                vec![
+                    UtteranceSegment::label("Save changes"),
+                    UtteranceSegment::new(SegmentContent::Role(Role::Dialog)),
+                ],
+                vec![
+                    UtteranceSegment::label("Save"),
+                    UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+                ],
+            ]
+        )
     );
 }
 
@@ -1131,13 +1167,15 @@ fn moving_within_the_same_dialog_does_not_reannounce_it() {
         &focus_event_with_ancestors(TraceId::mint(), source, cancel, vec![dialog]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Cancel"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 103, &[101], None),
+            vec![vec![
+                UtteranceSegment::label("Cancel"),
+                UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+            ]]
+        )
     );
 }
 
@@ -1171,10 +1209,15 @@ fn focus_from_another_application_treats_the_chain_as_new() {
         &focus_event_with_ancestors(TraceId::mint(), Pid(2), edit_b, vec![dialog_b]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments[0],
-        UtteranceSegment::label("Open"),
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 202, &[201], Some((OutpostId(2), 2000))),
+            vec![
+                vec![UtteranceSegment::label("Open"), role(Role::Dialog)],
+                vec![UtteranceSegment::label("Search"), role(Role::EditableText)],
+            ]
+        ),
         "a different application's chain is entirely newly entered"
     );
 }
@@ -1193,20 +1236,21 @@ fn nameless_groups_are_not_announced_but_named_ones_are() {
     );
 
     assert_eq!(
-        spoken_segments(&effects),
-        vec![
-            UtteranceSegment::label("Margins"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Group)),
-            UtteranceSegment::label("Top"),
-            UtteranceSegment::new(SegmentContent::Role(Role::SpinButton)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 302, &[300, 301], None),
+            vec![
+                vec![UtteranceSegment::label("Margins"), role(Role::Group)],
+                vec![UtteranceSegment::label("Top"), role(Role::SpinButton)],
+            ]
+        )
     );
 }
 
 #[test]
 fn a_named_list_ancestor_is_announced_as_entered_context() {
     // The settings dialog's category list ("Categories:") must be spoken when
-    // focus enters it — NVDA presents a named list ancestor.
+    // focus enters it â€” NVDA presents a named list ancestor.
     let state = SrState::new();
     let source = Pid(1);
     let list = node(600, Role::List, Some("Categories"), None, StateSet::new());
@@ -1218,12 +1262,14 @@ fn a_named_list_ancestor_is_announced_as_entered_context() {
     );
 
     assert_eq!(
-        spoken_segments(&effects),
-        vec![
-            UtteranceSegment::label("Categories"),
-            UtteranceSegment::new(SegmentContent::Role(Role::List)),
-            UtteranceSegment::label("Speech"),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 601, &[600], None),
+            vec![
+                vec![UtteranceSegment::label("Categories"), role(Role::List)],
+                vec![UtteranceSegment::label("Speech")],
+            ]
+        )
     );
 }
 
@@ -1242,11 +1288,14 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
     );
 
     assert_eq!(
-        spoken_segments(&effects),
-        vec![
-            UtteranceSegment::new(SegmentContent::Role(Role::Tree)),
-            UtteranceSegment::label("Home"),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 611, &[610], None),
+            vec![
+                vec![role(Role::Tree)],
+                vec![UtteranceSegment::label("Home")]
+            ]
+        )
     );
 }
 
@@ -1262,13 +1311,12 @@ fn an_unnamed_group_ancestor_is_dropped() {
         &focus_event_with_ancestors(TraceId::mint(), source, button, vec![group]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("OK"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ],
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 621, &[620], None),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        ),
         "a nameless group adds nothing and is not announced"
     );
 }
@@ -1294,13 +1342,14 @@ fn a_named_window_ancestor_is_announced_as_entered_context() {
     );
 
     assert_eq!(
-        spoken_segments(&effects),
-        vec![
-            UtteranceSegment::label("App - Window"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
-            UtteranceSegment::label("OK"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 631, &[630], None),
+            vec![
+                vec![UtteranceSegment::label("App - Window"), role(Role::Window)],
+                vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            ]
+        )
     );
 }
 
@@ -1314,13 +1363,12 @@ fn an_unnamed_window_ancestor_is_not_announced() {
         &focus_event_with_ancestors(TraceId::mint(), Pid(1), button, vec![window_node]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("OK"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 633, &[632], None),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        )
     );
 }
 
@@ -1345,19 +1393,17 @@ fn list_item_and_editable_text_ancestors_are_dropped() {
         &focus_event_with_ancestors(TraceId::mint(), source, button, vec![list_item, edit]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Go"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 642, &[640, 641], None),
+            vec![vec![UtteranceSegment::label("Go"), role(Role::Button)]]
+        )
     );
 }
 
 #[test]
 fn details_speak_in_nvda_property_order() {
-    let state = SrState::new();
     let mut item = node(
         400,
         Role::ListItem,
@@ -1374,13 +1420,10 @@ fn details_speak_in_nvda_property_order() {
         rect: None,
     };
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
-
     // The first level spoken goes first ("Where the level goes" in
     // `docs/nvda/speech.md`); everything else keeps NVDA's order.
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        focus_segments(item),
         vec![
             UtteranceSegment::new(SegmentContent::Level(1)),
             UtteranceSegment::label("Report.txt"),
@@ -1405,7 +1448,7 @@ fn tree_item(id: u64, name: &str, level: u32) -> NodeSnapshot {
 fn a_tree_items_level_goes_first_only_when_it_changes() {
     let level = |level| UtteranceSegment::new(SegmentContent::Level(level));
     let mut state = SrState::new();
-    let mut heard = Vec::new();
+    let mut steps = Vec::new();
     for (id, name, depth) in [
         (500, "Hardware Resources", 1),
         (501, "Components", 1),
@@ -1417,15 +1460,33 @@ fn a_tree_items_level_goes_first_only_when_it_changes() {
             &focus_event(TraceId::mint(), Pid(1), tree_item(id, name, depth)),
         );
         state = next;
-        heard.push(speak_effects(&effects)[0].segments.clone());
+        steps.push(heard(&effects));
     }
     assert_eq!(
-        heard,
+        steps,
         vec![
-            vec![level(1), UtteranceSegment::label("Hardware Resources")],
-            vec![UtteranceSegment::label("Components"), level(1)],
-            vec![level(0), UtteranceSegment::label("System Summary")],
-            vec![level(1), UtteranceSegment::label("Software Environment")],
+            focus_heard(
+                plain_focus(500),
+                vec![vec![
+                    level(1),
+                    UtteranceSegment::label("Hardware Resources")
+                ]]
+            ),
+            focus_heard(
+                plain_focus(501),
+                vec![vec![UtteranceSegment::label("Components"), level(1)]]
+            ),
+            focus_heard(
+                plain_focus(502),
+                vec![vec![level(0), UtteranceSegment::label("System Summary")]]
+            ),
+            focus_heard(
+                plain_focus(503),
+                vec![vec![
+                    level(1),
+                    UtteranceSegment::label("Software Environment")
+                ]]
+            ),
         ]
     );
 }
@@ -1466,7 +1527,17 @@ fn a_repeated_focus_with_another_selected_item_is_silent_until_the_selection_eve
         &SrState::new(),
         &focus_event_with_selection(TraceId::mint(), app, list.clone(), Some(first)),
     );
-    assert_eq!(speak_effects(&effects).len(), 1);
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            plain_focus(10),
+            vec![vec![
+                UtteranceSegment::label("Files"),
+                role(Role::List),
+                UtteranceSegment::label("a.txt"),
+            ]]
+        )
+    );
 
     let (state, effects) = reduce(
         &state,
@@ -1476,8 +1547,8 @@ fn a_repeated_focus_with_another_selected_item_is_silent_until_the_selection_eve
 
     let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), app, second));
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::label("b.txt")])],
         "the new item is announced by its selection event"
     );
 }
@@ -1505,14 +1576,16 @@ fn focusing_a_list_announces_its_selected_item() {
         &focus_event_with_selection(TraceId::mint(), source, list, Some(item)),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Categories"),
-            UtteranceSegment::new(SegmentContent::Role(Role::List)),
-            UtteranceSegment::label("Speech"),
-        ]
+        heard(&effects),
+        focus_heard(
+            plain_focus(500),
+            vec![vec![
+                UtteranceSegment::label("Categories"),
+                role(Role::List),
+                UtteranceSegment::label("Speech"),
+            ]]
+        )
     );
 }
 
@@ -1534,10 +1607,9 @@ fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
         &state,
         &selection_event(TraceId::mint(), source, keyboard.clone()),
     );
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::label("Keyboard"),]
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::label("Keyboard")])]
     );
 
     // A duplicate selection event for the same item stays silent.
@@ -1626,11 +1698,12 @@ fn notification_with_text_is_announced_and_priority_follows_processing() {
             Some("Snap layout available"),
         ),
     );
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].priority, SpeechPriority::Interrupt);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::text("Snap layout available")]
+        heard(&effects),
+        vec![Heard::Say(
+            SpeechPriority::Interrupt,
+            vec![UtteranceSegment::text("Snap layout available")]
+        )]
     );
 
     // All: queued behind current speech.
@@ -1643,8 +1716,10 @@ fn notification_with_text_is_announced_and_priority_follows_processing() {
             Some("Download complete"),
         ),
     );
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::text("Download complete")])]
+    );
 }
 
 #[test]
@@ -1670,7 +1745,14 @@ fn identical_back_to_back_focus_is_suppressed() {
         &SrState::new(),
         &focus_event(TraceId::mint(), source, button.clone()),
     );
-    assert_eq!(speak_effects(&effects).len(), 1, "first focus is announced");
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            plain_focus(700),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        ),
+        "first focus is announced"
+    );
 
     // The exact same node focusing again from the same app: suppressed.
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), source, button));
@@ -1695,8 +1777,11 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
     let state = switch_to(&state, Pid(1));
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), a));
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 700, &[], Some((OutpostId(1), 1000))),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        ),
         "focus that differs from the last announced one is announced, even if seen earlier"
     );
 }
@@ -1710,6 +1795,14 @@ fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
         trace_id,
         command: cmd,
         repeat,
+    }
+}
+
+/// The query of the one fetch that is all of `effects`.
+fn only_fetch(effects: &[Effect]) -> verbatim_model::Query {
+    match effects {
+        [Effect::Fetch(query)] => *query,
+        other => panic!("expected one Fetch and nothing else, got {other:?}"),
     }
 }
 
@@ -1739,8 +1832,14 @@ fn report_object_announces_spells_then_copies() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Name"));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![
+            UtteranceSegment::label("Name"),
+            role(Role::ComboBox),
+            UtteranceSegment::value("Ann"),
+        ])]
+    );
 
     // Second press: spell the name and value, as NVDA does, the space
     // spoken as "space" and the capitals marked for a raised pitch.
@@ -1748,10 +1847,9 @@ fn report_object_announces_spells_then_copies() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 1),
     );
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
+        heard(&effects),
+        vec![queued(vec![
             UtteranceSegment::new(SegmentContent::SpelledCapital("N".to_owned())),
             UtteranceSegment::text("a"),
             UtteranceSegment::text("m"),
@@ -1760,7 +1858,7 @@ fn report_object_announces_spells_then_copies() {
             UtteranceSegment::new(SegmentContent::SpelledCapital("A".to_owned())),
             UtteranceSegment::text("n"),
             UtteranceSegment::text("n"),
-        ]
+        ])]
     );
 
     // Third press: copy name and value to the clipboard.
@@ -1768,11 +1866,10 @@ fn report_object_announces_spells_then_copies() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 2),
     );
-    assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::CopyToClipboard(text) => assert_eq!(text, "Name Ann"),
-        other => panic!("expected CopyToClipboard, got {other:?}"),
-    }
+    assert_eq!(
+        effects,
+        vec![Effect::CopyToClipboard("Name Ann".to_owned())]
+    );
 }
 
 #[test]
@@ -1783,10 +1880,7 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
 
     // The command emits a navigation fetch.
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
     assert_eq!(query.kind, QueryKind::Parent);
     assert_eq!(query.node_id, NodeId::in_outpost(outpost_of(source), 10));
 
@@ -1799,10 +1893,9 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
         result: FetchResult::Node(parent),
     };
     let (_, effects) = reduce(&state, &completion);
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments[0],
-        UtteranceSegment::label("Buttons")
+        said(&effects),
+        vec![UtteranceSegment::label("Buttons"), role(Role::Group)]
     );
 }
 
@@ -1812,22 +1905,14 @@ fn a_named_item_leaves_its_role_unspoken_on_focus_but_an_unnamed_one_speaks_it()
     // focus, a list item with a name says its name alone; with nothing else
     // to hear, it still says "list item".
     let named = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
-    let (_, effects) = reduce(
-        &SrState::new(),
-        &focus_event(TraceId::mint(), Pid(1), named),
-    );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
+        focus_segments(named),
         vec![UtteranceSegment::label("alpha.txt")]
     );
 
     let unnamed = node(8, Role::ListItem, None, None, StateSet::new());
-    let (_, effects) = reduce(
-        &SrState::new(),
-        &focus_event(TraceId::mint(), Pid(1), unnamed),
-    );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
+        focus_segments(unnamed),
         vec![UtteranceSegment::new(SegmentContent::Role(Role::ListItem))]
     );
 }
@@ -1920,7 +2005,13 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         &observed_at(focus_event(TraceId::mint(), Pid(1), menu_item), 2_000),
         OutpostId(1),
     );
-    assert_eq!(speak_effects(&effects).len(), 1);
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            plain_focus(1),
+            vec![vec![UtteranceSegment::label("Settings...")]]
+        )
+    );
     let edit = node(
         1,
         Role::EditableText,
@@ -1940,7 +2031,10 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         &observed_at(focus_event(TraceId::mint(), Pid(1), other_item), 1_990),
         OutpostId(1),
     );
-    assert_eq!(speak_effects(&effects).len(), 1);
+    assert_eq!(
+        heard(&effects),
+        focus_heard(plain_focus(2), vec![vec![UtteranceSegment::label("Exit")]])
+    );
     let edit = node(
         1,
         Role::EditableText,
@@ -1953,7 +2047,16 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         &focus_event(TraceId::mint(), Pid(2), edit),
         OutpostId(2),
     );
-    assert_eq!(speak_effects(&effects).len(), 1);
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 1, &[], None),
+            vec![vec![
+                UtteranceSegment::label("Text editor"),
+                role(Role::EditableText)
+            ]]
+        )
+    );
 }
 
 #[test]
@@ -1996,7 +2099,17 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
         &observed_at(focus_in(source, facts, edit, vec![]), 1_000),
         OutpostId(2),
     );
-    assert_eq!(speak_effects(&effects).len(), 1, "the edit is spoken");
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 1, &[], Some((OutpostId(2), 2))),
+            vec![vec![
+                UtteranceSegment::label("Text editor"),
+                role(Role::EditableText)
+            ]]
+        ),
+        "the edit is spoken"
+    );
     let (state, effects) = reduce_from(&state, &foreground(3_000), OutpostId(2));
     assert!(effects.is_empty(), "focus is already in that window");
     let menu_item = node(
@@ -2046,8 +2159,15 @@ fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
         OutpostId(2),
     );
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 1, &[], Some((OutpostId(1), 1))),
+            vec![vec![
+                UtteranceSegment::label("Bluetooth"),
+                role(Role::CheckBox),
+                not(State::Checked)
+            ]]
+        ),
         "the content focus is spoken"
     );
 }
@@ -2064,14 +2184,15 @@ fn an_entered_container_is_spoken_as_a_focus_is() {
         &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![label, list]),
     );
     assert_eq!(
-        spoken_segments(&effects),
-        vec![
-            UtteranceSegment::label("Options"),
-            UtteranceSegment::label("Files"),
-            UtteranceSegment::new(SegmentContent::Role(Role::List)),
-            UtteranceSegment::label("OK"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 22, &[20, 21], None),
+            vec![
+                vec![UtteranceSegment::label("Options")],
+                vec![UtteranceSegment::label("Files"), role(Role::List)],
+                vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            ]
+        )
     );
 }
 
@@ -2087,7 +2208,7 @@ fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
+        said(&effects),
         vec![
             UtteranceSegment::label("alpha.txt"),
             UtteranceSegment::new(SegmentContent::Role(Role::ListItem)),
@@ -2098,10 +2219,7 @@ fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
         &state,
         &command(TraceId::mint(), ReviewCommand::NextSibling, 0),
     );
-    let query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
     let next = node(11, Role::ListItem, Some("beta.txt"), None, StateSet::new());
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
@@ -2110,10 +2228,7 @@ fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
         result: FetchResult::Node(next),
     };
     let (_, effects) = reduce(&state, &completion);
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::label("beta.txt")]
-    );
+    assert_eq!(said(&effects), vec![UtteranceSegment::label("beta.txt")]);
 }
 
 #[test]
@@ -2123,10 +2238,7 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
     let state = focused(source, root);
 
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
     let completion = Input::FetchCompleted {
         trace_id: TraceId::mint(),
         query_id: query.query_id,
@@ -2134,9 +2246,8 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
         result: FetchResult::NoNeighbor,
     };
     let (after, effects) = reduce(&state, &completion);
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        said(&effects),
         vec![UtteranceSegment::new(SegmentContent::Message(
             verbatim_model::Message::NoContainingObject
         ))],
@@ -2147,8 +2258,10 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
         &after,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("App"));
+    assert_eq!(
+        said(&effects),
+        vec![UtteranceSegment::label("App"), role(Role::Window)]
+    );
 }
 
 #[test]
@@ -2165,10 +2278,7 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
         let root = node(10, Role::Window, Some("App"), None, StateSet::new());
         let state = focused(source, root);
         let (state, effects) = reduce(&state, &command(TraceId::mint(), command_kind, 0));
-        let query = match &effects[0] {
-            Effect::Fetch(query) => *query,
-            other => panic!("expected Fetch, got {other:?}"),
-        };
+        let query = only_fetch(&effects);
         let completion = Input::FetchCompleted {
             trace_id: TraceId::mint(),
             query_id: query.query_id,
@@ -2176,9 +2286,8 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
             result: FetchResult::NoNeighbor,
         };
         let (_, effects) = reduce(&state, &completion);
-        let utterances = speak_effects(&effects);
         assert_eq!(
-            utterances[0].segments,
+            said(&effects),
             vec![UtteranceSegment::new(SegmentContent::Message(expected))],
             "edge message for {command_kind:?}"
         );
@@ -2193,10 +2302,7 @@ fn navigate_completion_after_an_intervening_focus_event_still_applies() {
 
     // Issue the navigation command; its completion is still in flight.
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
 
     // A focus event for a different node in the same application arrives
     // before the completion does. Review follows focus, so the navigator
@@ -2213,10 +2319,9 @@ fn navigate_completion_after_an_intervening_focus_event_still_applies() {
         result: FetchResult::Node(parent),
     };
     let (_, effects) = reduce(&state, &completion);
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments[0],
-        UtteranceSegment::label("Buttons"),
+        said(&effects),
+        vec![UtteranceSegment::label("Buttons"), role(Role::Group)],
         "a navigation completion must still land after an intervening focus event"
     );
 }
@@ -2228,19 +2333,13 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
     let state = focused(source, button);
 
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let first_query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let first_query = only_fetch(&effects);
 
     let (state, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::NextSibling, 0),
     );
-    let second_query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let second_query = only_fetch(&effects);
 
     // The first (now stale) completion is dropped.
     let stale_parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
@@ -2265,8 +2364,10 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
         result: FetchResult::Node(sibling),
     };
     let (_, effects) = reduce(&state, &completion);
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("Cancel"));
+    assert_eq!(
+        said(&effects),
+        vec![UtteranceSegment::label("Cancel"), role(Role::Button)]
+    );
 }
 
 #[test]
@@ -2276,10 +2377,7 @@ fn to_focus_after_a_navigation_drops_its_late_completion() {
     let state = focused(source, button);
 
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
 
     // The user explicitly returns to focus before the navigation's
     // completion arrives; that explicit intent must win.
@@ -2306,10 +2404,7 @@ fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
     let state = focused(source, button);
 
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let query = match &effects[0] {
-        Effect::Fetch(query) => *query,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
 
     // The outpost could not re-acquire the navigator's node: distinct from
     // a tree edge, so this must not stay silent. It falls back to
@@ -2321,8 +2416,10 @@ fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
         result: FetchResult::Gone,
     };
     let (_, effects) = reduce(&state, &completion);
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].segments[0], UtteranceSegment::label("OK"));
+    assert_eq!(
+        said(&effects),
+        vec![UtteranceSegment::label("OK"), role(Role::Button)]
+    );
 }
 
 #[test]
@@ -2335,12 +2432,12 @@ fn activate_emits_activate_for_the_navigator_object() {
         &state,
         &command(TraceId::mint(), ReviewCommand::Activate, 0),
     );
-    match &effects[0] {
-        Effect::Activate { node_id } => {
-            assert_eq!(*node_id, NodeId::in_outpost(outpost_of(source), 10));
-        }
-        other => panic!("expected Activate, got {other:?}"),
-    }
+    assert_eq!(
+        effects,
+        vec![Effect::Activate {
+            node_id: NodeId::in_outpost(outpost_of(source), 10)
+        }]
+    );
 }
 
 #[test]
@@ -2362,20 +2459,14 @@ fn review_cursor_walks_lines_words_and_characters() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReviewCurrentLine, 0),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::text("first line")]
-    );
+    assert_eq!(said(&effects), vec![UtteranceSegment::text("first line")]);
 
     // Next line.
     let (state, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::text("second line")]
-    );
+    assert_eq!(said(&effects), vec![UtteranceSegment::text("second line")]);
 
     // Next line at the bottom: says "Bottom", stays put, re-reads.
     let (state, effects) = reduce(
@@ -2383,7 +2474,7 @@ fn review_cursor_walks_lines_words_and_characters() {
         &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
+        said(&effects),
         vec![
             UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Bottom)),
             UtteranceSegment::text("second line"),
@@ -2399,28 +2490,19 @@ fn review_cursor_walks_lines_words_and_characters() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReviewCurrentWord, 0),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::text("first")]
-    );
+    assert_eq!(said(&effects), vec![UtteranceSegment::text("first")]);
     let (state, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReviewNextWord, 0),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::text("line")]
-    );
+    assert_eq!(said(&effects), vec![UtteranceSegment::text("line")]);
 
     // First character of the current position ("line" -> 'l').
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![UtteranceSegment::text("l")]
-    );
+    assert_eq!(said(&effects), vec![UtteranceSegment::text("l")]);
 }
 
 #[test]
@@ -2431,10 +2513,7 @@ fn navigator_follows_focus_and_returns_to_focus() {
 
     // Move the navigator to the parent.
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let query = match &effects[0] {
-        Effect::Fetch(q) => *q,
-        other => panic!("expected Fetch, got {other:?}"),
-    };
+    let query = only_fetch(&effects);
     let parent = node(11, Role::Group, Some("Group"), None, StateSet::new());
     let (state, _) = reduce(
         &state,
@@ -2459,9 +2538,27 @@ fn navigator_follows_focus_and_returns_to_focus() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
+    // An edit field says its name and role, and its text follows from a
+    // read of the selection in place of its value.
+    let read_selection = |query_id| {
+        Heard::Other(Effect::Text(verbatim_model::TextRequest {
+            query_id: QueryId(query_id),
+            node_id: NodeId::in_outpost(outpost_of(source), 20),
+            op: verbatim_model::TextOp::ReadRange {
+                start: verbatim_model::TextPoint::SelectionStart,
+                end: verbatim_model::TextPoint::SelectionEnd,
+            },
+        }))
+    };
     assert_eq!(
-        speak_effects(&effects)[0].segments[0],
-        UtteranceSegment::label("Field"),
+        heard(&effects),
+        vec![
+            queued(vec![
+                UtteranceSegment::label("Field"),
+                role(Role::EditableText),
+            ]),
+            read_selection(1),
+        ],
         "the navigator followed focus to the new control"
     );
 
@@ -2469,12 +2566,15 @@ fn navigator_follows_focus_and_returns_to_focus() {
     let (state, _) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
     let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
     assert_eq!(
-        speak_effects(&effects)[0].segments[..2],
-        [
-            UtteranceSegment::new(SegmentContent::Message(
-                verbatim_model::Message::MoveToFocus
-            )),
-            UtteranceSegment::label("Field"),
+        heard(&effects),
+        vec![
+            queued(vec![
+                message(verbatim_model::Message::MoveToFocus),
+                UtteranceSegment::label("Field"),
+                role(Role::EditableText),
+            ]),
+            // The parent fetch in between took query 2.
+            read_selection(3),
         ],
         "to-focus says \"Move to focus\" and snaps the navigator back"
     );
@@ -2487,12 +2587,12 @@ fn commands_with_no_navigator_yet_say_so() {
         verbatim_model::Message::NoNavigatorObject,
     ))];
     let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    assert_eq!(speak_effects(&effects)[0].segments, no_navigator);
+    assert_eq!(said(&effects), no_navigator);
     let (_, effects) = reduce(
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
-    assert_eq!(speak_effects(&effects)[0].segments, no_navigator);
+    assert_eq!(said(&effects), no_navigator);
 }
 
 // ---- Windows, menus, and name changes (outpost redesign step 1) ----
@@ -2522,12 +2622,12 @@ fn a_foreground_change_to_another_window_announces_the_window_as_the_focus() {
     let other = node(3, Role::Window, Some("Find"), None, StateSet::new());
     let (state, effects) = reduce(&state, &foreground_in(source, window(20), other));
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
+        heard(&effects),
         vec![
-            UtteranceSegment::label("Find"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+            Heard::Expire(focus_now(OutpostId(1), 3, &[], Some((OutpostId(1), 3)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Find"), role(Role::Window)]),
         ]
     );
     assert_eq!(
@@ -2555,13 +2655,15 @@ fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
         &focus_in(source, foreground_window(10), edit, vec![same_window]),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments,
-        vec![
-            UtteranceSegment::label("Text"),
-            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 2, &[5], Some((OutpostId(1), 1))),
+            vec![vec![
+                UtteranceSegment::label("Text"),
+                role(Role::EditableText)
+            ]]
+        )
     );
 }
 
@@ -2596,13 +2698,19 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
         ),
     );
 
-    let utterances = speak_effects(&effects);
     assert_eq!(
-        utterances[0].segments[..2],
-        [
-            UtteranceSegment::label("Display"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Group)),
-        ],
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 3, &[1, 2], Some((OutpostId(1), 1))),
+            vec![
+                vec![UtteranceSegment::label("Display"), role(Role::Group)],
+                vec![
+                    UtteranceSegment::label("Night light"),
+                    role(Role::ToggleButton),
+                    not(State::Pressed),
+                ],
+            ]
+        ),
         "the frame window is not spoken a second time"
     );
 }
@@ -2647,15 +2755,14 @@ fn entering_menus_is_silent_and_only_the_item_is_announced() {
         &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![menu_bar, menu]),
     );
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
-    assert!(
-        effects.contains(&Effect::StopSpeech),
-        "entering a menu cancels speech"
-    );
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::label("Open"),]
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 3, &[1, 2], None)),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Open")]),
+        ],
+        "entering a menu cancels speech, and only the item is announced"
     );
 }
 
@@ -2709,8 +2816,11 @@ fn a_focus_read_after_its_window_lost_the_foreground_is_dropped() {
         &focus_in(source, foreground_window(10), item, vec![]),
     );
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 2, &[], Some((OutpostId(1), 1))),
+            vec![vec![UtteranceSegment::label("Recycle Bin")]]
+        ),
         "read while its window was the foreground"
     );
 }
@@ -2737,7 +2847,15 @@ fn topmost_shared_owner_and_active_uwp_windows_are_attended() {
         let state = switch_to(&SrState::new(), Pid(1));
         let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
         let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, button, vec![]));
-        assert_eq!(speak_effects(&effects).len(), 1, "attended: {facts:?}");
+        assert_eq!(
+            heard(&effects),
+            vec![
+                Heard::Expire(focus_now(OutpostId(2), 2, &[], Some((OutpostId(1), 1000)))),
+                Heard::Stop,
+                queued(vec![UtteranceSegment::label("OK"), role(Role::Button)]),
+            ],
+            "attended: {facts:?}"
+        );
     }
 }
 
@@ -2754,8 +2872,11 @@ fn without_window_facts_the_application_decides() {
 
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 2, &[], Some((OutpostId(1), 1000))),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        ),
         "the attention application without facts"
     );
 }
@@ -2766,7 +2887,17 @@ fn a_foreground_change_is_always_accepted_and_moves_attention() {
     let other = node(2, Role::Window, Some("Calculator"), None, StateSet::new());
 
     let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), other));
-    assert_eq!(speak_effects(&effects).len(), 1);
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 2, &[], Some((OutpostId(2), 2)))),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Calculator"),
+                role(Role::Window)
+            ]),
+        ]
+    );
     assert_eq!(state.attention(), Some(Pid(2)));
 
     // The previous application is now in the background.
@@ -2803,7 +2934,14 @@ fn notifications_are_spoken_only_from_the_focus_application() {
     );
 
     let (_, effects) = reduce(&state, &notification_in(Pid(2), None));
-    assert_eq!(speak_effects(&effects).len(), 1, "the focus's application");
+    assert_eq!(
+        heard(&effects),
+        vec![Heard::Say(
+            SpeechPriority::Interrupt,
+            vec![UtteranceSegment::text("Snapped")]
+        )],
+        "the focus's application"
+    );
 
     let (_, effects) = reduce(&state, &notification_in(Pid(1), None));
     assert!(
@@ -2824,8 +2962,11 @@ fn with_no_focus_notifications_are_spoken_from_the_attention_application() {
 
     let (_, effects) = reduce(&state, &notification_in(Pid(1), None));
     assert_eq!(
-        speak_effects(&effects)[0].priority,
-        SpeechPriority::Interrupt
+        heard(&effects),
+        vec![Heard::Say(
+            SpeechPriority::Interrupt,
+            vec![UtteranceSegment::text("Snapped")]
+        )]
     );
 }
 
@@ -2841,11 +2982,9 @@ fn the_snap_results_notification_is_spoken_from_anywhere_queued() {
         ),
     );
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
-        utterances[0].segments,
-        vec![UtteranceSegment::text("Snapped")]
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::text("Snapped")])]
     );
     assert_eq!(
         next.attention(),
@@ -2862,7 +3001,10 @@ fn the_snap_results_notification_is_spoken_from_anywhere_queued() {
             Some("Windows.Shell.SnapComponent.SnapHotKeyResults"),
         ),
     );
-    assert_eq!(speak_effects(&effects)[0].priority, SpeechPriority::Queued);
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::text("Snapped")])]
+    );
 }
 
 // ---- Outpost replacement ----
@@ -2902,7 +3044,7 @@ fn an_ended_outposts_focus_is_dead_and_navigation_does_nothing() {
     ] {
         let (_, effects) = reduce(&state, &command(TraceId::mint(), cmd, 0));
         assert_eq!(
-            speak_effects(&effects)[0].segments,
+            said(&effects),
             vec![UtteranceSegment::new(SegmentContent::Message(
                 verbatim_model::Message::NoNavigatorObject
             ))],
@@ -2919,9 +3061,7 @@ fn a_pending_navigation_to_an_ended_outpost_is_dropped() {
     let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let Effect::Fetch(query) = effects[0] else {
-        panic!("expected Fetch, got {effects:?}");
-    };
+    let query = only_fetch(&effects);
 
     let (state, _) = reduce(&state, &ended(outpost_of(source)));
     let completion = Input::FetchCompleted {
@@ -2985,8 +3125,11 @@ fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
         OutpostId(2),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments[0],
-        UtteranceSegment::label("Cancel")
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 1, &[], None),
+            vec![vec![UtteranceSegment::label("Cancel"), role(Role::Button)]]
+        )
     );
 }
 
@@ -3014,7 +3157,11 @@ fn the_same_node_number_from_another_outpost_never_reaches_the_focus() {
     assert!(effects.is_empty(), "another outpost's node 500");
 
     let (_, effects) = reduce_from(&state, &value_changed, OutpostId(1));
-    assert_eq!(effects.len(), 1, "the focus's own outpost");
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("90")])],
+        "the focus's own outpost"
+    );
 }
 
 #[test]
@@ -3045,8 +3192,15 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
         OutpostId(2),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments[0],
-        UtteranceSegment::label("Volume"),
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 1, &[], None),
+            vec![vec![
+                UtteranceSegment::label("Volume"),
+                role(Role::Slider),
+                UtteranceSegment::value("50"),
+            ]]
+        ),
         "the replacement's first event is accepted"
     );
 
@@ -3071,7 +3225,11 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
         "the replaced outpost's own node 1 is not the focus"
     );
     let (_, effects) = reduce_from(&state, &value(1, "60"), OutpostId(2));
-    assert_eq!(effects.len(), 1, "the replacement's node 1 is the focus");
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("60")])],
+        "the replacement's node 1 is the focus"
+    );
 }
 
 #[test]
@@ -3094,7 +3252,15 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
 
     let (state, effects) = reduce(&state, &focus_in(Pid(2), facts, item, vec![]));
 
-    assert_eq!(speak_effects(&effects).len(), 1, "the focus is spoken");
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 2, &[], None)),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("System Summary")]),
+        ],
+        "the focus is spoken, cutting off speech for the window left"
+    );
     assert_eq!(state.attention(), Some(Pid(2)), "attention follows it");
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
     let (_, effects) = reduce(
@@ -3102,8 +3268,11 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
         &focus_in(Pid(2), foreground_window(30), button, vec![]),
     );
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 3, &[], None),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        ),
         "the window's later events are attended"
     );
 }
@@ -3128,14 +3297,20 @@ fn a_focus_in_a_new_foreground_window_without_a_foreground_fact_announces_the_wi
         &state,
         &focus_in(Pid(2), foreground_window(40), item, vec![title, list]),
     );
-    let spoken: Vec<String> = speak_effects(&effects)
-        .iter()
-        .map(|utterance| format!("{:?}", utterance.segments))
-        .collect();
-    assert_eq!(spoken.len(), 3, "window, list, item: {spoken:?}");
-    assert!(spoken[0].contains("Folder - File Explorer"), "{spoken:?}");
-    assert!(spoken[1].contains("Items View"), "{spoken:?}");
-    assert!(spoken[2].contains("alpha.txt"), "{spoken:?}");
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 7, &[5, 6], Some((OutpostId(2), 5)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Folder - File Explorer")]),
+            queued(vec![
+                UtteranceSegment::label("Items View"),
+                role(Role::List)
+            ]),
+            queued(vec![UtteranceSegment::label("alpha.txt")]),
+        ],
+        "window, list, item"
+    );
 }
 
 #[test]
@@ -3152,14 +3327,28 @@ fn a_window_already_announced_by_its_foreground_fact_is_not_announced_again() {
         &state,
         &foreground_in(Pid(2), foreground_window(40), title.clone()),
     );
-    assert_eq!(speak_effects(&effects).len(), 1, "the foreground fact");
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 5, &[], Some((OutpostId(2), 5)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Folder - File Explorer")]),
+        ],
+        "the foreground fact"
+    );
     let item = node(7, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
         &focus_in(Pid(2), foreground_window(40), item, vec![title]),
     );
-    let spoken = speak_effects(&effects);
-    assert_eq!(spoken.len(), 1, "only the item: {spoken:?}");
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 7, &[5], Some((OutpostId(2), 5))),
+            vec![vec![UtteranceSegment::label("alpha.txt")]]
+        ),
+        "only the item"
+    );
 }
 
 #[test]
@@ -3175,8 +3364,12 @@ fn focus_returning_from_a_topmost_popup_is_still_attended() {
     };
     let (state, effects) = reduce(&state, &focus_in(source, popup, item, vec![]));
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 2, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Copy")]),
+        ],
         "the topmost menu is attended"
     );
 
@@ -3186,8 +3379,15 @@ fn focus_returning_from_a_topmost_popup_is_still_attended() {
         &focus_in(source, foreground_window(1000), edit, vec![]),
     );
     assert_eq!(
-        speak_effects(&effects).len(),
-        1,
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 3, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Text"),
+                role(Role::EditableText)
+            ]),
+        ],
         "focus back in the foreground window"
     );
 }
@@ -3198,13 +3398,13 @@ fn a_nameless_foreground_window_moves_attention_silently() {
     let nameless = node(5, Role::Window, None, None, StateSet::new());
 
     let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), nameless));
-    assert!(
-        speak_effects(&effects).is_empty(),
-        "a bare window says nothing"
-    );
-    assert!(
-        effects.contains(&Effect::StopSpeech),
-        "a new foreground window cancels speech, nameless or not"
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 5, &[], Some((OutpostId(2), 5)))),
+            Heard::Stop
+        ],
+        "a bare window says nothing, but a new foreground window cancels speech, nameless or not"
     );
     assert_eq!(state.attention(), Some(Pid(2)));
 
@@ -3217,11 +3417,14 @@ fn a_nameless_foreground_window_moves_attention_silently() {
         &focus_in(Pid(2), foreground_window(20), button, vec![named]),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments[..2],
-        [
-            UtteranceSegment::label("Calculator"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Window)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 7, &[6], Some((OutpostId(2), 5))),
+            vec![
+                vec![UtteranceSegment::label("Calculator"), role(Role::Window)],
+                vec![UtteranceSegment::label("Seven"), role(Role::Button)],
+            ]
+        )
     );
 }
 
@@ -3279,11 +3482,12 @@ fn a_toast_is_spoken_from_anywhere_queued() {
 
     let (next, effects) = reduce(&state, &toast_in(Pid(2), window(20)));
 
-    let utterances = speak_effects(&effects);
-    assert_eq!(utterances[0].priority, SpeechPriority::Queued);
     assert_eq!(
-        utterances[0].segments[0],
-        UtteranceSegment::label("Download complete")
+        heard(&effects),
+        vec![queued(vec![
+            UtteranceSegment::label("Download complete"),
+            role(Role::Window)
+        ])]
     );
     assert_eq!(
         next.attention(),
@@ -3310,13 +3514,22 @@ fn role(role: Role) -> UtteranceSegment {
     UtteranceSegment::new(SegmentContent::Role(role))
 }
 
-/// The segments spoken when focus lands on `snapshot`.
+/// The segments spoken when focus lands on `snapshot`, after asserting
+/// that the focus change produced nothing but its drop of expired speech
+/// and that one queued utterance.
 fn focus_segments(snapshot: NodeSnapshot) -> Vec<UtteranceSegment> {
+    let focus = snapshot.id.number();
     let (_, effects) = reduce(
         &SrState::new(),
         &focus_event(TraceId::mint(), Pid(1), snapshot),
     );
-    speak_effects(&effects)[0].segments.clone()
+    match heard(&effects).as_slice() {
+        [
+            Heard::Expire(expired),
+            Heard::Say(SpeechPriority::Queued, segments),
+        ] if *expired == plain_focus(focus) => segments.clone(),
+        other => panic!("expected the focus's one queued utterance, got {other:?}"),
+    }
 }
 
 fn value_changed(node_id: u64, value: &str) -> Input {
@@ -3575,7 +3788,7 @@ fn reporting_the_object_speaks_selected_read_only_and_focused() {
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
+        said(&effects),
         vec![
             UtteranceSegment::label("alpha.txt"),
             role(Role::ListItem),
@@ -3605,10 +3818,7 @@ fn a_selection_gained_by_the_focus_says_selected() {
             states(&[State::Focusable, State::Selectable, State::Selected]),
         ),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![state(State::Selected)]
-    );
+    assert_eq!(said(&effects), vec![state(State::Selected)]);
 }
 
 #[test]
@@ -3625,10 +3835,7 @@ fn losing_half_checked_says_not_checked() {
         &state_after_focus,
         &states_changed_input(TraceId::mint(), Pid(1), NodeId::new(45), StateSet::new()),
     );
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![not(State::Checked)]
-    );
+    assert_eq!(said(&effects), vec![not(State::Checked)]);
 }
 
 // ---- Selection in a list the focus controls ----
@@ -3672,17 +3879,18 @@ fn a_result_selected_in_the_list_the_focus_controls_is_spoken_as_a_focus() {
     let state = focused(Pid(1), search_box);
 
     let (state, effects) = reduce(&state, &controlled_selection(50, search_result()));
-    let utterance = speak_effects(&effects)[0];
-    assert_eq!(utterance.priority, SpeechPriority::Interrupt);
     assert_eq!(
-        utterance.segments,
-        vec![
-            UtteranceSegment::label("Notepad, App"),
-            UtteranceSegment::new(SegmentContent::Position {
-                position: 1,
-                set_size: Some(4),
-            }),
-        ]
+        heard(&effects),
+        vec![Heard::Say(
+            SpeechPriority::Interrupt,
+            vec![
+                UtteranceSegment::label("Notepad, App"),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(4),
+                }),
+            ]
+        )]
     );
     assert_eq!(
         state.focused().map(|(_, focus)| focus.name.clone()),
@@ -3694,8 +3902,16 @@ fn a_result_selected_in_the_list_the_focus_controls_is_spoken_as_a_focus() {
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments[0],
-        UtteranceSegment::label("Notepad, App"),
+        said(&effects),
+        vec![
+            UtteranceSegment::label("Notepad, App"),
+            role(Role::ListItem),
+            UtteranceSegment::new(SegmentContent::State(State::Selected)),
+            UtteranceSegment::new(SegmentContent::Position {
+                position: 1,
+                set_size: Some(4),
+            }),
+        ],
         "the navigator moved to the result"
     );
 }
@@ -3741,11 +3957,11 @@ fn a_focus_with_unknown_ancestors_announces_no_containers_and_keeps_the_chain() 
     let second = node(112, Role::Button, Some("Cancel"), None, StateSet::new());
     let (state, effects) = reduce(&state, &focus_event_with_unknown_ancestors(source, second));
     assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![
-            UtteranceSegment::label("Cancel"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 112, &[110], None),
+            vec![vec![UtteranceSegment::label("Cancel"), role(Role::Button)]]
+        )
     );
 
     // The next fully read focus in the same dialog does not announce the
@@ -3756,11 +3972,11 @@ fn a_focus_with_unknown_ancestors_announces_no_containers_and_keeps_the_chain() 
         &focus_event_with_ancestors(TraceId::mint(), source, third, vec![dialog]),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![
-            UtteranceSegment::label("OK"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
-        ]
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 113, &[110], None),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        )
     );
 }
 
@@ -3784,12 +4000,13 @@ fn reporting_the_object_after_a_change_reads_the_object_as_it_is_now() {
         &state,
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
-    assert!(
-        speak_effects(&effects)[0]
-            .segments
-            .contains(&UtteranceSegment::new(SegmentContent::State(
-                State::Checked
-            ))),
+    assert_eq!(
+        said(&effects),
+        vec![
+            UtteranceSegment::label("Wrap"),
+            role(Role::CheckBox),
+            UtteranceSegment::new(SegmentContent::State(State::Checked)),
+        ],
         "report object says checked after the box was checked"
     );
 }
@@ -3800,9 +4017,7 @@ fn a_navigation_the_application_did_not_answer_leaves_the_navigator_put() {
     let button = node(121, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
     let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let Effect::Fetch(query) = &effects[0] else {
-        panic!("expected Fetch, got {effects:?}");
-    };
+    let query = only_fetch(&effects);
     let (state, effects) = reduce(
         &state,
         &Input::FetchCompleted {
@@ -3818,8 +4033,8 @@ fn a_navigation_the_application_did_not_answer_leaves_the_navigator_put() {
         &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments[0],
-        UtteranceSegment::label("OK"),
+        said(&effects),
+        vec![UtteranceSegment::label("OK"), role(Role::Button)],
         "the navigator did not jump"
     );
 }
@@ -3838,10 +4053,7 @@ fn selecting_the_focused_item_itself_says_selected() {
     let mut selected = item;
     selected.states.insert(State::Selected);
     let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, selected));
-    assert_eq!(
-        speak_effects(&effects)[0].segments,
-        vec![state_segment_selected()]
-    );
+    assert_eq!(said(&effects), vec![state_segment_selected()]);
 }
 
 fn state_segment_selected() -> UtteranceSegment {
@@ -3868,26 +4080,42 @@ fn an_entered_container_speaks_its_states_and_position_but_not_its_value() {
         &focus_event_with_ancestors(TraceId::mint(), source, field, vec![tab]),
     );
     assert_eq!(
-        speak_effects(&effects)[0].segments[..4],
-        [
-            UtteranceSegment::label("General"),
-            role(Role::Tab),
-            state(State::Selected),
-            UtteranceSegment::new(SegmentContent::Position {
-                position: 1,
-                set_size: Some(3),
-            }),
-        ],
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 131, &[130], None),
+            vec![
+                vec![
+                    UtteranceSegment::label("General"),
+                    role(Role::Tab),
+                    state(State::Selected),
+                    UtteranceSegment::new(SegmentContent::Position {
+                        position: 1,
+                        set_size: Some(3),
+                    }),
+                ],
+                vec![UtteranceSegment::label("Name"), role(Role::EditableText)],
+            ]
+        ),
         "no value, no shortcut, and no description repeating the name"
     );
 }
 
 // ---- Review messages and repeated presses, as NVDA's review commands ----
 
+/// Runs review command `cmd` and returns the segments it speaks, after
+/// asserting that it produced exactly one queued utterance and no other
+/// effect.
 fn review(state: &SrState, cmd: ReviewCommand, repeat: u8) -> (SrState, Vec<UtteranceSegment>) {
     let (state, effects) = reduce(state, &command(TraceId::mint(), cmd, repeat));
-    let segments = speak_effects(&effects)[0].segments.clone();
-    (state, segments)
+    (state, said(&effects))
+}
+
+/// The segments of the one queued utterance that is all of `effects`.
+fn said(effects: &[Effect]) -> Vec<UtteranceSegment> {
+    match heard(effects).as_slice() {
+        [Heard::Say(SpeechPriority::Queued, segments)] => segments.clone(),
+        other => panic!("expected one queued utterance and nothing else, got {other:?}"),
+    }
 }
 
 fn message(message: verbatim_model::Message) -> UtteranceSegment {
@@ -3974,7 +4202,7 @@ fn an_activation_says_its_action_activate_or_no_action() {
                 action,
             },
         );
-        speak_effects(&effects)[0].segments.clone()
+        said(&effects)
     };
     assert_eq!(
         outcome(true, None),
@@ -4006,13 +4234,16 @@ fn an_activation_says_its_action_activate_or_no_action() {
 fn a_window_title_is_queued_before_its_control_not_cut_off() {
     let notepad = node(10, Role::Window, Some("Notepad"), None, StateSet::new());
     let (state, effects) = reduce(&SrState::new(), &foreground_in(Pid(4), window(40), notepad));
-    assert!(
-        effects.contains(&Effect::StopSpeech),
-        "a new foreground cancels speech"
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(4), 10, &[], Some((OutpostId(4), 10)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Notepad"), role(Role::Window)]),
+        ],
+        "a new foreground cancels speech and is announced"
     );
-    let title = speak_effects(&effects);
-    assert_eq!(title.len(), 1);
-    assert_eq!(title[0].priority, SpeechPriority::Queued);
+    let title = only_speech(&effects[2..]);
     let validity = title[0]
         .validity
         .expect("focus speech carries its validity");
@@ -4030,24 +4261,28 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
         &state,
         &focus_in(Pid(4), foreground_window(40), editor, vec![]),
     );
-    assert!(
-        !effects.contains(&Effect::StopSpeech),
-        "the same window: nothing is cancelled"
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(4), 11, &[], Some((OutpostId(4), 10))),
+            vec![vec![
+                UtteranceSegment::label("Text editor"),
+                role(Role::Document)
+            ]]
+        ),
+        "the same window: nothing is cancelled, and the control queues behind the title"
     );
     let Some(Effect::DropExpiredSpeech(now)) = effects.first() else {
         panic!("the speech manager is told where the focus is first: {effects:?}");
     };
-    assert_eq!(now.focus.number(), 11);
     assert_eq!(now.foreground.map(NodeId::number), Some(10));
+    assert_eq!(now.ancestors, Vec::<NodeId>::new());
     assert!(
         title[0]
             .validity
             .is_some_and(|validity| validity.holds(now)),
         "the window's title is still worth hearing"
     );
-    let control = speak_effects(&effects);
-    assert_eq!(control.len(), 1);
-    assert_eq!(control[0].priority, SpeechPriority::Queued);
 }
 
 /// Focus speech for a control the user has left no longer holds, but an
@@ -4092,7 +4327,7 @@ fn spelling_marks_capitals_for_a_raised_pitch() {
         &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
     );
     assert_eq!(
-        spoken_segments(&effects),
+        said(&effects),
         vec![UtteranceSegment::new(SegmentContent::SpelledCapital(
             "H".to_owned()
         ))]
