@@ -603,6 +603,50 @@ fn a_sound_in_an_utterance_starts_at_its_place_and_plays_over_what_follows() {
 }
 
 #[test]
+fn a_sound_is_mixed_only_with_its_utterances_audio_until_the_utterance_is_finished() {
+    let harness = harness();
+    let trace = TraceId::mint();
+    harness.source.register(utterance(1), trace);
+    // Ten frames, enough to start the device while the utterance is still
+    // being written.
+    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    harness
+        .source
+        .sound(utterance(1), &sound(25, 2_000), 1.0)
+        .expect("the sound converts");
+    harness.play(10);
+    assert_eq!(harness.next(), started(1, trace));
+    // Playback has reached the sound's place, and the next word has not
+    // been written: nothing more is mixed, the sound alone included.
+    harness.device.settle();
+    let speech = level(1_000);
+    let (both, alone) = (level(1_000) + level(2_000), level(2_000));
+    assert_frames(&harness.device.written(), &[speech; 10]);
+
+    // Part of the next word, enough to start the device again: the sound
+    // starts with it, and goes no further than it while the rest has not
+    // been written.
+    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    harness.play(10);
+    harness.device.settle();
+    let mut expected = vec![speech; 10];
+    expected.extend([both; 10]);
+    assert_frames(&harness.device.written(), &expected);
+
+    // The rest of the word is heard under the sound too, and once the
+    // utterance is finished the sound plays on past it.
+    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    harness.source.finish(utterance(1));
+    harness.play(10);
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+    harness.play(5);
+    expected.extend([both; 10]);
+    expected.extend([alone; 5]);
+    assert_frames(&harness.device.written(), &expected);
+    harness.nothing_more();
+}
+
+#[test]
 fn a_sound_is_cancelled_with_its_utterance() {
     let harness = harness();
     let trace = TraceId::mint();

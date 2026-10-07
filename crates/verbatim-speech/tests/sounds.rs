@@ -239,11 +239,13 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
     });
 
     // The sound starts after the first word's audio, as one unbroken run,
-    // and the second word's audio comes after its start, whether mixed
-    // under it or, when the mixer had already mixed the sound alone before
-    // the word was synthesized, after it. The few frames the resampler
-    // still held of the first word when the sound was placed come after
-    // the sound's start too (`Source::mark` and `Source::sound`).
+    // and the second word's audio is mixed under it: until the utterance
+    // is finished, the mixer mixes a sound only alongside the utterance's
+    // own audio (`Source::sound`), so all of the word, which is shorter
+    // than the sound, is heard at its place under the sound, and none of it
+    // after the run, however the word's synthesis and playback interleave. The few frames the
+    // resampler still held of the first word when the sound was placed come
+    // after the sound's start too (`Source::mark`).
     let first_loud = heard
         .iter()
         .position(|frame| is_loud(*frame))
@@ -254,15 +256,20 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
         "the first word's audio runs up to the sound: {:?}",
         &heard[..first_loud]
     );
+
     let sound_alone = f32::from(LOUD) / 32_768.0;
     let run = &heard[first_loud..first_loud + SOUND_FRAMES];
     assert!(run.iter().all(|frame| is_loud(*frame)), "one unbroken run");
     assert!(
-        run.iter().any(|frame| (frame - sound_alone).abs() > 1e-6)
-            || heard[first_loud + SOUND_FRAMES..]
-                .iter()
-                .any(|frame| *frame != 0.0),
-        "the second word is heard after the sound's start"
+        run.iter().any(|frame| (frame - sound_alone).abs() > 1e-6),
+        "the second word is mixed under the sound"
+    );
+    assert!(
+        heard[first_loud + SOUND_FRAMES..]
+            .iter()
+            .all(|frame| *frame == 0.0),
+        "nothing of the second word comes after the sound: {:?}",
+        &heard[first_loud + SOUND_FRAMES..]
     );
 
     // A later utterance is heard to its end, so anything the first left

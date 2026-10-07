@@ -510,7 +510,11 @@ impl Source {
     /// Places `sound` at the current end of `utterance`'s audio, as
     /// [`mark`](Self::mark) places a mark: it starts when playback reaches
     /// that place and plays on over the audio that follows, at `gain` (1.0
-    /// for as recorded). It belongs to the utterance: failing the utterance
+    /// for as recorded). Until the utterance is finished it is mixed only
+    /// alongside the utterance's own audio, so what follows its place is
+    /// heard under it at its place however late it was synthesized: playback
+    /// that reaches the place first waits there for that audio, or for
+    /// [`finish`](Self::finish). It belongs to the utterance: failing the utterance
     /// drops it, and [`cancel_all`](Self::cancel_all) stops it. It does not
     /// delay the utterance's ending, which comes when its own audio has
     /// played.
@@ -835,9 +839,25 @@ impl SourceState {
         self.write_end - self.mixed_end
     }
 
+    /// Whether `voice`'s utterance is still being written. Until it is
+    /// not, the voice is mixed only alongside the utterance's own audio, so
+    /// every frame of that audio is heard at its place under the sound,
+    /// whenever it was synthesized: a sound placed between words starts
+    /// with the next word, and the word does not slip past the sound's end
+    /// because playback reached the sound before the word was written. Once
+    /// the utterance has written all its audio, the sound plays on past it.
+    fn still_written(&self, voice: &Voice) -> bool {
+        voice.utterance.is_some_and(|utterance| {
+            self.tracked
+                .iter()
+                .any(|tracked| tracked.utterance == utterance && tracked.writing)
+        })
+    }
+
     /// Frames that may be mixed now, with the next mix written at mix
     /// position `written`: the audio written and not yet mixed, or further
-    /// while a voice it has reached plays on; none while paused.
+    /// while a voice it has reached plays on and its utterance has written
+    /// all its audio ([`Self::still_written`]); none while paused.
     fn mixable(&self, written: u64) -> u64 {
         if self.paused {
             return 0;
@@ -848,6 +868,7 @@ impl SourceState {
             .map(|voice| {
                 let len = voice_len(voice, channels);
                 match voice.state {
+                    _ if self.still_written(voice) => 0,
                     VoiceState::Waiting
                         if voice.trigger >= self.mixed_end && voice.trigger <= self.write_end =>
                     {
@@ -865,10 +886,16 @@ impl SourceState {
     /// the source's own audio to mix position `written` onward: a voice
     /// resuming starts with the first of them, and a waiting voice where its
     /// place is among them, or at their end when that is all the audio
-    /// written.
+    /// written and its utterance has no more to write
+    /// ([`Self::still_written`]).
     fn start_voices(&mut self, written: u64, data: u64) {
         let (mixed_end, write_end) = (self.mixed_end, self.write_end);
-        for voice in &mut self.voices {
+        let writing: Vec<bool> = self
+            .voices
+            .iter()
+            .map(|voice| self.still_written(voice))
+            .collect();
+        for (voice, writing) in self.voices.iter_mut().zip(writing) {
             match voice.state {
                 VoiceState::Resume { heard } => {
                     voice.state = VoiceState::Playing {
@@ -878,7 +905,9 @@ impl SourceState {
                 VoiceState::Waiting
                     if voice.trigger >= mixed_end
                         && (voice.trigger < mixed_end + data
-                            || (voice.trigger == write_end && mixed_end + data == write_end)) =>
+                            || (voice.trigger == write_end
+                                && mixed_end + data == write_end
+                                && !writing)) =>
                 {
                     voice.state = VoiceState::Playing {
                         start: written + (voice.trigger - mixed_end),

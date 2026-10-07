@@ -45,7 +45,13 @@ Public API:
   Sounds (`phase6-design.md`, "Earcons"): `sound(utterance, sound, gain)`
   places a `Sound` at the current end of the utterance's audio, as `mark`
   places a mark, to start when playback reaches it and play on over the
-  audio that follows; `play(sound, gain)` plays one at once, for a source
+  audio that follows. Until the utterance is finished, the sound is mixed
+  only alongside the utterance's own audio: playback that reaches it, or
+  the end of the audio written after it, waits for more of that audio, so
+  what follows the sound's place is heard under it at its place however
+  synthesis and playback interleave (a sound between two words starts
+  with the second), and only once the utterance is finished does the
+  sound play on past its audio. `play(sound, gain)` plays one at once, for a source
   that carries only sounds. Both convert the sound to the device's format
   (an error only when it cannot be converted), and `cancel_all` stops
   both. Clones are handles to the same source.
@@ -204,7 +210,9 @@ without audio, cancellation sparing later utterances, failure, write
 backpressure, replaying unplayed audio after a reopen, the tap getting
 exactly what played and never what was cut off, and sounds: one placed in
 an utterance starting at its place and playing on past the utterance's
-end without delaying it, one stopped or never mixed when its utterance is
+end without delaying it, one reached before what follows it was written
+waiting for that audio and going no further than it until the utterance
+is finished, one stopped or never mixed when its utterance is
 cancelled, one played at once over another source's speech and alone,
 and one partly heard going on from where it was after a reopen. Unit
 tests in `sound.rs` decode WAV files of each sample format, refuse what is
