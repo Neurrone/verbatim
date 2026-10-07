@@ -1428,7 +1428,6 @@ fn router_loop(
                         trace_id: emitted.trace_id,
                         command,
                         repeat: emitted.repeat,
-                        pressed_at_ms: emitted.pressed_at_ms,
                     };
                     if command_tx
                         .send(ShellCommand::Input(Box::new(input)))
@@ -1675,8 +1674,6 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                     // multi-press counting applies to real key streams in
                     // the decision machine, not control-plane injection.
                     repeat: 0,
-                    // No key was pressed, so commands use the current caret.
-                    pressed_at_ms: 0,
                 })
                 .map_err(|_| "the gesture router is gone".to_owned())
         }),

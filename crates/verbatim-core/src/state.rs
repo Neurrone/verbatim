@@ -113,6 +113,13 @@ pub(crate) enum ReviewText {
     Flat,
     /// A position in the object's text, with the line it is on.
     At(ReviewPosition),
+    /// At the caret, following it, and not moved away since. Core's copy of
+    /// the caret can lag behind the application's, whose caret event for a
+    /// key may reach Core after a review command pressed later, so the next
+    /// review command reads the line at the caret as the outpost finds it
+    /// (`TextPoint::Caret`) and starts from there, as a caret key speaks
+    /// what the outpost reads after its wait.
+    Caret,
     /// A position in the object's text whose line has not been read, as
     /// say-all from the review cursor leaves it; the next review command
     /// reads the line there first.
@@ -629,7 +636,7 @@ impl SrState {
                     insert(navigator.object.id, TextPosition::at(position.line.start));
                 }
                 ReviewText::Point(point) => insert(navigator.object.id, *point),
-                ReviewText::Unknown | ReviewText::Flat => {}
+                ReviewText::Unknown | ReviewText::Flat | ReviewText::Caret => {}
             }
         }
         if let Some(StartMarker::Text { node, at }) = self.start_marker {

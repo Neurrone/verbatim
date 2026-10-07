@@ -93,6 +93,45 @@ fn editing(text: &str, offset: u32) -> SrState {
     state
 }
 
+/// Answers the read of the line at the caret that a review command makes
+/// while the review cursor follows the caret, with `line`.
+fn read_at_caret(state: &mut SrState, effects: &[Effect], line: TextChunk) -> Vec<Effect> {
+    let asked = request(effects);
+    assert_eq!(
+        asked.op,
+        TextOp::Read(TextRead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Line,
+        })
+    );
+    reduce(
+        state,
+        &completed(
+            asked.query_id,
+            TextReply::Read {
+                moved: 0,
+                chunk: line,
+            },
+        ),
+    )
+}
+
+/// Settles the review cursor, following the caret, on the caret's `line`,
+/// as the first review command after the caret moved does.
+fn settle(state: &mut SrState, line: TextChunk) {
+    let effects = reduce(state, &command(ReviewCommand::ReviewCurrentCharacter, 0));
+    let _ = read_at_caret(state, &effects, line);
+}
+
+/// An edit field as [`editing`] makes it, with the review cursor settled at
+/// the caret.
+fn reviewing(text: &str, offset: u32) -> SrState {
+    let mut state = editing(text, offset);
+    settle(&mut state, line(text, 100, offset));
+    state
+}
+
 /// When [`key`] says each key was pressed.
 const KEY_PRESSED_AT: u64 = 1_700_000_000_000;
 
@@ -109,7 +148,6 @@ fn command(command: ReviewCommand, repeat: u8) -> Input {
         trace_id: TraceId::mint(),
         command,
         repeat,
-        pressed_at_ms: 0,
     }
 }
 
@@ -319,7 +357,7 @@ fn a_word_of_one_character_is_spoken_as_that_character() {
 
 #[test]
 fn the_review_cursor_speaks_a_word_of_one_character_by_its_name() {
-    let mut state = editing("the river bank.\r\n", 11);
+    let mut state = reviewing("the river bank.\r\n", 11);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
     assert_eq!(spoken(&effects), vec![character(".")]);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentWord, 0));
@@ -654,13 +692,7 @@ fn a_late_reply_read_before_a_newer_caret_event_leaves_the_caret_newest() {
             caret_reply_at(line("abc", 100, 1), 450),
         ),
     );
-    // The review cursor, following the caret, stays on the newest caret.
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("c")]);
-    // A key after both finds the newest caret too.
+    // A key after both finds the newest caret.
     let effects = reduce(&mut state, &key_at(CaretMotion::NextCharacter, 600));
     let TextOp::AwaitCaret(watch) = request(&effects).op else {
         panic!("expected a caret wait");
@@ -674,63 +706,60 @@ fn a_late_reply_read_before_a_newer_caret_event_leaves_the_caret_newest() {
     );
 }
 
-/// A command whose key the hook saw at `pressed_at_ms`.
-fn command_at(command: ReviewCommand, pressed_at_ms: u64) -> Input {
-    Input::Command {
-        trace_id: TraceId::mint(),
-        command,
-        repeat: 0,
-        pressed_at_ms,
-    }
+#[test]
+fn a_review_command_reads_the_live_caret_though_a_caret_keys_event_comes_late() {
+    // Down Arrow, then the current line read before the application's
+    // caret event for Down Arrow reaches Core.
+    let mut state = reviewing("one\n", 0);
+    let down = reduce(&mut state, &key(CaretMotion::NextLine, false));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
+    // Core still holds the caret on "one"; the outpost reads where it is.
+    let effects = read_at_caret(&mut state, &effects, line("two\n", 101, 0));
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("two")]);
+    // The next command starts from the line that read found.
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Text(_)))
+    );
+    assert_eq!(spoken(&effects), vec![character("t")]);
+    // Down Arrow's own event and answer arrive late, and the review
+    // cursor follows the caret again.
+    caret_event(&mut state, 5, line("two\n", 101, 0));
+    let _ = reduce(
+        &mut state,
+        &completed(
+            request_of(&down),
+            caret_reply(true, line("two\n", 101, 0), None),
+        ),
+    );
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    let effects = read_at_caret(&mut state, &effects, line("two\n", 101, 0));
+    assert_eq!(spoken(&effects), vec![character("t")]);
 }
 
 #[test]
-fn a_command_reads_the_caret_from_before_its_key_though_a_later_caret_event_came_first() {
-    // The review cursor does not follow the caret, so the first review
-    // command starts it at the caret.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
-    let _ = caret_event_at(&mut state, line("abc", 100, 0), 100);
-    // Observed after the command's key was pressed, but reaching Core first.
-    let _ = caret_event_at(&mut state, line("abc", 100, 1), 210);
-    let mut review = state.clone();
-    let effects = reduce(
-        &mut review,
-        &command_at(ReviewCommand::ReviewCurrentCharacter, 200),
-    );
-    assert_eq!(spoken(&effects), vec![character("a")]);
-    // A gesture the control plane injected has no press time: the current
-    // caret.
-    let effects = reduce(
-        &mut state.clone(),
-        &command_at(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("b")]);
-
-    let before = TextPoint::At(TextPosition {
-        anchor: TextAnchor(100),
-        offset: 0,
-    });
-    let effects = reduce(
-        &mut state.clone(),
-        &command_at(ReviewCommand::SayAllFromCaret, 200),
-    );
-    assert_eq!(
-        request(&effects).op,
-        read_ahead(before, None, TextUnit::Sentence)
-    );
-    let effects = reduce(
-        &mut state.clone(),
-        &command_at(ReviewCommand::ReportCaretLocation, 200),
-    );
-    assert_eq!(request(&effects).op, TextOp::Location(before));
-    // With no report since the key, the outpost reads the caret itself.
+fn a_review_cursor_moved_off_the_caret_reviews_from_where_it_is() {
+    let mut state = reviewing("one two\n", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("two")]);
     let effects = reduce(
         &mut state,
-        &command_at(ReviewCommand::ReportCaretLocation, 300),
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
     );
-    assert_eq!(request(&effects).op, TextOp::Location(TextPoint::Caret));
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Text(_)))
+    );
+    assert_eq!(spoken(&effects), vec![character("t")]);
 }
 
 #[test]
@@ -992,11 +1021,12 @@ fn a_terminal_holds_typing_until_its_text_changes() {
 #[test]
 fn the_review_cursor_follows_the_caret_and_keeps_its_column_across_lines() {
     let mut state = editing("abcdef\n", 4);
-    // Following the caret: no read is needed for the current character.
+    // Following the caret: the line at the caret is read afresh.
     let effects = reduce(
         &mut state,
         &command(ReviewCommand::ReviewCurrentCharacter, 0),
     );
+    let effects = read_at_caret(&mut state, &effects, line("abcdef\n", 100, 4));
     assert_eq!(spoken(&effects), vec![character("e")]);
 
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
@@ -1056,7 +1086,7 @@ fn the_review_cursor_follows_the_caret_and_keeps_its_column_across_lines() {
 fn the_review_cursor_meets_each_character_of_a_line_break() {
     // A standard edit control's line: the end of the line is its line
     // feed, and moving by character crosses the carriage return first.
-    let mut state = editing("ab\r\n", 1);
+    let mut state = reviewing("ab\r\n", 1);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
     assert_eq!(spoken(&effects), vec![character("\n")]);
     let effects = reduce(
@@ -1082,10 +1112,10 @@ fn the_review_cursor_meets_each_character_of_a_line_break() {
 
     // Windows 11 Notepad's line ends with a carriage return alone, and the
     // text's last line, with no break, ends on its last character.
-    let mut state = editing("ab\r", 0);
+    let mut state = reviewing("ab\r", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
     assert_eq!(spoken(&effects), vec![character("\r")]);
-    let mut state = editing("ab", 0);
+    let mut state = reviewing("ab", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
     assert_eq!(spoken(&effects), vec![character("b")]);
 }
@@ -1096,6 +1126,7 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     focus(&mut state, node(13, Role::Terminal, StateSet::new()));
     // The caret on 中 at cells 2 and 3 of a padded row.
     caret_event(&mut state, 13, line("ab中文cd    \r\n", 200, 2));
+    settle(&mut state, line("ab中文cd    \r\n", 200, 2));
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
     assert_eq!(spoken(&effects), vec![character("文")]);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
@@ -1146,6 +1177,13 @@ fn review_edges_are_known_from_the_line_or_from_a_movement_that_did_not_move() {
             ..line("only\n", 300, 0)
         },
     );
+    settle(
+        &mut state,
+        TextChunk {
+            first: true,
+            ..line("only\n", 300, 0)
+        },
+    );
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
     assert_eq!(
         spoken(&effects),
@@ -1170,7 +1208,7 @@ fn review_edges_are_known_from_the_line_or_from_a_movement_that_did_not_move() {
 
 #[test]
 fn repeated_presses_describe_and_spell_with_descriptions() {
-    let mut state = editing("ab\n", 0);
+    let mut state = reviewing("ab\n", 0);
     let effects = reduce(
         &mut state,
         &command(ReviewCommand::ReviewCurrentCharacter, 1),
@@ -1213,7 +1251,7 @@ fn a_navigator_without_a_caret_reads_its_line_first_and_falls_back_to_flat_text(
 
 #[test]
 fn select_then_copy_uses_the_start_marker() {
-    let mut state = editing("hello world\n", 0);
+    let mut state = reviewing("hello world\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
     assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
     let effects = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
@@ -1248,7 +1286,7 @@ fn select_then_copy_uses_the_start_marker() {
 
 #[test]
 fn the_follow_caret_toggle_is_spoken_saved_and_obeyed() {
-    let mut state = editing("abc\n", 0);
+    let mut state = reviewing("abc\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
     assert_eq!(
         spoken(&effects),
@@ -1298,7 +1336,7 @@ fn a_unit_the_text_does_not_have_is_not_supported() {
 
 #[test]
 fn the_next_word_past_the_line_moves_to_the_next_line_first_word() {
-    let mut state = editing("last\n", 0);
+    let mut state = reviewing("last\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
     let effects = reduce(
         &mut state,
@@ -1582,7 +1620,7 @@ fn reads_query(effects: &[Effect]) -> Option<QueryId> {
 
 #[test]
 fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
-    let mut state = editing("one\n", 0);
+    let mut state = reviewing("one\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromReview, 0));
     let first = request(&effects);
     assert_eq!(

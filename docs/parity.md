@@ -1201,10 +1201,14 @@ verified.
   the newest by the time each report was observed or read, not the last to
   arrive, so a caret key's reply read before a caret event that reached
   Core first does not move the caret, or the review cursor following it,
-  back; a report without a time is taken as it arrives. Review commands and
-  say-all from the caret carry their key's press time too, and read the
-  caret as it was before the key; a gesture the control plane injects has
-  no press time and uses the current caret (both fixed 2026-10-07). Terminals are recognized by
+  back; a report without a time is taken as it arrives. A review command
+  while the review cursor follows the caret, say-all from the caret, and the
+  caret's location read the caret as the outpost finds it, not Core's copy,
+  which can lag behind a key the application has already handled: NVDA
+  runs one script at a time, so reading the current line waits for an
+  earlier Down Arrow's script to finish (`nvda/input.md`, "Scripts run one
+  at a time"), and a live read gives the same line without holding the
+  command back (both fixed 2026-10-07). Terminals are recognized by
   their UIA class (`TermControl`, `WPFTermControl`) and the console host's
   window class, never by title. The console host's text area is announced
   as "terminal" without its English-only name, "Text Area", as NVDA's

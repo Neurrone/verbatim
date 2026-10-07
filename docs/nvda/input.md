@@ -134,6 +134,22 @@ counts (`getLastScriptRepeatCount`) — the once/twice/thrice behaviors
 throughout NVDA (spell on second press, copy on third) are all
 time-window repeat counting here, not per-feature timers.
 
+## Scripts run one at a time
+
+`scriptHandler.queueScript` puts each script on the main thread's queue
+(`queueHandler.queueFunction`) and counts it in `_numScriptsQueued` until
+it starts. Scripts and events run there one at a time, in the order they
+were queued, so a script never starts while an earlier one is still
+running. A caret key's script (see [Editable text and
+terminals](editable-text-and-terminals.md)) runs until its wait for
+evidence is over, so a script pressed after it, such as reading the
+current line after Down Arrow, starts only once the caret has moved and
+the new line has been spoken, and reads the caret where the key left it.
+While it waits, the caret script asks `isScriptWaiting` (the count above
+being nonzero) and cuts its wait short when another script is queued,
+which keeps speech from lagging behind fast keys; the queued script then
+reads the caret wherever it has got to.
+
 ## Typed characters, IME, and composition
 
 Out-of-process key events cannot tell NVDA what an app actually

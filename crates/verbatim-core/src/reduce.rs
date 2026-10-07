@@ -71,8 +71,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             trace_id,
             command,
             repeat,
-            pressed_at_ms,
-        } => reduce_command(state, *trace_id, *command, *repeat, *pressed_at_ms),
+        } => reduce_command(state, *trace_id, *command, *repeat),
         Input::ActivationCompleted {
             trace_id,
             activated,
@@ -987,16 +986,11 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
 /// they emit a `Fetch` to the owning outpost and the completion moves the
 /// navigator; everything else — report, activate, review text motion — is
 /// synchronous over state the reducer already holds.
-///
-/// `pressed_at_ms` is when the hook saw the command's key, 0 when unknown: a
-/// command that reads the caret takes it as it was before then
-/// ([`editing::caret_before`]).
 fn reduce_command(
     state: &mut SrState,
     trace_id: TraceId,
     command: ReviewCommand,
     repeat: u8,
-    pressed_at_ms: u64,
 ) -> Vec<Effect> {
     // Any command stops say-all, as any key does in NVDA; say-all's own
     // commands start it afresh.
@@ -1007,10 +1001,10 @@ fn reduce_command(
         | ReviewCommand::ToggleTypedWords => toggle_setting(state, trace_id, command),
         ReviewCommand::ToggleReportNewOutput => terminal::toggle(state, trace_id),
         ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
-            caret_command(state, trace_id, command, pressed_at_ms)
+            caret_command(state, trace_id, command)
         }
         ReviewCommand::ReportFocus => report_focus(state, trace_id, repeat),
-        _ => navigator_command(state, trace_id, command, repeat, pressed_at_ms),
+        _ => navigator_command(state, trace_id, command, repeat),
     };
     stopped.append(&mut effects);
     stopped
@@ -1049,14 +1043,8 @@ fn toggle_setting(state: &mut SrState, trace_id: TraceId, command: ReviewCommand
 }
 
 /// Runs a command on the focus's caret: say-all from the caret, or the
-/// caret's location, from the caret as the command's key found it. A focus
-/// that cannot have text has no caret.
-fn caret_command(
-    state: &mut SrState,
-    trace_id: TraceId,
-    command: ReviewCommand,
-    pressed_at_ms: u64,
-) -> Vec<Effect> {
+/// caret's location. A focus that cannot have text has no caret.
+fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return vec![editing::speak(
             trace_id,
@@ -1072,9 +1060,8 @@ fn caret_command(
             review_text::message(Message::NotSupported),
         )];
     }
-    let at = editing::caret_point_before(state, node, pressed_at_ms);
     if command == ReviewCommand::SayAllFromCaret {
-        return say_all::start(state, node, true, at);
+        return say_all::start(state, node, true, verbatim_model::TextPoint::Caret);
     }
     let query_id = state.allocate_query_id();
     state.pending_text = Some(crate::state::PendingText {
@@ -1085,7 +1072,7 @@ fn caret_command(
     vec![Effect::Text(verbatim_model::TextRequest {
         query_id,
         node_id: node,
-        op: verbatim_model::TextOp::Location(at),
+        op: verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
     })]
 }
 
@@ -1095,7 +1082,6 @@ fn navigator_command(
     trace_id: TraceId,
     command: ReviewCommand,
     repeat: u8,
-    pressed_at_ms: u64,
 ) -> Vec<Effect> {
     // "To focus" is meaningful even with the navigator already on focus;
     // handle it before the navigator-present guard so it can seed one.
@@ -1134,7 +1120,7 @@ fn navigator_command(
         ReviewCommand::PreviousSibling => navigate(state, trace_id, QueryKind::PreviousSibling),
         ReviewCommand::FirstChild => navigate(state, trace_id, QueryKind::FirstChild),
         command if review_text::handles(command) => {
-            match review_text::run(state, trace_id, command, repeat, pressed_at_ms) {
+            match review_text::run(state, trace_id, command, repeat) {
                 review_text::Outcome::Done(effects) => effects,
                 review_text::Outcome::Flat => flat_review_command(state, trace_id, command, repeat),
             }

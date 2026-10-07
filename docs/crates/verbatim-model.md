@@ -76,10 +76,8 @@ Public API:
   observation time, which is for the latency record only), fetch
   completions (echoing their `QueryKind`), `OutpostEnded` (an outpost
   incarnation ended, so its node ids are dead), timer ticks, and `Command`
-  (a review or object-navigation gesture carrying a `ReviewCommand`, a
-  press-repeat count, roadmap M3, and `pressed_at_ms`, when the keyboard
-  hook saw the gesture's key on the clock of `observed_at_ms`, 0 when
-  unknown, as for a gesture the control plane injected). Effects are `Speak`, `StopSpeech`
+  (a review or object-navigation gesture carrying a `ReviewCommand` and a
+  press-repeat count, roadmap M3). Effects are `Speak`, `StopSpeech`
   (cancel current and queued speech), `DropExpiredSpeech` (the focus has
   changed: carrying a `FocusNow`, it asks the speech pipeline to drop
   focus speech whose `FocusValidity` no longer holds, see below),

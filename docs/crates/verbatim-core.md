@@ -343,8 +343,8 @@ review cursor over text in `review_text.rs`; say-all in `say_all.rs`.
 What the state keeps, within the bounds of "Core's state" in
 `phase6-design.md`: the focus's caret (`CaretContext`: its line, with the
 caret at the line's offset, and the selection), the review cursor's
-position (`ReviewText`: unknown, flat, a line and a position on it, or a
-point whose line has not been read), the caret key waiting for evidence,
+position (`ReviewText`: unknown, flat, a line and a position on it, at
+the caret it follows, or a point whose line has not been read), the caret key waiting for evidence,
 the one review or text request in flight, the start marker, a say-all's
 queue of spoken pieces, the word typed so far (at most 256 bytes), and
 typing held for a terminal (at most 1 KB). Text is held only a line at a
@@ -358,10 +358,7 @@ Which objects have text. A focus or navigator object whose role is an
 edit field, a document, or a terminal may have text, and so does any node
 the outpost sent a caret report for. For those, caret keys wait for
 evidence and the review cursor reads lines through the protocol; the
-first review command reads the line at the caret (Core's copy of the
-caret as the command's key found it, `Input::Command`'s `pressed_at_ms`,
-taken as a caret key takes it; the current caret for an injected gesture,
-which has no press time), and a `NoText` answer
+first review command reads the line at the caret, and a `NoText` answer
 makes the object flat text, reviewed by its value or name as in M3. Any
 other object is flat text without asking.
 
@@ -388,8 +385,7 @@ event that reached Core first, only joins the history, and neither the
 caret nor the review cursor following it moves back. A report without a
 time is taken as it arrives. A newer caret key supersedes one still
 waiting, and a focus change drops it, so a focus announcement wins and
-speech never lags behind fast typing. The answer updates the caret and,
-when the review cursor follows the caret, moves the review cursor to it,
+speech never lags behind fast typing. The answer updates the caret,
 then speaks, queued:
 
 - Left and Right Arrow, Home, and End: the character at the caret, a
@@ -454,9 +450,18 @@ held. A caret key or a focus change ends the word being typed.
 Interruption of speech by typing and Enter is the keyboard hook's
 (`verbatim-input`'s `interrupt_for_characters` and `interrupt_for_enter`).
 
-The review cursor over text (`docs/nvda/review-modes.md`). The cursor holds
-its line, so character and word motion within the line and reading the
-current unit need no round trip; another line, page, the document's ends,
+The review cursor over text (`docs/nvda/review-modes.md`). While it
+follows the caret and has not been moved away from it (`ReviewText::Caret`,
+set by a caret key, a caret report, or a caret key's answer), a review
+command reads the line at the caret as the outpost finds it
+(`TextPoint::Caret`) and starts from there, never from Core's copy of the
+caret: an application's caret event for a key can reach Core after a
+review command pressed later, so Down Arrow followed at once by reading
+the current line reads the line Down Arrow moved to, as a caret key speaks
+what the outpost reads after its wait. Say-all from the caret and the
+caret's location ask about the caret the same way. Once moved, the cursor
+holds its line, so character and word motion within the line and reading
+the current unit need no round trip; another line, page, the document's ends,
 the selection's ends, and the start marker are read through the protocol
 and landed on. NVDA's messages and repeated presses hold as in M3, with
 "Top" and "Bottom" known at once when the line is the document's first or
@@ -528,11 +533,7 @@ the text, known from a chunk marked as the last or a read that could not
 move on, and stops on any command, caret key, typed text, cancelled speech
 (`Input::SpeechCancelled`, from any key), a focus change (which also cuts
 its speech off), or the end of its outpost, dropping the buffer and leaving
-the cursor where reading got to. Say-all from the caret, and the caret's
-location, use the caret as the command's key found it when a caret
-report observed since has replaced it, as when an application's late caret
-event reached Core before the key; otherwise the caret the outpost
-reads.
+the cursor where reading got to.
 
 ## Terminals (milestone M4 item 9)
 

@@ -33,8 +33,8 @@ use verbatim_model::{
 };
 
 use crate::state::{
-    CARET_HISTORY, CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText,
-    ReviewPosition, ReviewText, SharedChunk, SrState, TextFollowUp, TimedCaret,
+    CARET_HISTORY, CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText, ReviewText,
+    SrState, TextFollowUp, TimedCaret,
 };
 use crate::text;
 
@@ -153,6 +153,10 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
             CaretWait::Standard
         },
     };
+    // The key is moving the caret, which the review cursor follows: a
+    // review command from now on reads where the caret is, not where Core
+    // last saw it, however late the application reports the move.
+    follow_caret(state, node);
     let query_id = state.allocate_query_id();
     state.pending_caret = Some(PendingCaret {
         query_id,
@@ -168,19 +172,17 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     effects
 }
 
-/// The caret of a node as a key found it: its line, with the caret at the
-/// chunk's offset, the selection, and when the report it came from was
-/// observed (0 when unknown).
+/// The caret of a node as a caret key found it: its line, with the caret
+/// at the chunk's offset, and the selection.
 #[derive(Clone, Copy)]
-pub(crate) struct CaretBefore<'a> {
-    pub(crate) line: &'a SharedChunk,
-    pub(crate) selection: Option<Selection>,
-    pub(crate) observed_at_ms: u64,
+struct CaretBefore<'a> {
+    line: &'a TextChunk,
+    selection: Option<Selection>,
 }
 
 impl CaretBefore<'_> {
     /// Where the caret was.
-    pub(crate) fn caret(self) -> TextPosition {
+    fn caret(self) -> TextPosition {
         TextPosition {
             anchor: self.line.start,
             offset: self.line.offset,
@@ -195,13 +197,8 @@ impl CaretBefore<'_> {
 /// same millisecond as the key, or later, may already show what the key
 /// did, so it is never the caret before the key. With no time for the key, or no timed report,
 /// the caret Core has now stands in; with timed reports but none from
-/// before the key, the caret before the key is not known. Caret keys and
-/// every command that reads the caret take the caret from here.
-pub(crate) fn caret_before(
-    state: &SrState,
-    node: NodeId,
-    pressed_at_ms: u64,
-) -> Option<CaretBefore<'_>> {
+/// before the key, the caret before the key is not known.
+fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<CaretBefore<'_>> {
     let mut timed = state
         .caret_history
         .iter()
@@ -216,7 +213,6 @@ pub(crate) fn caret_before(
             .map(|caret| CaretBefore {
                 line: &caret.line,
                 selection: caret.selection,
-                observed_at_ms: caret.observed_at_ms,
             });
     }
     // Reports arrive in the order their paths deliver them, not the order
@@ -228,27 +224,7 @@ pub(crate) fn caret_before(
         .map(|report| CaretBefore {
             line: &report.line,
             selection: report.selection,
-            observed_at_ms: report.observed_at_ms,
         })
-}
-
-/// Where a command that asks the outpost about the caret of `node` (say-all
-/// from the caret, the caret's location) should ask about, for a key pressed
-/// at `pressed_at_ms`: the caret before the key ([`caret_before`]) when a
-/// report observed since has replaced it, as when the key's own caret event
-/// reached Core first; otherwise the caret as the outpost finds it.
-pub(crate) fn caret_point_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> TextPoint {
-    let current = state
-        .caret
-        .as_ref()
-        .filter(|caret| caret.node == node)
-        .map(|caret| caret.observed_at_ms);
-    match caret_before(state, node, pressed_at_ms) {
-        Some(before) if current.is_some_and(|current| current != before.observed_at_ms) => {
-            TextPoint::At(before.caret())
-        }
-        _ => TextPoint::Caret,
-    }
 }
 
 /// What a Backspace is about to delete, from the caret's line before the
@@ -488,9 +464,10 @@ fn selection_segments(changes: &[SelectionChange]) -> Vec<UtteranceSegment> {
 
 /// Takes a caret report for `node` as the focus's caret, and moves the
 /// review cursor to it when the review cursor follows the caret and the
-/// navigator is on that node. `observed_at_ms` is when the report was
+/// navigator is on that node (to read the caret afresh, as the review
+/// cursor does at [`ReviewText::Caret`]). `observed_at_ms` is when the report was
 /// observed or read, 0 when unknown; a timed report is also kept for a
-/// later key to find the caret as it was when that key was pressed
+/// later caret key to find the caret as it was when that key was pressed
 /// ([`caret_before`]). A timed report observed before the caret Core holds,
 /// such as a caret key's reply read before a caret event that reached Core
 /// first, is only kept: the caret stays the newest known, and the review
@@ -526,19 +503,7 @@ pub(crate) fn update_caret(
         }
         return;
     }
-    if state.settings.follow_caret
-        && let Some(navigator) = state.navigator.as_mut()
-        && navigator.object.id == node
-    {
-        let grid = is_grid(navigator.object.role);
-        let content = text::line_content(&line.text, grid);
-        let offset = text::boundary(content, line.offset as usize);
-        navigator.text = ReviewText::At(ReviewPosition {
-            line: Arc::clone(&line),
-            offset,
-            column: text::column_of(content, offset, grid),
-        });
-    }
+    follow_caret(state, node);
     let line_break = text::line_break(&line.text).map(str::to_owned).or_else(|| {
         state
             .caret
@@ -553,6 +518,18 @@ pub(crate) fn update_caret(
         line_break,
         observed_at_ms,
     });
+}
+
+/// Puts the review cursor at the caret of `node` when it follows the caret
+/// and the navigator is on that node: the next review command reads the
+/// line at the caret as the outpost finds it ([`ReviewText::Caret`]).
+fn follow_caret(state: &mut SrState, node: NodeId) {
+    if state.settings.follow_caret
+        && let Some(navigator) = state.navigator.as_mut()
+        && navigator.object.id == node
+    {
+        navigator.text = ReviewText::Caret;
+    }
 }
 
 /// Sets the state to wait for a new focus's text at the caret, which it

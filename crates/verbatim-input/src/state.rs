@@ -113,12 +113,6 @@ pub struct EmittedGesture {
     /// Any key other than a modifier that completes no bound gesture ends
     /// the streak, as in NVDA.
     pub repeat: u8,
-    /// Milliseconds since the Unix epoch when the platform's keyboard hook
-    /// saw the key that completed the gesture, the clock outposts stamp
-    /// what they observe with. The decision machine has no such clock and
-    /// leaves it 0, for the hook to stamp; 0 also means unknown, as for a
-    /// gesture the control plane injected.
-    pub pressed_at_ms: u64,
 }
 
 /// What a key press does to speech (`docs/nvda/input.md`, "What a key
@@ -177,7 +171,6 @@ impl Decision {
                 trace_id: TraceId::mint(),
                 gesture,
                 repeat: 0,
-                pressed_at_ms: 0,
             }),
             ..Self::pass()
         }
@@ -546,7 +539,6 @@ impl DecisionMachine {
                 trace_id: TraceId::mint(),
                 gesture: gesture.clone(),
                 repeat,
-                pressed_at_ms: 0,
             });
         }
 
