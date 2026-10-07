@@ -121,6 +121,50 @@ jobs:
       # an agent started in a step of its own was gone (connection refused)
       # by the time the suite ran. NVDA's system tests start NVDA inside
       # their test step for the same reason.
+      # Windows Terminal, so the terminal scenarios that prefer it use it
+      # here as they do on Windows 11, rather than falling back to the
+      # console host (docs/tooling.md). The release's preinstall kit holds
+      # the bundle and its one dependency, the Microsoft.UI.Xaml.2.8
+      # framework, which Windows Server lacks; the bundle needs no VCLibs.
+      # Version and hash are pinned; the hash is the release asset's own
+      # SHA-256. The scenarios start wt.exe by searching PATH, so the
+      # folder holding its execution alias goes on PATH for later steps,
+      # and the step fails unless the package and the alias are there.
+      # Windows PowerShell runs it, since PowerShell 7's Appx module is not
+      # reliable; its progress display is off, which otherwise slows the
+      # download many times over.
+      - name: Install Windows Terminal
+        shell: powershell
+        env:
+          WT_VERSION: 1.24.12741.0
+          WT_KIT_SHA256: a913cbe4dddb8ce9939040c015f3fb3dade286e904fea227f1c0982b5fcb7cf3
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
+          $kit = "Microsoft.WindowsTerminal_${env:WT_VERSION}_8wekyb3d8bbwe.msixbundle_Windows10_PreinstallKit.zip"
+          $zip = Join-Path $env:RUNNER_TEMP $kit
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/microsoft/terminal/releases/download/v$env:WT_VERSION/$kit" -OutFile $zip
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:WT_KIT_SHA256) {
+            Write-Error "$kit has SHA-256 $hash, not the pinned $env:WT_KIT_SHA256"
+            exit 1
+          }
+          $dir = Join-Path $env:RUNNER_TEMP "windows-terminal"
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $bundle = Get-ChildItem -Path $dir -Filter *.msixbundle | Select-Object -First 1
+          $xaml = Get-ChildItem -Path $dir -Filter "Microsoft.UI.Xaml.2.8_*_x64__8wekyb3d8bbwe.appx" | Select-Object -First 1
+          if (-not $bundle -or -not $xaml) {
+            Write-Error "the preinstall kit lacks the bundle or the x64 Microsoft.UI.Xaml.2.8 framework"
+            exit 1
+          }
+          Add-AppxPackage -Path $bundle.FullName -DependencyPath $xaml.FullName
+          Get-AppxPackage Microsoft.WindowsTerminal | Format-List Name, Version, Architecture
+          $aliases = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps"
+          if (-not (Test-Path (Join-Path $aliases "wt.exe"))) {
+            Write-Error "Windows Terminal installed, but its wt.exe alias is not in $aliases"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $aliases
       # The runner's Windows Server has classic Notepad, without Windows 11
       # Notepad's spell checker, so the scenarios the registry marks
       # local-only are skipped here, and only here (docs/tooling.md).

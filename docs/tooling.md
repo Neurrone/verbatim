@@ -494,7 +494,20 @@ Each terminal scenario opens a window of its own titled
 terminals are left alone, and runs its shell in a folder of the same name
 in `target/e2e-stage`, deleted once the window has closed; it uses Windows Terminal when `wt.exe` can be
 started and the console host otherwise (`conhost_commands` always uses the
-console host), and prints which. They type through the agent's `TypeText`,
+console host), and prints which. The agent starts `wt.exe` by searching
+`PATH`, so Windows Terminal's execution alias folder,
+`%LOCALAPPDATA%\Microsoft\WindowsApps`, must be on the agent's `PATH`, as
+it is on Windows 11 by default. CI's `e2e` job installs Windows Terminal
+before the suite, so the terminal scenarios use it there too: a step
+downloads the release's preinstall kit for a pinned version (1.24.12741.0,
+the version these scenarios were checked against), checks it against its
+pinned SHA-256, installs the bundle with `Add-AppxPackage` and the kit's
+x64 `Microsoft.UI.Xaml.2.8` framework as its one dependency (Windows
+Server lacks it; the bundle declares no VCLibs dependency), puts the
+alias folder on `PATH` for the later steps, and fails unless the package
+and its `wt.exe` alias are there. To move to a newer release, change the
+version and the hash in the step together, taking the hash from the
+release asset's digest. They type through the agent's `TypeText`,
 which maps each character with the foreground window's keyboard layout, so
 any layout that can type the commands works. `crates/verbatim-e2e/src/
 scenarios/` documents exactly what each asserts, at the top of its module.
