@@ -2114,6 +2114,7 @@ A read-only audit compared Verbatim's MSAA handling with NVDA's. The tree view f
 - Tree items outside SysTreeView32: NVDA keeps a non-numeric value and takes no level from it.
 - A focused list view group header.
 - MSAA roles and states with no mapping (IP address, clock, grip and others; busy indicator; traversed and linked).
-- Lower likelihood: IME candidate lists, Scintilla editors, Qt containers' focus redirect, alert-role objects, repeating accFocus until it settles, the caret show event, focus events separated by other events in one batch, and the focused-state check reading ancestors' states as last read.
+- Application-specific support (IME candidate lists, Scintilla editors, Qt containers' focus redirect) is deferred until Wasm extensions exist (Dickson, 2026-10-07).
+- Lower likelihood: alert-role objects, repeating accFocus until it settles, the caret show event, focus events separated by other events in one batch, and the focused-state check reading ancestors' states as last read.
 
 MSAA calls Verbatim makes more often than NVDA, for the call-count reduction: accRole twice per child-0 focus; a rejected focus read in full before the focused-state check; a repeated focus read in full; full snapshots for events on objects that are not the focus; tree item sibling counts on every read, ancestors included; expanded child counts on every state change; selected-child reads NVDA does not make.
