@@ -88,8 +88,8 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::CharacterTyped { trace_id, text } => {
             editing::character_typed(state, *trace_id, text)
         }
-        Input::MarkReached { mark, at_ms } => {
-            let mut effects = say_all::mark_reached(state, *mark, *at_ms);
+        Input::MarkReached { mark } => {
+            let mut effects = say_all::mark_reached(state, *mark);
             effects.extend(terminal::mark_reached(state, *mark));
             effects
         }

@@ -445,7 +445,7 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
   null). With a `count` above one it reads on, a unit at a time from the
   last one's start, until it has `count`, the text read reaches
   `max_total`, or a move by one does not move (`ended`: the last unit read
-  is the text's last). That is say-all's batch: sixteen lines ahead in
+  is the text's last). That is say-all's batch: twenty lines ahead in
   one round trip.
 - `text_range` (`RangeQuery`, `RangeAnswer`): two points (or one, for
   moving the caret), ordered by comparing them, and the text between them

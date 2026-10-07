@@ -513,7 +513,7 @@ Reading mockapp's three lines (two lines and the empty one after the last
 line break) from the caret, and moving the caret as each is reached.
 
 - Minimum: 1 UIA call for every batch of lines read ahead
-  (`TextOp::ReadAhead`, sixteen units), and 1 for each caret move.
+  (`TextOp::ReadAhead`, twenty units), and 1 for each caret move.
 - Today: 1 UIA call for all three lines remotely, its end found in the
   same program; 29 classically. Before, say-all asked for one line per
   request, each a round trip remotely or not: 9 calls for the first line,
@@ -522,19 +522,41 @@ line break) from the caret, and moving the caret as each is reached.
   classically (4 both ways before).
 - Target: 1 per batch and 1 per caret move, met.
 
-When the next batch is read: say-all keeps its pieces in a buffer and
-hands them to speech two ahead of playback, and reads the next batch when
-what is left, handed out and buffered, would last less than three seconds
-at the pace of speech it measures from its marks
-(`docs/crates/verbatim-core.md`, "Say-all"). The mark is set by time, not
-by piece count, because pieces vary from a word to a paragraph and speech
-from slow to several hundred words a minute. Three seconds is chosen from
-the reads it must cover: sixteen lines of fifty characters read ahead in
-0.9 ms at the median remotely and 22 to 32 ms classically, with the worst
-of 600 classic reads 190 ms on a machine loaded by other builds (below), so
-the next batch arrives at least fifteen times sooner than speech would run
-dry, with Core's and the pipe's own latency inside that margin; a longer
-mark would only keep more text buffered.
+When the next batch is read (decided with Dickson on 2026-10-07): say-all
+reads 20 lines or sentences at a time, keeps their pieces in a buffer,
+hands them to speech two ahead of playback, and reads the next 20 once
+fewer than 10 pieces are left to speak, handed out and buffered together
+(`docs/crates/verbatim-core.md`, "Say-all"). It replaced a low-water mark
+in time (three seconds at a pace of speech measured from the marks): a
+count needs no estimate, and ten pieces, even of a few words each, last
+far longer than a batch's read, as measured against Windows 11 Notepad:
+
+Measured on 2026-10-07 on this machine (x64), debug build, otherwise
+quiet, reading a 300-line document of prose (lines of 40 to 80 characters
+taken from `docs/architecture.md`) from its top to its end, with eSpeak NG
+at the end-to-end rate (376 words a minute) in Verbatim and in NVDA. Each
+batch's read time and calls are the outpost read stage of Verbatim's
+latency log; the gap between two pieces is the silence in the system's
+loopback audio where the second piece starts, found from each piece's
+reported start (Verbatim's `SpeechStarted` frames, NVDA's index marks),
+and zero where the pieces ran together. Fifteen batches of 20 lines each;
+the read that then finds the end is left out.
+
+- Remote operations on: a batch read in 3.3 ms at the median, 9.3 ms at
+  the 95th percentile and at worst, in 1 call each; the gaps between
+  pieces 1.5 ms at the median, 14.5 ms at the 95th percentile, and 23.3
+  ms at worst, over 297 boundaries.
+- Remote operations off: a batch read in 21.1 ms at the median, 30.8 ms
+  at the 95th percentile and at worst, in 166 calls each (165 for the
+  first); the gaps 1.5, 13.9, and 25.3 ms.
+- NVDA, which reads a piece at a time, a few lines per call to the
+  synthesizer: the gaps 1.2, 30.2, and 62.5 ms, over 299 boundaries.
+
+Each batch's request also waited 5 ms at the median (10.8 at worst)
+behind the application's other events in the outpost's queue. With either
+path, a batch arrives with ten pieces, several seconds of speech, still
+to speak, and the gaps are the same with remote operations on and off:
+the pieces already with speech hide the read entirely.
 
 ### The caret's location, UIA
 

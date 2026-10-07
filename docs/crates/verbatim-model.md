@@ -379,10 +379,8 @@ failed).
   committed composition), a tab as a tab character and Enter as a
   carriage return. The platform side produces it, from the keyboard hook's
   translation of keys to text or from the application's text-edit events.
-- `Input::MarkReached { mark, at_ms }`: playback reached a `SpeechMark`
-  the reducer placed, as the speech pipeline's `mark_reached` reports it,
-  at `at_ms` milliseconds since the Unix epoch (0 when unknown), from which
-  say-all measures the pace of speech.
+- `Input::MarkReached { mark }`: playback reached a `SpeechMark` the
+  reducer placed, as the speech pipeline's `mark_reached` reports it.
 - `Input::SpeechCancelled`: a key press cut speech off outside the reducer
   (the hook's `KeySpeechEffect::Cancel`); say-all stops.
 - `Input::Settings(ReaderSettings)`: the reader settings, at startup and

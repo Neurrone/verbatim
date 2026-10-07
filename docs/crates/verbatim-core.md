@@ -508,7 +508,7 @@ setting: asked for a sentence, a provider with no sentence unit (UIA)
 answers that it has none and reading goes by line, and one whose text NVDA
 splits itself answers with the paragraph, which is split by Unicode's
 sentence rules; a terminal always reads by line. Each read asks for a batch
-of 16 units (`TextOp::ReadAhead`), the first from the point onwards, every
+of 20 units (`TextOp::ReadAhead`), the first from the point onwards, every
 later batch a unit on from the last chunk read, so a batch where the
 provider runs remote operations is one round trip for tens of seconds of
 speech. The batch's pieces wait in a buffer in the state
@@ -519,14 +519,11 @@ with its own index mark. When playback reaches a mark, say-all from the
 caret asks the outpost to move the caret there (and the review cursor
 follows the caret as usual), say-all from the review cursor leaves the
 review cursor at that point, whose line the next review command reads, and
-the next piece is handed on. The next batch is read when what is left to
-speak, handed out and buffered, would last less than three seconds
-(`LOW_WATER_MS`) at the pace of speech: the characters per minute between
-the last two marks reached (`Input::MarkReached`'s `at_ms`), each
-measurement folded in at a quarter weight, kept from one say-all to the
-next, and assumed to be 1,800 (30 characters a second, fast reading)
-before any is measured, so the first estimate errs early. The choice and
-the measurements behind it are in `docs/performance.md`, "Say-all".
+the next piece is handed on. The next batch is read once fewer than 10
+pieces (`LOW_WATER`) are left to speak, handed out and buffered together,
+so at most one read is in flight and the buffer holds under two batches.
+The choice and the measurements behind it are in `docs/performance.md`,
+"Say-all".
 Blank pieces are not spoken. The display is kept on while it reads
 (`Effect::KeepDisplayOn`, by the setting). It ends after the last piece of
 the text, known from a chunk marked as the last or a read that could not

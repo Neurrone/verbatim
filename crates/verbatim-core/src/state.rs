@@ -359,9 +359,8 @@ pub(crate) struct SayAll {
     /// moves on from.
     pub(crate) last_chunk: Option<(TextPosition, TextUnit)>,
     /// Pieces handed to speech whose marks playback has not reached yet,
-    /// oldest first, with where each starts and its length in characters
-    /// (Unicode scalar values). At most `say_all::HANDED`.
-    pub(crate) queued: std::collections::VecDeque<(SpeechMark, TextPosition, u32)>,
+    /// oldest first, with where each starts. At most `say_all::HANDED`.
+    pub(crate) queued: std::collections::VecDeque<(SpeechMark, TextPosition)>,
     /// Pieces read and not yet handed to speech, in order: the chunk and
     /// the byte range of its text. At most one read-ahead batch's worth
     /// (`verbatim_model::MAX_READ_AHEAD_TEXT`).
@@ -370,11 +369,6 @@ pub(crate) struct SayAll {
     /// The trace of the latest read, which pieces handed out later carry.
     #[serde(default)]
     pub(crate) trace: Option<TraceId>,
-    /// When playback last reached one of say-all's marks, in milliseconds
-    /// since the Unix epoch, and the length in characters of the piece it
-    /// started, to measure the pace of speech by the next.
-    #[serde(default)]
-    pub(crate) last_reached: Option<(u64, u32)>,
     /// The document's end has been read.
     pub(crate) finished: bool,
     /// Whether the display was asked to stay on.
@@ -457,10 +451,6 @@ pub struct SrState {
     /// The say-all in progress.
     #[serde(default)]
     pub(crate) say_all: Option<SayAll>,
-    /// The pace say-all's speech was last measured at, in characters per
-    /// minute, kept from one say-all to the next.
-    #[serde(default)]
-    pub(crate) say_all_pace: Option<u32>,
     /// The word typed so far, for typed word echo; at most
     /// `editing::MAX_TYPED_WORD` bytes.
     #[serde(default)]
@@ -646,7 +636,7 @@ impl SrState {
             if let Some((position, _)) = say_all.last_chunk {
                 insert(say_all.node, position);
             }
-            for (_, position, _) in &say_all.queued {
+            for (_, position) in &say_all.queued {
                 insert(say_all.node, *position);
             }
             for piece in &say_all.buffer {

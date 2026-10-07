@@ -154,7 +154,7 @@ impl Playback {
         };
         self.heard.push(text);
         if let Some(mark) = mark {
-            self.feed(state, &Input::MarkReached { mark, at_ms: 0 });
+            self.feed(state, &Input::MarkReached { mark });
         }
         true
     }
