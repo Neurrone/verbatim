@@ -41,9 +41,11 @@ Public API:
   registry)` is the kept object behind a dialog this outpost reported;
   `children()` reads its children in order (`accChildCount` and
   `AccessibleChildren`), standing in a window's client area for each child
-  that is the window object of another window, as NVDA does, and knowing a
-  hidden or disabled window from `IsWindowVisible` and `IsWindowEnabled`
-  without acquiring its client area; `role`, `states` (with multi-line from
+  that is the window object of another window, as NVDA does, acquiring it
+  the first time it is read, and knowing a hidden or disabled window from
+  `IsWindowVisible` and `IsWindowEnabled`, so it is passed over without
+  being acquired unless its role or name is asked for as the next sibling
+  of a label; `role`, `states` (with multi-line from
   an edit control's window style), `invisible`, `name`, `value`, and
   `description` each read their property the first time they are asked,
   and the first three keep it, since the gathering looks at a child's

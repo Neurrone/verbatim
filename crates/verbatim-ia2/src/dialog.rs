@@ -10,8 +10,11 @@
 //!
 //! A child that is a window object stands for the window's client area, as
 //! NVDA reads it, so a dialog's controls, each a window of its own, are
-//! seen with their own roles. A window that is hidden or disabled is known
-//! to be so from local window reads, without acquiring its client area.
+//! seen with their own roles. The client area is acquired the first time
+//! it is read. A window that is hidden or disabled is known to be so from
+//! local window reads, so it is passed over without acquiring it, unless
+//! its role or name is asked for as a neighbor's: a label is recognized by
+//! the control after it, hidden or not.
 
 use std::cell::OnceCell;
 
@@ -37,8 +40,12 @@ struct Seen {
 /// One object a dialog's text may be gathered from: the dialog itself or a
 /// descendant, with what has been read of it so far.
 pub struct DialogObject {
-    /// The object and the child id it is read at.
-    acc: Accessible,
+    /// The object and the child id it is read at, once acquired; a child
+    /// window's client area is acquired the first time it is read.
+    acc: OnceCell<Accessible>,
+    /// What is read when the object cannot be acquired: the object itself,
+    /// or a child window's window object.
+    fallback: Accessible,
     /// The window it is in.
     hwnd: isize,
     /// Whether it is that window's client area, whose window style says
@@ -50,16 +57,35 @@ pub struct DialogObject {
 }
 
 impl DialogObject {
-    /// An object read at `acc`, in the window `hwnd`.
-    fn new(acc: Accessible, hwnd: isize, client: bool) -> Self {
+    /// The client area of the window `hwnd`, whose window object is
+    /// `window_object`, acquired when it is first read.
+    fn window_client(window_object: Accessible, hwnd: isize) -> Self {
         Self {
-            acc,
+            acc: OnceCell::new(),
+            fallback: window_object,
             hwnd,
-            client,
+            client: true,
             role: OnceCell::new(),
             seen: OnceCell::new(),
             name: OnceCell::new(),
         }
+    }
+
+    /// An object already in hand, read at `acc`, in the window `hwnd`.
+    fn new(acc: Accessible, hwnd: isize, client: bool) -> Self {
+        let object = Self {
+            client,
+            ..Self::window_client(acc.clone(), hwnd)
+        };
+        let _ = object.acc.set(acc);
+        object
+    }
+
+    /// The object, acquiring a child window's client area on first use.
+    fn acc(&self) -> &Accessible {
+        self.acc.get_or_init(|| {
+            Accessible::client_of_window(self.hwnd).unwrap_or_else(|| self.fallback.clone())
+        })
     }
 
     /// The object this outpost reported as `node`, to gather its text from;
@@ -74,27 +100,25 @@ impl DialogObject {
     /// The object's children, in order, each a window's client area where
     /// the child is a window object; none when they cannot be read. Two
     /// calls (`accChildCount` and `AccessibleChildren`), then for each
-    /// child object its role, and for the window object of a visible,
-    /// enabled window its window and client area too.
+    /// child object its role, and for a window object its window.
     #[must_use]
     pub fn children(&self) -> Vec<Self> {
-        if self.acc.child() != CHILDID_SELF {
+        let acc = self.acc();
+        if acc.child() != CHILDID_SELF {
             return Vec::new();
         }
-        let count = match self.acc.child_count() {
+        let count = match acc.child_count() {
             Ok(count) if count > 0 => usize::try_from(count).unwrap_or(0),
             _ => return Vec::new(),
         };
-        let Some(entries) = self.acc.children(count) else {
+        let Some(entries) = acc.children(count) else {
             return Vec::new();
         };
         entries
             .iter()
             .filter_map(|entry| match entry {
-                Related::Child(child) => {
-                    Some(Self::new(self.acc.with_child(*child), self.hwnd, false))
-                }
-                Related::Object(_) => entry.object().map(|acc| self.child_object(acc)),
+                Related::Child(child) => Some(Self::new(acc.with_child(*child), self.hwnd, false)),
+                Related::Object(_) => entry.object().map(|child| self.child_object(child)),
                 Related::Nothing | Related::Other => None,
             })
             .collect()
@@ -108,11 +132,11 @@ impl DialogObject {
             && let Some(hwnd) = acc.window()
             && hwnd != self.hwnd
         {
+            let child = Self::window_client(acc, hwnd);
             let hidden = !window::is_visible(hwnd);
             let disabled = !window::is_enabled(hwnd);
             if hidden || disabled {
-                // Passed over on these alone; nothing more is read.
-                let child = Self::new(acc, hwnd, false);
+                // Passed over on these alone, without acquiring it.
                 let mut states = StateSet::new();
                 if disabled {
                     states.insert(State::Disabled);
@@ -121,12 +145,8 @@ impl DialogObject {
                     states,
                     invisible: hidden,
                 });
-                let _ = child.role.set(Role::Window);
-                return child;
             }
-            if let Some(client) = Accessible::client_of_window(hwnd) {
-                return Self::new(client, hwnd, true);
-            }
+            return child;
         }
         let child = Self::new(acc, self.hwnd, false);
         let _ = child
@@ -139,7 +159,7 @@ impl DialogObject {
     #[must_use]
     pub fn role(&self) -> Role {
         *self.role.get_or_init(|| {
-            self.acc
+            self.acc()
                 .role()
                 .map_or(Role::Unknown, |role| role_from_msaa(role.cast_unsigned()))
         })
@@ -148,7 +168,7 @@ impl DialogObject {
     /// The object's states and visibility, read once (`accState`).
     fn seen(&self) -> Seen {
         *self.seen.get_or_init(|| {
-            let raw = self.acc.state().map_or(0, i32::cast_unsigned);
+            let raw = self.acc().state().map_or(0, i32::cast_unsigned);
             let mut states = states_from_msaa(raw);
             // An edit control says whether it is multi-line by its window
             // style, as NVDA's edit control class reads it.
@@ -181,7 +201,7 @@ impl DialogObject {
     #[must_use]
     pub fn name(&self) -> Option<String> {
         self.name
-            .get_or_init(|| visible_text(self.acc.name()))
+            .get_or_init(|| visible_text(self.acc().name()))
             .clone()
     }
 
@@ -189,13 +209,13 @@ impl DialogObject {
     /// An edit control's value is its text.
     #[must_use]
     pub fn value(&self) -> Option<String> {
-        visible_text(self.acc.value())
+        visible_text(self.acc().value())
     }
 
     /// The object's description (`accDescription`), `None` when it is
     /// empty.
     #[must_use]
     pub fn description(&self) -> Option<String> {
-        non_empty(self.acc.description())
+        non_empty(self.acc().description())
     }
 }
