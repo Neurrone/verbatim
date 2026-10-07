@@ -2147,3 +2147,22 @@ Further decisions (Dickson, 2026-10-08):
 - The legacy console (no UIA text) is not supported or tested: every supported Windows has the console host with UIA, and most have Windows Terminal. The NVDA study's risk about it is dropped.
 - The changed-word rule must work in every language. Today it finds a word's start by the last whitespace before the change, so in Chinese, Japanese or Thai, which have no spaces, it speaks from the start of the line, and it compares characters rather than graphemes. It is to use verbatim-text's word segmentation (ICU's, with dictionaries for scripts without spaces) and grapheme boundaries, with unit cases in those scripts.
 - Floods and the screen diff. The anchor becomes the screen's top row as last read, found again by its text. How far it moved up is how many new lines arrived since the last read; the diff of the visible screens gives the ones still visible (in-place updates, such as a program's footer redrawn, are found by the same diff and are not counted as new lines), and the rest are the lines that went by unread, spoken as "skipped N lines". When the old top row has left a full history, the count is "more than N". A program that redraws its region after a flood is therefore read as the flood's new lines, counted, plus whatever the redraw inserted. End-to-end: a flood above a fixed footer that redraws during and after it, asserted exactly.
+
+## Language audit (2026-10-08)
+
+A read-only audit found these, ranked by how likely a user of the language is to hit them; each is fixed with exact tests in a language work package, together with the terminal's changed-word rule:
+
+1. The flat review cursor (objects without a text pattern: list items, buttons, labels) walks by code point and by white space: Hindi vowel signs and viramas stop alone, emoji modifiers and flags split, and Chinese, Japanese and Thai names are one word. Walk with verbatim-text's graphemes and words, as text-pattern review does.
+2. Backspace and Control+Backspace speak a prediction (the grapheme or word before the caret), not what was deleted; Windows edit controls delete one code point inside Indic and Thai clusters, and the control's word break can differ from ICU's. Derive the deleted text from evidence, comparing the line before and after, falling back to the prediction only when the lines are not comparable. This is the same evidence rule as the terminal's Backspace.
+3. The terminal's changed-word rule (already recorded).
+4. Typing echo with Windows' built-in text-service keyboards outside Chinese, Japanese and Korean (Vietnamese Telex and VNI, Indic Phonetic) echoes the raw keys, not the composed text.
+5. The plain Win32 edit control's word unit is white-space only.
+6. Language runs are flattened to one language per line, caret speech carries none, and the language never reaches the synthesizer: OneCore's SSML always uses the current voice's language. Automatic language switching is recorded as "not yet" in docs/parity.md.
+7. Left-to-right and right-to-left marks in names and values (Explorer's dates, the clock) are not stripped, and are read as silent characters.
+8. Say-all's sentence ends know only ". ! ?": add Chinese and Japanese full-width marks, Hindi danda, Arabic and Urdu marks, Armenian, Ethiopic, and closing marks such as » „“ 」.
+9. Typed-word echo ends a word at combining marks (virama, Thai tone marks, ZWNJ): word characters are letters, marks and numbers.
+10. A zero-width space counts as a word.
+11. Capitals and character names fail on decomposed text: normalize each grapheme to NFC first.
+12. ANSI rich edit windows are decoded by the window's flag rather than by the buffer, as NVDA does.
+
+Lower likelihood: kanji-only Japanese segmented as Chinese, and Han outside the BMP; locale-free word rules ("EU:n"); text chunks cut mid-surrogate or mid-grapheme; East Asian Ambiguous cell widths; Cherokee as capitals; Turkish casing for a future table; the ideographic space unnamed.
