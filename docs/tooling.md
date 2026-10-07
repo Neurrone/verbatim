@@ -509,13 +509,14 @@ then off, or the reverse),
 Verbatim's settings dialog must leave focus and the navigator on the
 control that really has focus), `object_navigation_in_settings` (the M3
 object-navigation and review commands against Verbatim's own settings
-dialog), and `system_information_tree` (an MSAA-only legacy application, msinfo32,
+dialog), `object_navigation_over_uia` (the same walk over UIA, in
+`mockapp`'s provider), and `system_information_tree` (an MSAA-only legacy application, msinfo32,
 reaches Verbatim, and logical object navigation works through its real
 Win32 tree view — the regression scenario for the flat MSAA tree-view
 exposure).
-Milestone M4's text scenarios add Notepad editing, word selection, typed
-word echo, the review cursor, and say-all, say-all in a Win32 edit
-control, spelling errors in `mockapp`'s scripted text (`spelling_errors`)
+Milestone M4's text scenarios add editing, word selection, typed word
+echo, the review cursor, and say-all, each in the harness's Windows Forms
+text box (`text_box_`) and in Windows 11 Notepad (`notepad_`), spelling errors in `mockapp`'s scripted text (`spelling_errors`)
 and in Windows 11 Notepad (`notepad_spelling_errors`, local-only), and
 the terminal scenarios, each in Windows Terminal (`windows_terminal_`) and in the console host
 (`conhost_`), each its own code: commands (commands, typed echo, and a
