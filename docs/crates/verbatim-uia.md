@@ -25,6 +25,14 @@ Public API:
   client interfaces, and querying `IUIAutomation5` (the notification-event
   registration) on a plain `CUIAutomation` object fails with
   `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
+  Every client, including the one made for UIA's first-time setup, also
+  turns on `IUIAutomation6`'s event coalescing (UIA drops an event that
+  duplicates one still waiting for this client) and connection recovery
+  (UIA adjusts its waits for a provider that stopped answering), as NVDA
+  does whenever Windows has them; Verbatim's minimum, Windows 11 24H2,
+  always does, so there is no check. Neither changed a call count or a
+  wait measured against mockapp (`docs/performance.md`, "Newer UIA
+  features").
   Every client in the crate, and the provider probe, first wait for UIA's
   first-time setup, which creates a client and builds a cache request
   from it once, under a lock, on a thread of its own (so a thread that only
@@ -57,8 +65,17 @@ Public API:
   reading the same raw-view ancestors in one round trip inside the
   provider process. The outpost uses that for a UIA focus and keeps the
   per-hop walk for windows read the classic way.
-- `selected_element(element, cache)` — the first element of a selection
-  container's current selection, rebuilt with `cache`, or `None`;
+- `Uia::selected_element(element, cache)` — the first element of a
+  selection container's current selection, rebuilt with `cache`, or
+  `None`. One `BuildUpdatedCache` on the container caches both
+  `SelectionPattern2`'s `FirstSelectedItem` property (ignoring its
+  default) and the `Selection` pattern object, as NVDA uses the newer
+  pattern where the provider has it: two calls with the item's rebuild,
+  and for a provider without `SelectionPattern2`, whose property reads
+  "not supported", three (`GetCurrentSelection` on the cached pattern
+  between), the count the `Selection` pattern alone took.
+  Any failure, a missing pattern, or an empty selection is `None`, so the
+  focus is still reported, without a selected child;
   `Uia::selected_child` maps it to a snapshot, and `verbatim-uia-rops`'s
   classic focus ancestry uses it as it is.
 - `Uia::navigate` — one raw-view tree-walker step (parent, next or
@@ -173,7 +190,13 @@ Public API:
   id, which `verbatim-uia-rops` uses for the `Culture` its programs
   read), and `attribute` (any text attribute's raw
   `VARIANT`, UIA's "not supported" or "mixed" sentinel included, for
-  milestone M4's formatting). The `variant_*` readers (`variant_string`,
+  milestone M4's formatting), and `attributes`, several attributes' values
+  in the order asked in one call (`IUIAutomationTextRange3`'s
+  `GetAttributeValues`, NVDA's bulk attribute fetch), falling back to one
+  `attribute` call each where the range has no `IUIAutomationTextRange3`
+  or that call fails, with a failed attribute read as "not supported" (an
+  empty `VARIANT`), as NVDA reads it; a gone provider is still an error.
+  The `variant_*` readers (`variant_string`,
   `variant_i32`, `variant_i32_array` for a range's annotation types, a
   single integer or an array of them, `variant_f64`, and
   `variant_optional_bool`) read a value and give `None` for a sentinel or
@@ -195,7 +218,7 @@ Public API:
   focus listener, which watches every application at once; the per-application
   pid filter this module once carried is gone with that move (the sealed
   module made the relocation a change of caller, not a rewrite).
-- `Registration::new(subscription, scope)` and `retarget(scope)` — one
+- `Registration::new(subscriptions, scope)` and `retarget(scope)` — one
   subscription type for everything but focus: `Subscription::Properties`
   (a list of property ids, such as `FOCUS_PROPERTIES`: name, value,
   toggle state, enabled, and expand/collapse), `Subscription::Event` (an
@@ -203,20 +226,34 @@ Public API:
   `MenuOpened`), `Subscription::Events` (several automation event ids
   through one handler whose callback receives the event id, such as a text
   control's `Text_TextSelectionChanged` and `Text_TextChanged`), or
-  `Subscription::Notifications`
-  (`IUIAutomation5::AddNotificationEventHandler`, delivering the raising
-  element plus kind, processing, display string, and activity id). The
+  `Subscription::Notifications` (delivering the raising element plus
+  kind, processing, display string, and activity id), or
+  `Subscription::ActiveTextPosition` (`IUIAutomation6`'s active text
+  position changed event, delivering the raising element and the range now
+  active, when the event carries one). The
   `Scope` is nothing yet, the subtree of given top-level windows, the whole
   desktop (the subtree of the root element), or exactly given elements.
-  Each registration owns its thread, apartment, client, and handler and
+  A registration takes any number of subscriptions and registers them as
+  one event handler group (`IUIAutomationEventHandlerGroup`, from
+  `IUIAutomation6`), as NVDA registers its handlers: each handler is added
+  to the group, which is local, and the group is registered on each
+  element of the scope with one `AddEventHandlerGroup` call. Each
+  registration owns its thread, apartment, client, and handlers and
   registers with the base cache request; `retarget` hands the new scope to
   that thread, which removes everything its client registered and registers
-  again, so the caller never waits on UIA's removal (which waits for
-  running callbacks). Elements that fail to resolve are skipped. Dropping a
-  registration unregisters and ends its thread. The focus listener holds the
-  desktop-wide selection, menu-opened, and notification subscriptions; each
-  outpost holds one focus-following property subscription and one
-  focus-following subscription to a text focus's caret and text changes.
+  the group again, so the caller never waits on UIA's removal (which waits
+  for running callbacks). Elements that fail to resolve, or on which the
+  group cannot be registered (an element that has gone, which NVDA also
+  logs and passes over), are skipped. Dropping a registration unregisters
+  and ends its thread. The focus listener holds one registration, the
+  desktop-wide selection, menu-opened, and notification subscriptions as
+  one group, where it held three registrations, each with its own thread
+  and client, before; each outpost holds one focus-following property
+  subscription and one focus-following subscription to a text focus's
+  caret and text changes and active text position changes, one group.
+  Registering the listener's group took 9.9 ms at
+  the median against mockapp where its three registrations took 18.5 ms
+  (`docs/performance.md`, "Event handler groups").
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends
   `WM_GETOBJECT` and can block on a hung application, so it is documented
   as callable only from deadline-guarded query threads. Only the window's

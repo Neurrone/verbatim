@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Failing Attribute Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Notes",
+      "states": ["focusable"],
+      "text": "alpha beta\n",
+      "italic_fails": true
+    }
+  ]
+}

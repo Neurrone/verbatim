@@ -3,7 +3,7 @@
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
 //! `caret <id> <start> [<end>]`, `set-text <id> <text>`, `notify <text>`,
-//! `stall <ms>`, and `quit`.
+//! `active-text-position <id> <start> <end>`, `stall <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -41,6 +41,12 @@ pub(crate) enum Command {
     /// in `text` is a line feed and `\\` a backslash, so one stdin line can
     /// carry many lines. UIA-only.
     SetText(String, String),
+    /// `active-text-position <id> <start> <end>`: raises UIA's active text
+    /// position changed event from a text node, with the range of its text
+    /// from `start` to `end` (UTF-16 offsets), as an application raises it
+    /// when it scrolls to a place in a document without moving the caret.
+    /// UIA-only.
+    ActiveTextPosition(String, usize, usize),
     /// `notify <text>`: raises a UIA `AutomationNotification` carrying
     /// `text` as its display string, from the root provider. UIA-only; the
     /// MSAA backend reports it as unsupported, since MSAA has no
@@ -73,6 +79,13 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
+        "active-text-position" => {
+            let mut parts = rest.split_whitespace();
+            let id = parts.next()?;
+            let start: usize = parts.next()?.parse().ok()?;
+            let end: usize = parts.next()?.parse().ok()?;
+            Some(Command::ActiveTextPosition(id.to_owned(), start, end))
+        }
         "caret" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;
@@ -214,6 +227,17 @@ mod tests {
             _ => panic!("expected Caret"),
         }
         assert!(parse_command("caret doc").is_none());
+    }
+
+    #[test]
+    fn parses_active_text_position() {
+        match parse_command("active-text-position doc 6 10") {
+            Some(Command::ActiveTextPosition(id, start, end)) => {
+                assert_eq!((id.as_str(), start, end), ("doc", 6, 10));
+            }
+            _ => panic!("expected ActiveTextPosition"),
+        }
+        assert!(parse_command("active-text-position doc 6").is_none());
     }
 
     #[test]

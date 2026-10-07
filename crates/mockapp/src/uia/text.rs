@@ -20,7 +20,8 @@
 //! otherwise, as Windows 11 Notepad reports them; the font is 11 point
 //! Consolas in black, neither italic nor underlined, its weight 700 in the
 //! fixture's bold stretches, 400 elsewhere, and mixed across both; every
-//! other text attribute is unsupported.
+//! other text attribute is unsupported. A fixture can make the `IsItalic`
+//! read fail (`italic_fails`), as a provider that fails an attribute read.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -34,7 +35,7 @@
 use std::cell::Cell;
 use std::mem::ManuallyDrop;
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::System::Com::SAFEARRAY;
 use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4, VT_R8, VT_UNKNOWN,
@@ -444,6 +445,9 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                     int_variant(400)
                 }
             }
+            UIA_IsItalicAttributeId if formats.italic_fails => {
+                return Err(Error::from(E_FAIL));
+            }
             UIA_IsItalicAttributeId => VARIANT::from(false),
             UIA_UnderlineStyleAttributeId | UIA_ForegroundColorAttributeId => int_variant(0),
             _ => not_supported()?,
@@ -667,6 +671,23 @@ pub(super) fn has_text(tree: &SharedTree, index: usize) -> bool {
         .nodes[index]
         .text
         .is_some()
+}
+
+/// A range of the text of the node at `index`, from `start` to `end`
+/// (clamped to the text), for an event that carries one.
+pub(super) fn range_provider(
+    tree: &SharedTree,
+    hwnd: HWND,
+    index: usize,
+    (start, end): (usize, usize),
+) -> ITextRangeProvider {
+    let length = text_of(tree, index).len();
+    TextProvider {
+        tree: tree.clone(),
+        hwnd,
+        index,
+    }
+    .range(start.min(length), end.min(length))
 }
 
 /// The text pattern's interface pointer for `GetPatternProvider`.

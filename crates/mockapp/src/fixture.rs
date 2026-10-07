@@ -93,6 +93,8 @@ struct RawNode {
     #[serde(default)]
     bold: Vec<(usize, usize)>,
     #[serde(default)]
+    italic_fails: bool,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -121,6 +123,9 @@ pub(crate) struct FixtureNode {
     pub(crate) spelling_errors: Vec<(usize, usize)>,
     /// Stretches of the text in bold, served as UIA's font weight.
     pub(crate) bold: Vec<(usize, usize)>,
+    /// Whether reading the text's `IsItalic` attribute fails, as a provider
+    /// that fails an attribute read does.
+    pub(crate) italic_fails: bool,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -196,6 +201,7 @@ fn convert(
         text: raw.text,
         spelling_errors: raw.spelling_errors,
         bold: raw.bold,
+        italic_fails: raw.italic_fails,
         children,
     })
 }

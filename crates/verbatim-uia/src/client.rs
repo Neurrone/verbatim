@@ -11,12 +11,14 @@ use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::{InitVariantFromInt32Array, VARIANT};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest,
+    CUIAutomation8, CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled,
+    IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
     IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
-    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId,
-    UIA_SelectionPatternId, UIA_TogglePatternId,
+    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
+    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+    UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -535,8 +537,46 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
-        let selected = selected_element(element, cache);
+        let selected = self.selected_element(element, cache);
         Ok(selected.map(|selected| snapshot_from_cached_element(&selected, registry)))
+    }
+
+    /// The element behind [`Uia::selected_child`]: the first element of the
+    /// container's current selection, rebuilt with `cache`, or `None` for
+    /// every benign outcome (no `Selection` pattern, nothing selected, or a
+    /// failed call). `verbatim-uia-rops` calls it for the classic focus
+    /// ancestry.
+    ///
+    /// One `BuildUpdatedCache` on the container asks for both of its
+    /// selection patterns at once: `SelectionPattern2`'s `FirstSelectedItem`
+    /// property, ignoring its default, as NVDA reads the newer pattern
+    /// where the provider has it, and the `Selection` pattern object. With
+    /// `SelectionPattern2`, the first item comes from that call, and its
+    /// cache rebuild is the second and last. Without it, the property reads
+    /// "not supported" and the cached `Selection` pattern reads the
+    /// selection, a second call, with the rebuild a third, the count the
+    /// `Selection` pattern alone always took.
+    #[must_use]
+    pub fn selected_element(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+    ) -> Option<IUIAutomationElement> {
+        let request =
+            crate::cache::cache_request(&self.client, &[UIA_Selection2FirstSelectedItemPropertyId])
+                .ok()?;
+        // SAFETY: `request` was just created; a pattern id is a plain value.
+        unsafe { request.AddPattern(UIA_SelectionPatternId) }.ok()?;
+        let container = element.build_updated_cache(&request).ok()?;
+        let first = match container
+            .cached_value_ignoring_default(UIA_Selection2FirstSelectedItemPropertyId)?
+        {
+            value if crate::is_not_supported(&value) => first_of_selection(&container)?,
+            value => crate::variant_element(&value)?,
+        };
+        // Rebuilding with `cache` prefetches the full snapshot property set in
+        // one round trip.
+        first.build_updated_cache(cache).ok()
     }
 
     /// Navigates one step from `element` in `direction`, via the raw-view
@@ -632,25 +672,14 @@ impl Uia {
     }
 }
 
-/// The element behind [`Uia::selected_child`]: the first element of the
-/// container's current selection, rebuilt with `cache`, or `None` for every
-/// benign outcome (no `Selection` pattern, nothing selected, or a failed
-/// call). Two cross-process round trips after the pattern fetch: the
-/// selection, then the cache rebuild. `verbatim-uia-rops` calls it for the
-/// classic focus ancestry.
-#[must_use]
-pub fn selected_element(
-    element: &IUIAutomationElement,
-    cache: &IUIAutomationCacheRequest,
-) -> Option<IUIAutomationElement> {
-    // A missing pattern surfaces as an error mapped to None.
-    let pattern = element
-        .current_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
-        .ok()?;
-    let first = current_selection(&pattern).ok()?.into_iter().next()?;
-    // Rebuilding with `cache` prefetches the full snapshot property set in
-    // one round trip.
-    first.build_updated_cache(cache).ok()
+/// The first element of a container's selection through the `Selection`
+/// pattern object cached on `container`, for a provider without
+/// `SelectionPattern2`: one round trip, the selection. A container without
+/// the pattern has no cached pattern, and no selection.
+fn first_of_selection(container: &IUIAutomationElement) -> Option<IUIAutomationElement> {
+    let pattern =
+        container.cached_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)?;
+    current_selection(&pattern).ok()?.into_iter().next()
 }
 
 /// What one ancestor did to a walk ([`take_ancestor`]).
@@ -742,6 +771,12 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
                         CLSCTX_INPROC_SERVER,
                     )
                 }
+                // Configured as every other client is, though it lives only
+                // for the setup.
+                .and_then(|client| {
+                    enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
+                    Ok(client)
+                })
                 // SAFETY: a local call on the client just created, released
                 // before the thread leaves COM.
                 .and_then(|client| unsafe { client.CreateCacheRequest() }.map(drop));
@@ -779,7 +814,24 @@ pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
         unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
     // CUIAutomation8 objects implement IUIAutomation2.
     set_connection_timeout(&client.cast::<IUIAutomation2>()?, CONNECTION_TIMEOUT_MS)?;
+    enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
     Ok(client)
+}
+
+/// Turns on the two `IUIAutomation6` behaviors NVDA enables on its client
+/// whenever Windows has them (Windows 10 1809 and later, so always on
+/// Verbatim's Windows 11 24H2): event coalescing, where UIA drops an event
+/// that duplicates one still waiting to be delivered to this client, so a
+/// burst of identical events from one element reaches the handler once;
+/// and connection recovery, where UIA adjusts its waits for a provider
+/// that has stopped responding and reconnects when it answers again.
+/// Both are local settings of the client object.
+fn enable_recovery_and_coalescing(client: &IUIAutomation6) -> windows::core::Result<()> {
+    // SAFETY: `client` is a live IUIAutomation6; the option is a plain
+    // value.
+    unsafe { client.SetCoalesceEvents(CoalesceEventsOptions_Enabled) }?;
+    // SAFETY: as above.
+    unsafe { client.SetConnectionRecoveryBehavior(ConnectionRecoveryBehaviorOptions_Enabled) }
 }
 
 /// Sets how long `client` waits for an application's provider to answer.
@@ -979,5 +1031,26 @@ mod presentation_tests {
             Some("named"),
             None
         )));
+    }
+}
+
+#[cfg(test)]
+mod client_tests {
+    use windows::Win32::UI::Accessibility::{
+        CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled, IUIAutomation6,
+    };
+    use windows::core::Interface;
+
+    #[test]
+    fn a_client_coalesces_events_and_recovers_connections() {
+        let uia = super::Uia::new().expect("a client");
+        let client: IUIAutomation6 = uia.client().cast().expect("IUIAutomation6");
+        // SAFETY: reading a local setting of a live client.
+        let coalesce = unsafe { client.CoalesceEvents() }.expect("the coalescing setting");
+        // SAFETY: as above.
+        let recovery =
+            unsafe { client.ConnectionRecoveryBehavior() }.expect("the recovery setting");
+        assert_eq!(coalesce, CoalesceEventsOptions_Enabled);
+        assert_eq!(recovery, ConnectionRecoveryBehaviorOptions_Enabled);
     }
 }

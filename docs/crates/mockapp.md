@@ -56,7 +56,10 @@ the node selected, moving the state off any previous selection, and raises
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
 root provider with `text` as the display string, kind `Other`, processing
 `All`, and a fixed `mockapp-notify` activity id; reported as unsupported
-on the MSAA backend, which has no notification event), `caret <id> <start>
+on the MSAA backend, which has no notification event),
+`active-text-position <id> <start> <end>` (raises UIA's active text
+position changed event from a text node, with the range of its text from
+`start` to `end`, UTF-16 offsets; unsupported on the MSAA backend), `caret <id> <start>
 [<end>]` (selects the text node's text from `start` to `end`, UTF-16
 offsets, the caret alone at `start` when `end` is left out, raising no
 event, as an application's caret moves before a client asks where it is;
@@ -120,7 +123,9 @@ its crate-internal modules are the reviewable surface:
   touching one of the spelling errors and unsupported otherwise, as
   Windows 11 Notepad reports them; the font is 11 point Consolas in black,
   neither italic nor underlined, weighing 700 within a bold stretch, 400
-  outside, and mixed across both; every other attribute is unsupported. A range handed back by a client
+  outside, and mixed across both; every other attribute is unsupported,
+  and a node with `italic_fails` set fails its `IsItalic` read with
+  `E_FAIL`, as a provider that fails an attribute read. A range handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation.
 - `edit` — the MSAA backend's real edit control: created inside the host
@@ -187,7 +192,10 @@ Implementation notes:
   selection is its children in the `selected` state, so a fixture's
   initial selection and the `select` command both show through the
   Selection pattern and its `Selection` property, as a real list reports
-  its selected item.
+  its selected item. A list's provider also serves `ISelectionProvider2`
+  (`FirstSelectedItem`, `LastSelectedItem`, `CurrentSelectedItem`, the
+  last selected, and `ItemCount`), and a tab control's does not, so the
+  tests see both a provider with `SelectionPattern2` and one without.
 - **Raw-view host furniture.** A real `hwnd`'s UIA raw tree (`TreeScope_Children`
   with a true condition) can include host-provided native elements — for
   example window-chrome furniture merged in via `HostRawElementProvider` —
@@ -229,7 +237,11 @@ that `select` is observed by a selection `verbatim_uia::Registration` (with
 the delivered element's mapped snapshot carrying its name and `Selected`
 state) and by the WinEvent hook as `WinEventKind::Selection`, and that
 `notify` is observed by a notification `verbatim_uia::Registration` with its
-full payload — property, value, selection, and notification changes are
+full payload, that one registration of all three, one event handler
+group, hears each, that a registration on a focus hears its changes
+and neither its group's nor a sibling's, and that an active text position
+change arrives with its element and a range whose text is the one
+raised — property, value, selection, and notification changes are
 used rather than focus, so the tests never depend on real keyboard focus
 or `SetForegroundWindow` succeeding, and pass headless on GitHub
 `windows-latest` runners. `controller_for.rs` selects items with `select`
@@ -277,5 +289,14 @@ does, reading the calls from the event's or reply's timing. The UIA ones
 run on the test's own thread, making the same `verbatim-uia` calls in the
 same order as the outpost's worker once it has the element: the outpost
 finds a UIA focus's element by reading the system's keyboard focus, which
-a test must not take. On a mismatch the test prints every measured count,
+a test must not take. Event registrations, which run on a registration's
+own thread, are pinned by the provider calls they cost mockapp: the focus
+listener's desktop-wide group and an outpost's focus-following property
+subscription. A container's selected child is pinned over
+`tests/fixtures/ancestry.json`, through a list's `SelectionPattern2` and
+through a tab control's `Selection` pattern, classically and in the
+focus's remote program; and so are a text focus's registration, its caret
+and text changes and active text position changes as one group, and the
+handling of an active text position change, which makes no call. On a
+mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

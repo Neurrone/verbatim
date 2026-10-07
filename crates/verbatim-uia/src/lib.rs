@@ -55,10 +55,10 @@ pub mod text;
 
 pub use cache::{CACHED_PROPERTIES, base_cache_request, cache_request_for, cached_properties};
 pub use checks::{console_reports_formatting, is_windows_forms};
-pub use client::{AncestorStops, AncestorWalk, Uia, selected_element};
+pub use client::{AncestorStops, AncestorWalk, Uia};
 pub use com::{
-    element_is_gone, init_mta, runtime_id, variant_f64, variant_i32, variant_i32_array,
-    variant_optional_bool, variant_string,
+    element_is_gone, init_mta, is_not_supported, runtime_id, variant_element, variant_f64,
+    variant_i32, variant_i32_array, variant_optional_bool, variant_string,
 };
 pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::{FocusCallback, FocusRegistration};
@@ -66,8 +66,8 @@ pub use nearest::nearest_window_handle;
 pub use probe::{has_server_side_provider, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
-    ElementCallback, EventCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback,
-    Registration, Scope, Subscription,
+    ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES,
+    NotificationCallback, PropertyCallback, Registration, Scope, Subscription,
 };
 
 /// Releases the UIA objects this crate keeps for the calling thread: the

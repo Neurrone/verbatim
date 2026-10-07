@@ -40,8 +40,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, UIA_Text_TextChangedEventId,
-    UIA_Text_TextSelectionChangedEventId,
+    IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationTextRange,
+    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
 };
 use windows::core::AgileReference;
 
@@ -525,7 +525,7 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
         properties: FOCUS_PROPERTIES.to_vec(),
         callback,
     };
-    match Registration::new(subscription, Scope::Nothing) {
+    match Registration::new(vec![subscription], Scope::Nothing) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(
@@ -538,9 +538,10 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
 }
 
 /// Starts the focus-following UIA subscription to a text focus's caret and
-/// text changes (`Text_TextSelectionChanged` and `Text_TextChanged`),
-/// listening nowhere until the worker reports a focus with text. A caret
-/// change also counts for a caret key's wait for evidence.
+/// text changes (`Text_TextSelectionChanged` and `Text_TextChanged`) and
+/// its active text position changes, one event handler group listening
+/// nowhere until the worker reports a focus with text. A caret change also
+/// counts for a caret key's wait for evidence.
 fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
     let callback_context = Arc::clone(context);
     let callback = Arc::new(move |element: &IUIAutomationElement, event_id: i32| {
@@ -567,7 +568,26 @@ fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
         ],
         callback,
     };
-    match Registration::new(subscription, Scope::Nothing) {
+    let position_context = Arc::clone(context);
+    let position = Subscription::ActiveTextPosition {
+        callback: Arc::new(
+            move |element: &IUIAutomationElement, range: Option<&IUIAutomationTextRange>| {
+                let range = range
+                    .and_then(|range| AgileReference::new(range).ok())
+                    .map(intake::ActiveRange);
+                position_context.push(
+                    Item::Uia(capture(element, UiaKind::ActiveTextPosition(range))),
+                    TraceId::mint(),
+                    now_ms(),
+                    EventTiming {
+                        observed_at_us: now_us(),
+                        ..EventTiming::default()
+                    },
+                );
+            },
+        ),
+    };
+    match Registration::new(vec![subscription, position], Scope::Nothing) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(context, format!("UIA text subscription failed: {error}"));

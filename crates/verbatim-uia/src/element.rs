@@ -114,6 +114,11 @@ pub trait ElementExt {
         property: UIA_PROPERTY_ID,
     ) -> windows::core::Result<Option<i32>>;
 
+    /// A pattern object from the element's cache, `None` when the cache
+    /// holds none: the element does not support the pattern, or the cache
+    /// request did not ask for it. Local.
+    fn cached_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> Option<T>;
+
     /// Whether the element has the keyboard focus, read live rather than
     /// from the cache. Cross-process.
     ///
@@ -235,6 +240,13 @@ impl ElementExt for IUIAutomationElement {
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
         Ok(variant_i32(&value))
+    }
+
+    fn cached_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> Option<T> {
+        // SAFETY: `self` is a live element; a cached read stays in this
+        // process, and the pattern object is queried for `T`'s own
+        // interface id.
+        unsafe { self.GetCachedPatternAs::<T>(pattern) }.ok()
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {

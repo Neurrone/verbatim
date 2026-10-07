@@ -280,6 +280,14 @@ the contract the Windows side implements.
   `MAX_TERMINAL_LINE_BYTES` (4 KB). Core echoes typing it held when the
   terminal shows it at the end of the line, and speaks the rest by the
   flood policy ([verbatim-core](verbatim-core.md), "Terminals").
+- `NormalizedEvent::ActiveTextPositionChanged { node_id, position }`: the
+  place being read in a text focus moved without its caret (UIA's active
+  text position changed event: the application scrolled to a place, such
+  as an in-page link's target); `position` is a `TextPosition` at the
+  start of the text now active, on an anchor the outpost minted for it.
+  Core speaks nothing for it: it is browse mode's (milestone M6), which
+  moves its own caret there, and outside browse mode NVDA does nothing
+  with it either.
 
 ### Requests and replies
 

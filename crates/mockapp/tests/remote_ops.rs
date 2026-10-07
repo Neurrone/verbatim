@@ -239,7 +239,9 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
     fixture.app.send("select apple");
     let fruits = fixture.find("Fruits");
     common::wait_until("Apple is selected", || {
-        verbatim_uia::selected_element(&fruits, &fixture.uia.base_cache_request().expect("cache"))
+        fixture
+            .uia
+            .selected_element(&fruits, &fixture.uia.base_cache_request().expect("cache"))
             .is_some_and(|child| names(&[child]) == ["Apple"])
     });
     fixture.app.send("focus fruits");

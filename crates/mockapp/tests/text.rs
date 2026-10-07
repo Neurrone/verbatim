@@ -542,6 +542,52 @@ fn remote_and_classic_caret_reads_agree() {
     app.send("quit");
 }
 
+/// A provider whose `IsItalic` read fails: the failed attribute is not
+/// supported and the others are read, as NVDA treats a failed attribute
+/// read, both classically, where UIA answers `GetAttributeValues` for all
+/// seven in one call with the failed one not supported, and in the remote
+/// program.
+fn a_failing_attribute_is_not_supported() {
+    common::init_com();
+    let title = common::unique_title("mockapp-failing-attribute");
+    let mut app = common::spawn("failing_attribute.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let query = CaretQuery {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+        since: None,
+        previous_selection: None,
+        unit: None,
+        formats: Some(FormatSpan::Character),
+        attributes: Attributes {
+            annotations: true,
+            font: true,
+            font_attributes: true,
+            color: true,
+        },
+        max_text: 1024,
+        max_change_text: 1024,
+    };
+    common::apply(&mut app, hwnd, "caret doc 1");
+    let classic = caret_read_classic(&query).expect("the classic reads run");
+    assert_eq!(
+        summary(&classic).runs,
+        [(
+            0,
+            RunAttributes {
+                italic: None,
+                ..mock_attributes(false, false)
+            }
+        )]
+    );
+    let remote = caret_read_remote(&query).expect("the remote program runs");
+    assert_eq!(summary(&remote).runs, summary(&classic).runs);
+    app.send("quit");
+}
+
 /// What a units read found, comparable across the two implementations.
 /// How far a units read moved, each unit's text, offset, and language, and
 /// whether the text ended.
@@ -752,6 +798,10 @@ fn edit_control_text_reads_moves_and_answers_caret_keys() {
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        (
+            "a_failing_attribute_is_not_supported",
+            a_failing_attribute_is_not_supported,
+        ),
         (
             "remote_and_classic_caret_reads_agree",
             remote_and_classic_caret_reads_agree,

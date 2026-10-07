@@ -589,6 +589,23 @@ verified.
   state, spoken only for the focus or its ancestors. Selecting the focused
   item itself is such a change of state, and since 2026-10-03 Verbatim
   speaks it ("selected"), as NVDA does ([verbatim-core](crates/verbatim-core.md)).
+- A selection container's selected item through UIA. NVDA reads
+  `SelectionPattern2` where the provider has it (`ItemCount` for its
+  "selected" rule, and Excel's first and last selected cells), and a
+  provider without it, or a selection container that raises (Qt) or is
+  null (Outlook's attachment list), counts as no selection without
+  cutting focus speech short. Verbatim: **matched since 2026-10-07** for
+  the selected item it reports with a focused list or tab control: the
+  first selected item from `SelectionPattern2`'s `FirstSelectedItem`,
+  classically and in the focus's remote program, and the `Selection`
+  pattern for a provider without `SelectionPattern2`; any failure is no
+  selected item and the focus is still reported. Verbatim reads the
+  selection from the container, so the item's own selection container is
+  never read. **Not yet:** NVDA's use of `ItemCount` to leave "selected"
+  unsaid on a focused selectable item (a cell, a header) that is the
+  only one selected, which Verbatim's reducer does not apply; Verbatim
+  leaves "selected" unsaid only for list items, tree items, menu items,
+  rows, and check boxes, whatever the count.
 - Selection in a list the focus controls (search suggestions and
   results). NVDA: when an item is selected inside an element the focus
   names in its UIA ControllerFor relation, NVDA reports that item as it
@@ -913,16 +930,114 @@ verified.
   cached elements + scoped search landed in 918e5b8/4563bff after a
   desktop-wide re-find bug; audit against NVDA's per-event cache
   contents still open.
-- UIA event registration scope (global group vs focus-local
-  high-frequency events). Verbatim: **partial** — focus/property
-  registrations exist; the local-group re-registration pattern for
-  text events is **not yet (M4)**.
+- UIA event registration. NVDA: selective registration
+  (`UIA.eventRegistration`, automatic by default, which is selective from
+  Windows 11 22H2), with a global and a local event handler group
+  ([The UIA client](nvda/uia.md)). Verbatim: **matched, narrower, since
+  2026-10-07**, with no setting, since Verbatim's minimum is Windows 11
+  24H2. Every registration is an event handler group, registered with one
+  `AddEventHandlerGroup` call per element; a group that cannot be
+  registered on an element (most often one that has gone) is logged and
+  skipped, and removing handlers from an element that died is left to
+  UIA, as NVDA does.
+  - The global group, desktop-wide in the focus listener: an element
+    selected, a menu opened, and notifications. NVDA's also takes live
+    regions, tool tips, windows opened, system alerts, layout
+    invalidation, drag and drop, and range values anywhere (progress
+    bars); Verbatim subscribes to none of these until it handles them.
+  - The local group, on the focus: name, value, range value, toggle,
+    enabled, and expand and collapse changes. NVDA registers its local
+    group (those, help text, ControllerFor, item status, and caret
+    events) on the focused element with
+    `TreeScope_Element | TreeScope_Ancestors`, when it handles a UIA
+    focus. Verbatim registers on the focus with `TreeScope_Element`
+    alone, and the outcome is the same, because UIA delivers no
+    ancestor's event to an ancestors-scoped registration. Checked on
+    2026-10-07 (Windows 11 build 26200):
+    - Against Windows 11's taskbar, a real provider in Explorer: a
+      registration on the clock button's child, scoped to its ancestors
+      (with or without the element itself) or to its parent, did not
+      hear the clock button's name change each minute; one on the clock
+      button itself, and one on the taskbar with its subtree in scope,
+      did.
+    - Against mockapp: the same, for a group's name change and a
+      registration on a button inside it, made both as an event handler
+      group and directly. mockapp raises the change
+      correctly, through `UiaRaiseAutomationPropertyChangedEvent` on the
+      group's own provider (raising without first asking
+      `UiaClientsAreListening` is allowed; that call only saves work): a
+      registration on the window with its subtree in scope hears it. As
+      UIA raised the event, it asked the group for its parent and runtime
+      id and went no further, so nothing related the group to the
+      registered button.
+    NVDA's `event_stateChange` speaks a state change on a focus ancestor
+    (its issue 10890), but under selective registration UIA never hands
+    it one, so for UIA NVDA too speaks property changes of the focus
+    alone. Verbatim's reducer acts only on the focus's own changes
+    (`reduce.rs`: a name change, a value change, and a state change each
+    return early unless the node is the live focus, and the navigator's
+    copy is updated only while it rests on the focus); a change on a
+    focus ancestor, such as a window's title changing when a file is
+    saved, reaches the reducer only from MSAA, and is dropped there. The
+    ancestor state rule is listed above as a difference. Until 2026-10-07
+    Verbatim registered on the focus and on each reported ancestor with
+    `TreeScope_Element`, which delivered those changes only for the
+    reducer to drop them.
+  - Caret and text changes: on a focus that has text, alone. NVDA takes
+    text changes only from Word, the console host, and Windows Terminal
+    (when its notifications are off); Verbatim takes them from any text
+    focus, for typed text and terminal output.
+  - NVDA checks that the element is still focused before registering on
+    it (comparing it with `GetFocusedElement`, a call). Verbatim does
+    not: a registration's thread registers only the newest focus it was
+    handed, and a newer focus replaces it.
+- The active text position (UIA's active text position changed event,
+  raised when an application scrolls to a place in a document without
+  moving the caret, such as an in-page link's target). NVDA: registered
+  desktop-wide in its global group; the event is handed to the object,
+  and only a UIA browse mode document acts on it, moving its caret to the
+  range's line and speaking the line when the caret was not already on
+  it; an event whose element is gone, or from an application that is not
+  responding, is dropped, and outside browse mode nothing happens.
+  Verbatim: **matched as far as it goes, since 2026-10-07**: the outpost
+  registers for it on a text focus, in the same event handler group as
+  its caret and text changes (the range belongs to the application and
+  cannot travel to another process, so the focus listener cannot carry
+  it), keeps the range's start as a position in the focus's text, and
+  sends it to Core (`ActiveTextPositionChanged`), dropping an event whose
+  element or range cannot be had, or whose window is hung. Core does
+  nothing with it. **Not yet (M6):** browse mode, which moves its caret
+  there and speaks the line, as NVDA's does; it will need the
+  registration on the document a focus is inside, not only a text focus.
+- Text attributes through UIA. NVDA: a range's formatting is fetched in
+  one `IUIAutomationTextRange3::GetAttributeValues` call where the range
+  has it, else attribute by attribute, and an attribute whose read fails
+  is "not supported" (its issue 7124); a mixed value is handled apart.
+  Verbatim: **matched since 2026-10-07** on the classic path, the same
+  bulk read with the same fallback and the same reading of a failed
+  attribute; the remote program reads each attribute inside the
+  provider, and a failed one comes back not supported there too. A mixed
+  value is no value on both paths, as before.
 - MSAA winevent flood control (per-thread caps, focus coalescing,
   latest-menu-only). NVDA: `OrderedWinEventLimiter`
-  ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **not yet** — outposts rely on
-  per-app isolation to bound damage, but no equivalent coalescing
-  exists inside an outpost; flagged as a review question for busy-app
-  scenarios.
+  ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **matched**,
+  in each outpost's intake, which applies NVDA's limiter rules to its
+  MSAA events and its UIA events alike
+  ([verbatim-outpost](crates/verbatim-outpost.md), the queue under
+  `Outpost`): one
+  waiting entry per object and kind, a newer one replacing it and moving
+  to the back; a batch is everything that arrived while the worker
+  handled the previous one; per batch the newest 4 focus events and the
+  newest 10 other events per application UI thread are kept, and the
+  focused object's events always; events from a window the system
+  reports hung are dropped before any read; within a batch only the
+  newest foreground change and the newest focus are handled, falling
+  back to up to three older focus events when the newest cannot be
+  reported, and the newest menu opening is handled last. Before an
+  outpost hears them, the focus listener coalesces its facts by the same
+  one-per-object-and-kind rule, and the supervisor holds the facts that
+  arrive while an outpost starts by that rule too, and lets a newer fact
+  replace a waiting one when an outpost's queue is full.
 - Event acceptance filtering (foreground gating, show/hide rules).
   NVDA: `shouldAcceptEvent`. Verbatim: **partial, different (D13)** —
   foreground gating lives in the shell/focus-listener design rather

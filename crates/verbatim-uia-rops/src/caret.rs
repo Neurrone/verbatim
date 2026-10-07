@@ -916,14 +916,19 @@ fn unit_at(
     })
 }
 
-/// The attributes of `run`, one call each (one for both errors).
+/// The attributes of `run`, all of them in one call (`GetAttributeValues`),
+/// or, where the range cannot answer that, one call each (one for both
+/// errors); an attribute whose read fails is not supported.
 fn attributes_of(
     run: &IUIAutomationTextRange,
     ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
 ) -> Result<RunAttributes, Error> {
     let mut attributes = RunAttributes::default();
-    for (attribute, id) in ids {
-        let value = run.attribute(*id)?;
+    if ids.is_empty() {
+        return Ok(attributes);
+    }
+    let values = run.attributes(&ids.iter().map(|(_, id)| *id).collect::<Vec<_>>())?;
+    for ((attribute, _), value) in ids.iter().zip(values) {
         match attribute {
             Attribute::Annotations => {
                 let types = verbatim_uia::variant_i32_array(&value).unwrap_or_default();

@@ -56,7 +56,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     let selected = Arc::new(Mutex::new(Vec::<(Option<String>, Vec<i32>)>::new()));
     let selected_cb = selected.clone();
     let _registration = Registration::new(
-        Subscription::Event {
+        vec![Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element| {
                 selected_cb
@@ -64,7 +64,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push((name_of(element), runtime_id(element)));
             }),
-        },
+        }],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");

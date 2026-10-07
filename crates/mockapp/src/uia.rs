@@ -27,7 +27,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
     UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
     UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
-    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
+    UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -77,6 +78,15 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
             }
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text),
+        Command::ActiveTextPosition(id, start, end) => {
+            let index = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&id);
+            if let Some(index) = index.filter(|&index| text::has_text(tree, index)) {
+                raise_active_text_position(tree, hwnd, index, (start, end));
+            }
+        }
         Command::Caret(id, start, end) => {
             let mut guard = tree
                 .lock()
@@ -167,6 +177,25 @@ fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) {
     // SAFETY: `provider` is a live COM object for the just-updated node.
     unsafe {
         let _ = UiaRaiseAutomationEvent(&provider, UIA_AutomationFocusChangedEventId);
+    }
+}
+
+/// Raises UIA's active text position changed event from the text node at
+/// `index`, with the range of its text from `start` to `end`.
+fn raise_active_text_position(
+    tree: &SharedTree,
+    hwnd: HWND,
+    index: usize,
+    (start, end): (usize, usize),
+) {
+    let fragment = props::provider_for(tree.clone(), hwnd, index);
+    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
+        return;
+    };
+    let range = text::range_provider(tree, hwnd, index, (start, end));
+    // SAFETY: `provider` and `range` are live COM objects for the node.
+    unsafe {
+        let _ = UiaRaiseActiveTextPositionChangedEvent(&provider, &range);
     }
 }
 
@@ -447,6 +476,12 @@ mod props {
         states.contains(State::Selectable) || states.contains(State::Selected)
     }
 
+    /// Whether `role` also serves `SelectionPattern2`: a list does, and a
+    /// tab control does not, as a provider without the newer pattern.
+    pub(super) fn selection2_container(role: verbatim_model::Role) -> bool {
+        role == verbatim_model::Role::List
+    }
+
     /// Whether `role` serves the `SelectionPattern`: a list or a tab
     /// control, the containers whose selected child the focus reports.
     pub(super) fn selection_container(role: verbatim_model::Role) -> bool {
@@ -459,22 +494,34 @@ mod props {
     /// The children of `index` in the `selected` state, as a `VT_UNKNOWN`
     /// array of their providers, which the caller owns.
     pub(super) fn selected_children(tree: &SharedTree, hwnd: HWND, index: usize) -> *mut SAFEARRAY {
-        let selected: Vec<usize> = {
-            let guard = tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.nodes[index]
-                .children
-                .iter()
-                .copied()
-                .filter(|&child| guard.nodes[child].states.contains(State::Selected))
-                .collect()
-        };
-        let providers: Vec<IRawElementProviderSimple> = selected
+        let providers: Vec<IRawElementProviderSimple> = selected_indices(tree, index)
             .into_iter()
-            .filter_map(|child| provider_for(tree.clone(), hwnd, child).cast().ok())
+            .filter_map(|child| child_provider(tree, hwnd, child))
             .collect();
         provider_array(&providers)
+    }
+
+    /// The tree indices of the children of `index` in the `selected` state,
+    /// in order.
+    pub(super) fn selected_indices(tree: &SharedTree, index: usize) -> Vec<usize> {
+        let guard = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.nodes[index]
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| guard.nodes[child].states.contains(State::Selected))
+            .collect()
+    }
+
+    /// The provider of the node at `child`.
+    pub(super) fn child_provider(
+        tree: &SharedTree,
+        hwnd: HWND,
+        child: usize,
+    ) -> Option<IRawElementProviderSimple> {
+        provider_for(tree.clone(), hwnd, child).cast().ok()
     }
 
     /// A `VT_UNKNOWN` vector of `providers`, or null when it cannot be
@@ -700,11 +747,12 @@ mod handler {
         IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
         IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
         IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl,
-        ISelectionProvider, ISelectionProvider_Impl, IToggleProvider, IToggleProvider_Impl,
-        NavigateDirection, ProviderOptions, ProviderOptions_ServerSideProvider,
-        ProviderOptions_UseComThreading, UIA_ExpandCollapsePatternId, UIA_PATTERN_ID,
-        UIA_PROPERTY_ID, UIA_SelectionItemPatternId, UIA_SelectionPatternId, UIA_TextPattern2Id,
-        UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
+        ISelectionProvider, ISelectionProvider_Impl, ISelectionProvider2, ISelectionProvider2_Impl,
+        IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
+        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
+        UIA_ExpandCollapsePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionItemPatternId,
+        UIA_SelectionPattern2Id, UIA_SelectionPatternId, UIA_TextPattern2Id, UIA_TextPatternId,
+        UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
     use windows::core::Result as WinResult;
     use windows_core::{Error, IUnknown, implement};
@@ -917,6 +965,17 @@ mod handler {
             .into();
             return Ok(provider);
         }
+        if (pattern_id == UIA_SelectionPatternId || pattern_id == UIA_SelectionPattern2Id)
+            && props::selection2_container(role)
+        {
+            let provider: IUnknown = Selection2Provider {
+                tree: tree.clone(),
+                hwnd,
+                index,
+            }
+            .into();
+            return Ok(provider);
+        }
         if pattern_id == UIA_SelectionPatternId && props::selection_container(role) {
             let provider: IUnknown = SelectionProvider {
                 tree: tree.clone(),
@@ -1118,6 +1177,64 @@ mod handler {
         fn IsSelectionRequired(&self) -> WinResult<windows_core::BOOL> {
             hits::hit(hits::Method::IsSelectionRequired);
             Ok(false.into())
+        }
+    }
+
+    /// The `SelectionPattern` provider for a list, which also serves
+    /// `SelectionPattern2`: the first, last, and current selected item (the
+    /// current one is the last selected, as a single-selection list has
+    /// one) and how many are selected, each a null item or zero when
+    /// nothing is.
+    #[implement(ISelectionProvider, ISelectionProvider2, Agile = false)]
+    struct Selection2Provider {
+        tree: SharedTree,
+        hwnd: HWND,
+        index: usize,
+    }
+
+    impl Selection2Provider_Impl {
+        /// The provider of the selected child `pick` chooses.
+        fn item(
+            &self,
+            pick: impl FnOnce(Vec<usize>) -> Option<usize>,
+        ) -> WinResult<IRawElementProviderSimple> {
+            pick(props::selected_indices(&self.tree, self.index))
+                .and_then(|child| props::child_provider(&self.tree, self.hwnd, child))
+                .ok_or_else(Error::empty)
+        }
+    }
+
+    impl ISelectionProvider_Impl for Selection2Provider_Impl {
+        fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
+            hits::hit(hits::Method::GetSelection);
+            Ok(props::selected_children(&self.tree, self.hwnd, self.index))
+        }
+        fn CanSelectMultiple(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::CanSelectMultiple);
+            Ok(false.into())
+        }
+        fn IsSelectionRequired(&self) -> WinResult<windows_core::BOOL> {
+            hits::hit(hits::Method::IsSelectionRequired);
+            Ok(false.into())
+        }
+    }
+
+    impl ISelectionProvider2_Impl for Selection2Provider_Impl {
+        fn FirstSelectedItem(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::FirstSelectedItem);
+            self.item(|selected| selected.first().copied())
+        }
+        fn LastSelectedItem(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::LastSelectedItem);
+            self.item(|selected| selected.last().copied())
+        }
+        fn CurrentSelectedItem(&self) -> WinResult<IRawElementProviderSimple> {
+            hits::hit(hits::Method::CurrentSelectedItem);
+            self.item(|selected| selected.last().copied())
+        }
+        fn ItemCount(&self) -> WinResult<i32> {
+            hits::hit(hits::Method::ItemCount);
+            Ok(i32::try_from(props::selected_indices(&self.tree, self.index).len()).unwrap_or(0))
         }
     }
 }

@@ -54,18 +54,24 @@ use verbatim_outpost::protocol::{
     SupervisorToOutpost, read_message,
 };
 use verbatim_outpost::text::edit::EditText;
-use verbatim_outpost::text::uia::UiaText;
+use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, CaretSignal, TextSource, caret_report, perform};
 use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state};
 use verbatim_uia::{
-    AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia,
+    AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, FOCUS_PROPERTIES, NodeIdRegistry,
+    Registration, Scope, Subscription, Uia,
 };
 use verbatim_uia_rops::{
     FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
     navigation_step,
 };
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationCacheRequest, IUIAutomationElement, UIA_MenuOpenedEventId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId,
+};
+use windows::core::AgileReference;
 
 /// The fixture's nodes, by their index in mockapp's tree (depth first, the
 /// root at 0): mockapp answers `WM_GETOBJECT` for index `i` at object id
@@ -934,6 +940,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("FragmentRoot", 4),
                 ],
             ),
+            // The list's first selected item through `SelectionPattern2`.
             into_list: (
                 calls(2, 0, 0),
                 &[
@@ -947,7 +954,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("BoundingRectangle", 2),
                     ("FragmentRoot", 3),
                     ("IsSelected", 1),
-                    ("GetSelection", 1),
+                    ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
@@ -1000,20 +1007,24 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("FragmentRoot", 6),
                 ],
             ),
+            // The list's first selected item through `SelectionPattern2`'s
+            // `FirstSelectedItem`, fetched with the `Selection` pattern in
+            // one call, and its cache, one more (6 calls and 143 provider
+            // calls through the `Selection` pattern alone, before).
             into_list: (
-                calls(6, 0, 0),
+                calls(5, 0, 0),
                 &[
                     ("WM_GETOBJECT", 2),
-                    ("ProviderOptions", 30),
+                    ("ProviderOptions", 34),
                     ("GetPatternProvider", 24),
                     ("GetPropertyValue", 49),
                     ("HostRawElementProvider", 14),
                     ("Navigate", 7),
-                    ("GetRuntimeId", 4),
+                    ("GetRuntimeId", 5),
                     ("BoundingRectangle", 2),
                     ("FragmentRoot", 9),
                     ("IsSelected", 1),
-                    ("GetSelection", 1),
+                    ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
@@ -1154,6 +1165,279 @@ fn uia_navigation_steps_cost_exactly() {
     drop(app);
 }
 
+/// What registering for events costs mockapp. A registration is made on its
+/// own thread and is the same with remote operations on or off, so it
+/// makes no counted call on this thread either way; what it costs is the
+/// provider calls UIA makes while registering, pinned here: the focus
+/// listener's desktop-wide group (an element selected, a menu opened, and
+/// notifications), and an outpost's focus-following property subscription
+/// moved to a focus, `First` inside the group `Settings`, registered on the
+/// focus alone.
+fn uia_event_registrations_cost_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-registrations");
+    let app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+
+    let (registration, cost) = under_test.measure(hwnd, |_| {
+        Registration::new(
+            vec![
+                Subscription::Event {
+                    event: UIA_SelectionItem_ElementSelectedEventId,
+                    callback: Arc::new(|_| {}),
+                },
+                Subscription::Event {
+                    event: UIA_MenuOpenedEventId,
+                    callback: Arc::new(|_| {}),
+                },
+                Subscription::Notifications {
+                    callback: Arc::new(|_, _, _, _, _| {}),
+                },
+            ],
+            Scope::Desktop,
+        )
+        .expect("the listener's registration")
+    });
+    drop(registration);
+    ratchet.check(
+        "UIA desktop-wide registration, one group",
+        &cost,
+        calls(0, 0, 0),
+        &[],
+    );
+
+    let focus = AgileReference::new(under_test.element("First")).expect("an agile reference");
+    let (registration, cost) = under_test.measure(hwnd, |_| {
+        Registration::new(
+            vec![Subscription::Properties {
+                properties: FOCUS_PROPERTIES.to_vec(),
+                callback: Arc::new(|_, _| {}),
+            }],
+            Scope::Elements(vec![focus]),
+        )
+        .expect("the focus-following registration")
+    });
+    drop(registration);
+    ratchet.check(
+        "UIA focus-following registration",
+        &cost,
+        calls(0, 0, 0),
+        &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
+    );
+
+    ratchet.finish();
+    drop(app);
+}
+
+/// A container's selected child, through `SelectionPattern2` (mockapp's
+/// list has it) and, for a provider without it (mockapp's tab control),
+/// through the `Selection` pattern, both ways the outpost reads it: inside
+/// the focus's remote program, and classically. The calls of the focus
+/// ancestry around it are those of the focus ledger above; these are the
+/// selected child's alone classically, and the whole program remotely.
+#[expect(
+    clippy::too_many_lines,
+    reason = "both containers' pinned provider hits, listed in full"
+)]
+fn uia_selected_children_cost_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-selection");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let cache = under_test
+        .uia
+        .cache_request(CACHED_PROPERTIES)
+        .expect("a cache request");
+    let mut ratchet = Ratchet::default();
+    let selected_name = |selected: Option<IUIAutomationElement>| {
+        let selected = selected.expect("a selected child");
+        snapshot_from_cached_element(&selected, &under_test.registry).name
+    };
+
+    // The program's hits beyond the selected child's, the same for both.
+    let program = |extra_pattern: u32, selection: (&'static str, u32)| {
+        vec![
+            ("WM_GETOBJECT", 2),
+            ("ProviderOptions", 24),
+            ("GetPatternProvider", 23 + extra_pattern),
+            ("GetPropertyValue", 49),
+            ("HostRawElementProvider", 10),
+            ("Navigate", 8),
+            ("GetRuntimeId", 3),
+            ("BoundingRectangle", 2),
+            ("FragmentRoot", 3),
+            ("IsSelected", 1),
+            selection,
+        ]
+    };
+    for (id, name, selected, classic_calls, classic_hits, remote_hits) in [
+        // `FirstSelectedItem`, cached in the call that also caches the
+        // `Selection` pattern, and the item's cache.
+        (
+            "fruits",
+            "Fruits",
+            "Banana",
+            2,
+            vec![
+                ("ProviderOptions", 14),
+                ("GetPatternProvider", 13),
+                ("GetPropertyValue", 23),
+                ("HostRawElementProvider", 8),
+                ("Navigate", 1),
+                ("GetRuntimeId", 5),
+                ("BoundingRectangle", 1),
+                ("FragmentRoot", 7),
+                ("IsSelected", 1),
+                ("FirstSelectedItem", 1),
+            ],
+            program(0, ("FirstSelectedItem", 1)),
+        ),
+        // `FirstSelectedItem` answered "not supported" in the same call
+        // that cached the `Selection` pattern, then its selection and the
+        // item's cache: 3, as the `Selection` pattern alone took. The
+        // program asks for `SelectionPattern2` once more.
+        (
+            "pages",
+            "Pages",
+            "General",
+            3,
+            vec![
+                ("ProviderOptions", 14),
+                ("GetPatternProvider", 14),
+                ("GetPropertyValue", 23),
+                ("HostRawElementProvider", 9),
+                ("Navigate", 1),
+                ("GetRuntimeId", 5),
+                ("BoundingRectangle", 1),
+                ("FragmentRoot", 8),
+                ("IsSelected", 1),
+                ("GetSelection", 1),
+            ],
+            program(1, ("GetSelection", 1)),
+        ),
+    ] {
+        common::apply(&mut app, hwnd, &format!("set-focus {id}"));
+        let container = under_test.element(name);
+        let (child, cost) = under_test.measure(hwnd, |under_test| {
+            under_test.uia.selected_element(container, &cache)
+        });
+        assert_eq!(selected_name(child).as_deref(), Some(selected));
+        ratchet.check(
+            &format!("UIA selected child of {name}, classically"),
+            &cost,
+            calls(classic_calls, 0, 0),
+            &classic_hits,
+        );
+        let (ancestry, cost) = under_test.measure(hwnd, |under_test| {
+            focus_ancestry(
+                &under_test.uia,
+                &FocusQuery {
+                    element: container,
+                    known: &[],
+                    depth_limit: 64,
+                    properties: CACHED_PROPERTIES,
+                    deadline: None,
+                },
+                true,
+            )
+            .expect("the focus ancestry")
+        });
+        let FocusAncestry::Focused(ancestry) = ancestry.0 else {
+            panic!("{name} has the focus");
+        };
+        assert_eq!(
+            selected_name(ancestry.selected_child).as_deref(),
+            Some(selected)
+        );
+        ratchet.check(
+            &format!("UIA focus on {name} with its selected child, remotely"),
+            &cost,
+            calls(1, 0, 0),
+            &remote_hits,
+        );
+    }
+
+    ratchet.finish();
+    app.send("quit");
+}
+
+/// The active text position changed event: registering for it, with a text
+/// focus's caret and text changes, as one group on the focus, and handling
+/// one, which keeps the event's range as a position in the focus's text and
+/// reads nothing, the same with remote operations on or off.
+fn uia_active_text_position_costs_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-active-position");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+
+    let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&ranges);
+    let notes = AgileReference::new(under_test.element("Notes")).expect("an agile reference");
+    let (registration, cost) = under_test.measure(hwnd, |_| {
+        Registration::new(
+            vec![
+                Subscription::Events {
+                    events: vec![
+                        UIA_Text_TextSelectionChangedEventId,
+                        UIA_Text_TextChangedEventId,
+                    ],
+                    callback: Arc::new(|_, _| {}),
+                },
+                Subscription::ActiveTextPosition {
+                    callback: Arc::new(move |_, range| {
+                        if let Some(range) = range.and_then(|range| AgileReference::new(range).ok())
+                        {
+                            seen.lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .push(range);
+                        }
+                    }),
+                },
+            ],
+            Scope::Elements(vec![notes]),
+        )
+        .expect("the text focus's registration")
+    });
+    ratchet.check(
+        "UIA text focus registration",
+        &cost,
+        calls(0, 0, 0),
+        &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
+    );
+
+    app.send("active-text-position doc 6 10");
+    common::wait_until("the active text position changed event", || {
+        !ranges
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    });
+    let range = ranges
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(0)
+        .resolve()
+        .expect("the event's range");
+    let mut store = Anchors::new(Arc::default());
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        let start = UiaPos::start_of(&range).expect("the range's start");
+        store.node(1).position_at(start)
+    });
+    ratchet.check(
+        "UIA active text position change",
+        &cost,
+        calls(0, 0, 0),
+        &[],
+    );
+
+    drop(registration);
+    ratchet.finish();
+    app.send("quit");
+}
+
 /// A caret key's wait that never waits: the caret has already moved.
 struct AlreadyMoved;
 
@@ -1272,6 +1556,10 @@ fn measure_focus_report(hwnd: HWND, source: &mut UiaText) -> Cost {
 /// line's formatting, and a wait that finds nothing, through UIA, remotely
 /// or classically, with the default theme's formatting (spelling and
 /// grammar errors).
+#[expect(
+    clippy::too_many_lines,
+    reason = "both ways' pinned provider hits, listed in full"
+)]
 fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     let title = common::unique_title("mockapp-counts-uia-caret");
     let mut app = common::spawn("text.json", "uia", &title);
@@ -1282,6 +1570,11 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     let (polls, waited) = measure_fruitless_wait(&mut app, hwnd, &mut source);
     assert_eq!(polls, 11, "every 10 milliseconds for 100");
     let focus_report = measure_focus_report(hwnd, &mut source);
+    // The same report with every formatting indication on: seven attributes
+    // per stretch, the annotation types, font name and size, weight,
+    // italic, underline style, and color.
+    let mut every_attribute = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
+    let formatted_report = measure_focus_report(hwnd, &mut every_attribute);
     // The caret's read, the evidence, the line and the caret's offset
     // in it, and the character's spelling error.
     let move_hits = [
@@ -1314,6 +1607,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ("MoveEndpointByUnit", 4),
         ("MoveEndpointByRange", 7),
     ];
+    // The same, with seven attributes read for each of the four stretches.
+    let formatted_hits: Vec<(&'static str, u32)> = focus_hits
+        .iter()
+        .map(|&(name, count)| match name {
+            "GetAttributeValue" => (name, 28),
+            _ => (name, count),
+        })
+        .collect();
     if remote {
         // One round trip each. Inside the provider the program also
         // copies the collapsed caret before using it, one clone and one
@@ -1344,6 +1645,12 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             calls(1, 0, 0),
             &remote_hits(1, &plus_copy(&focus_hits)),
         );
+        ratchet.check(
+            "UIA caret report after a focus with every attribute, remotely",
+            &formatted_report,
+            calls(1, 0, 0),
+            &remote_hits(1, &plus_copy(&formatted_hits)),
+        );
         // One round trip per read, each the whole read: the read that
         // finds the evidence is the answer.
         ratchet.check(
@@ -1370,6 +1677,15 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &focus_report,
             calls(39, 0, 0),
             &focus_hits,
+        );
+        // One `GetAttributeValues` call per stretch for all seven
+        // attributes (`IUIAutomationTextRange3`), which the provider answers
+        // one attribute at a time; 63 calls when each attribute was a call.
+        ratchet.check(
+            "UIA caret report after a focus with every attribute, classically",
+            &formatted_report,
+            calls(39, 0, 0),
+            &formatted_hits,
         );
         ratchet.check(
             "UIA caret wait finding nothing, classically",
@@ -1952,6 +2268,18 @@ fn main() {
         (
             "uia_navigation_steps_cost_exactly",
             uia_navigation_steps_cost_exactly,
+        ),
+        (
+            "uia_event_registrations_cost_exactly",
+            uia_event_registrations_cost_exactly,
+        ),
+        (
+            "uia_selected_children_cost_exactly",
+            uia_selected_children_cost_exactly,
+        ),
+        (
+            "uia_active_text_position_costs_exactly",
+            uia_active_text_position_costs_exactly,
         ),
     ]);
 }

@@ -8,7 +8,8 @@ use std::time::Instant;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_HasKeyboardFocusPropertyId, UIA_IsDataValidForFormPropertyId,
     UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
-    UIA_RuntimeIdPropertyId, UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
+    UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
+    UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
 };
 
 use verbatim_uia::map::cached_native_window_handle;
@@ -187,21 +188,44 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let selected = b.new_null_element();
     let selected = b.add_to_results(selected);
     if wants_selected_child(query.element) {
-        // The Selection pattern has no method instructions; its
-        // `Selection` property is the same array of elements.
-        let selection = b.property(element, UIA_SelectionSelectionPropertyId.0);
-        let is_array = b.is(TypeTest::Array, selection);
-        b.if_(is_array, |b| {
-            let selection = selection.assume::<kind::Array>();
-            let size = b.array_size(selection);
-            let zero = b.uint(0);
-            let any = b.compare(size, zero, Comparison::GreaterThan);
-            b.if_(any, |b| {
-                let first = b.array_get_at(selection, zero).assume::<kind::Element>();
-                cache.populate(b, first);
-                b.set(selected, first);
-            });
-        });
+        // `SelectionPattern2`'s first selected item, ignoring its default,
+        // so a provider without the pattern answers "not supported".
+        let property = b.int(UIA_Selection2FirstSelectedItemPropertyId.0);
+        let ignore_default = b.bool(true);
+        let first = b.get_property_value(element, property, ignore_default);
+        let unsupported = b.is(TypeTest::NotSupported, first);
+        b.if_else(
+            unsupported,
+            |b| {
+                // The Selection pattern has no method instructions; its
+                // `Selection` property is the same array of elements.
+                let selection = b.property(element, UIA_SelectionSelectionPropertyId.0);
+                let is_array = b.is(TypeTest::Array, selection);
+                b.if_(is_array, |b| {
+                    let selection = selection.assume::<kind::Array>();
+                    let size = b.array_size(selection);
+                    let zero = b.uint(0);
+                    let any = b.compare(size, zero, Comparison::GreaterThan);
+                    b.if_(any, |b| {
+                        let first = b.array_get_at(selection, zero).assume::<kind::Element>();
+                        cache.populate(b, first);
+                        b.set(selected, first);
+                    });
+                });
+            },
+            |b| {
+                let is_element = b.is(TypeTest::Element, first);
+                b.if_(is_element, |b| {
+                    let first = first.assume::<kind::Element>();
+                    let null = b.is_null(first);
+                    let some = b.not(null);
+                    b.if_(some, |b| {
+                        cache.populate(b, first);
+                        b.set(selected, first);
+                    });
+                });
+            },
+        );
     }
 
     let known = b.new_string_map();
@@ -378,7 +402,7 @@ impl RemoteCache {
 
 /// The focus ancestry the classic way, the fallback and the reference:
 /// a live `HasKeyboardFocus` read, the selected child through the
-/// `Selection` pattern ([`verbatim_uia::selected_element`], as
+/// `Selection` pattern ([`Uia::selected_element`], as
 /// `Uia::selected_child` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestor_chain` makes. Stops where the remote program
@@ -397,7 +421,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
     let cache = uia.cache_request(query.properties)?;
     let selected_child = if wants_selected_child(query.element) {
-        verbatim_uia::selected_element(query.element, &cache)
+        uia.selected_element(query.element, &cache)
     } else {
         None
     };

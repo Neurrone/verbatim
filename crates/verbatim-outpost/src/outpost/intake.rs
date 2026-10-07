@@ -29,7 +29,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{Notification, TraceId};
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 use windows::core::AgileReference;
 
 use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact};
@@ -53,6 +53,19 @@ pub(super) enum UiaKind {
     TextSelection,
     /// A text focus's text changed (`Text_TextChanged`).
     TextChanged,
+    /// The active position in a text focus's text changed, to the start of
+    /// this range when the event carried one.
+    ActiveTextPosition(Option<ActiveRange>),
+}
+
+/// The range an active text position change carried.
+#[derive(Clone)]
+pub(super) struct ActiveRange(pub(super) AgileReference<IUIAutomationTextRange>);
+
+impl std::fmt::Debug for ActiveRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ActiveRange")
+    }
 }
 
 /// A UIA event as its callback captured it: cached properties only, plus an
@@ -330,6 +343,11 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
                 UiaKind::Selection => Some(Key::Uia(1, 0, event.parts.runtime_id.clone())),
                 UiaKind::TextSelection => Some(Key::Uia(2, 0, event.parts.runtime_id.clone())),
                 UiaKind::TextChanged => Some(Key::Uia(3, 0, event.parts.runtime_id.clone())),
+                // Only the newest position matters, as NVDA's limiter keeps
+                // one event per element and kind.
+                UiaKind::ActiveTextPosition(_) => {
+                    Some(Key::Uia(4, 0, event.parts.runtime_id.clone()))
+                }
                 // Each notification carries its own text, so none replaces
                 // another.
                 UiaKind::Notification(_) => None,

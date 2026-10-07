@@ -110,10 +110,15 @@ Public API:
     application.
   - The focus-following UIA property subscription, following NVDA's
     selective registration on Windows 11: name, value, and state changes on
-    the focused element and its ancestors only. The worker moves it each time
-    it reports a focus, without waiting. This replaces the subscriptions on
-    the top-level windows that existed at spawn, under which a dialog or
-    window opened later received no UIA events at all.
+    the focused element only, since the reducer acts on no other element's
+    changes (NVDA's scope also names the focus's ancestors, but UIA
+    delivers no ancestor's event to it; `docs/parity.md`, "UIA event
+    registration"). The worker moves it each
+    time it reports a focus, without waiting. This replaces the
+    subscriptions on the top-level windows that existed at spawn, under
+    which a dialog or window opened later received no UIA events at all,
+    and, since 2026-10-07, the registrations on each of the focus's
+    reported ancestors.
   - The queue applies NVDA's limiter rules: one waiting entry per object and
     kind, a newer one replacing it and moving to the back; a batch is
     everything that accumulated while the worker handled the previous one;
@@ -178,7 +183,9 @@ Public API:
   formatting when asked (the report after a focus), and remembers when
   its read finished. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share; `NodeText` is one
-  node's. `CaretSignal` is a caret key's wait: whether a caret event
+  node's, and its `position_at` mints a position at a backend position
+  without a call, as the worker keeps an active text position change's
+  range (`UiaPos::start_of`). `CaretSignal` is a caret key's wait: whether a caret event
   arrived, waiting for one, and the clocks (an `Instant` for the wait
   and Unix milliseconds for when a caret was read), so the unit tests run
   on fake clocks. Details under "Text" below.
@@ -198,7 +205,8 @@ Public API:
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
   menu-popup, menu and switcher end, and alert), and desktop-wide UIA
   subscriptions for the events NVDA registers globally on Windows 11: an
-  element selected, a menu opened, and notifications, and only then
+  element selected, a menu opened, and notifications, registered together
+  as one event handler group on the desktop's root element, and only then
   announces `Ready`, so focus and menus are seen from the moment it does
   (announcing first lost a menu opened right after start, found
   2026-10-06). The event thread (`EventThread::spawn`) likewise returns
@@ -665,7 +673,12 @@ Implementation notes:
   a second focus-following UIA subscription, moved to the focus when it
   has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as
-  `TextChanged`; for an edit control, the hooks' caret
+  `TextChanged`, and, in the same event handler group, the active text
+  position changed event, reported as `ActiveTextPositionChanged` with the
+  start of its range kept as a position in the focus's text (an anchor
+  minted for it, no call), and dropped when its element is not a node the
+  outpost knows or it carries no range, as NVDA's handler drops it; the
+  intake keeps the newest one per element. For an edit control, the hooks' caret
   (`EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET`) and text selection
   events are reported as `CaretMoved`, and its value change as
   `TextChanged` without reading the control's whole text as its MSAA value.

@@ -240,11 +240,12 @@ The focus lands on the list itself, and its selected item is read with it.
   properties.
 - Today, with remote operations: 2 UIA calls, the focused element and one
   `Execute`. 126 provider calls besides the focused-element read.
-- Today, classic: 6 UIA calls: the focused element, its nearest window,
+- Today, classic: 5 UIA calls: the focused element, its nearest window,
   one ancestor hop (the window, known from the previous focus), and the
-  selected item in three calls (the `Selection` pattern,
-  `GetCurrentSelection`, and `BuildUpdatedCache` on the first item). 143
-  provider calls besides the focused-element read.
+  selected item in two calls (`SelectionPattern2`'s `FirstSelectedItem`
+  and `BuildUpdatedCache` on it). 136 provider calls besides the
+  focused-element read. Through the `Selection` pattern, before, 6 and
+  143 ("A container's selected item" below).
 - Target: 2, met.
 
 ### Arrowing through a list, UIA
@@ -455,10 +456,15 @@ space, the misspelt "beta", the line feed).
 - Minimum: 1 UIA call remotely. Classically, a caret report's 8 and the
   walk by UIA's format unit: a collapsed copy of the line (2), and for each
   stretch a copy, `MoveEndpointByUnit`, two comparisons (with the line's
-  end, and of where the next starts), its text, its attribute, and moving
-  the walk on, 7 each, and a `MoveEndpointByRange` to cut a stretch that
-  runs past the line's end, here the last: 39 for four.
-- Today: 1 remotely, 39 classically (8 before formatting was read).
+  end, and of where the next starts), its text, its attributes (one call
+  for all of them, `GetAttributeValues`), and moving the walk on, 7 each,
+  and a `MoveEndpointByRange` to cut a stretch that runs past the line's
+  end, here the last: 39 for four, however many attributes the theme
+  reads.
+- Today: 1 remotely, 39 classically (8 before formatting was read), with
+  the default theme and with every formatting indication on (63 before
+  the attributes were read in one call; "Several text attributes in one
+  call" below).
 - Target: 1.
 
 ### A caret key that selects, UIA
@@ -671,3 +677,142 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   text moved while it was read (a full scrollback scrolling beneath the
   ranges during a flood), when the read is set aside for the next.
 - Target: 1.
+
+## Newer UIA features
+
+What adopting the UIA features newer than Verbatim's first UIA code
+changed (`phase6-design.md`, item 13 of the work scheduled on
+2026-10-07). Each was measured on 2026-10-07 on this machine (x64),
+release build, against mockapp in its own process, before and after the
+change, with another engineer's build running; the counts are pinned by
+`crates/mockapp/tests/call_counts.rs` as the ledger above is.
+
+### Event coalescing and connection recovery
+
+Every UIA client Verbatim creates turns on `IUIAutomation6`'s
+`CoalesceEvents` and `ConnectionRecoveryBehavior`, as NVDA does on its
+one client (`docs/crates/verbatim-uia.md`). Both are local settings of
+the client, so no operation's call count changed.
+
+- A burst of 100 name changes from one mockapp element, through a
+  property subscription: all 100 delivered before and after, the last
+  arriving 91 ms after the burst began at the median before and 88 ms
+  after; with a handler that takes 5 ms per event, still 100. mockapp's
+  provider raises each change at once, and UIA delivered every one of
+  them either way. The same burst from mockapp's MSAA backend, through
+  UIA's MSAA proxy, arrived as one event both before and after: the
+  system merges those `WinEvent`s before UIA sees them.
+- Reads while mockapp's window thread is stalled: a fetch on a new
+  connection waited out a 3 second stall and answered, and failed with
+  UIA's timeout after 10.0 seconds of a 12 second stall, before and
+  after; a read of an element already fetched waited out the stall
+  either way. Connection recovery therefore leaves Verbatim's long wait
+  for a starting application's answer as it was.
+- Creating a client: 0.038 ms at the median before, 0.036 after.
+
+### Event handler groups
+
+Every `verbatim_uia::Registration` now registers its subscriptions as one
+`IUIAutomationEventHandlerGroup`, with one `AddEventHandlerGroup` call per
+element of its scope, as NVDA registers its handlers. The focus listener's
+three desktop-wide subscriptions (an element selected, a menu opened, and
+notifications) became one registration with one thread and one client,
+where they were three of each. A registration runs on its own thread, so
+it makes no counted call on the worker's; what it costs the application
+is the provider calls UIA makes while registering, now pinned by the
+ratchet (`uia_event_registrations_cost_exactly`), the same with remote
+operations on or off.
+
+- The listener's registration: none of mockapp's provider calls, before
+  and after. Registering it took 18.5 ms at the median (24.9 at the 95th
+  percentile) as three registrations and 9.9 ms (11.9) as one group, 30
+  runs each.
+- An outpost's focus-following property subscription moved to a focus
+  inside a group (the focus, the group, and the window): 2
+  `HostRawElementProvider` and 5 `FragmentRoot` provider calls, and 1.19
+  ms at the median before, 1.15 after, as one group per element.
+
+### Selective registration
+
+The outpost's focus-following property subscription is registered on the
+focus alone, where it was registered on the focus and on each ancestor
+the focus reported (`docs/parity.md`, "UIA event registration"). The
+reducer acted only on the focus's own changes, so the ancestors' events
+were read and sent for nothing. NVDA's scope, the focus with its
+ancestors, was measured too: UIA delivers no ancestor's event to it,
+against mockapp and against Windows 11's taskbar, and it cost mockapp
+the same provider calls as the focus alone.
+
+- Moving it to a focus inside a group: 2 `HostRawElementProvider` and 5
+  `FragmentRoot` provider calls before, on the focus, the group, and the
+  window; 1 and 2 after. 1.15 ms at the median before (1.33 at the 95th
+  percentile) and 0.75 ms after (1.14), 30 runs each.
+- A change on an ancestor (a window's title, a group's name) no longer
+  reaches the outpost, which read it, mapped it, and sent it to Core,
+  which dropped it.
+
+### Several text attributes in one call
+
+The classic reads of a stretch's formatting fetch all its attributes in
+one `IUIAutomationTextRange3::GetAttributeValues` call, where each was a
+call (`docs/crates/verbatim-uia-rops.md`). The remote program is
+unchanged: it reads the attributes inside the provider already. The
+provider's own work is the same either way, one `GetAttributeValue` per
+attribute.
+
+- The caret report after a focus, mockapp's first line (four stretches),
+  with every formatting indication on (seven attributes per stretch):
+  classically 63 UIA calls before and 39 after, 5.26 ms at the median
+  before (6.11 at the 95th percentile) and 3.69 ms after (4.29), 200
+  runs each; remotely 1 call, 0.36 ms before and 0.39 after. With the
+  default theme, which reads only the annotation types, one attribute per
+  stretch, the count is the same as before, 39 classically.
+
+### A container's selected item
+
+A focused list's or tab control's selected item is read through
+`SelectionPattern2`'s `FirstSelectedItem` where the provider has it, and
+through the `Selection` pattern where it does not, classically and in the
+focus's remote program (`docs/crates/verbatim-uia.md`). Pinned over
+mockapp's `tests/fixtures/ancestry.json`, whose list has
+`SelectionPattern2` and whose tab control does not
+(`uia_selected_children_cost_exactly`).
+
+- Classically, one `BuildUpdatedCache` on the container caches both its
+  `FirstSelectedItem` property, ignoring its default, and its `Selection`
+  pattern object, so a provider without `SelectionPattern2` costs no
+  extra call.
+- A list's selected item, classically: 2 UIA calls (that one and the
+  item's cache) where it was 3 (the pattern, `GetCurrentSelection`, and
+  the cache); 74 provider calls where it was 63; 0.41 ms at the median
+  where it was 0.46 (0.48 and 0.55 at the 95th percentile), 200 runs
+  each.
+- A tab control's, classically: 3 calls, as before (that one, which
+  finds `FirstSelectedItem` not supported, `GetCurrentSelection` on the
+  cached pattern, and the item's cache); 0.54 ms at the median where it
+  was 0.46, the cache request with a pattern costing the provider more
+  than fetching the pattern alone. A first version asked for
+  `FirstSelectedItem` live before fetching the pattern, 4 calls and 0.58
+  ms.
+- Inside the focus's remote program: 1 call either way, with the same
+  provider calls but for the selection read itself (`FirstSelectedItem`
+  in place of `GetSelection`, and for the tab control one more
+  `GetPatternProvider`); 1.10 ms at the median before and after for the
+  list, 1.07 for the tab control.
+
+### The active text position
+
+A text focus's caret and text changes and its active text position
+changes are registered as one event handler group on the focus, and an
+active text position change is kept as a position in the focus's text
+without reading anything (`docs/crates/verbatim-outpost.md`). Pinned by
+the ratchet (`uia_active_text_position_costs_exactly`), the same with
+remote operations on or off.
+
+- Registering the group on mockapp's text: 1 `HostRawElementProvider` and
+  2 `FragmentRoot` provider calls, as for the caret and text changes
+  alone; 0.89 ms at the median with the new handler and 0.72 without (30
+  runs each).
+- Handling a change: no call and no provider call, 0.002 ms at the
+  median. A change reached a registration 0.13 ms at the median after
+  mockapp was told to raise it (100 runs).

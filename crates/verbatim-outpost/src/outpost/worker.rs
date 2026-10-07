@@ -327,6 +327,26 @@ fn is_terminal_output_notification(
     role == Role::Terminal && notification.activity_id.as_deref() == Some(TERMINAL_OUTPUT_ACTIVITY)
 }
 
+/// Where the focus-following property subscription listens for a focus
+/// whose live UIA element is `element`: on that element alone, or nowhere
+/// for a focus with no UIA element. The reducer acts on the focus's own
+/// name, value, and state changes and on no other element's. NVDA
+/// registers its local group on the focus with `TreeScope_Ancestors` as
+/// well, but UIA delivers no ancestor's event to such a registration: a
+/// registration on the Windows 11 taskbar clock's child with that scope
+/// did not hear the clock's own name change each minute, which one on the
+/// clock and one on the taskbar's subtree did (`docs/parity.md`, "UIA
+/// event registration").
+fn following(
+    element: Option<
+        windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>,
+    >,
+) -> verbatim_uia::Scope {
+    element.map_or(verbatim_uia::Scope::Nothing, |element| {
+        verbatim_uia::Scope::Elements(vec![element])
+    })
+}
+
 /// Why the watchdog abandons a worker at `now`, if it does: the entry it
 /// started at `started`, concerning `window` (0 for none), has passed its
 /// `deadline`, or has waited [`MOVED_ON_GRACE`] and `moved_on` says the user
@@ -887,6 +907,7 @@ impl Worker<'_> {
         );
         self.context.tracking().dialog = memo;
         let role = node.role;
+        let node_id = node.id;
         let text_node = (!foreground).then(|| node.clone());
         tracing::debug!(
             ?role,
@@ -910,15 +931,18 @@ impl Worker<'_> {
             ancestors: ancestors.unwrap_or_default(),
             selected_child,
         };
-        let followed = self.uia_elements(&event);
+        let followed = self.context.uia_registry.element_of(node_id);
         if self.emit(trace, observed_at_ms, backend, window, event) {
             if !foreground {
                 self.context.intake.set_focused(object);
                 // Move the focus-following UIA property subscription to the
-                // new focus and its ancestors, without waiting. A foreground
+                // new focus, without waiting: selective registration, as
+                // NVDA's, on the focus alone, whose changes are the only
+                // ones the reducer acts on. A focus read through MSAA has no
+                // element and is followed by the hooks, and a foreground
                 // report is a window, not the control focus is in.
                 if let Some(subscription) = self.context.focus_properties.get() {
-                    subscription.retarget(verbatim_uia::Scope::Elements(followed));
+                    subscription.retarget(following(followed));
                 }
             }
             let mut tracking = self.context.tracking();
@@ -943,25 +967,6 @@ impl Worker<'_> {
     /// The last focus this outpost reported, with its ancestors.
     fn focus_chain(&self) -> Vec<NodeSnapshot> {
         self.context.tracking().chain.clone()
-    }
-
-    /// The live UIA elements behind a focus event's node and ancestors, for
-    /// the focus-following property subscription. MSAA nodes have none.
-    fn uia_elements(
-        &self,
-        event: &NormalizedEvent,
-    ) -> Vec<windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>>
-    {
-        let NormalizedEvent::FocusChanged {
-            node, ancestors, ..
-        } = event
-        else {
-            return Vec::new();
-        };
-        std::iter::once(node)
-            .chain(ancestors)
-            .filter_map(|node| self.context.uia_registry.element_of(node.id))
-            .collect()
     }
 
     /// An MSAA event from this outpost's own hooks.
@@ -1111,6 +1116,10 @@ impl Worker<'_> {
                 }
                 return;
             }
+            UiaKind::ActiveTextPosition(range) => {
+                let event = (&event.parts.runtime_id[..], range, hwnd);
+                return self.active_text_position(event, (trace, observed_at_ms));
+            }
             UiaKind::TextChanged => {
                 if let Some(node_id) = self
                     .context
@@ -1160,9 +1169,36 @@ impl Worker<'_> {
                 node_id: node.id,
                 notification,
             },
-            UiaKind::TextSelection | UiaKind::TextChanged => return,
+            UiaKind::TextSelection | UiaKind::TextChanged | UiaKind::ActiveTextPosition(_) => {
+                return;
+            }
         };
         self.emit(trace, observed_at_ms, Backend::Uia, hwnd, normalized);
+    }
+
+    /// An active text position change for the text focus whose runtime id
+    /// it carries, the start of its range reported as a position in the
+    /// node's text. As NVDA's
+    /// handler, an event whose element or range cannot be had is dropped,
+    /// and one from a window the system reports hung never gets this far.
+    fn active_text_position(
+        &mut self,
+        (runtime_id, range, hwnd): (&[i32], Option<super::intake::ActiveRange>, Option<isize>),
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
+        let node_id = self.context.uia_registry.existing_id(runtime_id);
+        let (Some(node_id), Some(range)) = (node_id, range) else {
+            return;
+        };
+        if let Some(position) = text_reads::active_position(self.context, node_id, &range.0) {
+            self.emit(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                hwnd,
+                NormalizedEvent::ActiveTextPositionChanged { node_id, position },
+            );
+        }
     }
 
     /// The selection of the element `runtime_id` names as a selection in a
@@ -1727,9 +1763,8 @@ impl Worker<'_> {
             return;
         };
         let id = context.uia_registry.id_for_element(runtime_id, &element);
-        let followed: Vec<_> = context.uia_registry.element_of(id).into_iter().collect();
         if let Some(subscription) = context.focus_properties.get() {
-            subscription.retarget(verbatim_uia::Scope::Elements(followed));
+            subscription.retarget(following(context.uia_registry.element_of(id)));
         }
         tracing::debug!("the focus's element was found; its changes are followed");
     }

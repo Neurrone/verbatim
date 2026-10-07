@@ -522,7 +522,8 @@ name, selection, and window destruction (the end of a menu or of the
 Alt+Tab switcher is global too, and goes from the listener to Core,
 amended 2026-10-02), and one UIA property
 subscription that follows the focus and its ancestors (NVDA's selective
-registration on Windows 11); selection and notifications come
+registration on Windows 11; amended 2026-10-07: the focus alone, since
+the reducer acts only on its changes); selection and notifications come
 desktop-wide from the listener. One extra hop (listener to
 Core to app outpost) costs well under a millisecond against the tens of
 milliseconds acquisition already costs, and removes the zero-to-seconds

@@ -171,7 +171,7 @@ impl Outgoing {
 struct Listener {
     outgoing: Arc<Outgoing>,
     _focus_registration: Option<FocusRegistration>,
-    _registrations: Vec<Registration>,
+    _registration: Option<Registration>,
     _event_thread: EventThread,
     _writer: JoinHandle<()>,
 }
@@ -204,7 +204,7 @@ impl Listener {
             .expect("spawn the listener writer");
 
         let focus_registration = install_focus_registration(&outgoing);
-        let registrations = install_desktop_subscriptions(&outgoing);
+        let registration = install_desktop_subscriptions(&outgoing);
 
         let msaa_outgoing = Arc::clone(&outgoing);
         let make_callback: Arc<dyn Fn() -> WinEventCallback + Send + Sync> = Arc::new(move || {
@@ -225,7 +225,7 @@ impl Listener {
         Self {
             outgoing,
             _focus_registration: focus_registration,
-            _registrations: registrations,
+            _registration: registration,
             _event_thread: event_thread,
             _writer: writer,
         }
@@ -300,10 +300,9 @@ fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistrat
 }
 
 /// Installs the desktop-wide UIA subscriptions NVDA registers globally on
-/// Windows 11: an element selected, a menu opened, and notifications.
-fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> {
-    let mut registrations = Vec::new();
-
+/// Windows 11, an element selected, a menu opened, and notifications, as
+/// one event handler group, as NVDA's global handlers also are.
+fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Option<Registration> {
     let selection_outgoing = Arc::clone(outgoing);
     let selection = Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
@@ -354,19 +353,15 @@ fn install_desktop_subscriptions(outgoing: &Arc<Outgoing>) -> Vec<Registration> 
         ),
     };
 
-    for (name, subscription) in [
-        ("selection", selection),
-        ("menu-opened", menu),
-        ("notification", notifications),
-    ] {
-        match Registration::new(subscription, Scope::Desktop) {
-            Ok(registration) => registrations.push(registration),
-            Err(error) => outgoing.fault(format!(
-                "listener desktop-wide UIA {name} subscription failed: {error}"
-            )),
+    match Registration::new(vec![selection, menu, notifications], Scope::Desktop) {
+        Ok(registration) => Some(registration),
+        Err(error) => {
+            outgoing.fault(format!(
+                "listener desktop-wide UIA subscriptions failed: {error}"
+            ));
+            None
         }
     }
-    registrations
 }
 
 /// Forwards one global MSAA `WinEvent` as a fact. Reads the owning pid with
