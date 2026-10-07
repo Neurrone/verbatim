@@ -896,9 +896,11 @@ verified.
   Page Down), the selection's start and end (Verbatim+Alt+Home and End),
   and the review cursor's and caret's locations ("Positioned at x, y") are
   new. An object with no text interface is reviewed by its value or name,
-  NVDA's fallback, through the M3 flat walk, whose start and end of line
-  still speak the line rather than the character there (**different**,
-  a follow-up).
+  NVDA's fallback, through the M3 flat walk, which since 2026-10-08 walks
+  the same grapheme clusters and words as text with a text pattern (it had
+  walked code points and white space, so a Hindi vowel sign stopped alone
+  and a Thai name was one word); its start and end of line still speak the
+  line rather than the character there (**different**, a follow-up).
 - Review cursor columns. NVDA moves the review cursor to the start of the
   next or previous line. Verbatim: **different, deliberately** (decided
   2026-10-06, `phase6-design.md`, M4 item 5): moving to another line,

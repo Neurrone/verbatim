@@ -4408,6 +4408,53 @@ fn review_edges_are_named_and_the_unit_is_read_again() {
     );
 }
 
+/// Flat review walks grapheme clusters: in "हिन्दी" the consonant ha with
+/// its vowel sign is one character, and the conjunct after it, na, virama,
+/// da, and the long vowel sign, is the next, starting at byte 6.
+#[test]
+fn flat_review_moves_by_grapheme_cluster() {
+    let state = reviewing("हिन्दी");
+    let (state, segments) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    assert_eq!(
+        segments,
+        vec![UtteranceSegment::new(SegmentContent::Character(
+            "न्दी".to_owned()
+        ))]
+    );
+    // The cursor is at byte 6: a start marked there, copied to the end of
+    // the line, is the second character exactly.
+    let (state, segments) = review(&state, ReviewCommand::SetStartMarker, 0);
+    assert_eq!(
+        segments,
+        vec![message(verbatim_model::Message::StartMarked)]
+    );
+    let (state, segments) = review(&state, ReviewCommand::ReviewEndOfLine, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("हिन्दी")]);
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+    );
+    assert_eq!(effects, vec![Effect::CopyToClipboard("न्दी".to_owned())]);
+}
+
+/// An emoji with a skin tone is one character in flat review, so the next
+/// character after it is the space.
+#[test]
+fn flat_review_keeps_an_emoji_sequence_whole() {
+    let state = reviewing("👍🏽 ok");
+    let (_, segments) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    assert_eq!(segments, vec![message(verbatim_model::Message::Space)]);
+}
+
+/// Flat review finds the words of Thai, written without spaces, by
+/// dictionary: "สวัสดีชาวโลก" is "สวัสดี", "ชาว", and "โลก".
+#[test]
+fn flat_review_finds_words_written_without_spaces() {
+    let state = reviewing("สวัสดีชาวโลก");
+    let (_, segments) = review(&state, ReviewCommand::ReviewNextWord, 0);
+    assert_eq!(segments, vec![UtteranceSegment::text("ชาว")]);
+}
+
 #[test]
 fn an_empty_unit_is_blank() {
     let state = reviewing("ab\n\ncd");

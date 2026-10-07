@@ -1385,21 +1385,24 @@ pub(crate) fn flat_review_command(
         // spoken text.
         ReviewCommand::ReviewCurrentLine | ReviewCommand::ReviewStartOfLine => (line.0, line, None),
         ReviewCommand::ReviewEndOfLine => (line.1, line, None),
-        ReviewCommand::ReviewPreviousWord => match review::previous_word_start(&text, offset) {
-            Some(target) => (target, review::word_span(&text, target), None),
-            None => (offset, review::word_span(&text, offset), Some(Message::Top)),
-        },
-        ReviewCommand::ReviewNextWord => match review::next_word_start(&text, offset) {
-            Some(target) => (target, review::word_span(&text, target), None),
-            None => (
-                offset,
-                review::word_span(&text, offset),
-                Some(Message::Bottom),
-            ),
-        },
-        ReviewCommand::ReviewCurrentWord => {
-            let span = review::word_span(&text, offset);
-            (span.0, span, None)
+        ReviewCommand::ReviewPreviousWord
+        | ReviewCommand::ReviewNextWord
+        | ReviewCommand::ReviewCurrentWord => {
+            let words = review::words(&text);
+            let current = text::word_at(&words, offset)
+                .map_or((offset, offset), |word| (word.start, word.end));
+            let target = match command {
+                ReviewCommand::ReviewPreviousWord => review::previous_word(&words, offset),
+                ReviewCommand::ReviewNextWord => review::next_word(&words, offset),
+                _ => Some(current.0..current.1),
+            };
+            match target {
+                Some(word) => (word.start, (word.start, word.end), None),
+                None if command == ReviewCommand::ReviewPreviousWord => {
+                    (offset, current, Some(Message::Top))
+                }
+                None => (offset, current, Some(Message::Bottom)),
+            }
         }
         ReviewCommand::ReviewPreviousCharacter => match review::previous_char(&text, offset) {
             Some(target) if target >= line.0 => (target, char_at(target), None),
@@ -1426,8 +1429,15 @@ pub(crate) fn flat_review_command(
             | ReviewCommand::ReviewCurrentWord
             | ReviewCommand::ReviewCurrentCharacter
     ) && repeat > 0;
-    // A unit with nothing to read is "blank"; spelled, a space is "space".
-    let blank = slice.is_empty() || (!repeated_current && slice.trim().is_empty());
+    let by_character = matches!(
+        command,
+        ReviewCommand::ReviewPreviousCharacter
+            | ReviewCommand::ReviewNextCharacter
+            | ReviewCommand::ReviewCurrentCharacter
+    );
+    // A unit with nothing to read is "blank"; spelled, or read as one
+    // character, a space is "space", as with a text pattern.
+    let blank = slice.is_empty() || (!repeated_current && !by_character && text::is_blank(slice));
     if blank {
         segments.push(UtteranceSegment::new(SegmentContent::Message(
             Message::Blank,
@@ -1449,15 +1459,18 @@ pub(crate) fn flat_review_command(
     } else if repeated_current {
         // Spelled, and on a third press spelled with descriptions.
         segments.extend(text::spelled(slice, repeat > 1, None));
-    } else if matches!(
-        command,
-        ReviewCommand::ReviewPreviousCharacter
-            | ReviewCommand::ReviewNextCharacter
-            | ReviewCommand::ReviewCurrentCharacter
-    ) {
+    } else if by_character {
         // A single character is spoken as NVDA spells it, so a capital is
         // raised in pitch.
         segments.extend(spelled(slice));
+    } else if matches!(
+        command,
+        ReviewCommand::ReviewPreviousWord
+            | ReviewCommand::ReviewNextWord
+            | ReviewCommand::ReviewCurrentWord
+    ) {
+        // A word of one character, a punctuation mark, by its name.
+        segments.extend(text::word_segments(slice, None));
     } else {
         segments.push(UtteranceSegment::text(slice.to_owned()));
     }

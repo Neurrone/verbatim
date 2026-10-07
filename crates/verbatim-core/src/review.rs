@@ -1,18 +1,20 @@
 //! Review-cursor text: the flat text of a navigator object and the pure
 //! line, word, and character walks over it (roadmap M3).
 //!
-//! M3's review cursor reviews one object at a time — the navigator object —
-//! with no text-pattern support yet (that arrives in M4). An object's review
-//! text is therefore its flat presentation: its value when it has one (an
-//! edit control's content), otherwise its name (a button's or list item's
-//! label). Navigation is ordinary Unicode string work: lines split on any
-//! line break (`verbatim_text::lines`), words on whitespace runs, characters by `char`. Grapheme-cluster
-//! characters and word-boundary segmentation are deliberately left for M4,
-//! where the character-description table and text model land; M3 walks
-//! `char`s and whitespace, which reads correctly for the plain labels and
-//! single-line values it faces.
+//! An object without a text pattern (a button, a list item, a label) is
+//! reviewed as its flat presentation: its value when it has one, otherwise
+//! its name. Lines split on any line break (`verbatim_text::lines`);
+//! characters are grapheme clusters and words come from Unicode's word
+//! rules with dictionaries, the same units the review cursor walks in text
+//! with a text pattern (`text::words`, `text::grapheme_at`), so a Hindi
+//! vowel sign stays with its letter, an emoji with its skin tone is one
+//! character, and a Thai or Chinese name has words.
+
+use std::ops::Range;
 
 use verbatim_model::NodeSnapshot;
+
+use crate::text;
 
 /// The review text of a node: its value if it has a non-empty one, else its
 /// name, else the empty string. This is what the review cursor walks.
@@ -46,98 +48,55 @@ pub(crate) fn next_line_span(text: &str, offset: usize) -> Option<(usize, usize)
         .map(|line| (line.start, line.end))
 }
 
-/// The span of the word containing `offset`: a run of non-whitespace
-/// characters. If `offset` sits on whitespace, the next word is returned;
-/// past the last word, an empty span at the end. This is "current word" —
-/// the word the cursor is within, or the next one it would reach.
+/// The words of flat `text`, each as its byte range, in order: the words
+/// the review cursor walks in text with a text pattern (`text::words`),
+/// with punctuation a word of its own and white space no word. Flat text
+/// carries no language (a name or value has none), so the rules are chosen
+/// from the text itself (`verbatim_text::WordRules::for_text`).
 #[must_use]
-pub(crate) fn word_span(text: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(text.len());
-    let on_word = text[offset..]
-        .chars()
-        .next()
-        .is_some_and(|ch| !ch.is_whitespace());
-    let start = if on_word {
-        word_start(text, offset)
-    } else {
-        // On or past whitespace: advance to the next word's start.
-        text[offset..]
-            .char_indices()
-            .find(|(_, ch)| !ch.is_whitespace())
-            .map_or(text.len(), |(index, _)| offset + index)
-    };
-    let end = text[start..]
-        .char_indices()
-        .find(|(_, ch)| ch.is_whitespace())
-        .map_or(text.len(), |(index, _)| start + index);
-    (start, end)
+pub(crate) fn words(text: &str) -> Vec<Range<usize>> {
+    text::words(text, None)
 }
 
-/// The start of the non-whitespace run `offset` is inside: scan back while
-/// the preceding character is non-whitespace.
-fn word_start(text: &str, offset: usize) -> usize {
-    let mut start = offset.min(text.len());
-    for (index, ch) in text[..start].char_indices().rev() {
-        if ch.is_whitespace() {
-            break;
-        }
-        start = index;
-    }
-    start
-}
-
-/// The offset of the previous word start before `offset`, or `None` at the
-/// first word.
+/// The word of `words` after the one the cursor at `offset` is on
+/// (`text::word_at`), or `None` past the last.
 #[must_use]
-pub(crate) fn previous_word_start(text: &str, offset: usize) -> Option<usize> {
-    let offset = offset.min(text.len());
-    // Step back one char, then to that word's start; repeat until we land
-    // strictly before the current word's start.
-    let current = word_span(text, offset).0;
-    let mut probe = current;
-    while probe > 0 {
-        let prev = text[..probe]
-            .char_indices()
-            .next_back()
-            .map_or(0, |(index, _)| index);
-        let start = word_span(text, prev).0;
-        if start < current {
-            return Some(start);
-        }
-        probe = prev;
-    }
-    None
+pub(crate) fn next_word(words: &[Range<usize>], offset: usize) -> Option<Range<usize>> {
+    let current = text::word_at(words, offset);
+    words
+        .iter()
+        .find(|range| {
+            current
+                .as_ref()
+                .is_none_or(|current| range.start > current.start)
+        })
+        .cloned()
 }
 
-/// The offset of the next word start after the word containing `offset`, or
-/// `None` if there is no further word.
+/// The word of `words` before the one the cursor at `offset` is on, or
+/// `None` at the first.
 #[must_use]
-pub(crate) fn next_word_start(text: &str, offset: usize) -> Option<usize> {
-    let (_, end) = word_span(text, offset);
-    let next = text[end..]
-        .char_indices()
-        .find(|(_, ch)| !ch.is_whitespace())
-        .map(|(index, _)| end + index)?;
-    Some(next)
+pub(crate) fn previous_word(words: &[Range<usize>], offset: usize) -> Option<Range<usize>> {
+    let current = text::word_at(words, offset)?;
+    words
+        .iter()
+        .rev()
+        .find(|range| range.start < current.start)
+        .cloned()
 }
 
-/// The character span `[offset, next_char)` at `offset`, or `None` at the
-/// end of the text.
+/// The character span at `offset`: the grapheme cluster starting at or
+/// containing it, or `None` at the end of the text.
 #[must_use]
 pub(crate) fn char_span(text: &str, offset: usize) -> Option<(usize, usize)> {
-    let offset = offset.min(text.len());
-    let ch = text[offset..].chars().next()?;
-    Some((offset, offset + ch.len_utf8()))
+    text::grapheme_at(text, offset.min(text.len())).map(|range| (range.start, range.end))
 }
 
-/// The offset one character before `offset`, or `None` at the start.
+/// The start of the character (grapheme cluster) before the one at
+/// `offset`, or `None` at the start.
 #[must_use]
 pub(crate) fn previous_char(text: &str, offset: usize) -> Option<usize> {
-    let offset = offset.min(text.len());
-    text[..offset]
-        .char_indices()
-        .next_back()
-        .map(|(index, _)| index)
+    text::previous_grapheme(text, offset.min(text.len())).map(|range| range.start)
 }
 
 #[cfg(test)]
@@ -190,28 +149,22 @@ mod tests {
     }
 
     #[test]
-    fn words_are_non_whitespace_runs() {
-        let text = "the quick  fox";
-        assert_eq!(word_span(text, 0), (0, 3)); // "the"
-        assert_eq!(word_span(text, 1), (0, 3)); // inside "the"
-        assert_eq!(word_span(text, 3), (4, 9)); // on the space -> next word "quick"
-        assert_eq!(word_span(text, 4), (4, 9)); // "quick"
-        assert_eq!(&text[word_span(text, 11).0..word_span(text, 11).1], "fox");
+    fn words_follow_unicode_rules_and_skip_white_space() {
+        let text = "the quick  fox, ok";
+        let words = words(text);
+        let spans: Vec<&str> = words.iter().map(|range| &text[range.clone()]).collect();
+        assert_eq!(spans, ["the", "quick", "fox", ",", "ok"]);
+        // From white space, the next word is the one after the word the
+        // white space follows.
+        assert_eq!(next_word(&words, 0), Some(4..9));
+        assert_eq!(next_word(&words, 9), Some(11..14));
+        assert_eq!(next_word(&words, 16), None);
+        assert_eq!(previous_word(&words, 11), Some(4..9));
+        assert_eq!(previous_word(&words, 1), None);
     }
 
     #[test]
-    fn word_motion_walks_forward_and_back() {
-        let text = "the quick fox";
-        assert_eq!(next_word_start(text, 0), Some(4));
-        assert_eq!(next_word_start(text, 4), Some(10));
-        assert_eq!(next_word_start(text, 10), None);
-        assert_eq!(previous_word_start(text, 10), Some(4));
-        assert_eq!(previous_word_start(text, 4), Some(0));
-        assert_eq!(previous_word_start(text, 0), None);
-    }
-
-    #[test]
-    fn character_motion_respects_utf8() {
+    fn characters_are_grapheme_clusters() {
         let text = "aé中";
         assert_eq!(char_span(text, 0), Some((0, 1))); // 'a'
         assert_eq!(char_span(text, 1), Some((1, 3))); // 'é' is two bytes
@@ -221,5 +174,9 @@ mod tests {
         assert_eq!(previous_char(text, 3), Some(1));
         assert_eq!(previous_char(text, 1), Some(0));
         assert_eq!(previous_char(text, 0), None);
+        // A letter and its combining accent are one character.
+        let text = "e\u{301}x";
+        assert_eq!(char_span(text, 0), Some((0, 3)));
+        assert_eq!(previous_char(text, 3), Some(0));
     }
 }
