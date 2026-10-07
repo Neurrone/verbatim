@@ -178,7 +178,6 @@ pub(super) fn foreground_window(
     let (backend, mut node) = window_snapshot(context, client, hwnd)
         .unwrap_or_else(|| (Backend::Msaa, local_window_snapshot(context, hwnd)));
     if backend == Backend::Msaa {
-        tracing::debug!(hwnd, accessible = ?node.name, text = ?window_text(hwnd), top = top_level_of(hwnd), "DEBUG foreground names");
         node.name = top_level_name(hwnd, OBJID_CLIENT.0, CHILDID_SELF, node.name);
     }
     if node
