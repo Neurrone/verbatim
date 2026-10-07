@@ -1982,6 +1982,19 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       application decides: a provider that does not implement a newer
       pattern, and a window with no server-side provider, where remote
       operations cannot run.
+      NVDA uses them all except `TextPattern2.GetCaretRange` (it infers
+      the caret from the selection; Verbatim already uses
+      `GetCaretRange` where supported), so they are proven. Edge cases
+      NVDA handles that Verbatim must too: a missing `SelectionPattern2`
+      or `IUIAutomationTextRange3` falls back to the older pattern; an
+      attribute read that fails is "not supported", and a mixed value is
+      handled apart; a selection container that raises (Qt) or is null
+      (Outlook's attachment list) is "none" without cutting focus speech
+      short. NVDA also registers some property events only for the focus
+      and its ancestors ("selective" registration, automatic by default)
+      and rate-limits events itself ("enhanced event processing", on by
+      default, with a feature flag); Verbatim considers both, by
+      measurement.
       Each is weighed by measurement and adopted where it helps; the
       text attribute survey (item 2) covers the full list of UIA text
       attributes, including annotations, link, culture, font weight,
