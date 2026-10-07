@@ -332,6 +332,18 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   splits by Unicode's sentence rules, and is moved by `Paragraph` for the
   next read; a provider with a sentence unit of its own answers with the
   sentence.
+- `ReadAhead(TextReadAhead { at, movement, unit, count })`: say-all's
+  read. The first unit is read as `Read` reads it; then each next unit of
+  the same kind (moved by one from the last one's start), up to `count`
+  units in all (at most `MAX_READ_AHEAD`, 32), stopping early once the
+  text read reaches `MAX_READ_AHEAD_TEXT` (32 K UTF-16 code units, as the
+  providers count text). Answer `TextReply::Chunks { moved, chunks }`:
+  `moved` as for `Read`, and the chunks in order, at least one, every one
+  after the first with its `offset` at its start. When the outpost tried
+  to move past the last chunk and could not, that chunk is marked `last`.
+  A first unit that cannot be read is answered as `Read` would answer it
+  (`UnsupportedUnit`, `AnchorLost`, and so on). Where the provider runs
+  remote operations the whole batch is one round trip.
 - `ReadRange { start, end }`: the text between two points, whichever comes
   first in the document, answered `Range { text, truncated }`, cut to
   `MAX_RANGE_BYTES` (1 MB). For a copy to the clipboard.
@@ -365,8 +377,10 @@ failed).
   committed composition), a tab as a tab character and Enter as a
   carriage return. The platform side produces it, from the keyboard hook's
   translation of keys to text or from the application's text-edit events.
-- `Input::MarkReached { mark }`: playback reached a `SpeechMark` the
-  reducer placed, as the speech pipeline's `mark_reached` reports it.
+- `Input::MarkReached { mark, at_ms }`: playback reached a `SpeechMark`
+  the reducer placed, as the speech pipeline's `mark_reached` reports it,
+  at `at_ms` milliseconds since the Unix epoch (0 when unknown), from which
+  say-all measures the pace of speech.
 - `Input::SpeechCancelled`: a key press cut speech off outside the reducer
   (the hook's `KeySpeechEffect::Cancel`); say-all stops.
 - `Input::Settings(ReaderSettings)`: the reader settings, at startup and

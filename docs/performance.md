@@ -264,16 +264,23 @@ The focus moves from one list item to the next.
 
 Next sibling and parent, from a node the outpost holds.
 
-- Minimum: 1 UIA call: one tree-walker step built with the cache request
-  returns the neighbor with every property it is announced with.
-- Today: 3 UIA calls each: refreshing the held element's cache, which also
-  proves it still answers (`BuildUpdatedCache`), its nearest window, for
-  correcting the neighbor's backend, and the step. A neighbor with no
-  window of its own needs no further call for the correction. They cost
-  mockapp 141 provider calls for the next sibling and 142 for the parent.
-- Target: 1. The refresh is not needed to take the step, which itself
-  fails when the element is gone, and the nearest window can be read in
-  the same program as the step.
+- Minimum: 1 UIA call: one program takes the step, fills the neighbor's
+  cache with every property it is announced with, and finds the node's
+  nearest window, for correcting the neighbor's backend
+  (`verbatim_uia_rops::navigation_step`).
+- Today, with remote operations: 1 UIA call each, from the element the
+  registry holds without refreshing it first: the program fails at once
+  when the element is gone, and the outpost then searches for it. 91
+  provider calls for the next sibling and 92 for the parent. A step from
+  a top-level window is taken classically, since a program's walk ends
+  there.
+- Today, classic: 3 UIA calls each, as before remote operations:
+  refreshing the held element's cache, which also proves it still answers
+  (`BuildUpdatedCache`), its nearest window, and the step. A neighbor with
+  no window of its own needs no further call for the correction. They
+  cost mockapp 141 provider calls for the next sibling and 142 for the
+  parent.
+- Target: 1, met.
 
 ### A focus change, MSAA, steady state
 
@@ -454,6 +461,136 @@ space, the misspelt "beta", the line feed).
 - Today: 1 remotely, 39 classically (8 before formatting was read).
 - Target: 1.
 
+### A caret key that selects, UIA
+
+Shift with Right Arrow, answered with the caret's line and character and
+the text newly selected: mockapp's caret goes from collapsed at the start
+to a selection of "alpha".
+
+- Minimum: 1 UIA call: the caret read's program also compares the
+  selection's ends with the old ones and, when they moved, reads the text
+  of each change.
+- Today: 1 remotely (8 before: the caret read and then the selection's
+  changes worked out call by call, two comparisons for whether the two
+  selections are apart, one for each side, and three for the text of the
+  change). Classically 23 (30 before): the caret read's calls, and the
+  same comparisons and text read, now only when the selection moved.
+- Target: 1, met.
+
+### A review cursor line, UIA
+
+The review cursor's next line (Verbatim's numpad 9), from a position the
+outpost reported: a `Read` moving by a line from the start of the line
+holding the position, then reading that line and its language.
+
+- Minimum: 1 UIA call, one program (`verbatim_uia_rops::text_units`).
+- Today: 1 remotely; classically 9, as before remote operations (a copy
+  of the position, expanded to its line, collapsed, moved, collapsed; a
+  copy expanded to the line reached and its text; its `Culture`
+  attribute). The first review command and report current object on an
+  edit field read the line at the caret the same way, in one program
+  (classically 9: the caret's two reads, the line's three, the caret's
+  offset in it three, and its language).
+- Target: 1, met.
+
+### A review cursor word inside a line, UIA
+
+The word at a position Core found inside a line it holds (the review
+cursor moved by characters within the line, then current word): the
+position is the line's start and the text before it, found by moving a
+copy by that many characters and comparing the text passed.
+
+- Minimum: 1 UIA call: the program moves and compares inside the
+  provider, trying each character count a provider may use.
+- Today: 1 remotely; classically 12, as before (five to find the
+  position, three for the word, three for the position's offset in it,
+  and the language).
+- Target: 1, met.
+
+### Say-all, UIA
+
+Reading mockapp's three lines (two lines and the empty one after the last
+line break) from the caret, and moving the caret as each is reached.
+
+- Minimum: 1 UIA call for every batch of lines read ahead
+  (`TextOp::ReadAhead`, sixteen units), and 1 for each caret move.
+- Today: 1 UIA call for all three lines remotely, its end found in the
+  same program; 29 classically. Before, say-all asked for one line per
+  request, each a round trip remotely or not: 9 calls for the first line,
+  10 for each later one, and 10 more for a last request that found the
+  end, 39 calls in four requests. Each caret move is 1 call remotely and 4
+  classically (4 both ways before).
+- Target: 1 per batch and 1 per caret move, met.
+
+When the next batch is read: say-all keeps its pieces in a buffer and
+hands them to speech two ahead of playback, and reads the next batch when
+what is left, handed out and buffered, would last less than three seconds
+at the pace of speech it measures from its marks
+(`docs/crates/verbatim-core.md`, "Say-all"). The mark is set by time, not
+by piece count, because pieces vary from a word to a paragraph and speech
+from slow to several hundred words a minute. Three seconds is chosen from
+the reads it must cover: sixteen lines of fifty characters read ahead in
+0.9 ms at the median remotely and 22 to 32 ms classically, with the worst
+of 600 classic reads 190 ms on a machine loaded by other builds (below), so
+the next batch arrives at least fifteen times sooner than speech would run
+dry, with Core's and the pipe's own latency inside that margin; a longer
+mark would only keep more text buffered.
+
+### The caret's location, UIA
+
+Report caret location: the screen position of the character at the
+caret.
+
+- Minimum: 1 UIA call.
+- Today: 1 remotely; classically 5, as before (the caret's two reads, a
+  copy expanded to the character, and its bounding rectangles).
+- Target: 1, met.
+
+### The selected text, UIA
+
+The selected text read for a copy, or for the selection a focus or the
+navigator object is announced with (`ReadRange` from the selection's
+start to its end).
+
+- Minimum: 1 UIA call.
+- Today: 1 remotely; classically 7 (10 before: the caret was read once for
+  each end).
+- Target: 1, met.
+
+### Wall-clock gain
+
+Measured on 2026-10-07 on this machine (x64), release build, against
+mockapp in its own process, 200 runs of each operation through the
+outpost's text module or the navigation step as the worker makes them,
+with the machine loaded by two other engineers' builds. The medians held
+within about 0.2 ms across three runs; the 95th percentiles and the worst
+runs vary with that load, and the worst remote navigation step is the
+first program a process runs, which pays for creating the remote
+operations machinery. mockapp's providers run on one window thread, so
+each provider call inside a program is itself marshaled there; a real
+application's provider answers inside the program without that hop, so
+the gain is larger there. Median, 95th percentile, and worst, in
+milliseconds, remote against classic:
+
+- Navigation, next sibling: 0.93, 8.8, and 109 against 1.62, 7.7, and 19.6.
+- Review cursor's next line: 0.40, 0.49, and 8.4 against 0.77, 4.7, and
+  7.3.
+- Review cursor's word inside a line: 0.38, 0.43, and 4.9 against 0.60,
+  4.6, and 5.2.
+- Line at the caret (first review command, report current object): 0.43,
+  4.0, and 10.1 against 0.76, 5.4, and 7.5.
+- Say-all's read ahead of sixteen lines: 0.90, 1.08, and 6.4 against
+  22.3, 83.3, and 149. The same sixteen lines read a request each, as
+  say-all read before: 6.5, 12.7, and 37.5 remotely and 29.8, 112, and 190
+  classically, before counting Core's round trip per request.
+- Say-all's caret move: 0.29, 0.35, and 4.4 against 0.40, 4.9, and 9.2.
+- The caret's location: 0.36, 0.40, and 0.44 against 0.54, 8.8, and 24.4.
+- The selected text: 0.39, 0.46, and 4.3 against 0.68, 6.2, and 13.9.
+- A caret key that selects: 0.45, 0.55, and 1.1 against 2.5, 21.5, and
+  56.8.
+- A caret move (for comparison, converted earlier): 0.41, 0.45, and 0.96
+  against 1.34, 19.4, and 34.8.
+
 ### A caret move, Win32 edit control
 
 The same caret key in a standard edit control, read through its messages.
@@ -496,9 +633,10 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   scrollback and however many lines it reads.
 - Today: 1 UIA call for a read that finds new output, a prompt that grew
   or a command's output line. A read that finds nothing new after the
-  anchor reads the screen afresh to compare it line by line, 2 more (the
-  document range and a second program); so does a terminal's first read
-  when it gains the focus, the baseline (2 calls). Classically, with
+  anchor reads the screen afresh to compare it line by line, 1 more, a
+  second program that gets the document range itself (2 before, the
+  document range read first); so is a terminal's first read when it gains
+  the focus, the baseline (1 call, 2 before). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
   call per provider method: 34 for the baseline of a six-line text, 30 for
   a grown prompt, 43 for an output line and a new prompt. The provider's
