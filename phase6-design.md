@@ -1794,3 +1794,82 @@ remote operation, the Terminal page, the demonstrations) are merged:
 8. `cargo xtask demo` respects `CARGO_TARGET_DIR`.
 9. This document brought up to date with the run's decisions and each
    step's outcome.
+
+## Outcome (2026-10-07)
+
+What the run delivered, step by step, with the decisions taken along the
+way. The code, its crate guides, `docs/parity.md`, and
+`docs/performance.md` hold the details; this records what was decided and
+why.
+
+### Step 1: NVDA as the reference
+
+- The transcript add-on and `cargo xtask nvda capture` exist, now with
+  `--verbatim` (Verbatim's own speech for the same steps), `--type`, and
+  key steps joined by commas. Captures are working material, never kept
+  in the repository (Dickson, 2026-10-07): they drive exploratory testing
+  and the tests that pin behavior down.
+- The comparison against NVDA for every M4 feature found and fixed, among
+  others: selection wording ("hello selected"), NATO spellings ("Alfa",
+  "Xray"), the review cursor reaching the empty last line, the console
+  host's "Text Area" name, "multi line", tree levels from 0 and their
+  placement, report current object's second and third press, a dialog's
+  own text, and the settings dialog keeping one node across title changes.
+
+### Step 2: counts, memory, remote operations, unsafe code
+
+- Exact cross-process call counts are pinned for both the remote and the
+  classic path (`crates/mockapp/tests/call_counts.rs`). Remote operations
+  are used whenever available (Dickson, 2026-10-06): a steady-state UIA
+  focus costs 2 calls, a UIA caret move or caret report 1 (from 9), with
+  the theme's formatting attributes in the same round trip, and every poll
+  of the caret wait 1.
+- Caret responsiveness was measured once, from an injected key to the
+  first audible sample, against NVDA on the same eSpeak NG settings.
+  Medians in Windows 11 Notepad: Verbatim 21 to 24 ms, NVDA 31 to 48 ms;
+  in a Win32 edit control, Verbatim 19 to 23 ms, NVDA 29 to 46 ms. The
+  latency log line now starts at the keyboard hook and names every stage.
+- The UIA and MSAA clients read through safe wrappers; every crate without
+  unsafe code forbids it; `undocumented_unsafe_blocks` and
+  `multiple_unsafe_ops_per_block` are on. The audit
+  (`safety-audit-2026-10-06.md`) found 1 high, 3 medium, and 26 low
+  issues; all are fixed except two lows declined with reasons there.
+- Verbatim survives output it cannot write (a full disk under redirected
+  output), which had aborted it.
+
+### Step 3: the GUI port
+
+- wxDragon and libclang are gone; a small C++ wxWidgets layer behind a
+  cxx bridge holds the windows, with all logic and strings in Rust. The
+  bridge's GUI-thread rule is enforced by a token type. The port needed
+  `/EHsc` (exceptions changed `wxApp`'s vtable) and the RelWithDebInfo
+  configuration requested explicitly for the ARM64 build.
+- The settings dialog has Speech, Theme, and Terminal pages; Enter on a
+  focused button activates it, and Control+S and Control+Tab work from any
+  control.
+
+### M4
+
+All ten items are in: the text model and segmentation (`verbatim-text`),
+reading text through UIA and the standard edit controls, caret navigation
+and selection, typing echo (only in edit controls by default, as NVDA),
+the review cursor with its kept column, say-all, formatting spans, themes
+and earcons with NVDA's sounds, and terminals (an anchored diff as a
+remote operation, the 30-and-30 flood policy, Verbatim+5). The end-to-end
+suite holds 24 scenarios that run the same locally and on GitHub's
+Windows Server runners; where a machine lacks something (Windows 11
+Notepad's spell checker), the suite reads the same speech from mockapp
+and the real case is a demonstration. Demonstrations, separate from the
+tests, are recorded into `videos/demos/`; test recordings are kept in
+`videos/tests/`.
+
+### Open questions for Dickson
+
+- Whether line breaks are named as NVDA names them ("carriage return"),
+  where Verbatim says "blank" or nothing.
+- Whether the Terminal page applies its changes live, like the Speech and
+  Theme pages, or on Apply, as built.
+- Whether the default theme's spelling error also plays the error sound,
+  where NVDA only speaks it.
+- Whether the say-all demonstration's Windows Forms text box is
+  acceptable for reading by sentence.
