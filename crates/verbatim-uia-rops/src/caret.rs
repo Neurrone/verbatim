@@ -491,16 +491,21 @@ fn emit_runs(
             let length = b.string_size(text);
             b.array_append(lengths, length);
             emit_attributes(b, run, ids, &registers);
-            b.text_range_move_endpoint_by_range(walker, c.start, run, c.end);
+            // The stretch reached the span's end when it was cut there or
+            // ended on it, which the comparison above already says.
+            let reached = b.compare(order, c.zero, Comparison::GreaterThanOrEqual);
+            let done = b.or(reached, stuck);
             b.add_assign(count, c.one);
-            let order = b.text_range_compare_endpoints(walker, c.start, span, c.end);
-            let done = b.compare(order, c.zero, Comparison::GreaterThanOrEqual);
             let full = b.compare(count, limit, Comparison::GreaterThanOrEqual);
             let stop = b.or(done, full);
-            b.if_(stop, |b| {
-                let no = b.bool(false);
-                b.set(going, no);
-            });
+            b.if_else(
+                stop,
+                |b| {
+                    let no = b.bool(false);
+                    b.set(going, no);
+                },
+                |b| b.text_range_move_endpoint_by_range(walker, c.start, run, c.end),
+            );
         },
     );
     registers
@@ -975,18 +980,21 @@ fn classic_runs(
     loop {
         let run = walker.clone_range()?;
         let moved = run.move_endpoint_by_unit(Endpoint::End, TextUnit_Format, 1)?;
-        if run.compare_endpoints(Endpoint::End, span, Endpoint::End)? > 0 || moved == 0 {
+        let order = run.compare_endpoints(Endpoint::End, span, Endpoint::End)?;
+        if order > 0 || moved == 0 {
             run.move_endpoint_to(Endpoint::End, span, Endpoint::End)?;
         }
         runs.push(Run {
             length: run.text(max_text)?.len(),
             attributes: attributes_of(&run, ids)?,
         });
-        walker.move_endpoint_to(Endpoint::Start, &run, Endpoint::End)?;
-        let done = walker.compare_endpoints(Endpoint::Start, span, Endpoint::End)? >= 0;
+        // The stretch reached the span's end when it was cut there or ended
+        // on it, which the comparison already says.
+        let done = order >= 0 || moved == 0;
         if done || runs.len() >= MAX_RUNS as usize {
             return Ok(runs);
         }
+        walker.move_endpoint_to(Endpoint::Start, &run, Endpoint::End)?;
     }
 }
 

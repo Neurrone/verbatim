@@ -488,16 +488,25 @@ space, the misspelt "beta", the line feed).
 
 - Minimum: 1 UIA call remotely. Classically, a caret report's 8 and the
   walk by UIA's format unit: a collapsed copy of the line (2), and for each
-  stretch a copy, `MoveEndpointByUnit`, two comparisons (with the line's
-  end, and of where the next starts), its text, its attributes (one call
-  for all of them, `GetAttributeValues`), and moving the walk on, 7 each,
-  and a `MoveEndpointByRange` to cut a stretch that runs past the line's
-  end, here the last: 39 for four, however many attributes the theme
-  reads.
-- Today: 1 remotely, 39 classically (8 before formatting was read), with
+  stretch a copy, `MoveEndpointByUnit`, a comparison with the line's end,
+  its text, and its attributes (one call for all of them,
+  `GetAttributeValues`), 5 each, moving the walk on after each but the
+  last (3), and a `MoveEndpointByRange` to cut a stretch that runs past
+  the line's end, here the last: 34 for four, however many attributes the
+  theme reads.
+- Today: 1 remotely, 34 classically (8 before formatting was read), with
   the default theme and with every formatting indication on (63 before
-  the attributes were read in one call; "Several text attributes in one
-  call" below).
+  the attributes were read in one call, "Several text attributes in one
+  call" below; 39 before the text range audit of 2026-10-07, which
+  dropped a second comparison per stretch, of where the next one starts
+  with the line's end: the first comparison already says whether the
+  stretch reached the end, and the walk is no longer moved on after the
+  last stretch). The remote program's provider calls fell the same way,
+  from 9 comparisons to 5 and from 8 endpoint moves to 7. Against
+  mockapp, debug build, 200 reports, three runs: classically 3.67 to 3.84
+  ms at the median before and 3.16 to 3.46 after, with the default theme
+  or every indication on; remotely 0.40 ms (0.50 with every indication)
+  either way.
 - Target: 1.
 
 ### A caret key that selects, UIA
@@ -931,7 +940,8 @@ attribute.
 
 - The caret report after a focus, mockapp's first line (four stretches),
   with every formatting indication on (seven attributes per stretch):
-  classically 63 UIA calls before and 39 after, 5.26 ms at the median
+  classically 63 UIA calls before and 39 after (34 since the text range
+  audit, "The caret report after a focus, UIA" above), 5.26 ms at the median
   before (6.11 at the 95th percentile) and 3.69 ms after (4.29), 200
   runs each; remotely 1 call, 0.36 ms before and 0.39 after. With the
   default theme, which reads only the annotation types, one attribute per

@@ -1413,17 +1413,20 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ("MoveEndpointByRange", 1),
     ];
     // The report's, and the line walked by the format unit: four
-    // stretches, each cut at the line's end, read, and its annotations
-    // read.
+    // stretches, each compared with the line's end (the last cut there),
+    // read, and its annotations read, and the walk moved on after each but
+    // the last. 39 classically before the text range audit of 2026-10-07,
+    // which found that the comparison of where the next stretch starts
+    // repeated the one before it.
     let focus_hits = [
         ("ITextProvider::GetSelection", 1),
         ("Clone", 7),
-        ("CompareEndpoints", 9),
+        ("CompareEndpoints", 5),
         ("ExpandToEnclosingUnit", 1),
         ("GetAttributeValue", 4),
         ("GetText", 6),
         ("MoveEndpointByUnit", 4),
-        ("MoveEndpointByRange", 7),
+        ("MoveEndpointByRange", 6),
     ];
     // The same, with seven attributes read for each of the four stretches.
     let formatted_hits: Vec<(&'static str, u32)> = focus_hits
@@ -1493,16 +1496,17 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ratchet.check(
             "UIA caret report after a focus, classically",
             &focus_report,
-            calls(39, 0, 0),
+            calls(34, 0, 0),
             &focus_hits,
         );
         // One `GetAttributeValues` call per stretch for all seven
         // attributes (`IUIAutomationTextRange3`), which the provider answers
-        // one attribute at a time; 63 calls when each attribute was a call.
+        // one attribute at a time; 63 calls when each attribute was a call,
+        // 39 before the text range audit.
         ratchet.check(
             "UIA caret report after a focus with every attribute, classically",
             &formatted_report,
-            calls(39, 0, 0),
+            calls(34, 0, 0),
             &formatted_hits,
         );
         ratchet.check(
