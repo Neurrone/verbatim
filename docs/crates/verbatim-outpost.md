@@ -111,8 +111,9 @@ Public API:
   - The focus-following UIA property subscription, following NVDA's
     selective registration on Windows 11: name, value, and state changes on
     the focused element only, since the reducer acts on no other element's
-    changes (NVDA's scope also takes in the focus's ancestors;
-    `docs/parity.md`, "UIA event registration"). The worker moves it each
+    changes (NVDA's scope also names the focus's ancestors, but UIA
+    delivers no ancestor's event to it; `docs/parity.md`, "UIA event
+    registration"). The worker moves it each
     time it reports a focus, without waiting. This replaces the
     subscriptions on the top-level windows that existed at spawn, under
     which a dialog or window opened later received no UIA events at all,

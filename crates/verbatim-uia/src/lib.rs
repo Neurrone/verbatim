@@ -55,7 +55,7 @@ pub mod text;
 
 pub use cache::{CACHED_PROPERTIES, base_cache_request, cache_request_for, cached_properties};
 pub use checks::{console_reports_formatting, is_windows_forms};
-pub use client::{AncestorStops, AncestorWalk, Uia, selected_element};
+pub use client::{AncestorStops, AncestorWalk, Uia};
 pub use com::{
     element_is_gone, init_mta, is_not_supported, runtime_id, variant_element, variant_f64,
     variant_i32, variant_i32_array, variant_optional_bool, variant_string,

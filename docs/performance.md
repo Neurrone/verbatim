@@ -738,7 +738,10 @@ The outpost's focus-following property subscription is registered on the
 focus alone, where it was registered on the focus and on each ancestor
 the focus reported (`docs/parity.md`, "UIA event registration"). The
 reducer acted only on the focus's own changes, so the ancestors' events
-were read and sent for nothing.
+were read and sent for nothing. NVDA's scope, the focus with its
+ancestors, was measured too: UIA delivers no ancestor's event to it,
+against mockapp and against Windows 11's taskbar, and it cost mockapp
+the same provider calls as the focus alone.
 
 - Moving it to a focus inside a group: 2 `HostRawElementProvider` and 5
   `FragmentRoot` provider calls before, on the focus, the group, and the
@@ -775,13 +778,22 @@ mockapp's `tests/fixtures/ancestry.json`, whose list has
 `SelectionPattern2` and whose tab control does not
 (`uia_selected_children_cost_exactly`).
 
-- A list's selected item, classically: 2 UIA calls
-  (`FirstSelectedItem` and the item's cache) where it was 3 (the pattern,
-  `GetCurrentSelection`, and the cache), and 0.37 ms at the median where
-  it was 0.46 (0.45 and 0.55 at the 95th percentile), 200 runs each.
-- A tab control's, classically: 4 calls, one more than before, since
-  `FirstSelectedItem` is asked first and answered "not supported"; 0.58
-  ms at the median where it was 0.46.
+- Classically, one `BuildUpdatedCache` on the container caches both its
+  `FirstSelectedItem` property, ignoring its default, and its `Selection`
+  pattern object, so a provider without `SelectionPattern2` costs no
+  extra call.
+- A list's selected item, classically: 2 UIA calls (that one and the
+  item's cache) where it was 3 (the pattern, `GetCurrentSelection`, and
+  the cache); 74 provider calls where it was 63; 0.41 ms at the median
+  where it was 0.46 (0.48 and 0.55 at the 95th percentile), 200 runs
+  each.
+- A tab control's, classically: 3 calls, as before (that one, which
+  finds `FirstSelectedItem` not supported, `GetCurrentSelection` on the
+  cached pattern, and the item's cache); 0.54 ms at the median where it
+  was 0.46, the cache request with a pattern costing the provider more
+  than fetching the pattern alone. A first version asked for
+  `FirstSelectedItem` live before fetching the pattern, 4 calls and 0.58
+  ms.
 - Inside the focus's remote program: 1 call either way, with the same
   provider calls but for the selection read itself (`FirstSelectedItem`
   in place of `GetSelection`, and for the tab control one more

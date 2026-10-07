@@ -948,12 +948,41 @@ verified.
   - The local group, on the focus: name, value, range value, toggle,
     enabled, and expand and collapse changes. NVDA registers its local
     group (those, help text, ControllerFor, item status, and caret
-    events) on the focus with its ancestors in scope; Verbatim registers
-    on the focus alone, since the reducer acts only on the focus's own
-    changes, and a registration whose scope took in the ancestors
-    (`TreeScope_Ancestors`) did not hear an ancestor's change from
-    mockapp's provider when tried on 2026-10-07. Until then Verbatim
-    registered on the focus and each reported ancestor.
+    events) on the focused element with
+    `TreeScope_Element | TreeScope_Ancestors`, when it handles a UIA
+    focus. Verbatim registers on the focus with `TreeScope_Element`
+    alone, and the outcome is the same, because UIA delivers no
+    ancestor's event to an ancestors-scoped registration. Checked on
+    2026-10-07 (Windows 11 build 26200):
+    - Against Windows 11's taskbar, a real provider in Explorer: a
+      registration on the clock button's child, scoped to its ancestors
+      (with or without the element itself) or to its parent, did not
+      hear the clock button's name change each minute; one on the clock
+      button itself, and one on the taskbar with its subtree in scope,
+      did.
+    - Against mockapp: the same, for a group's name change and a
+      registration on a button inside it, made both as an event handler
+      group and directly. mockapp raises the change
+      correctly, through `UiaRaiseAutomationPropertyChangedEvent` on the
+      group's own provider (raising without first asking
+      `UiaClientsAreListening` is allowed; that call only saves work): a
+      registration on the window with its subtree in scope hears it. As
+      UIA raised the event, it asked the group for its parent and runtime
+      id and went no further, so nothing related the group to the
+      registered button.
+    NVDA's `event_stateChange` speaks a state change on a focus ancestor
+    (its issue 10890), but under selective registration UIA never hands
+    it one, so for UIA NVDA too speaks property changes of the focus
+    alone. Verbatim's reducer acts only on the focus's own changes
+    (`reduce.rs`: a name change, a value change, and a state change each
+    return early unless the node is the live focus, and the navigator's
+    copy is updated only while it rests on the focus); a change on a
+    focus ancestor, such as a window's title changing when a file is
+    saved, reaches the reducer only from MSAA, and is dropped there. The
+    ancestor state rule is listed above as a difference. Until 2026-10-07
+    Verbatim registered on the focus and on each reported ancestor with
+    `TreeScope_Element`, which delivered those changes only for the
+    reducer to drop them.
   - Caret and text changes: on a focus that has text, alone. NVDA takes
     text changes only from Word, the console host, and Windows Terminal
     (when its notifications are off); Verbatim takes them from any text
@@ -991,10 +1020,24 @@ verified.
   value is no value on both paths, as before.
 - MSAA winevent flood control (per-thread caps, focus coalescing,
   latest-menu-only). NVDA: `OrderedWinEventLimiter`
-  ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **not yet** — outposts rely on
-  per-app isolation to bound damage, but no equivalent coalescing
-  exists inside an outpost; flagged as a review question for busy-app
-  scenarios.
+  ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **matched**,
+  in each outpost's intake, which applies NVDA's limiter rules to its
+  MSAA events and its UIA events alike
+  ([verbatim-outpost](crates/verbatim-outpost.md), the queue under
+  `Outpost`): one
+  waiting entry per object and kind, a newer one replacing it and moving
+  to the back; a batch is everything that arrived while the worker
+  handled the previous one; per batch the newest 4 focus events and the
+  newest 10 other events per application UI thread are kept, and the
+  focused object's events always; events from a window the system
+  reports hung are dropped before any read; within a batch only the
+  newest foreground change and the newest focus are handled, falling
+  back to up to three older focus events when the newest cannot be
+  reported, and the newest menu opening is handled last. Before an
+  outpost hears them, the focus listener coalesces its facts by the same
+  one-per-object-and-kind rule, and the supervisor holds the facts that
+  arrive while an outpost starts by that rule too, and lets a newer fact
+  replace a waiting one when an outpost's queue is full.
 - Event acceptance filtering (foreground gating, show/hide rules).
   NVDA: `shouldAcceptEvent`. Verbatim: **partial, different (D13)** —
   foreground gating lives in the shell/focus-listener design rather

@@ -1008,21 +1008,21 @@ fn uia_focus_changes_cost_exactly_classic() {
                 ],
             ),
             // The list's first selected item through `SelectionPattern2`'s
-            // `FirstSelectedItem`, one call, and its cache, one more (6
-            // calls and 143 provider calls through the `Selection`
-            // pattern, before).
+            // `FirstSelectedItem`, fetched with the `Selection` pattern in
+            // one call, and its cache, one more (6 calls and 143 provider
+            // calls through the `Selection` pattern alone, before).
             into_list: (
                 calls(5, 0, 0),
                 &[
                     ("WM_GETOBJECT", 2),
-                    ("ProviderOptions", 29),
-                    ("GetPatternProvider", 23),
+                    ("ProviderOptions", 34),
+                    ("GetPatternProvider", 24),
                     ("GetPropertyValue", 49),
-                    ("HostRawElementProvider", 12),
+                    ("HostRawElementProvider", 14),
                     ("Navigate", 7),
-                    ("GetRuntimeId", 3),
+                    ("GetRuntimeId", 5),
                     ("BoundingRectangle", 2),
-                    ("FragmentRoot", 7),
+                    ("FragmentRoot", 9),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
@@ -1272,41 +1272,43 @@ fn uia_selected_children_cost_exactly() {
         ]
     };
     for (id, name, selected, classic_calls, classic_hits, remote_hits) in [
-        // `FirstSelectedItem` and the item's cache.
+        // `FirstSelectedItem`, cached in the call that also caches the
+        // `Selection` pattern, and the item's cache.
         (
             "fruits",
             "Fruits",
             "Banana",
             2,
             vec![
-                ("ProviderOptions", 9),
-                ("GetPatternProvider", 12),
+                ("ProviderOptions", 14),
+                ("GetPatternProvider", 13),
                 ("GetPropertyValue", 23),
-                ("HostRawElementProvider", 6),
+                ("HostRawElementProvider", 8),
                 ("Navigate", 1),
-                ("GetRuntimeId", 3),
+                ("GetRuntimeId", 5),
                 ("BoundingRectangle", 1),
-                ("FragmentRoot", 5),
+                ("FragmentRoot", 7),
                 ("IsSelected", 1),
                 ("FirstSelectedItem", 1),
             ],
             program(0, ("FirstSelectedItem", 1)),
         ),
-        // `FirstSelectedItem` answered "not supported", then the
-        // `Selection` pattern, its selection, and the item's cache; the
+        // `FirstSelectedItem` answered "not supported" in the same call
+        // that cached the `Selection` pattern, then its selection and the
+        // item's cache: 3, as the `Selection` pattern alone took. The
         // program asks for `SelectionPattern2` once more.
         (
             "pages",
             "Pages",
             "General",
-            4,
+            3,
             vec![
-                ("ProviderOptions", 10),
+                ("ProviderOptions", 14),
                 ("GetPatternProvider", 14),
                 ("GetPropertyValue", 23),
                 ("HostRawElementProvider", 9),
                 ("Navigate", 1),
-                ("GetRuntimeId", 4),
+                ("GetRuntimeId", 5),
                 ("BoundingRectangle", 1),
                 ("FragmentRoot", 8),
                 ("IsSelected", 1),
@@ -1317,8 +1319,9 @@ fn uia_selected_children_cost_exactly() {
     ] {
         common::apply(&mut app, hwnd, &format!("set-focus {id}"));
         let container = under_test.element(name);
-        let (child, cost) =
-            under_test.measure(hwnd, |_| verbatim_uia::selected_element(container, &cache));
+        let (child, cost) = under_test.measure(hwnd, |under_test| {
+            under_test.uia.selected_element(container, &cache)
+        });
         assert_eq!(selected_name(child).as_deref(), Some(selected));
         ratchet.check(
             &format!("UIA selected child of {name}, classically"),

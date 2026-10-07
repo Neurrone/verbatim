@@ -329,11 +329,14 @@ fn is_terminal_output_notification(
 
 /// Where the focus-following property subscription listens for a focus
 /// whose live UIA element is `element`: on that element alone, or nowhere
-/// for a focus with no UIA element. NVDA's selective registration also
-/// takes in the focus's ancestors; Verbatim's reducer acts only on the
-/// focus's own changes, so it does not, and a registration whose scope
-/// took in the ancestors (`TreeScope_Ancestors`) did not hear an
-/// ancestor's change from mockapp's provider anyway.
+/// for a focus with no UIA element. The reducer acts on the focus's own
+/// name, value, and state changes and on no other element's. NVDA
+/// registers its local group on the focus with `TreeScope_Ancestors` as
+/// well, but UIA delivers no ancestor's event to such a registration: a
+/// registration on the Windows 11 taskbar clock's child with that scope
+/// did not hear the clock's own name change each minute, which one on the
+/// clock and one on the taskbar's subtree did (`docs/parity.md`, "UIA
+/// event registration").
 fn following(
     element: Option<
         windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>,

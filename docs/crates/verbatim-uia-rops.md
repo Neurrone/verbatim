@@ -193,7 +193,7 @@ goes on up, returning nothing more, until it does.
 The classic implementation is the reference and the fallback: the same
 live read, the selected child through `SelectionPattern2` or else the
 Selection pattern
-(`verbatim_uia::selected_element`, which `Uia::selected_child` also
+(`Uia::selected_element`, which `Uia::selected_child` also
 uses), and one `GetParentElementBuildCache` round trip per ancestor over
 the raw view, the walk `Uia::ancestor_chain` makes. `ancestor_chain`
 itself is not called, because it returns filtered snapshots, not

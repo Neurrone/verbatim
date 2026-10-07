@@ -402,7 +402,7 @@ impl RemoteCache {
 
 /// The focus ancestry the classic way, the fallback and the reference:
 /// a live `HasKeyboardFocus` read, the selected child through the
-/// `Selection` pattern ([`verbatim_uia::selected_element`], as
+/// `Selection` pattern ([`Uia::selected_element`], as
 /// `Uia::selected_child` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestor_chain` makes. Stops where the remote program
@@ -421,7 +421,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
     let cache = uia.cache_request(query.properties)?;
     let selected_child = if wants_selected_child(query.element) {
-        verbatim_uia::selected_element(query.element, &cache)
+        uia.selected_element(query.element, &cache)
     } else {
         None
     };
