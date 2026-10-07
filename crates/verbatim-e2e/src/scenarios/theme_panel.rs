@@ -150,7 +150,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         &["tab"],
         &["Indications: tree view", "level 0 Roles expanded 1 of 1"],
     );
-    press(scenario, &["downarrow"], &["level 1 button: speech 1 of 7"]);
+    press(scenario, &["downarrow"], &["level 1 button: speech 1 of 9"]);
 
     // Report as sound: the built-in theme asks for a new theme to make the
     // change in, offering a name, which Enter accepts.
@@ -195,7 +195,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(
         scenario,
         &["enter"],
-        &["Indications: tree view", "button: speech 1 of 7 level 1"],
+        &["Indications: tree view", "button: speech 1 of 9 level 1"],
     );
 
     // On to the Remove button, past the indication's other controls and
