@@ -791,7 +791,13 @@ verified.
   gives no tree view handling at all, reading them as plain check boxes
   with MSAA's flat navigation; Verbatim still navigates and walks them
   through the control's messages, which reads more usefully and changes
-  nothing spoken on focus.
+  nothing spoken on focus. A tree view that draws its own check boxes
+  (msconfig's, say) says whether an item is checked only through the
+  item's state image, which NVDA reads with `TVM_GETITEMSTATE`: any state
+  image makes the item checkable, the second checked, and the third half
+  checked. **Matched since 2026-10-07** (`native_controls` mockapp test:
+  "checked", "not checked", and a half-checked parent; the end-to-end
+  scenario is still to be written).
 - Navigator death recovery: NVDA reports failure and stays; Verbatim
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side

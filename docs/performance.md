@@ -375,16 +375,22 @@ window, `WindowFromAccessibleObject`).
 
 A focus on a nested item of a real comctl32 tree view registered under a
 Windows Forms class name (mockapp's `tests/fixtures/tree_view.json`, the
-`msaa_tree_view_costs_exactly` ratchet), from a fresh outpost: the item,
-its logical parent found through the control's messages, the tree view,
-its window object, and mockapp's scripted root.
+`msaa_tree_view_costs_exactly` ratchet), after a focus on another root
+item of the same tree: the item, its logical parent found through the
+control's messages, and the tree view, where the walk meets the previous
+focus's container. mockapp's scripted root is not read. Only the client's
+calls are pinned: the provider is comctl32's, and the hits mockapp counts
+for its root come from other clients answering the control's creation
+events, at times of their own.
 
 - Before the MSAA work package (2026-10-07), once the Windows Forms class
-  was recognized at all: 47 MSAA calls and 15 window messages. The window
-  messages are the probe of mockapp's window (1), the item's position
-  (mapping its child id to its item, then counting its siblings both ways,
-  4), its parent (3), and the parent's own position (5) and parent (2).
-  mockapp answered 22 provider calls for its root.
+  was recognized at all: 28 MSAA calls and 14 window messages. The window
+  messages are the item's position (mapping its child id to its item, then
+  counting its siblings both ways, 4), its parent (3), and the parent's
+  own position (5) and parent (2).
+- With the check state read from each item's state image, as NVDA reads
+  it: 28 MSAA calls and 16 window messages, one `TVM_GETITEMSTATE` for the
+  item and one for its parent.
 
 ### Entering a dialog, MSAA
 

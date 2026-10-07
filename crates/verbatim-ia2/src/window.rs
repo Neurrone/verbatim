@@ -19,8 +19,8 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{
-    CCM_GETVERSION, LVM_GETITEMCOUNT, TVM_GETNEXTITEM, TVM_MAPACCIDTOHTREEITEM,
-    TVM_MAPHTREEITEMTOACCID,
+    CCM_GETVERSION, LVM_GETITEMCOUNT, TVIS_STATEIMAGEMASK, TVM_GETITEMSTATE, TVM_GETNEXTITEM,
+    TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -199,4 +199,22 @@ pub(crate) fn tree_view_next_item(hwnd: isize, relation: u32, item: isize) -> is
     // the handle in its own process, so callers pass only handles it
     // produced.
     unsafe { send(hwnd, TVM_GETNEXTITEM, relation as usize, item) }
+}
+
+/// The index of a tree view item's state image (`TVM_GETITEMSTATE` with
+/// `TVIS_STATEIMAGEMASK`), 0 for none: the bits above the twelfth, of
+/// which NVDA looks at two.
+pub(crate) fn tree_view_state_image(hwnd: isize, item: isize) -> u32 {
+    // SAFETY: TVM_GETITEMSTATE takes an item handle and a mask as integers;
+    // nothing in this process is read. The control dereferences the handle
+    // in its own process, so callers pass only handles it produced.
+    let state = unsafe {
+        send(
+            hwnd,
+            TVM_GETITEMSTATE,
+            item.cast_unsigned(),
+            isize::try_from(TVIS_STATEIMAGEMASK.0).unwrap_or(0),
+        )
+    };
+    u32::try_from((state >> 12) & 3).unwrap_or(0)
 }

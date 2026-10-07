@@ -87,7 +87,14 @@ fn a_windows_forms_tree_item_is_read_as_a_tree_view_item() {
     );
     assert_eq!(
         node.states,
-        states(&[State::Focusable, State::Selected, State::Selectable])
+        states(&[
+            State::Focusable,
+            State::Selected,
+            State::Selectable,
+            State::Checkable,
+            State::Checked
+        ]),
+        "checked, by its state image"
     );
     assert_eq!(
         (
@@ -120,8 +127,59 @@ fn a_windows_forms_tree_item_is_read_as_a_tree_view_item() {
             vec![
                 SegmentContent::Level(1),
                 SegmentContent::Label("Disks".to_owned()),
+                SegmentContent::State(State::Checked),
                 SegmentContent::Position {
                     position: 1,
+                    set_size: Some(2)
+                },
+            ],
+        ]
+    );
+    app.quit();
+}
+
+/// A tree view that draws its own check boxes says through each item's
+/// state image whether it is checked, which NVDA's tree view item reads
+/// (`TVM_GETITEMSTATE`): an item with an empty box is checkable and not
+/// checked, one with a partly filled box is half checked.
+fn tree_view_items_are_checked_by_their_state_images() {
+    common::init_com();
+    let title = common::unique_title("mockapp-native-tree-checks");
+    let app = common::spawn("tree_view.json", "msaa", &title);
+    let tree = tree_view(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    let reported = focus_item(&outpost, tree, "Display");
+    assert_eq!(
+        reported.node.states,
+        states(&[State::Focusable, State::Selectable, State::Checkable])
+    );
+    let hardware = reported.ancestors.last().expect("the item's parent");
+    assert_eq!(hardware.name.as_deref(), Some("Hardware"));
+    assert_eq!(
+        hardware.states,
+        states(&[
+            State::Focusable,
+            State::Selectable,
+            State::Expanded,
+            State::Checkable,
+            State::Mixed
+        ]),
+        "half checked"
+    );
+    assert_eq!(
+        spoken(&reported),
+        [
+            vec![SegmentContent::Role(Role::Tree)],
+            vec![
+                SegmentContent::Level(1),
+                SegmentContent::Label("Display".to_owned()),
+                // The focus is handed to the outpost without the control
+                // moving its selection, so the item is not selected.
+                SegmentContent::NegatedState(State::Selected),
+                SegmentContent::NegatedState(State::Checked),
+                SegmentContent::Position {
+                    position: 2,
                     set_size: Some(2)
                 },
             ],
@@ -136,8 +194,14 @@ fn roles(nodes: &[NodeSnapshot]) -> Vec<Role> {
 }
 
 fn main() {
-    harness::run(&[(
-        "a_windows_forms_tree_item_is_read_as_a_tree_view_item",
-        a_windows_forms_tree_item_is_read_as_a_tree_view_item,
-    )]);
+    harness::run(&[
+        (
+            "a_windows_forms_tree_item_is_read_as_a_tree_view_item",
+            a_windows_forms_tree_item_is_read_as_a_tree_view_item,
+        ),
+        (
+            "tree_view_items_are_checked_by_their_state_images",
+            tree_view_items_are_checked_by_their_state_images,
+        ),
+    ]);
 }

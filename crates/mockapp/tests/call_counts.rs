@@ -129,6 +129,15 @@ impl Ratchet {
         }
     }
 
+    /// [`check`](Self::check) for an operation whose provider is not
+    /// mockapp's, so only the client's calls are compared.
+    fn check_calls(&mut self, operation: &str, measured: CallCounts, expected: CallCounts) {
+        if measured != expected {
+            self.mismatches
+                .push(format!("{operation}: measured {measured:?}"));
+        }
+    }
+
     fn finish(self) {
         assert!(
             self.mismatches.is_empty(),
@@ -336,20 +345,22 @@ fn msaa_dialog_text_costs_exactly() {
 
 /// A focus on an item of a real tree view, comctl32's under a Windows Forms
 /// class name (`tests/fixtures/tree_view.json`), read through comctl32's
-/// MSAA implementation and the control's `TVM_*` messages: the item, its
-/// logical parent, the tree view, and mockapp's scripted root above it,
-/// whose hits are the provider calls counted here. The comctl32 objects'
-/// own calls are the client's.
+/// MSAA implementation and the control's `TVM_*` messages, after a focus on
+/// another root item: the item, its logical parent, and the tree view, met
+/// there as the previous focus's container. The provider is comctl32's, so
+/// only the client's calls are pinned: mockapp's scripted root above it is
+/// not read, and the hits it counts are other clients', the UIA clients of
+/// this process's other tests among them, answering the control's
+/// creation events at times of their own.
 fn msaa_tree_view_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-tree-view");
     let app = common::spawn("tree_view.json", "msaa", &title);
-    let host = common::find_window(&title);
-    let tree = common::tree_view::tree_view(host);
+    let tree = common::tree_view::tree_view(common::find_window(&title));
     let outpost = OutpostUnderTest::new(app.pid());
     let mut ratchet = Ratchet::default();
 
-    common::reset_hits(host);
+    let _ = common::tree_view::focus_item(&outpost, tree, "Settings");
     let reported = common::tree_view::focus_item(&outpost, tree, "Disks");
     assert_eq!(
         reported.chain(),
@@ -360,25 +371,10 @@ fn msaa_tree_view_costs_exactly() {
             Some("Disks")
         ]
     );
-    let cost = Cost {
-        calls: reported.calls,
-        hits: common::read_hits(host),
-    };
-    ratchet.check(
+    ratchet.check_calls(
         "MSAA focus on a tree view item",
-        &cost,
-        calls(0, 47, 15),
-        &[
-            ("WM_GETOBJECT", 4),
-            ("accParent", 4),
-            ("get_accName", 2),
-            ("get_accValue", 2),
-            ("get_accDescription", 2),
-            ("get_accRole", 2),
-            ("get_accState", 2),
-            ("get_accKeyboardShortcut", 2),
-            ("accLocation", 2),
-        ],
+        reported.calls,
+        calls(0, 28, 16),
     );
 
     ratchet.finish();

@@ -151,7 +151,9 @@ Public API:
   neighbor instead of the logical one; a tree item's `accValue` is its
   0-based indent depth, not a value, so `read_snapshot` reads it into the
   snapshot's level as it is, a root item at level 0, and leaves the value empty, again matching
-  NVDA. And a window-root object — the window face every windowed control
+  NVDA; and its state image (`TVM_GETITEMSTATE`) makes it checkable, and
+  checked or half checked, as NVDA's tree view item reads a tree that
+  draws its own check boxes. And a window-root object — the window face every windowed control
   exposes alongside its client object, keyed under `OBJID_WINDOW` (not
   `OBJID_CLIENT`, so the two faces of one hwnd get distinct node ids
   rather than colliding) — navigates the Win32 window hierarchy rather

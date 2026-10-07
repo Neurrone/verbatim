@@ -1070,6 +1070,15 @@ fn read_snapshot(
     {
         states.insert(verbatim_model::State::Multiline);
     }
+    // A `SysTreeView32` item's own handle, for its check state and its
+    // position.
+    let tree_item =
+        (role == Role::TreeItem && acc.child() != CHILDID_SELF && is_systreeview32(key.0))
+            .then(|| htreeitem_for_acc_id(key.0, acc.child()))
+            .filter(|&item| item != 0);
+    if let Some(item) = tree_item {
+        add_tree_view_check_states(&mut states, key.0, item);
+    }
     // A detail the active theme reports as off is not read at all, saving
     // its cross-process call (`NodeIdRegistry::fetches`).
     let fetches = registry.fetches();
@@ -1088,7 +1097,7 @@ fn read_snapshot(
     // has none of its own when the combo box is labelled, as in NVDA.
     let name = name.filter(|_| role != Role::EditableText || !in_labelled_combo_box(acc));
     let (position_in_set, set_size) = if fetches.position {
-        position_of(key.0, acc.child(), role)
+        position_of(key.0, acc.child(), role, tree_item)
     } else {
         (None, None)
     };
@@ -1165,6 +1174,26 @@ fn in_labelled_combo_box(acc: &Accessible) -> bool {
     visible_text(parent.name()).is_some()
 }
 
+/// Adds a `SysTreeView32` item's check state, from its state image
+/// (`TVM_GETITEMSTATE`), as NVDA's tree view item reads it: any state image
+/// makes the item checkable, the second checked, and the third partly
+/// checked. A tree view that draws its own check boxes (msconfig's, say)
+/// says so only through its items' state images.
+fn add_tree_view_check_states(states: &mut verbatim_model::StateSet, hwnd: isize, item: isize) {
+    use verbatim_model::State;
+    match window::tree_view_state_image(hwnd, item) {
+        0 => {}
+        image => {
+            states.insert(State::Checkable);
+            match image {
+                2 => states.insert(State::Checked),
+                3 => states.insert(State::Mixed),
+                _ => {}
+            }
+        }
+    }
+}
+
 /// More siblings than any real tree view holds, so a broken control cannot
 /// keep a walk through a `SysTreeView32`'s items going.
 const MAX_TREE_VIEW_SIBLINGS: u32 = 100_000;
@@ -1195,14 +1224,20 @@ pub fn tree_view_child_count(hwnd: isize, child_id: i32) -> Option<u32> {
 /// An item's position in its set and the set's size, for an item of a
 /// comctl32 list view or tree view, which MSAA gives no way to ask for, as
 /// NVDA computes them: a list view item is at its child id among
-/// `LVM_GETITEMCOUNT` items; a tree view item is counted among its siblings
-/// through `TVM_GETNEXTITEM`. `(None, None)` for anything else.
-fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u32>) {
+/// `LVM_GETITEMCOUNT` items; a tree view item, `tree_item` its handle, is
+/// counted among its siblings through `TVM_GETNEXTITEM`. `(None, None)` for
+/// anything else.
+fn position_of(
+    hwnd: isize,
+    child_id: i32,
+    role: Role,
+    tree_item: Option<isize>,
+) -> (Option<u32>, Option<u32>) {
     if child_id == CHILDID_SELF || hwnd == 0 {
         return (None, None);
     }
-    match role {
-        Role::ListItem if normalized_class_of(hwnd) == "SysListView32" => {
+    match (role, tree_item) {
+        (Role::ListItem, _) if normalized_class_of(hwnd) == "SysListView32" => {
             let items = window::list_view_item_count(hwnd);
             let items = u32::try_from(items).ok().filter(|&items| items > 0);
             (
@@ -1210,11 +1245,7 @@ fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u
                 items,
             )
         }
-        Role::TreeItem if is_systreeview32(hwnd) => {
-            let item = htreeitem_for_acc_id(hwnd, child_id);
-            if item == 0 {
-                return (None, None);
-            }
+        (Role::TreeItem, Some(item)) => {
             let walk = |relation: u32| {
                 let mut count = 0u32;
                 let mut current = item;
