@@ -218,9 +218,9 @@ impl Scenario {
     /// Launches a fresh Verbatim with `configure` applied to the fixed
     /// settings, from the desktop every scenario starts from.
     ///
-    /// In order: stages the binaries and writes the settings (runner-direct
-    /// mode); ends every process the agent launched for an earlier run
-    /// that is still running, by its own handle; closes any window an
+    /// In order: ends every process the agent launched for an earlier run
+    /// that is still running, by its own handle; stages the binaries and
+    /// writes the settings (runner-direct mode); closes any window an
     /// earlier run left open by its harness title (a Notepad harness tab as
     /// a tab) and deletes the harness files it left; minimizes every
     /// window, as Show Desktop does, and waits until they are and the
@@ -246,6 +246,15 @@ impl Scenario {
         let lock = live_instance_lock()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+
+        // An earlier run that ended without its cleanup can have left its
+        // Verbatim running from the stage, which staging would then fail to
+        // overwrite: everything the agent launched is ended first.
+        let mut agent = AgentClient::connect(&agent_addr)?;
+        let ended = agent.end_launched()?;
+        if ended > 0 {
+            println!("ended {ended} process(es) an earlier run left running");
+        }
 
         let verbatim_exe = verbatim_exe_path();
         let remote = is_remote();
@@ -282,7 +291,6 @@ impl Scenario {
             .to_owned();
         let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
 
-        let mut agent = AgentClient::connect(&agent_addr)?;
         if remote {
             write_remote_settings(&mut agent, &run_dir, run_settings(configure))?;
         }
