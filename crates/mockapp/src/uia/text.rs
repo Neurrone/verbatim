@@ -20,7 +20,8 @@
 //! otherwise, as Windows 11 Notepad reports them; the font is 11 point
 //! Consolas in black, neither italic nor underlined, its weight 700 in the
 //! fixture's bold stretches, 400 elsewhere, and mixed across both; every
-//! other text attribute is unsupported.
+//! other text attribute is unsupported. A fixture can make the `IsItalic`
+//! read fail (`italic_fails`), as a provider that fails an attribute read.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -34,7 +35,7 @@
 use std::cell::Cell;
 use std::mem::ManuallyDrop;
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::System::Com::SAFEARRAY;
 use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4, VT_R8, VT_UNKNOWN,
@@ -443,6 +444,9 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                 } else {
                     int_variant(400)
                 }
+            }
+            UIA_IsItalicAttributeId if formats.italic_fails => {
+                return Err(Error::from(E_FAIL));
             }
             UIA_IsItalicAttributeId => VARIANT::from(false),
             UIA_UnderlineStyleAttributeId | UIA_ForegroundColorAttributeId => int_variant(0),

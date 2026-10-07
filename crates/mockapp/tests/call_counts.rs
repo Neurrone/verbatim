@@ -1342,6 +1342,10 @@ fn measure_focus_report(hwnd: HWND, source: &mut UiaText) -> Cost {
 /// line's formatting, and a wait that finds nothing, through UIA, remotely
 /// or classically, with the default theme's formatting (spelling and
 /// grammar errors).
+#[expect(
+    clippy::too_many_lines,
+    reason = "both ways' pinned provider hits, listed in full"
+)]
 fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     let title = common::unique_title("mockapp-counts-uia-caret");
     let mut app = common::spawn("text.json", "uia", &title);
@@ -1352,6 +1356,11 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     let (polls, waited) = measure_fruitless_wait(&mut app, hwnd, &mut source);
     assert_eq!(polls, 11, "every 10 milliseconds for 100");
     let focus_report = measure_focus_report(hwnd, &mut source);
+    // The same report with every formatting indication on: seven attributes
+    // per stretch, the annotation types, font name and size, weight,
+    // italic, underline style, and color.
+    let mut every_attribute = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
+    let formatted_report = measure_focus_report(hwnd, &mut every_attribute);
     // The caret's read, the evidence, the line and the caret's offset
     // in it, and the character's spelling error.
     let move_hits = [
@@ -1384,6 +1393,14 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ("MoveEndpointByUnit", 4),
         ("MoveEndpointByRange", 7),
     ];
+    // The same, with seven attributes read for each of the four stretches.
+    let formatted_hits: Vec<(&'static str, u32)> = focus_hits
+        .iter()
+        .map(|&(name, count)| match name {
+            "GetAttributeValue" => (name, 28),
+            _ => (name, count),
+        })
+        .collect();
     if remote {
         // One round trip each. Inside the provider the program also
         // copies the collapsed caret before using it, one clone and one
@@ -1414,6 +1431,12 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             calls(1, 0, 0),
             &remote_hits(1, &plus_copy(&focus_hits)),
         );
+        ratchet.check(
+            "UIA caret report after a focus with every attribute, remotely",
+            &formatted_report,
+            calls(1, 0, 0),
+            &remote_hits(1, &plus_copy(&formatted_hits)),
+        );
         // One round trip per read, each the whole read: the read that
         // finds the evidence is the answer.
         ratchet.check(
@@ -1440,6 +1463,15 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &focus_report,
             calls(39, 0, 0),
             &focus_hits,
+        );
+        // One `GetAttributeValues` call per stretch for all seven
+        // attributes (`IUIAutomationTextRange3`), which the provider answers
+        // one attribute at a time; 63 calls when each attribute was a call.
+        ratchet.check(
+            "UIA caret report after a focus with every attribute, classically",
+            &formatted_report,
+            calls(39, 0, 0),
+            &formatted_hits,
         );
         ratchet.check(
             "UIA caret wait finding nothing, classically",

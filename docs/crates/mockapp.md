@@ -120,7 +120,9 @@ its crate-internal modules are the reviewable surface:
   touching one of the spelling errors and unsupported otherwise, as
   Windows 11 Notepad reports them; the font is 11 point Consolas in black,
   neither italic nor underlined, weighing 700 within a bold stretch, 400
-  outside, and mixed across both; every other attribute is unsupported. A range handed back by a client
+  outside, and mixed across both; every other attribute is unsupported,
+  and a node with `italic_fails` set fails its `IsItalic` read with
+  `E_FAIL`, as a provider that fails an attribute read. A range handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation.
 - `edit` — the MSAA backend's real edit control: created inside the host

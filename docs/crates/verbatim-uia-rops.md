@@ -390,7 +390,15 @@ mockapp (`crates/mockapp/tests/text.rs`).
 
 The classic implementation makes the same reads one call at a time,
 except that a collapsed caret serves as its own point where the program
-copies it. Both read the whole answer on every call, so a caret key's
+copies it, and that a stretch's attributes are read together, in one
+`IUIAutomationTextRange3::GetAttributeValues` call, as NVDA reads a
+range's formatting (`verbatim_uia::text::TextRangeExt::attributes`), one
+call each only where the range cannot answer that. An attribute whose
+read fails is not supported on both paths: UIA answers
+`GetAttributeValues` with "not supported" in its place, and the program
+gets the same, checked against a mockapp provider whose `IsItalic` read
+fails (`a_failing_attribute_is_not_supported` in mockapp's `text.rs`).
+Both read the whole answer on every call, so a caret key's
 wait for evidence costs one round trip per read remotely
 (`docs/performance.md`, "A caret move, UIA").
 

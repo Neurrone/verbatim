@@ -12,10 +12,11 @@
 use windows::Win32::Globalization::LCIDToLocaleName;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, IUIAutomationTextRangeArray, TextPatternRangeEndpoint,
-    TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit, TextUnit_Character,
-    TextUnit_Document, TextUnit_Line, TextUnit_Page, TextUnit_Paragraph, TextUnit_Word,
-    UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_TextPattern2Id, UIA_TextPatternId,
+    IUIAutomationTextRange, IUIAutomationTextRange3, IUIAutomationTextRangeArray,
+    TextPatternRangeEndpoint, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
+    TextUnit, TextUnit_Character, TextUnit_Document, TextUnit_Line, TextUnit_Page,
+    TextUnit_Paragraph, TextUnit_Word, UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID,
+    UIA_TextPattern2Id, UIA_TextPatternId,
 };
 use windows::core::Interface;
 
@@ -23,7 +24,7 @@ use verbatim_model::CallKind;
 
 use crate::ElementExt;
 use crate::calls::count;
-use crate::com::{take_f64_safearray, variant_i32};
+use crate::com::{take_f64_safearray, take_variant_safearray, variant_i32};
 
 pub use windows::Win32::System::Variant::VARIANT;
 
@@ -240,6 +241,25 @@ pub trait TextRangeExt {
     ///
     /// The COM error if the provider fails.
     fn attribute(&self, attribute: UIA_TEXTATTRIBUTE_ID) -> windows::core::Result<VARIANT>;
+
+    /// Several text attributes' values over the range, in the order asked,
+    /// each as [`attribute`](Self::attribute) gives it: in one call,
+    /// `IUIAutomationTextRange3::GetAttributeValues`, as NVDA fetches a
+    /// range's formatting. Where the range has no `IUIAutomationTextRange3`,
+    /// or that call fails or answers with the wrong number of values, each
+    /// attribute is read on its own, one call each, and an attribute whose
+    /// read fails is "not supported" (an empty `VARIANT`, which the
+    /// `variant_*` readers read as `None`), as NVDA treats a failed
+    /// attribute read.
+    ///
+    /// # Errors
+    ///
+    /// The COM error when the range's provider is gone
+    /// ([`element_is_gone`](crate::element_is_gone)).
+    fn attributes(
+        &self,
+        attributes: &[UIA_TEXTATTRIBUTE_ID],
+    ) -> windows::core::Result<Vec<VARIANT>>;
 }
 
 impl TextRangeExt for IUIAutomationTextRange {
@@ -321,6 +341,39 @@ impl TextRangeExt for IUIAutomationTextRange {
         count(CallKind::Uia);
         // SAFETY: as in `clone_range`; the attribute id is a plain value.
         unsafe { self.GetAttributeValue(attribute) }
+    }
+
+    fn attributes(
+        &self,
+        attributes: &[UIA_TEXTATTRIBUTE_ID],
+    ) -> windows::core::Result<Vec<VARIANT>> {
+        // A local query of the client's range object.
+        if let Ok(range) = self.cast::<IUIAutomationTextRange3>() {
+            count(CallKind::Uia);
+            // SAFETY: `range` is a live range; the ids are plain values, and
+            // the returned SAFEARRAY is owned here.
+            match unsafe { range.GetAttributeValues(attributes) } {
+                Ok(array) => {
+                    // SAFETY: the array was just returned to this caller,
+                    // which hands its ownership to the helper.
+                    let values = unsafe { take_variant_safearray(array) };
+                    if values.len() == attributes.len() {
+                        return Ok(values);
+                    }
+                }
+                Err(error) if crate::element_is_gone(&error) => return Err(error),
+                Err(error) => {
+                    tracing::debug!(%error, "GetAttributeValues failed; reading attributes one by one");
+                }
+            }
+        }
+        attributes
+            .iter()
+            .map(|&attribute| match self.attribute(attribute) {
+                Err(error) if crate::element_is_gone(&error) => Err(error),
+                read => Ok(read.unwrap_or_default()),
+            })
+            .collect()
     }
 
     fn culture(&self) -> windows::core::Result<Option<String>> {

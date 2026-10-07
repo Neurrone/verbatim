@@ -47,11 +47,13 @@ pub(crate) struct NodeData {
 }
 
 /// A text's formatting: stretches that are spelling errors and that are
-/// bold, each a start and an end UTF-16 offset.
+/// bold, each a start and an end UTF-16 offset, and whether its `IsItalic`
+/// attribute fails to read.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Formats {
     pub(crate) spelling_errors: Vec<(usize, usize)>,
     pub(crate) bold: Vec<(usize, usize)>,
+    pub(crate) italic_fails: bool,
 }
 
 /// The whole scripted tree: an arena of [`NodeData`] plus a lookup from
@@ -143,6 +145,7 @@ fn insert(
         formats: Formats {
             spelling_errors: node.spelling_errors,
             bold: node.bold,
+            italic_fails: node.italic_fails,
         },
         parent,
         children: Vec::new(),
@@ -186,6 +189,7 @@ mod tests {
             text: None,
             spelling_errors: Vec::new(),
             bold: Vec::new(),
+            italic_fails: false,
             children,
         }
     }

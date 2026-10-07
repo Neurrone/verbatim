@@ -181,7 +181,13 @@ Public API:
   id, which `verbatim-uia-rops` uses for the `Culture` its programs
   read), and `attribute` (any text attribute's raw
   `VARIANT`, UIA's "not supported" or "mixed" sentinel included, for
-  milestone M4's formatting). The `variant_*` readers (`variant_string`,
+  milestone M4's formatting), and `attributes`, several attributes' values
+  in the order asked in one call (`IUIAutomationTextRange3`'s
+  `GetAttributeValues`, NVDA's bulk attribute fetch), falling back to one
+  `attribute` call each where the range has no `IUIAutomationTextRange3`
+  or that call fails, with a failed attribute read as "not supported" (an
+  empty `VARIANT`), as NVDA reads it; a gone provider is still an error.
+  The `variant_*` readers (`variant_string`,
   `variant_i32`, `variant_i32_array` for a range's annotation types, a
   single integer or an array of them, `variant_f64`, and
   `variant_optional_bool`) read a value and give `None` for a sentinel or

@@ -455,10 +455,15 @@ space, the misspelt "beta", the line feed).
 - Minimum: 1 UIA call remotely. Classically, a caret report's 8 and the
   walk by UIA's format unit: a collapsed copy of the line (2), and for each
   stretch a copy, `MoveEndpointByUnit`, two comparisons (with the line's
-  end, and of where the next starts), its text, its attribute, and moving
-  the walk on, 7 each, and a `MoveEndpointByRange` to cut a stretch that
-  runs past the line's end, here the last: 39 for four.
-- Today: 1 remotely, 39 classically (8 before formatting was read).
+  end, and of where the next starts), its text, its attributes (one call
+  for all of them, `GetAttributeValues`), and moving the walk on, 7 each,
+  and a `MoveEndpointByRange` to cut a stretch that runs past the line's
+  end, here the last: 39 for four, however many attributes the theme
+  reads.
+- Today: 1 remotely, 39 classically (8 before formatting was read), with
+  the default theme and with every formatting indication on (63 before
+  the attributes were read in one call; "Several text attributes in one
+  call" below).
 - Target: 1.
 
 ### A caret key that selects, UIA
@@ -742,3 +747,19 @@ were read and sent for nothing.
   reaches the outpost, which read it, mapped it, and sent it to Core,
   which dropped it.
 
+### Several text attributes in one call
+
+The classic reads of a stretch's formatting fetch all its attributes in
+one `IUIAutomationTextRange3::GetAttributeValues` call, where each was a
+call (`docs/crates/verbatim-uia-rops.md`). The remote program is
+unchanged: it reads the attributes inside the provider already. The
+provider's own work is the same either way, one `GetAttributeValue` per
+attribute.
+
+- The caret report after a focus, mockapp's first line (four stretches),
+  with every formatting indication on (seven attributes per stretch):
+  classically 63 UIA calls before and 39 after, 5.26 ms at the median
+  before (6.11 at the 95th percentile) and 3.69 ms after (4.29), 200
+  runs each; remotely 1 call, 0.36 ms before and 0.39 after. With the
+  default theme, which reads only the annotation types, one attribute per
+  stretch, the count is the same as before, 39 classically.

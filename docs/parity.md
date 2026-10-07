@@ -945,6 +945,15 @@ verified.
     it (comparing it with `GetFocusedElement`, a call). Verbatim does
     not: a registration's thread registers only the newest focus it was
     handed, and a newer focus replaces it.
+- Text attributes through UIA. NVDA: a range's formatting is fetched in
+  one `IUIAutomationTextRange3::GetAttributeValues` call where the range
+  has it, else attribute by attribute, and an attribute whose read fails
+  is "not supported" (its issue 7124); a mixed value is handled apart.
+  Verbatim: **matched since 2026-10-07** on the classic path, the same
+  bulk read with the same fallback and the same reading of a failed
+  attribute; the remote program reads each attribute inside the
+  provider, and a failed one comes back not supported there too. A mixed
+  value is no value on both paths, as before.
 - MSAA winevent flood control (per-thread caps, focus coalescing,
   latest-menu-only). NVDA: `OrderedWinEventLimiter`
   ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **not yet** — outposts rely on
