@@ -155,6 +155,20 @@ pub struct CaretQuery<'a> {
     pub attributes: Attributes,
     /// The most UTF-16 code units of text read for a line or a unit.
     pub max_text: i32,
+    /// The most UTF-16 code units read for each selection change, when the
+    /// selection is not [`previous_selection`](Self::previous_selection).
+    pub max_change_text: i32,
+}
+
+/// Text that became selected or stopped being selected
+/// ([`CaretAnswer::changes`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectionTextChange {
+    /// True for text newly selected, false for text no longer selected.
+    pub selected: bool,
+    /// The text, at most the query's `max_change_text` code units; never
+    /// empty.
+    pub text: Vec<u16>,
 }
 
 /// A unit read at the caret.
@@ -224,6 +238,13 @@ pub struct CaretAnswer {
     /// The formatting of the query's span, stretch by stretch from its
     /// start; empty when it asked for none.
     pub runs: Vec<Run>,
+    /// With a [`CaretQuery::previous_selection`], how the selection changed
+    /// from it, by the text protocol's rule (`docs/crates/verbatim-model.md`,
+    /// "Requests and replies"): two selections that neither overlap nor
+    /// touch are an unselection then a selection; otherwise the start side
+    /// changes, then the end side. Empty when the selection did not move;
+    /// `None` without a previous selection.
+    pub changes: Option<Vec<SelectionTextChange>>,
 }
 
 /// The signature both implementations share.
@@ -251,7 +272,7 @@ pub fn caret_read(query: &CaretQuery<'_>, remote: bool) -> Result<(CaretAnswer, 
 
 /// Whether a run failed because the provider's process has gone or did not
 /// answer in time, which the classic implementation would meet too.
-fn gone_or_timed_out(error: &Error) -> bool {
+pub(crate) fn gone_or_timed_out(error: &Error) -> bool {
     use windows::Win32::UI::Accessibility::{UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT};
     error.hresult().is_some_and(|code| {
         let code = code.0.cast_unsigned();
@@ -260,7 +281,7 @@ fn gone_or_timed_out(error: &Error) -> bool {
 }
 
 /// A UIA endpoint's number in a program.
-fn endpoint_number(endpoint: Endpoint) -> i32 {
+pub(crate) fn endpoint_number(endpoint: Endpoint) -> i32 {
     match endpoint {
         Endpoint::Start => 0,
         Endpoint::End => 1,
@@ -268,17 +289,21 @@ fn endpoint_number(endpoint: Endpoint) -> i32 {
 }
 
 /// The program's constants.
-struct Constants {
-    start: Reg<kind::Int>,
-    end: Reg<kind::Int>,
-    zero: Reg<kind::Int>,
-    one: Reg<kind::Int>,
-    max_text: Reg<kind::Int>,
+pub(crate) struct Constants {
+    pub(crate) start: Reg<kind::Int>,
+    pub(crate) end: Reg<kind::Int>,
+    pub(crate) zero: Reg<kind::Int>,
+    pub(crate) one: Reg<kind::Int>,
+    pub(crate) max_text: Reg<kind::Int>,
 }
 
 impl Constants {
     /// Emits a copy of `range` collapsed to its start.
-    fn collapsed(&self, b: &mut Builder, range: Reg<kind::TextRange>) -> Reg<kind::TextRange> {
+    pub(crate) fn collapsed(
+        &self,
+        b: &mut Builder,
+        range: Reg<kind::TextRange>,
+    ) -> Reg<kind::TextRange> {
         let copy = b.text_range_clone(range);
         b.text_range_move_endpoint_by_range(copy, self.end, copy, self.start);
         copy
@@ -329,7 +354,7 @@ impl UnitRegisters {
 
 /// A string result, empty for a null one: an empty string may come back
 /// as null.
-fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String, Error> {
+pub(crate) fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String, Error> {
     Ok(match outcome.get(reg.any())? {
         Value::String(text) => text,
         _ => String::new(),
@@ -562,6 +587,10 @@ fn double(value: Option<&Value>) -> Option<f64> {
 /// # Errors
 ///
 /// Any [`Error`] from running the program.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one program, read top to bottom as it runs"
+)]
 pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     let mut b = Builder::new();
     let c = Constants {
@@ -592,6 +621,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     }
     let selection_moved = b.new_bool(false);
     let selection_moved = b.add_to_results(selection_moved);
+    let mut changes = None;
     if let Some((old_start, old_end)) = query.previous_selection {
         let start_range = b.import_text_range(old_start.range);
         let start_endpoint = b.int(endpoint_number(old_start.endpoint));
@@ -613,6 +643,13 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             |b| compare_ends(b, selection, c.start, c.end),
             |b| compare_ends(b, point, c.start, c.start),
         );
+        changes = Some(emit_changes(
+            &mut b,
+            &c,
+            (has_selection, selection, point),
+            ((start_range, start_endpoint), (end_range, end_endpoint)),
+            (selection_moved, query.max_change_text),
+        ));
     }
 
     // The line, the unit, and the formatting.
@@ -661,15 +698,127 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             .map(|runs| runs.read(&outcome))
             .transpose()?
             .unwrap_or_default(),
+        changes: changes
+            .map(|(selected, texts)| read_changes(&outcome, selected, texts))
+            .transpose()?,
     })
 }
 
+/// A position in a program: a range register and the endpoint's number.
+type ProgramEnd = (Reg<kind::TextRange>, Reg<kind::Int>);
+
+/// Emits the selection's changes from the old ends to the new selection,
+/// read only when `moved`: two arrays, whether each change is a selection,
+/// and its text. The new selection is `selection` when `has_selection`,
+/// else collapsed at `point`.
+fn emit_changes(
+    b: &mut Builder,
+    c: &Constants,
+    (has_selection, selection, point): (
+        Reg<kind::Bool>,
+        Reg<kind::TextRange>,
+        Reg<kind::TextRange>,
+    ),
+    (old_start, old_end): (ProgramEnd, ProgramEnd),
+    (moved, max_text): (Reg<kind::Bool>, i32),
+) -> (Reg<kind::Array>, Reg<kind::Array>) {
+    let selected = b.new_array();
+    let selected = b.add_to_results(selected);
+    let texts = b.new_array();
+    let texts = b.add_to_results(texts);
+    let max_text = b.int(max_text);
+    b.if_(moved, |b| {
+        let range = b.new_null().assume::<kind::TextRange>();
+        let start_end = b.new_int(0);
+        let end_end = b.new_int(0);
+        b.if_else(
+            has_selection,
+            |b| {
+                b.set(range, selection);
+                b.set(start_end, c.start);
+                b.set(end_end, c.end);
+            },
+            |b| {
+                b.set(range, point);
+                b.set(start_end, c.start);
+                b.set(end_end, c.start);
+            },
+        );
+        let new_start = (range, start_end);
+        let new_end = (range, end_end);
+        let change = |b: &mut Builder, is_selection: bool, from: ProgramEnd, to: ProgramEnd| {
+            let between = b.text_range_clone(from.0);
+            b.text_range_move_endpoint_by_range(between, c.start, from.0, from.1);
+            b.text_range_move_endpoint_by_range(between, c.end, to.0, to.1);
+            let text = b.text_range_get_text(between, max_text);
+            let size = b.string_size(text);
+            let none = b.uint(0);
+            let some = b.compare(size, none, Comparison::GreaterThan);
+            b.if_(some, |b| {
+                let flag = b.bool(is_selection);
+                b.array_append(selected, flag);
+                b.array_append(texts, text);
+            });
+        };
+        let order = |b: &mut Builder, a: ProgramEnd, other: ProgramEnd| {
+            b.text_range_compare_endpoints(a.0, a.1, other.0, other.1)
+        };
+        let before = order(b, new_end, old_start);
+        let before = b.compare(before, c.zero, Comparison::LessThan);
+        let after = order(b, new_start, old_end);
+        let after = b.compare(after, c.zero, Comparison::GreaterThan);
+        let apart = b.or(before, after);
+        b.if_else(
+            apart,
+            |b| {
+                change(b, false, old_start, old_end);
+                change(b, true, new_start, new_end);
+            },
+            |b| {
+                let starts = order(b, new_start, old_start);
+                let back = b.compare(starts, c.zero, Comparison::LessThan);
+                b.if_(back, |b| change(b, true, new_start, old_start));
+                let on = b.compare(starts, c.zero, Comparison::GreaterThan);
+                b.if_(on, |b| change(b, false, old_start, new_start));
+                let ends = order(b, new_end, old_end);
+                let on = b.compare(ends, c.zero, Comparison::GreaterThan);
+                b.if_(on, |b| change(b, true, old_end, new_end));
+                let back = b.compare(ends, c.zero, Comparison::LessThan);
+                b.if_(back, |b| change(b, false, new_end, old_end));
+            },
+        );
+    });
+    (selected, texts)
+}
+
+/// The changes [`emit_changes`] found.
+fn read_changes(
+    outcome: &Outcome,
+    selected: Reg<kind::Array>,
+    texts: Reg<kind::Array>,
+) -> Result<Vec<SelectionTextChange>, Error> {
+    let selected = outcome.get(selected)?;
+    let texts = outcome.get(texts)?;
+    Ok(selected
+        .iter()
+        .zip(texts)
+        .map(|(selected, text)| SelectionTextChange {
+            selected: matches!(selected, Value::Bool(true)),
+            text: match text {
+                Value::String(text) => text.encode_utf16().collect(),
+                _ => Vec::new(),
+            },
+        })
+        .collect())
+}
+
 /// The registers of the caret and the selection.
-struct CaretRegisters {
-    caret: Reg<kind::TextRange>,
-    collapsed: Reg<kind::Bool>,
-    has_selection: Reg<kind::Bool>,
-    selection: Reg<kind::TextRange>,
+#[derive(Clone, Copy)]
+pub(crate) struct CaretRegisters {
+    pub(crate) caret: Reg<kind::TextRange>,
+    pub(crate) collapsed: Reg<kind::Bool>,
+    pub(crate) has_selection: Reg<kind::Bool>,
+    pub(crate) selection: Reg<kind::TextRange>,
 }
 
 /// Emits the caret and the selection, as the classic implementation reads
@@ -677,7 +826,7 @@ struct CaretRegisters {
 /// is selected; with text selected, `TextPattern2`'s caret where the
 /// provider has it (`pattern2`), else the selection's start; with no
 /// selection at all, the start of the document.
-fn emit_caret(
+pub(crate) fn emit_caret(
     b: &mut Builder,
     c: &Constants,
     element: Reg<kind::Element>,
@@ -880,6 +1029,27 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         }
         None => false,
     };
+    let changes = match query.previous_selection {
+        Some(old) if selection_moved => {
+            let (range, end) = match &selection {
+                Some(selection) => (selection, Endpoint::End),
+                None => (&point, Endpoint::Start),
+            };
+            let new = (
+                RangeEnd {
+                    range,
+                    endpoint: Endpoint::Start,
+                },
+                RangeEnd {
+                    range,
+                    endpoint: end,
+                },
+            );
+            Some(classic_changes(old, new, query.max_change_text)?)
+        }
+        Some(_) => Some(Vec::new()),
+        None => None,
+    };
     let line = unit_at(&point, TextUnit_Line, query.max_text)?;
     let unit = query
         .unit
@@ -912,5 +1082,45 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         line,
         unit,
         runs,
+        changes,
     })
+}
+
+/// The selection's changes from `old` to `new`, the classic way, as
+/// [`emit_changes`] emits them.
+fn classic_changes(
+    (old_start, old_end): (RangeEnd<'_>, RangeEnd<'_>),
+    (new_start, new_end): (RangeEnd<'_>, RangeEnd<'_>),
+    max_text: i32,
+) -> Result<Vec<SelectionTextChange>, Error> {
+    let order = |a: RangeEnd<'_>, b: RangeEnd<'_>| -> Result<i32, Error> {
+        Ok(a.range.compare_endpoints(a.endpoint, b.range, b.endpoint)?)
+    };
+    let mut changes = Vec::new();
+    let mut change = |selected: bool, from: RangeEnd<'_>, to: RangeEnd<'_>| -> Result<(), Error> {
+        let between = from.range.clone_range()?;
+        between.move_endpoint_to(Endpoint::Start, from.range, from.endpoint)?;
+        between.move_endpoint_to(Endpoint::End, to.range, to.endpoint)?;
+        let text = between.text(max_text)?;
+        if !text.is_empty() {
+            changes.push(SelectionTextChange { selected, text });
+        }
+        Ok(())
+    };
+    if order(new_end, old_start)? < 0 || order(new_start, old_end)? > 0 {
+        change(false, old_start, old_end)?;
+        change(true, new_start, new_end)?;
+    } else {
+        match order(new_start, old_start)? {
+            starts if starts < 0 => change(true, new_start, old_start)?,
+            starts if starts > 0 => change(false, old_start, new_start)?,
+            _ => {}
+        }
+        match order(new_end, old_end)? {
+            ends if ends > 0 => change(true, old_end, new_end)?,
+            ends if ends < 0 => change(false, new_end, old_end)?,
+            _ => {}
+        }
+    }
+    Ok(changes)
 }
