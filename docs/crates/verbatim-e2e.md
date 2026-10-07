@@ -73,8 +73,8 @@ overrides the filter; set but empty, Verbatim logs as its own
 configuration says.
 
 Every scenario then starts by asserting the startup speech exactly
-(`registry::startup_speech`): the start sound heard, then "Verbatim is
-starting." cut off by the desktop's announcement, which follows as
+(`registry::startup_speech`): the start sound heard (Verbatim speaks no
+start message, as NVDA speaks none), then the desktop's announcement, as
 `Scenario::desktop_speech` gives it: "Program Manager", "Desktop list", and
 the focused desktop item, read independently by the agent through UI
 Automation, its name, "not selected" when it is not, and its position and

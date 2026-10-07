@@ -829,17 +829,14 @@ pub fn select<'a>(
         .collect())
 }
 
-/// The speech every scenario starts with: Verbatim's start sound, and its
-/// startup words, cut off by the announcement of the desktop, which has the
-/// focus once every window is minimized (`Scenario::launch`) and is
-/// announced as a focus change, which interrupts. Asserted exactly before
-/// setup, the desktop after it.
+/// The speech every scenario starts with: Verbatim's start sound, heard in
+/// full. Verbatim speaks no start message, as NVDA speaks none
+/// (`docs/parity.md`, "Starting"); the announcement of the desktop, which
+/// has the focus once every window is minimized (`Scenario::launch`),
+/// follows, asserted after it.
 #[must_use]
-pub fn startup_speech() -> [crate::speech::Expected; 2] {
-    [
-        crate::speech::heard("sound: start"),
-        crate::speech::cut_off("Verbatim is starting."),
-    ]
+pub fn startup_speech() -> [crate::speech::Expected; 1] {
+    [crate::speech::heard("sound: start")]
 }
 
 /// Looks up `name` and runs it: the body of every `#[test]` wrapper under

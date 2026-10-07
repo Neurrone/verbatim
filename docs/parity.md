@@ -1702,6 +1702,15 @@ verified.
 
 ## System integration
 
+- Starting. NVDA plays its start sound and speaks no start message: "NVDA
+  started" goes to braille only, and "Loading NVDA. Please wait..." is
+  spoken only when start-up has taken more than five seconds; then it
+  queues the initial focus (`core.py`). Verbatim: **matched since
+  2026-10-08**: the start sound, then the foreground's announcement, its
+  first speech. It used to speak "Verbatim is starting.", which the
+  foreground's announcement cut off or not depending on how soon the
+  foreground's outpost answered, a race. The slow-start message is **not
+  yet**.
 - Vision framework (focus highlight, screen curtain, magnifier),
   OCR, secure screens, remote access: all **not yet** (M8 for OCR
   and secure desktop, M12 remote); references [The vision framework](nvda/vision.md),

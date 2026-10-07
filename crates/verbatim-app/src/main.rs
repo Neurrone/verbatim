@@ -381,17 +381,11 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         }),
     )?;
 
-    // The start sound and first words, and the initial outpost target (the
-    // focus listener only reports foreground changes after this point).
+    // The start sound, and the initial outpost target (the focus listener
+    // only reports foreground changes after this point). No start message
+    // is spoken, as NVDA speaks none (`docs/parity.md`, "Starting"): the
+    // first speech is the foreground's announcement.
     manager.play_earcon(Earcon::Start);
-    manager.speak(Utterance {
-        trace_id: TraceId::mint(),
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::text(verbatim_i18n::startup_message())],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
     // Ask the foreground application for its current focus: its outpost is
     // started if needed, and the answer is spoken like a switch to it.
     if let Some(pid) = foreground_pid() {
