@@ -85,7 +85,11 @@ Public API:
   there named with the marker, deleted with its contents when the scenario
   is dropped, after the applications it launched have ended (a folder a
   closing program still holds is tried again until a deadline), and by the
-  next launch's sweep when an aborted run left it; `write_agent_file`
+  next launch's sweep when an aborted run left it; `harness_file(name,
+  extension)` is the path of a file there named with the marker, such as
+  the spelling errors scenario's `mockapp` fixture, deleted the same way
+  (the sweep deletes leftover harness files ending `.txt` or `.json`);
+  `write_agent_file`
   writes a file, creating any folder it names, and
   `wait_for_agent_file` waits for a file to appear and returns it, the
   evidence a script reached the point that writes it; `subscribe_events`

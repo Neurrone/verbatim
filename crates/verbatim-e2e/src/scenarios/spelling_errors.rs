@@ -51,7 +51,9 @@ const FIRST_LINE: &str = "sound: spelling-error spelling error Ths line has a so
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let directory = scenario.run_directory()?;
     let title = harness_marker(NAME);
-    let fixture = format!(r"{directory}\{title}.json");
+    // Deleted when the scenario ends, and by the next launch's sweep after
+    // an aborted run.
+    let fixture = scenario.harness_file(NAME, "json")?;
     let contents = format!(
         r#"{{
   "id": "root",
