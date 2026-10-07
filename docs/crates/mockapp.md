@@ -189,7 +189,10 @@ Implementation notes:
   selection is its children in the `selected` state, so a fixture's
   initial selection and the `select` command both show through the
   Selection pattern and its `Selection` property, as a real list reports
-  its selected item.
+  its selected item. A list's provider also serves `ISelectionProvider2`
+  (`FirstSelectedItem`, `LastSelectedItem`, `CurrentSelectedItem`, the
+  last selected, and `ItemCount`), and a tab control's does not, so the
+  tests see both a provider with `SelectionPattern2` and one without.
 - **Raw-view host furniture.** A real `hwnd`'s UIA raw tree (`TreeScope_Children`
   with a true condition) can include host-provided native elements — for
   example window-chrome furniture merged in via `HostRawElementProvider` —
@@ -284,5 +287,8 @@ finds a UIA focus's element by reading the system's keyboard focus, which
 a test must not take. Event registrations, which run on a registration's
 own thread, are pinned by the provider calls they cost mockapp: the focus
 listener's desktop-wide group and an outpost's focus-following property
-subscription. On a mismatch the test prints every measured count,
+subscription. A container's selected child is pinned over
+`tests/fixtures/ancestry.json`, through a list's `SelectionPattern2` and
+through a tab control's `Selection` pattern, classically and in the
+focus's remote program. On a mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

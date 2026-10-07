@@ -16,8 +16,9 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
     IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
-    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId,
-    UIA_SelectionPatternId, UIA_TogglePatternId,
+    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
+    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+    UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -636,22 +637,40 @@ impl Uia {
 /// The element behind [`Uia::selected_child`]: the first element of the
 /// container's current selection, rebuilt with `cache`, or `None` for every
 /// benign outcome (no `Selection` pattern, nothing selected, or a failed
-/// call). Two cross-process round trips after the pattern fetch: the
-/// selection, then the cache rebuild. `verbatim-uia-rops` calls it for the
-/// classic focus ancestry.
+/// call). `verbatim-uia-rops` calls it for the classic focus ancestry.
+///
+/// The first selected item comes from `SelectionPattern2`'s
+/// `FirstSelectedItem` property, read live ignoring its default, as NVDA
+/// reads the newer pattern where the provider has it: one round trip, and
+/// the cache rebuild a second. A provider without `SelectionPattern2`
+/// answers "not supported", and the selection is then read through the
+/// `Selection` pattern, three round trips after that read: the pattern,
+/// the selection, and the cache rebuild.
 #[must_use]
 pub fn selected_element(
     element: &IUIAutomationElement,
     cache: &IUIAutomationCacheRequest,
 ) -> Option<IUIAutomationElement> {
+    let first =
+        match element.current_value_ignoring_default(UIA_Selection2FirstSelectedItemPropertyId) {
+            Ok(value) if crate::is_not_supported(&value) => first_of_selection(element)?,
+            Ok(value) => crate::variant_element(&value)?,
+            Err(_) => return None,
+        };
+    // Rebuilding with `cache` prefetches the full snapshot property set in
+    // one round trip.
+    first.build_updated_cache(cache).ok()
+}
+
+/// The first element of a container's selection through the `Selection`
+/// pattern, for a provider without `SelectionPattern2`. Two round trips:
+/// the pattern and the selection.
+fn first_of_selection(element: &IUIAutomationElement) -> Option<IUIAutomationElement> {
     // A missing pattern surfaces as an error mapped to None.
     let pattern = element
         .current_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
         .ok()?;
-    let first = current_selection(&pattern).ok()?.into_iter().next()?;
-    // Rebuilding with `cache` prefetches the full snapshot property set in
-    // one round trip.
-    first.build_updated_cache(cache).ok()
+    current_selection(&pattern).ok()?.into_iter().next()
 }
 
 /// What one ancestor did to a walk ([`take_ancestor`]).

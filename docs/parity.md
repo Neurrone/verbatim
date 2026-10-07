@@ -589,6 +589,23 @@ verified.
   state, spoken only for the focus or its ancestors. Selecting the focused
   item itself is such a change of state, and since 2026-10-03 Verbatim
   speaks it ("selected"), as NVDA does ([verbatim-core](crates/verbatim-core.md)).
+- A selection container's selected item through UIA. NVDA reads
+  `SelectionPattern2` where the provider has it (`ItemCount` for its
+  "selected" rule, and Excel's first and last selected cells), and a
+  provider without it, or a selection container that raises (Qt) or is
+  null (Outlook's attachment list), counts as no selection without
+  cutting focus speech short. Verbatim: **matched since 2026-10-07** for
+  the selected item it reports with a focused list or tab control: the
+  first selected item from `SelectionPattern2`'s `FirstSelectedItem`,
+  classically and in the focus's remote program, and the `Selection`
+  pattern for a provider without `SelectionPattern2`; any failure is no
+  selected item and the focus is still reported. Verbatim reads the
+  selection from the container, so the item's own selection container is
+  never read. **Not yet:** NVDA's use of `ItemCount` to leave "selected"
+  unsaid on a focused selectable item (a cell, a header) that is the
+  only one selected, which Verbatim's reducer does not apply; Verbatim
+  leaves "selected" unsaid only for list items, tree items, menu items,
+  rows, and check boxes, whatever the count.
 - Selection in a list the focus controls (search suggestions and
   results). NVDA: when an item is selected inside an element the focus
   names in its UIA ControllerFor relation, NVDA reports that item as it

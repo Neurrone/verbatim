@@ -114,6 +114,18 @@ pub trait ElementExt {
         property: UIA_PROPERTY_ID,
     ) -> windows::core::Result<Option<i32>>;
 
+    /// A property read live, ignoring its default: UIA's "not supported"
+    /// sentinel when the element does not support it, as
+    /// [`is_not_supported`](crate::is_not_supported) tells. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails the read.
+    fn current_value_ignoring_default(
+        &self,
+        property: UIA_PROPERTY_ID,
+    ) -> windows::core::Result<VARIANT>;
+
     /// Whether the element has the keyboard focus, read live rather than
     /// from the cache. Cross-process.
     ///
@@ -235,6 +247,16 @@ impl ElementExt for IUIAutomationElement {
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
         Ok(variant_i32(&value))
+    }
+
+    fn current_value_ignoring_default(
+        &self,
+        property: UIA_PROPERTY_ID,
+    ) -> windows::core::Result<VARIANT> {
+        count(CallKind::Uia);
+        // SAFETY: `self` is a live element (see the module comment); the
+        // property id is a plain value.
+        unsafe { self.GetCurrentPropertyValueEx(property, true) }
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {

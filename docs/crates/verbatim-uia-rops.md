@@ -170,6 +170,10 @@ that a focus event is not stale), and otherwise an `Ancestry`:
 
 The remote program is one round trip. It reads `HasKeyboardFocus` and
 halts when it is false. For a list or tab control it reads the element's
+`Selection2FirstSelectedItem` property ignoring its default
+(`SelectionPattern2`), fills that item's cache, and keeps it; a provider
+without `SelectionPattern2` answers "not supported", and the program then
+reads the
 `Selection` property (the Selection pattern has no method instructions;
 the property is the same array of elements, verified against mockapp),
 fills the first item's cache, and keeps it. Then it walks with
@@ -187,7 +191,8 @@ that stopped at a known ancestor or the depth limit before finding one
 goes on up, returning nothing more, until it does.
 
 The classic implementation is the reference and the fallback: the same
-live read, the selected child through the Selection pattern
+live read, the selected child through `SelectionPattern2` or else the
+Selection pattern
 (`verbatim_uia::selected_element`, which `Uia::selected_child` also
 uses), and one `GetParentElementBuildCache` round trip per ancestor over
 the raw view, the walk `Uia::ancestor_chain` makes. `ancestor_chain`

@@ -16,8 +16,10 @@ use windows::Win32::System::Ole::{
 use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VT_ARRAY, VT_BOOL, VT_I4, VT_R8, VariantToStringAlloc,
 };
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE};
-use windows::core::HRESULT;
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UiaGetReservedNotSupportedValue,
+};
+use windows::core::{HRESULT, IUnknown, Interface};
 
 /// The RPC server is unavailable, as an `HRESULT`: what a call answers once
 /// the provider's process has exited.
@@ -144,6 +146,27 @@ pub fn variant_i32_array(value: &VARIANT) -> Option<Vec<i32>> {
     let array = unsafe { tagged.Anonymous.parray };
     // SAFETY: `array` is the variant's valid SAFEARRAY (or null), only read.
     Some(unsafe { read_safearray::<i32>(array.cast()) })
+}
+
+/// Whether `value` is UIA's "not supported" sentinel, which a read that
+/// ignores defaults answers for a property the element does not support.
+/// Local: the sentinel is UIA's own object in this process.
+#[must_use]
+pub fn is_not_supported(value: &VARIANT) -> bool {
+    // SAFETY: a local call that returns UIA's process-wide sentinel.
+    let Ok(sentinel) = (unsafe { UiaGetReservedNotSupportedValue() }) else {
+        return false;
+    };
+    IUnknown::try_from(value).is_ok_and(|unknown| unknown == sentinel)
+}
+
+/// Reads a `VARIANT` holding an element (`VT_UNKNOWN`), `None` when it holds
+/// none: null, empty, UIA's "not supported" sentinel, or another type.
+#[must_use]
+pub fn variant_element(value: &VARIANT) -> Option<IUIAutomationElement> {
+    IUnknown::try_from(value)
+        .ok()
+        .and_then(|unknown| unknown.cast().ok())
 }
 
 /// Reads a `VARIANT` boolean property, defaulting to `false` when the value is

@@ -66,7 +66,14 @@ Public API:
   provider process. The outpost uses that for a UIA focus and keeps the
   per-hop walk for windows read the classic way.
 - `selected_element(element, cache)` — the first element of a selection
-  container's current selection, rebuilt with `cache`, or `None`;
+  container's current selection, rebuilt with `cache`, or `None`: read
+  through `SelectionPattern2`'s `FirstSelectedItem` property (live,
+  ignoring its default), two calls with the rebuild, and for a provider
+  without `SelectionPattern2`, which answers "not supported", through the
+  `Selection` pattern, three more (the pattern, the selection, and the
+  rebuild), as NVDA uses the newer pattern where the provider has it.
+  Any failure, a missing pattern, or an empty selection is `None`, so the
+  focus is still reported, without a selected child;
   `Uia::selected_child` maps it to a snapshot, and `verbatim-uia-rops`'s
   classic focus ancestry uses it as it is.
 - `Uia::navigate` — one raw-view tree-walker step (parent, next or

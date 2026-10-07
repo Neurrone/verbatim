@@ -92,6 +92,14 @@ pub(crate) enum Method {
     CanSelectMultiple,
     /// `ISelectionProvider::IsSelectionRequired`.
     IsSelectionRequired,
+    /// `ISelectionProvider2::FirstSelectedItem`.
+    FirstSelectedItem,
+    /// `ISelectionProvider2::LastSelectedItem`.
+    LastSelectedItem,
+    /// `ISelectionProvider2::CurrentSelectedItem`.
+    CurrentSelectedItem,
+    /// `ISelectionProvider2::ItemCount`.
+    ItemCount,
     /// `IAccessible::accParent`.
     AccParent,
     /// `IAccessible::accChildCount`.
@@ -183,7 +191,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 70] = [
+    pub(crate) const ALL: [Method; 74] = [
         Method::CommandApplied,
         Method::GetObject,
         Method::ProviderOptions,
@@ -214,6 +222,10 @@ impl Method {
         Method::GetSelection,
         Method::CanSelectMultiple,
         Method::IsSelectionRequired,
+        Method::FirstSelectedItem,
+        Method::LastSelectedItem,
+        Method::CurrentSelectedItem,
+        Method::ItemCount,
         Method::AccParent,
         Method::AccChildCount,
         Method::AccChild,
@@ -293,6 +305,10 @@ impl Method {
             Method::GetSelection => "GetSelection",
             Method::CanSelectMultiple => "CanSelectMultiple",
             Method::IsSelectionRequired => "IsSelectionRequired",
+            Method::FirstSelectedItem => "FirstSelectedItem",
+            Method::LastSelectedItem => "LastSelectedItem",
+            Method::CurrentSelectedItem => "CurrentSelectedItem",
+            Method::ItemCount => "ItemCount",
             Method::AccParent => "accParent",
             Method::AccChildCount => "accChildCount",
             Method::AccChild => "get_accChild",

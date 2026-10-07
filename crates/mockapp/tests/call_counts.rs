@@ -939,6 +939,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("FragmentRoot", 4),
                 ],
             ),
+            // The list's first selected item through `SelectionPattern2`.
             into_list: (
                 calls(2, 0, 0),
                 &[
@@ -952,7 +953,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("BoundingRectangle", 2),
                     ("FragmentRoot", 3),
                     ("IsSelected", 1),
-                    ("GetSelection", 1),
+                    ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
@@ -1005,20 +1006,24 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("FragmentRoot", 6),
                 ],
             ),
+            // The list's first selected item through `SelectionPattern2`'s
+            // `FirstSelectedItem`, one call, and its cache, one more (6
+            // calls and 143 provider calls through the `Selection`
+            // pattern, before).
             into_list: (
-                calls(6, 0, 0),
+                calls(5, 0, 0),
                 &[
                     ("WM_GETOBJECT", 2),
-                    ("ProviderOptions", 30),
-                    ("GetPatternProvider", 24),
+                    ("ProviderOptions", 29),
+                    ("GetPatternProvider", 23),
                     ("GetPropertyValue", 49),
-                    ("HostRawElementProvider", 14),
+                    ("HostRawElementProvider", 12),
                     ("Navigate", 7),
-                    ("GetRuntimeId", 4),
+                    ("GetRuntimeId", 3),
                     ("BoundingRectangle", 2),
-                    ("FragmentRoot", 9),
+                    ("FragmentRoot", 7),
                     ("IsSelected", 1),
-                    ("GetSelection", 1),
+                    ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
@@ -1222,6 +1227,135 @@ fn uia_event_registrations_cost_exactly() {
 
     ratchet.finish();
     drop(app);
+}
+
+/// A container's selected child, through `SelectionPattern2` (mockapp's
+/// list has it) and, for a provider without it (mockapp's tab control),
+/// through the `Selection` pattern, both ways the outpost reads it: inside
+/// the focus's remote program, and classically. The calls of the focus
+/// ancestry around it are those of the focus ledger above; these are the
+/// selected child's alone classically, and the whole program remotely.
+#[expect(
+    clippy::too_many_lines,
+    reason = "both containers' pinned provider hits, listed in full"
+)]
+fn uia_selected_children_cost_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-selection");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let cache = under_test
+        .uia
+        .cache_request(CACHED_PROPERTIES)
+        .expect("a cache request");
+    let mut ratchet = Ratchet::default();
+    let selected_name = |selected: Option<IUIAutomationElement>| {
+        let selected = selected.expect("a selected child");
+        snapshot_from_cached_element(&selected, &under_test.registry).name
+    };
+
+    // The program's hits beyond the selected child's, the same for both.
+    let program = |extra_pattern: u32, selection: (&'static str, u32)| {
+        vec![
+            ("WM_GETOBJECT", 2),
+            ("ProviderOptions", 24),
+            ("GetPatternProvider", 23 + extra_pattern),
+            ("GetPropertyValue", 49),
+            ("HostRawElementProvider", 10),
+            ("Navigate", 8),
+            ("GetRuntimeId", 3),
+            ("BoundingRectangle", 2),
+            ("FragmentRoot", 3),
+            ("IsSelected", 1),
+            selection,
+        ]
+    };
+    for (id, name, selected, classic_calls, classic_hits, remote_hits) in [
+        // `FirstSelectedItem` and the item's cache.
+        (
+            "fruits",
+            "Fruits",
+            "Banana",
+            2,
+            vec![
+                ("ProviderOptions", 9),
+                ("GetPatternProvider", 12),
+                ("GetPropertyValue", 23),
+                ("HostRawElementProvider", 6),
+                ("Navigate", 1),
+                ("GetRuntimeId", 3),
+                ("BoundingRectangle", 1),
+                ("FragmentRoot", 5),
+                ("IsSelected", 1),
+                ("FirstSelectedItem", 1),
+            ],
+            program(0, ("FirstSelectedItem", 1)),
+        ),
+        // `FirstSelectedItem` answered "not supported", then the
+        // `Selection` pattern, its selection, and the item's cache; the
+        // program asks for `SelectionPattern2` once more.
+        (
+            "pages",
+            "Pages",
+            "General",
+            4,
+            vec![
+                ("ProviderOptions", 10),
+                ("GetPatternProvider", 14),
+                ("GetPropertyValue", 23),
+                ("HostRawElementProvider", 9),
+                ("Navigate", 1),
+                ("GetRuntimeId", 4),
+                ("BoundingRectangle", 1),
+                ("FragmentRoot", 8),
+                ("IsSelected", 1),
+                ("GetSelection", 1),
+            ],
+            program(1, ("GetSelection", 1)),
+        ),
+    ] {
+        common::apply(&mut app, hwnd, &format!("set-focus {id}"));
+        let container = under_test.element(name);
+        let (child, cost) =
+            under_test.measure(hwnd, |_| verbatim_uia::selected_element(container, &cache));
+        assert_eq!(selected_name(child).as_deref(), Some(selected));
+        ratchet.check(
+            &format!("UIA selected child of {name}, classically"),
+            &cost,
+            calls(classic_calls, 0, 0),
+            &classic_hits,
+        );
+        let (ancestry, cost) = under_test.measure(hwnd, |under_test| {
+            focus_ancestry(
+                &under_test.uia,
+                &FocusQuery {
+                    element: container,
+                    known: &[],
+                    depth_limit: 64,
+                    properties: CACHED_PROPERTIES,
+                    deadline: None,
+                },
+                true,
+            )
+            .expect("the focus ancestry")
+        });
+        let FocusAncestry::Focused(ancestry) = ancestry.0 else {
+            panic!("{name} has the focus");
+        };
+        assert_eq!(
+            selected_name(ancestry.selected_child).as_deref(),
+            Some(selected)
+        );
+        ratchet.check(
+            &format!("UIA focus on {name} with its selected child, remotely"),
+            &cost,
+            calls(1, 0, 0),
+            &remote_hits,
+        );
+    }
+
+    ratchet.finish();
+    app.send("quit");
 }
 
 /// A caret key's wait that never waits: the caret has already moved.
@@ -2058,6 +2192,10 @@ fn main() {
         (
             "uia_event_registrations_cost_exactly",
             uia_event_registrations_cost_exactly,
+        ),
+        (
+            "uia_selected_children_cost_exactly",
+            uia_selected_children_cost_exactly,
         ),
     ]);
 }

@@ -240,11 +240,12 @@ The focus lands on the list itself, and its selected item is read with it.
   properties.
 - Today, with remote operations: 2 UIA calls, the focused element and one
   `Execute`. 126 provider calls besides the focused-element read.
-- Today, classic: 6 UIA calls: the focused element, its nearest window,
+- Today, classic: 5 UIA calls: the focused element, its nearest window,
   one ancestor hop (the window, known from the previous focus), and the
-  selected item in three calls (the `Selection` pattern,
-  `GetCurrentSelection`, and `BuildUpdatedCache` on the first item). 143
-  provider calls besides the focused-element read.
+  selected item in two calls (`SelectionPattern2`'s `FirstSelectedItem`
+  and `BuildUpdatedCache` on it). 136 provider calls besides the
+  focused-element read. Through the `Selection` pattern, before, 6 and
+  143 ("A container's selected item" below).
 - Target: 2, met.
 
 ### Arrowing through a list, UIA
@@ -763,3 +764,26 @@ attribute.
   runs each; remotely 1 call, 0.36 ms before and 0.39 after. With the
   default theme, which reads only the annotation types, one attribute per
   stretch, the count is the same as before, 39 classically.
+
+### A container's selected item
+
+A focused list's or tab control's selected item is read through
+`SelectionPattern2`'s `FirstSelectedItem` where the provider has it, and
+through the `Selection` pattern where it does not, classically and in the
+focus's remote program (`docs/crates/verbatim-uia.md`). Pinned over
+mockapp's `tests/fixtures/ancestry.json`, whose list has
+`SelectionPattern2` and whose tab control does not
+(`uia_selected_children_cost_exactly`).
+
+- A list's selected item, classically: 2 UIA calls
+  (`FirstSelectedItem` and the item's cache) where it was 3 (the pattern,
+  `GetCurrentSelection`, and the cache), and 0.37 ms at the median where
+  it was 0.46 (0.45 and 0.55 at the 95th percentile), 200 runs each.
+- A tab control's, classically: 4 calls, one more than before, since
+  `FirstSelectedItem` is asked first and answered "not supported"; 0.58
+  ms at the median where it was 0.46.
+- Inside the focus's remote program: 1 call either way, with the same
+  provider calls but for the selection read itself (`FirstSelectedItem`
+  in place of `GetSelection`, and for the tab control one more
+  `GetPatternProvider`); 1.10 ms at the median before and after for the
+  list, 1.07 for the tab control.
