@@ -17,6 +17,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_VALUECHANGE,
+    OBJID_CLIENT,
 };
 
 use crate::stdin::Command;
@@ -68,6 +69,17 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::SetValue(id, text) => {
             let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
             notify(hwnd, EVENT_OBJECT_VALUECHANGE, index);
+        }
+        Command::ClientName(text) => {
+            tree.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[0]
+                .name = (!text.is_empty()).then_some(text);
+            // SAFETY: `hwnd` is the mockapp window's own live handle, whose
+            // client area its `WM_GETOBJECT` handler answers.
+            unsafe {
+                NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            }
         }
         Command::Select(id) => {
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
