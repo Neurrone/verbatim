@@ -814,7 +814,13 @@ of a window that closes for its next session, so the harness closes its
 document's tab with Control+W, saving it first when it has unsaved
 changes, and then closes the window only when no Notepad window was open
 before; the tabs Notepad restored from your last session are left as they
-were. It then deletes the document, and the folders the harness made for
+were. With a Notepad window already open, Notepad opens the harness
+document as a new tab of that window, which first comes to the foreground
+showing the tab it had and announces that tab's text area, then switches
+tabs and announces the new one, cutting the first off; once the window's
+title names the harness document and that speech has ended, the harness
+opens Verbatim's menu and closes it, so the scenario hears the window and
+its own tab announced once, in full. It then deletes the document, and the folders the harness made for
 Explorer and terminal windows, each named with `verbatim-e2e-`; nothing
 without that marker in its name is ever deleted. It cannot run at all, though, if the test process itself is
 killed outright (Ctrl+C, a CI job cancellation, or the whole `cargo test`

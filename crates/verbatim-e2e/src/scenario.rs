@@ -662,7 +662,10 @@ impl Scenario {
     /// title at cleanup, so the user's own windows of it are never touched;
     /// in Notepad, the document's tab is closed rather than its window, so
     /// Notepad does not keep it for its next session, and the window too
-    /// only when the harness opened it. The document is then deleted.
+    /// only when the harness opened it. The document is then deleted. When
+    /// a window of the application was already open, the window is
+    /// announced afresh once it holds the document (see
+    /// `announce_afresh`), so a scenario hears it whether or not one was.
     ///
     /// # Errors
     ///
@@ -715,7 +718,29 @@ impl Scenario {
             close_application: !already_open,
         });
         self.require_window_in_front(&image, Some(&marker))?;
+        if already_open {
+            self.announce_afresh()?;
+        }
         Ok(pid)
+    }
+
+    /// Has Verbatim announce the harness document's window afresh, once it
+    /// is in front holding the document. Windows 11 Notepad opens a
+    /// document in a window already open as a new tab: the window comes to
+    /// the foreground still showing the tab it had, whose text area takes
+    /// the focus and is announced, and only then switches to the new tab,
+    /// whose text area takes the focus again and cuts that announcement
+    /// off. The window's title naming the harness document is the evidence
+    /// the switch has happened; once everything said up to then has ended,
+    /// Verbatim's menu is opened, its announcement is heard, and Escape
+    /// closes it, which returns the focus to the window, so a scenario hears
+    /// the window and the harness tab's text area announced once, in full.
+    fn announce_afresh(&mut self) -> io::Result<()> {
+        self.speech.wait_until_quiet(LAUNCH_FOREGROUND_TIMEOUT);
+        self.send_gesture("kb:verbatim+v")?;
+        self.speech
+            .expect_in_order(&["Context", "menu"], LAUNCH_FOREGROUND_TIMEOUT);
+        self.send_keys(&["escape"])
     }
 
     /// Saves the harness document `name` ([`Scenario::open_document_with`])
