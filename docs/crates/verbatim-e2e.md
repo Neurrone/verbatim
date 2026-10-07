@@ -68,8 +68,9 @@ Public API:
   control plane to answer over the agent's tunnel, opens a *second*,
   dedicated tunnel connection for speech collection, and waits until
   Verbatim's status reports it ready (`StatusInfo::ready`: the GUI can act
-  on gestures, the focus listener is running, and the outpost reading
-  Verbatim's own windows is ready) before returning. No scenario waits a
+  on gestures, the focus listener is running, the outpost reading
+  Verbatim's own windows is ready, and Core knows the current focus)
+  before returning, so a first key cannot race the first focus report. No scenario waits a
   fixed time: every wait is for a condition, with a deadline that only
   bounds a failure. `control()` and `speech()`
   expose the two connections; `send_gesture`, `send_keys`, `launch_target`,

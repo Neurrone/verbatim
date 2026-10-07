@@ -209,8 +209,8 @@ pub struct StatusInfo {
     /// One entry per live outpost.
     pub outposts: Vec<OutpostStatus>,
     /// Whether Verbatim is ready for input: its GUI can act on gestures,
-    /// the focus listener is running, and the outpost reading Verbatim's
-    /// own windows is ready. A client that acts right after connecting
+    /// the focus listener is running, the outpost reading Verbatim's own
+    /// windows is ready, and Core knows the current focus. A client that acts right after connecting
     /// waits for this rather than for a fixed time.
     #[serde(default)]
     pub ready: bool,

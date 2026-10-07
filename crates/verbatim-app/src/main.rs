@@ -245,6 +245,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // Set once the focus listener first reports ready; part of the
     // readiness the control plane's status reports.
     let listener_ready = Arc::new(AtomicBool::new(false));
+    let focus_known = Arc::new(AtomicBool::new(false));
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
@@ -259,6 +260,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             outposts: Arc::clone(&outposts),
             recorder: Arc::clone(&recorder),
             listener_ready: Arc::clone(&listener_ready),
+            focus_known: Arc::clone(&focus_known),
             store: Arc::clone(&store),
         };
         thread::Builder::new()
@@ -307,6 +309,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         settings_host: settings_host.clone(),
         outposts: Arc::clone(&outposts),
         listener_ready: Arc::clone(&listener_ready),
+        focus_known: Arc::clone(&focus_known),
         ledger: Arc::clone(&ledger),
         bound_gestures: Arc::clone(&bound_gestures),
         gesture_tx: gesture_tx.clone(),
@@ -747,6 +750,8 @@ struct ReducerContext {
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     recorder: SharedRecorder,
     listener_ready: Arc<AtomicBool>,
+    /// Set once Core knows a focus, for the control plane's readiness.
+    focus_known: Arc<AtomicBool>,
     /// The configuration, where reader settings changed by a toggle key are
     /// saved.
     store: Arc<Mutex<ConfigStore>>,
@@ -1099,6 +1104,9 @@ impl ReducerThread<'_> {
             _ => TraceId::mint(),
         };
         let effects = reduce(&mut self.state, &input);
+        if self.state.focused().is_some() {
+            self.context.focus_known.store(true, Ordering::Release);
+        }
         self.context.ledger.reduced(trace_id);
         {
             let mut recorder = self
@@ -1576,6 +1584,8 @@ struct ControlHandlersConfig {
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     /// Whether the focus listener has reported ready.
     listener_ready: Arc<AtomicBool>,
+    /// Whether Core has learned the focus.
+    focus_known: Arc<AtomicBool>,
     ledger: Arc<LatencyLedger>,
     bound_gestures: SharedGestureMap,
     gesture_tx: crossbeam_channel::Sender<EmittedGesture>,
@@ -1594,6 +1604,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         settings_host,
         outposts,
         listener_ready,
+        focus_known,
         ledger,
         bound_gestures,
         gesture_tx,
@@ -1614,10 +1625,13 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .cloned()
                 .collect();
             // Ready to take input: the GUI can act on gestures, the focus
-            // listener is running, and the outpost reading Verbatim's own
-            // windows (its menu and dialogs) is ready.
+            // listener is running, the outpost reading Verbatim's own
+            // windows (its menu and dialogs) is ready, and Core knows the
+            // focus, so the first focus report cannot arrive after, and cut
+            // off, the speech of a key pressed straight away.
             let ready = ready_handle.get().is_some()
                 && listener_ready.load(Ordering::Acquire)
+                && focus_known.load(Ordering::Acquire)
                 && outposts.iter().any(|outpost| {
                     outpost.target_pid == Pid(own_pid) && outpost.state == OutpostState::Ready
                 });

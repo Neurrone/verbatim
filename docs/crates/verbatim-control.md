@@ -11,7 +11,8 @@ Public API:
   `DumpRecorder`, `Quit`) in a `RequestEnvelope` with a correlation id;
   `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechStarted`,
   `SpeechEnded`, `Sound`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
-  input: GUI up, focus listener running, own-window outpost ready),
+  input: GUI up, focus listener running, own-window outpost ready, focus
+  known),
   `OutpostStatus`, `OutpostState`, `LatencyRecord`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
   same newline-JSON framing helpers. Of the two readers, `read_message` is
   for connections whose reads never time out: a read that fails partway
