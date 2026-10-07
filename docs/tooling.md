@@ -434,6 +434,18 @@ More environment variables matter for less common cases:
   defaulting to `ffmpeg` found on that machine's `PATH`. `cargo xtask vm
   test` sets it to the guest's vendored copy,
   `C:\VerbatimLab\tools\ffmpeg.exe`.
+- `VERBATIM_E2E_RUST_LOG` is passed to the Verbatim a scenario launches
+  as `RUST_LOG`, and its outposts inherit it, so a run's logs carry what
+  is not logged by default. For a terminal's reads during a flood, set it
+  to `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
+  each tail read then logs `terminal tail timing` (whether it started at
+  the anchor or afresh, the path, its time in microseconds, its calls,
+  where the fingerprint was found, and whether it settled), each text
+  change's read `terminal read timing` (its time and how long it waited
+  in the queue), and each caret read `caret read timing`. The console
+  host's outpost log then grows past the agent's 8 MB file limit, so
+  read it from `target\e2e-stage\logs\<Verbatim's pid>` rather than from
+  the artifacts.
 - `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` skips the local-only scenarios; unset,
   empty, or `0` runs them, and any other value fails each test saying so.
   CI's `e2e` job sets it; see the local-only scenarios below.

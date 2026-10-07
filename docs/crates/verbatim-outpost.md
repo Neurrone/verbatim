@@ -749,7 +749,15 @@ finds it.
   the read (`scrolled`: the line above where it started changed), lines
   went by unread instead: the read says "skipped lines" without a count
   (`Skipped::Uncounted`) and remembers its own last lines and last line
-  as the anchor, so the next read starts from there. Live, a flood in
+  as the anchor, so the next read starts from there; a set-aside read that
+  read no lines (the fingerprint was found on the last line) keeps the
+  fingerprint it had, which still names that line. An unsettled read that
+  did not find the fingerprint is not set aside but read afresh, as a
+  settled one is: counted from an anchor a full scrollback keeps on its
+  last row, it would read no lines, and a fingerprint of two empty lines
+  then kept every later read of the flood searching all 256 lines in
+  vain (measured live in the console host, `docs/performance.md`, "A
+  terminal flood"). Live, a flood in
   Windows Terminal's full scrollback kept every read from settling until
   it ended; kept back at an anchor from before it, a second, identical
   flood's end matched the first's and nothing was spoken. Before reads
@@ -761,9 +769,11 @@ finds it.
   line above it), the terminal is read afresh from the end of its
   document (one program, which gets the document range from the element
   itself, `TailStart::Text`), and `after_fresh` compares the lines read with the screen
-  last seen: when the old screen's end reappears at the new one's start
-  (its last line as it was or grown since), what that line gained and the
-  lines after it; otherwise the lines that differ in place, preceded
+  last seen: when the old screen's end reappears in the new one (its last
+  line as it was or grown since; at the new one's start when both hold as
+  many lines and the text scrolled, further down when the old one holds
+  fewer, as a set-aside read's does), what that line gained and the lines
+  after it, taking the latest place it reappears; otherwise the lines that differ in place, preceded
   by `Skipped::Uncounted` ("skipped lines") when no line kept its place
   and the text holds more lines than were read (the scrollback overflowed
   past the search). A redraw with the same text finds nothing, and
@@ -771,6 +781,11 @@ finds it.
 - Lines lose their trailing padding, every trailing character with
   Unicode's `White_Space` property (`verbatim_text::trim_padding`), and are
   cut to `MAX_TERMINAL_LINE_BYTES`.
+- Each tail read logs its cost at debug (`terminal tail timing`: anchored
+  or fresh, the path, microseconds, calls, where the fingerprint was
+  found, settled and scrolled), as does each text change's read (`terminal
+  read timing`, with its wait in the queue) and each caret read (`caret
+  read timing`).
 - `TerminalOutput` is sent only when something changed, as
   `NormalizedEvent::TerminalOutput`.
 - How many of the newest lines a read takes comes from Core,

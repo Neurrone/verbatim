@@ -54,6 +54,14 @@ pub fn take() -> CallCounts {
     COUNTS.with(Cell::take)
 }
 
+/// This thread's calls since the last take, leaving them counted: for
+/// logging the calls one step of an entry made, by the difference between
+/// two looks.
+#[must_use]
+pub fn peek() -> CallCounts {
+    COUNTS.with(Cell::get)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +80,9 @@ mod tests {
             }
         );
         assert!(take().is_empty());
+        count(CallKind::Msaa);
+        assert_eq!(peek().msaa, 1);
+        assert_eq!(take().msaa, 1);
         // Another thread's calls are its own.
         std::thread::spawn(|| count(CallKind::Uia))
             .join()

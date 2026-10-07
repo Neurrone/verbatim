@@ -25,6 +25,8 @@ struct Sim {
     unsettled: usize,
     /// Whether the text moving under them scrolls it.
     scrolling: bool,
+    /// How many fresh reads were made.
+    fresh_reads: usize,
 }
 
 fn padded(text: &str) -> String {
@@ -40,6 +42,7 @@ impl Sim {
             comparable: true,
             unsettled: 0,
             scrolling: false,
+            fresh_reads: 0,
         };
         sim.push(rows);
         sim
@@ -92,10 +95,18 @@ impl Sim {
             .iter()
             .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
             .collect();
-        let before_last = last
-            .checked_sub(1)
-            .map(|row| self.row(row))
-            .unwrap_or_default();
+        // As the program does, the last line and the one before it are
+        // read only when lines are read.
+        let (last_line, before_last) = if reading == 0 {
+            (String::new(), String::new())
+        } else {
+            (
+                self.row(last),
+                last.checked_sub(1)
+                    .map(|row| self.row(row))
+                    .unwrap_or_default(),
+            )
+        };
         let scrolled = !settled && self.scrolling;
         if settled || scrolled {
             self.anchor = Some(last);
@@ -109,7 +120,7 @@ impl Sim {
             count: u32::try_from(count).unwrap_or(u32::MAX),
             rows: u32::try_from(reading).unwrap_or(u32::MAX),
             lines,
-            last_line: self.row(last),
+            last_line,
             before_last,
             settled,
             scrolled,
@@ -164,6 +175,7 @@ impl TailSource for Sim {
     }
 
     fn fresh(&mut self, wanted: u32) -> Result<TailText, ()> {
+        self.fresh_reads += 1;
         let settled = self.settles();
         Ok(self.tail(0, false, wanted, settled))
     }
@@ -249,6 +261,48 @@ fn a_read_the_text_scrolled_under_skips_lines_and_starts_again_from_there() {
 }
 
 #[test]
+fn a_scrolled_read_that_lost_the_fingerprint_reads_afresh_and_finds_it_next() {
+    // A full scrollback, anchored on its last row: more scrolls by than
+    // the search covers while the read is under way. The read counted
+    // from the anchor would read no lines, and so have no fingerprint for
+    // the next; the terminal is read afresh instead.
+    let mut reader = Reader::new(Sim::new(8, &["a", "b", "c", "d", "e", "f", "g", "h"]));
+    reader
+        .sim
+        .push(&["one", "two", "three", "four", "five", "six"]);
+    reader.sim.unsettled = 1;
+    reader.sim.scrolling = true;
+    let fresh = reader.sim.fresh_reads;
+    let output = reader.read();
+    assert_eq!(reader.sim.fresh_reads, fresh + 1);
+    assert_eq!(output.skipped, Some(Skipped::Uncounted));
+    // The next read finds the fingerprint that read took, without
+    // reading afresh again.
+    reader.sim.push(&["seven"]);
+    let output = reader.read();
+    assert_eq!(reader.sim.fresh_reads, fresh + 1);
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, lines(&["seven"]));
+}
+
+#[test]
+fn a_scrolled_read_of_no_lines_keeps_the_fingerprint() {
+    // The text scrolled under a read that found the fingerprint on the
+    // last line, so it read no lines: the fingerprint it had still names
+    // that line, and the next read finds it.
+    let mut reader = Reader::new(Sim::new(4, &["a", "b", "c", "d"]));
+    reader.sim.unsettled = 1;
+    reader.sim.scrolling = true;
+    let output = reader.read();
+    assert_eq!(output.skipped, Some(Skipped::Uncounted));
+    let fresh = reader.sim.fresh_reads;
+    reader.sim.push(&["e"]);
+    let output = reader.read();
+    assert_eq!(reader.sim.fresh_reads, fresh);
+    assert_eq!(output.lines, lines(&["e"]));
+}
+
+#[test]
 fn a_half_written_last_line_is_found_grown_when_the_text_moved() {
     let mut reader = Reader::new(Sim::new(5, &["one", "two", "three", "fo"]));
     reader.sim.rewrite_last("four");
@@ -293,6 +347,39 @@ fn screens_compared_after_more_output_find_the_last_line_grown() {
     );
     assert_eq!(output.skipped, None);
     assert_eq!(output.lines, lines(&["c"]));
+}
+
+#[test]
+fn a_shorter_screen_is_found_where_it_ends_in_the_new_one() {
+    // An unsettled read remembered only the few lines it read; the fresh
+    // read after the output stopped holds more, ending with them and then
+    // one new line. Only the line after them is new.
+    let memory = Memory {
+        previous: padded("8"),
+        line: padded("9"),
+        screen: lines(&["7", "8", "9"]),
+    };
+    let rows = ["5", "6", "7", "8", "9", "ready>"].map(padded);
+    let tail = TailText {
+        found: Found::Afresh,
+        line: String::new(),
+        previous: String::new(),
+        found_line: String::new(),
+        count: 100,
+        rows: 6,
+        lines: rows
+            .iter()
+            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
+            .collect(),
+        last_line: rows[5].clone(),
+        before_last: rows[4].clone(),
+        settled: true,
+        scrolled: false,
+    };
+    let (output, _) = after_fresh(Some(&memory), &tail, 6);
+    assert_eq!(output.changed, None);
+    assert_eq!(output.skipped, None);
+    assert_eq!(output.lines, lines(&["ready>"]));
 }
 
 #[test]

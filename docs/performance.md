@@ -671,3 +671,67 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   text moved while it was read (a full scrollback scrolling beneath the
   ranges during a flood), when the read is set aside for the next.
 - Target: 1.
+
+### A terminal flood
+
+What Verbatim costs a terminal while ten thousand lines are written as
+fast as PowerShell can write them (`terminal_flood`'s script) into a full
+scrollback of 9,001 lines, measured on 2026-10-07 on a 12-thread x64
+desktop with a debug build. Each time is one flood's own stopwatch; the
+probes that split the cost apart registered and read exactly as the
+outpost does, without the rest of Verbatim.
+
+The console host:
+
+- With no screen reader, a flood takes 1.6 to 1.9 seconds (1.7 typical).
+- Subscribed to the text change and caret events alone, reading nothing,
+  2.2 to 2.6 seconds. The console host raises about 13,600 of these events
+  per flood, 1.4 for each line, and raising each one to a listening client
+  costs it about 40 microseconds. This is the largest part of the cost,
+  and it is the console host's own: every client that subscribes pays it.
+  About 0.15 seconds of it is the base cache request the subscription
+  attaches, whose 34 properties the provider computes for every event;
+  a one-property cache request saves that in isolation, but in the full
+  outpost it made the console host stall for three to four minutes in
+  each of five runs, with a thread of UIA's own in the outpost spinning,
+  so it was not adopted.
+- Reading the tail back to back without events, 1.8 to 2.0 seconds: each
+  read holds the provider for 0.4 to 0.9 milliseconds, and the provider
+  answers a read at a time.
+- Verbatim, which does both, 2.9 to 3.7 seconds: about twice the time
+  with no screen reader. The outpost reads continuously, since every text
+  change that arrives during a read causes one more (`phase6-design.md`:
+  coalesced, with no fixed delay): about 2,800 tail reads per flood,
+  median 0.6 milliseconds, busy for 40 to 60 percent of the flood. In the
+  first flood, which fills an empty scrollback, the caret also moves on
+  every line, and about 2,000 caret reads (0.5 milliseconds each) are
+  added; once the scrollback is full the caret stays on the last row and
+  hardly any are made.
+- Before the fix of 2026-10-07, a read the text scrolled under that found
+  no lines took a fingerprint of two empty lines, and from then until the
+  flood ended every read searched all 256 lines above the anchor without
+  finding it: about 760 reads per flood at 3 milliseconds median, 2.5
+  seconds of the 3.7-second flood, each saying only "skipped lines". After
+  it, no read of the same floods fails to find its fingerprint, and the
+  output is counted. The wall time did not change: cheaper reads are more
+  numerous, since the outpost reads whenever the text changed.
+
+Windows Terminal:
+
+- With no screen reader, 1.4 to 1.6 seconds; with Verbatim, 1.5 to 1.7.
+- It raises about 60 text events per flood (it batches its output by
+  frame), so the outpost reads about 50 times per flood, at 1 to 5
+  milliseconds each (the fingerprint is found about 200 lines up, searched
+  a line at a time), busy for 6 to 10 percent of the flood.
+- Read back to back with no events, it would take 1.6 to 1.8 seconds.
+
+The wall-time ratio `terminal_flood` checks compares a flood with output
+reported against one with it turned off, and the outpost reads the
+terminal either way (turning reporting off is Core's), so the ratio is
+about 1 by construction and does not measure the reads' cost; the
+comparison with no screen reader above does. The one ratio of 5.68 on
+record (2026-10-06, Windows Terminal) came from a run during which
+another engineer's tests started seven mockapp processes and Verbatim's
+audio ran dry thirteen times in the fourth flood alone: the machine was
+starved. Twelve busy threads at normal priority make the same flood take
+75 to 99 seconds in Windows Terminal with no screen reader at all.

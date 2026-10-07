@@ -206,7 +206,8 @@ caches, or, when it stopped before reaching one, from
 `focus_ancestry(uia, query, remote)` is what call sites use. With `remote`
 true it runs the program and, when that fails for any reason, runs the
 classic walk for the same call; with `remote` false it runs the classic
-walk alone. It returns the answer with a `Path`: `Remote`, `Classic`, or
+walk alone. It returns the answer with a `Path` (whose `name()` is the
+word a log line gives it): `Remote`, `Classic`, or
 `Fallback(error)`, the program's error, so the caller can log it (an
 `Error::Failed` prints the failing instruction, its opcode, and the Rust
 line that emitted it) and stop trying for a window whose import failed.

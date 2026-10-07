@@ -146,6 +146,32 @@ pub fn is_audible() -> bool {
     std::env::var(AUDIBLE_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
+/// Environment variable naming a tracing filter for the Verbatim a
+/// scenario launches, in `RUST_LOG`'s syntax: [`Scenario::launch`] passes
+/// it to Verbatim as `RUST_LOG`, which its outposts inherit, so a run can
+/// log what it does not by default (the terminal reads' timings, at debug
+/// on `verbatim_outpost`). Unset or empty, Verbatim logs as configured.
+pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
+
+/// The environment Verbatim is launched with: `VERBATIM_TEST_AUDIO=null`
+/// unless the run is `audible` (so verbatim-app plays through the real
+/// device rather than the silent one; see [`AUDIBLE_ENV`]), and `RUST_LOG`
+/// from [`RUST_LOG_ENV`] when that is set.
+fn launch_env(audible: bool) -> Vec<(String, String)> {
+    let mut env = if audible {
+        Vec::new()
+    } else {
+        vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
+    };
+    if let Some(filter) = std::env::var(RUST_LOG_ENV)
+        .ok()
+        .filter(|filter| !filter.is_empty())
+    {
+        env.push(("RUST_LOG".to_owned(), filter));
+    }
+    env
+}
+
 /// How long [`Scenario::launch`] waits for Verbatim's control plane to come
 /// up before giving up.
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(20);
@@ -337,14 +363,7 @@ impl Scenario {
             .ok_or_else(|| io::Error::other("verbatim.exe directory is not valid UTF-8"))?;
         let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
 
-        // Audible mode omits VERBATIM_TEST_AUDIO=null entirely, so
-        // verbatim-app plays through the real device rather than the silent
-        // one; see AUDIBLE_ENV.
-        let mut launch_env: Vec<(String, String)> = if audible {
-            Vec::new()
-        } else {
-            vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())]
-        };
+        let mut launch_env = launch_env(audible);
 
         let mut process_agent = AgentClient::connect(&agent_addr)?;
         if remote {

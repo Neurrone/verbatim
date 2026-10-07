@@ -258,7 +258,9 @@ Public API:
   here crosses a thread boundary.
 - `calls` — the count of the cross-process calls this crate makes, kept
   per thread: `calls::count(kind)` counts one, and `calls::take()` returns
-  this thread's `CallCounts` since the last take and resets them. Every
+  this thread's `CallCounts` since the last take and resets them;
+  `calls::peek()` returns them without resetting, so a step of an entry
+  (a terminal's tail read) can log its own calls by the difference. Every
   call that reaches the application is counted where it is made, inside
   the client method or wrapper that makes it: the
   `*BuildCache` fetches and tree-walker steps, `BuildUpdatedCache`,

@@ -94,6 +94,18 @@ pub enum Path {
     Fallback(Error),
 }
 
+impl Path {
+    /// The path's name for a log line: `remote`, `classic`, or `fallback`.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Remote => "remote",
+            Self::Classic => "classic",
+            Self::Fallback(_) => "fallback",
+        }
+    }
+}
+
 /// The focus ancestry, the one function call sites use: the remote program
 /// when `remote` is true, falling back to the classic walk for this call
 /// when remote operations are unavailable or the program fails, and the

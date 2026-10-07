@@ -703,7 +703,16 @@ impl Worker<'_> {
         {
             return;
         }
-        let event = match text_reads::report_caret(self.context, node_id, after_focus) {
+        let started = std::time::Instant::now();
+        let report = text_reads::report_caret(self.context, node_id, after_focus);
+        // A caret event's read, which a terminal's output causes too, as
+        // its cursor moves.
+        tracing::debug!(
+            elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            after_focus,
+            "caret read timing"
+        );
+        let event = match report {
             Some(caret) => NormalizedEvent::CaretMoved { node_id, caret },
             None if after_focus => NormalizedEvent::NoText { node_id },
             None => return,
@@ -738,7 +747,21 @@ impl Worker<'_> {
         let Some(uia) = self.client.uia() else {
             return;
         };
-        let Some(output) = text_reads::terminal_output(self.context, uia, node_id, false) else {
+        let started = std::time::Instant::now();
+        let read = text_reads::terminal_output(self.context, uia, node_id, false);
+        // Each text change's read, end to end, and how long it waited in
+        // the queue: during a flood the reads follow one another, so these
+        // say how much of the time the outpost spends in the terminal.
+        tracing::debug!(
+            queued_us = self
+                .timing
+                .dequeued_at_us
+                .saturating_sub(self.timing.observed_at_us),
+            elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            lines = read.as_ref().map_or(0, |output| output.lines.len()),
+            "terminal read timing"
+        );
+        let Some(output) = read else {
             return;
         };
         if output.is_empty() {
