@@ -123,8 +123,13 @@ pub(crate) fn run(
         }
         // Real controls, read through their own MSAA implementations.
         for node in native {
-            if node.native.as_deref() == Some("tree_view") {
-                crate::tree_view::create(hwnd, node)?;
+            match node.native.as_deref() {
+                Some("tree_view") => {
+                    crate::tree_view::create(hwnd, node)?;
+                }
+                Some("group_box") => crate::buttons::create_group_box(hwnd, node)?,
+                Some("button") => crate::buttons::create_button(hwnd, node)?,
+                _ => {}
             }
         }
     }

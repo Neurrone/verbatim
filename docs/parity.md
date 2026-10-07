@@ -133,12 +133,17 @@ verified.
     2026-10-07**, found by comparing transcripts with NVDA in a Windows
     Forms text box and Verbatim's own read-only description field.
   - Found by NVDA transcripts of Verbatim's settings dialog on
-    2026-10-07, tabbing through the Speech, Theme, and Terminal pages,
-    and **not yet** matched: NVDA announces the group box a control sits
-    in when the focus enters it ("Synthesizer grouping" before the
-    Change button), which Verbatim does not, since a Win32 group box is
-    the control's sibling rather than its parent and NVDA finds it by
-    position; and NVDA says "Verbatim", the menu's owner window,
+    2026-10-07, tabbing through the Speech, Theme, and Terminal pages:
+    NVDA announces the group box a control sits in when the focus enters
+    it ("Synthesizer grouping" before the Change button), which Verbatim
+    did not, since a Win32 group box is the control's sibling rather than
+    its parent and NVDA finds it by position. **Matched since 2026-10-07**:
+    a control's window object has as its container the first visible
+    group box before it in z-order whose rectangle holds it, as NVDA's
+    `findGroupboxObject` finds it (`native_controls` mockapp test with
+    real buttons; the end-to-end check is the settings dialog's Speech
+    page). **Not yet:** the group box's description, which NVDA takes from
+    a static text right after it; and NVDA says "Verbatim", the menu's owner window,
     before "Context menu". Control+Tab to another category made Verbatim
     announce the dialog again under its new title, because the dialog
     was read as a different node after the title changed, where NVDA,

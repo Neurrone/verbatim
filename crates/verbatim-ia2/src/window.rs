@@ -17,7 +17,7 @@
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::UI::Controls::{
     CCM_GETVERSION, LVM_GETITEMCOUNT, TVIS_STATEIMAGEMASK, TVM_GETITEMSTATE, TVM_GETNEXTITEM,
     TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
@@ -25,7 +25,7 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
-    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowLongPtrW,
+    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SendMessageW,
 };
 
@@ -92,6 +92,22 @@ pub(crate) fn is_multiline_edit(hwnd: isize) -> bool {
     // SAFETY: a local read of the window's style; any handle is tolerated.
     let style = unsafe { GetWindowLongPtrW(handle(hwnd), GWL_STYLE) };
     style & ES_MULTILINE as isize != 0
+}
+
+/// The window's style (`GWL_STYLE`), zero for one that names no window.
+/// Local.
+pub(crate) fn style(hwnd: isize) -> isize {
+    // SAFETY: a local read of the window's style; any handle is tolerated.
+    unsafe { GetWindowLongPtrW(handle(hwnd), GWL_STYLE) }
+}
+
+/// The window's rectangle in screen coordinates (`GetWindowRect`), `None`
+/// for one that names no window. Local.
+pub(crate) fn rect(hwnd: isize) -> Option<RECT> {
+    let mut rect = RECT::default();
+    // SAFETY: a local out-parameter; any handle is tolerated, failing.
+    unsafe { GetWindowRect(handle(hwnd), &raw mut rect) }.ok()?;
+    Some(rect)
 }
 
 /// The window's parent (`GA_PARENT`), zero for none.

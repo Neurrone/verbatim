@@ -201,7 +201,9 @@ pub(crate) struct FixtureNode {
     pub(crate) backward_moves_positive: bool,
     /// The real control the node becomes for the MSAA backend instead of a
     /// scripted node: `tree_view` for a comctl32 tree view
-    /// ([`crate::tree_view`]).
+    /// ([`crate::tree_view`]), `group_box` for a group box with its child
+    /// buttons inside it, or `button` for a push button outside it
+    /// ([`crate::buttons`]).
     pub(crate) native: Option<String>,
     /// The window class a real control is registered under, a superclass
     /// of the comctl32 one, as Windows Forms names its controls.

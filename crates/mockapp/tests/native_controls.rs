@@ -246,6 +246,62 @@ fn other_tree_items_keep_a_value_that_is_not_a_number() {
     app.quit();
 }
 
+/// A standard group box encloses a control as its container, as NVDA finds
+/// it among the windows before the control, though it is the control's
+/// sibling: entering it speaks it ("Synthesizer grouping"); a button
+/// outside it has no such container.
+fn a_group_box_is_the_context_of_the_controls_inside_it() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    common::init_com();
+    let title = common::unique_title("mockapp-group-box");
+    let app = common::spawn("group_box.json", "msaa", &title);
+    let host = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+    let button = |text: windows::core::PCWSTR| {
+        // SAFETY: a local search of the host window's children.
+        unsafe { FindWindowExW(Some(host), None, w!("Button"), text) }
+            .expect("mockapp made the button")
+    };
+    let focus = |hwnd: windows::Win32::Foundation::HWND| {
+        outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+            hwnd: hwnd.0 as isize,
+            id_object: OBJID_CLIENT.0,
+            id_child: 0,
+        })
+    };
+
+    let change = focus(button(w!("Change")));
+    assert_eq!(
+        change.chain(),
+        [
+            Some("Mockapp Group Box Fixture"),
+            Some("Synthesizer"),
+            Some("Change")
+        ]
+    );
+    assert_eq!(
+        spoken(&change),
+        [
+            vec![
+                SegmentContent::Label("Synthesizer".to_owned()),
+                SegmentContent::Role(Role::Group)
+            ],
+            vec![
+                SegmentContent::Label("Change".to_owned()),
+                SegmentContent::Role(Role::Button)
+            ],
+        ]
+    );
+
+    let apply = focus(button(w!("Apply")));
+    assert_eq!(
+        apply.chain(),
+        [Some("Mockapp Group Box Fixture"), Some("Apply")]
+    );
+    app.quit();
+}
+
 /// The roles of `nodes`, in order.
 fn roles(nodes: &[NodeSnapshot]) -> Vec<Role> {
     nodes.iter().map(|node| node.role).collect()
@@ -260,6 +316,10 @@ fn main() {
         (
             "tree_view_items_are_checked_by_their_state_images",
             tree_view_items_are_checked_by_their_state_images,
+        ),
+        (
+            "a_group_box_is_the_context_of_the_controls_inside_it",
+            a_group_box_is_the_context_of_the_controls_inside_it,
         ),
         (
             "other_tree_items_keep_a_value_that_is_not_a_number",

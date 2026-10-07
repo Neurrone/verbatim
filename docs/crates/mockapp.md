@@ -202,6 +202,12 @@ its crate-internal modules are the reviewable surface:
   window, found by class, and selected with `EM_SETSEL` on the window
   thread.
 - `tree_view` — the MSAA backend's real tree view, described above.
+- `buttons` — the MSAA backend's real buttons: a `native` `group_box`
+  node is a standard group box (`Button` with `BS_GROUPBOX`) with its
+  children as push buttons inside its rectangle, and a `native` `button`
+  node a push button beside it; each window is placed below the last in
+  z-order, as a dialog places its controls
+  (`tests/fixtures/group_box.json`).
 - `stdin` — command parsing and the reader thread.
 - `hits` — the provider-side hit counters: one atomic per provider method
   (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,

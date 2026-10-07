@@ -132,7 +132,10 @@ Public API:
   (stopping at a known ancestor, a deadline, or a parent in a different
   window that `read_by_other_api` says is read through UIA, and saying
   which as `Walked`, whose `Crossed(hwnd)` lets the outpost continue the
-  walk through UIA) (per-hop `accParent` walks, outermost first, with the simple-child
+  walk through UIA; a control's window object met on the way has as its
+  next ancestor the group box enclosing it, a `Button` window with
+  `BS_GROUPBOX` before it in z-order, as NVDA's `findGroupboxObject`
+  finds it, and the walk goes on from the group box) (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent

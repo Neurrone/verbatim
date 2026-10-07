@@ -25,7 +25,9 @@
 use windows::Win32::Foundation::{
     CO_E_OBJNOTCONNECTED, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED, RPC_E_SERVER_DIED_DNE,
 };
-use windows::Win32::UI::Accessibility::{NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS};
+use windows::Win32::UI::Accessibility::{
+    NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, ROLE_SYSTEM_GROUPING,
+};
 use windows::Win32::UI::Controls::{TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS};
 use windows::Win32::UI::WindowsAndMessaging::{
     GET_WINDOW_CMD, GW_HWNDNEXT, GW_HWNDPREV, OBJID_CLIENT, OBJID_WINDOW,
@@ -503,6 +505,10 @@ pub enum Walked {
 /// # Errors
 ///
 /// [`AcquireError::Gone`] when `node` is no longer reachable.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the tree view, simple-child, parent, and group box hops read best side by side"
+)]
 pub fn ancestor_chain_until(
     node: NodeId,
     registry: &NodeIdRegistry,
@@ -612,16 +618,77 @@ pub fn ancestor_chain_until(
         };
         let snapshot = read_snapshot_with(&parent_acc, parent_key, context(parent_at), registry);
         let id = snapshot.id;
+        let is_window_object = snapshot.role == Role::Window;
         chain.push(snapshot);
         hops_used += 1;
         current = parent_acc;
         current_hwnd = parent_hwnd;
         if (limits.known)(id) {
             walked = Walked::MetKnown(id);
+            continue;
+        }
+        // A control's window object has a group box as its container when
+        // one encloses it, as NVDA's window root finds it: the group box
+        // is the next ancestor, and the walk goes on from it.
+        if is_window_object
+            && hops_used < max_hops
+            && let Some((group, group_hwnd)) = group_box_of(parent_hwnd)
+        {
+            let group_key = (group_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+            let snapshot = read_snapshot_with(&group, group_key, context(true), registry);
+            let id = snapshot.id;
+            chain.push(snapshot);
+            hops_used += 1;
+            current = group;
+            current_hwnd = group_hwnd;
+            if (limits.known)(id) {
+                walked = Walked::MetKnown(id);
+            }
         }
     }
     chain.reverse();
     Ok((chain, walked))
+}
+
+/// The group box enclosing the window `hwnd`, and its window, as NVDA's
+/// `findGroupboxObject` finds it: among the windows before `hwnd` in
+/// z-order, the first visible standard button with the group box style
+/// (`BS_GROUPBOX`, compared by the raw class name, as NVDA compares it)
+/// whose client object is a grouping and whose rectangle holds `hwnd`'s
+/// whole rectangle. A Win32 group box is the sibling of the controls inside
+/// it, not their parent, so the walk up from them never meets it
+/// otherwise. Only local window calls, but for the candidate's role.
+fn group_box_of(hwnd: isize) -> Option<(Accessible, isize)> {
+    const BS_GROUPBOX: isize = 0x7;
+    const BS_TYPEMASK: isize = 0xF;
+    // The group box's own visible style: the focus's dialog is shown, so
+    // this is NVDA's visibility check, which also asks of every parent.
+    const WS_VISIBLE_STYLE: isize = 0x1000_0000;
+    let inner = window::rect(hwnd)?;
+    let mut previous = window::related(hwnd, GW_HWNDPREV);
+    while previous != 0 {
+        if window::class_name(previous) == "Button"
+            && window::style(previous) & BS_TYPEMASK == BS_GROUPBOX
+            && window::style(previous) & WS_VISIBLE_STYLE != 0
+        {
+            let group = Accessible::from_event(previous, OBJID_CLIENT.0, CHILDID_SELF)?;
+            let outer = window::rect(previous)?;
+            let encloses = inner.left >= outer.left
+                && inner.right <= outer.right
+                && inner.top >= outer.top
+                && inner.bottom <= outer.bottom;
+            if encloses && group.role() == Some(ROLE_SYSTEM_GROUPING.cast_signed()) {
+                return Some((group, previous));
+            }
+        }
+        let next = window::related(previous, GW_HWNDPREV);
+        // A window can be its own previous window (NVDA's guard).
+        if next == previous {
+            break;
+        }
+        previous = next;
+    }
+    None
 }
 
 /// Returns whether `hwnd` is a `SysTreeView32` common control (comctl32's
