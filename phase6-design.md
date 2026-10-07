@@ -1899,7 +1899,9 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      (fonts, colors foreground and background, bold, italic, underline
      styles, strikethrough, links, and anything else), surveyed live and
      written down, then the useful ones reported through the formatting
-     stage, links among them.
+     stage, links among them. The same survey for Windows 11 Notepad:
+     every attribute and annotation it exposes that Verbatim does not yet
+     read.
   3. A typed space at the end of a terminal's line is spoken when typed,
      using the outpost's knowledge of which trailing white space is real.
   4. The terminal flood: why reporting slowed the console host 5.68 times
