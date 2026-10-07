@@ -46,4 +46,4 @@ A test never falls back to another target when its own is missing, and never cho
 ## The harness does not change what it measures
 
 - The harness injects only the input the scenario is about. It never taps keys, or uses Alt+Tab, to bring a window forward; a window that refuses the foreground fails the test.
-- Recording and other instrumentation do not change the desktop or the load a run sees.
+- Every scenario starts from the same state: all windows minimized to the desktop, whether the run is recorded or not. Recording and other instrumentation change nothing else about the desktop or the load a run sees.
