@@ -16,10 +16,12 @@
 //! start, as the edit controls report it, and the focused node's caret
 //! moves with the keys [`caret_key`] lists. The language is English
 //! (`en-US`) outside the fixture's `cultures` stretches and theirs within
-//! them, mixed over a range that holds more than one; the annotation types are the spelling error type for a range
-//! touching one of the fixture's spelling errors and unsupported
-//! otherwise, as Windows 11 Notepad reports them; the font is 11 point
-//! Consolas in black, neither italic nor underlined, its weight 700 in the
+//! them, mixed over a range that holds more than one; the annotation types
+//! are the spelling error type for a range touching one of the fixture's
+//! spelling errors and unsupported otherwise, as Windows 11 Notepad reports them; the font is 11 point
+//! Consolas in black, italic within the fixture's `italic` stretches (which
+//! the format unit does not end at, so a stretch of it holding italic and
+//! upright text reads as mixed), never underlined, its weight 700 in the
 //! fixture's bold stretches, 400 elsewhere, and mixed across both; every
 //! other text attribute is unsupported. A fixture can make the `IsItalic`
 //! read fail (`italic_fails`), as a provider that fails an attribute read.
@@ -507,7 +509,17 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             UIA_IsItalicAttributeId if formats.italic_fails => {
                 return Err(Error::from(E_FAIL));
             }
-            UIA_IsItalicAttributeId => VARIANT::from(false),
+            UIA_IsItalicAttributeId => {
+                if within(&formats.italic, start, end) {
+                    VARIANT::from(true)
+                } else if touches(&formats.italic, start, end) {
+                    // SAFETY: UIA's own sentinel object, owned by the
+                    // returned variant.
+                    sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?)
+                } else {
+                    VARIANT::from(false)
+                }
+            }
             UIA_UnderlineStyleAttributeId | UIA_ForegroundColorAttributeId => int_variant(0),
             _ => not_supported()?,
         })

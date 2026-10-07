@@ -2182,6 +2182,102 @@ fn uia_say_all_batches_cost_exactly() {
     ratchet.finish();
 }
 
+/// An operation's expected calls and provider hits.
+type Expected = (CallCounts, &'static [(&'static str, u32)]);
+
+/// The report after a focus on a line whose one format stretch reads as
+/// "mixed" for italics (mockapp's `italic.json`, "plain italic text"):
+/// read again by its four words, and the mixed word "italic " by its seven
+/// characters, ten stretches in all, with every formatting indication on,
+/// remotely and classically.
+fn uia_mixed_stretch_costs_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    let title = common::unique_title("mockapp-counts-uia-mixed");
+    let mut app = common::spawn("italic.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "caret doc 0");
+    for remote in [true, false] {
+        let mut source = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
+        let mut store = Anchors::new(Arc::default());
+        let _ = verbatim_uia::calls::take();
+        common::reset_hits(hwnd);
+        let (report, _) =
+            caret_report(&mut source, &mut store.node(1), &mut || 0, true).expect("the caret");
+        let cost = Cost {
+            calls: verbatim_uia::calls::take(),
+            hits: common::read_hits(hwnd),
+        };
+        let italics: Vec<(u32, u32, Option<bool>)> = report
+            .line
+            .formats
+            .iter()
+            .map(|run| (run.start, run.end, run.attributes.italic))
+            .collect();
+        let mut expected = vec![(0, 6, Some(false))];
+        expected.extend((6..12).map(|at| (at, at + 1, Some(true))));
+        expected.extend([
+            (12, 13, Some(false)),
+            (13, 17, Some(false)),
+            (17, 18, Some(false)),
+        ]);
+        assert_eq!(italics, expected);
+        // Twelve stretches walked (the line's one, its four words, the mixed
+        // word's seven characters), each a copy, an end moved one unit on,
+        // a comparison with the span's end, and its seven attributes; the
+        // ten appended also read their text. Before the text range audit of
+        // 2026-10-07 the line was one stretch whose italics were none.
+        let (way, expected): (&str, Expected) = if remote {
+            (
+                "remotely",
+                (
+                    calls(1, 0, 0),
+                    &[
+                        ("ProviderOptions", 2),
+                        ("GetPatternProvider", 1),
+                        ("GetPropertyValue", 1),
+                        ("HostRawElementProvider", 1),
+                        ("Navigate", 1),
+                        ("ITextProvider::GetSelection", 1),
+                        ("Clone", 18),
+                        ("CompareEndpoints", 13),
+                        ("ExpandToEnclosingUnit", 1),
+                        ("GetAttributeValue", 84),
+                        ("GetText", 12),
+                        ("MoveEndpointByUnit", 12),
+                        ("MoveEndpointByRange", 15),
+                    ],
+                ),
+            )
+        } else {
+            (
+                "classically",
+                (
+                    calls(82, 0, 0),
+                    &[
+                        ("ITextProvider::GetSelection", 1),
+                        ("Clone", 17),
+                        ("CompareEndpoints", 13),
+                        ("ExpandToEnclosingUnit", 1),
+                        ("GetAttributeValue", 84),
+                        ("GetText", 12),
+                        ("MoveEndpointByUnit", 12),
+                        ("MoveEndpointByRange", 14),
+                    ],
+                ),
+            )
+        };
+        ratchet.check(
+            &format!("UIA caret report after a focus on a mixed stretch, {way}"),
+            &cost,
+            expected.0,
+            expected.1,
+        );
+    }
+    app.quit();
+    ratchet.finish();
+}
+
 fn caret_moves_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -2307,6 +2403,10 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 fn main() {
     harness::run(&[
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
+        (
+            "uia_mixed_stretch_costs_exactly",
+            uia_mixed_stretch_costs_exactly,
+        ),
         (
             "uia_text_requests_cost_exactly",
             uia_text_requests_cost_exactly,

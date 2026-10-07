@@ -418,9 +418,16 @@ their text and the text before the caret, whose length is the offset.
 Formatting is read by UIA's format unit, as NVDA reads it: from the
 span's start, a copy's end moved one format unit on, cut at the span's
 end, its text's length and each attribute read, until the span's end or
-`MAX_RUNS` (64) stretches. A value of the wrong type, UIA's "not
-supported" or "mixed" sentinel among them, is set to null before it is
-appended, so only plain values come back. Verified on Windows 11 26200
+`MAX_RUNS` (64) stretches. A stretch with an attribute that answers UIA's
+"mixed" (the program's `IsMixedAttribute` test, `verbatim_uia::is_mixed`
+classically) is not appended: it is walked again the same way by words,
+and a mixed word by characters, as NVDA walks a mixed stretch by finer
+units, so a provider whose format unit does not end where an attribute
+changes (Windows Terminal's and the console host's do not, for italics,
+`docs/text-attributes.md`) still has each part read with its own value;
+the 64 stretches bound the whole walk. A value of the wrong type, UIA's
+"not supported" sentinel among them, or "mixed" for a single character,
+is set to null before it is appended, so only plain values come back. Verified on Windows 11 26200
 against Windows 11 Notepad (`RichEditD2DPT`), whose provider runs
 programs and reports a misspelt word's annotation types as an array
 holding 60001, and splits its format units at the error's ends; the

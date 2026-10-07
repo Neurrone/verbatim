@@ -138,8 +138,10 @@ its crate-internal modules are the reviewable surface:
   annotation types are the spelling error type (60001) for a range
   touching one of the spelling errors and unsupported otherwise, as
   Windows 11 Notepad reports them; the font is 11 point Consolas in black,
-  neither italic nor underlined, weighing 700 within a bold stretch, 400
-  outside, and mixed across both; every other attribute is unsupported,
+  never underlined, italic within the node's `italic` stretches (which the
+  format unit does not end at, so one of its stretches holding italic and
+  upright text reads as mixed, as in Windows Terminal), weighing 700
+  within a bold stretch, 400 outside, and mixed across both; every other attribute is unsupported,
   and a node with `italic_fails` set fails its `IsItalic` read with
   `E_FAIL`, as a provider that fails an attribute read. A range handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
@@ -337,6 +339,8 @@ handling of an active text position change, which makes no call. Say-all's
 batches of twenty lines are pinned over `text.json`'s text replaced by
 forty-five lines, and a batch whose lines differ in language over
 `tests/fixtures/languages.json` (lines in English, French, and German, by
-its `cultures`), which `text.rs` also reads both ways. On a
+its `cultures`), which `text.rs` also reads both ways; and a line's
+formatting whose one stretch is mixed for italics, over
+`tests/fixtures/italic.json`, read again by words and characters. On a
 mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

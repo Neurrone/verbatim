@@ -995,3 +995,32 @@ remote operations on or off.
 - Handling a change: no call and no provider call, 0.002 ms at the
   median. A change reached a registration 0.13 ms at the median after
   mockapp was told to raise it (100 runs).
+
+## The text range audit
+
+What auditing Verbatim's text range code against Microsoft's guidance
+changed (`phase6-design.md`, item 14 of the work scheduled on 2026-10-07):
+"Using IUIAutomationTextRange", "Understanding Performance Issues When
+Using the Text and TextRange Control Patterns", and the reference pages of
+`ITextRangeProvider` and `IUIAutomationTextRange`. Each change is pinned by
+`crates/mockapp/tests/call_counts.rs` on both paths; say-all's batches and
+the caret report after a focus are given above, with the counts before.
+
+### A stretch whose attribute is mixed
+
+`GetAttributeValue` answers UIA's "mixed" sentinel when an attribute
+varies across the range. Verbatim read it, on both paths, as no value: a
+provider whose format unit does not end where italics change (Windows
+Terminal's and the console host's, `docs/text-attributes.md`) had its
+italics lost. A stretch with a mixed attribute is now read again by its
+words, and a mixed word by its characters, as NVDA reads one, up to the
+64 stretches a span may have. Ordinary text costs nothing more, since the
+mixed test is made on values already read.
+
+- mockapp's `italic.json`, "plain italic text" as one format stretch with
+  "italic" in italics, every formatting indication on (the caret report
+  after a focus): 82 calls classically, where a stretch read as one cost
+  34 for mockapp's four-stretch line; 1 remotely, its program walking the
+  twelve stretches (the line's, four words, seven characters) inside the
+  provider with 84 attribute reads. Before, the line was read as one
+  stretch whose italics were none.
