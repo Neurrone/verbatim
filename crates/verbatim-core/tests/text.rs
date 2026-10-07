@@ -12,7 +12,7 @@ use verbatim_model::{
     TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextUnit, TraceId,
     TypingEcho, UtteranceSegment,
 };
-use verbatim_model::{FormatRun, TextAttributes, TextFormat};
+use verbatim_model::{BulletStyle, FormatRun, LineStyle, TextAttributes, TextFormat};
 
 const OUTPOST: OutpostId = OutpostId(1);
 
@@ -2039,6 +2039,210 @@ fn bold_starts_and_ends_and_a_font_change_is_named() {
     assert_eq!(
         answered(&mut state, CaretMotion::NextLine, next, None),
         vec![format(TextFormat::NotBold), UtteranceSegment::text("next")]
+    );
+}
+
+/// `chunk` with formatting: each stretch a byte range and its attributes.
+fn formatted(mut chunk: TextChunk, stretches: Vec<(u32, u32, TextAttributes)>) -> TextChunk {
+    chunk.formats = stretches
+        .into_iter()
+        .map(|(start, end, attributes)| FormatRun {
+            start,
+            end,
+            attributes,
+        })
+        .collect();
+    chunk
+}
+
+/// Answers a caret key with `line`, and with `unit` at the caret, checking
+/// that speech is its one effect, and returns what it says.
+fn answered_alone(
+    state: &mut SrState,
+    motion: CaretMotion,
+    line: TextChunk,
+    unit: Option<TextChunk>,
+) -> Vec<UtteranceSegment> {
+    let effects = reduce(state, &key(motion, false));
+    let effects = reduce(
+        state,
+        &completed(request_of(&effects), caret_reply(true, line, unit)),
+    );
+    assert!(
+        matches!(effects.as_slice(), [Effect::Speak(_)]),
+        "speech alone: {effects:?}"
+    );
+    spoken(&effects)
+}
+
+#[test]
+fn a_heading_says_its_size_and_a_list_item_its_bullet_before_its_text() {
+    let mut state = editing("first\n", 0);
+    let size = |points: &str| TextAttributes {
+        font_size: Some(points.to_owned()),
+        ..TextAttributes::default()
+    };
+    let heading = formatted(
+        line("Title\n", 101, 0),
+        vec![(0, 5, size("28.0 pt")), (5, 6, size("11.0 pt"))],
+    );
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, heading, None),
+        vec![
+            format(TextFormat::FontSize("28.0 pt".to_owned())),
+            UtteranceSegment::text("Title"),
+        ],
+        "the line break, not part of the line's content, changes nothing"
+    );
+    let bulleted = TextAttributes {
+        bullet: Some(BulletStyle::FilledRound),
+        ..size("11.0 pt")
+    };
+    let item = || formatted(line("item\n", 102, 0), vec![(0, 5, bulleted.clone())]);
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, item(), None),
+        vec![
+            format(TextFormat::FontSize("11.0 pt".to_owned())),
+            format(TextFormat::Bullet(BulletStyle::FilledRound)),
+            UtteranceSegment::text("item"),
+        ],
+        "the bullet after the changes"
+    );
+    // Every line read says its bullet, which is no change of formatting.
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, item(), None),
+        vec![
+            format(TextFormat::Bullet(BulletStyle::FilledRound)),
+            UtteranceSegment::text("item"),
+        ]
+    );
+    // A word says none.
+    let word = formatted(
+        TextChunk {
+            unit: TextUnit::Word,
+            ..line("item", 201, 0)
+        },
+        vec![(0, 4, bulleted.clone())],
+    );
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextWord, item(), Some(word)),
+        vec![UtteranceSegment::text("item")]
+    );
+    // A line out of the list says nothing of it.
+    let plain = formatted(
+        line("after\n", 103, 0),
+        vec![(
+            0,
+            6,
+            TextAttributes {
+                bullet: Some(BulletStyle::None),
+                ..size("11.0 pt")
+            },
+        )],
+    );
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, plain, None),
+        vec![UtteranceSegment::text("after")]
+    );
+}
+
+#[test]
+fn a_background_color_is_named_alone_or_after_the_color() {
+    let mut state = editing("first\n", 0);
+    let colored = |color: &str, background: &str| TextAttributes {
+        color: Some(color.to_owned()),
+        background_color: Some(background.to_owned()),
+        ..TextAttributes::default()
+    };
+    let line = formatted(
+        line("one two three four\n", 101, 0),
+        vec![
+            (0, 4, colored("black", "white")),
+            (4, 8, colored("dark red", "light grey")),
+            (8, 14, colored("dark red", "white")),
+            (14, 19, colored("black", "white")),
+        ],
+    );
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, line, None),
+        vec![
+            format(TextFormat::Color("black".to_owned())),
+            format(TextFormat::OnBackgroundColor("white".to_owned())),
+            UtteranceSegment::text("one"),
+            format(TextFormat::Color("dark red".to_owned())),
+            format(TextFormat::OnBackgroundColor("light grey".to_owned())),
+            UtteranceSegment::text("two"),
+            format(TextFormat::BackgroundColor("white".to_owned())),
+            UtteranceSegment::text("three"),
+            format(TextFormat::Color("black".to_owned())),
+            UtteranceSegment::text("four"),
+        ]
+    );
+}
+
+#[test]
+fn strikethrough_and_the_kind_of_underline_start_change_and_end() {
+    let mut state = editing("first\n", 0);
+    let drawn = |strikethrough, underline_style| TextAttributes {
+        strikethrough: Some(strikethrough),
+        underline_style: Some(underline_style),
+        // Read for the font attributes too; the kind is reported instead.
+        underline: Some(underline_style != LineStyle::None),
+        ..TextAttributes::default()
+    };
+    let line = formatted(
+        line("a b c d e\n", 101, 0),
+        vec![
+            (0, 2, drawn(LineStyle::None, LineStyle::None)),
+            (2, 4, drawn(LineStyle::Single, LineStyle::Double)),
+            (4, 6, drawn(LineStyle::Double, LineStyle::Wavy)),
+            (6, 8, drawn(LineStyle::Double, LineStyle::Single)),
+            (8, 10, drawn(LineStyle::None, LineStyle::None)),
+        ],
+    );
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, line, None),
+        vec![
+            UtteranceSegment::text("a"),
+            format(TextFormat::Strikethrough(LineStyle::Single)),
+            format(TextFormat::UnderlineStyle(LineStyle::Double)),
+            UtteranceSegment::text("b"),
+            format(TextFormat::Strikethrough(LineStyle::Double)),
+            format(TextFormat::UnderlineStyle(LineStyle::Wavy)),
+            UtteranceSegment::text("c"),
+            format(TextFormat::UnderlineStyle(LineStyle::Single)),
+            UtteranceSegment::text("d"),
+            format(TextFormat::Strikethrough(LineStyle::None)),
+            format(TextFormat::UnderlineStyle(LineStyle::None)),
+            UtteranceSegment::text("e"),
+        ]
+    );
+}
+
+#[test]
+fn a_link_is_said_where_it_starts_and_where_it_ends() {
+    let mut state = editing("first\n", 0);
+    let linked = |link| TextAttributes {
+        link,
+        ..TextAttributes::default()
+    };
+    let line = formatted(
+        line("see the page here\n", 101, 0),
+        vec![
+            (0, 8, linked(false)),
+            (8, 12, linked(true)),
+            (12, 18, linked(false)),
+        ],
+    );
+    assert_eq!(
+        answered_alone(&mut state, CaretMotion::NextLine, line, None),
+        vec![
+            UtteranceSegment::text("see the"),
+            format(TextFormat::Link),
+            UtteranceSegment::text("page"),
+            format(TextFormat::NotLink),
+            UtteranceSegment::text("here"),
+        ]
     );
 }
 

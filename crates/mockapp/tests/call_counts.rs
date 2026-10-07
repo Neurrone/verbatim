@@ -49,8 +49,8 @@ use std::time::Instant;
 
 use verbatim_model::{CallCounts, Fetches, NodeSnapshot, QueryKind, Role, TreeNode, WindowHandle};
 use verbatim_model::{
-    CaretWait, CaretWatch, PreviousSelection, TextAttributes, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextUnit, Theme,
+    CaretWait, CaretWatch, LineStyle, PreviousSelection, TextAttributes, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit, Theme,
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
@@ -63,7 +63,7 @@ use verbatim_uia::{
     CACHED_PROPERTIES, ElementExt, FOCUS_PROPERTIES, NodeIdRegistry, Registration, Scope,
     Subscription, Uia,
 };
-use verbatim_uia_rops::{FocusAncestry, FocusQuery, focus_ancestry};
+use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -1348,7 +1348,8 @@ fn measure_focus_report(
     cost
 }
 
-/// The attributes the default theme reads: the errors alone.
+/// The attributes the default theme reads: the errors, and links, which
+/// mockapp's text without styles does not support.
 fn errors_only(_bold: bool, spelling_error: bool) -> TextAttributes {
     TextAttributes {
         spelling_error,
@@ -1356,7 +1357,9 @@ fn errors_only(_bold: bool, spelling_error: bool) -> TextAttributes {
     }
 }
 
-/// Every attribute mockapp reports, as the outpost reads it.
+/// Every attribute mockapp's text without styles reports, as the outpost
+/// reads it: strikethrough, the background color, bullets, and links are
+/// not supported, and read as none.
 fn every_attribute(bold: bool, spelling_error: bool) -> TextAttributes {
     TextAttributes {
         spelling_error,
@@ -1367,13 +1370,23 @@ fn every_attribute(bold: bool, spelling_error: bool) -> TextAttributes {
         bold: Some(bold),
         italic: Some(false),
         underline: Some(false),
+        underline_style: Some(LineStyle::None),
+        strikethrough: None,
+        background_color: None,
+        bullet: None,
+        link: false,
     }
 }
 
 /// A caret move, a caret report, the report after a focus with its
 /// line's formatting, and a wait that finds nothing, through UIA, remotely
 /// or classically, with the default theme's formatting (spelling and
-/// grammar errors).
+/// grammar errors, and links). The report after a focus is measured twice
+/// for the same text, as the outpost keeps what it learned of the control
+/// between reads: the first read learns that mockapp's text without styles
+/// does not support links (or, with every indication on, strikethrough,
+/// the background color, and bullets too), and the second no longer asks
+/// for them.
 #[expect(
     clippy::too_many_lines,
     reason = "both ways' pinned provider hits, listed in full"
@@ -1388,19 +1401,33 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     let (polls, waited) = measure_fruitless_wait(&mut app, hwnd, &mut source);
     assert_eq!(polls, 11, "every 10 milliseconds for 100");
     let focus_report = measure_focus_report(hwnd, &mut source, errors_only);
-    // The same report with every formatting indication on: seven attributes
-    // per stretch, the annotation types, font name and size, weight,
-    // italic, underline style, and color.
+    let focus_again = measure_focus_report(hwnd, &mut source, errors_only);
+    // The same report with every formatting indication on: eleven
+    // attributes per stretch, the annotation types, font name and size,
+    // weight, italic, underline style, strikethrough style, color,
+    // background color, bullet style, and link, until the four mockapp
+    // does not support are learned.
     let mut formatted = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
     let formatted_report = measure_focus_report(hwnd, &mut formatted, every_attribute);
+    let formatted_again = measure_focus_report(hwnd, &mut formatted, every_attribute);
+    assert_eq!(
+        formatted.known_support().unsupported,
+        Attributes::of(&[
+            TextAttribute::StrikethroughStyle,
+            TextAttribute::BackgroundColor,
+            TextAttribute::BulletStyle,
+            TextAttribute::Link,
+        ])
+    );
     // The caret's read, the evidence, the line and the caret's offset
-    // in it, and the character's spelling error.
+    // in it, and the character's spelling error and link, which a
+    // character's read never learns are not supported.
     let move_hits = [
         ("ITextProvider::GetSelection", 1),
         ("Clone", 3),
         ("CompareEndpoints", 2),
         ("ExpandToEnclosingUnit", 2),
-        ("GetAttributeValue", 1),
+        ("GetAttributeValue", 2),
         ("GetText", 2),
         ("MoveEndpointByRange", 1),
     ];
@@ -1412,30 +1439,38 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         ("GetText", 2),
         ("MoveEndpointByRange", 1),
     ];
-    // The report's, and the line walked by the format unit: four
-    // stretches, each compared with the line's end (the last cut there),
-    // read, and its annotations read, and the walk moved on after each but
-    // the last. 39 classically before the text range audit of 2026-10-07,
-    // which found that the comparison of where the next stretch starts
-    // repeated the one before it.
-    let focus_hits = [
-        ("ITextProvider::GetSelection", 1),
-        ("Clone", 7),
-        ("CompareEndpoints", 5),
-        ("ExpandToEnclosingUnit", 1),
-        ("GetAttributeValue", 4),
-        ("GetText", 6),
-        ("MoveEndpointByUnit", 4),
-        ("MoveEndpointByRange", 6),
-    ];
-    // The same, with seven attributes read for each of the four stretches.
-    let formatted_hits: Vec<(&'static str, u32)> = focus_hits
-        .iter()
-        .map(|&(name, count)| match name {
-            "GetAttributeValue" => (name, 28),
-            _ => (name, count),
-        })
-        .collect();
+    // The report's; the line's annotation types, which it has, and, while
+    // their support is not known, the attributes being learned, asked of
+    // the line; and the line walked by the format unit: four stretches,
+    // each compared with the line's end (the last cut there), read, and its
+    // attributes read, and the walk moved on after each but the last. 39
+    // classically before the text range audit of 2026-10-07, which found
+    // that the comparison of where the next stretch starts repeated the one
+    // before it.
+    let with_attributes = |reads: u32| -> Vec<(&'static str, u32)> {
+        [
+            ("ITextProvider::GetSelection", 1),
+            ("Clone", 7),
+            ("CompareEndpoints", 5),
+            ("ExpandToEnclosingUnit", 1),
+            ("GetAttributeValue", reads),
+            ("GetText", 6),
+            ("MoveEndpointByUnit", 4),
+            ("MoveEndpointByRange", 6),
+        ]
+        .to_vec()
+    };
+    // The line's annotation types and link, then two attributes per
+    // stretch; once links are known to be unsupported, the line's
+    // annotation types and one per stretch.
+    let focus_hits = with_attributes(2 + 4 * 2);
+    let focus_again_hits = with_attributes(1 + 4);
+    // The line's annotation types and the ten others being learned, then
+    // eleven attributes per stretch; once four are known to be
+    // unsupported and the rest supported, the line's annotation types and
+    // seven per stretch.
+    let formatted_hits = with_attributes(11 + 4 * 11);
+    let formatted_again_hits = with_attributes(1 + 4 * 7);
     if remote {
         // One round trip each. Inside the provider the program also
         // copies the collapsed caret before using it, one clone and one
@@ -1467,10 +1502,22 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &remote_hits(1, &plus_copy(&focus_hits)),
         );
         ratchet.check(
+            "UIA caret report after a focus, links learned, remotely",
+            &focus_again,
+            calls(1, 0, 0),
+            &remote_hits(1, &plus_copy(&focus_again_hits)),
+        );
+        ratchet.check(
             "UIA caret report after a focus with every attribute, remotely",
             &formatted_report,
             calls(1, 0, 0),
             &remote_hits(1, &plus_copy(&formatted_hits)),
+        );
+        ratchet.check(
+            "UIA caret report after a focus with every attribute learned, remotely",
+            &formatted_again,
+            calls(1, 0, 0),
+            &remote_hits(1, &plus_copy(&formatted_again_hits)),
         );
         // One round trip per read, each the whole read: the read that
         // finds the evidence is the answer.
@@ -1493,21 +1540,37 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             calls(8, 0, 0),
             &report_hits,
         );
+        // The caret report's 8, one call asking the line for its
+        // annotation types and the attributes being learned, and the walk's
+        // 26, with one `GetAttributeValues` call per stretch for all its
+        // attributes (`IUIAutomationTextRange3`), which the provider
+        // answers one attribute at a time: 35 however many attributes are
+        // read (34 before the line was asked first; 63 with seven
+        // attributes when each attribute was a call; 39 before the text
+        // range audit).
         ratchet.check(
             "UIA caret report after a focus, classically",
             &focus_report,
-            calls(34, 0, 0),
+            calls(35, 0, 0),
             &focus_hits,
         );
-        // One `GetAttributeValues` call per stretch for all seven
-        // attributes (`IUIAutomationTextRange3`), which the provider answers
-        // one attribute at a time; 63 calls when each attribute was a call,
-        // 39 before the text range audit.
+        ratchet.check(
+            "UIA caret report after a focus, links learned, classically",
+            &focus_again,
+            calls(35, 0, 0),
+            &focus_again_hits,
+        );
         ratchet.check(
             "UIA caret report after a focus with every attribute, classically",
             &formatted_report,
-            calls(34, 0, 0),
+            calls(35, 0, 0),
             &formatted_hits,
+        );
+        ratchet.check(
+            "UIA caret report after a focus with every attribute learned, classically",
+            &formatted_again,
+            calls(35, 0, 0),
+            &formatted_again_hits,
         );
         ratchet.check(
             "UIA caret wait finding nothing, classically",
@@ -1888,6 +1951,8 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         .map(|change| (change.selected, change.text.as_str(), change.characters))
         .collect();
     assert_eq!(changes, [(true, "alpha", 5)]);
+    // The character's spelling error and link: two attribute reads (one
+    // before the default theme reported links).
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -1902,7 +1967,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Clone", 5),
                 ("CompareEndpoints", 8),
                 ("ExpandToEnclosingUnit", 2),
-                ("GetAttributeValue", 1),
+                ("GetAttributeValue", 2),
                 ("GetText", 3),
                 ("MoveEndpointByRange", 4),
             ],
@@ -1916,7 +1981,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Clone", 4),
                 ("CompareEndpoints", 8),
                 ("ExpandToEnclosingUnit", 2),
-                ("GetAttributeValue", 1),
+                ("GetAttributeValue", 2),
                 ("GetText", 3),
                 ("MoveEndpointByRange", 3),
             ],
@@ -2222,10 +2287,15 @@ fn uia_mixed_stretch_costs_exactly() {
             (17, 18, Some(false)),
         ]);
         assert_eq!(italics, expected);
-        // Twelve stretches walked (the line's one, its four words, the mixed
-        // word's seven characters), each a copy, an end moved one unit on,
-        // a comparison with the span's end, and its seven attributes; the
-        // ten appended also read their text. Before the text range audit of
+        // The line's annotation types, which it has none of, and the ten
+        // other attributes, being learned; and twelve stretches walked (the
+        // line's one, its four words, the mixed word's seven characters),
+        // each a copy, an end moved one unit on, a comparison with the
+        // span's end, and its attributes but the annotation types, ten; the
+        // ten appended also read their text.
+        // Before the line's annotation types were asked first, each
+        // stretch read them too, and there were seven attributes in all
+        // (84 reads, 82 calls classically). Before the text range audit of
         // 2026-10-07 the line was one stretch whose italics were none.
         let (way, expected): (&str, Expected) = if remote {
             (
@@ -2242,7 +2312,7 @@ fn uia_mixed_stretch_costs_exactly() {
                         ("Clone", 18),
                         ("CompareEndpoints", 13),
                         ("ExpandToEnclosingUnit", 1),
-                        ("GetAttributeValue", 84),
+                        ("GetAttributeValue", 131),
                         ("GetText", 12),
                         ("MoveEndpointByUnit", 12),
                         ("MoveEndpointByRange", 15),
@@ -2253,13 +2323,13 @@ fn uia_mixed_stretch_costs_exactly() {
             (
                 "classically",
                 (
-                    calls(82, 0, 0),
+                    calls(83, 0, 0),
                     &[
                         ("ITextProvider::GetSelection", 1),
                         ("Clone", 17),
                         ("CompareEndpoints", 13),
                         ("ExpandToEnclosingUnit", 1),
-                        ("GetAttributeValue", 84),
+                        ("GetAttributeValue", 131),
                         ("GetText", 12),
                         ("MoveEndpointByUnit", 12),
                         ("MoveEndpointByRange", 14),

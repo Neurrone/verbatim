@@ -414,6 +414,7 @@ fn emit_tail(
         b.subtract_assign(back, reading);
         let first = c.collapsed(b, last);
         let went = b.text_range_move(first, c.line, back);
+        crate::text::emit_backward_count(b, went);
         b.set(rows, c.one);
         b.subtract_assign(rows, went);
         b.text_range_move_endpoint_by_range(first, c.end, last, c.end);

@@ -32,9 +32,10 @@ use verbatim_uia::text::Endpoint;
 use verbatim_uia::{NodeIdRegistry, Uia};
 use verbatim_uia_rops::{
     Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
-    RangeAction, RangeEnd, RangeQuery, RunAttributes, TextFrom, TextTarget, UnitsAnswer,
-    UnitsQuery, caret_read_classic, caret_read_remote, text_location_classic, text_location_remote,
-    text_range_classic, text_range_remote, text_units_classic, text_units_remote,
+    RangeAction, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget,
+    UnitsAnswer, UnitsQuery, caret_read_classic, caret_read_remote, text_location_classic,
+    text_location_remote, text_range_classic, text_range_remote, text_units_classic,
+    text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, TextUnit_Word};
@@ -456,6 +457,9 @@ fn mock_attributes(spelling_error: bool, bold: bool) -> RunAttributes {
         italic: Some(false),
         underline: Some(0),
         color: Some(0),
+        // Not supported by mockapp's text without styles: strikethrough,
+        // the background color, bullets, and links.
+        ..RunAttributes::default()
     }
 }
 
@@ -470,12 +474,7 @@ fn remote_and_classic_caret_reads_agree() {
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
     let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let all = Attributes {
-        annotations: true,
-        font: true,
-        font_attributes: true,
-        color: true,
-    };
+    let all = Attributes::ALL;
     let query = |formats, unit| CaretQuery {
         element: &element,
         pattern: &pattern,
@@ -485,6 +484,7 @@ fn remote_and_classic_caret_reads_agree() {
         unit,
         formats,
         attributes: all,
+        learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
     };
@@ -512,7 +512,7 @@ fn remote_and_classic_caret_reads_agree() {
     assert_eq!(character.runs, [(0, mock_attributes(true, false))]);
     // Only what the theme asks for: no attributes, no formatting.
     let mut nothing = query(Some(FormatSpan::Line), None);
-    nothing.attributes = Attributes::default();
+    nothing.attributes = Attributes::NONE;
     assert_eq!(caret_both(&nothing).runs, []);
 
     // The evidence: compared with where the caret was, and the selection.
@@ -603,12 +603,8 @@ fn a_failing_attribute_is_not_supported() {
         previous_selection: None,
         unit: None,
         formats: Some(FormatSpan::Character),
-        attributes: Attributes {
-            annotations: true,
-            font: true,
-            font_attributes: true,
-            color: true,
-        },
+        attributes: Attributes::ALL,
+        learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
     };
@@ -649,12 +645,8 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         previous_selection: None,
         unit: None,
         formats: Some(FormatSpan::Line),
-        attributes: Attributes {
-            annotations: true,
-            font: true,
-            font_attributes: true,
-            color: true,
-        },
+        attributes: Attributes::ALL,
+        learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
     };
@@ -829,7 +821,8 @@ fn remote_and_classic_text_reads_agree() {
         previous_selection: None,
         unit: None,
         formats: None,
-        attributes: Attributes::default(),
+        attributes: Attributes::NONE,
+        learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
     })
@@ -967,10 +960,272 @@ fn edit_control_text_reads_moves_and_answers_caret_keys() {
     app.quit();
 }
 
+/// The attributes mockapp's `formatting.json` reports for plain text, every
+/// attribute supported.
+fn plain_formatting() -> RunAttributes {
+    RunAttributes {
+        spelling_error: false,
+        grammar_error: false,
+        font_name: Some("Consolas".to_owned()),
+        font_size: Some(11.0),
+        font_weight: Some(400),
+        italic: Some(false),
+        underline: Some(0),
+        strikethrough: Some(0),
+        color: Some(0),
+        background_color: Some(0x00FF_FFFF),
+        bullet_style: Some(0),
+        link: Some(false),
+    }
+}
+
+/// Every attribute Verbatim reads, over mockapp's `formatting.json`, which
+/// supports them all: a heading's font size, a background color,
+/// strikethrough, a double underline, a link, and a bullet, each its own
+/// stretch, the same remotely and classically; and, for an attribute being
+/// learned, that the provider supports it, from a line but not from a
+/// character.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each line's stretches listed in full"
+)]
+fn every_attribute_is_read_both_ways() {
+    common::init_com();
+    let title = common::unique_title("mockapp-every-attribute");
+    let mut app = common::spawn("formatting.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let learning = Attributes::ALL.without(Attributes::of(&[TextAttribute::Annotations]));
+    let query = |formats| CaretQuery {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+        since: None,
+        previous_selection: None,
+        unit: None,
+        formats: Some(formats),
+        attributes: Attributes::ALL,
+        learning,
+        max_text: 1024,
+        max_change_text: 1024,
+    };
+    let plain = plain_formatting;
+    let read = |formats| {
+        let remote = caret_read_remote(&query(formats)).expect("the remote program runs");
+        let classic = caret_read_classic(&query(formats)).expect("the classic reads run");
+        assert_eq!(remote.unsupported, classic.unsupported);
+        let unsupported = remote.unsupported;
+        let remote = summary(&remote);
+        assert_eq!(remote, summary(&classic));
+        (remote.runs, unsupported)
+    };
+
+    common::apply(&mut app, hwnd, "caret doc 0");
+    assert_eq!(
+        read(FormatSpan::Line),
+        (
+            vec![
+                (
+                    5,
+                    RunAttributes {
+                        font_size: Some(28.0),
+                        ..plain()
+                    }
+                ),
+                (1, plain()),
+            ],
+            Some(Attributes::NONE)
+        ),
+        "the heading's size; every attribute supported"
+    );
+    common::apply(&mut app, hwnd, "caret doc 6");
+    assert_eq!(
+        read(FormatSpan::Line),
+        (
+            vec![
+                (
+                    5,
+                    RunAttributes {
+                        background_color: Some(0x00C0_C0C0),
+                        ..plain()
+                    }
+                ),
+                (1, plain()),
+                (
+                    6,
+                    RunAttributes {
+                        strikethrough: Some(1),
+                        ..plain()
+                    }
+                ),
+                (1, plain()),
+                (
+                    6,
+                    RunAttributes {
+                        underline: Some(3),
+                        ..plain()
+                    }
+                ),
+                (1, plain()),
+                (
+                    4,
+                    RunAttributes {
+                        link: Some(true),
+                        ..plain()
+                    }
+                ),
+                (1, plain()),
+            ],
+            Some(Attributes::NONE)
+        )
+    );
+    common::apply(&mut app, hwnd, "caret doc 31");
+    assert_eq!(
+        read(FormatSpan::Line),
+        (
+            vec![(
+                5,
+                RunAttributes {
+                    bullet_style: Some(2),
+                    ..plain()
+                }
+            )],
+            Some(Attributes::NONE)
+        )
+    );
+    assert_eq!(
+        read(FormatSpan::Character),
+        (
+            vec![(
+                0,
+                RunAttributes {
+                    bullet_style: Some(2),
+                    ..plain()
+                }
+            )],
+            None
+        ),
+        "nothing learned from a character"
+    );
+    app.quit();
+}
+
+/// mockapp's text without styles (`text.json`) does not support
+/// strikethrough, the background color, bullets, or links, as Windows
+/// Terminal does not: UIA answers "not supported" for each, which both
+/// ways read as no value and report as unsupported, from a line; the
+/// annotation types are never reported, though the text between spelling
+/// errors answers "not supported" for them.
+fn unsupported_attributes_are_found_both_ways() {
+    common::init_com();
+    let title = common::unique_title("mockapp-unsupported-attributes");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let query = CaretQuery {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+        since: None,
+        previous_selection: None,
+        unit: None,
+        formats: Some(FormatSpan::Line),
+        attributes: Attributes::ALL,
+        learning: Attributes::ALL,
+        max_text: 1024,
+        max_change_text: 1024,
+    };
+    let unsupported = Some(Attributes::of(&[
+        TextAttribute::StrikethroughStyle,
+        TextAttribute::BackgroundColor,
+        TextAttribute::BulletStyle,
+        TextAttribute::Link,
+    ]));
+    // "gamma", with no spelling error: its annotation types are not
+    // supported, which says nothing about the provider.
+    common::apply(&mut app, hwnd, "caret doc 11");
+    let remote = caret_read_remote(&query).expect("the remote program runs");
+    let classic = caret_read_classic(&query).expect("the classic reads run");
+    assert_eq!(summary(&remote), summary(&classic));
+    assert_eq!(
+        summary(&remote).runs,
+        [(6, mock_attributes(false, false))],
+        "the unsupported attributes read as none"
+    );
+    assert_eq!(remote.unsupported, unsupported);
+    assert_eq!(classic.unsupported, unsupported);
+    app.quit();
+}
+
+/// A provider whose backward moves answer with a positive count
+/// (`backward_moves.json`), as some do: the count is corrected to a
+/// negative one, as NVDA corrects it, the same remotely and classically.
+fn a_backward_move_is_counted_backward_both_ways() {
+    common::init_com();
+    let title = common::unique_title("mockapp-backward-moves");
+    let mut app = common::spawn("backward_moves.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let target = TextTarget {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+    };
+    let units = |unit, count| {
+        let query = UnitsQuery {
+            target,
+            from: TextFrom::Caret,
+            movement: Some(Movement::By(unit, count)),
+            unit,
+            count: 1,
+            max_text: 1024,
+            max_total: 1024,
+            culture: false,
+        };
+        let remote = text_units_remote(&query).expect("the remote program runs");
+        let classic = text_units_classic(&query).expect("the classic reads run");
+        let remote = units_summary(&remote);
+        assert_eq!(remote, units_summary(&classic));
+        remote
+    };
+    common::apply(&mut app, hwnd, "caret doc 6");
+    assert_eq!(
+        units(TextUnit_Word, -1),
+        (-1, vec![("alpha ".to_owned(), 0, None)], false),
+        "from \"beta\" back to \"alpha\""
+    );
+    common::apply(&mut app, hwnd, "caret doc 13");
+    assert_eq!(
+        units(TextUnit_Line, -1),
+        (-1, vec![("alpha beta\n".to_owned(), 0, None)], false)
+    );
+    assert_eq!(
+        units(TextUnit_Line, 1),
+        (1, vec![(String::new(), 0, None)], false),
+        "forward moves are as they were"
+    );
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        (
+            "every_attribute_is_read_both_ways",
+            every_attribute_is_read_both_ways,
+        ),
+        (
+            "unsupported_attributes_are_found_both_ways",
+            unsupported_attributes_are_found_both_ways,
+        ),
+        (
+            "a_backward_move_is_counted_backward_both_ways",
+            a_backward_move_is_counted_backward_both_ways,
+        ),
         (
             "a_failing_attribute_is_not_supported",
             a_failing_attribute_is_not_supported,

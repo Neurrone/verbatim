@@ -1200,9 +1200,14 @@ verified.
   reporting](nvda/document-formatting.md)). Verbatim: **different**, by
   design: each is an indication in the theme, off, speech, sound, or
   speech and sound, with NVDA's defaults in the default theme (font name,
-  size, color, and font attributes off; descriptions, positions, and
-  shortcuts spoken). An indication set to off is also not fetched where
-  the reducer decides what is fetched. **Unverified**.
+  size, color, background color, font attributes, strikethrough, and the
+  kind of underline off; descriptions, positions, shortcuts, and links in
+  text spoken). Strikethrough, which NVDA groups with the font
+  attributes, and the background color, which it groups with the color,
+  are indications of their own; the kind of underline and the bullet
+  style, which NVDA does not report through UIA, are Verbatim's own and
+  off by default. An indication set to off is also not fetched where the
+  reducer decides what is fetched. **Unverified**.
 - Formatting while the caret moves (milestone M4 item 7). NVDA: the
   formatting last spoken is kept per object, and a unit read speaks only
   what changed, at its start and where it changes inside it, an error's
@@ -1210,13 +1215,51 @@ verified.
   reporting](nvda/document-formatting.md), "The cache, attribute by
   attribute"). Verbatim: **matched** for caret keys and a focus's first
   line, through UIA, with spelling and grammar errors, font name and size,
-  color, bold, italic, and underline; NVDA's other formatting (styles,
-  alignment, indentation, links, comments, and the rest) is **not yet**,
-  nor is formatting while reviewing or reading with say-all. The standard
-  edit controls report no formatting (NVDA moves their selection to read
-  each character's, which Verbatim does not do). Colors are named in
-  English only. **Verified** live for spelling errors in Windows 11
-  Notepad.
+  color, bold, italic, and underline, and since 2026-10-07 the background
+  color (with NVDA's "dark red on light grey" and "light grey
+  background"), strikethrough ("strikethrough", "double strikethrough",
+  "no strikethrough"), and links ("link", "out of link", at every unit as
+  NVDA says them, through UIA's link attribute). **Different**, by
+  design: the kind of underline, which NVDA reads only as underlined or
+  not, is an indication of its own that, when on, says the kind where
+  the font attributes say "underlined" ("double underline", "wave
+  underline", Microsoft Word's names, which NVDA uses for Word's underline
+  commands; a single underline is still "underlined", and its end "not
+  underlined"); and a list item's bullet, from UIA's bullet style, which
+  NVDA does not read, is spoken as NVDA speaks Word's line prefix, at the
+  start of each line read and never for a word or a character, named as
+  NVDA names the bullet's character ("bullet", "white bullet", "black
+  square"). NVDA's other formatting (styles, alignment, indentation,
+  comments, and the rest) is **not yet**, nor is formatting while
+  reviewing or reading with say-all. The standard edit controls report
+  no formatting (NVDA moves their selection to read each character's,
+  which Verbatim does not do). Colors are named in English only.
+  **Verified** live for spelling errors in Windows 11 Notepad; the
+  attributes added on 2026-10-07 are **unverified** live, tested against
+  mockapp.
+- Which text attributes are fetched. NVDA: every attribute its settings
+  ask for, on every read, whatever the control supports ([Document
+  formatting reporting](nvda/document-formatting.md), "UIA providers").
+  Verbatim: **different**, by design (`phase6-design.md`, "Terminal
+  decisions"): the attributes the theme's indications ask for, among
+  those the focused control supports, learned from the control itself.
+  An attribute a line answers "not supported" for, while its support is
+  not yet known, is not asked again while the outpost keeps the node;
+  one answered otherwise is supported and no longer checked. The
+  annotation types are never learned that way, since Windows 11 Notepad
+  answers "not supported" for text without annotations; instead a line
+  is asked for them once, and its stretches only when it has some, which
+  NVDA does not do. Hidden text (`IsHidden`) is never read. No list of
+  applications is involved.
+- Text range moves. NVDA: a backward `Move` or `MoveEndpointByUnit` that a
+  provider answers with a positive count is counted as negative
+  ([Document formatting reporting](nvda/document-formatting.md), "A UIA
+  text range move"). Verbatim: **matched since 2026-10-07** on both
+  paths: the classic reads correct every such count
+  (`verbatim_uia::text::signed_move`), and the remote programs correct
+  the counts whose sign they use (a units read's movement, a terminal's
+  tail); tested with mockapp's `backward_moves.json` and
+  `terminal_backward_moves.json`.
 - Synth isolation. NVDA: in-process drivers (crash = NVDA crash),
   one out-of-process precedent ([Synth drivers](nvda/synth-drivers.md)).
   Verbatim: **different (D6)** — native synth host out of process
@@ -1436,8 +1479,9 @@ verified.
 - Document formatting reporting (the option vocabulary and the
   cache-and-diff announcement model). NVDA:
   [Document formatting reporting](nvda/document-formatting.md).
-  Verbatim: **not yet (M4)** — the diff-not-per-run behavior is the
-  parity-critical core.
+  Verbatim: **partial**: the cache-and-diff model is matched for caret
+  keys and a focus's line ("Formatting while the caret moves" under
+  "Speech and audio"), and the options are theme indications.
 - The role-shaped behavior layer (progress bars, dialog text
   harvesting, suggestion sounds, fake table rows, tooltips/toasts).
   NVDA: the behavior mixins ([Object model](nvda/object-model.md)).

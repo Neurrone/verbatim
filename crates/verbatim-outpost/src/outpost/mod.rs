@@ -98,6 +98,10 @@ pub(crate) struct Context {
     edit_anchors: Mutex<Anchors<u32>>,
     /// Each UIA node's text patterns, once fetched.
     patterns: Mutex<HashMap<u64, text_reads::Patterns>>,
+    /// What each UIA node's text is known to support of the text
+    /// attributes, learned from its answers and kept, like its patterns,
+    /// until the node is released.
+    text_support: Mutex<HashMap<u64, crate::text::uia::TextSupport>>,
     /// The node whose caret the worker last read, and when that read began,
     /// in microseconds: a caret event observed before it changes nothing
     /// the read did not see.
@@ -180,6 +184,12 @@ impl Context {
 
     fn patterns(&self) -> MutexGuard<'_, HashMap<u64, text_reads::Patterns>> {
         self.patterns.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn text_support(&self) -> MutexGuard<'_, HashMap<u64, crate::text::uia::TextSupport>> {
+        self.text_support
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Records that the worker is reading `node`'s caret now.
@@ -329,6 +339,7 @@ impl Outpost {
             uia_anchors: Mutex::new(Anchors::new(Arc::clone(&anchor_counter))),
             edit_anchors: Mutex::new(Anchors::new(anchor_counter)),
             patterns: Mutex::new(HashMap::new()),
+            text_support: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(None),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),

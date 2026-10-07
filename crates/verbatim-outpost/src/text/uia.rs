@@ -24,6 +24,17 @@
 //! theme asks for ([`Fetches`]), converted here to the model's
 //! [`TextAttributes`] (`docs/nvda/document-formatting.md`, "UIA
 //! providers").
+//!
+//! Which attributes are read is generic, never by application: those the
+//! theme's indications ask for, among those the control supports. Support
+//! is learned from the control itself ([`TextSupport`]): an attribute UIA
+//! answers "not supported" for, over every stretch of a line read, is one
+//! the control does not support, and is not asked again while the control
+//! is read; one it answers otherwise is supported, and no longer watched.
+//! The annotation types are never learned that way, as a provider may
+//! answer "not supported" for text without annotations; the caret read
+//! asks a line for them once, and its stretches only when it has some.
+//! `IsHidden` is never read.
 
 use std::cmp::Ordering;
 
@@ -34,12 +45,13 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 
 use verbatim_model::{
-    Fetches, MAX_READ_AHEAD_TEXT, TextAttributes, TextMovement, TextReply, TextUnit,
+    BulletStyle, Fetches, LineStyle, MAX_READ_AHEAD_TEXT, TextAttributes, TextMovement, TextReply,
+    TextUnit,
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range, uia_text_unit};
 use verbatim_uia_rops::{
     Attributes, CaretQuery, FoundPoint, LocationQuery, Movement, Path, Position, RangeEnd,
-    RangeQuery, RunAttributes, TextFrom, TextTarget, UnitsQuery,
+    RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
 };
 
 use super::{
@@ -184,8 +196,21 @@ pub struct UiaText {
     pattern2: Option<IUIAutomationTextPattern2>,
     terminal: bool,
     remote: bool,
-    attributes: Attributes,
+    fetches: Fetches,
+    support: TextSupport,
     fallback: Option<verbatim_uia_rops::Error>,
+}
+
+/// What a control is known to support of the text attributes the caret
+/// read can read, learned from its own answers and kept by the outpost for
+/// as long as the control is read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextSupport {
+    /// The attributes it answered "not supported" for: never asked again.
+    pub unsupported: Attributes,
+    /// The attributes it answered with something else: asked without
+    /// watching for "not supported".
+    pub supported: Attributes,
 }
 
 impl UiaText {
@@ -207,7 +232,8 @@ impl UiaText {
             pattern2,
             terminal,
             remote: true,
-            attributes: attributes_for(Fetches::default()),
+            fetches: Fetches::default(),
+            support: TextSupport::default(),
             fallback: None,
         }
     }
@@ -224,8 +250,22 @@ impl UiaText {
     /// indications are on.
     #[must_use]
     pub fn fetches(mut self, fetches: Fetches) -> Self {
-        self.attributes = attributes_for(fetches);
+        self.fetches = fetches;
         self
+    }
+
+    /// What the control is already known to support, from earlier reads.
+    #[must_use]
+    pub fn support(mut self, support: TextSupport) -> Self {
+        self.support = support;
+        self
+    }
+
+    /// What the control is known to support now, the earlier reads' and
+    /// this text's, for the caller to keep for the next read.
+    #[must_use]
+    pub fn known_support(&self) -> TextSupport {
+        self.support
     }
 
     /// The remote operation's error, when a caret read fell back to the
@@ -530,6 +570,10 @@ impl TextSource for UiaText {
         };
         // A unit this text does not have is not read.
         let unit = request.unit.and_then(|unit| self.unit(unit));
+        let attributes = attributes_for(self.fetches).without(self.support.unsupported);
+        let learning = attributes
+            .without(self.support.supported)
+            .without(Attributes::NONE.with(TextAttribute::Annotations));
         let query = CaretQuery {
             element: &self.element,
             pattern: &self.pattern,
@@ -544,13 +588,18 @@ impl TextSource for UiaText {
                 FormatSpan::Unit => verbatim_uia_rops::FormatSpan::Unit,
                 FormatSpan::Line => verbatim_uia_rops::FormatSpan::Line,
             }),
-            attributes: self.attributes,
+            attributes,
+            learning,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
             max_change_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
         };
         let (answer, path) =
             verbatim_uia_rops::caret_read(&query, self.remote).map_err(rops_failed)?;
         self.note(path);
+        if let Some(unsupported) = answer.unsupported {
+            self.support.unsupported = self.support.unsupported.union(unsupported);
+            self.support.supported = self.support.supported.union(learning.without(unsupported));
+        }
         let caret = UiaPos::new(&answer.caret, Endpoint::Start, answer.collapsed)?;
         let selection = match &answer.selection {
             Some(range) => Some((
@@ -566,7 +615,11 @@ impl TextSource for UiaText {
         let mut formats = Vec::with_capacity(answer.runs.len());
         let mut at = 0;
         for run in answer.runs {
-            formats.push((at, at + run.length, attributes_of(&run.attributes)));
+            formats.push((
+                at,
+                at + run.length,
+                attributes_of(&run.attributes, self.fetches),
+            ));
             at += run.length;
         }
         Ok(Some(CaretRead {
@@ -718,29 +771,104 @@ fn unit_read(read: verbatim_uia_rops::UnitRead) -> TextResult<(Unit<UiaPos>, usi
 
 /// The attributes to read for the details the theme wants.
 fn attributes_for(fetches: Fetches) -> Attributes {
-    Attributes {
-        annotations: fetches.spelling_errors || fetches.grammar_errors,
-        font: fetches.font,
-        font_attributes: fetches.font_attributes,
-        color: fetches.color,
+    let mut attributes = Attributes::NONE;
+    for (wanted, read) in [
+        (
+            fetches.spelling_errors || fetches.grammar_errors,
+            &[TextAttribute::Annotations][..],
+        ),
+        (fetches.font_name, &[TextAttribute::FontName]),
+        (fetches.font_size, &[TextAttribute::FontSize]),
+        (
+            fetches.font_attributes,
+            &[
+                TextAttribute::FontWeight,
+                TextAttribute::Italic,
+                TextAttribute::UnderlineStyle,
+            ],
+        ),
+        (fetches.underline_style, &[TextAttribute::UnderlineStyle]),
+        (fetches.strikethrough, &[TextAttribute::StrikethroughStyle]),
+        (fetches.color, &[TextAttribute::ForegroundColor]),
+        (fetches.background_color, &[TextAttribute::BackgroundColor]),
+        (fetches.bullet_style, &[TextAttribute::BulletStyle]),
+        (fetches.link, &[TextAttribute::Link]),
+    ] {
+        if wanted {
+            attributes = attributes.union(Attributes::of(read));
+        }
     }
+    attributes
 }
 
 /// A stretch's attributes in the model's words, as NVDA words UIA's: bold
 /// from a weight of 700 or more, underlined from any underline style but
-/// none, the size in points ("11.0 pt"), and the color by its name.
-fn attributes_of(run: &RunAttributes) -> TextAttributes {
+/// none, the size in points ("11.0 pt"), the colors by their names, and the
+/// line and bullet styles by UIA's numbers (`docs/nvda/document-formatting.md`,
+/// "UIA providers"). The underline style is read for the font attributes
+/// and for the kind of underline alike, and given to each that `fetches`
+/// asks for.
+fn attributes_of(run: &RunAttributes, fetches: Fetches) -> TextAttributes {
+    let color_name = |color: i32| super::color::color_name(color.cast_unsigned());
     TextAttributes {
         spelling_error: run.spelling_error,
         grammar_error: run.grammar_error,
         font_name: run.font_name.clone(),
         font_size: run.font_size.map(|size| format!("{size:?} pt")),
-        color: run
-            .color
-            .map(|color| super::color::color_name(color.cast_unsigned())),
+        color: run.color.map(color_name),
         bold: run.font_weight.map(|weight| weight >= 700),
         italic: run.italic,
-        underline: run.underline.map(|style| style != 0),
+        underline: run
+            .underline
+            .filter(|_| fetches.font_attributes)
+            .map(|style| style != 0),
+        underline_style: run
+            .underline
+            .filter(|_| fetches.underline_style)
+            .map(line_style),
+        strikethrough: run.strikethrough.map(line_style),
+        background_color: run.background_color.map(color_name),
+        bullet: run.bullet_style.map(bullet_style),
+        link: run.link == Some(true),
+    }
+}
+
+/// UIA's text decoration line style (`TextDecorationLineStyle`) as the
+/// model's.
+fn line_style(style: i32) -> LineStyle {
+    match style {
+        0 => LineStyle::None,
+        1 => LineStyle::Single,
+        2 => LineStyle::WordsOnly,
+        3 => LineStyle::Double,
+        4 => LineStyle::Dotted,
+        5 => LineStyle::Dashed,
+        6 => LineStyle::DotDash,
+        7 => LineStyle::DotDotDash,
+        8 => LineStyle::Wavy,
+        9 => LineStyle::Thick,
+        11 => LineStyle::DoubleWavy,
+        12 => LineStyle::ThickWavy,
+        13 => LineStyle::LongDash,
+        14 => LineStyle::ThickDashed,
+        15 => LineStyle::ThickDotDash,
+        16 => LineStyle::ThickDotDotDash,
+        17 => LineStyle::ThickDotted,
+        18 => LineStyle::ThickLongDash,
+        _ => LineStyle::Other,
+    }
+}
+
+/// UIA's bullet style (`BulletStyle`) as the model's.
+fn bullet_style(style: i32) -> BulletStyle {
+    match style {
+        0 => BulletStyle::None,
+        1 => BulletStyle::HollowRound,
+        2 => BulletStyle::FilledRound,
+        3 => BulletStyle::HollowSquare,
+        4 => BulletStyle::FilledSquare,
+        5 => BulletStyle::Dash,
+        _ => BulletStyle::Other,
     }
 }
 

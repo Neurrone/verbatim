@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Terminal Backward Moves Fixture",
+  "children": [
+    {
+      "id": "term",
+      "role": "editable_text",
+      "name": "Terminal",
+      "states": ["focusable"],
+      "text": "one\ntwo\nthree\nfour\nfive\nready>",
+      "backward_moves_positive": true
+    }
+  ]
+}

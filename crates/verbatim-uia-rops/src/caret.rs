@@ -22,9 +22,11 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
     IUIAutomationTextRange, TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line,
-    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_FontNameAttributeId,
-    UIA_FontSizeAttributeId, UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId,
-    UIA_IsItalicAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
+    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId,
+    UIA_BulletStyleAttributeId, UIA_FontNameAttributeId, UIA_FontSizeAttributeId,
+    UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId,
+    UIA_LinkAttributeId, UIA_StrikethroughStyleAttributeId, UIA_TEXTATTRIBUTE_ID,
+    UIA_UnderlineStyleAttributeId,
 };
 
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range};
@@ -66,73 +68,133 @@ pub enum FormatSpan {
     Line,
 }
 
-/// Which text attributes to read, each only when its indication is on.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent attributes, each read or not"
-)]
-pub struct Attributes {
+/// A text attribute the caret read can read, each read only when an
+/// indication of the theme asks for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextAttribute {
     /// The annotation types, for spelling and grammar errors.
-    pub annotations: bool,
-    /// The font's name and size.
-    pub font: bool,
-    /// Font weight, italic, and underline style.
-    pub font_attributes: bool,
+    Annotations,
+    /// The font's name.
+    FontName,
+    /// The font's size.
+    FontSize,
+    /// The font's weight.
+    FontWeight,
+    /// Italic.
+    Italic,
+    /// The underline style.
+    UnderlineStyle,
+    /// The strikethrough style.
+    StrikethroughStyle,
     /// The foreground color.
-    pub color: bool,
+    ForegroundColor,
+    /// The background color.
+    BackgroundColor,
+    /// The bullet style of a list item.
+    BulletStyle,
+    /// The link attribute.
+    Link,
 }
+
+impl TextAttribute {
+    /// Every attribute, in the order a read gives them.
+    pub const ALL: [Self; 11] = [
+        Self::Annotations,
+        Self::FontName,
+        Self::FontSize,
+        Self::FontWeight,
+        Self::Italic,
+        Self::UnderlineStyle,
+        Self::StrikethroughStyle,
+        Self::ForegroundColor,
+        Self::BackgroundColor,
+        Self::BulletStyle,
+        Self::Link,
+    ];
+
+    /// UIA's id of the attribute.
+    #[must_use]
+    pub const fn id(self) -> UIA_TEXTATTRIBUTE_ID {
+        match self {
+            Self::Annotations => UIA_AnnotationTypesAttributeId,
+            Self::FontName => UIA_FontNameAttributeId,
+            Self::FontSize => UIA_FontSizeAttributeId,
+            Self::FontWeight => UIA_FontWeightAttributeId,
+            Self::Italic => UIA_IsItalicAttributeId,
+            Self::UnderlineStyle => UIA_UnderlineStyleAttributeId,
+            Self::StrikethroughStyle => UIA_StrikethroughStyleAttributeId,
+            Self::ForegroundColor => UIA_ForegroundColorAttributeId,
+            Self::BackgroundColor => UIA_BackgroundColorAttributeId,
+            Self::BulletStyle => UIA_BulletStyleAttributeId,
+            Self::Link => UIA_LinkAttributeId,
+        }
+    }
+
+    /// The attribute's bit in [`Attributes`].
+    const fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
+}
+
+/// A set of [`TextAttribute`]s: which to read, or which a provider was
+/// found not to support.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Attributes(u16);
 
 impl Attributes {
-    /// The attribute ids read, in the order the answer gives them.
-    fn ids(self) -> Vec<(Attribute, UIA_TEXTATTRIBUTE_ID)> {
-        let mut ids = Vec::new();
-        if self.annotations {
-            ids.push((Attribute::Annotations, UIA_AnnotationTypesAttributeId));
-        }
-        if self.font {
-            ids.push((Attribute::FontName, UIA_FontNameAttributeId));
-            ids.push((Attribute::FontSize, UIA_FontSizeAttributeId));
-        }
-        if self.font_attributes {
-            ids.push((Attribute::FontWeight, UIA_FontWeightAttributeId));
-            ids.push((Attribute::Italic, UIA_IsItalicAttributeId));
-            ids.push((Attribute::Underline, UIA_UnderlineStyleAttributeId));
-        }
-        if self.color {
-            ids.push((Attribute::Color, UIA_ForegroundColorAttributeId));
-        }
-        ids
-    }
+    /// No attribute.
+    pub const NONE: Self = Self(0);
 
-    /// Whether any attribute is read.
+    /// Every attribute.
+    pub const ALL: Self = Self::of(&TextAttribute::ALL);
+
+    /// The set of `attributes`.
     #[must_use]
-    pub fn any(self) -> bool {
-        self.annotations || self.font || self.font_attributes || self.color
-    }
-}
-
-/// One attribute read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Attribute {
-    Annotations,
-    FontName,
-    FontSize,
-    FontWeight,
-    Italic,
-    Underline,
-    Color,
-}
-
-impl Attribute {
-    /// The type its value has when the provider gives one.
-    fn test(self) -> TypeTest {
-        match self {
-            Self::Annotations | Self::FontWeight | Self::Underline | Self::Color => TypeTest::Int,
-            Self::FontName => TypeTest::String,
-            Self::FontSize => TypeTest::Double,
-            Self::Italic => TypeTest::Bool,
+    pub const fn of(attributes: &[TextAttribute]) -> Self {
+        let mut bits = 0;
+        let mut index = 0;
+        while index < attributes.len() {
+            bits |= attributes[index].bit();
+            index += 1;
         }
+        Self(bits)
+    }
+
+    /// This set and `attribute`.
+    #[must_use]
+    pub const fn with(self, attribute: TextAttribute) -> Self {
+        Self(self.0 | attribute.bit())
+    }
+
+    /// Whether `attribute` is in the set.
+    #[must_use]
+    pub const fn contains(self, attribute: TextAttribute) -> bool {
+        self.0 & attribute.bit() != 0
+    }
+
+    /// Both sets together.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// This set without the attributes of `other`.
+    #[must_use]
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    /// Whether the set is empty.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The attributes in the set, in the order of [`TextAttribute::ALL`].
+    pub fn iter(self) -> impl Iterator<Item = TextAttribute> {
+        TextAttribute::ALL
+            .into_iter()
+            .filter(move |attribute| self.contains(*attribute))
     }
 }
 
@@ -157,6 +219,12 @@ pub struct CaretQuery<'a> {
     pub formats: Option<FormatSpan>,
     /// The attributes to read.
     pub attributes: Attributes,
+    /// Those of [`attributes`](Self::attributes) whose support is not yet
+    /// known: the answer says which of them the provider answered "not
+    /// supported" for ([`CaretAnswer::unsupported`]). The annotation types
+    /// are never learned this way, since a provider may answer "not
+    /// supported" for text without annotations (Windows 11 Notepad does).
+    pub learning: Attributes,
     /// The most UTF-16 code units of text read for a line or a unit.
     pub max_text: i32,
     /// The most UTF-16 code units read for each selection change, when the
@@ -204,8 +272,17 @@ pub struct RunAttributes {
     pub italic: Option<bool>,
     /// The underline style (0 none).
     pub underline: Option<i32>,
+    /// The strikethrough style (0 none).
+    pub strikethrough: Option<i32>,
     /// The foreground color, a `COLORREF` (0x00bbggrr).
     pub color: Option<i32>,
+    /// The background color, a `COLORREF`.
+    pub background_color: Option<i32>,
+    /// The bullet style (0 none).
+    pub bullet_style: Option<i32>,
+    /// Whether the stretch is a link: `None` when the provider does not
+    /// support links, false where it says there is none.
+    pub link: Option<bool>,
 }
 
 /// One stretch of formatting: how many UTF-16 code units of the span's text
@@ -249,6 +326,13 @@ pub struct CaretAnswer {
     /// changes, then the end side. Empty when the selection did not move;
     /// `None` without a previous selection.
     pub changes: Option<Vec<SelectionTextChange>>,
+    /// Of the query's [`learning`](CaretQuery::learning) attributes, those
+    /// the provider answered "not supported" for in every stretch read:
+    /// attributes it does not support; the rest of them it supports.
+    /// Learned only from the formatting of a line or a unit with text, and
+    /// `None` for any other read: a character's one read, or an empty
+    /// line's, says too little about the provider.
+    pub unsupported: Option<Attributes>,
 }
 
 /// The signature both implementations share.
@@ -365,12 +449,23 @@ pub(crate) fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String
     })
 }
 
-/// The registers of the formatting read: the stretches' lengths, and one
-/// array per attribute read (two for the annotations: spelling, then
-/// grammar).
+/// The registers of the formatting read: the stretches' lengths; one array
+/// per attribute read, of the values as the provider gave them; and, for
+/// each attribute being learned, whether the span answered "not supported"
+/// for it.
 struct RunRegisters {
     lengths: Reg<kind::Array>,
-    values: Vec<(Attribute, Reg<kind::Array>, Option<Reg<kind::Array>>)>,
+    values: Vec<(TextAttribute, Reg<kind::Array>)>,
+    unsupported: Vec<(TextAttribute, Reg<kind::Bool>)>,
+}
+
+/// What a walk reads of each stretch: the attributes, and, when the span
+/// was asked for its annotation types first, whether it has any, so a
+/// stretch's are read only when it does.
+#[derive(Clone, Copy)]
+struct Reads<'a> {
+    ids: &'a [TextAttribute],
+    annotations: Option<Reg<kind::Bool>>,
 }
 
 /// The units a span's formatting is walked by, coarsest first: UIA's format
@@ -381,18 +476,28 @@ struct RunRegisters {
 /// as none.
 const WALK_UNITS: [TextUnit; 3] = [TextUnit_Format, TextUnit_Word, TextUnit_Character];
 
-/// Emits the reads of `run`'s attributes, in the order of `ids`, and
+/// Emits the reads of `run`'s attributes, in the order of `reads.ids`, and
 /// whether any of them answered UIA's "mixed".
 fn emit_attribute_reads(
     b: &mut Builder,
     run: Reg<kind::TextRange>,
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    reads: Reads<'_>,
 ) -> (Vec<Reg<kind::Any>>, Reg<kind::Bool>) {
     let mixed = b.new_bool(false);
-    let mut values = Vec::with_capacity(ids.len());
-    for (_, id) in ids {
-        let id = b.int(id.0);
-        let value = b.text_range_get_attribute_value(run, id);
+    let mut values = Vec::with_capacity(reads.ids.len());
+    for &attribute in reads.ids {
+        let id = b.int(attribute.id().0);
+        let value = match (attribute, reads.annotations) {
+            (TextAttribute::Annotations, Some(present)) => {
+                let value = b.new_null();
+                b.if_(present, |b| {
+                    let read = b.text_range_get_attribute_value(run, id);
+                    b.set(value, read);
+                });
+                value
+            }
+            _ => b.text_range_get_attribute_value(run, id),
+        };
         let this = b.is(TypeTest::MixedAttribute, value);
         b.or_assign(mixed, this);
         values.push(value);
@@ -401,115 +506,101 @@ fn emit_attribute_reads(
 }
 
 /// Emits the appending of the attribute values [`emit_attribute_reads`]
-/// read, each to its array.
-fn emit_attributes(
-    b: &mut Builder,
-    read: &[Reg<kind::Any>],
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
-    registers: &RunRegisters,
-) {
-    for (((attribute, _), (_, values, grammar)), &value) in
-        ids.iter().zip(&registers.values).zip(read)
-    {
-        if *attribute == Attribute::Annotations {
-            let spelling = b.new_bool(false);
-            let grammar_error = b.new_bool(false);
-            let spelling_type = b.int(ANNOTATION_SPELLING_ERROR);
-            let grammar_type = b.int(ANNOTATION_GRAMMAR_ERROR);
-            // One annotation type may come as a single integer.
-            let single = b.is(TypeTest::Int, value);
-            b.if_(single, |b| {
-                let value = value.assume::<kind::Int>();
-                let is_spelling = b.equal(value, spelling_type);
-                b.if_(is_spelling, |b| {
-                    let yes = b.bool(true);
-                    b.set(spelling, yes);
-                });
-                let is_grammar = b.equal(value, grammar_type);
-                b.if_(is_grammar, |b| {
-                    let yes = b.bool(true);
-                    b.set(grammar_error, yes);
-                });
-            });
-            let array = b.is(TypeTest::Array, value);
-            b.if_(array, |b| {
-                let types = value.assume::<kind::Array>();
-                let size = b.array_size(types);
-                let index = b.new_uint(0);
-                b.while_(
-                    |b| b.compare(index, size, Comparison::LessThan),
-                    |b| {
-                        let item = b.array_get_at(types, index).assume::<kind::Int>();
-                        let is_spelling = b.equal(item, spelling_type);
-                        b.if_(is_spelling, |b| {
-                            let yes = b.bool(true);
-                            b.set(spelling, yes);
-                        });
-                        let is_grammar = b.equal(item, grammar_type);
-                        b.if_(is_grammar, |b| {
-                            let yes = b.bool(true);
-                            b.set(grammar_error, yes);
-                        });
-                        let one = b.uint(1);
-                        b.add_assign(index, one);
-                    },
-                );
-            });
-            b.array_append(*values, spelling);
-            if let Some(grammar) = grammar {
-                b.array_append(*grammar, grammar_error);
-            }
-        } else {
-            // A sentinel ("not supported", "mixed") or a value of another
-            // type is returned as null.
-            let wanted = b.is(attribute.test(), value);
-            let other = b.not(wanted);
-            b.if_(other, |b| {
-                let null = b.new_null();
-                b.set(value, null);
-            });
-            b.array_append(*values, value);
-        }
+/// read, each to its array, as the provider gave them: the caller reads
+/// them by their types ([`RunRegisters::read`]), so the program spends no
+/// instructions on them.
+fn emit_attributes(b: &mut Builder, read: &[Reg<kind::Any>], registers: &RunRegisters) {
+    for (&(_, values), &value) in registers.values.iter().zip(read) {
+        b.array_append(values, value);
     }
 }
 
-/// Emits the formatting read of `span`: one stretch for a character, and
-/// otherwise a walk by the format unit, each stretch cut at the span's end,
-/// and a stretch with a mixed attribute walked again by finer units
-/// ([`WALK_UNITS`]), up to [`MAX_RUNS`] stretches in all.
+/// Emits the formatting read of `span`, whose text is `text`: one stretch
+/// for a character, and otherwise a walk by the format unit, each stretch
+/// cut at the span's end, and a stretch with a mixed attribute walked again
+/// by finer units ([`WALK_UNITS`]), up to [`MAX_RUNS`] stretches in all.
+/// The annotation types are asked of the whole span first, and of each
+/// stretch only when the span has some; a span with none and nothing else
+/// to read is one stretch, never walked. Each attribute of `learning` but
+/// the annotation types is asked of the whole span too, whose "not
+/// supported" says the provider does not support it.
 fn emit_runs(
     b: &mut Builder,
     c: &Constants,
-    span: Reg<kind::TextRange>,
+    (span, text): (Reg<kind::TextRange>, Reg<kind::Str>),
     character: bool,
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    ids: &[TextAttribute],
+    learning: Attributes,
 ) -> RunRegisters {
     let lengths = b.new_array();
     let lengths = b.add_to_results(lengths);
     let mut values = Vec::new();
-    for (attribute, _) in ids {
+    let mut unsupported = Vec::new();
+    for &attribute in ids {
         let array = b.new_array();
-        let array = b.add_to_results(array);
-        let grammar = (*attribute == Attribute::Annotations).then(|| {
-            let array = b.new_array();
-            b.add_to_results(array)
-        });
-        values.push((*attribute, array, grammar));
+        values.push((attribute, b.add_to_results(array)));
+        if learning.contains(attribute) && attribute != TextAttribute::Annotations && !character {
+            let id = b.int(attribute.id().0);
+            let value = b.text_range_get_attribute_value(span, id);
+            let not_supported = b.is(TypeTest::NotSupported, value);
+            unsupported.push((attribute, b.add_to_results(not_supported)));
+        }
     }
-    let registers = RunRegisters { lengths, values };
+    let registers = RunRegisters {
+        lengths,
+        values,
+        unsupported,
+    };
     if character {
         // A character is one stretch, covering it whatever its length.
         let length = b.uint(0);
         b.array_append(lengths, length);
-        let (read, _) = emit_attribute_reads(b, span, ids);
-        emit_attributes(b, &read, ids, &registers);
+        let reads = Reads {
+            ids,
+            annotations: None,
+        };
+        let (read, _) = emit_attribute_reads(b, span, reads);
+        emit_attributes(b, &read, &registers);
         return registers;
     }
     let count = Count {
         runs: b.new_int(0),
         limit: b.int(i32::try_from(MAX_RUNS).unwrap_or(i32::MAX)),
     };
-    emit_walk(b, c, span, 0, ids, &registers, count);
+    if !ids.contains(&TextAttribute::Annotations) {
+        let reads = Reads {
+            ids,
+            annotations: None,
+        };
+        emit_walk(b, c, span, 0, reads, &registers, count);
+        return registers;
+    }
+    let id = b.int(TextAttribute::Annotations.id().0);
+    let types = b.text_range_get_attribute_value(span, id);
+    let none = b.is(TypeTest::NotSupported, types);
+    let present = b.not(none);
+    let reads = Reads {
+        ids,
+        annotations: Some(present),
+    };
+    if ids.len() == 1 {
+        b.if_else(
+            present,
+            |b| emit_walk(b, c, span, 0, reads, &registers, count),
+            |b| {
+                // No annotations and nothing else to read: the span is one
+                // stretch, with none.
+                let length = b.string_size(text);
+                b.array_append(lengths, length);
+                let null = b.new_null();
+                for &(_, values) in &registers.values {
+                    b.array_append(values, null);
+                }
+            },
+        );
+    } else {
+        emit_walk(b, c, span, 0, reads, &registers, count);
+    }
     registers
 }
 
@@ -531,7 +622,7 @@ fn emit_walk(
     c: &Constants,
     span: Reg<kind::TextRange>,
     level: usize,
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    reads: Reads<'_>,
     registers: &RunRegisters,
     count: Count,
 ) {
@@ -550,18 +641,18 @@ fn emit_walk(
             b.if_(cut, |b| {
                 b.text_range_move_endpoint_by_range(run, c.end, span, c.end);
             });
-            let (read, mixed) = emit_attribute_reads(b, run, ids);
+            let (read, mixed) = emit_attribute_reads(b, run, reads);
             let append = |b: &mut Builder| {
                 let text = b.text_range_get_text(run, c.max_text);
                 let length = b.string_size(text);
                 b.array_append(registers.lengths, length);
-                emit_attributes(b, &read, ids, registers);
+                emit_attributes(b, &read, registers);
                 b.add_assign(count.runs, c.one);
             };
             if level + 1 < WALK_UNITS.len() {
                 b.if_else(
                     mixed,
-                    |b| emit_walk(b, c, run, level + 1, ids, registers, count),
+                    |b| emit_walk(b, c, run, level + 1, reads, registers, count),
                     append,
                 );
             } else {
@@ -586,48 +677,60 @@ fn emit_walk(
 }
 
 impl RunRegisters {
-    /// The stretches, from the arrays the program filled.
+    /// The stretches, from the arrays the program filled: each value read
+    /// by its type, a sentinel ("not supported", "mixed") or a value of
+    /// another type as none.
     fn read(&self, outcome: &Outcome) -> Result<Vec<Run>, Error> {
         let lengths = outcome.get(self.lengths)?;
         let mut columns = Vec::new();
-        for (attribute, values, grammar) in &self.values {
-            let grammar = match grammar {
-                Some(grammar) => Some(outcome.get(*grammar)?),
-                None => None,
-            };
-            columns.push((*attribute, outcome.get(*values)?, grammar));
+        for (attribute, values) in &self.values {
+            columns.push((*attribute, outcome.get(*values)?));
         }
         Ok(lengths
             .iter()
             .enumerate()
             .map(|(index, length)| {
                 let mut attributes = RunAttributes::default();
-                for (attribute, values, grammar) in &columns {
+                for (attribute, values) in &columns {
                     let value = values.get(index);
                     match attribute {
-                        Attribute::Annotations => {
-                            attributes.spelling_error = matches!(value, Some(Value::Bool(true)));
-                            attributes.grammar_error = matches!(
-                                grammar.as_ref().and_then(|grammar| grammar.get(index)),
-                                Some(Value::Bool(true))
-                            );
+                        TextAttribute::Annotations => {
+                            let types = annotation_types(value);
+                            attributes.spelling_error = types.contains(&ANNOTATION_SPELLING_ERROR);
+                            attributes.grammar_error = types.contains(&ANNOTATION_GRAMMAR_ERROR);
                         }
-                        Attribute::FontName => {
+                        TextAttribute::FontName => {
                             attributes.font_name = match value {
                                 Some(Value::String(name)) if !name.is_empty() => Some(name.clone()),
                                 _ => None,
                             };
                         }
-                        Attribute::FontSize => attributes.font_size = double(value),
-                        Attribute::FontWeight => attributes.font_weight = int(value),
-                        Attribute::Italic => {
+                        TextAttribute::FontSize => attributes.font_size = double(value),
+                        TextAttribute::FontWeight => attributes.font_weight = int(value),
+                        TextAttribute::Italic => {
                             attributes.italic = match value {
                                 Some(Value::Bool(italic)) => Some(*italic),
                                 _ => None,
                             };
                         }
-                        Attribute::Underline => attributes.underline = int(value),
-                        Attribute::Color => attributes.color = int(value),
+                        TextAttribute::UnderlineStyle => attributes.underline = int(value),
+                        TextAttribute::StrikethroughStyle => {
+                            attributes.strikethrough = int(value);
+                        }
+                        TextAttribute::ForegroundColor => attributes.color = int(value),
+                        TextAttribute::BackgroundColor => {
+                            attributes.background_color = int(value);
+                        }
+                        TextAttribute::BulletStyle => attributes.bullet_style = int(value),
+                        TextAttribute::Link => {
+                            // A link's value is the range it leads to; no
+                            // link is null.
+                            attributes.link = match value {
+                                Some(Value::TextRange(_)) => Some(true),
+                                Some(Value::Null) => Some(false),
+                                _ => None,
+                            };
+                        }
                     }
                 }
                 Run {
@@ -640,6 +743,29 @@ impl RunRegisters {
                 }
             })
             .collect())
+    }
+
+    /// The attributes being learned that the span answered "not supported"
+    /// for.
+    fn unsupported(&self, outcome: &Outcome) -> Result<Attributes, Error> {
+        let mut unsupported = Attributes::NONE;
+        for &(attribute, flag) in &self.unsupported {
+            if outcome.get(flag)? {
+                unsupported = unsupported.with(attribute);
+            }
+        }
+        Ok(unsupported)
+    }
+}
+
+/// The annotation types a value returned holds: an array of them, or one
+/// alone as a single integer; none for anything else.
+fn annotation_types(value: Option<&Value>) -> Vec<i32> {
+    match value {
+        Some(Value::IntArray(types)) => types.clone(),
+        Some(Value::Array(items)) => items.iter().filter_map(|item| int(Some(item))).collect(),
+        Some(single) => int(Some(single)).into_iter().collect(),
+        None => Vec::new(),
     }
 }
 
@@ -738,20 +864,29 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         let unit = b.int(unit.0);
         c.unit_at(&mut b, point, unit)
     });
-    let ids = query.attributes.ids();
+    let ids: Vec<TextAttribute> = query.attributes.iter().collect();
     let runs = match query.formats {
         Some(span) if !ids.is_empty() => {
-            let (range, character) = match span {
-                FormatSpan::Line => (line.range, false),
-                FormatSpan::Unit => (unit.map_or(line.range, |unit| unit.range), false),
+            let (range, text, character) = match span {
+                FormatSpan::Line => (line.range, line.text, false),
+                FormatSpan::Unit => unit.map_or((line.range, line.text, false), |unit| {
+                    (unit.range, unit.text, false)
+                }),
                 FormatSpan::Character => {
                     let character = b.text_range_clone(point);
                     let unit = b.int(TextUnit_Character.0);
                     b.text_range_expand_to_enclosing_unit(character, unit);
-                    (character, true)
+                    (character, line.text, true)
                 }
             };
-            Some(emit_runs(&mut b, &c, range, character, &ids))
+            Some(emit_runs(
+                &mut b,
+                &c,
+                (range, text),
+                character,
+                &ids,
+                query.learning,
+            ))
         }
         _ => None,
     };
@@ -765,22 +900,44 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
     } else {
         None
     };
+    let line = line.read(&outcome)?;
+    let unit = unit.map(|unit| unit.read(&outcome)).transpose()?;
+    let (runs, unsupported) = match runs {
+        Some(runs) => {
+            let unsupported = if spoken_text(query.formats, &line, unit.as_ref()) {
+                Some(runs.unsupported(&outcome)?)
+            } else {
+                None
+            };
+            (runs.read(&outcome)?, unsupported)
+        }
+        None => (Vec::new(), None),
+    };
     Ok(CaretAnswer {
         caret: caret_range,
         collapsed: outcome.get(collapsed)?,
         selection,
         moved: outcome.get(moved)?,
         selection_moved: outcome.get(selection_moved)?,
-        line: line.read(&outcome)?,
-        unit: unit.map(|unit| unit.read(&outcome)).transpose()?,
-        runs: runs
-            .map(|runs| runs.read(&outcome))
-            .transpose()?
-            .unwrap_or_default(),
+        line,
+        unit,
+        runs,
         changes: changes
             .map(|(selected, texts)| read_changes(&outcome, selected, texts))
             .transpose()?,
+        unsupported,
     })
+}
+
+/// Whether the formatting read was of a line or a unit with text, the only
+/// reads support is learned from: a character's one read, or an empty
+/// line's, says too little about the provider.
+fn spoken_text(formats: Option<FormatSpan>, line: &UnitRead, unit: Option<&UnitRead>) -> bool {
+    match formats {
+        Some(FormatSpan::Line) => !line.text.is_empty(),
+        Some(FormatSpan::Unit) => !unit.unwrap_or(line).text.is_empty(),
+        Some(FormatSpan::Character) | None => false,
+    }
 }
 
 /// A position in a program: a range register and the endpoint's number.
@@ -1000,38 +1157,62 @@ fn unit_at(
 /// one call each; an attribute whose read fails is not supported.
 fn attribute_values(
     run: &IUIAutomationTextRange,
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    ids: &[TextAttribute],
 ) -> Result<Vec<VARIANT>, Error> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(run.attributes(&ids.iter().map(|(_, id)| *id).collect::<Vec<_>>())?)
+    Ok(run.attributes(
+        &ids.iter()
+            .map(|attribute| attribute.id())
+            .collect::<Vec<_>>(),
+    )?)
 }
 
 /// The attributes `values` give, read in the order of `ids`: a sentinel,
 /// "mixed" or "not supported", or a value of another type, as none.
-fn attributes_of(ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)], values: &[VARIANT]) -> RunAttributes {
+fn attributes_of(ids: &[TextAttribute], values: &[VARIANT]) -> RunAttributes {
     let mut attributes = RunAttributes::default();
-    for ((attribute, _), value) in ids.iter().zip(values) {
+    for (attribute, value) in ids.iter().zip(values) {
         match attribute {
-            Attribute::Annotations => {
+            TextAttribute::Annotations => {
                 let types = verbatim_uia::variant_i32_array(value).unwrap_or_default();
                 attributes.spelling_error = types.contains(&ANNOTATION_SPELLING_ERROR);
                 attributes.grammar_error = types.contains(&ANNOTATION_GRAMMAR_ERROR);
             }
-            Attribute::FontName => {
+            TextAttribute::FontName => {
                 attributes.font_name = (value.vt() == windows::Win32::System::Variant::VT_BSTR)
                     .then(|| verbatim_uia::variant_string(value))
                     .flatten();
             }
-            Attribute::FontSize => attributes.font_size = verbatim_uia::variant_f64(value),
-            Attribute::FontWeight => attributes.font_weight = plain_i32(value),
-            Attribute::Italic => attributes.italic = verbatim_uia::variant_optional_bool(value),
-            Attribute::Underline => attributes.underline = plain_i32(value),
-            Attribute::Color => attributes.color = plain_i32(value),
+            TextAttribute::FontSize => attributes.font_size = verbatim_uia::variant_f64(value),
+            TextAttribute::FontWeight => attributes.font_weight = plain_i32(value),
+            TextAttribute::Italic => {
+                attributes.italic = verbatim_uia::variant_optional_bool(value);
+            }
+            TextAttribute::UnderlineStyle => attributes.underline = plain_i32(value),
+            TextAttribute::StrikethroughStyle => attributes.strikethrough = plain_i32(value),
+            TextAttribute::ForegroundColor => attributes.color = plain_i32(value),
+            TextAttribute::BackgroundColor => attributes.background_color = plain_i32(value),
+            TextAttribute::BulletStyle => attributes.bullet_style = plain_i32(value),
+            TextAttribute::Link => attributes.link = link_of(value),
         }
     }
     attributes
+}
+
+/// Whether a link attribute's value is a link, as the remote program reads
+/// it: a text range is one; none, or "mixed", is not; and "not supported"
+/// is `None`.
+fn link_of(value: &VARIANT) -> Option<bool> {
+    if verbatim_uia::is_not_supported(value) {
+        return None;
+    }
+    Some(
+        value.vt() == windows::Win32::System::Variant::VT_UNKNOWN
+            && windows::core::IUnknown::try_from(value).is_ok()
+            && !verbatim_uia::is_mixed(value),
+    )
 }
 
 /// A variant's 32-bit integer, `None` for any other type.
@@ -1041,22 +1222,67 @@ fn plain_i32(value: &VARIANT) -> Option<i32> {
         .flatten()
 }
 
-/// The formatting of `span` the classic way, as [`emit_runs`] emits it.
+/// The formatting of `span` the classic way, as [`emit_runs`] emits it:
+/// the stretches, and which of `learning` the span answered "not
+/// supported" for. `length` is the span's text's length, the one stretch
+/// of a span without annotations when nothing else is read. The span's
+/// annotation types and the attributes being learned are asked in one
+/// call.
 fn classic_runs(
-    span: &IUIAutomationTextRange,
+    (span, length): (&IUIAutomationTextRange, usize),
     character: bool,
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    ids: &[TextAttribute],
+    learning: Attributes,
     max_text: i32,
-) -> Result<Vec<Run>, Error> {
+) -> Result<(Vec<Run>, Attributes), Error> {
     if character {
-        return Ok(vec![Run {
-            length: 0,
-            attributes: attributes_of(ids, &attribute_values(span, ids)?),
-        }]);
+        return Ok((
+            vec![Run {
+                length: 0,
+                attributes: attributes_of(ids, &attribute_values(span, ids)?),
+            }],
+            Attributes::NONE,
+        ));
+    }
+    let annotations = ids.contains(&TextAttribute::Annotations);
+    let learned: Vec<TextAttribute> = ids
+        .iter()
+        .copied()
+        .filter(|attribute| {
+            learning.contains(*attribute) && *attribute != TextAttribute::Annotations
+        })
+        .collect();
+    let asked: Vec<TextAttribute> = annotations
+        .then_some(TextAttribute::Annotations)
+        .into_iter()
+        .chain(learned.iter().copied())
+        .collect();
+    let answers = attribute_values(span, &asked)?;
+    let mut unsupported = Attributes::NONE;
+    let mut ids = ids.to_vec();
+    for (attribute, value) in asked.iter().zip(&answers) {
+        if !verbatim_uia::is_not_supported(value) {
+            continue;
+        }
+        if *attribute == TextAttribute::Annotations {
+            // No annotations in the span: none is read of its stretches.
+            ids.retain(|attribute| *attribute != TextAttribute::Annotations);
+        } else {
+            unsupported = unsupported.with(*attribute);
+        }
+    }
+    if ids.is_empty() {
+        return Ok((
+            vec![Run {
+                length,
+                attributes: RunAttributes::default(),
+            }],
+            unsupported,
+        ));
     }
     let mut runs = Vec::new();
-    classic_walk(span, 0, ids, max_text, &mut runs)?;
-    Ok(runs)
+    classic_walk(span, 0, &ids, max_text, &mut runs)?;
+    Ok((runs, unsupported))
 }
 
 /// The walk of `span` by `WALK_UNITS[level]` the classic way, as
@@ -1064,7 +1290,7 @@ fn classic_runs(
 fn classic_walk(
     span: &IUIAutomationTextRange,
     level: usize,
-    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    ids: &[TextAttribute],
     max_text: i32,
     runs: &mut Vec<Run>,
 ) -> Result<(), Error> {
@@ -1165,24 +1391,7 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         .unit
         .map(|unit| unit_at(&point, unit, query.max_text))
         .transpose()?;
-    let ids = query.attributes.ids();
-    let runs = match query.formats {
-        Some(span) if !ids.is_empty() => match span {
-            FormatSpan::Line => classic_runs(&line.range, false, &ids, query.max_text)?,
-            FormatSpan::Unit => classic_runs(
-                unit.as_ref().map_or(&line.range, |unit| &unit.range),
-                false,
-                &ids,
-                query.max_text,
-            )?,
-            FormatSpan::Character => {
-                let character = point.clone_range()?;
-                character.expand(TextUnit_Character)?;
-                classic_runs(&character, true, &ids, query.max_text)?
-            }
-        },
-        _ => Vec::new(),
-    };
+    let (runs, unsupported) = classic_formats(query, &point, &line, unit.as_ref())?;
     Ok(CaretAnswer {
         caret,
         collapsed: collapsed_caret,
@@ -1193,7 +1402,50 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         unit,
         runs,
         changes,
+        unsupported,
     })
+}
+
+/// The formatting the query asks for the classic way, of the span it
+/// names at `point`, given the caret's `line` and `unit`, and what was
+/// learned of the attributes' support, as [`caret_read_remote`] reads them.
+fn classic_formats(
+    query: &CaretQuery<'_>,
+    point: &IUIAutomationTextRange,
+    line: &UnitRead,
+    unit: Option<&UnitRead>,
+) -> Result<(Vec<Run>, Option<Attributes>), Error> {
+    let ids: Vec<TextAttribute> = query.attributes.iter().collect();
+    let Some(span) = query.formats.filter(|_| !ids.is_empty()) else {
+        return Ok((Vec::new(), None));
+    };
+    let learns = spoken_text(Some(span), line, unit);
+    let learning = if learns {
+        query.learning
+    } else {
+        Attributes::NONE
+    };
+    let (runs, unsupported) = match span {
+        FormatSpan::Line | FormatSpan::Unit => {
+            let read = match span {
+                FormatSpan::Unit => unit.unwrap_or(line),
+                _ => line,
+            };
+            classic_runs(
+                (&read.range, read.text.len()),
+                false,
+                &ids,
+                learning,
+                query.max_text,
+            )?
+        }
+        FormatSpan::Character => {
+            let character = point.clone_range()?;
+            character.expand(TextUnit_Character)?;
+            classic_runs((&character, 0), true, &ids, learning, query.max_text)?
+        }
+    };
+    Ok((runs, learns.then_some(unsupported)))
 }
 
 /// The selection's changes from `old` to `new`, the classic way, as

@@ -11,7 +11,8 @@
 use std::ops::Range;
 
 use verbatim_model::{
-    FormatRun, Message, SegmentContent, TextAttributes, TextChunk, TextFormat, UtteranceSegment,
+    BulletStyle, FormatRun, LineStyle, Message, SegmentContent, TextAttributes, TextChunk,
+    TextFormat, UtteranceSegment,
 };
 use verbatim_text::{Segmenter, WordRules, is_line_break};
 
@@ -294,10 +295,14 @@ pub(crate) fn spelled(
 
 /// The formatting changes from `old` to `new` that are spoken, in NVDA's
 /// order (`docs/nvda/document-formatting.md`, "The cache, attribute by
-/// attribute"): font name, size, and color when present and different;
-/// bold, italic, and underline starting, or ending after having been on;
-/// a spelling or grammar error starting, and, with `extra_detail` (a
-/// character or a word), ending.
+/// attribute"): font name, size, and color when present and different,
+/// the color and the background together as "dark red on light grey"
+/// when both change; bold, italic, strikethrough, and underline starting,
+/// or ending after having been on, the underline by its kind when the kind
+/// was read; a link starting or ending; a spelling or grammar error
+/// starting, and, with `extra_detail` (a character or a word), ending. A
+/// bullet is not a change: [`formatted_segments`] speaks it at the start
+/// of every line that has one.
 pub(crate) fn format_changes(
     old: &TextAttributes,
     new: &TextAttributes,
@@ -315,29 +320,52 @@ pub(crate) fn format_changes(
     if let Some(size) = differs(&old.font_size, &new.font_size) {
         changes.push(TextFormat::FontSize(size));
     }
+    let background = differs(&old.background_color, &new.background_color);
     if let Some(color) = differs(&old.color, &new.color) {
         changes.push(TextFormat::Color(color));
+        if let Some(background) = background {
+            changes.push(TextFormat::OnBackgroundColor(background));
+        }
+    } else if let Some(background) = background {
+        changes.push(TextFormat::BackgroundColor(background));
     }
-    for (old, new, on, off) in [
-        (old.bold, new.bold, TextFormat::Bold, TextFormat::NotBold),
-        (
-            old.italic,
-            new.italic,
-            TextFormat::Italic,
-            TextFormat::NotItalic,
-        ),
-        (
+    let switched = |old: Option<bool>, new: Option<bool>, on, off| match (old, new) {
+        (Some(true), Some(false)) => Some(off),
+        (None | Some(false), Some(true)) => Some(on),
+        _ => None,
+    };
+    changes.extend(switched(
+        old.bold,
+        new.bold,
+        TextFormat::Bold,
+        TextFormat::NotBold,
+    ));
+    changes.extend(switched(
+        old.italic,
+        new.italic,
+        TextFormat::Italic,
+        TextFormat::NotItalic,
+    ));
+    changes
+        .extend(line_change(old.strikethrough, new.strikethrough).map(TextFormat::Strikethrough));
+    if new.underline_style.is_some() {
+        changes.extend(
+            line_change(old.underline_style, new.underline_style).map(TextFormat::UnderlineStyle),
+        );
+    } else {
+        changes.extend(switched(
             old.underline,
             new.underline,
             TextFormat::Underline,
             TextFormat::NotUnderline,
-        ),
-    ] {
-        match (old, new) {
-            (Some(true), Some(false)) => changes.push(off),
-            (None | Some(false), Some(true)) => changes.push(on),
-            _ => {}
-        }
+        ));
+    }
+    if new.link != old.link {
+        changes.push(if new.link {
+            TextFormat::Link
+        } else {
+            TextFormat::NotLink
+        });
     }
     for (old, new, on, off) in [
         (
@@ -360,6 +388,19 @@ pub(crate) fn format_changes(
         }
     }
     changes
+}
+
+/// The change of a line under or through text, as NVDA reports
+/// strikethrough and underline: a line, or a different line, from where
+/// there was none or another; and no line after having had one. A line
+/// never read says nothing.
+fn line_change(old: Option<LineStyle>, new: Option<LineStyle>) -> Option<LineStyle> {
+    match new? {
+        LineStyle::None => old
+            .is_some_and(LineStyle::is_drawn)
+            .then_some(LineStyle::None),
+        drawn => (old != Some(drawn)).then_some(drawn),
+    }
 }
 
 /// How a unit of text with formatting is spoken.
@@ -418,6 +459,18 @@ pub(crate) fn formatted_segments(
         .into_iter()
         .map(format)
         .collect();
+    // A list item's bullet, which is not in the text, after the changes at
+    // the start of a line read as text, as NVDA speaks its line prefix
+    // (`docs/nvda/document-formatting.md`, "Line prefixes"); never for a
+    // word or a character.
+    if how == Spoken::Text
+        && let Some(bullet) = runs[0]
+            .1
+            .bullet
+            .filter(|bullet| *bullet != BulletStyle::None)
+    {
+        segments.push(format(TextFormat::Bullet(bullet)));
+    }
     *reported = runs[0].1.clone();
     let single = how == Spoken::Character
         || (how == Spoken::Word && verbatim_text::graphemes(text.trim()).len() == 1);
