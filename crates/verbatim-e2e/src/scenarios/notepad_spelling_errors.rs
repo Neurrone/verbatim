@@ -8,10 +8,13 @@
 //! Notepad's spell checker marks its errors with UIA's spelling error
 //! annotation, which Verbatim reads with the caret in one remote
 //! operation. The checker marks the document a moment after it opens,
-//! raising no event when it does, and well before Notepad's opening has
-//! been announced; so once it has, the agent reads which words are marked
+//! raising no event when it does, so the document's first line, where the
+//! caret starts and which Notepad's opening announces, has no error: what
+//! the opening says does not depend on whether the marks are there yet.
+//! Once the opening has been heard, the agent reads which words are marked
 //! through UI Automation, independently of Verbatim, and the scenario
-//! fails unless they are exactly the two misspelt words. Every step waits
+//! fails unless they are exactly the second line's two misspelt words.
+//! Every step waits
 //! for its speech to be heard in full before the next key, as a listening
 //! user would, and there is no other wait.
 //!
@@ -34,12 +37,16 @@ pub(crate) use super::no_teardown as teardown;
 /// The harness document's name.
 const NAME: &str = "spelling";
 
-/// The document: two misspelt words on the first line, none on the second.
-const DOCUMENT: &str = "Ths line has a tset.\r\nAll fine here.\r\n";
+/// The document: no error on the first line, two misspelt words on the
+/// second.
+const DOCUMENT: &str = "All fine here.\r\nThs line has a tset.\r\n";
 
-/// The first line as the default theme reads it once the errors are
+/// The line without errors.
+const FINE_LINE: &str = "All fine here.";
+
+/// The line with errors as the default theme reads it once they are
 /// marked.
-const FIRST_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .";
+const ERROR_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     scenario.open_document_with(NAME, DOCUMENT)?;
@@ -53,7 +60,7 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::expect_notepad_opened(scenario, NAME, "Ths line has a tset.");
+    super::expect_notepad_opened(scenario, NAME, FINE_LINE);
     assert_eq!(
         scenario
             .misspelt_words()
@@ -61,7 +68,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         ["Ths", "tset"],
         "the words Notepad's spell checker marked once its opening was announced"
     );
-    press(scenario, "control+home", FIRST_LINE);
+    press(scenario, "downarrow", ERROR_LINE);
 
     // The line ended out of the error, after its full stop, so the next
     // character, inside the misspelt "Ths", enters it again; the one after
@@ -84,8 +91,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     );
     press(scenario, "control+rightarrow", "out of spelling error dot");
 
-    // The second line has no error, and says nothing about formatting;
-    // the first, read again, says its errors again.
-    press(scenario, "downarrow", "All fine here.");
-    press(scenario, "uparrow", FIRST_LINE);
+    // The first line has no error, and says nothing about formatting; the
+    // second, read again, says its errors again.
+    press(scenario, "uparrow", FINE_LINE);
+    press(scenario, "downarrow", ERROR_LINE);
 }

@@ -20,10 +20,10 @@
 //!
 //! 1. The first flood, with no key pressed, asserted exactly as above.
 //! 2. Responsiveness and output reporting off: the second flood's first
-//!    line is playing, and its second queued behind it (output is handed to
-//!    speech two at a time), when Verbatim+5 is sent; both are cut off,
-//!    "report new output off" is heard in full, and nothing more of the
-//!    flood is said.
+//!    line is playing, and its next two queued behind it (output is handed
+//!    to speech two ahead of the line playing), when Verbatim+5 is sent;
+//!    all three are cut off, "report new output off" is heard in full, and
+//!    nothing more of the flood is said.
 //! 3. The third flood, with output reporting off throughout: only the
 //!    typed command's echo is spoken. Verbatim+5 then says "report new
 //!    output on", and `echo back` is answered with exactly "back" and then
@@ -128,7 +128,7 @@ pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
 fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
     terminal::type_with_echo(scenario, r".\flood.ps1 2", terminal::Echo::Shown);
     let first = scenario.speech().expect_started(&line(1));
-    let queued = scenario.speech().expect_queued(&[&line(2)]);
+    let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
     scenario
         .send_gesture("kb:verbatim+5")
         .expect("sends Verbatim+5");

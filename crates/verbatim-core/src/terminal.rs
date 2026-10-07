@@ -49,7 +49,7 @@ use crate::state::SrState;
 use crate::text;
 
 /// How many utterances of output are handed to speech before their marks
-/// are reached: one playing and one ready behind it, so there is no gap
+/// are reached: two queued behind the one playing, so there is no gap
 /// between lines and the backlog stays here, where it can be trimmed.
 const AHEAD: usize = 2;
 
