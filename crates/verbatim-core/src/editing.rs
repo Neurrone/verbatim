@@ -649,18 +649,25 @@ fn navigator_request(
 /// selected text when there is some, else, after asking for it, the caret's
 /// line; the value when the object turns out to have no text to read, and
 /// for spelling or copying the name and value, as for any object. Nothing
-/// is done once the navigator has moved on.
+/// is done once the object asked about is neither the navigator object nor
+/// the focus (reporting the focus reads the focus's text the same way).
 pub(crate) fn navigator_text_reply(
     state: &mut SrState,
     trace_id: TraceId,
     pending: &PendingText,
     reply: TextReply,
 ) -> Vec<Effect> {
-    let Some(object) = state
-        .navigator
+    let navigator = state.navigator.as_ref().map(|navigator| &navigator.object);
+    let focus = state
+        .focus
         .as_ref()
-        .map(|navigator| navigator.object.clone())
-        .filter(|object| object.id == pending.node)
+        .filter(|focus| focus.alive)
+        .map(|focus| &focus.snapshot);
+    let Some(object) = navigator
+        .into_iter()
+        .chain(focus)
+        .find(|object| object.id == pending.node)
+        .cloned()
     else {
         return Vec::new();
     };

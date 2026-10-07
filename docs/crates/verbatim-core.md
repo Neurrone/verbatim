@@ -242,7 +242,14 @@ Implementation notes, `reduce`:
   navigator and announces it; activate emits `Activate`, whose outcome
   returns as `Input::ActivationCompleted` and is spoken as the action's
   name, "Activate" for an action without one, or "No action"; to-focus says "Move to focus" and snaps the navigator back; any
-  command with no navigator says "No navigator object". An `Unanswered`
+  command with no navigator says "No navigator object". Report focus
+  (`report_focus`) runs against the focus instead, leaving the navigator
+  where it is: the first press announces the focus as the first press of
+  report-object announces the navigator, its text read the same way (a
+  text answer is used while the object asked about is the navigator or the
+  focus); the second spells its name alone, "blank" with none; the third and
+  later spell the name with character descriptions; with no live focus it
+  says "No focus". An `Unanswered`
   completion (the application did not answer) leaves the navigator put and
   says nothing. The review commands' messages ("Top", "Bottom", "Left",
   "Right", "blank") and repeated presses follow "Reading commands built on

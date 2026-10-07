@@ -127,6 +127,9 @@ pub enum ScriptAction {
     ReportCaretLocation,
     /// Report the review cursor's location.
     ReportReviewLocation,
+    /// Report the focus object; repeated presses spell its name, then
+    /// spell it with character descriptions.
+    ReportFocus,
 }
 
 impl ScriptAction {
@@ -172,6 +175,7 @@ impl ScriptAction {
             Self::ToggleReportNewOutput => ReviewCommand::ToggleReportNewOutput,
             Self::ReportCaretLocation => ReviewCommand::ReportCaretLocation,
             Self::ReportReviewLocation => ReviewCommand::ReportReviewLocation,
+            Self::ReportFocus => ReviewCommand::ReportFocus,
             Self::SpeakTime | Self::ShowTrayList => return None,
         })
     }
@@ -183,7 +187,7 @@ type RawBinding = (&'static str, ScriptAction);
 
 /// The bindings of every layout: M3's in `docs/roadmap-done.md` order
 /// (object navigation, then review-cursor text reading, then time and tray
-/// list), then M4's. NVDA binds each of these for all layouts (`kb:` rather
+/// list), then M4's, then report focus. NVDA binds each of these for all layouts (`kb:` rather
 /// than `kb(desktop):`), so a laptop-layout user with a numpad keeps them.
 const COMMON_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+numpad5", ScriptAction::ReportCurrentObject),
@@ -224,6 +228,7 @@ const COMMON_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+2", ScriptAction::ToggleTypedCharacters),
     ("kb:verbatim+3", ScriptAction::ToggleTypedWords),
     ("kb:verbatim+5", ScriptAction::ToggleReportNewOutput),
+    ("kb:verbatim+tab", ScriptAction::ReportFocus),
 ];
 
 /// The desktop layout's own M4 bindings, NVDA's `kb(desktop):` ones: keys
@@ -427,16 +432,17 @@ mod tests {
 
     #[test]
     fn desktop_table_has_the_documented_count() {
-        // Every layout's 32 (M3's 7 object-navigation, 13 review-cursor, and
-        // 2 for time and the tray list; M4's 10), and the desktop's own 5.
-        assert_eq!(bindings_for(KeyboardLayout::Desktop).len(), 37);
+        // Every layout's 33 (M3's 7 object-navigation, 13 review-cursor, and
+        // 2 for time and the tray list; M4's 10; report focus), and the
+        // desktop's own 5.
+        assert_eq!(bindings_for(KeyboardLayout::Desktop).len(), 38);
     }
 
     #[test]
     fn laptop_table_has_the_documented_count() {
         // Its own 26 (M3's 7 object-navigation and 13 review-cursor, M4's 6)
-        // and the 32 of every layout.
-        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 58);
+        // and the 33 of every layout.
+        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 59);
     }
 
     #[test]
@@ -544,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn both_layouts_bind_time_and_tray_list_identically() {
+    fn both_layouts_bind_time_tray_list_and_report_focus_identically() {
         let identical = |action: ScriptAction, expected: &str| {
             for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
                 let gesture = bindings_for(layout)
@@ -557,6 +563,11 @@ mod tests {
         };
         identical(ScriptAction::SpeakTime, "kb:f12+verbatim");
         identical(ScriptAction::ShowTrayList, "kb:f11+verbatim");
+        identical(ScriptAction::ReportFocus, "kb:tab+verbatim");
+        assert_eq!(
+            ScriptAction::ReportFocus.review_command(),
+            Some(ReviewCommand::ReportFocus)
+        );
     }
 
     #[test]

@@ -104,7 +104,7 @@ Public API:
   and next page, the selection's start and end, say-all from the review
   cursor or the caret, the start marker and select then copy, the follow
   caret and typing echo toggles, and the caret's and review cursor's
-  locations) the keyboard layer's scripts map onto, so the reducer never
+  locations; and report focus) the keyboard layer's scripts map onto, so the reducer never
   depends on input-crate types.
 - `Utterance`, `UtteranceSegment`, `SegmentContent`, `UtteranceSource`,
   `SpeechPriority` — structured speech per decision D12. Segments are

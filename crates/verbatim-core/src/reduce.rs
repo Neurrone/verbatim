@@ -1003,6 +1003,7 @@ fn reduce_command(
         ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
             caret_command(state, trace_id, command)
         }
+        ReviewCommand::ReportFocus => report_focus(state, trace_id, repeat),
         _ => navigator_command(state, trace_id, command, repeat),
     };
     stopped.append(&mut effects);
@@ -1223,6 +1224,39 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
             vec![Effect::CopyToClipboard(text)]
         }
     }
+}
+
+/// Reports the focus object, leaving the navigator where it is
+/// (`docs/nvda/focus-and-navigator.md`, "Reporting the focus"): on the
+/// first press as reporting the current object reports the navigator, its
+/// text included; on the second its name spelled, "blank" when it has none;
+/// on the third and later its name spelled with character descriptions.
+/// Says "No focus" with no focus whose outpost is still running.
+fn report_focus(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+    let Some(object) = state
+        .focus
+        .as_ref()
+        .filter(|focus| focus.alive)
+        .map(|focus| focus.snapshot.clone())
+    else {
+        return vec![editing::speak(
+            trace_id,
+            review_text::message(Message::NoFocus),
+        )];
+    };
+    if repeat == 0 {
+        return announce_navigator(state, trace_id, &object, Reason::Query);
+    }
+    let segments =
+        review_text::spell_or_blank(object.name.as_deref().unwrap_or_default(), repeat > 1, None);
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments,
+        source: Some(source_of(&object)),
+        say_all: false,
+        validity: None,
+    })]
 }
 
 /// The text the report-object copy press puts on the clipboard: the

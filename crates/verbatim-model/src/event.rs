@@ -613,6 +613,10 @@ pub enum ReviewCommand {
     ReportCaretLocation,
     /// Report where the review cursor is on the screen.
     ReportReviewLocation,
+    /// Report the focus object, wherever the navigator is: spell its name
+    /// on the second press in a streak, with character descriptions on the
+    /// third and later.
+    ReportFocus,
 }
 
 /// An event Verbatim indicates at once, outside the speech queue, named

@@ -62,8 +62,8 @@ verified.
   layout has the numpad bindings too, as NVDA binds them for every layout
   (since 2026-10-03; they had been desktop only).
 - NVDA's global commands Verbatim has not built: **not yet**. Among them
-  are the settings ring (NVDA+Control+arrows), speech modes, report focus
-  (NVDA+Tab), the title (NVDA+T), the status bar (NVDA+End), read window
+  are the settings ring (NVDA+Control+arrows), speech modes, the title
+  (NVDA+T), the status bar (NVDA+End), read window
   (NVDA+B), sleep mode, quit (NVDA+Q), pass the next key through
   (NVDA+F2), and the desktop layout's current line (NVDA+UpArrow). As in
   NVDA, a Verbatim key combination with no command reaches the
@@ -666,6 +666,15 @@ verified.
   ([Speech](nvda/speech.md), "What an object with text says"): **matched
   since 2026-10-07**, found by comparing transcripts with NVDA in
   Notepad, where Verbatim had spelled the whole value.
+- Report focus (NVDA+Tab, every layout): the focus object reported as a
+  query on the first press, its text included as on focus; its name
+  spelled on the second press ("blank" with no name), and spelled with
+  character descriptions on the third and later; "No focus" with none
+  ([Focus and the navigator](nvda/focus-and-navigator.md), "Reporting the
+  focus"). Verbatim: **matched since 2026-10-07** on Verbatim+Tab. One
+  difference with no counterpart in NVDA: while the outpost that reported
+  the focus has ended and its replacement has not yet reported the focus
+  again, Verbatim says "No focus", as its node ids name nothing then.
 - Review and navigator messages and repeated presses (the list in
   [Review modes](nvda/review-modes.md), "Reading commands built on
   review"). Verbatim: **matched since 2026-10-03**: the edge messages

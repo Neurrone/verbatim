@@ -648,6 +648,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::Blank => i18n_embed_fl::fl!(loader, "message-blank"),
         Message::MoveToFocus => i18n_embed_fl::fl!(loader, "message-move-to-focus"),
         Message::NoNavigatorObject => i18n_embed_fl::fl!(loader, "message-no-navigator-object"),
+        Message::NoFocus => i18n_embed_fl::fl!(loader, "message-no-focus"),
         Message::Activate => i18n_embed_fl::fl!(loader, "message-activate"),
         Message::NoAction => i18n_embed_fl::fl!(loader, "message-no-action"),
         Message::Invoke => i18n_embed_fl::fl!(loader, "message-invoke"),

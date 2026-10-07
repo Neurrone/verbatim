@@ -87,6 +87,8 @@ Public API:
   own bindings followed by those of every layout, since desktop and laptop
   give Verbatim+Down Arrow different meanings, as NVDA's `kb(desktop):`
   and `kb(laptop):` bindings do.
+- Report focus (`ScriptAction::ReportFocus`), Verbatim+Tab in every
+  layout, as NVDA's NVDA+Tab.
 - `ScriptAction::review_command` — the reducer command an action runs, or
   `None` for speak time and the tray list, which the router handles; the
   one place the two vocabularies meet.
