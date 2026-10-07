@@ -1941,16 +1941,24 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       pieces, calls), with remote operations on and off and against NVDA,
       which reads one piece at a time as the previous one starts.
   11. The instruction limit (Dickson, 2026-10-07): measure UIA's
-      unpublished cap on instructions a remote program may execute, count
-      what each of Verbatim's programs executes at typical and worst-case
-      sizes, and make every program that loops resumable: it stops at a
-      budget well under the cap and returns where it stopped, and the
-      outpost sends a follow-up to continue, so no program fails on the
-      cap and falls back mid-way. The terminal's upward search bound
-      (256 lines, never approved) is brought to Dickson with these
-      measurements to decide: a fixed number, one derived from the
-      terminal's size, or an unbounded resumable search.
+      unpublished cap (NVDA's local emulator of remote operations assumes
+      10,000) and count what each of Verbatim's programs executes at
+      typical and worst-case sizes, to confirm they stay well under it.
+      Programs are not made resumable: their work is bounded, and
+      resuming is left until something like Word's whole-document
+      searches needs it. The terminal's upward search (256 lines, never
+      approved) is reconsidered with these numbers, and with UIA's
+      `FindText`, which searches a range inside the provider in one call
+      (and is also a remote-operation instruction), if Windows Terminal
+      and the console host implement it; Dickson decides the bound.
+  12. MSAA call counts (Dickson, 2026-10-07): measure the wall-clock cost
+      of MSAA paths against NVDA's (a cold MSAA focus, 30 calls; a focus
+      into a message box, 44 with its text; navigation and list moves),
+      and reduce them: reading static text through window messages,
+      reusing what the focus walk already fetched, and anything else the
+      measurements point to.
 
 The order from here: the say-all change (item 10), then the terminal
-measurements (items 2 and 4), with the instruction-limit work (item 11)
+measurements (items 2 and 4), then the MSAA call counts (item 12, which
+item 5 is part of), with the instruction-limit measurements (item 11)
 alongside as build slots allow.
