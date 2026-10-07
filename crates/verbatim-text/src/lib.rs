@@ -34,10 +34,13 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::OnceLock;
 
+use icu_locale_core::LanguageIdentifier;
 use icu_normalizer::ComposingNormalizerBorrowed;
 use icu_properties::CodePointMapData;
-use icu_properties::props::{GeneralCategory, GeneralCategoryGroup};
-use icu_segmenter::options::{SentenceBreakInvariantOptions, WordBreakInvariantOptions};
+use icu_properties::props::{GeneralCategory, GeneralCategoryGroup, Script};
+use icu_segmenter::options::{
+    SentenceBreakInvariantOptions, WordBreakInvariantOptions, WordBreakOptions,
+};
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
 
@@ -241,10 +244,22 @@ impl Segmenter {
     /// whitespace, with each run of whitespace merged into one segment.
     #[must_use]
     pub fn words(&self, text: &str, rules: WordRules) -> Vec<Range<usize>> {
+        self.words_in(text, rules, None)
+    }
+
+    /// [`words`](Self::words) for text in `language` (a BCP 47 tag, or
+    /// `None` when unknown): Unicode's rules take the language's tailoring
+    /// where ICU has one, so in Finnish or Swedish a colon inside a word
+    /// ("EU:n") does not break it.
+    #[must_use]
+    pub fn words_in(
+        &self,
+        text: &str,
+        rules: WordRules,
+        language: Option<&str>,
+    ) -> Vec<Range<usize>> {
         let segments = match rules {
-            WordRules::Unicode => ranges(
-                WordSegmenter::new_auto(WordBreakInvariantOptions::default()).segment_str(text),
-            ),
+            WordRules::Unicode => unicode_words(text, language),
             WordRules::Chinese => jieba()
                 .cut(text, true)
                 .into_iter()
@@ -360,6 +375,22 @@ fn is_closing(c: char) -> bool {
     )
 }
 
+/// The boundaries of `text` by Unicode's word rules with ICU's dictionaries,
+/// tailored for `language` when the tag parses and ICU has a tailoring for
+/// it.
+fn unicode_words(text: &str, language: Option<&str>) -> Vec<Range<usize>> {
+    let locale =
+        language.and_then(|tag| LanguageIdentifier::try_from_str(&tag.replace('_', "-")).ok());
+    if let Some(locale) = &locale {
+        let mut options = WordBreakOptions::default();
+        options.content_locale = Some(locale);
+        if let Ok(segmenter) = WordSegmenter::try_new_auto(options) {
+            return ranges(segmenter.as_borrowed().segment_str(text));
+        }
+    }
+    ranges(WordSegmenter::new_auto(WordBreakInvariantOptions::default()).segment_str(text))
+}
+
 /// The shared jieba segmenter, with its built-in dictionary.
 fn jieba() -> &'static Jieba {
     static JIEBA: OnceLock<Jieba> = OnceLock::new();
@@ -394,15 +425,20 @@ fn merge_whitespace_runs(text: &str, segments: Vec<Range<usize>>) -> Vec<Range<u
     merged
 }
 
-/// Whether `c` is a Han character (CJK Unified Ideographs and their
-/// extensions in the Basic Multilingual Plane).
+/// Whether `c` is a Han character, by its Unicode script: the CJK Unified
+/// Ideographs and every extension, those outside the Basic Multilingual
+/// Plane included, and the compatibility ideographs.
 fn is_han(c: char) -> bool {
-    matches!(c, '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}')
+    CodePointMapData::<Script>::new().get(c) == Script::Han
 }
 
-/// Whether `c` is Japanese kana (Hiragana or Katakana).
+/// Whether `c` is Japanese kana: Hiragana or Katakana by its Unicode
+/// script, or the prolonged sound mark and the other marks the two share.
 fn is_kana(c: char) -> bool {
-    matches!(c, '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}')
+    matches!(
+        CodePointMapData::<Script>::new().get(c),
+        Script::Hiragana | Script::Katakana
+    ) || matches!(c, '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}')
 }
 
 #[cfg(test)]
@@ -644,6 +680,49 @@ mod tests {
             WordRules::Chinese
         );
         assert_eq!(WordRules::for_text("中文", Some("ja")), WordRules::Unicode);
+        // Han outside the Basic Multilingual Plane (Extension B) is Han.
+        assert_eq!(
+            WordRules::for_text("\u{20000}\u{20001}", None),
+            WordRules::Chinese
+        );
+        // Japanese kana outside the main blocks, half-width katakana.
+        assert_eq!(
+            WordRules::for_text("東京\u{FF83}\u{FF9E}", None),
+            WordRules::Unicode
+        );
+    }
+
+    #[test]
+    fn a_language_tailors_the_word_rules() {
+        let segmenter = Segmenter::new();
+        let text = "EU:n";
+        assert_eq!(
+            texts(text, &segmenter.words_in(text, WordRules::Unicode, None)),
+            ["EU", ":", "n"]
+        );
+        // In Finnish and Swedish a colon joins a word to its ending.
+        for language in ["fi", "sv_SE"] {
+            assert_eq!(
+                texts(
+                    text,
+                    &segmenter.words_in(text, WordRules::Unicode, Some(language))
+                ),
+                ["EU:n"],
+                "{language}"
+            );
+        }
+        // A language with no tailoring, or a tag that does not parse,
+        // takes Unicode's rules.
+        for language in ["en", "not a tag"] {
+            assert_eq!(
+                texts(
+                    text,
+                    &segmenter.words_in(text, WordRules::Unicode, Some(language))
+                ),
+                ["EU", ":", "n"],
+                "{language}"
+            );
+        }
     }
 
     #[test]

@@ -177,11 +177,11 @@ pub(crate) fn offset_at_column(content: &str, column: usize, grid: bool) -> usiz
 }
 
 /// Words: the segments of `content` that are not whitespace, by the rules
-/// for its language.
+/// for its language, tailored for it where ICU has a tailoring.
 pub(crate) fn words(content: &str, language: Option<&str>) -> Vec<Range<usize>> {
     let rules = WordRules::for_text(content, language);
     Segmenter::new()
-        .words(content, rules)
+        .words_in(content, rules, language)
         .into_iter()
         .filter(|range| !is_blank(&content[range.clone()]))
         .collect()

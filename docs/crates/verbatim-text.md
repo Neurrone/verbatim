@@ -19,9 +19,15 @@ Windows API, and `cargo xtask ci` checks that it does not.
   Unicode's, together with the zero-width space and the zero-width
   no-break space, which Khmer, Thai, and Burmese text uses to mark word
   breaks.
+- `Segmenter::words_in`: the same with the text's language, whose
+  tailoring of Unicode's rules ICU applies where it has one: in Finnish or
+  Swedish a colon joins a word to its ending ("EU:n" is one word).
 - `WordRules::for_text`: which word rules a text takes, from its language
-  tag when the provider gives one, and otherwise from its characters (Han
-  without kana is Chinese; Japanese mixes kanji with kana).
+  tag when the provider gives one, and otherwise from its characters by
+  their Unicode script (Han without kana is Chinese, Han outside the Basic
+  Multilingual Plane included; Japanese mixes kanji with kana). Japanese
+  written only in kanji cannot be told from Chinese without its language,
+  and is segmented as Chinese then, as NVDA's automatic choice does.
 - `Segmenter::sentences`: sentences by Unicode's sentence rules.
 - `last_pause`: where say-all's speech without pauses splits a piece of
   text (`docs/nvda/speech.md`, "Say-all speaks without pauses"): just past

@@ -39,6 +39,7 @@ serde_json = "1"
 # cell widths by East Asian Width. ICU4X's general categories tell a word
 # character (a letter, mark, or number) from the rest, and its normalizer
 # composes a decomposed character before capitals and names are looked up.
+icu_locale_core = "2"
 icu_normalizer = "2"
 icu_properties = "2"
 icu_segmenter = "2"

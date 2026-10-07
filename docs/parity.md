@@ -1618,6 +1618,12 @@ verified.
   one segment), used by the review cursor over text and by spelling; a
   zero-width space or zero-width no-break space counts as white space, not
   as a word, and text of nothing else reads as blank (since 2026-10-08);
+  Han outside the Basic Multilingual Plane counts as Chinese for choosing
+  jieba, and the text's language, when the provider gives one, tailors
+  Unicode's word rules where ICU has a tailoring (Finnish and Swedish
+  "EU:n" is one word), since 2026-10-08; Japanese written only in kanji
+  with no language given is segmented as Chinese, as NVDA's automatic
+  choice does;
   where
   the application moves the caret by word, the provider's word is spoken.
   A plain Win32 edit control's word, which the outpost finds itself, is
