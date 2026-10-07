@@ -150,14 +150,17 @@ const REPORTED_TEXT_AREAS: [&str; 2] = [
 /// the platform names menu popups "Context", spoken with the menu role —
 /// emitted by the `MenuPopupStart` `WinEvent` the moment the menu opens
 /// (NVDA's menu-start behavior), with the foreground-announce path
-/// producing the identical node as its fallback.
+/// producing the identical node as its fallback. Before it, the menu's
+/// owner window, Verbatim's frame, is named "Verbatim", as NVDA names the
+/// foreground window a menu opens from (`docs/parity.md`, the Verbatim
+/// menu's owner window).
 pub(crate) fn open_verbatim_menu(scenario: &mut Scenario, timeout: Duration) {
     scenario
         .send_gesture("kb:verbatim+v")
         .expect("sends the Verbatim+V gesture");
     scenario
         .speech()
-        .expect_in_order(&["Context", "menu"], timeout);
+        .expect_exactly(&["Verbatim", "Context menu"], timeout);
 }
 
 /// Opens Verbatim's settings dialog from its menu and waits until focus has

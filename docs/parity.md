@@ -146,15 +146,20 @@ verified.
     title either: **matched since 2026-10-07**, by matching a window's
     own MSAA object by the address its identity string names (Held
     objects, below; the `settings_dialog_keys` scenario). NVDA's
-    "Verbatim" is **different by decision** (2026-10-07): NVDA names the
-    foreground window, and Verbatim's hidden frame, titled "Verbatim",
-    is shown and brought forward for the menu, since without NVDA's
-    `uiAccess` privilege a hidden window cannot take the foreground.
-    NVDA's own menu has no such frame announced: NVDA keeps its frame
-    hidden and says only "NVDA menu" (a transcript of NVDA+N on
-    2026-10-07). Verbatim's menu is the counterpart of NVDA's, so its
-    frame stays unannounced (the hidden-frame suppression in
-    `docs/crates/verbatim-outpost.md`). The Terminal page's "Lines spoken in full"
+    "Verbatim": NVDA names the foreground window a menu opens from, and
+    Verbatim's hidden frame, titled "Verbatim", is shown and brought
+    forward for the menu, since without NVDA's `uiAccess` privilege a
+    hidden window cannot take the foreground. (NVDA's own menu has no such
+    frame: NVDA keeps its frame hidden and says only "NVDA menu", a
+    transcript of NVDA+N on 2026-10-07.) **Matched since 2026-10-07, by
+    decision**: Verbatim+V says "Verbatim", then "Context menu", as NVDA
+    does. The frame's own focus and foreground events stay suppressed,
+    since it transits focus (the hidden-frame suppression in
+    `docs/crates/verbatim-outpost.md`); the menu's opening is reported in
+    the frame's window with the frame as its ancestor, and the reducer
+    names a new foreground window from the top of the focus's ancestry, as
+    NVDA does when no foreground event named it (every scenario that opens
+    the menu asserts both). The Terminal page's "Lines spoken in full"
     and "Last lines to speak" sliders read 29 for the setting's 30 in
     both screen readers: a standard trackbar's MSAA value is its position
     as a percentage of its range, which is 1 to 100 there. **Fixed since
