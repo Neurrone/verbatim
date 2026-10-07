@@ -89,8 +89,9 @@ A host that died between requests is found before the next one. A host
 sends nothing while idle, so if a message is already waiting when
 `speak` or `set_setting` begins (the reader thread queues the pipe's end
 of stream when the process dies, and anything else would be out of
-turn), the host is ended and a new one started before the request is
-sent, rather than the request being lost to the dead host.
+turn), or its process has exited (`Contained::has_exited`), the host is
+ended and a new one started before the request is sent, rather than the
+request being lost to the dead host.
 
 Ending a process is not immediate, so a request can still reach a host
 that is dying. `speak` therefore sends an utterance once more, to a fresh

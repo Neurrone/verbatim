@@ -102,11 +102,13 @@ impl HostedSynth {
         // Between requests a host sends nothing, so anything waiting from it
         // is its end (the reader queues the pipe's end of stream when the
         // process dies) or a message out of turn: either way it is replaced
-        // now, before the next request is lost to it.
+        // now, before the next request is lost to it. A host whose process
+        // has exited is replaced too, whether or not the reader has queued
+        // its end yet.
         if self
             .host
             .as_ref()
-            .is_some_and(|host| !host.replies.is_empty())
+            .is_some_and(|host| !host.replies.is_empty() || host.contained.has_exited())
         {
             self.lose_host(&SynthError::Synthesis(
                 "the synthesizer host ended while idle".to_owned(),

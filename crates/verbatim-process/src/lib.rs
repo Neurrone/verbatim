@@ -31,7 +31,7 @@ use std::{fs, io};
 
 use windows::Win32::Foundation::{
     GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, INVALID_HANDLE_VALUE,
-    SetHandleInformation,
+    SetHandleInformation, WAIT_OBJECT_0,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
@@ -47,7 +47,7 @@ use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -79,6 +79,19 @@ pub struct Contained {
     pub process: OwnedHandle,
     /// The process's own id, for logs.
     pub pid: u32,
+}
+
+impl Contained {
+    /// Whether the process has exited, by whatever means. A process that
+    /// is being ended counts as exited only once the system has finished
+    /// ending it.
+    #[must_use]
+    pub fn has_exited(&self) -> bool {
+        // SAFETY: the process handle this value owns, open for its life;
+        // a zero timeout only reads whether it is signaled.
+        let state = unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), 0) };
+        state == WAIT_OBJECT_0
+    }
 }
 
 /// Core's ends of a launched child's two pipes.
