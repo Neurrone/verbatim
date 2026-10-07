@@ -1,7 +1,8 @@
 //! Stdin command parsing and the reader thread.
 //!
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
-//! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
+//! `set-name <id> <text>`, `set-value <id> <text>`,
+//! `set-description <id> <text>`, `set-states <id> <state>...`, `select <id>`,
 //! `caret <id> <start> [<end>]`, `set-text <id> <text>`, `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `stall <ms>`, `slow <ms>`, and `quit`.
@@ -29,6 +30,13 @@ pub(crate) enum Command {
     SetName(String, String),
     /// `set-value <id> <text>`, same empty-text convention as `SetName`.
     SetValue(String, String),
+    /// `set-description <id> <text>`, same empty-text convention as
+    /// `SetName`; raises `EVENT_OBJECT_DESCRIPTIONCHANGE`. MSAA-only.
+    SetDescription(String, String),
+    /// `set-states <id> <state>...`: replaces the node's states with those
+    /// named, in the fixture's snake case, and raises
+    /// `EVENT_OBJECT_STATECHANGE`. MSAA-only.
+    SetStates(String, verbatim_model::StateSet),
     /// `select <id>`: marks the node selected (moving the state off any
     /// previously selected node) and raises the backend-appropriate
     /// selection notification — `SelectionItem_ElementSelected` for UIA,
@@ -150,6 +158,18 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
                 container.to_owned(),
                 child.trim().to_owned(),
             ))
+        }
+        "set-description" => {
+            let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            (!id.is_empty()).then(|| Command::SetDescription(id.to_owned(), text.trim().to_owned()))
+        }
+        "set-states" => {
+            let mut parts = rest.split_whitespace();
+            let id = parts.next()?;
+            let states = parts
+                .map(crate::fixture::state_from_fixture_str)
+                .collect::<Option<verbatim_model::StateSet>>()?;
+            Some(Command::SetStates(id.to_owned(), states))
         }
         "set-value" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));

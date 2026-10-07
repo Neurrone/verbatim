@@ -12,7 +12,7 @@ Public API:
   since its hooks share one callback; a second install on the same thread
   fails. Two constant sets name the two
   callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
-  installs — value, state, name, and selection changes
+  installs — value, state, name, description, and selection changes
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
   remove, and within events are reported as `WinEventKind::StateChange`, as
   NVDA handles them), and since milestone M4 the caret
@@ -27,7 +27,10 @@ Public API:
   (`EVENT_SYSTEM_MENUPOPUPSTART`), and the end of a menu or of the Alt+Tab
   switcher (`WinEventKind::MenuEnd` and `WinEventKind::SwitchEnd`), which
   is global because focus returns to whichever application is then in
-  front. A popup menu opening announces the menu
+  front, and a tooltip window shown (`WinEventKind::Show`:
+  `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
+  custom object, every other show event dropped at the hook, as NVDA
+  accepts no others from a standard control). A popup menu opening announces the menu
   itself the moment it opens, NVDA's menu-start behavior — the app outpost
   emits it as focus on the menu's client object with no ancestry, the
   identical node its foreground-announce fallback produces for a menu-class
@@ -105,7 +108,24 @@ Public API:
   own focus with a focused child"); the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_snapshot` also uses, so the child-id and child-object forms are
-  handled once), `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
+  handled once), `focus_candidate` (the same acquisition and redirect,
+  reading no more than the redirect needs, so the outpost can make NVDA's
+  checks before the read: `key()` is the address after the redirect, for
+  NVDA's duplicate check; `has_focused_state(max_hops)` is NVDA's
+  `shouldAllowIAccessibleFocusEvent`, the object's state and then each
+  ancestor's read live through `accParent`; `read(registry)` reads it
+  without reading again the role and state words the checks read;
+  `snapshot_from_focus_event` is a candidate read at once),
+  `event_object` (an event's object acquired and nothing read:
+  `which_of(nodes, registry)` tells whether it is one of the given nodes by
+  the address the node was issued for or by the same COM object and child
+  id, reading no property; `role()` reads its role alone; `read(registry,
+  purpose)` reads it), `Purpose` (`Announce` or `Context`, passed to
+  `snapshot_from_event` and `EventObject::read`: an object read for
+  context, such as an ancestor or the object of a change, has no list view
+  or tree view position counted, as NVDA counts it only when it speaks the
+  object; ancestor walks read for context too),
+  `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
   for the synthetic focus event an outpost emits after a foreground
   change), and the node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from
@@ -117,7 +137,10 @@ Public API:
   (stopping at a known ancestor, a deadline, or a parent in a different
   window that `read_by_other_api` says is read through UIA, and saying
   which as `Walked`, whose `Crossed(hwnd)` lets the outpost continue the
-  walk through UIA) (per-hop `accParent` walks, outermost first, with the simple-child
+  walk through UIA; a control's window object met on the way has as its
+  next ancestor the group box enclosing it, a `Button` window with
+  `BS_GROUPBOX` before it in z-order, as NVDA's `findGroupboxObject`
+  finds it, and the walk goes on from the group box) (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent
@@ -156,7 +179,9 @@ Public API:
   neighbor instead of the logical one; a tree item's `accValue` is its
   0-based indent depth, not a value, so `read_snapshot` reads it into the
   snapshot's level as it is, a root item at level 0, and leaves the value empty, again matching
-  NVDA. And a window-root object — the window face every windowed control
+  NVDA; and its state image (`TVM_GETITEMSTATE`) makes it checkable, and
+  checked or half checked, as NVDA's tree view item reads a tree that
+  draws its own check boxes. And a window-root object — the window face every windowed control
   exposes alongside its client object, keyed under `OBJID_WINDOW` (not
   `OBJID_CLIENT`, so the two faces of one hwnd get distinct node ids
   rather than colliding) — navigates the Win32 window hierarchy rather
@@ -168,15 +193,34 @@ Public API:
   parent-then-sibling-then-child navigation between the controls of a
   dialog work: MSAA's own answers there are the control's scroll-bar and
   client pieces, not the sibling controls.
+- `class` — `normalize_class_name(raw)`, a window class name as NVDA
+  normalizes it before matching any class-based rule: a Windows Forms
+  name (`WindowsForms10.SysTreeView32.app.0.…`) cut down to the control
+  class it wraps, an `ATL:` prefix dropped, and the result looked up in
+  NVDA's class map; and `normalized_class_of(hwnd)`, the same for a
+  window. Every class-based rule in this crate compares the normalized
+  name, so a Windows Forms tree view gets the `SysTreeView32` handling
+  below and a Windows Forms list view the `SysListView32` position. The
+  outpost's backend arbitration uses the same function.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, following NVDA's MSAA
   role and state tables (so `STATE_SYSTEM_DEFAULT` is dropped and
-  `STATE_SYSTEM_PROTECTED` kept), pinned by unit tests against raw state
+  `STATE_SYSTEM_PROTECTED` kept, traversed is visited, and linked is
+  linked), and `adjust_role_and_states`, NVDA's adjustment once mapped
+  (a half-checked progress bar is a busy indicator), pinned by unit tests against raw state
   words captured from live controls. Reading a snapshot also treats a
   whitespace-only name or value as absent, drops the name of the edit
   field inside a labelled combo box, and gives a list view or tree view
   item its position, from `LVM_GETITEMCOUNT` or by counting its siblings
-  with `TVM_GETNEXTITEM`, as NVDA does.
+  with `TVM_GETNEXTITEM`, as NVDA does. A list view item has no value or
+  description, and one of a list view showing columns (the report view or
+  tiles) is named by its columns' texts, "content; Header: content", in
+  the order shown, leaving out columns of zero width or no text
+  (`list_view`, ported from NVDA's `sysListView32.py`: `LVM_GETVIEW`, the
+  header's item count, `LVM_GETCOLUMNORDERARRAY`, `LVM_GETSUBITEMRECT`,
+  `LVM_GETITEMTEXTW`, and `LVM_GETCOLUMNW`, their structures written into
+  the list view's process through `edit`'s target process, with pointer
+  fields sized for it).
 - `calls` — the count of the cross-process calls `acquire` makes, kept per
   thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
   Every `IAccessible` method, `IAccIdentity`'s identity string, the

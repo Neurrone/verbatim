@@ -91,6 +91,12 @@ continuously alongside every later milestone.
   name-plus-rectangle elements. OCR joins as a second text source in M8 and
   the display model as a third in M14; the review commands and cursor stay
   the same throughout, only the source improves underneath.
+- Typed-character echo of composed text from the D2 injection helper, as
+  NVDA echoes what the application receives: Windows' text-service
+  keyboards outside Chinese, Japanese and Korean (Vietnamese Telex and
+  VNI, the Indic Phonetic keyboards) compose characters the keyboard hook
+  cannot see. Until then Verbatim stays silent while such a keyboard is
+  active rather than echoing raw keys (decided 2026-10-08).
 - Interaction-before-full-render E2E on a very large page.
 - Scan-mode generalization: the same projection over an ordinary app.
 - Start-menu search results: the results are a Chromium (WebView2)
@@ -123,13 +129,21 @@ Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
 
 ## M8 — Breadth: speech configurability, profiles, overlays, OCR, secure desktop
 
+- Automatic language switching, as NVDA does it: the language of each
+  run of text (UIA's Culture per format run, IA2 text attributes) carried
+  through the text reads, Core and speech, and each run spoken in its
+  language's voice by every synthesizer, with a setting to turn it off.
+  Today the language is read but used only for word segmentation, and
+  OneCore's SSML always uses the current voice's language (language audit,
+  2026-10-08). Terminal output switches language only where the terminal
+  reports a language per line (decided 2026-10-07).
 - Input help mode; the gesture-remapping configuration GUI; full
   pronunciation/symbol dictionaries and their configuration UI (the
   data-driven infrastructure exists from M3/M4). With punctuation and
-  symbol levels in place, revisit terminal output's symbol-only lines
-  (vim's "~" rows, box-drawing rules), which M4 skips outright as a
-  stand-in for NVDA's default level: they should then follow the user's
-  symbol level instead (`phase6-design.md`, "Terminal risks found by
+  symbol levels in place, decide how terminal output's symbol-only lines
+  (vim's "~" rows, box-drawing rules) are spoken: M4 speaks them as they
+  are, and they should then follow the user's symbol level, as NVDA's
+  are silent at its default level (`phase6-design.md`, "Terminal risks found by
   studying NVDA").
 - Configuration profiles (manual and triggered); localized UI shipped in at
   least two languages as proof.

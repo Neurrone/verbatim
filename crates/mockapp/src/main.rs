@@ -11,12 +11,16 @@
 //! runners. See `docs/crates/mockapp.md` for the fixture format, CLI, and stdin
 //! command reference.
 
+mod buttons;
+mod common_controls;
 mod edit;
 mod fixture;
 mod hits;
+mod list_view;
 mod msaa;
 mod stdin;
 mod tree;
+mod tree_view;
 mod uia;
 mod window;
 
@@ -70,12 +74,13 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let root = fixture::load(&cli.fixture)?;
+    let mut root = fixture::load(&cli.fixture)?;
+    let native = root.take_native();
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
     let backend = match cli.backend {
         BackendArg::Uia => Backend::Uia,
         BackendArg::Msaa => Backend::Msaa,
     };
-    window::run(backend, tree, &cli.title, cli.show)?;
+    window::run(backend, tree, &native, &cli.title, cli.show)?;
     Ok(())
 }

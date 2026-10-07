@@ -131,6 +131,50 @@ pub enum Role {
     /// cells, and typed characters wait for the terminal to show them
     /// (`phase6-design.md`, M4 items 4 and 5).
     Terminal,
+    /// A field for an IP address (MSAA `ROLE_SYSTEM_IPADDRESS`).
+    IpAddress,
+    /// An animation (MSAA `ROLE_SYSTEM_ANIMATION`).
+    Animation,
+    /// A clock (MSAA `ROLE_SYSTEM_CLOCK`).
+    Clock,
+    /// A drop-down list (MSAA `ROLE_SYSTEM_DROPLIST`).
+    DropList,
+    /// A dial or knob (MSAA `ROLE_SYSTEM_DIAL`).
+    Dial,
+    /// A grip for resizing or moving (MSAA `ROLE_SYSTEM_GRIP`).
+    Grip,
+    /// An indicator, such as a pointer to the current item (MSAA
+    /// `ROLE_SYSTEM_INDICATOR`).
+    Indicator,
+    /// A window border (MSAA `ROLE_SYSTEM_BORDER`).
+    Border,
+    /// Blank space between other objects (MSAA `ROLE_SYSTEM_WHITESPACE`).
+    Whitespace,
+    /// A mathematical equation (MSAA `ROLE_SYSTEM_EQUATION`).
+    Math,
+    /// A chart (MSAA `ROLE_SYSTEM_CHART`).
+    Chart,
+    /// A diagram (MSAA `ROLE_SYSTEM_DIAGRAM`).
+    Diagram,
+    /// A column of a table (MSAA `ROLE_SYSTEM_COLUMN`).
+    Column,
+    /// A character, such as a cartoon assistant (MSAA
+    /// `ROLE_SYSTEM_CHARACTER`).
+    Character,
+    /// A sound (MSAA `ROLE_SYSTEM_SOUND`).
+    Sound,
+    /// A button that expands or collapses a tree item (MSAA
+    /// `ROLE_SYSTEM_OUTLINEBUTTON`).
+    TreeViewButton,
+    /// A drop-down button that opens a grid (MSAA
+    /// `ROLE_SYSTEM_BUTTONDROPDOWNGRID`).
+    DropDownButtonGrid,
+    /// A help balloon, a tooltip that explains something (MSAA
+    /// `ROLE_SYSTEM_HELPBALLOON`).
+    HelpBalloon,
+    /// A progress bar that shows activity but not how far it has got, as
+    /// NVDA calls a half-checked progress bar.
+    BusyIndicator,
     /// Anything not yet mapped into the vocabulary.
     Unknown,
 }
@@ -139,7 +183,7 @@ impl Role {
     /// Every role, in declaration order: the roles of the indication
     /// catalogue (`crate::Indication`). A role added to the enum is added
     /// here too.
-    pub const ALL: [Role; 52] = [
+    pub const ALL: [Role; 71] = [
         Role::Window,
         Role::Dialog,
         Role::Pane,
@@ -191,6 +235,25 @@ impl Role {
         Role::HotkeyField,
         Role::Thumb,
         Role::Terminal,
+        Role::IpAddress,
+        Role::Animation,
+        Role::Clock,
+        Role::DropList,
+        Role::Dial,
+        Role::Grip,
+        Role::Indicator,
+        Role::Border,
+        Role::Whitespace,
+        Role::Math,
+        Role::Chart,
+        Role::Diagram,
+        Role::Column,
+        Role::Character,
+        Role::Sound,
+        Role::TreeViewButton,
+        Role::DropDownButtonGrid,
+        Role::HelpBalloon,
+        Role::BusyIndicator,
         Role::Unknown,
     ];
 }
@@ -240,11 +303,15 @@ pub enum State {
     /// Edits more than one line: a standard edit control made multi-line,
     /// spoken "multi line" as NVDA speaks it.
     Multiline,
+    /// A link that has been visited (MSAA `STATE_SYSTEM_TRAVERSED`).
+    Visited,
+    /// Linked to other objects (MSAA `STATE_SYSTEM_LINKED`).
+    Linked,
 }
 
 impl State {
     /// Every state, in declaration order; the basis for [`StateSet::iter`].
-    pub const ALL: [State; 19] = [
+    pub const ALL: [State; 21] = [
         State::Focused,
         State::Focusable,
         State::Selected,
@@ -264,6 +331,8 @@ impl State {
         State::InvalidEntry,
         State::Checkable,
         State::Multiline,
+        State::Visited,
+        State::Linked,
     ];
 
     const fn bit(self) -> u32 {

@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "pane",
+  "name": "Mockapp List View Fixture",
+  "states": ["focused"],
+  "children": [
+    {
+      "id": "files",
+      "role": "list",
+      "native": "list_view",
+      "columns": [["Name", 120], ["Size", 80], ["Hidden", 0], ["Type", 140]],
+      "children": [
+        { "id": "readme", "role": "list_item", "name": "readme.txt", "value": "1 KB|secret|Text Document" },
+        { "id": "notes", "role": "list_item", "name": "notes.md", "value": "|secret|Markdown" }
+      ]
+    }
+  ]
+}

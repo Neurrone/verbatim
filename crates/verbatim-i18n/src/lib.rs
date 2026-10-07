@@ -867,6 +867,25 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::HotkeyField => i18n_embed_fl::fl!(loader, "role-hotkey-field"),
         Role::Thumb => i18n_embed_fl::fl!(loader, "role-thumb"),
         Role::Terminal => i18n_embed_fl::fl!(loader, "role-terminal"),
+        Role::IpAddress => i18n_embed_fl::fl!(loader, "role-ip-address"),
+        Role::Animation => i18n_embed_fl::fl!(loader, "role-animation"),
+        Role::Clock => i18n_embed_fl::fl!(loader, "role-clock"),
+        Role::DropList => i18n_embed_fl::fl!(loader, "role-drop-list"),
+        Role::Dial => i18n_embed_fl::fl!(loader, "role-dial"),
+        Role::Grip => i18n_embed_fl::fl!(loader, "role-grip"),
+        Role::Indicator => i18n_embed_fl::fl!(loader, "role-indicator"),
+        Role::Border => i18n_embed_fl::fl!(loader, "role-border"),
+        Role::Whitespace => i18n_embed_fl::fl!(loader, "role-whitespace"),
+        Role::Math => i18n_embed_fl::fl!(loader, "role-math"),
+        Role::Chart => i18n_embed_fl::fl!(loader, "role-chart"),
+        Role::Diagram => i18n_embed_fl::fl!(loader, "role-diagram"),
+        Role::Column => i18n_embed_fl::fl!(loader, "role-column"),
+        Role::Character => i18n_embed_fl::fl!(loader, "role-character"),
+        Role::Sound => i18n_embed_fl::fl!(loader, "role-sound"),
+        Role::TreeViewButton => i18n_embed_fl::fl!(loader, "role-tree-view-button"),
+        Role::DropDownButtonGrid => i18n_embed_fl::fl!(loader, "role-drop-down-button-grid"),
+        Role::HelpBalloon => i18n_embed_fl::fl!(loader, "role-help-balloon"),
+        Role::BusyIndicator => i18n_embed_fl::fl!(loader, "role-busy-indicator"),
         _ => i18n_embed_fl::fl!(loader, "role-unknown"),
     }
 }
@@ -894,6 +913,8 @@ pub fn state_name(state: verbatim_model::State) -> Option<String> {
         State::Protected => i18n_embed_fl::fl!(loader, "state-protected"),
         State::Required => i18n_embed_fl::fl!(loader, "state-required"),
         State::InvalidEntry => i18n_embed_fl::fl!(loader, "state-invalid-entry"),
+        State::Visited => i18n_embed_fl::fl!(loader, "state-visited"),
+        State::Linked => i18n_embed_fl::fl!(loader, "state-linked"),
         _ => return None,
     })
 }
@@ -1724,6 +1745,11 @@ mod tests {
             "No start marker set"
         );
         assert_eq!(role_name(verbatim_model::Role::Terminal), "terminal");
+        assert_eq!(role_name(verbatim_model::Role::IpAddress), "IP address");
+        assert_eq!(
+            role_name(verbatim_model::Role::BusyIndicator),
+            "busy indicator"
+        );
     }
 
     #[test]

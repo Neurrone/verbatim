@@ -200,6 +200,16 @@ pub enum DeliveredFact {
         /// The event's `idChild`.
         id_child: i32,
     },
+    /// A tooltip window shown (`EVENT_OBJECT_SHOW` on `tooltips_class32`):
+    /// the raw `WinEvent` address.
+    Show {
+        /// The event's window handle.
+        hwnd: isize,
+        /// The event's `idObject`.
+        id_object: i32,
+        /// The event's `idChild`.
+        id_child: i32,
+    },
 }
 
 impl DeliveredFact {
@@ -243,6 +253,11 @@ impl DeliveredFact {
                 id_object,
                 id_child,
             } => FactKey::Alert(*hwnd, *id_object, *id_child),
+            DeliveredFact::Show {
+                hwnd,
+                id_object,
+                id_child,
+            } => FactKey::Show(*hwnd, *id_object, *id_child),
             DeliveredFact::UiaNotification { .. } => return None,
         })
     }
@@ -265,6 +280,8 @@ pub enum FactKey {
     UiaSelection(Vec<i32>),
     /// An MSAA alert at this address.
     Alert(isize, i32, i32),
+    /// A tooltip shown at this address.
+    Show(isize, i32, i32),
 }
 
 /// Messages from the Core-side supervisor to an outpost.

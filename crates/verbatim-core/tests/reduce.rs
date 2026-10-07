@@ -4,10 +4,10 @@
 
 use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::{
-    Backend, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind, Role, SegmentContent,
-    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts,
-    WindowHandle,
+    Backend, Earcon, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot,
+    NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind, Role,
+    SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
+    WindowFacts, WindowHandle,
 };
 
 /// The outpost standing for application `source` in these tests: one per
@@ -622,6 +622,256 @@ fn states_changed_with_children(
     }
 }
 
+/// A state change on an ancestor of the focus is spoken, as NVDA's base
+/// state change handler speaks one (a focused button that changes the
+/// state of the container above it), diffed against the ancestor's states
+/// as the focus was reported with them; one on a node that is neither the
+/// focus nor an ancestor stays silent.
+#[test]
+fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
+    let source = Pid(1);
+    let header = node(
+        31,
+        Role::ColumnHeader,
+        Some("Name"),
+        None,
+        states(&[State::Collapsed]),
+    );
+    let button = node(
+        32,
+        Role::Button,
+        Some("Sort"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &event_in(
+            source,
+            None,
+            NormalizedEvent::FocusChanged {
+                node: button,
+                foreground: false,
+                ancestors: vec![header],
+                ancestors_unknown: false,
+                selected_child: None,
+            },
+        ),
+    );
+
+    let (reader, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(31),
+            states(&[State::Expanded]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![queued(vec![state(State::Expanded)])]);
+
+    let (reader, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(31),
+            states(&[State::Expanded]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![], "the same states again say nothing");
+
+    let (_, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(99),
+            states(&[State::Checked]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![], "another node's change is silent");
+}
+
+/// Visited is said only of a link, and linked only when it changes, as
+/// NVDA says them; a busy indicator does not say its value.
+#[test]
+fn visited_is_said_of_a_link_and_linked_only_as_a_change() {
+    let link = node(
+        61,
+        Role::Link,
+        Some("Home"),
+        None,
+        states(&[State::Visited, State::Linked]),
+    );
+    assert_eq!(
+        focus_segments(link),
+        vec![
+            UtteranceSegment::label("Home"),
+            role(Role::Link),
+            state(State::Visited)
+        ]
+    );
+    let button = node(
+        62,
+        Role::Button,
+        Some("Home"),
+        None,
+        states(&[State::Visited, State::Focused]),
+    );
+    assert_eq!(
+        focus_segments(button),
+        vec![UtteranceSegment::label("Home"), role(Role::Button)]
+    );
+    let busy = node(
+        63,
+        Role::BusyIndicator,
+        Some("Loading"),
+        Some("50"),
+        StateSet::new(),
+    );
+    assert_eq!(
+        focus_segments(busy),
+        vec![
+            UtteranceSegment::label("Loading"),
+            role(Role::BusyIndicator)
+        ]
+    );
+
+    let source = Pid(1);
+    let item = node(
+        64,
+        Role::ListItem,
+        Some("Part"),
+        None,
+        states(&[State::Focused]),
+    );
+    let (reader, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (_, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(64),
+            states(&[State::Focused, State::Linked]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![queued(vec![state(State::Linked)])]);
+}
+
+/// A progress bar indicates its percentage by NVDA's rules (`docs/nvda/
+/// object-model.md`, "How a progress bar reports its value"): focused or
+/// not, as an indication rather than a spoken value, once it moves by a
+/// percent or more from the last one indicated for a progress bar at the
+/// same place; an off-screen one, or one whose value is no number, is an
+/// ordinary value change.
+#[test]
+fn a_progress_bar_indicates_its_percentage() {
+    let source = Pid(1);
+    let at = |id: u64, value: &str, left: i32, offscreen: bool| {
+        let mut bar = node(
+            id,
+            Role::ProgressBar,
+            Some("Copying"),
+            Some(value),
+            if offscreen {
+                states(&[State::Offscreen])
+            } else {
+                StateSet::new()
+            },
+        );
+        bar.details.rect = Some(verbatim_model::Rect {
+            left,
+            top: 0,
+            width: 100,
+            height: 10,
+        });
+        event_in(source, None, NormalizedEvent::ProgressChanged { node: bar })
+    };
+    let bar = node(
+        51,
+        Role::ProgressBar,
+        Some("Copying"),
+        Some("0"),
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (reader, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, bar));
+
+    let (reader, effects) = reduce(&reader, &at(51, "20", 0, false));
+    assert_eq!(
+        heard(&effects),
+        vec![Heard::Other(Effect::PlayEarcon(Earcon::Progress(20)))],
+        "the focused progress bar's value is not spoken"
+    );
+    let (reader, effects) = reduce(&reader, &at(51, "20.9%", 0, false));
+    assert_eq!(heard(&effects), vec![], "less than a percent");
+    let (reader, effects) = reduce(&reader, &at(52, "21", 0, false));
+    assert_eq!(
+        heard(&effects),
+        vec![Heard::Other(Effect::PlayEarcon(Earcon::Progress(21)))],
+        "remembered by place, so a new bar in the same place carries on"
+    );
+    let (reader, effects) = reduce(&reader, &at(53, "21", 500, false));
+    assert_eq!(
+        heard(&effects),
+        vec![Heard::Other(Effect::PlayEarcon(Earcon::Progress(21)))],
+        "another place has a memory of its own"
+    );
+    let (reader, effects) = reduce(&reader, &at(53, "90", 500, true));
+    assert_eq!(heard(&effects), vec![], "off screen, and not the focus");
+    let (_, effects) = reduce(&reader, &at(51, "Paused", 0, false));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("Paused")])],
+        "not a number: the focus's ordinary value change"
+    );
+}
+
+/// A description change on the focus speaks the new description alone, as
+/// NVDA's base handler does; the same description again, one that only
+/// repeats the name, or another node's change says nothing.
+#[test]
+fn a_description_change_on_the_focus_is_spoken() {
+    let source = Pid(1);
+    let field = node(
+        41,
+        Role::EditableText,
+        Some("Password"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, field),
+    );
+    let described = |node: u64, description: &str| Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source,
+        backend: Backend::Msaa,
+        window: None,
+        event: NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(node),
+            change: PropertyChange::Description(Some(description.to_owned())),
+            child_count: None,
+        },
+    };
+
+    let (state, effects) = reduce(&state, &described(41, "Too short"));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(
+            SegmentContent::Description("Too short".to_owned())
+        )])]
+    );
+    let (state, effects) = reduce(&state, &described(41, "Too short"));
+    assert_eq!(heard(&effects), vec![], "unchanged");
+    let (state, effects) = reduce(&state, &described(41, "Password"));
+    assert_eq!(heard(&effects), vec![], "only the name again");
+    let (_, effects) = reduce(&state, &described(42, "Elsewhere"));
+    assert_eq!(heard(&effects), vec![], "not the focus");
+}
+
 #[test]
 fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
     let source = Pid(1);
@@ -1072,7 +1322,7 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
 }
 
 /// A focus event whose snapshot arrives with an ancestor chain, outermost
-/// first â€” the enriched form outposts emit from M3 on.
+/// first Ã¢â‚¬â€ the enriched form outposts emit from M3 on.
 fn focus_event_with_ancestors(
     trace_id: TraceId,
     source: Pid,
@@ -1250,7 +1500,7 @@ fn nameless_groups_are_not_announced_but_named_ones_are() {
 #[test]
 fn a_named_list_ancestor_is_announced_as_entered_context() {
     // The settings dialog's category list ("Categories:") must be spoken when
-    // focus enters it â€” NVDA presents a named list ancestor.
+    // focus enters it Ã¢â‚¬â€ NVDA presents a named list ancestor.
     let state = SrState::new();
     let source = Pid(1);
     let list = node(600, Role::List, Some("Categories"), None, StateSet::new());

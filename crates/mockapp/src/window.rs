@@ -77,6 +77,7 @@ impl From<windows::core::Error> for WindowError {
 pub(crate) fn run(
     backend: Backend,
     tree: SharedTree,
+    native: &[crate::fixture::FixtureNode],
     title: &str,
     show: bool,
 ) -> Result<(), WindowError> {
@@ -119,6 +120,20 @@ pub(crate) fn run(
             .find_map(|node| node.text.clone());
         if let Some(text) = text {
             crate::edit::create(hwnd, &text)?;
+        }
+        // Real controls, read through their own MSAA implementations.
+        for node in native {
+            match node.native.as_deref() {
+                Some("tree_view") => {
+                    crate::tree_view::create(hwnd, node)?;
+                }
+                Some("list_view") => {
+                    crate::list_view::create(hwnd, node)?;
+                }
+                Some("group_box") => crate::buttons::create_group_box(hwnd, node)?,
+                Some("button") => crate::buttons::create_button(hwnd, node)?,
+                _ => {}
+            }
         }
     }
 

@@ -75,6 +75,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             raise_selection(tree, hwnd, index)?;
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text)?,
+        Command::SetDescription(..) | Command::SetStates(..) => {
+            return Err("this command is supported on the msaa backend only".into());
+        }
         Command::ActiveTextPosition(id, start, end) => {
             let index = tree
                 .lock()

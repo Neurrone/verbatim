@@ -47,14 +47,16 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
-use verbatim_model::{CallCounts, Fetches, NodeSnapshot, QueryKind, Role, TreeNode, WindowHandle};
+use verbatim_model::{
+    CallCounts, Fetches, NodeSnapshot, NormalizedEvent, QueryKind, Role, TreeNode, WindowHandle,
+};
 use verbatim_model::{
     CaretWait, CaretWatch, LineStyle, PreviousSelection, TextAttributes, TextMovement, TextOp,
     TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit, Theme,
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
-use verbatim_outpost::protocol::SupervisorToOutpost;
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, CaretSignal, TextSource, caret_report, perform};
@@ -72,6 +74,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
     UIA_Text_TextSelectionChangedEventId,
 };
+use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVE_EXPAND, TVM_EXPAND};
 use windows::core::AgileReference;
 
 use common::outpost::{OutpostUnderTest, Reported};
@@ -129,6 +132,15 @@ impl Ratchet {
         }
     }
 
+    /// [`check`](Self::check) for an operation whose provider is not
+    /// mockapp's, so only the client's calls are compared.
+    fn check_calls(&mut self, operation: &str, measured: CallCounts, expected: CallCounts) {
+        if measured != expected {
+            self.mismatches
+                .push(format!("{operation}: measured {measured:?}"));
+        }
+    }
+
     fn finish(self) {
         assert!(
             self.mismatches.is_empty(),
@@ -180,7 +192,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        calls(0, 31, 1),
+        calls(0, 30, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -188,7 +200,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accName", 3),
             ("get_accValue", 3),
             ("get_accDescription", 3),
-            ("get_accRole", 4),
+            ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
@@ -203,7 +215,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, steady state",
         &cost,
-        calls(0, 31, 0),
+        calls(0, 30, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -211,7 +223,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accName", 3),
             ("get_accValue", 3),
             ("get_accDescription", 3),
-            ("get_accRole", 4),
+            ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
@@ -234,7 +246,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus into a list",
         &cost,
-        calls(0, 31, 0),
+        calls(0, 30, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 7),
@@ -242,7 +254,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accName", 3),
             ("get_accValue", 3),
             ("get_accDescription", 3),
-            ("get_accRole", 4),
+            ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
@@ -260,7 +272,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the next list item",
         &cost,
-        calls(0, 31, 0),
+        calls(0, 30, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -268,7 +280,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accName", 3),
             ("get_accValue", 3),
             ("get_accDescription", 3),
-            ("get_accRole", 4),
+            ("get_accRole", 3),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
@@ -276,8 +288,117 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
+    // The same focus event again: NVDA drops a focus event naming the
+    // address of the focus it last queued before reading anything of it
+    // but the role its class choice needs, and the outpost says nothing.
+    // With nothing published, the calls are known only as mockapp's hits.
+    common::reset_hits(hwnd);
+    outpost.deliver(msaa_focus_fact(hwnd, ITEM_TWO));
+    outpost.settled();
+    ratchet.check(
+        "MSAA focus repeated",
+        &Cost {
+            calls: CallCounts::default(),
+            hits: hits_without_probe(hwnd),
+        },
+        CallCounts::default(),
+        &[
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accRole", 1),
+            ("accFocus", 1),
+        ],
+    );
+
+    // A focus event on an object that neither has the focused state nor
+    // is inside one that has: NVDA reads the states, the object's and then
+    // each ancestor's, and goes no further, and the outpost says nothing:
+    // again only mockapp's hits are known.
+    common::reset_hits(hwnd);
+    outpost.deliver(msaa_focus_fact(hwnd, FIRST));
+    outpost.settled();
+    ratchet.check(
+        "MSAA focus without the focused state",
+        &Cost {
+            calls: CallCounts::default(),
+            hits: hits_without_probe(hwnd),
+        },
+        CallCounts::default(),
+        &[
+            ("accParent", 6),
+            ("get_accChild", 1),
+            ("get_accRole", 1),
+            ("get_accState", 3),
+            ("accFocus", 1),
+        ],
+    );
+
+    // A value change on an object that is not the focus is told from the
+    // focus by its identity, and only its role is read, to know whether it
+    // is a progress bar, whose changes are reported off the focus too: its
+    // acquisition and role are counted before the focus's own value
+    // change, which comes after it from the same hook and is read and
+    // reported.
+    common::reset_hits(hwnd);
+    app.send("set-value first Changed");
+    app.send("set-value item2 Picked");
+    let calls_made = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::ValueChanged { value, .. },
+            timing,
+            ..
+        } => {
+            assert_eq!(value.as_deref(), Some("Picked"));
+            timing.calls
+        }
+        other => panic!("the outpost said {other:?}, not the focus's value change"),
+    };
+    outpost.settled();
+    // `WM_GETOBJECT` is left out (`hits_without_probe`).
+    let hits = hits_without_probe(hwnd);
+    ratchet.check(
+        "MSAA value changes off and on the focus",
+        &Cost {
+            calls: calls_made,
+            hits,
+        },
+        calls(0, 11, 0),
+        &[
+            ("accParent", 2),
+            ("get_accChild", 2),
+            ("get_accName", 1),
+            ("get_accValue", 1),
+            ("get_accDescription", 1),
+            ("get_accRole", 3),
+            ("get_accState", 1),
+            ("get_accKeyboardShortcut", 1),
+            ("accLocation", 1),
+        ],
+    );
+
     ratchet.finish();
     app.quit();
+}
+
+/// mockapp's hits, but for `WM_GETOBJECT`: an event's window is checked
+/// against its backend, whose probe, answered with it, is renewed only once
+/// the last one is half a second old, which depends on the time the test
+/// has taken.
+fn hits_without_probe(hwnd: HWND) -> Vec<(&'static str, u32)> {
+    common::read_hits(hwnd)
+        .into_iter()
+        .filter(|(method, _)| *method != "WM_GETOBJECT")
+        .collect()
+}
+
+/// The fact the listener delivers for an MSAA focus event on mockapp's
+/// node `index`.
+fn msaa_focus_fact(hwnd: HWND, index: usize) -> DeliveredFact {
+    DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: i32::try_from(index + 1).expect("a small index"),
+        id_child: 0,
+    }
 }
 
 /// The description the dialog among `ancestors` was reported with.
@@ -317,7 +438,7 @@ fn msaa_dialog_text_costs_exactly() {
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        calls(0, 45, 1),
+        calls(0, 44, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 17),
@@ -326,7 +447,7 @@ fn msaa_dialog_text_costs_exactly() {
             ("get_accName", 4),
             ("get_accValue", 4),
             ("get_accDescription", 4),
-            ("get_accRole", 7),
+            ("get_accRole", 6),
             ("get_accState", 6),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
@@ -334,6 +455,124 @@ fn msaa_dialog_text_costs_exactly() {
         ],
     );
 
+    ratchet.finish();
+    app.quit();
+}
+
+/// A focus on an item of a real tree view, comctl32's under a Windows Forms
+/// class name (`tests/fixtures/tree_view.json`), read through comctl32's
+/// MSAA implementation and the control's `TVM_*` messages, after a focus on
+/// another root item: the item, its logical parent, and the tree view, met
+/// there as the previous focus's container. The provider is comctl32's, so
+/// only the client's calls are pinned: mockapp's scripted root above it is
+/// not read, and the hits it counts are other clients', the UIA clients of
+/// this process's other tests among them, answering the control's
+/// creation events at times of their own.
+fn msaa_tree_view_costs_exactly() {
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-tree-view");
+    let app = common::spawn("tree_view.json", "msaa", &title);
+    let tree = common::tree_view::tree_view(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut ratchet = Ratchet::default();
+
+    let _ = common::tree_view::focus_item(&outpost, tree, "Settings");
+    let reported = common::tree_view::focus_item(&outpost, tree, "Disks");
+    assert_eq!(
+        reported.chain(),
+        [
+            Some("Mockapp Tree View Fixture"),
+            None,
+            Some("Hardware"),
+            Some("Disks")
+        ]
+    );
+    ratchet.check_calls(
+        "MSAA focus on a tree view item",
+        reported.calls,
+        calls(0, 35, 12),
+    );
+
+    // The focus expands, and its children are counted with the change, for
+    // Core to say how many it holds; collapsing it counts nothing. The
+    // control raises its own state change event for each, which the
+    // outpost hears through its hooks.
+    let _ = common::tree_view::focus_item(&outpost, tree, "Software");
+    let software = common::tree_view::item(tree, "Software");
+    let state_change = |action: u32| {
+        common::tree_view::send(tree, TVM_EXPAND, action as usize, software);
+        let change = match outpost.next() {
+            OutpostToSupervisor::Event {
+                event:
+                    NormalizedEvent::PropertyChanged {
+                        child_count,
+                        change: verbatim_model::PropertyChange::States(states),
+                        ..
+                    },
+                timing,
+                ..
+            } => (child_count, states, timing.calls),
+            other => panic!("the outpost said {other:?}, not the focus's state change"),
+        };
+        outpost.settled();
+        change
+    };
+    let (count, states, calls_made) = state_change(TVE_EXPAND.0);
+    assert!(states.contains(verbatim_model::State::Expanded));
+    assert_eq!(count, Some(3), "Software holds three items");
+    ratchet.check_calls("MSAA tree view item expanded", calls_made, calls(0, 13, 7));
+    let (count, states, calls_made) = state_change(TVE_COLLAPSE.0);
+    assert!(states.contains(verbatim_model::State::Collapsed));
+    assert_eq!(count, None, "nothing is counted for a collapse");
+    ratchet.check_calls("MSAA tree view item collapsed", calls_made, calls(0, 13, 2));
+
+    ratchet.finish();
+    app.quit();
+}
+
+/// A focus on an item of a real list view in the report view
+/// (`tests/fixtures/list_view.json`), after a focus on another item: the
+/// item, named by its columns through the control's messages, as NVDA
+/// names it, and the list view, met there as the previous focus's
+/// container. The provider is comctl32's, so only the client's calls are
+/// pinned, as for the tree view.
+fn msaa_list_view_costs_exactly() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-list-view");
+    let app = common::spawn("list_view.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let list = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            w!("SysListView32"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the list view");
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut ratchet = Ratchet::default();
+    let focus = |child: i32| {
+        outpost.focus(DeliveredFact::MsaaFocus {
+            hwnd: list.0 as isize,
+            id_object: OBJID_CLIENT.0,
+            id_child: child,
+        })
+    };
+    let _ = focus(2);
+    let reported = focus(1);
+    assert_eq!(
+        reported.node.name.as_deref(),
+        Some("readme.txt; Size: 1 KB; Type: Text Document")
+    );
+    ratchet.check_calls(
+        "MSAA focus on a report view item",
+        reported.calls,
+        calls(0, 29, 14),
+    );
     ratchet.finish();
     app.quit();
 }
@@ -2504,6 +2743,8 @@ fn main() {
             "msaa_dialog_text_costs_exactly",
             msaa_dialog_text_costs_exactly,
         ),
+        ("msaa_tree_view_costs_exactly", msaa_tree_view_costs_exactly),
+        ("msaa_list_view_costs_exactly", msaa_list_view_costs_exactly),
         (
             "uia_dialog_text_costs_exactly",
             uia_dialog_text_costs_exactly,

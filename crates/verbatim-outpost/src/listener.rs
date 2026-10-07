@@ -421,6 +421,11 @@ fn forward_msaa_event(
             id_object,
             id_child,
         },
+        WinEventKind::Show => DeliveredFact::Show {
+            hwnd,
+            id_object,
+            id_child,
+        },
         // The listener subscribes to nothing else (LISTENER_SUBSCRIPTIONS).
         _ => return,
     };

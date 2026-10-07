@@ -200,7 +200,7 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
 /// before the item's arrives, and the item's then reports nothing more.
 fn a_controls_own_focus_reports_its_focused_child() {
     let title = common::unique_title("mockapp-focus-child");
-    let mut app = common::spawn("tree_view.json", "msaa", &title);
+    let mut app = common::spawn("focus_child.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::new(app.pid());
     // The tree is node 1, after the root, so its object id is 2; General

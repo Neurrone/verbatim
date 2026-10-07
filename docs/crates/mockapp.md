@@ -37,8 +37,36 @@ the UIA backend the node serves the text pattern over it, and on the MSAA
 backend, since MSAA has no text interface, mockapp creates a real
 multi-line Win32 `EDIT` control holding the first such text, its line
 feeds made carriage return and line feed pairs, read through the edit
-control's own messages), and `children` (nested nodes). The root
+control's own messages), an optional `native` (on the MSAA backend, the
+node is a real control rather than a scripted node: `tree_view` makes a
+comctl32 tree view, below, with its own optional `window_class` and
+`state_images`), and `children` (nested nodes). The root
 node conceptually corresponds to the window itself.
+
+A `native` tree view (`tree_view.rs`, `tests/fixtures/tree_view.json`) is
+a child window of the host window whose items are the node's `tree_item`
+children, nested as they are, read through comctl32's own MSAA
+implementation and its `TVM_*` messages, as Verbatim reads real
+applications' tree views. Its `window_class` registers it under another
+name first, a superclass whose `WM_GETOBJECT` answers the client object
+with comctl32's tree view proxy (`CreateStdAccessibleProxyW`), as Windows
+Forms names and wraps its tree view. With `state_images`, every item gets
+a state image, as a tree view that draws its own check boxes has:
+unchecked, or checked or partly checked by the item's `checked` or
+`mixed` state. (A tree view with comctl32's own check boxes,
+`TVS_CHECKBOXES`, reports its items to MSAA as check boxes instead.) An
+item's `expanded` state expands it, and `selected` selects it. mockapp's
+manifest (`mockapp.exe.manifest`, embedded by `build.rs` as resource 2,
+not the process's own) declares Common Controls version 6, whose tree
+view maps MSAA child ids to items; the tree view alone is made in an
+activation context built from it, so the edit control stays the classic
+one its tests were written against (the version 6 edit control answered
+a line read past the last line break differently, which those tests did
+not cover and which is left for a test of its own). A test
+reaches the items through the control's messages, which take plain
+integers (`tests/common/tree_view.rs`), and gives the scripted root the
+focused state, so a focus handed to an outpost passes NVDA's
+focused-state check without the control taking the keyboard focus.
 `fixture::role_from_fixture_str` and `state_from_fixture_str` hold the
 complete name tables.
 
@@ -50,7 +78,10 @@ on the machine, a running screen reader included, calls into mockapp in
 response; for the tests that count an operation's calls exactly, which
 hand the focus to the outpost themselves), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
-property-change or name/value-change notification), `focus-child
+property-change or name/value-change notification), `set-description <id>
+<text>` and `set-states <id> <state>...` (MSAA only: replace the
+description, or the whole state set, named as in fixtures, and raise
+`EVENT_OBJECT_DESCRIPTIONCHANGE` or `EVENT_OBJECT_STATECHANGE`), `focus-child
 <container> <child>` (addresses the container's children as numbered
 simple children from then on, as a Win32 tree view's items are, so its
 `accFocus` names the focused child by child id and its `accChild` has no
@@ -180,6 +211,19 @@ its crate-internal modules are the reviewable surface:
 - `edit` — the MSAA backend's real edit control: created inside the host
   window, found by class, and selected with `EM_SETSEL` on the window
   thread.
+- `tree_view` — the MSAA backend's real tree view, described above.
+- `list_view` — the MSAA backend's real list view: a `native`
+  `list_view` node is a comctl32 list view in the report view, made in a
+  Common Controls 6 activation context (`common_controls`), with the
+  node's `columns`, each a header and a width (0 hides it), and its
+  `list_item` children as items, each named by its first column, its value
+  split at `|` the texts of the others (`tests/fixtures/list_view.json`).
+- `buttons` — the MSAA backend's real buttons: a `native` `group_box`
+  node is a standard group box (`Button` with `BS_GROUPBOX`) with its
+  children as push buttons inside its rectangle, and a `native` `button`
+  node a push button beside it; each window is placed below the last in
+  z-order, as a dialog places its controls
+  (`tests/fixtures/group_box.json`).
 - `stdin` — command parsing and the reader thread.
 - `hits` — the provider-side hit counters: one atomic per provider method
   (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,

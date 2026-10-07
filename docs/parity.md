@@ -133,12 +133,17 @@ verified.
     2026-10-07**, found by comparing transcripts with NVDA in a Windows
     Forms text box and Verbatim's own read-only description field.
   - Found by NVDA transcripts of Verbatim's settings dialog on
-    2026-10-07, tabbing through the Speech, Theme, and Terminal pages,
-    and **not yet** matched: NVDA announces the group box a control sits
-    in when the focus enters it ("Synthesizer grouping" before the
-    Change button), which Verbatim does not, since a Win32 group box is
-    the control's sibling rather than its parent and NVDA finds it by
-    position; and NVDA says "Verbatim", the menu's owner window,
+    2026-10-07, tabbing through the Speech, Theme, and Terminal pages:
+    NVDA announces the group box a control sits in when the focus enters
+    it ("Synthesizer grouping" before the Change button), which Verbatim
+    did not, since a Win32 group box is the control's sibling rather than
+    its parent and NVDA finds it by position. **Matched since 2026-10-07**:
+    a control's window object has as its container the first visible
+    group box before it in z-order whose rectangle holds it, as NVDA's
+    `findGroupboxObject` finds it (`native_controls` mockapp test with
+    real buttons; the end-to-end check is the settings dialog's Speech
+    page). **Not yet:** the group box's description, which NVDA takes from
+    a static text right after it; and NVDA says "Verbatim", the menu's owner window,
     before "Context menu". Control+Tab to another category made Verbatim
     announce the dialog again under its new title, because the dialog
     was read as a different node after the title changed, where NVDA,
@@ -203,6 +208,16 @@ verified.
     grid, document, title bar, tool tip, and separator; a UIA document
     is a "document", not an "edit" (Notepad's text area is "Text editor
     document"). Progress bars and title bars are never focus context.
+    The MSAA roles NVDA maps that had no counterpart in Verbatim's
+    vocabulary were unknown, so spoken as nothing: IP address, animation,
+    clock, drop list, dial, grip, indicator, border, white space, math
+    (an equation), chart, diagram, column, character, sound, tree view
+    button, drop down button grid, and help balloon. **Matched since
+    2026-10-07**, each with NVDA's English name, and so are the visited
+    state (MSAA traversed), said only of a link, and the linked state,
+    said only when it changes; a half-checked progress bar is a "busy
+    indicator" with no half-checked state and no value spoken, as NVDA
+    adjusts it (map unit tests and reducer tests).
 
   **Different**, still, from the same audit:
   - On focus NVDA reads an edit field's selection or the line at the
@@ -225,17 +240,33 @@ verified.
     third time still spells and copies the name and value, where NVDA
     spells and copies the name and the same text.
   - A multi-column list view item (a report view, such as msinfo32's
-    right pane) is named by NVDA from its column texts, with no value
-    or description; Verbatim keeps MSAA's name and description, since
-    reading column texts needs a cross-process read not yet written.
+    right pane) is named by NVDA from its column texts, "content; Header:
+    content", with no value or description; Verbatim kept MSAA's name and
+    description. **Matched since 2026-10-07**: an item of a
+    `SysListView32` in the report view or tiles is named by its columns
+    in the order shown, each but the first after its header, leaving out
+    a column of zero width or no text, through the control's messages with
+    their structures in the list view's process, and no list view item has
+    a value or description (`native_controls` mockapp test, a real list
+    view; the end-to-end scenario is still to be written). **Not yet:** an
+    owner-drawn list view's display text, which needs a display model
+    (M14).
   - UIA read-only state from a text pattern's document range, which
     NVDA falls back to when `ValueIsReadOnly` is unsupported.
-  - Events NVDA handles that Verbatim does not subscribe to:
-    description changes (MSAA `EVENT_OBJECT_DESCRIPTIONCHANGE`, UIA
-    `HelpText`), UIA live region changes and system alerts, and UIA
-    elements added to or removed from a selection. NVDA also speaks
-    state changes on the focus's ancestors, where Verbatim speaks them
-    only on the focus.
+  - Events NVDA handles that Verbatim does not subscribe to: UIA
+    description changes (`HelpText`), UIA live region changes and system
+    alerts, and UIA elements added to or removed from a selection. MSAA
+    description changes (`EVENT_OBJECT_DESCRIPTIONCHANGE`) on the focus,
+    and state changes, a selection included, on the focus's ancestors:
+    **matched since 2026-10-07** (reducer tests and the `msaa_events`
+    mockapp test, an ancestor in a real tree view collapsed). An ancestor
+    is recognized by the address it was reported at or by its COM object,
+    so an event on a windowless ancestor reached through `accParent`, at
+    an address made up for it, is not recognized unless the application
+    hands out the same object each time; NVDA compares such objects by
+    their properties too. UIA delivers no ancestor's events to the
+    focus-following registration ("UIA event registration"), so a UIA
+    ancestor's state change is still not spoken.
   - Dialog text, which NVDA reads on entering a dialog: a message box's
     question, read after the dialog's title and role and before its
     focused button. **Matched since 2026-10-07** ("A dialog's own text" in
@@ -438,9 +469,19 @@ verified.
   application, which differs in Settings, where ApplicationFrameHost
   holds attention and the focus is in SystemSettings). Accepted background events
   never move focus or the navigator and are spoken queued.
-  **matched (unverified)** for these; the tooltip and notification-bar
-  windows, background progress bars, and a per-source cap on
-  background events are **not yet**.
+  **matched (unverified)** for these. A help balloon, shown in a
+  standard tooltip window (`tooltips_class32`), is spoken from any
+  application as NVDA speaks it by default (the listener hooks the show
+  event desktop-wide and forwards only a tooltip window's), and an
+  ordinary tooltip is not, as NVDA's tooltip reporting is off by default:
+  **matched since 2026-10-07** (`msaa_events` mockapp test, scripted;
+  the end-to-end scenario is still to be written). The setting that
+  turns tooltips on is **not yet**. Background progress bars and a
+  per-source cap on background events are **not yet**. The other window
+  classes NVDA accepts show events from belong to one application or
+  input method (Internet Explorer's notification bar, a chat
+  application's tray alert, IME candidate windows) and are deferred with
+  application support.
 - Recovery after an outpost is replaced. NVDA has no equivalent: it
   is one process, and after an application crash it re-queries the
   real focus ([Focus and the navigator](nvda/focus-and-navigator.md)).
@@ -640,8 +681,20 @@ verified.
 - Value change on focused node speaks bare value (slider drag), not
   for an edit field or document, not when unchanged, and not for a role
   that never speaks its value. Verbatim: **matched since 2026-10-02**
-  (source-checked). Background progress bar
-  reporting (NVDA option): **not yet**.
+  (source-checked). A progress bar's value changes, focused or not, by
+  NVDA's progress bar behavior ("How a progress bar reports its value" in
+  [Object model](nvda/object-model.md)): **matched since 2026-10-07** for
+  MSAA (reducer tests and the `msaa_events` mockapp test). Verbatim's
+  progress indication, a tone by default (D12), is given once the
+  percentage moves by a percent from the last one indicated at that
+  place, and the value is not spoken; an off-screen or invisible progress
+  bar, or one whose value is no number, is an ordinary value change.
+  **Different:** a theme that reports the indication as speech speaks it
+  at the same one-percent interval, where NVDA's speech mode speaks every
+  ten percent. A UIA progress bar is reported only while it is the focus,
+  since UIA's property events are followed on the focus alone ("UIA event
+  registration"). Background progress bar reporting (NVDA option, off by
+  default): **not yet**.
 - State-change diff announcements (gained states; lost states spoken
   by their absence, including half checked becoming "not checked").
   Verbatim: **matched since 2026-10-02** (source-checked).
@@ -664,6 +717,27 @@ verified.
   among the focus's ancestors (`event_alert` on IAccessible objects).
   Verbatim: **not yet**: it has the alert role (UIA and MSAA map to it),
   but no alert events, so it reports no other alerts.
+- Items of the MSAA audit of 2026-10-07 still **not yet**, each found
+  against NVDA's source:
+  - A focused list view group header. When a focus event names a
+    `SysListView32` itself and one of its group headers has the focus
+    (`LVM_GETFOCUSEDGROUP`), NVDA makes the group the focus, named by its
+    header, its footer as its value, collapsed or expanded, inside the
+    list view, reading the group through its in-process helper. A
+    control's group focus exists only while it has the keyboard focus,
+    which mockapp's tests do not give it, so this waits for an end-to-end
+    scenario to be tested against.
+  - NVDA asks `accFocus` again of what `accFocus` answered, until it
+    answers the same object, when it reads the focus on request; Verbatim
+    asks once.
+  - NVDA handles the system caret's show event as a caret event on the
+    focus; Verbatim follows the caret's location changes only, and reads
+    the caret after every focus anyway.
+  - NVDA handles each focus event of a batch in order once another kind
+    of event follows it, so a focus separated from a later one by other
+    events is still handled; Verbatim handles a batch's newest focus
+    first and falls back to older ones only when it cannot be reported.
+  - An alert-role object's alert event, as above.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
 - A control's own focus with a focused child. A Win32 control taking
@@ -795,7 +869,30 @@ verified.
   E2E; commit d3e13b7).
 - SysTreeView32 via TVM messages, Tree/TreeItem roles. NVDA:
   control-specific overlay. Verbatim: **matched (verified)**
-  (system_information_tree E2E; commits 809214d, 1078614).
+  (system_information_tree E2E; commits 809214d, 1078614). A Windows
+  Forms tree view (`WindowsForms10.SysTreeView32.app.…`) gets the same
+  handling, since NVDA matches its class rules against the normalized
+  class name: Verbatim compared the raw name, so such a tree's items had
+  no position, flat navigation, and no expanded count. **Matched since
+  2026-10-07**: every class rule in `verbatim-ia2` compares the normalized
+  name (`native_controls` mockapp test, a real comctl32 tree view under a
+  Windows Forms class name; the end-to-end scenario is still to be
+  written). **Different:** a tree view with comctl32's own check boxes
+  (`TVS_CHECKBOXES`) reports its items to MSAA as check boxes, which NVDA
+  gives no tree view handling at all, reading them as plain check boxes
+  with MSAA's flat navigation; Verbatim still navigates and walks them
+  through the control's messages, which reads more usefully and changes
+  nothing spoken on focus. A tree view that draws its own check boxes
+  (msconfig's, say) says whether an item is checked only through the
+  item's state image, which NVDA reads with `TVM_GETITEMSTATE`: any state
+  image makes the item checkable, the second checked, and the third half
+  checked. **Matched since 2026-10-07** (`native_controls` mockapp test:
+  "checked", "not checked", and a half-checked parent; the end-to-end
+  scenario is still to be written). A tree item outside a `SysTreeView32`
+  is NVDA's generic outline item, which drops its value only when it is a
+  number and takes no level from it; Verbatim had made any tree item's
+  numeric value its level and dropped any other value. **Matched since
+  2026-10-07** (`native_controls` mockapp test, scripted tree items).
 - Navigator death recovery: NVDA reports failure and stays; Verbatim
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side
@@ -959,6 +1056,16 @@ verified.
     back; NVDA waits.
   - An MSAA focus is accepted only when the object or one of its
     ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`).
+    Since 2026-10-07 the states are checked first and read live, as NVDA
+    reads them, ancestors included; Verbatim had read the focus and its
+    ancestors in full first, and had checked ancestors reused from the
+    previous focus's chain as last read. A focus event naming the address
+    of the focus last reported, a whole object, is dropped before it is
+    read, as NVDA's `isDuplicateIAccessibleEvent` drops it; **different**
+    only in that a reported foreground change makes the next such event no
+    duplicate, since an outpost does not see focus in other applications,
+    which is how NVDA knows the focus left. (`msaa_focus_changes_cost_exactly`
+    pins both.)
   - When the newest focus event of a batch cannot be reported (unreadable,
     destroyed, refused), the next older one is tried, up to three, as
     NVDA's event pump falls back.
@@ -1232,7 +1339,8 @@ verified.
   be decided. Line indentation tones are **not yet**: indentation is not
   reported yet. Which events produce earcons (start and exit, browse and
   focus mode, suggestions, progress bars, logged errors) is the shell's
-  and later milestones' to wire; the reducer emits none of them yet.
+  and later milestones' to wire; the reducer emits the progress
+  indication since 2026-10-07, and none of the others yet.
 - Verbosity settings (report object descriptions, position information,
   keyboard shortcuts, and the document formatting options). NVDA:
   checkboxes in the Object Presentation and Document Formatting panels
