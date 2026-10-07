@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicU64;
 use verbatim_model::{CaretKey, CaretMotion};
 
 use super::*;
+use crate::outpost::text_reads::{CaretEvents, EventWait};
 
 /// An in-memory text whose positions are UTF-16 offsets. Lines end after
 /// each line feed; a word is a run of letters and digits with the spaces
@@ -546,6 +547,78 @@ fn a_line_that_changed_away_from_the_caret_or_a_late_event_is_no_evidence() {
     ));
     assert!(!reply.moved);
     assert_eq!(signal.waits, 10, "the wait ran out");
+}
+
+/// The outpost's own caret events (`EventWait`), on a clock that moves on
+/// by each wait's timeout when it runs out and stands still when an event
+/// ends it, counting the caret's reads. The first read meets a caret event:
+/// the application's late report of something earlier.
+struct EventsOnce<'a> {
+    events: &'a CaretEvents,
+    wait: EventWait<'a>,
+    now: Instant,
+    reads: usize,
+}
+
+impl CaretSignal for EventsOnce<'_> {
+    fn caret_event(&mut self) -> bool {
+        self.wait.caret_event()
+    }
+
+    fn wait(&mut self, timeout: Duration) {
+        if !self.wait.wait(timeout) {
+            self.now += timeout;
+        }
+    }
+
+    fn now(&mut self) -> Instant {
+        self.now
+    }
+
+    fn now_ms(&mut self) -> u64 {
+        WAITED_AT
+    }
+
+    fn reading(&mut self) {
+        self.reads += 1;
+        assert!(self.reads <= 12, "the wait read the caret without waiting");
+        self.wait.reading();
+        if self.reads == 1 {
+            self.events.arrived();
+        }
+    }
+}
+
+#[test]
+fn a_caret_event_during_the_wait_ends_one_wait_only() {
+    // Core knew the caret, so the event is no evidence; it ends the wait
+    // after the read it arrived during, and every later wait waits its
+    // time again rather than returning at once.
+    let mut source = Fake::new("only", 2);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    let events = CaretEvents::default();
+    let mut signal = EventsOnce {
+        events: &events,
+        wait: EventWait::new(&events),
+        now: Instant::now(),
+        reads: 0,
+    };
+    let reply = caret_reply(perform(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::AwaitCaret(watch(Some(since), TextUnit::Character)),
+        &mut signal,
+    ));
+    assert!(!reply.moved);
+    assert_eq!(
+        signal.reads, 12,
+        "the read the event met, one again at once, and one every 10 ms for 100 ms"
+    );
 }
 
 #[test]

@@ -61,11 +61,66 @@ impl CaretEvents {
     }
 }
 
-/// A caret key's wait, listening for caret events since it began.
+/// The caret events a caret key's wait listens for: those since the wait
+/// began, which may be evidence, and those since the caret was last read,
+/// which the next read has not seen and which end a wait between reads.
+pub(crate) struct EventWait<'a> {
+    events: &'a CaretEvents,
+    /// The count when the wait began.
+    since: u64,
+    /// The count when the caret was last read.
+    seen: u64,
+}
+
+impl<'a> EventWait<'a> {
+    /// A wait beginning now.
+    pub(crate) fn new(events: &'a CaretEvents) -> Self {
+        let since = events.count();
+        Self {
+            events,
+            since,
+            seen: since,
+        }
+    }
+
+    /// Whether a caret event arrived since the wait began.
+    pub(crate) fn caret_event(&self) -> bool {
+        self.events.count() > self.since
+    }
+
+    /// The caret is about to be read: it will see every caret event that
+    /// arrived before now.
+    pub(crate) fn reading(&mut self) {
+        self.seen = self.events.count();
+    }
+
+    /// Waits until a caret event arrives that the last read of the caret
+    /// did not see, or `timeout` passes; true when an event ended it. Each
+    /// event ends one wait at most, as the read after it sees it, so a
+    /// wait after an earlier event waits its time out rather than
+    /// returning at once.
+    pub(crate) fn wait(&self, timeout: Duration) -> bool {
+        let count = self
+            .events
+            .count
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let seen = self.seen;
+        let (count, result) = self
+            .events
+            .arrived
+            .wait_timeout_while(count, timeout, |count| *count <= seen)
+            .unwrap_or_else(PoisonError::into_inner);
+        drop(count);
+        !result.timed_out()
+    }
+}
+
+/// A caret key's wait, listening for caret events.
 struct Signal<'a> {
     context: &'a Context,
     node_id: NodeId,
-    since: u64,
+    events: EventWait<'a>,
     awaited: Option<Awaited>,
 }
 
@@ -82,16 +137,11 @@ pub(super) struct Awaited {
 
 impl CaretSignal for Signal<'_> {
     fn caret_event(&mut self) -> bool {
-        self.context.caret_events.count() > self.since
+        self.events.caret_event()
     }
 
     fn wait(&mut self, timeout: Duration) {
-        let events = &self.context.caret_events;
-        let count = events.count.lock().unwrap_or_else(PoisonError::into_inner);
-        let since = self.since;
-        let _ = events
-            .arrived
-            .wait_timeout_while(count, timeout, |count| *count <= since);
+        self.events.wait(timeout);
     }
 
     fn now(&mut self) -> Instant {
@@ -103,6 +153,7 @@ impl CaretSignal for Signal<'_> {
     }
 
     fn reading(&mut self) {
+        self.events.reading();
         self.context.caret_read(self.node_id);
     }
 
@@ -267,7 +318,7 @@ pub(super) fn answer(
     let mut signal = Signal {
         context,
         node_id,
-        since: context.caret_events.count(),
+        events: EventWait::new(&context.caret_events),
         awaited: None,
     };
     let reply = match source {
