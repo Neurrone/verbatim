@@ -45,8 +45,8 @@ use windows::Win32::System::Threading::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, GetExitCodeProcess, OpenProcess,
     PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-    QueryFullProcessImageNameW, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess,
-    WaitForSingleObject,
+    QueryFullProcessImageNameW, ResumeThread, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
+    STARTUPINFOW, TerminateProcess, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::core::{PCWSTR, PWSTR};
@@ -80,10 +80,12 @@ use crate::protocol::{KillOutcome, ProcessInfo, ProcessState};
 /// Nothing is injected to make that so. Returns the process's id and
 /// whether it was allowed.
 ///
-/// # Errors
-///
 /// A console program's window is titled `console_title`, when given, from
-/// its first frame.
+/// its first frame. With `minimized`, the program's first window opens
+/// minimized and inactive (`SW_SHOWMINNOACTIVE`), for a caller that brings
+/// it forward itself once it is ready.
+///
+/// # Errors
 ///
 /// Returns an error if the process cannot be spawned (bad path, permission
 /// denied, and so on), or if `stderr_to` is set and the capture file cannot
@@ -95,6 +97,7 @@ pub fn launch(
     env: &[(String, String)],
     stderr_to: Option<&str>,
     console_title: Option<&str>,
+    minimized: bool,
 ) -> io::Result<(u32, bool)> {
     let capture = stderr_to
         .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
@@ -110,8 +113,14 @@ pub fn launch(
             .map_or(PWSTR::null(), |title| PWSTR(title.as_mut_ptr())),
         ..STARTUPINFOW::default()
     };
+    if minimized {
+        startup.dwFlags |= STARTF_USESHOWWINDOW;
+        startup.wShowWindow =
+            u16::try_from(windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0)
+                .unwrap_or_default();
+    }
     if let Some(capture) = &capture {
-        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.dwFlags |= STARTF_USESTDHANDLES;
         startup.hStdOutput = HANDLE(capture.as_raw_handle());
         startup.hStdError = HANDLE(capture.as_raw_handle());
     }
@@ -119,8 +128,8 @@ pub fn launch(
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: every pointer passed points into a buffer that outlives the
     // call: the command line is writable and nul-terminated, as the
-    // directory and the console title are, and the environment block is UTF-16 ending in two
-    // nuls, as `CREATE_UNICODE_ENVIRONMENT` declares. The capture handle,
+    // directory and the console title are, and the environment block is
+    // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares. The capture handle,
     // when there is one, is open and inheritable.
     unsafe {
         CreateProcessW(
@@ -620,6 +629,7 @@ mod tests {
             &[],
             None,
             None,
+            false,
         )
         .expect("spawns powershell")
         .0
@@ -688,6 +698,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
+            false,
         )
         .expect("spawns cmd with a stderr capture path");
         assert_eq!(
@@ -718,6 +729,7 @@ mod tests {
             &[],
             None,
             None,
+            false,
         )
         .expect("spawns cmd");
         assert_eq!(
@@ -741,6 +753,7 @@ mod tests {
             &[],
             None,
             None,
+            false,
         )
         .expect("spawns cmd");
         wait_for_job(pid, |job| job.running.len() == 2);

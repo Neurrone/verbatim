@@ -103,15 +103,12 @@ pub(crate) fn notepad_title(name: &str) -> String {
     format!("{}.txt - Notepad", harness_marker(name))
 }
 
-/// Asserts what Windows 11 Notepad says as it opens the harness document
-/// `name` with its caret on `line`: the window as Notepad first names it,
-/// then as it names it once the document is loaded, the text area, and
-/// the line at the caret.
+/// Asserts what Windows 11 Notepad says as the harness document `name`,
+/// opened ([`Scenario::open_document_with`]), is brought forward with its
+/// caret on `line`: the window, named with the document, the text area,
+/// and the line at the caret.
 pub(crate) fn expect_notepad_opened(scenario: &mut Scenario, name: &str, line: &str) {
-    let title = notepad_title(name);
-    scenario
-        .speech()
-        .expect(&["Notepad", &title, "Text editor document", line]);
+    expect_notepad_returned(scenario, name, line);
 }
 
 /// Asserts what Windows 11 Notepad says as its window comes back to the

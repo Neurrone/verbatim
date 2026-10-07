@@ -187,6 +187,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
             env,
             stderr_to,
             console_title,
+            minimized,
         } => match process::launch(
             &command,
             &args,
@@ -194,6 +195,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
             &env,
             stderr_to.as_deref(),
             console_title.as_deref(),
+            minimized,
         ) {
             Ok((pid, foreground_allowed)) => Frame::Reply {
                 to: id,
@@ -667,6 +669,7 @@ mod tests {
             env: vec![],
             stderr_to: None,
             console_title: None,
+            minimized: false,
         });
         let Frame::Reply {
             payload: ReplyPayload::Launched { pid, .. },

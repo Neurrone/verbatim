@@ -160,6 +160,27 @@ impl AgentClient {
             env: env.to_vec(),
             stderr_to: stderr_to.map(str::to_owned),
             console_title: None,
+            minimized: false,
+        })
+    }
+
+    /// Launches `command` with `args`, as [`AgentClient::launch_process`]
+    /// does, its first window opening minimized and inactive, for the
+    /// caller to bring forward once it is ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the agent could not spawn
+    /// the process.
+    pub fn launch_minimized(&mut self, command: &str, args: &[String]) -> io::Result<Launched> {
+        self.launch(Request::LaunchProcess {
+            command: command.to_owned(),
+            args: args.to_vec(),
+            working_dir: None,
+            env: Vec::new(),
+            stderr_to: None,
+            console_title: None,
+            minimized: true,
         })
     }
 
@@ -184,6 +205,7 @@ impl AgentClient {
             env: Vec::new(),
             stderr_to: None,
             console_title: Some(title.to_owned()),
+            minimized: false,
         })
     }
 

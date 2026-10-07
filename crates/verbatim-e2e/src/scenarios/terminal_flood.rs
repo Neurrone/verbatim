@@ -8,15 +8,16 @@
 //! says "skipped N lines" for all but the newest "Last lines to speak"
 //! (30) and speaks those; it repeats that after each group until the
 //! output stops. The written script `flood.ps1` prints "flood line 1" to
-//! "flood line 3000" as fast as the shell can, which is within the
-//! terminal's scrollback and ends long before thirty lines have been
+//! "flood line 2000" as fast as the shell can, which, all four floods
+//! together, stays within the terminal's scrollback of 9,001 lines, so
+//! every line is counted, and ends long before thirty lines have been
 //! spoken, then writes how long that took, by its own stopwatch, to
 //! `flood-<run>.ms` in the run's folder. The prompt that follows is the
 //! burst's last line, and counts as a line of its output like any other:
-//! the burst is 3001 lines, and its last 30 are flood lines 2972 to 3000
+//! the burst is 2001 lines, and its last 30 are flood lines 1972 to 2000
 //! and the prompt. So a flood is heard exactly as: flood lines 1 to 30,
-//! "skipped 2941 lines" after the skipped-lines sound, then flood lines
-//! 2972 to 3000 and the prompt.
+//! "skipped 1941 lines" after the skipped-lines sound, then flood lines
+//! 1972 to 2000 and the prompt.
 //!
 //! 1. The first flood, with no key pressed, asserted exactly as above.
 //! 2. Responsiveness and output reporting off: the second flood's first
@@ -49,7 +50,7 @@ pub(crate) use super::no_teardown as teardown;
 const NAME: &str = "terminal_flood";
 
 /// How many lines a flood prints.
-const LINES: u32 = 3_000;
+const LINES: u32 = 2_000;
 
 /// How many lines a burst speaks whole, and how many it speaks last: the
 /// e2e settings' "Lines spoken in full" and "Last lines to speak".
@@ -58,7 +59,7 @@ const GROUP: u32 = 30;
 /// The flood script; its argument names the run's elapsed-time file.
 pub(crate) const SCRIPT: &str = "param([string]$Run)\r\n\
 $watch = [Diagnostics.Stopwatch]::StartNew()\r\n\
-for ($line = 1; $line -le 3000; $line++) { \"flood line $line\" }\r\n\
+for ($line = 1; $line -le 2000; $line++) { \"flood line $line\" }\r\n\
 $watch.Stop()\r\n\
 [IO.File]::WriteAllText(\"$PSScriptRoot\\flood-$Run.ms\", [string]$watch.ElapsedMilliseconds)\r\n";
 
@@ -192,9 +193,9 @@ mod tests {
         assert_eq!(speech.len(), 2 * GROUP as usize + 1);
         assert_eq!(speech[0], "flood line 1");
         assert_eq!(speech[29], "flood line 30");
-        assert_eq!(speech[30], "sound: skipped-lines skipped 2941 lines");
-        assert_eq!(speech[31], "flood line 2972");
-        assert_eq!(speech[59], "flood line 3000");
+        assert_eq!(speech[30], "sound: skipped-lines skipped 1941 lines");
+        assert_eq!(speech[31], "flood line 1972");
+        assert_eq!(speech[59], "flood line 2000");
         assert_eq!(speech[60], "ready>");
     }
 

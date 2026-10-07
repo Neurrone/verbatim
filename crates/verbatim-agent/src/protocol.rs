@@ -98,6 +98,10 @@ pub enum Request {
         /// otherwise shows its own path until the shell sets a title.
         #[serde(default)]
         console_title: Option<String>,
+        /// Whether the program's first window opens minimized and
+        /// inactive, for a caller that brings it forward once it is ready.
+        #[serde(default)]
+        minimized: bool,
     },
     /// Terminates a process by pid.
     KillProcess {
@@ -559,6 +563,12 @@ pub enum WindowCondition {
         /// Text the title contains.
         title_contains: String,
     },
+    /// A visible top-level window, minimized or not, is titled with
+    /// `title_contains`.
+    Present {
+        /// Text the title contains.
+        title_contains: String,
+    },
     /// No visible top-level window is titled with `title_contains`.
     Absent {
         /// Text the title contains.
@@ -645,6 +655,7 @@ mod tests {
                 env: vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())],
                 stderr_to: Some(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned()),
                 console_title: Some("A console".to_owned()),
+                minimized: true,
             },
         };
         let frame = Frame::Reply {

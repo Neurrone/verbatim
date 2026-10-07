@@ -515,6 +515,17 @@ impl Scenario {
         self.speech.expect_nothing_more(self.last_input);
     }
 
+    /// Every utterance not yet matched that was queued before Verbatim
+    /// has handled the scenario's last input and is idle
+    /// ([`SpeechCollector::take_until_idle`]), for the caller to assert on.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle.
+    pub fn take_until_idle(&mut self) -> Vec<crate::speech::Heard> {
+        self.speech.take_until_idle(self.last_input)
+    }
+
     /// The directory, on the agent's machine, that this run's harness
     /// files go in: the one holding Verbatim's executable.
     #[must_use]
@@ -672,17 +683,22 @@ impl Scenario {
     }
 
     /// Opens a harness document holding `contents` in Windows 11 Notepad,
-    /// named with [`DOCUMENT_MARKER`] and `name`, and waits for its window
-    /// to take the foreground. No Notepad window may be open before, so
-    /// the window is the scenario's own and Notepad's process exits once
-    /// it closes; at cleanup the harness tab is closed as a tab, so
-    /// Notepad does not keep it for its next session, and the document is
-    /// deleted.
+    /// named with [`DOCUMENT_MARKER`] and `name`, and brings its window to
+    /// the foreground. Notepad opens minimized and inactive, and is
+    /// brought forward, as clicking its taskbar button does, only once its
+    /// window is titled with the document: a window that takes the
+    /// foreground as it opens is first titled "Notepad" alone for a moment,
+    /// and whether Verbatim reads it then is a race. No Notepad window may
+    /// be open before, so the window is the scenario's own and Notepad's
+    /// process exits once it closes; at cleanup the harness tab is closed
+    /// as a tab, so Notepad does not keep it for its next session, and the
+    /// document is deleted.
     ///
     /// # Errors
     ///
     /// Returns an error if a Notepad window is already open, a request
-    /// fails, or the window does not take the foreground.
+    /// fails, the window is not titled with the document in time, or it
+    /// does not take the foreground.
     pub fn open_document_with(&mut self, name: &str, contents: &str) -> io::Result<WindowInfo> {
         let marker = harness_marker(name);
         let open: Vec<String> = self
@@ -700,13 +716,9 @@ impl Scenario {
         }
         let path = format!(r"{}\{marker}.txt", self.run_dir);
         self.agent.write_file(&path, contents.as_bytes())?;
-        let launch = self.agent.launch_process(
-            "notepad.exe",
-            std::slice::from_ref(&path),
-            None,
-            &[],
-            None,
-        )?;
+        let launch = self
+            .agent
+            .launch_minimized("notepad.exe", std::slice::from_ref(&path))?;
         self.launched.push(Launched {
             pid: launch.pid,
             title: Some(marker.clone()),
@@ -716,6 +728,29 @@ impl Scenario {
             notepad: true,
             also_exit: Vec::new(),
         });
+        let (present, desktop) = self.agent.wait_for_window(
+            WindowCondition::Present {
+                title_contains: marker.clone(),
+            },
+            WINDOW_TIMEOUT,
+        )?;
+        let window = desktop
+            .windows
+            .iter()
+            .find(|window| present && window.title.contains(&marker))
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
+                    describe_foreground(&desktop)
+                ))
+            })?;
+        if !self.agent.set_foreground(window.window)? {
+            return Err(io::Error::other(format!(
+                "Notepad's window {:?} could not be brought to the foreground: {}",
+                window.title,
+                describe_foreground(&desktop)
+            )));
+        }
         self.require_in_front(&marker, launch)
     }
 

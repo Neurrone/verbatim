@@ -27,7 +27,8 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SetForegroundWindow, WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
+    PostMessageW, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_CLOSE, WM_COMMAND,
+    WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
 
@@ -89,6 +90,9 @@ pub fn holds(condition: &WindowCondition) -> bool {
         WindowCondition::NotForeground { title_contains } => !foreground_info()
             .foreground
             .is_some_and(|window| window.title.contains(title_contains.as_str())),
+        WindowCondition::Present { title_contains } => top_level_windows()
+            .into_iter()
+            .any(|window| window_text(window).contains(title_contains.as_str())),
         WindowCondition::Absent { title_contains } => !top_level_windows()
             .into_iter()
             .any(|window| window_text(window).contains(title_contains.as_str())),
@@ -144,11 +148,18 @@ pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
     )
 }
 
-/// Brings `window` to the foreground with `SetForegroundWindow`, injecting
-/// no input, and returns whether it is the foreground window afterwards.
+/// Brings `window` to the foreground with `SetForegroundWindow`, restoring
+/// it first when it is minimized, as clicking its taskbar button does,
+/// injecting no input, and returns whether it is the foreground window
+/// afterwards.
 #[must_use]
 pub fn set_foreground(window: u64) -> bool {
     let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
+    if is_minimized(window) {
+        // SAFETY: tolerates any handle; the return value is the window's
+        // earlier visibility, not a failure.
+        let _ = unsafe { ShowWindow(window, SW_RESTORE) };
+    }
     // SAFETY: tolerates any handle; a stale one fails.
     let set = unsafe { SetForegroundWindow(window) }.as_bool();
     // SAFETY: GetForegroundWindow has no preconditions.

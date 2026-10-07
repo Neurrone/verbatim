@@ -587,6 +587,52 @@ impl SpeechCollector {
     /// Panics, naming the unexpected utterances, if anything was queued
     /// that no assertion matched, or if Verbatim does not become idle.
     pub fn expect_nothing_more(&mut self, after_input: Option<u64>) {
+        self.await_idle(after_input);
+        self.require_all_asserted("after the scenario's last assertion");
+        let unended: Vec<UtteranceId> = self.unended.iter().copied().collect();
+        for utterance in unended {
+            let deadline = Instant::now() + self.step_timeout;
+            if self.ending_by(utterance, deadline).is_none() {
+                self.fail(&format!(
+                    "{:?} had not ended {:?} after the scenario's last assertion",
+                    self.text_of(utterance),
+                    self.step_timeout
+                ));
+            }
+        }
+        self.require_all_asserted("while the last utterances ended");
+    }
+
+    /// Every utterance not yet matched that was queued before Verbatim
+    /// reports it has handled the input numbered `after_input` and
+    /// everything before it, and is idle, in order: for the one step whose
+    /// speech cannot be known before it runs (`docs/testing.md`, "Exact
+    /// assertions"). The caller asserts on every one returned; each counts
+    /// as matched.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle.
+    pub fn take_until_idle(&mut self, after_input: Option<u64>) -> Vec<Heard> {
+        self.await_idle(after_input);
+        let taken: Vec<Heard> = self
+            .pending
+            .drain(..)
+            .map(|utterance| Heard {
+                text: utterance.text,
+                utterance: utterance.utterance,
+            })
+            .collect();
+        self.matched
+            .extend(taken.iter().map(|heard| heard.text.clone()));
+        taken
+    }
+
+    /// Asks Verbatim, on this connection, to answer once it has handled
+    /// the input numbered `after_input` and everything before it, and is
+    /// idle, and reads every frame until the answer: every utterance
+    /// queued before it is then read.
+    fn await_idle(&mut self, after_input: Option<u64>) {
         let id = match self.source.send(Request::AwaitIdle {
             after_input,
             timeout_ms: u64::try_from(IDLE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
@@ -612,19 +658,6 @@ impl SpeechCollector {
                 self.fail("Verbatim did not answer whether it is idle");
             }
         }
-        self.require_all_asserted("after the scenario's last assertion");
-        let unended: Vec<UtteranceId> = self.unended.iter().copied().collect();
-        for utterance in unended {
-            let deadline = Instant::now() + self.step_timeout;
-            if self.ending_by(utterance, deadline).is_none() {
-                self.fail(&format!(
-                    "{:?} had not ended {:?} after the scenario's last assertion",
-                    self.text_of(utterance),
-                    self.step_timeout
-                ));
-            }
-        }
-        self.require_all_asserted("while the last utterances ended");
     }
 
     /// Reads every frame already on its way, without waiting for any to
