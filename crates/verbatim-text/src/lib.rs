@@ -30,9 +30,11 @@
 
 #![forbid(unsafe_code)]
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::OnceLock;
 
+use icu_normalizer::ComposingNormalizerBorrowed;
 use icu_properties::CodePointMapData;
 use icu_properties::props::{GeneralCategory, GeneralCategoryGroup};
 use icu_segmenter::options::{SentenceBreakInvariantOptions, WordBreakInvariantOptions};
@@ -69,6 +71,25 @@ pub fn cell_width(text: &str) -> usize {
 #[must_use]
 pub fn trim_padding(line: &str) -> &str {
     line.trim_end_matches(char::is_whitespace)
+}
+
+/// `text` in Unicode's composed normal form (NFC): a letter typed or
+/// stored as a base letter and a combining accent ("E" and U+0301) becomes
+/// the precomposed letter ("É") where Unicode has one, so a character is
+/// named and its case found the same way however it was written.
+#[must_use]
+pub fn composed(text: &str) -> Cow<'_, str> {
+    ComposingNormalizerBorrowed::new_nfc().normalize(text)
+}
+
+/// Whether the grapheme cluster `grapheme` is a capital, raised in pitch
+/// when it is spoken on its own: in its composed form ([`composed`]) some
+/// code point is uppercase and none is lowercase, so a capital with
+/// accents that have no precomposed form is still a capital.
+#[must_use]
+pub fn is_capital(grapheme: &str) -> bool {
+    let grapheme = composed(grapheme);
+    grapheme.chars().any(char::is_uppercase) && !grapheme.chars().any(char::is_lowercase)
 }
 
 /// Whether the grapheme cluster `grapheme` belongs in a word: every code
@@ -640,6 +661,19 @@ mod tests {
         assert_eq!(cell_width("ab"), 2);
         assert_eq!(cell_width("中文"), 4);
         assert_eq!(cell_width("e\u{301}"), 1);
+    }
+
+    #[test]
+    fn capitals_are_found_in_composed_form() {
+        assert_eq!(composed("E\u{301}"), "\u{C9}");
+        assert!(is_capital("E\u{301}"));
+        assert!(is_capital("\u{C9}"));
+        // A capital A with a dot below and an acute: composed, the acute
+        // stays a combining mark, which has no case.
+        assert!(is_capital("A\u{323}\u{301}"));
+        assert!(!is_capital("e\u{301}"));
+        assert!(!is_capital("7"));
+        assert!(!is_capital(","));
     }
 
     #[test]

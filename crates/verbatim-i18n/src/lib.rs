@@ -789,8 +789,11 @@ pub fn character_description(character: &str, language: Option<&str>) -> Option<
     )
 }
 
-/// The code point of a one-code-point string.
+/// The code point of a character that is one code point in its composed
+/// form (`verbatim_text::composed`), so a letter written with a combining
+/// accent is looked up as the precomposed letter.
 fn single_code_point(character: &str) -> Option<u32> {
+    let character = verbatim_text::composed(character);
     let mut chars = character.chars();
     let first = chars.next()?;
     chars.next().is_none().then_some(u32::from(first))

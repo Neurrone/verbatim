@@ -47,6 +47,11 @@ Windows API, and `cargo xtask ci` checks that it does not.
   characters and none for combining marks.
 - `trim_padding`: a terminal line without its trailing padding, whatever
   whitespace characters it is made of.
+- `composed` and `is_capital`: a character in Unicode's composed normal
+  form (NFC, by ICU4X's `icu_normalizer`), and whether it is a capital,
+  some code point uppercase and none lowercase once composed; the
+  character table and the capital pitch use them, so a letter written
+  with combining accents is named and raised as its precomposed form is.
 - `is_word_grapheme`: whether a grapheme cluster continues a typed word:
   every code point a letter, mark, or number by its general category
   (ICU4X's `icu_properties`), or the zero-width non-joiner or joiner.

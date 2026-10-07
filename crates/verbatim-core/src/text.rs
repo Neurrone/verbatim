@@ -265,10 +265,12 @@ pub(crate) fn character_segments(
     }
 }
 
-/// `text` spelled one character (grapheme cluster) at a time: a space as
-/// "space", a capital raised in pitch, a letter or digit as itself, any
-/// other character by its name; with `descriptions`, each character by its
-/// description where it has one ("Alpha"), as NVDA spells on a third press.
+/// `text` spelled one character (grapheme cluster) at a time, each in its
+/// composed form (`verbatim_text::composed`): a space as "space", a capital
+/// (`verbatim_text::is_capital`) raised in pitch, a letter or digit as
+/// itself, any other character by its name; with `descriptions`, each
+/// character by its description where it has one ("Alpha"), as NVDA spells
+/// on a third press.
 pub(crate) fn spelled(
     text: &str,
     descriptions: bool,
@@ -277,17 +279,19 @@ pub(crate) fn spelled(
     verbatim_text::graphemes(text)
         .into_iter()
         .map(|range| {
-            let character = &text[range];
+            // Composed first, so a capital or a letter written with a
+            // combining accent is found as the precomposed one is.
+            let character = verbatim_text::composed(&text[range]).into_owned();
             let content = if descriptions {
-                SegmentContent::CharacterDescription(character.to_owned())
+                SegmentContent::CharacterDescription(character)
             } else if character == " " {
                 SegmentContent::Message(Message::Space)
-            } else if is_single_uppercase(character) {
-                SegmentContent::SpelledCapital(character.to_owned())
+            } else if verbatim_text::is_capital(&character) {
+                SegmentContent::SpelledCapital(character)
             } else if character.chars().all(char::is_alphanumeric) {
-                SegmentContent::Text(character.to_owned())
+                SegmentContent::Text(character)
             } else {
-                SegmentContent::Character(character.to_owned())
+                SegmentContent::Character(character)
             };
             in_language(content, language)
         })
@@ -518,14 +522,6 @@ pub(crate) fn formatted_segments(
     Some(segments)
 }
 
-/// Whether `text` is one uppercase letter.
-fn is_single_uppercase(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_uppercase() && chars.next().is_none())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,6 +624,17 @@ mod tests {
             spelled("\u{1F469}\u{200D}\u{1F4BB}", false, None),
             vec![UtteranceSegment::new(SegmentContent::Character(
                 "\u{1F469}\u{200D}\u{1F4BB}".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn a_decomposed_capital_is_spelled_composed() {
+        // E with a combining acute accent is the capital É.
+        assert_eq!(
+            spelled("E\u{301}", false, None),
+            vec![UtteranceSegment::new(SegmentContent::SpelledCapital(
+                "\u{C9}".into()
             ))]
         );
     }

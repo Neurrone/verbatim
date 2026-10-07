@@ -142,7 +142,9 @@ Public API:
   of its own (a description, a position, a font); a voice style with a
   pitch change speaks the words between two pitch items. A capital letter
   spoken on its own (a spelled capital, a capital character with no name,
-  a capital's description) follows the `capital` indication: raised in
+  a capital's description; a capital by `verbatim_text::is_capital`,
+  judged and spoken in composed form, so "E" with a combining acute is
+  "É") follows the `capital` indication: raised in
   pitch by `CAPITAL_PITCH_OFFSET` when spoken, after its tone when it
   plays one, and as it is when off. A sound's gain is the theme's, the
   indication's, and the sound volume multiplied. With the built-in default

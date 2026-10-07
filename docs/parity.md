@@ -819,7 +819,12 @@ verified.
   within one synthesis, as SSML prosody written as NVDA's drivers write
   it, so a capital brings no pause; a synthesizer that cannot is given
   the change as a pitch setting between separate synthesis calls, which
-  can leave a short pause.
+  can leave a short pause. Since 2026-10-08 a character is composed (NFC)
+  before its case is judged and before the table is looked up, so "E"
+  written with a combining acute accent is spelled as the capital "É",
+  and a capital is a character with some uppercase letter and no
+  lowercase one, so a capital with accents that have no precomposed form
+  is still raised.
 - Toggle key announcements ("caps lock on", "num lock off", "scroll lock
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:

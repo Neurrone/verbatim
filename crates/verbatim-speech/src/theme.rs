@@ -28,6 +28,7 @@ use verbatim_model::{
     SoundSource, TextFormat, Theme, ThemeOptions, ThemeProblem, Utterance, UtteranceId,
     progress_frequency,
 };
+use verbatim_text::{composed, is_capital};
 
 use crate::driver::{IndexMark, SoundCue, SpeechItem, SpeechSequence};
 
@@ -493,27 +494,20 @@ fn carries_content(indication: Indication) -> bool {
 
 /// The capital letter a span speaks on its own, if it is one: a spelled
 /// capital, a capital character with no name of its own, or a capital's
-/// description (the description is what is spoken).
+/// description (the description is what is spoken). A character is judged
+/// and spoken in its composed form, so "E" with a combining acute accent is
+/// the capital "É" (`verbatim_text::is_capital`).
 fn capital_of(content: &SegmentContent, language: Option<&str>) -> Option<String> {
     match content {
         SegmentContent::SpelledCapital(text) => Some(text.clone()),
         SegmentContent::Character(text) if character_name(text, language).is_none() => {
-            is_capital(text).then(|| text.clone())
+            is_capital(text).then(|| composed(text).into_owned())
         }
-        SegmentContent::CharacterDescription(text) if is_capital(text) => {
-            Some(character_description(text, language).unwrap_or_else(|| text.clone()))
-        }
+        SegmentContent::CharacterDescription(text) if is_capital(text) => Some(
+            character_description(text, language).unwrap_or_else(|| composed(text).into_owned()),
+        ),
         _ => None,
     }
-}
-
-/// Whether `text` is one uppercase letter, which is raised in pitch when it
-/// is spoken on its own.
-fn is_capital(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_uppercase() && chars.next().is_none())
 }
 
 /// The plain spoken form of one span, or `None` for spans with nothing to
@@ -708,6 +702,22 @@ mod tests {
             ]
         );
         assert!(sequence.has_marks());
+    }
+
+    #[test]
+    fn a_decomposed_capital_is_raised_in_pitch_composed() {
+        let utterance = utterance_of(vec![UtteranceSegment::new(SegmentContent::Character(
+            "E\u{301}".to_owned(),
+        ))]);
+        let sequence = plain().flatten(&utterance, UtteranceId(1));
+        assert_eq!(
+            sequence.items,
+            vec![
+                SpeechItem::Pitch(CAPITAL_PITCH_OFFSET),
+                SpeechItem::Text("\u{C9}".to_owned()),
+                SpeechItem::Pitch(0),
+            ]
+        );
     }
 
     #[test]
