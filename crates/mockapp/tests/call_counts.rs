@@ -1165,7 +1165,8 @@ fn uia_navigation_steps_cost_exactly() {
 /// provider calls UIA makes while registering, pinned here: the focus
 /// listener's desktop-wide group (an element selected, a menu opened, and
 /// notifications), and an outpost's focus-following property subscription
-/// moved to a focus, `First` inside the group `Settings`.
+/// moved to a focus, `First` inside the group `Settings`, registered on the
+/// focus alone.
 fn uia_event_registrations_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-registrations");
     let app = common::spawn("counts.json", "uia", &title);
@@ -1200,17 +1201,14 @@ fn uia_event_registrations_cost_exactly() {
         &[],
     );
 
-    let followed = ["First", "Settings", "Mockapp Counts Fixture"]
-        .iter()
-        .map(|name| AgileReference::new(under_test.element(name)).expect("an agile reference"))
-        .collect();
+    let focus = AgileReference::new(under_test.element("First")).expect("an agile reference");
     let (registration, cost) = under_test.measure(hwnd, |_| {
         Registration::new(
             vec![Subscription::Properties {
                 properties: FOCUS_PROPERTIES.to_vec(),
                 callback: Arc::new(|_, _| {}),
             }],
-            Scope::Elements(followed),
+            Scope::Elements(vec![focus]),
         )
         .expect("the focus-following registration")
     });
@@ -1219,7 +1217,7 @@ fn uia_event_registrations_cost_exactly() {
         "UIA focus-following registration",
         &cost,
         calls(0, 0, 0),
-        &[("HostRawElementProvider", 2), ("FragmentRoot", 5)],
+        &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
     );
 
     ratchet.finish();

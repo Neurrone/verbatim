@@ -229,8 +229,9 @@ that `select` is observed by a selection `verbatim_uia::Registration` (with
 the delivered element's mapped snapshot carrying its name and `Selected`
 state) and by the WinEvent hook as `WinEventKind::Selection`, and that
 `notify` is observed by a notification `verbatim_uia::Registration` with its
-full payload, and that one registration of all three, one event handler
-group, hears each — property, value, selection, and notification changes are
+full payload, that one registration of all three, one event handler
+group, hears each, and that a registration on a focus hears its changes
+and neither its group's nor a sibling's — property, value, selection, and notification changes are
 used rather than focus, so the tests never depend on real keyboard focus
 or `SetForegroundWindow` succeeding, and pass headless on GitHub
 `windows-latest` runners. `controller_for.rs` selects items with `select`

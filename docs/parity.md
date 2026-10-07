@@ -913,10 +913,38 @@ verified.
   cached elements + scoped search landed in 918e5b8/4563bff after a
   desktop-wide re-find bug; audit against NVDA's per-event cache
   contents still open.
-- UIA event registration scope (global group vs focus-local
-  high-frequency events). Verbatim: **partial** — focus/property
-  registrations exist; the local-group re-registration pattern for
-  text events is **not yet (M4)**.
+- UIA event registration. NVDA: selective registration
+  (`UIA.eventRegistration`, automatic by default, which is selective from
+  Windows 11 22H2), with a global and a local event handler group
+  ([The UIA client](nvda/uia.md)). Verbatim: **matched, narrower, since
+  2026-10-07**, with no setting, since Verbatim's minimum is Windows 11
+  24H2. Every registration is an event handler group, registered with one
+  `AddEventHandlerGroup` call per element; a group that cannot be
+  registered on an element (most often one that has gone) is logged and
+  skipped, and removing handlers from an element that died is left to
+  UIA, as NVDA does.
+  - The global group, desktop-wide in the focus listener: an element
+    selected, a menu opened, and notifications. NVDA's also takes live
+    regions, tool tips, windows opened, system alerts, layout
+    invalidation, drag and drop, and range values anywhere (progress
+    bars); Verbatim subscribes to none of these until it handles them.
+  - The local group, on the focus: name, value, range value, toggle,
+    enabled, and expand and collapse changes. NVDA registers its local
+    group (those, help text, ControllerFor, item status, and caret
+    events) on the focus with its ancestors in scope; Verbatim registers
+    on the focus alone, since the reducer acts only on the focus's own
+    changes, and a registration whose scope took in the ancestors
+    (`TreeScope_Ancestors`) did not hear an ancestor's change from
+    mockapp's provider when tried on 2026-10-07. Until then Verbatim
+    registered on the focus and each reported ancestor.
+  - Caret and text changes: on a focus that has text, alone. NVDA takes
+    text changes only from Word, the console host, and Windows Terminal
+    (when its notifications are off); Verbatim takes them from any text
+    focus, for typed text and terminal output.
+  - NVDA checks that the element is still focused before registering on
+    it (comparing it with `GetFocusedElement`, a call). Verbatim does
+    not: a registration's thread registers only the newest focus it was
+    handed, and a newer focus replaces it.
 - MSAA winevent flood control (per-thread caps, focus coalescing,
   latest-menu-only). NVDA: `OrderedWinEventLimiter`
   ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **not yet** — outposts rely on

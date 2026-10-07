@@ -184,7 +184,7 @@ releases Alt. Notepad has no outpost yet.
    is under the input thread's active window, and `in_foreground`, NVDA's
    test of whether the window is in the system's foreground window right
    now. The worker also moves the focus-following UIA property
-   subscription to the new focus and its ancestors, records the chain for
+   subscription to the new focus, records the chain for
    the next walk, and tells the intake which object is focused. The UIA
    element behind every node it reported stays in the outpost's registry
    until Core says it no longer holds it ("Held objects" in

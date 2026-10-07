@@ -726,3 +726,19 @@ operations on or off.
   `HostRawElementProvider` and 5 `FragmentRoot` provider calls, and 1.19
   ms at the median before, 1.15 after, as one group per element.
 
+### Selective registration
+
+The outpost's focus-following property subscription is registered on the
+focus alone, where it was registered on the focus and on each ancestor
+the focus reported (`docs/parity.md`, "UIA event registration"). The
+reducer acted only on the focus's own changes, so the ancestors' events
+were read and sent for nothing.
+
+- Moving it to a focus inside a group: 2 `HostRawElementProvider` and 5
+  `FragmentRoot` provider calls before, on the focus, the group, and the
+  window; 1 and 2 after. 1.15 ms at the median before (1.33 at the 95th
+  percentile) and 0.75 ms after (1.14), 30 runs each.
+- A change on an ancestor (a window's title, a group's name) no longer
+  reaches the outpost, which read it, mapped it, and sent it to Core,
+  which dropped it.
+

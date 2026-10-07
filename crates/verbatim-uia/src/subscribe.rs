@@ -60,7 +60,7 @@ pub type NotificationCallback = Arc<
         + Sync,
 >;
 
-/// The properties an outpost follows on the focus and its ancestors: name,
+/// The properties an outpost follows on the focus, and only there: name,
 /// value (of the `Value` or the `RangeValue` pattern, as NVDA follows both),
 /// and the state-bearing toggle, enabled, and expand/collapse properties,
 /// all in the base cache request, so the state set is rebuilt from the
