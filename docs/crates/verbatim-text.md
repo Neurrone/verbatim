@@ -22,12 +22,17 @@ Windows API, and `cargo xtask ci` checks that it does not.
 - `Segmenter::sentences`: sentences by Unicode's sentence rules.
 - `last_pause`: where say-all's speech without pauses splits a piece of
   text (`docs/nvda/speech.md`, "Say-all speaks without pauses"): just past
-  its last sentence end, a full stop, exclamation mark, or question mark
-  after a character that is neither whitespace nor another such mark, with
-  at most one closing quotation mark or parenthesis after it and then
-  whitespace or the text's end, together with that whitespace. There is no
-  list of abbreviations, so "Dr. " ends a sentence; a decimal point and an
-  ellipsis do not.
+  its last sentence end, a sentence-ending mark after a character that is
+  neither whitespace nor another such mark, with at most one closing
+  character after it and then whitespace or the text's end, together with
+  that whitespace. The marks are the full stop, exclamation mark, and
+  question mark, their Chinese and Japanese full-width forms (after which
+  no space is needed), the Devanagari danda and double danda, the Arabic
+  question mark, the Urdu and Armenian full stops, and the Ethiopic full
+  stop and question mark; the closing characters are quotation marks,
+  guillemets either way round, German quotation marks, corner brackets,
+  and parentheses, full-width or not. There is no list of abbreviations,
+  so "Dr. " ends a sentence; a decimal point and an ellipsis do not.
 - `is_line_break`, `lines`, and `line_at`: lines of text Core holds whole,
   such as an object's value reviewed as flat text. Any line break ends a
   line: a carriage return and line feed together are one break, and a

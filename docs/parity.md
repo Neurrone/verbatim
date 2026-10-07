@@ -1260,7 +1260,16 @@ verified.
   sentence running across lines. Both eSpeak NG and OneCore speak such a
   sentence in one synthesis call, the mark inside it, as NVDA's eSpeak NG
   driver does; with eSpeak NG the audio is the unmarked sentence's, sample
-  for sample.
+  for sample. **Different, deliberately, since 2026-10-08:** NVDA's
+  sentence ends are only the full stop, exclamation mark, and question
+  mark, so a line of Chinese, Japanese, Hindi, Arabic, Urdu, Armenian, or
+  Amharic never splits. Verbatim also ends a sentence at the Chinese and
+  Japanese full-width marks (。！？, with no space needed after them), the
+  Devanagari danda and double danda, the Arabic question mark, the Urdu
+  full stop, the Armenian full stop, and the Ethiopic full stop and
+  question mark, and also takes guillemets either way round, German
+  quotation marks („ and “), corner brackets, and the full-width
+  parenthesis as the one closing character.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.

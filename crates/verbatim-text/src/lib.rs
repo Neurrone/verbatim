@@ -227,29 +227,30 @@ impl Segmenter {
 /// pauses"). Say-all speaks the text before the offset now and holds back
 /// the rest to speak with what follows it.
 ///
-/// A sentence end is a full stop, exclamation mark, or question mark that
-/// directly follows a character that is neither whitespace nor one of
-/// those marks, with at most one closing quotation mark or parenthesis
-/// after it, and then whitespace or the end of the text. There is no list
-/// of abbreviations: "Dr. Smith" splits after "Dr. ". A decimal point is
-/// followed by a numeral, and the last full stop of an ellipsis follows
-/// another, so neither is a sentence end.
+/// A sentence end is a sentence-ending mark ([`is_sentence_end`]) that
+/// directly follows a character that is neither whitespace nor such a
+/// mark, with at most one closing quotation mark, guillemet, corner
+/// bracket, or parenthesis ([`is_closing`]) after it, and then whitespace
+/// or the end of the text. Chinese and Japanese leave no space after their
+/// full-width marks, so after one of those ([`is_full_width_end`]) the
+/// next sentence may follow at once. There is no list of abbreviations:
+/// "Dr. Smith" splits after "Dr. ". A decimal point is followed by a
+/// numeral, and the last full stop of an ellipsis follows another, so
+/// neither is a sentence end.
 #[must_use]
 pub fn last_pause(text: &str) -> Option<usize> {
-    let is_terminator = |c: char| matches!(c, '.' | '!' | '?');
-    let is_closing = |c: char| matches!(c, '"' | '\'' | '\u{201D}' | '\u{2019}' | ')');
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     (1..chars.len()).rev().find_map(|index| {
         let (_, mark) = chars[index];
         let (_, before) = chars[index - 1];
-        if !is_terminator(mark) || before.is_whitespace() || is_terminator(before) {
+        if !is_sentence_end(mark) || before.is_whitespace() || is_sentence_end(before) {
             return None;
         }
         let mut next = index + 1;
         if chars.get(next).is_some_and(|&(_, c)| is_closing(c)) {
             next += 1;
         }
-        if chars.get(next).is_some_and(|&(_, c)| !c.is_whitespace()) {
+        if !is_full_width_end(mark) && chars.get(next).is_some_and(|&(_, c)| !c.is_whitespace()) {
             return None;
         }
         while chars.get(next).is_some_and(|&(_, c)| c.is_whitespace()) {
@@ -257,6 +258,57 @@ pub fn last_pause(text: &str) -> Option<usize> {
         }
         Some(chars.get(next).map_or(text.len(), |&(offset, _)| offset))
     })
+}
+
+/// Whether `c` ends a sentence: a full stop, exclamation mark, or question
+/// mark; their Chinese and Japanese full-width forms; the Devanagari danda
+/// and double danda; the Arabic question mark and the Urdu full stop; the
+/// Armenian full stop; and the Ethiopic full stop and question mark.
+fn is_sentence_end(c: char) -> bool {
+    matches!(
+        c,
+        '.' | '!'
+            | '?'
+            | '\u{3002}'
+            | '\u{FF01}'
+            | '\u{FF1F}'
+            | '\u{0964}'
+            | '\u{0965}'
+            | '\u{061F}'
+            | '\u{06D4}'
+            | '\u{0589}'
+            | '\u{1362}'
+            | '\u{1367}'
+    )
+}
+
+/// Whether `c` is a full-width sentence end of Chinese and Japanese (the
+/// ideographic full stop and the full-width exclamation and question
+/// marks), after which the next sentence follows without a space.
+fn is_full_width_end(c: char) -> bool {
+    matches!(c, '\u{3002}' | '\u{FF01}' | '\u{FF1F}')
+}
+
+/// Whether `c` may close a sentence after its end: a quotation mark or
+/// apostrophe, a guillemet either way round (French closes with », German
+/// with «), the low and high double quotation marks German closes with
+/// („ and “), a corner bracket or white corner bracket, or a parenthesis,
+/// full-width or not.
+fn is_closing(c: char) -> bool {
+    matches!(
+        c,
+        '"' | '\''
+            | '\u{201D}'
+            | '\u{2019}'
+            | ')'
+            | '\u{00BB}'
+            | '\u{00AB}'
+            | '\u{201E}'
+            | '\u{201C}'
+            | '\u{300D}'
+            | '\u{300F}'
+            | '\u{FF09}'
+    )
 }
 
 /// The shared jieba segmenter, with its built-in dictionary.
@@ -366,8 +418,45 @@ mod tests {
         );
         // Two closing characters are not a sentence end.
         assert_eq!(split("(he said \"stop.\") Then"), None);
-        // The ideographic full stop is not one of the marks.
-        assert_eq!(split("\u{4F60}\u{597D}\u{3002}\u{518D}"), None);
+        // Guillemets either way round, and German quotation marks.
+        assert_eq!(split("«Oui.» Puis"), Some(("«Oui.» ", "Puis")));
+        assert_eq!(split("»Ja.« Dann"), Some(("»Ja.« ", "Dann")));
+        assert_eq!(split("„Ja.“ Dann"), Some(("„Ja.“ ", "Dann")));
+        assert_eq!(split("Ja.„ Dann"), Some(("Ja.„ ", "Dann")));
+    }
+
+    #[test]
+    fn chinese_and_japanese_marks_need_no_space_after_them() {
+        assert_eq!(
+            split("\u{4F60}\u{597D}\u{3002}\u{518D}"),
+            Some(("\u{4F60}\u{597D}\u{3002}", "\u{518D}"))
+        );
+        assert_eq!(split("好吗？好的！谢谢"), Some(("好吗？好的！", "谢谢")));
+        // A corner bracket or a full-width parenthesis may close it.
+        assert_eq!(split("「はい。」次"), Some(("「はい。」", "次")));
+        assert_eq!(split("『終。』次"), Some(("『終。』", "次")));
+        assert_eq!(split("（注意。）再"), Some(("（注意。）", "再")));
+        // A space after one goes before the split.
+        assert_eq!(split("好。 再"), Some(("好。 ", "再")));
+        // An ideographic full stop opening the text is no sentence end.
+        assert_eq!(split("\u{3002}再"), None);
+    }
+
+    #[test]
+    fn other_scripts_end_sentences_with_their_own_marks() {
+        // Devanagari danda and double danda.
+        assert_eq!(split("यह ठीक है। अब"), Some(("यह ठीक है। ", "अब")));
+        assert_eq!(split("श्लोक॥ अब"), Some(("श्लोक॥ ", "अब")));
+        // Arabic question mark and Urdu full stop.
+        assert_eq!(split("هل أنت؟ نعم"), Some(("هل أنت؟ ", "نعم")));
+        assert_eq!(split("یہ ہے۔ اب"), Some(("یہ ہے۔ ", "اب")));
+        // Armenian full stop.
+        assert_eq!(split("Բարեւ։ Ինչ"), Some(("Բարեւ։ ", "Ինչ")));
+        // Ethiopic full stop and question mark.
+        assert_eq!(split("ሰላም። እንዴት"), Some(("ሰላም። ", "እንዴት")));
+        assert_eq!(split("ደህና፧ አዎ"), Some(("ደህና፧ ", "አዎ")));
+        // These still need whitespace or the end after them.
+        assert_eq!(split("है।अब"), None);
     }
 
     #[test]
