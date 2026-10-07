@@ -99,7 +99,11 @@ pub fn load_locale_dir_into(
         Box::new(LocaleDirAssets::try_new(locale_dir)?) as Box<dyn I18nAssets + Send + Sync>,
         Box::new(EmbeddedLocalizations),
     ]);
-    i18n_embed::select(loader, &assets, requested).map_err(LocaleError::Load)
+    let selected = i18n_embed::select(loader, &assets, requested).map_err(LocaleError::Load)?;
+    // The languages just loaded come with Fluent's bidi isolation on again;
+    // it stays off for every language, as `new_loader` explains.
+    loader.set_use_isolating(false);
+    Ok(selected)
 }
 
 /// Error from [`load_locale_dir`].
@@ -1148,10 +1152,35 @@ mod tests {
         assert_eq!(startup_message(), "Verbatim is starting.");
     }
 
+    /// A locale folder of one test's own under the system temp folder,
+    /// named for the test and this process, so no two tests or runs share
+    /// one. It is created empty, failing if it already exists, and removed
+    /// when the test ends; a failure to remove it fails the test. A test
+    /// that failed leaves its folder for inspection.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("verbatim-i18n-{name}-{}", std::process::id()));
+            std::fs::create_dir(&dir).expect("create the test's own locale folder");
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            if !std::thread::panicking() {
+                std::fs::remove_dir_all(&self.0).expect("remove the test's locale folder");
+            }
+        }
+    }
+
     #[test]
     fn locale_dir_overrides_language_and_keeps_fallback() {
-        let dir = std::env::temp_dir().join("verbatim-i18n-test-locale");
-        std::fs::create_dir_all(dir.join("de")).expect("create locale dir");
+        let temp = TempDir::new("locale");
+        let dir = &temp.0;
+        std::fs::create_dir(dir.join("de")).expect("create locale dir");
         std::fs::write(
             dir.join("de").join("verbatim.ftl"),
             "startup-message = Verbatim startet.\n",
@@ -1160,23 +1189,28 @@ mod tests {
 
         let loader = new_loader();
         let german: LanguageIdentifier = "de".parse().expect("valid language id");
-        load_locale_dir_into(&loader, &dir, &[german]).expect("locale dir loads");
+        load_locale_dir_into(&loader, dir, &[german]).expect("locale dir loads");
 
         assert_eq!(
             loader.get("startup-message"),
             "Verbatim startet.",
             "requested language wins for translated messages"
         );
+        assert_eq!(
+            loader.get("menu-exit"),
+            "E&xit",
+            "embedded English serves what the translation lacks"
+        );
     }
 
     #[test]
     fn missing_translation_falls_back_to_embedded_english() {
-        let dir = std::env::temp_dir().join("verbatim-i18n-test-locale-empty");
-        std::fs::create_dir_all(&dir).expect("create locale dir");
+        let temp = TempDir::new("locale-empty");
+        let dir = &temp.0;
 
         let loader = new_loader();
         let untranslated: LanguageIdentifier = "fr".parse().expect("valid language id");
-        load_locale_dir_into(&loader, &dir, &[untranslated]).expect("locale dir loads");
+        load_locale_dir_into(&loader, dir, &[untranslated]).expect("locale dir loads");
 
         assert_eq!(
             loader.get("startup-message"),
@@ -1203,14 +1237,14 @@ mod tests {
     /// The pseudo-locale test required from M1 (roadmap, localization
     /// track): every message resolves through a generated pseudo-locale,
     /// proving no string bypasses the loader and every id is translatable.
+    /// Each resolves to exactly its English text, as the embedded English
+    /// resolves it, inside the pseudo-locale's brackets: no argument is
+    /// dropped, no isolation mark added, and no message takes another's
+    /// text.
     #[test]
     fn pseudo_locale_covers_every_message() {
         let ids = english_message_ids();
-        assert!(
-            ids.len() > 40,
-            "the M1 string inventory should be present, found {}",
-            ids.len()
-        );
+        assert_eq!(ids.first(), Some(&"startup-message"), "the ids are read");
 
         // Generate the pseudo-locale: every message value wrapped in
         // distinctive brackets.
@@ -1228,19 +1262,21 @@ mod tests {
             })
             .collect();
 
-        let dir = std::env::temp_dir().join("verbatim-i18n-test-pseudo");
-        std::fs::create_dir_all(dir.join("en-XA")).expect("create pseudo locale dir");
+        let temp = TempDir::new("pseudo");
+        let dir = &temp.0;
+        std::fs::create_dir(dir.join("en-XA")).expect("create pseudo locale dir");
         std::fs::write(dir.join("en-XA").join("verbatim.ftl"), pseudo).expect("write pseudo ftl");
 
         let loader = new_loader();
         let pseudo_locale: LanguageIdentifier = "en-XA".parse().expect("valid language id");
-        load_locale_dir_into(&loader, &dir, &[pseudo_locale]).expect("pseudo locale loads");
+        load_locale_dir_into(&loader, dir, &[pseudo_locale]).expect("pseudo locale loads");
 
+        let english = new_loader();
         for id in ids {
-            let resolved = loader.get(id);
-            assert!(
-                resolved.starts_with("[!!") || resolved.starts_with("\u{2068}[!!"),
-                "message {id} did not resolve through the pseudo-locale: {resolved:?}"
+            assert_eq!(
+                loader.get(id),
+                format!("[!! {} !!]", english.get(id)),
+                "message {id} resolves through the pseudo-locale"
             );
         }
     }
@@ -1311,17 +1347,72 @@ mod tests {
     #[test]
     fn every_indication_and_category_has_a_name() {
         use verbatim_model::{Indication, IndicationCategory, Presentation, Role, State};
+        // A role or state is named as it is spoken, never by the id it would
+        // fall back to; every other indication has a name of its own.
+        let own_names = [
+            (Indication::Description, "description"),
+            (Indication::Shortcut, "shortcut key"),
+            (Indication::Position, "position"),
+            (Indication::Level, "level"),
+            (Indication::SpellingError, "spelling error"),
+            (Indication::GrammarError, "grammar error"),
+            (Indication::FontName, "font name"),
+            (Indication::FontSize, "font size"),
+            (Indication::Color, "color"),
+            (Indication::FontAttributes, "font attributes"),
+            (Indication::Capital, "capital letter"),
+            (Indication::Blank, "blank"),
+            (Indication::SkippedLines, "skipped lines"),
+            (Indication::AppNotResponding, "application not responding"),
+            (Indication::Start, "start"),
+            (Indication::Exit, "exit"),
+            (Indication::Error, "error"),
+            (Indication::BrowseMode, "browse mode"),
+            (Indication::FocusMode, "focus mode"),
+            (Indication::SuggestionsOpened, "suggestions opened"),
+            (Indication::SuggestionsClosed, "suggestions closed"),
+            (Indication::Progress, "progress bar"),
+        ];
+        let mut named_own = Vec::new();
         for indication in Indication::catalogue() {
-            let name = indication_name(indication);
-            // A name, not the id it falls back to: ids are kebab case.
-            assert!(
-                !name.is_empty() && !name.contains('-'),
-                "{indication}: {name}"
-            );
+            let expected = match indication {
+                Indication::Role(role) => role_name(role),
+                Indication::State(state) => state_name(state).expect("a spoken state"),
+                Indication::NegatedState(state) => {
+                    negated_state_name(state).expect("a negated state")
+                }
+                other => {
+                    named_own.push(other);
+                    own_names
+                        .iter()
+                        .find(|(own, _)| *own == other)
+                        .unwrap_or_else(|| panic!("{other} has a name in this test"))
+                        .1
+                        .to_owned()
+                }
+            };
+            assert_eq!(indication_name(indication), expected, "{indication}");
         }
-        for category in IndicationCategory::ALL {
-            assert_ne!(indication_category_name(category), String::new());
-        }
+        assert_eq!(
+            named_own,
+            own_names.map(|(indication, _)| indication),
+            "each of the catalogue's own indications once"
+        );
+        let categories: Vec<String> = IndicationCategory::ALL
+            .into_iter()
+            .map(indication_category_name)
+            .collect();
+        assert_eq!(
+            categories,
+            [
+                "Roles",
+                "States",
+                "Properties",
+                "Text formatting",
+                "Structure",
+                "Events"
+            ]
+        );
         assert_eq!(
             presentation_name(Presentation::SpeechAndSound),
             "speech and sound"
