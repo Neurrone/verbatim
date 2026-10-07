@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use verbatim_model::{
     CaretWait, CaretWatch, PreviousSelection, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReply, TextUnit,
+    TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
@@ -31,11 +31,13 @@ use verbatim_outpost::text::{Anchors, CaretSignal, NodeText, TextSource, caret_r
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{NodeIdRegistry, Uia};
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, FormatSpan, RangeEnd, RunAttributes, caret_read_classic,
-    caret_read_remote,
+    Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
+    RangeAction, RangeEnd, RangeQuery, RunAttributes, TextFrom, TextTarget, UnitsAnswer,
+    UnitsQuery, caret_read_classic, caret_read_remote, text_location_classic, text_location_remote,
+    text_range_classic, text_range_remote, text_units_classic, text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Word};
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, TextUnit_Word};
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
@@ -177,6 +179,52 @@ fn lines_stop_at_the_end<S: TextSource>(
         TextUnit::Line,
     ));
     assert_eq!((moved, again.text.as_str()), (0, ""), "no further");
+
+    // Say-all's read ahead: every line in one request, the last marked as
+    // the text's last.
+    let reply = perform(
+        source,
+        anchors,
+        &TextOp::ReadAhead(TextReadAhead {
+            at: TextPoint::Start,
+            movement: None,
+            unit: TextUnit::Line,
+            count: 16,
+        }),
+        &mut AlreadyMoved,
+    );
+    let TextReply::Chunks { moved, chunks } = reply else {
+        panic!("chunks, not {reply:?}");
+    };
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(
+        (moved, texts),
+        (
+            0,
+            vec![
+                &*format!("alpha beta{break_text}"),
+                &*format!("gamma{break_text}"),
+                ""
+            ]
+        )
+    );
+    assert!(chunks.last().is_some_and(|chunk| chunk.last));
+    // Two lines asked for: two read.
+    let reply = perform(
+        source,
+        anchors,
+        &TextOp::ReadAhead(TextReadAhead {
+            at: TextPoint::Start,
+            movement: None,
+            unit: TextUnit::Line,
+            count: 2,
+        }),
+        &mut AlreadyMoved,
+    );
+    let TextReply::Chunks { chunks, .. } = reply else {
+        panic!("chunks, not {reply:?}");
+    };
+    assert_eq!(chunks.len(), 2);
 }
 
 /// The first word and character, and a word reached inside the line.
@@ -329,6 +377,7 @@ struct CaretSummary {
     line: (String, usize),
     unit: Option<(String, usize)>,
     runs: Vec<(usize, RunAttributes)>,
+    changes: Option<Vec<(bool, String)>>,
 }
 
 fn summary(answer: &CaretAnswer) -> CaretSummary {
@@ -346,6 +395,12 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
             .iter()
             .map(|run| (run.length, run.attributes.clone()))
             .collect(),
+        changes: answer.changes.as_ref().map(|changes| {
+            changes
+                .iter()
+                .map(|change| (change.selected, text(&change.text)))
+                .collect()
+        }),
     }
 }
 
@@ -363,6 +418,10 @@ fn mock_attributes(spelling_error: bool, bold: bool) -> RunAttributes {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "each read checked in turn against one running mockapp"
+)]
 fn remote_and_classic_caret_reads_agree() {
     common::init_com();
     let title = common::unique_title("mockapp-caret-read");
@@ -386,6 +445,7 @@ fn remote_and_classic_caret_reads_agree() {
         formats,
         attributes: all,
         max_text: 1024,
+        max_change_text: 1024,
     };
 
     // The caret in "beta", a spelling error after bold "alpha": the line's
@@ -434,6 +494,30 @@ fn remote_and_classic_caret_reads_agree() {
     ));
     let found = caret_both(&moved);
     assert!(found.moved && found.selection_moved);
+    assert_eq!(
+        found.changes,
+        Some(Vec::new()),
+        "nothing was or is selected"
+    );
+    // A selection made from the caret: its text, newly selected.
+    let at_six = {
+        common::apply(&mut app, hwnd, "caret doc 6");
+        caret_read_classic(&query(None, None)).expect("the caret")
+    };
+    common::apply(&mut app, hwnd, "caret doc 6 10");
+    let six = RangeEnd {
+        range: &at_six.caret,
+        endpoint: Endpoint::Start,
+    };
+    let extended = caret_both(&CaretQuery {
+        previous_selection: Some((six, six)),
+        ..query(None, None)
+    });
+    assert_eq!(
+        extended.changes,
+        Some(vec![(true, "beta".to_owned())]),
+        "the word selected"
+    );
     common::apply(&mut app, hwnd, "caret doc 6 10");
     let selected = caret_read_remote(&query(None, None)).expect("the caret");
     assert!(selected.selection.is_some());
@@ -455,6 +539,176 @@ fn remote_and_classic_caret_reads_agree() {
         ..query(None, None)
     });
     assert!(!again.moved && !again.selection_moved);
+    app.send("quit");
+}
+
+/// What a units read found, comparable across the two implementations.
+/// How far a units read moved, each unit's text, offset, and language, and
+/// whether the text ended.
+type UnitsSummary = (i32, Vec<(String, usize, Option<String>)>, bool);
+
+fn units_summary(answer: &UnitsAnswer) -> UnitsSummary {
+    (
+        answer.moved,
+        answer
+            .units
+            .iter()
+            .map(|unit| {
+                (
+                    String::from_utf16_lossy(&unit.text),
+                    unit.offset,
+                    unit.language.clone(),
+                )
+            })
+            .collect(),
+        answer.ended,
+    )
+}
+
+/// The text protocol's other reads agree remotely and classically: units
+/// after a movement, read ahead, and from a position some text after a held
+/// one; the text between two points and selecting it; and a point's place
+/// on the screen.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each read checked in turn against one running mockapp"
+)]
+fn remote_and_classic_text_reads_agree() {
+    common::init_com();
+    let title = common::unique_title("mockapp-text-reads");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let target = TextTarget {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+    };
+    let units = |from, movement, count| {
+        let query = UnitsQuery {
+            target,
+            from,
+            movement,
+            unit: TextUnit_Line,
+            count,
+            max_text: 1024,
+            max_total: 1024,
+            culture: true,
+        };
+        let remote = text_units_remote(&query).expect("the remote program runs");
+        let classic = text_units_classic(&query).expect("the classic reads run");
+        let remote = units_summary(&remote);
+        assert_eq!(remote, units_summary(&classic));
+        remote
+    };
+    let en = || Some("en-US".to_owned());
+    common::apply(&mut app, hwnd, "caret doc 7");
+    assert_eq!(
+        units(TextFrom::Caret, None, 1),
+        (0, vec![("alpha beta\n".to_owned(), 7, en())], false)
+    );
+    assert_eq!(
+        units(TextFrom::Caret, Some(Movement::By(TextUnit_Line, 1)), 1),
+        (1, vec![("gamma\n".to_owned(), 0, en())], false)
+    );
+    assert_eq!(
+        units(TextFrom::Start, Some(Movement::Document(1)), 1),
+        (1, vec![(String::new(), 0, en())], false),
+        "the end of the text, on its empty last line"
+    );
+    assert_eq!(
+        units(TextFrom::Start, None, 16),
+        (
+            0,
+            vec![
+                ("alpha beta\n".to_owned(), 0, en()),
+                ("gamma\n".to_owned(), 0, en()),
+                (String::new(), 0, en()),
+            ],
+            true
+        )
+    );
+    assert_eq!(units(TextFrom::Start, None, 2).1.len(), 2);
+
+    // A position Core found inside a line: the start's range, and the
+    // text before the position.
+    let document = verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the text");
+    let start = Position {
+        range: &document,
+        endpoint: Endpoint::Start,
+        collapsed: false,
+    };
+    let prefix: Vec<u16> = "alpha ".encode_utf16().collect();
+    let after = TextFrom::After {
+        from: start,
+        prefix: &prefix,
+        counts: &[6],
+    };
+    assert_eq!(
+        units(after, None, 1),
+        (0, vec![("alpha beta\n".to_owned(), 6, en())], false)
+    );
+
+    // The text between two points, given in either order, and selected.
+    let range = |start, end, action| {
+        let query = RangeQuery {
+            target,
+            start,
+            end,
+            action,
+        };
+        let remote = text_range_remote(&query).expect("the remote program runs");
+        let classic = text_range_classic(&query).expect("the classic reads run");
+        assert_eq!(
+            (&remote.text, remote.selected),
+            (&classic.text, classic.selected)
+        );
+        (String::from_utf16_lossy(&remote.text), remote.selected)
+    };
+    assert_eq!(
+        range(after, Some(TextFrom::Start), RangeAction::Text(1024)),
+        ("alpha ".to_owned(), false)
+    );
+    assert_eq!(
+        range(TextFrom::Start, Some(after), RangeAction::Select),
+        (String::new(), true)
+    );
+    let selected = caret_read_remote(&CaretQuery {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+        since: None,
+        previous_selection: None,
+        unit: None,
+        formats: None,
+        attributes: Attributes::default(),
+        max_text: 1024,
+        max_change_text: 1024,
+    })
+    .expect("the caret");
+    let selection = selected.selection.expect("the selection made");
+    assert_eq!(
+        verbatim_uia::text::TextRangeExt::text(&selection, 64).expect("its text"),
+        prefix
+    );
+    assert_eq!(
+        range(
+            TextFrom::SelectionStart,
+            Some(TextFrom::SelectionEnd),
+            RangeAction::Text(1024)
+        ),
+        ("alpha ".to_owned(), false)
+    );
+
+    // A point's place: mockapp draws each character 8 pixels wide.
+    for (at, expected) in [(TextFrom::Start, (100.0, 200.0)), (after, (148.0, 200.0))] {
+        let query = LocationQuery { target, at };
+        let remote = text_location_remote(&query).expect("the remote program runs");
+        let classic = text_location_classic(&query).expect("the classic reads run");
+        assert_eq!(remote.location, classic.location);
+        assert_eq!(remote.location, Some(expected));
+    }
     app.send("quit");
 }
 
@@ -501,6 +755,10 @@ fn main() {
         (
             "remote_and_classic_caret_reads_agree",
             remote_and_classic_caret_reads_agree,
+        ),
+        (
+            "remote_and_classic_text_reads_agree",
+            remote_and_classic_text_reads_agree,
         ),
         (
             "uia_text_reads_moves_and_answers_caret_keys",

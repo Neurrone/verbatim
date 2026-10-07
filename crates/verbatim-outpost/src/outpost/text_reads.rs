@@ -345,7 +345,14 @@ pub(super) fn terminal_output(
     let wanted = u32::from(context.terminal_lines());
     let mut terminals = context.terminals();
     let terminal = terminals.entry(node_id.number()).or_default();
-    let read = crate::terminal::read(uia, source.pattern(), terminal, wanted, remote, baseline);
+    let read = crate::terminal::read(
+        uia,
+        (source.element(), source.pattern()),
+        terminal,
+        wanted,
+        remote,
+        baseline,
+    );
     drop(terminals);
     match read {
         Ok((output, paths)) => {

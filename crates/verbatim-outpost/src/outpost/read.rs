@@ -16,14 +16,17 @@ use verbatim_uia::map::{
     cached_native_window_handle, snapshot_from_cached_element, with_legacy_checked_state,
 };
 use verbatim_uia::{AncestorWalk, ElementExt, Uia, probe_server_side_provider};
-use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
+use verbatim_uia_rops::{
+    FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
+    navigation_step,
+};
 
 use crate::arbitration::{PostProbeCheck, WindowClasses, post_probe_check, window_class_name};
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
 use super::window::{
-    desktop_window, focus_window_of, foreground_window_of, main_window_of, now_ms,
+    desktop_window, focus_window_of, foreground_window_of, main_window_of, now_ms, top_level_of,
     top_level_windows, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
     window_text,
 };
@@ -807,17 +810,23 @@ pub(super) fn navigate(
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
     let (neighbor, from_window) = if context.uia_registry.runtime_id_of(node_id).is_some() {
-        let (uia, cache, element) = uia_node(context, client, node_id)?;
-        let from_window = verbatim_uia::nearest_window_handle(&element);
-        let neighbor = uia
-            .navigate(&element, &cache, &context.uia_registry, kind)
-            .map_err(|error| {
-                if verbatim_uia::element_is_gone(&error) {
-                    ReadError::Gone
-                } else {
-                    ReadError::Failed(format!("UIA navigation failed: {error}"))
-                }
-            })?;
+        let (neighbor, from_window) =
+            if let Some(step) = uia_remote_step(context, client, node_id, kind)? {
+                step
+            } else {
+                let (uia, cache, element) = uia_node(context, client, node_id)?;
+                let from_window = verbatim_uia::nearest_window_handle(&element);
+                let neighbor = uia
+                    .navigate(&element, &cache, &context.uia_registry, kind)
+                    .map_err(|error| {
+                        if verbatim_uia::element_is_gone(&error) {
+                            ReadError::Gone
+                        } else {
+                            ReadError::Failed(format!("UIA navigation failed: {error}"))
+                        }
+                    })?;
+                (neighbor, from_window)
+            };
         // A menu item reached by navigation reads its legacy checked state
         // as a focused one does.
         let neighbor = neighbor.map(|neighbor| {
@@ -837,6 +846,79 @@ pub(super) fn navigate(
         (neighbor, from_window)
     };
     Ok(neighbor.map(|neighbor| corrected_backend(context, client, from_window, neighbor, kind)))
+}
+
+/// A navigation step's neighbor, `None` at a tree edge, and the nearest
+/// window of the node it was taken from.
+type Stepped = (Option<NodeSnapshot>, Option<isize>);
+
+/// One navigation step from a UIA node in one round trip, the neighbor and
+/// the node's nearest window read inside the application's provider
+/// ([`verbatim_uia_rops::navigation_step`]), from the element the registry
+/// keeps, without first refreshing it: the program fails at once when the
+/// element is gone. `None`, having made no call, when the step is taken
+/// the classic way instead: remote operations are off or failed to import
+/// for the node's window, the registry keeps no live element, the node is
+/// a top-level window (a program's walk ends there, while the step from it
+/// reaches the desktop or another application's window), or the element is
+/// gone, which the classic way answers by searching for it.
+fn uia_remote_step(
+    context: &Context,
+    client: &mut Client,
+    node_id: NodeId,
+    kind: QueryKind,
+) -> Result<Option<Stepped>, ReadError> {
+    let direction = match kind {
+        QueryKind::Parent => NavigationDirection::Parent,
+        QueryKind::NextSibling => NavigationDirection::NextSibling,
+        QueryKind::PreviousSibling => NavigationDirection::PreviousSibling,
+        QueryKind::FirstChild => NavigationDirection::FirstChild,
+        _ => return Ok(None),
+    };
+    let Some(element) = context
+        .uia_registry
+        .element_of(node_id)
+        .and_then(|agile| agile.resolve().ok())
+    else {
+        return Ok(None);
+    };
+    // The registry's element was built with the base cache request, which
+    // caches the native window handle.
+    let own = cached_native_window_handle(&element);
+    let window = (own != 0).then_some(own);
+    if !context.tries_remote(window) || (own != 0 && top_level_of(own) == own) {
+        return Ok(None);
+    }
+    let (uia, _) = client.uia_and_cache(context)?;
+    let properties = verbatim_uia::cached_properties(context.fetches());
+    let query = StepQuery {
+        element: &element,
+        direction,
+        properties: &properties,
+    };
+    let (step, path) = match navigation_step(uia, &query, true) {
+        Ok(answer) => answer,
+        Err(error)
+            if error.hresult().is_some_and(|code| {
+                verbatim_uia::element_is_gone(&windows::core::Error::from(code))
+            }) =>
+        {
+            // Searched for, the classic way.
+            context.uia_registry.evict_element(node_id);
+            return Ok(None);
+        }
+        Err(error) => return Err(ReadError::Failed(format!("UIA navigation failed: {error}"))),
+    };
+    if let Path::Fallback(error) = &path {
+        tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+        if let (verbatim_uia_rops::Error::Import(_), Some(hwnd)) = (error, step.window) {
+            context.read_classically(top_level_of(hwnd));
+        }
+    }
+    let neighbor = step
+        .neighbor
+        .map(|neighbor| snapshot_from_cached_element(&neighbor, &context.uia_registry));
+    Ok(Some((neighbor, step.window)))
 }
 
 /// `neighbor` through the backend its window uses, as NVDA corrects the API

@@ -43,6 +43,15 @@ pub const MAX_SELECTION_TEXT_BYTES: usize = 4 * 1024;
 /// to the clipboard.
 pub const MAX_RANGE_BYTES: usize = 1024 * 1024;
 
+/// The most units one [`TextOp::ReadAhead`] asks for.
+pub const MAX_READ_AHEAD: u8 = 32;
+
+/// A [`TextOp::ReadAhead`] stops adding units once the text it read
+/// reaches this many UTF-16 code units (as the providers count text, so at
+/// most three times as many UTF-8 bytes), so a batch of long units stays
+/// bounded; it always carries at least one.
+pub const MAX_READ_AHEAD_TEXT: usize = 32 * 1024;
+
 /// An opaque position in a node's text, minted by the outpost that owns the
 /// node: a UIA text range's start, a Win32 edit control's UTF-16 offset, or
 /// whatever the backend needs to find the position again.
@@ -377,6 +386,23 @@ pub struct TextRead {
     pub unit: TextUnit,
 }
 
+/// Read several units ahead, for say-all: the first as [`TextRead`] reads
+/// it (from `at`, after `movement`), then each next unit of the same kind,
+/// up to `count` units (at most [`MAX_READ_AHEAD`]), stopping early once
+/// the text read reaches [`MAX_READ_AHEAD_TEXT`]. One round trip where the
+/// provider runs remote operations, however many units it reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextReadAhead {
+    /// Where to start.
+    pub at: TextPoint,
+    /// How to move first, if at all.
+    pub movement: Option<TextMovement>,
+    /// The unit to read.
+    pub unit: TextUnit,
+    /// How many units to read.
+    pub count: u8,
+}
+
 /// One operation Core asks an outpost to perform on a node's text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -409,6 +435,9 @@ pub enum TextOp {
     /// The screen position of a point: answered [`TextReply::Location`], or
     /// [`TextReply::Unsupported`] when the provider cannot tell.
     Location(TextPoint),
+    /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
+    /// or as [`TextOp::Read`] is when the first unit cannot be read.
+    ReadAhead(TextReadAhead),
 }
 
 /// A text request from Core to the outpost that owns `node_id`; the answer
@@ -438,6 +467,17 @@ pub enum TextReply {
         moved: i32,
         /// The unit read where the movement ended.
         chunk: TextChunk,
+    },
+    /// The answer to [`TextOp::ReadAhead`]: `moved` as for
+    /// [`TextReply::Read`], and the units read, in order, at least one. The
+    /// last is marked [`TextChunk::last`] when the outpost found no unit
+    /// after it; fewer than asked otherwise means the batch reached
+    /// [`MAX_READ_AHEAD_TEXT`].
+    Chunks {
+        /// Units moved, signed like the request.
+        moved: i32,
+        /// The units read.
+        chunks: Vec<TextChunk>,
     },
     /// The answer to [`TextOp::ReadRange`].
     Range {

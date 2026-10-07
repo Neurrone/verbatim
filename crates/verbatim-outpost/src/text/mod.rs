@@ -48,9 +48,9 @@ use std::time::{Duration, Instant};
 
 use verbatim_model::{
     CaretReply, CaretReport, CaretWait, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES,
-    MAX_RANGE_BYTES, MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection, SelectionChange,
-    TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
-    TextReply, TextUnit,
+    MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES,
+    PreviousSelection, Selection, SelectionChange, TextAnchor, TextAttributes, TextChunk,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
 };
 
 /// How often the caret is read again while a caret key's wait for evidence
@@ -67,7 +67,7 @@ pub const KEPT_ANCHORS: usize = 64;
 
 /// The most UTF-16 code units read for a range copied to the clipboard or a
 /// selection change counted: what fits in [`MAX_RANGE_BYTES`] at worst.
-const MAX_RANGE_UNITS: usize = MAX_RANGE_BYTES / 2;
+pub(crate) const MAX_RANGE_UNITS: usize = MAX_RANGE_BYTES / 2;
 
 /// The most UTF-16 code units read for one chunk.
 pub(crate) const MAX_CHUNK_UNITS: usize = MAX_CHUNK_BYTES;
@@ -117,6 +117,103 @@ pub struct CaretRead<P> {
     pub unit: Option<(Unit<P>, usize)>,
     /// The formatting of the request's span, UTF-16 ranges of its text.
     pub formats: Vec<Formatting>,
+    /// With [`CaretRequest::previous`], how the selection changed from it
+    /// (each change selected or not, and its UTF-16 text), read with the
+    /// rest; `None` when the source did not read them, which the caller
+    /// then does.
+    pub changes: Option<Vec<(bool, Vec<u16>)>>,
+}
+
+/// A point as a source is asked to find it: the protocol's [`TextPoint`],
+/// with a position Core named turned into what the outpost keeps, with no
+/// call.
+#[derive(Clone, Debug)]
+pub enum PointFrom<P> {
+    /// The caret.
+    Caret,
+    /// The selection's start, the caret when nothing is selected.
+    SelectionStart,
+    /// The selection's end, the caret when nothing is selected.
+    SelectionEnd,
+    /// The start of the text.
+    Start,
+    /// The end of the text.
+    End,
+    /// A position the outpost keeps: an anchor's own, or one it reported.
+    At(P),
+    /// The position `prefix.len()` UTF-16 code units after a kept one,
+    /// `prefix` being the text between them as the outpost sent it
+    /// ([`TextSource::advance`]).
+    After(P, Vec<u16>),
+}
+
+/// What [`TextSource::read_units`] reads.
+pub struct UnitsRequest<'a, P> {
+    /// Where to start.
+    pub from: &'a PointFrom<P>,
+    /// How to move first: by a unit the source may not have, or to an end
+    /// of the text (`TextUnit::Document`).
+    pub movement: Option<TextMovement>,
+    /// The unit to read (never a sentence where the source has none, nor
+    /// the document).
+    pub unit: TextUnit,
+    /// How many units: one for a read, more for reading ahead.
+    pub count: u32,
+}
+
+/// One unit [`TextSource::read_units`] read.
+pub struct UnitRead<P> {
+    /// The unit.
+    pub unit: Unit<P>,
+    /// The UTF-16 offset of the point reached in it: zero for every unit
+    /// after the first.
+    pub offset: usize,
+    /// Its languages, as [`TextSource::languages`] gives them.
+    pub languages: Vec<(usize, usize, String)>,
+}
+
+/// The answer of [`TextSource::read_units`].
+pub struct UnitsRead<P> {
+    /// The starting point, found.
+    pub from: P,
+    /// The point the movement reached.
+    pub point: P,
+    /// How far the movement went.
+    pub moved: i32,
+    /// The units, in order, at least one.
+    pub units: Vec<UnitRead<P>>,
+    /// No unit follows the last one read.
+    pub ended: bool,
+}
+
+/// What [`TextSource::read_units`] answers: `None` when the source reads
+/// call by call, or the units, or the reply that ends the request.
+pub type UnitsAnswer<P> = Option<Result<UnitsRead<P>, TextReply>>;
+
+/// What [`TextSource::point_location`] answers: `None` when the source
+/// reads call by call, or the point found and its screen position, `None`
+/// when the source cannot tell.
+pub type Located<P> = Option<(P, Option<(i32, i32)>)>;
+
+/// What [`TextSource::range`] does with the text between two points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeAction {
+    /// Reads it, at most this many UTF-16 code units.
+    Text(usize),
+    /// Selects it.
+    Select,
+}
+
+/// The answer of [`TextSource::range`].
+pub struct RangeRead<P> {
+    /// The first point, found.
+    pub start: P,
+    /// The second point, found.
+    pub end: P,
+    /// The text read, for [`RangeAction::Text`].
+    pub text: Vec<u16>,
+    /// Whether the selection was made, for [`RangeAction::Select`].
+    pub selected: bool,
 }
 
 /// Why a source could not answer.
@@ -301,6 +398,47 @@ pub trait TextSource {
     ) -> TextResult<Option<CaretRead<Self::Pos>>> {
         Ok(None)
     }
+
+    /// Finds a point, moves, and reads units at once, where the source can
+    /// do it in one round trip, answering an unsupported unit with its
+    /// reply; `None` for a source that reads them one call at a time, which
+    /// the caller then does with the methods above.
+    ///
+    /// # Errors
+    ///
+    /// As [`caret`](Self::caret).
+    fn read_units(
+        &mut self,
+        _request: &UnitsRequest<'_, Self::Pos>,
+    ) -> TextResult<UnitsAnswer<Self::Pos>> {
+        Ok(None)
+    }
+
+    /// Finds two points (the second the first again when `None`) and reads
+    /// or selects the text between them, whichever comes first, at once
+    /// where the source can; `None` as for [`read_units`](Self::read_units).
+    ///
+    /// # Errors
+    ///
+    /// As [`caret`](Self::caret).
+    fn range(
+        &mut self,
+        _start: &PointFrom<Self::Pos>,
+        _end: Option<&PointFrom<Self::Pos>>,
+        _action: RangeAction,
+    ) -> TextResult<Option<RangeRead<Self::Pos>>> {
+        Ok(None)
+    }
+
+    /// Finds a point and its screen position at once where the source can;
+    /// `None` as for [`read_units`](Self::read_units).
+    ///
+    /// # Errors
+    ///
+    /// As [`caret`](Self::caret).
+    fn point_location(&mut self, _at: &PointFrom<Self::Pos>) -> TextResult<Located<Self::Pos>> {
+        Ok(None)
+    }
 }
 
 /// Caret events, and the clock, for a caret key's wait for evidence.
@@ -458,6 +596,22 @@ impl<P: Clone> NodeText<'_, P> {
         position
     }
 
+    /// What `position` names, with no call: a position kept, or one some
+    /// text after a kept one; `None` when its anchor was forgotten.
+    fn point_from(&self, position: TextPosition) -> Option<PointFrom<P>> {
+        let key = (position.anchor.0, position.offset);
+        if let Some(pos) = self.anchors.reported.get(&key) {
+            return Some(PointFrom::At(pos.clone()));
+        }
+        let anchor = self.anchors.anchors.get(&position.anchor.0)?;
+        if position.offset == 0 {
+            return Some(PointFrom::At(anchor.pos.clone()));
+        }
+        let offset = floor_boundary(&anchor.text, position.offset as usize);
+        let prefix: Vec<u16> = anchor.text[..offset].encode_utf16().collect();
+        Some(PointFrom::After(anchor.pos.clone(), prefix))
+    }
+
     /// Resolves `position` to a source position; `None` when its anchor was
     /// forgotten.
     fn resolve<S: TextSource<Pos = P>>(
@@ -545,9 +699,10 @@ pub fn perform<S: TextSource>(
     let result = match op {
         TextOp::AwaitCaret(watch) => await_caret(source, anchors, watch, signal),
         TextOp::Read(read) => read_unit(source, anchors, read),
+        TextOp::ReadAhead(ahead) => read_ahead(source, anchors, ahead),
         TextOp::ReadRange { start, end } => read_range(source, anchors, *start, *end),
-        TextOp::Select { start, end } => select(source, anchors, *start, *end),
-        TextOp::MoveCaret(point) => select(source, anchors, *point, *point),
+        TextOp::Select { start, end } => select(source, anchors, *start, Some(*end)),
+        TextOp::MoveCaret(point) => select(source, anchors, *point, None),
         TextOp::Location(point) => location(source, anchors, *point),
         _ => Ok(TextReply::Unsupported),
     };
@@ -585,22 +740,48 @@ fn point<S: TextSource>(
     }))
 }
 
+/// A point as a source finds it, and the position to remember it by once
+/// found when finding it costs a read; or the reply that ends the request.
+type From<P> = Result<(PointFrom<P>, Option<TextPosition>), TextReply>;
+
+/// What `point` names, with no call.
+fn point_from<P: Clone>(anchors: &NodeText<'_, P>, point: TextPoint) -> From<P> {
+    Ok(match point {
+        TextPoint::Caret => (PointFrom::Caret, None),
+        TextPoint::SelectionStart => (PointFrom::SelectionStart, None),
+        TextPoint::SelectionEnd => (PointFrom::SelectionEnd, None),
+        TextPoint::Start => (PointFrom::Start, None),
+        TextPoint::End => (PointFrom::End, None),
+        TextPoint::At(position) => match anchors.point_from(position) {
+            Some(from @ PointFrom::After(..)) => (from, Some(position)),
+            Some(from) => (from, None),
+            None => return Err(TextReply::AnchorLost),
+        },
+    })
+}
+
+/// Remembers a point found by reading, so a later request naming it costs
+/// nothing.
+fn remember_found<P>(anchors: &mut NodeText<'_, P>, position: Option<TextPosition>, pos: &P)
+where
+    P: Clone,
+{
+    if let Some(position) = position {
+        anchors.remember(position, pos.clone());
+    }
+}
+
 /// Builds the chunk for `unit` read as `kind`, with its offset at the
 /// UTF-16 offset `offset`, the source position `at`, and mints its anchor;
-/// with its languages when `languages` is true, and with `formats`, its
+/// with `languages`, its languages read already, and `formats`, its
 /// formatting read already.
 fn chunk<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (unit, kind): (&Unit<S::Pos>, TextUnit),
     (offset, at): (usize, S::Pos),
-    (languages, formats): (bool, &[Formatting]),
+    (runs, formats): (Vec<(usize, usize, String)>, &[Formatting]),
 ) -> TextChunk {
-    let runs = if languages {
-        source.languages(unit)
-    } else {
-        Vec::new()
-    };
     let mut wanted = vec![offset];
     for (start, end, _) in &runs {
         wanted.push(*start);
@@ -735,7 +916,7 @@ fn report_for<S: TextSource>(
         anchors,
         (&line, TextUnit::Line),
         (offset, state.caret.clone()),
-        (false, &formats),
+        (Vec::new(), &formats),
     );
     let carets = &mut anchors.anchors.carets;
     if carets.len() == REMEMBERED_CARETS {
@@ -855,6 +1036,8 @@ struct Polled<P> {
     line: Option<(Unit<P>, usize)>,
     unit: Option<(Unit<P>, usize)>,
     formats: Vec<Formatting>,
+    /// The selection's changes, when the read found them.
+    changes: Option<Vec<(bool, Vec<u16>)>>,
 }
 
 /// Reads the caret for a caret key's wait: in one go where the source can
@@ -875,6 +1058,7 @@ fn poll<S: TextSource>(
             line: Some(read.line),
             unit: read.unit,
             formats: read.formats,
+            changes: read.changes,
         });
     }
     let state = source.caret()?;
@@ -895,6 +1079,7 @@ fn poll<S: TextSource>(
         line: None,
         unit: None,
         formats: Vec::new(),
+        changes: None,
     })
 }
 
@@ -1049,6 +1234,7 @@ fn answer_caret<S: TextSource>(
         line,
         unit: read_unit,
         formats,
+        changes,
         ..
     } = polled;
     let (line_formats, unit_formats) = if span == Some(FormatSpan::Line) {
@@ -1065,9 +1251,13 @@ fn answer_caret<S: TextSource>(
         unit,
         (read_unit, unit_formats),
     )?;
-    let selection_changes = match previous {
-        Some(previous) => selection_changes(source, previous, &state)?,
-        None => Vec::new(),
+    let selection_changes = match (previous, changes) {
+        (Some(_), Some(changes)) => changes
+            .into_iter()
+            .filter_map(|(selected, text)| change_of(selected, &text))
+            .collect(),
+        (Some(previous), None) => selection_changes(source, previous, &state)?,
+        (None, _) => Vec::new(),
     };
     Ok(TextReply::Caret(Box::new(CaretReply {
         moved,
@@ -1139,7 +1329,7 @@ fn unit_at_caret<S: TextSource>(
                 anchors,
                 (&found, reported),
                 (offset, state.caret.clone()),
-                (false, &formats),
+                (Vec::new(), &formats),
             )))
         }
     }
@@ -1153,18 +1343,23 @@ fn change<S: TextSource>(
     end: &S::Pos,
 ) -> TextResult<Option<SelectionChange>> {
     let (units, _) = source.text(start, end, MAX_RANGE_UNITS)?;
+    Ok(change_of(selected, &units))
+}
+
+/// A selection change of the UTF-16 text `units`, `None` for none.
+fn change_of(selected: bool, units: &[u16]) -> Option<SelectionChange> {
     if units.is_empty() {
-        return Ok(None);
+        return None;
     }
-    let (full, _, _) = to_utf8(&units, MAX_RANGE_BYTES, &[]);
+    let (full, _, _) = to_utf8(units, MAX_RANGE_BYTES, &[]);
     let count = characters(&full);
     let mut text = full;
     text.truncate(floor_boundary(&text, MAX_SELECTION_TEXT_BYTES));
-    Ok(Some(SelectionChange {
+    Some(SelectionChange {
         selected,
         text,
         characters: count,
-    }))
+    })
 }
 
 /// How the selection changed from `previous` (its ends, equal for none) to
@@ -1209,11 +1404,119 @@ fn read_unit<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     read: &TextRead,
 ) -> TextResult<TextReply> {
-    let at = match point(source, anchors, read.at)? {
-        Ok(at) => at,
-        Err(reply) => return Ok(reply),
+    Ok(match read_units(source, anchors, read, 1)? {
+        Ok((moved, chunks)) => match chunks.into_iter().next() {
+            Some(chunk) => TextReply::Read { moved, chunk },
+            None => TextReply::Unanswered,
+        },
+        Err(reply) => reply,
+    })
+}
+
+/// Reads several units ahead, for say-all.
+fn read_ahead<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    ahead: &TextReadAhead,
+) -> TextResult<TextReply> {
+    let read = TextRead {
+        at: ahead.at,
+        movement: ahead.movement,
+        unit: ahead.unit,
     };
-    let (at, moved, on_start) = match read.movement {
+    let count = ahead.count.clamp(1, MAX_READ_AHEAD);
+    Ok(
+        match read_units(source, anchors, &read, u32::from(count))? {
+            Ok((moved, chunks)) => TextReply::Chunks { moved, chunks },
+            Err(reply) => reply,
+        },
+    )
+}
+
+/// Reads `count` units: the first as [`TextOp::Read`] reads it, then each
+/// next one, while the text read is under [`MAX_READ_AHEAD_TEXT`]; in one
+/// go where the source can ([`TextSource::read_units`]), else call by
+/// call. Answers how far the movement went and the chunks, the last marked
+/// as the text's last when no unit follows it, or the reply that ends the
+/// request.
+fn read_units<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read: &TextRead,
+    count: u32,
+) -> OrReply<(i32, Vec<TextChunk>)> {
+    let (from, position) = match point_from(anchors, read.at) {
+        Ok(found) => found,
+        Err(reply) => return Ok(Err(reply)),
+    };
+    let kind = match read.unit {
+        TextUnit::Document => return Ok(Err(TextReply::UnsupportedUnit(TextUnit::Document))),
+        TextUnit::Sentence => match source.sentences() {
+            Sentences::Unsupported => {
+                return Ok(Err(TextReply::UnsupportedUnit(TextUnit::Sentence)));
+            }
+            Sentences::ByParagraph => TextUnit::Paragraph,
+        },
+        other => other,
+    };
+    let movement = read.movement.map(|movement| TextMovement {
+        unit: if movement.unit == TextUnit::Document {
+            TextUnit::Document
+        } else {
+            movement_unit(source, movement.unit)
+        },
+        count: movement.count,
+    });
+    let request = UnitsRequest {
+        from: &from,
+        movement,
+        unit: kind,
+        count,
+    };
+    if let Some(answer) = source.read_units(&request)? {
+        let read = match answer {
+            Ok(read) => read,
+            Err(reply) => return Ok(Err(reply)),
+        };
+        remember_found(anchors, position, &read.from);
+        let mut chunks = Vec::with_capacity(read.units.len());
+        for (index, unit) in read.units.into_iter().enumerate() {
+            let at = if index == 0 {
+                read.point.clone()
+            } else {
+                unit.unit.start.clone()
+            };
+            chunks.push(chunk(
+                source,
+                anchors,
+                (&unit.unit, kind),
+                (unit.offset, at),
+                (unit.languages, &[]),
+            ));
+        }
+        if read.ended
+            && let Some(last) = chunks.last_mut()
+        {
+            last.last = true;
+        }
+        return Ok(Ok((read.moved, chunks)));
+    }
+    read_units_classic(source, anchors, (&request, position), read.unit)
+}
+
+/// [`read_units`] call by call, for a source that cannot read them in one
+/// go; `unit` is the unit the request named, before a sentence became a
+/// paragraph.
+fn read_units_classic<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    (request, position): (&UnitsRequest<'_, S::Pos>, Option<TextPosition>),
+    unit: TextUnit,
+) -> OrReply<(i32, Vec<TextChunk>)> {
+    let (kind, count) = (request.unit, request.count);
+    let at = resolve_from(source, request.from)?;
+    remember_found(anchors, position, &at);
+    let (at, moved, on_start) = match request.movement {
         None => (at, 0, false),
         Some(TextMovement {
             unit: TextUnit::Document,
@@ -1231,32 +1534,73 @@ fn read_unit<S: TextSource>(
             };
             (target, moved, false)
         }
-        Some(TextMovement { unit, count }) => {
-            let unit = movement_unit(source, unit);
-            match source.move_by(&at, unit, count)? {
-                Some((landed, moved)) => (landed, moved, unit == read.unit),
-                None => return Ok(TextReply::UnsupportedUnit(unit)),
-            }
-        }
-    };
-    let kind = match read.unit {
-        TextUnit::Document => return Ok(TextReply::UnsupportedUnit(TextUnit::Document)),
-        TextUnit::Sentence => match source.sentences() {
-            Sentences::Unsupported => return Ok(TextReply::UnsupportedUnit(TextUnit::Sentence)),
-            Sentences::ByParagraph => TextUnit::Paragraph,
+        Some(TextMovement { unit: by, count }) => match source.move_by(&at, by, count)? {
+            Some((landed, moved)) => (landed, moved, by == unit),
+            None => return Ok(Err(TextReply::UnsupportedUnit(by))),
         },
-        other => other,
     };
     let Some(found) = source.unit_at(&at, kind, MAX_CHUNK_UNITS)? else {
-        return Ok(TextReply::UnsupportedUnit(kind));
+        return Ok(Err(TextReply::UnsupportedUnit(kind)));
     };
     let offset = if on_start {
         0
     } else {
         source.offset_in(&found, &at)?
     };
-    let chunk = chunk(source, anchors, (&found, kind), (offset, at), (true, &[]));
-    Ok(TextReply::Read { moved, chunk })
+    let languages = source.languages(&found);
+    let mut total = found.text.len();
+    let mut chunks = vec![chunk(
+        source,
+        anchors,
+        (&found, kind),
+        (offset, at),
+        (languages, &[]),
+    )];
+    let mut last = found;
+    while chunks.len() < count as usize && total < MAX_READ_AHEAD_TEXT {
+        let Some((next, moved)) = source.move_by(&last.start, kind, 1)? else {
+            break;
+        };
+        if moved == 0 {
+            if let Some(chunk) = chunks.last_mut() {
+                chunk.last = true;
+            }
+            break;
+        }
+        let Some(found) = source.unit_at(&next, kind, MAX_CHUNK_UNITS)? else {
+            break;
+        };
+        let languages = source.languages(&found);
+        total += found.text.len();
+        chunks.push(chunk(
+            source,
+            anchors,
+            (&found, kind),
+            (0, found.start.clone()),
+            (languages, &[]),
+        ));
+        last = found;
+    }
+    Ok(Ok((moved, chunks)))
+}
+
+/// Finds a point the classic way, call by call.
+fn resolve_from<S: TextSource>(source: &mut S, from: &PointFrom<S::Pos>) -> TextResult<S::Pos> {
+    Ok(match from {
+        PointFrom::Caret => source.caret()?.caret,
+        PointFrom::SelectionStart => {
+            let state = source.caret()?;
+            state.selection.map_or(state.caret, |(start, _)| start)
+        }
+        PointFrom::SelectionEnd => {
+            let state = source.caret()?;
+            state.selection.map_or(state.caret, |(_, end)| end)
+        }
+        PointFrom::Start => source.start()?,
+        PointFrom::End => source.end()?,
+        PointFrom::At(pos) => pos.clone(),
+        PointFrom::After(pos, prefix) => source.advance(pos, prefix)?,
+    })
 }
 
 /// The unit a movement goes by: a sentence movement over text split by
@@ -1298,6 +1642,24 @@ fn read_range<S: TextSource>(
     start: TextPoint,
     end: TextPoint,
 ) -> TextResult<TextReply> {
+    if let Some(reply) = range_at_once(
+        source,
+        anchors,
+        (start, Some(end)),
+        RangeAction::Text(MAX_RANGE_UNITS + 1),
+    )? {
+        let read = match reply {
+            Ok(read) => read,
+            Err(reply) => return Ok(reply),
+        };
+        let read_cut = read.text.len() > MAX_RANGE_UNITS;
+        let units = &read.text[..read.text.len().min(MAX_RANGE_UNITS)];
+        let (text, _, cut) = to_utf8(units, MAX_RANGE_BYTES, &[]);
+        return Ok(TextReply::Range {
+            text,
+            truncated: read_cut || cut,
+        });
+    }
     let (start, end) = match ordered(source, anchors, start, end)? {
         Ok(range) => range,
         Err(reply) => return Ok(reply),
@@ -1310,14 +1672,48 @@ fn read_range<S: TextSource>(
     })
 }
 
-/// Selects between two points, or moves the caret to one.
+/// The text between two points read or selected in one go where the
+/// source can ([`TextSource::range`]), remembering the points it found;
+/// `None` when it reads call by call.
+fn range_at_once<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    (start, end): (TextPoint, Option<TextPoint>),
+    action: RangeAction,
+) -> TextResult<Option<Result<RangeRead<S::Pos>, TextReply>>> {
+    let (start, start_position) = match point_from(anchors, start) {
+        Ok(found) => found,
+        Err(reply) => return Ok(Some(Err(reply))),
+    };
+    let end = match end.map(|end| point_from(anchors, end)).transpose() {
+        Ok(end) => end,
+        Err(reply) => return Ok(Some(Err(reply))),
+    };
+    let Some(read) = source.range(&start, end.as_ref().map(|(end, _)| end), action)? else {
+        return Ok(None);
+    };
+    remember_found(anchors, start_position, &read.start);
+    if let Some((_, end_position)) = end {
+        remember_found(anchors, end_position, &read.end);
+    }
+    Ok(Some(Ok(read)))
+}
+
+/// Selects between two points, or moves the caret to one (`end` `None`).
 fn select<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     start: TextPoint,
-    end: TextPoint,
+    end: Option<TextPoint>,
 ) -> TextResult<TextReply> {
-    let (start, end) = match ordered(source, anchors, start, end)? {
+    if let Some(reply) = range_at_once(source, anchors, (start, end), RangeAction::Select)? {
+        return Ok(match reply {
+            Ok(read) if read.selected => TextReply::Done,
+            Ok(_) => TextReply::Unsupported,
+            Err(reply) => reply,
+        });
+    }
+    let (start, end) = match ordered(source, anchors, start, end.unwrap_or(start))? {
         Ok(range) => range,
         Err(reply) => return Ok(reply),
     };
@@ -1334,6 +1730,17 @@ fn location<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     at: TextPoint,
 ) -> TextResult<TextReply> {
+    let (from, position) = match point_from(anchors, at) {
+        Ok(found) => found,
+        Err(reply) => return Ok(reply),
+    };
+    if let Some((pos, location)) = source.point_location(&from)? {
+        remember_found(anchors, position, &pos);
+        return Ok(match location {
+            Some((x, y)) => TextReply::Location { x, y },
+            None => TextReply::Unsupported,
+        });
+    }
     let at = match point(source, anchors, at)? {
         Ok(at) => at,
         Err(reply) => return Ok(reply),
