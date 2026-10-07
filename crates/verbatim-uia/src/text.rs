@@ -443,10 +443,28 @@ mod tests {
 
     #[test]
     fn uia_has_every_unit_but_the_sentence() {
+        use verbatim_model::TextUnit as Unit;
+        let mapped = [
+            Unit::Character,
+            Unit::Word,
+            Unit::Line,
+            Unit::Sentence,
+            Unit::Paragraph,
+            Unit::Page,
+            Unit::Document,
+        ]
+        .map(uia_text_unit);
         assert_eq!(
-            uia_text_unit(verbatim_model::TextUnit::Line),
-            Some(TextUnit_Line)
+            mapped,
+            [
+                Some(TextUnit_Character),
+                Some(TextUnit_Word),
+                Some(TextUnit_Line),
+                None,
+                Some(TextUnit_Paragraph),
+                Some(TextUnit_Page),
+                Some(TextUnit_Document),
+            ]
         );
-        assert_eq!(uia_text_unit(verbatim_model::TextUnit::Sentence), None);
     }
 }
