@@ -79,8 +79,8 @@ shortest eSpeak NG allows) as it synthesizes,
 many times faster than real time. The callback pushes each chunk to the
 sink, and returns non-zero to abort synthesis when the sink's `push_pcm`
 returns `Break`, so a cancel takes effect within one chunk. A sink that
-already reports the utterance cancelled, or a sequence whose text is
-blank, produces nothing. The audio is 16-bit mono at the sample rate
+already reports the utterance cancelled produces nothing, and a sequence
+whose text is blank produces no audio, only its marks, in order. The audio is 16-bit mono at the sample rate
 eSpeak NG reports when it starts, 22050 Hz. A cancelled utterance
 returns success, as with any driver; an error code from `espeak_Synth`
 is `SynthError::Synthesis`.
@@ -89,16 +89,40 @@ Pitch changes. `changes_pitch` is `true`: a sequence with a pitch change
 is given to eSpeak NG as SSML (`espeakSSML`), its text escaped and each
 change a `prosody` element whose pitch is the new value as a percentage
 of the configured one, as NVDA's driver writes it (50 raised by 30 is
-160%), so a capital is raised within one synthesis. Other sequences go
-as plain text.
+160%), so a capital is raised within one synthesis. A sequence with
+neither pitch changes nor marks goes as plain text, its text items
+concatenated.
 
-Index marks and input. `places_marks` is `false`, and the speech manager
-splits each sequence at its marks before it reaches the driver, which
-keeps every mark exact (decision D17). The driver does not place marks
-because eSpeak NG drops an SSML mark that follows a full stop (true up to
-at least eSpeak NG master in September 2026). The driver therefore
-passes the sequence's text items, concatenated, as plain UTF-8, not
-SSML; other items are ignored.
+Index marks. `places_marks` is `true`, so the speech manager gives the
+driver whole sequences, marks included, and a sentence with a mark inside
+it, such as say-all's sentence running from one line to the next, is
+spoken in one synthesis, as NVDA's eSpeak NG driver speaks it, with no
+pause and no change of intonation at the mark. Each mark is a `mark`
+element in the SSML, named by its number. eSpeak NG reports each one as
+a mark event carrying the sample it falls at, counted from the start of
+the synthesis; the callback pushes the chunk's audio up to that sample,
+reports the mark, and pushes the rest, so every mark is exact (decision
+D17). A mark eSpeak NG places beyond the chunk it came with is logged and
+placed at the chunk's end. A synthesis that runs to its end without
+reporting every mark of its piece, in order, is
+`SynthError::Synthesis`, so a lost mark fails the utterance rather than
+leaving say-all waiting.
+
+One case is divided. Within one synthesis, eSpeak NG drops a mark that
+follows a full stop and whitespace when an upper-case letter or anything
+but a letter follows it: it waits past the tag to decide whether the
+full stop ends the sentence, then ends the clause at the full stop and
+discards what the tag wrote after it (true up to at least eSpeak NG
+master in October 2026). So a new synthesis starts at each mark that
+follows a full stop and whitespace, the pitch change in force repeated at
+its start, and every synthesis but the last is asked for the pause after
+its last clause (`espeakENDPAUSE`), which it would have had within one
+synthesis. Where eSpeak NG ends the sentence there anyway, the division
+costs nothing that is heard: the two sentences with the mark between
+them are the unmarked two sentences, sample for sample. Where a
+lower-case letter follows, as after "e.g. ", eSpeak NG would have run on
+within one synthesis, and the division ends a sentence there instead;
+say-all never asks for that, since it ends its calls at such a full stop.
 
 Settings. The driver offers six settings:
 
@@ -129,7 +153,7 @@ own small runner (`harness = false`). Tests that compare speech exactly
 have each utterance spoken by a process of their own, the test binary run
 again with `--speak` and the name of a case, since only a new process's
 speech is reproducible. It checks that a second driver is refused with
-its message, that `places_marks` is false, that an unknown voice is
+its message, that `places_marks` is true, that an unknown voice is
 refused and the voice kept, that a sentence comes as 22050 Hz mono audio
 in full 1,324-sample chunks but the last, that the same utterance gives
 the same samples in two processes, that synthesis stopped at the first
@@ -137,4 +161,12 @@ push gives exactly the sentence's first chunk, that the highest rate
 gives shorter audio and setting the rate back gives the same samples as
 never changing it, and that a raised capital's markup changes the speech
 but is not read aloud (a B spoken through SSML with no change of pitch
-is the plain B, sample for sample).
+is the plain B, sample for sample). For marks, it checks that a sentence
+with marks before it, where its second half starts, and after it is the
+unmarked sentence, sample for sample (so it was one synthesis), with the
+marks at samples 0, 16,829, and 37,945; and that a mark after a full stop
+and a space is reported at sample 15,259, where the next sentence starts
+after the sentence pause, in speech that is the unmarked two sentences',
+sample for sample. Unit tests check the SSML (escaped text, marks named
+by number, a raised pitch as a percentage) and where a sequence is
+divided into syntheses.

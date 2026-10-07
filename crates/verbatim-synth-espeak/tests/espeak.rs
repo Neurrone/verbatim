@@ -32,6 +32,18 @@ use verbatim_synth_espeak::EspeakSynth;
 /// The sentence the tests speak.
 const SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 
+/// The sentence's first half, up to where a mark is placed within it.
+const FIRST_HALF: &str = "The quick brown fox ";
+
+/// The sentence's second half.
+const SECOND_HALF: &str = "jumps over the lazy dog.";
+
+/// The first of two sentences, with the space after it.
+const FIRST_SENTENCE: &str = "One sentence. ";
+
+/// The second of two sentences.
+const SECOND_SENTENCE: &str = "Another.";
+
 /// The samples in one of the driver's 60 millisecond chunks at 22,050 Hz:
 /// eSpeak NG sizes its buffer as 60 times 22,050 thousandths of a sample,
 /// rounded up to the next whole thousand, which is 1,324 samples.
@@ -61,10 +73,18 @@ enum Case {
     /// The SSML a raised B is spoken as, given as plain text: what the
     /// markup would sound like read aloud.
     RaisedBMarkupAsText,
+    /// The sentence with a mark before it, one where its second half
+    /// starts, as say-all's second line starts within a sentence, and one
+    /// after it.
+    SentenceWithMarks,
+    /// Two sentences.
+    TwoSentences,
+    /// The two sentences with a mark after the first one's full stop.
+    MarkAfterAFullStop,
 }
 
 impl Case {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 11] = [
         Self::Sentence,
         Self::SentenceStoppedAtTheFirstPush,
         Self::SentenceAtRate100,
@@ -73,6 +93,9 @@ impl Case {
         Self::BAsSsml,
         Self::RaisedB,
         Self::RaisedBMarkupAsText,
+        Self::SentenceWithMarks,
+        Self::TwoSentences,
+        Self::MarkAfterAFullStop,
     ];
 
     fn name(self) -> String {
@@ -114,13 +137,35 @@ impl Case {
             ),
             Self::RaisedB => speak(synth, raised_b()),
             Self::RaisedBMarkupAsText => speak(synth, text("<prosody pitch=\"160%\">B</prosody>")),
+            Self::SentenceWithMarks => speak(
+                synth,
+                vec![
+                    SpeechItem::Mark(IndexMark(1)),
+                    SpeechItem::Text(FIRST_HALF.to_owned()),
+                    SpeechItem::Mark(IndexMark(2)),
+                    SpeechItem::Text(SECOND_HALF.to_owned()),
+                    SpeechItem::Mark(IndexMark(3)),
+                ],
+            ),
+            Self::TwoSentences => speak(synth, text(&format!("{FIRST_SENTENCE}{SECOND_SENTENCE}"))),
+            Self::MarkAfterAFullStop => speak(
+                synth,
+                vec![
+                    SpeechItem::Text(FIRST_SENTENCE.to_owned()),
+                    SpeechItem::Mark(IndexMark(7)),
+                    SpeechItem::Text(SECOND_SENTENCE.to_owned()),
+                ],
+            ),
         }
     }
 }
 
-/// Keeps every push of audio, and stops after `stop_after` pushes.
+/// Keeps every push of audio and every mark, and stops after `stop_after`
+/// pushes.
 struct Record {
     pushes: Vec<Vec<i16>>,
+    /// Each mark reported, with the number of samples pushed before it.
+    marks: Vec<(usize, IndexMark)>,
     format: Option<PcmFormat>,
     stop_after: usize,
 }
@@ -129,6 +174,7 @@ impl Record {
     fn stopping_after(stop_after: usize) -> Self {
         Self {
             pushes: Vec::new(),
+            marks: Vec::new(),
             format: None,
             stop_after,
         }
@@ -138,9 +184,11 @@ impl Record {
         self.pushes.concat()
     }
 
-    /// Writes the format and the pushes: the sample rate, the channels, and
-    /// the number of pushes, then each push's length and samples, all as
-    /// little-endian 32-bit counts and 16-bit samples.
+    /// Writes the format, the pushes, and the marks: the sample rate, the
+    /// channels, and the number of pushes, then each push's length and
+    /// samples, then the number of marks and each one's position and
+    /// number, all as little-endian 32-bit counts, 16-bit samples, and
+    /// 64-bit mark numbers.
     fn write(&self, out: &mut impl Write) {
         let format = self.format.expect("speech was produced");
         let count = |n: usize| u32::try_from(n).expect("fits").to_le_bytes();
@@ -151,6 +199,11 @@ impl Record {
         for push in &self.pushes {
             bytes.extend(count(push.len()));
             bytes.extend(push.iter().flat_map(|sample| sample.to_le_bytes()));
+        }
+        bytes.extend(count(self.marks.len()));
+        for (position, mark) in &self.marks {
+            bytes.extend(count(*position));
+            bytes.extend(mark.0.to_le_bytes());
         }
         out.write_all(&bytes).expect("writes the speech");
     }
@@ -179,9 +232,17 @@ impl Record {
                     .collect()
             })
             .collect();
-        assert!(rest.is_empty(), "nothing follows the last push");
+        let marks = (0..word(&mut take))
+            .map(|_| {
+                let position = usize::try_from(word(&mut take)).expect("fits");
+                let number = u64::from_le_bytes(take(8).try_into().expect("eight bytes"));
+                (position, IndexMark(number))
+            })
+            .collect();
+        assert!(rest.is_empty(), "nothing follows the last mark");
         Self {
             pushes,
+            marks,
             format: Some(PcmFormat {
                 sample_rate,
                 channels,
@@ -206,7 +267,10 @@ impl SynthSink for Record {
         }
     }
 
-    fn index_reached(&mut self, _mark: IndexMark) {}
+    fn index_reached(&mut self, mark: IndexMark) {
+        self.marks
+            .push((self.pushes.iter().map(Vec::len).sum(), mark));
+    }
 
     fn is_cancelled(&self) -> bool {
         false
@@ -260,7 +324,7 @@ fn spoken(case: Case) -> Record {
     Record::read(&bytes)
 }
 
-fn a_process_has_one_driver_which_places_no_marks_and_changes_pitch() {
+fn a_process_has_one_driver_which_places_marks_and_changes_pitch() {
     let synth = new_driver();
     assert_eq!(
         EspeakSynth::new().err(),
@@ -270,8 +334,8 @@ fn a_process_has_one_driver_which_places_no_marks_and_changes_pitch() {
         "eSpeak NG keeps global state, so a process has one driver"
     );
     assert!(
-        !synth.places_marks(),
-        "marks are placed by splitting the sequence"
+        synth.places_marks(),
+        "eSpeak NG reports where each mark falls in its audio"
     );
     assert!(synth.changes_pitch());
 }
@@ -360,6 +424,42 @@ fn a_raised_capital_is_spoken_at_a_raised_pitch_within_one_synthesis() {
     );
 }
 
+/// A sentence with a mark where its second half starts is spoken in one
+/// synthesis, as NVDA's driver speaks it: its audio is the unmarked
+/// sentence's, sample for sample, which a synthesis divided at the mark is
+/// not (the first half ends as a sentence does, longer and falling, and the
+/// second starts its intonation again). eSpeak NG reports each mark at its
+/// sample: the first before any audio, the second where "jumps" starts,
+/// and the last after "dog", before the synthesis's last 110 samples.
+fn a_sentence_with_marks_is_one_synthesis_with_each_mark_at_its_sample() {
+    let marked = spoken(Case::SentenceWithMarks);
+    assert_eq!(
+        marked.marks,
+        [
+            (0, IndexMark(1)),
+            (16_829, IndexMark(2)),
+            (37_945, IndexMark(3))
+        ]
+    );
+    assert!(
+        marked.samples() == spoken(Case::Sentence).samples(),
+        "the marks change nothing that is heard"
+    );
+}
+
+/// A mark after a full stop and a space, which eSpeak NG drops within one
+/// synthesis, is reported where the next sentence starts, after the
+/// sentence pause, and the speech is the unmarked two sentences', sample
+/// for sample, the pause included.
+fn a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts() {
+    let marked = spoken(Case::MarkAfterAFullStop);
+    assert_eq!(marked.marks, [(15_259, IndexMark(7))]);
+    assert!(
+        marked.samples() == spoken(Case::TwoSentences).samples(),
+        "the mark changes nothing that is heard"
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let [option, name] = args.as_slice()
@@ -374,10 +474,10 @@ fn main() {
         return;
     }
     let filter = args.iter().find(|arg| !arg.starts_with('-'));
-    let tests: [(&str, fn()); 7] = [
+    let tests: [(&str, fn()); 9] = [
         (
-            "a_process_has_one_driver_which_places_no_marks_and_changes_pitch",
-            a_process_has_one_driver_which_places_no_marks_and_changes_pitch,
+            "a_process_has_one_driver_which_places_marks_and_changes_pitch",
+            a_process_has_one_driver_which_places_marks_and_changes_pitch,
         ),
         (
             "an_unknown_voice_is_refused_and_the_voice_kept",
@@ -402,6 +502,14 @@ fn main() {
         (
             "a_raised_capital_is_spoken_at_a_raised_pitch_within_one_synthesis",
             a_raised_capital_is_spoken_at_a_raised_pitch_within_one_synthesis,
+        ),
+        (
+            "a_sentence_with_marks_is_one_synthesis_with_each_mark_at_its_sample",
+            a_sentence_with_marks_is_one_synthesis_with_each_mark_at_its_sample,
+        ),
+        (
+            "a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts",
+            a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts,
         ),
     ];
     let selected: Vec<_> = tests
