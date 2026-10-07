@@ -50,8 +50,15 @@ impl SpeechEvents for ShellSpeechEvents {
     }
 
     fn mark_reached(&self, _: UtteranceId, _: TraceId, mark: IndexMark, _: Instant) {
+        // The mark is sent at once, so the time now is when it was reached.
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            });
         let input = Input::MarkReached {
             mark: SpeechMark(mark.0),
+            at_ms,
         };
         if self
             .commands

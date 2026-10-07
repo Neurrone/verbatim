@@ -508,6 +508,10 @@ pub enum Input {
     MarkReached {
         /// The mark.
         mark: SpeechMark,
+        /// When playback reached it, in milliseconds since the Unix epoch
+        /// (0 when unknown), from which say-all measures the pace of speech.
+        #[serde(default)]
+        at_ms: u64,
     },
     /// Speech was cut off outside the reducer: a key press cancelled it, as
     /// the keyboard hook does for nearly every key. Say-all stops here, as
