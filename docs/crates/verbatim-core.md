@@ -305,7 +305,11 @@ Implementation notes, `reduce`:
   (`FocusContext::reported_focused`) and whose new state set no longer
   includes focused has lost the focus before the next focus event
   arrived: its states are kept but nothing is spoken (`docs/parity.md`,
-  "State changes after the focus has left").
+  "State changes after the focus has left"). When the change makes the
+  focus expanded and the event carries a `child_count`, which the outpost
+  reads only for a Win32 tree view item, "52 items" (`Phrase::Items`)
+  follows as an utterance of its own (`docs/nvda/speech.md`, "How many
+  items an expanded tree view item holds").
 - Outpost replacement (`docs/parity.md`, "Recovery after an outpost is
   replaced"): node ids carry the outpost incarnation that issued them, so an
   id from a replaced outpost never names a node in its successor. On

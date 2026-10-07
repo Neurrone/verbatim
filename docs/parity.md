@@ -564,6 +564,16 @@ verified.
   set no longer includes focused, has lost the focus, and its change is
   not spoken (its states are still kept). A control that never reports
   the focused state is unaffected. Unverified live.
+- The number of items an expanded tree view item holds. NVDA follows
+  "expanded" on a Win32 tree view item that has just become expanded
+  while it is the focus with the number of its children, "52 items"
+  ("How many items an expanded tree view item holds" in
+  [Speech](nvda/speech.md)); found by an NVDA transcript of the
+  Theme page's indications tree, where Verbatim said only "expanded".
+  Verbatim: **matched since 2026-10-07**: the outpost counts a
+  `SysTreeView32` item's children with a state change that leaves it
+  expanded, and Core speaks the count when the change makes the focus
+  expanded (the `theme_panel` scenario).
 - Selection announcements (focused list's selected child; changes
   while focus stays on container; combo box exclusion). NVDA:
   selection events. Verbatim: **different, deliberately** (the roadmap's

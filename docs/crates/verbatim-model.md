@@ -57,7 +57,9 @@ Public API:
   the container's selected child, both gathered by the outpost on a query
   worker before emitting: deadline-guarded, degrading to empty on failure,
   so enrichment never blocks or loses a focus announcement),
-  `PropertyChanged` (name, value, or the complete new `States` set),
+  `PropertyChanged` (name, value, or the complete new `States` set, with
+  a `child_count` the outpost reads only for a state change that leaves a
+  Win32 tree view item expanded),
   `ValueChanged`, `SelectionChanged` (a node was selected within its
   container, carrying its snapshot), `ControlledSelection` (a node was
   selected inside an element the focus controls through UIA's
@@ -122,7 +124,8 @@ Public API:
   count of characters; `Positioned` with screen coordinates; and the new
   values of the typing echo toggles, and `SkippedLines` with a count, for
   terminal output too much to read, or `SkippedUncountedLines`, "skipped
-  lines", when the count is not known), and `Format` (a `TextFormat`: a
+  lines", when the count is not known; and `Items` with a count, "52
+  items", for a tree view item just expanded), and `Format` (a `TextFormat`: a
   spelling or grammar error starting or ending, bold, italic, or underline
   starting or ending, or a font name, size, or color as the application
   words it, spoken as formatting changes). The pure reducer never touches localization; spans

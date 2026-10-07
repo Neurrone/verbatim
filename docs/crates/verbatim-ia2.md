@@ -86,6 +86,10 @@ Public API:
   the `NodeDetails` half plain MSAA can express; position-in-set is
   counted for list-view and tree-view items, as described below, and is
   otherwise `None` until IA2's `groupPosition` (roadmap M6)),
+  `tree_view_child_count` (a `SysTreeView32` item's number of children,
+  its first child and each next sibling through `TVM_GETNEXTITEM`, as
+  NVDA counts them; read by the outpost only with a state change that
+  leaves the item expanded),
   `snapshot_from_focus_event` (the
   focus-specific entry the outpost uses for `EVENT_OBJECT_FOCUS` addresses,
   applying NVDA's `processFocusWinEvent` child-0-on-a-list redirect: when a

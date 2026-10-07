@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use verbatim_model::{
     ActionName, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
-    Notification, NotificationProcessing, OutpostId, Pid, PropertyChange, Query, QueryId,
+    Notification, NotificationProcessing, OutpostId, Phrase, Pid, PropertyChange, Query, QueryId,
     QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
     Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
@@ -411,7 +411,11 @@ fn reduce_event(
         NormalizedEvent::TerminalOutput { node_id, output } => {
             terminal::output(state, trace_id, *node_id, output)
         }
-        NormalizedEvent::PropertyChanged { node_id, change } => match change {
+        NormalizedEvent::PropertyChanged {
+            node_id,
+            change,
+            child_count,
+        } => match change {
             PropertyChange::Name(name) => {
                 reduce_name_changed(state, trace_id, *node_id, name.as_ref())
             }
@@ -419,7 +423,7 @@ fn reduce_event(
                 reduce_value_changed(state, trace_id, *node_id, value.clone())
             }
             PropertyChange::States(new_states) => {
-                reduce_states_changed(state, trace_id, *node_id, *new_states)
+                reduce_states_changed(state, trace_id, *node_id, *new_states, *child_count)
             }
             // `PropertyChange` is `#[non_exhaustive]`.
             _ => Vec::new(),
@@ -1438,7 +1442,7 @@ fn reduce_selection_changed(
     // handles a selection on the focus: "selected" is spoken.
     if node.id == focus.snapshot.id {
         let states = node.states;
-        return reduce_states_changed(state, trace_id, node.id, states);
+        return reduce_states_changed(state, trace_id, node.id, states, None);
     }
     if focus.snapshot.id.outpost() != node.id.outpost()
         || !is_selection_container(focus.snapshot.role)
@@ -1526,11 +1530,16 @@ fn reduce_value_changed(
 /// spoken by their absence, by the rules and in the order of "Which states
 /// are spoken, and in what order" in `docs/nvda/speech.md`. Ignored for any
 /// node other than the focused one; a no-op if nothing speakable changed.
+/// When the change makes the focus expanded and carries the node's number
+/// of children, which the outpost reads only for a Win32 tree view item,
+/// the number follows as an utterance of its own ("How many items an
+/// expanded tree view item holds" in `docs/nvda/speech.md`).
 fn reduce_states_changed(
     state: &mut SrState,
     trace_id: TraceId,
     node_id: NodeId,
     new_states: StateSet,
+    child_count: Option<u32>,
 ) -> Vec<Effect> {
     if !state.focus_matches(node_id) {
         return Vec::new();
@@ -1576,18 +1585,30 @@ fn reduce_states_changed(
         negative.insert(State::Checked);
     }
     let segments = ordered_state_segments(positive, negative);
-    if segments.is_empty() {
-        return Vec::new();
-    }
-
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: Some(utterance_source),
-        say_all: false,
-        validity: None,
-    })]
+    let items = child_count
+        .filter(|_| gained.contains(State::Expanded))
+        .map(|count| {
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::Items(count),
+            ))]
+        });
+    [
+        Some(segments).filter(|segments| !segments.is_empty()),
+        items,
+    ]
+    .into_iter()
+    .flatten()
+    .map(|segments| {
+        Effect::Speak(Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(utterance_source),
+            say_all: false,
+            validity: None,
+        })
+    })
+    .collect()
 }
 
 /// Completes an object-navigation fetch.

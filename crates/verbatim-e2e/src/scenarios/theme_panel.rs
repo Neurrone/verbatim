@@ -8,7 +8,8 @@
 //! to the theme list (the built-in default theme) and on to the find field
 //! and the tree, whose first category is selected; in each category,
 //! expand it, hear its first indication with its setting, and go back to
-//! the next category. Then type "button" in the find field, Tab into the
+//! the next category; expanding the first says how many indications it
+//! holds. Then type "button" in the find field, Tab into the
 //! filtered tree, and select "button: speech". Set "Report as" to sound:
 //! the default theme cannot be changed, so Verbatim asks for a new theme's
 //! name, and Enter accepts the one it offers. Choose a sound, and Tab to
@@ -25,6 +26,8 @@
 
 use std::io;
 use std::time::Duration;
+
+use verbatim_model::{Indication, IndicationCategory};
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
@@ -105,8 +108,24 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // back to it, collapsing it, and moving down to the next.
     tab_to(scenario, &["Find"]);
     press(scenario, &["tab"], &["Roles"]);
+    // Expanding a category says how many indications it holds, after
+    // "expanded", as NVDA says it for a Win32 tree view item.
+    let roles = Indication::catalogue()
+        .into_iter()
+        .filter(|indication| indication.category() == IndicationCategory::Roles)
+        .count();
+    let items = format!("{roles} items");
+    scenario.send_keys(&["rightarrow"]).expect("sends the key");
+    scenario
+        .speech()
+        .expect_exactly(&["expanded", &items], STEP_TIMEOUT);
     for (index, (category, first)) in CATEGORIES.iter().enumerate() {
-        press(scenario, &["rightarrow", "downarrow"], &[first]);
+        let keys: &[&str] = if index == 0 {
+            &["downarrow"]
+        } else {
+            &["rightarrow", "downarrow"]
+        };
+        press(scenario, keys, &[first]);
         if let Some((next, _)) = CATEGORIES.get(index + 1) {
             press(scenario, &["leftarrow"], &[category]);
             press(scenario, &["leftarrow", "downarrow"], &[next]);

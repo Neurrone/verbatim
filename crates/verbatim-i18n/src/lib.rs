@@ -715,6 +715,10 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::SkippedUncountedLines => {
             i18n_embed_fl::fl!(loader, "phrase-skipped-uncounted-lines")
         }
+        Phrase::Items(1) => i18n_embed_fl::fl!(loader, "phrase-item", count = "1"),
+        Phrase::Items(count) => {
+            i18n_embed_fl::fl!(loader, "phrase-items", count = count.to_string())
+        }
         // `Phrase` is non_exhaustive; an unmapped future phrase speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -1342,6 +1346,9 @@ mod tests {
         assert_eq!(phrase_text(&Phrase::SkippedLines(1)), "skipped 1 line");
         assert_eq!(phrase_text(&Phrase::SkippedLines(120)), "skipped 120 lines");
         assert_eq!(phrase_text(&Phrase::SkippedUncountedLines), "skipped lines");
+        assert_eq!(phrase_text(&Phrase::Items(1)), "1 item");
+        assert_eq!(phrase_text(&Phrase::Items(0)), "0 items");
+        assert_eq!(phrase_text(&Phrase::Items(52)), "52 items");
         assert_eq!(
             message_text(verbatim_model::Message::ReportNewOutputOff),
             "report new output off"

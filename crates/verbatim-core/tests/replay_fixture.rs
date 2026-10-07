@@ -70,6 +70,7 @@ fn scripted_inputs() -> Vec<Input> {
             event: NormalizedEvent::PropertyChanged {
                 node_id,
                 change: PropertyChange::States(StateSet::new().with(State::Disabled)),
+                child_count: None,
             },
         },
     ]

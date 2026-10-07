@@ -5,8 +5,9 @@
 use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::{
     Backend, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, PropertyChange, QueryId, QueryKind, Role, SegmentContent, SpeechPriority,
-    State, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts, WindowHandle,
+    OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind, Role, SegmentContent,
+    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts,
+    WindowHandle,
 };
 
 /// The outpost standing for application `source` in these tests: one per
@@ -535,6 +536,7 @@ fn a_name_change_on_the_focus_speaks_the_new_name_alone_queued() {
         event: NormalizedEvent::PropertyChanged {
             node_id,
             change: PropertyChange::Name(Some("New name".to_string())),
+            child_count: None,
         },
     };
     let (state, effects) = reduce(&state, &name_changed);
@@ -559,6 +561,16 @@ fn states_changed_input(
     node_id: NodeId,
     states: StateSet,
 ) -> Input {
+    states_changed_with_children(trace_id, source, node_id, states, None)
+}
+
+fn states_changed_with_children(
+    trace_id: TraceId,
+    source: Pid,
+    node_id: NodeId,
+    states: StateSet,
+    child_count: Option<u32>,
+) -> Input {
     Input::Event {
         observed_at_ms: 0,
         trace_id,
@@ -568,8 +580,85 @@ fn states_changed_input(
         event: NormalizedEvent::PropertyChanged {
             node_id,
             change: PropertyChange::States(states),
+            child_count,
         },
     }
+}
+
+#[test]
+fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
+    let source = Pid(1);
+    let node_id = NodeId::new(21);
+    let focusable = StateSet::new()
+        .with(State::Focusable)
+        .with(State::Focused)
+        .with(State::Selectable);
+    let collapsed = focusable.with(State::Selected).with(State::Collapsed);
+    let item = node(21, Role::TreeItem, Some("Roles"), None, collapsed);
+    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+
+    let expanded = focusable.with(State::Selected).with(State::Expanded);
+    let (state, effects) = reduce(
+        &state,
+        &states_changed_with_children(TraceId::mint(), source, node_id, expanded, Some(52)),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(utterances.len(), 2, "the state, then the count on its own");
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::new(SegmentContent::State(
+            State::Expanded
+        ))]
+    );
+    assert_eq!(utterances[1].priority, SpeechPriority::Queued);
+    assert_eq!(
+        utterances[1].segments,
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Items(52)
+        ))]
+    );
+
+    // A further change while it stays expanded says no count, even with
+    // one on the event.
+    let unselected = focusable.with(State::Expanded);
+    let (_, effects) = reduce(
+        &state,
+        &states_changed_with_children(TraceId::mint(), source, node_id, unselected, Some(52)),
+    );
+    assert!(
+        speak_effects(&effects).iter().all(|utterance| !utterance
+            .segments
+            .iter()
+            .any(|segment| matches!(segment.content, SegmentContent::Phrase(Phrase::Items(_))))),
+        "only a change that makes the item expanded says the count"
+    );
+}
+
+#[test]
+fn expanding_without_a_count_says_only_expanded() {
+    let source = Pid(1);
+    let node_id = NodeId::new(22);
+    let collapsed = StateSet::new().with(State::Focused).with(State::Collapsed);
+    let item = node(22, Role::TreeItem, Some("Folder"), None, collapsed);
+    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+
+    let expanded = StateSet::new().with(State::Focused).with(State::Expanded);
+    let (_, effects) = reduce(
+        &state,
+        &states_changed_input(TraceId::mint(), source, node_id, expanded),
+    );
+    let utterances = speak_effects(&effects);
+    assert_eq!(
+        utterances.len(),
+        1,
+        "a tree item read through UIA says no count"
+    );
+    assert_eq!(
+        utterances[0].segments,
+        vec![UtteranceSegment::new(SegmentContent::State(
+            State::Expanded
+        ))]
+    );
 }
 
 #[test]
@@ -2536,6 +2625,7 @@ fn a_name_change_on_a_focus_ancestor_is_silent() {
             NormalizedEvent::PropertyChanged {
                 node_id: NodeId::new(1),
                 change: PropertyChange::Name(Some("Untitled - Notepad".to_owned())),
+                child_count: None,
             },
         ),
     );
