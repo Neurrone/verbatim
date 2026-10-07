@@ -125,10 +125,10 @@ Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
 - Input help mode; the gesture-remapping configuration GUI; full
   pronunciation/symbol dictionaries and their configuration UI (the
   data-driven infrastructure exists from M3/M4). With punctuation and
-  symbol levels in place, revisit terminal output's symbol-only lines
-  (vim's "~" rows, box-drawing rules), which M4 skips outright as a
-  stand-in for NVDA's default level: they should then follow the user's
-  symbol level instead (`phase6-design.md`, "Terminal risks found by
+  symbol levels in place, decide how terminal output's symbol-only lines
+  (vim's "~" rows, box-drawing rules) are spoken: M4 speaks them as they
+  are, and they should then follow the user's symbol level, as NVDA's
+  are silent at its default level (`phase6-design.md`, "Terminal risks found by
   studying NVDA").
 - Configuration profiles (manual and triggered); localized UI shipped in at
   least two languages as proof.
