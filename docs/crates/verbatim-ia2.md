@@ -64,7 +64,12 @@ Public API:
   `text_range`, `find_word_break`, `position_of` (screen coordinates), and
   `is_password`, each an `EditResult` whose `EditError` is `Gone` when the
   window no longer exists and `Failed` otherwise. Offsets are the
-  control's UTF-16 code units. Which message is sent follows the version,
+  control's UTF-16 code units. The line messages' answers are read as
+  the 32-bit `int` they are, the low half of the message's result: the
+  classic edit control sign-extends `EM_LINEINDEX`'s -1 for a line past
+  the last, but Common Controls version 6's, which Windows Forms text
+  boxes are, zero-extends it, and read whole it was taken for an offset
+  of 4294967295. Which message is sent follows the version,
   as in NVDA: a plain edit control answers `EM_GETSEL` (two `DWORD`
   pointers Windows marshals across processes), `EM_SETSEL`,
   `EM_LINEFROMCHAR`, `EM_GETLINE` (a buffer Windows marshals, its size in

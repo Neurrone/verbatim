@@ -58,11 +58,15 @@ unchecked, or checked or partly checked by the item's `checked` or
 item's `expanded` state expands it, and `selected` selects it. mockapp's
 manifest (`mockapp.exe.manifest`, embedded by `build.rs` as resource 2,
 not the process's own) declares Common Controls version 6, whose tree
-view maps MSAA child ids to items; the tree view alone is made in an
-activation context built from it, so the edit control stays the classic
-one its tests were written against (the version 6 edit control answered
-a line read past the last line break differently, which those tests did
-not cover and which is left for a test of its own). A test
+view maps MSAA child ids to items; the tree view and the list view are
+made in an activation context built from it, and the edit control is the
+classic one unless the node with the text sets `edit_version_6`, which
+makes it Common Controls version 6's, as a Windows Forms text box is
+(`tests/fixtures/text_version_6.json`). The two answer `EM_LINEINDEX` for
+the line after the last differently: the classic control's -1 is
+sign-extended into the message's result, and version 6's is zero-extended,
+4294967295, so a client must read the answer's low 32 bits. `text.rs`
+pins both answers and reads both controls alike. A test
 reaches the items through the control's messages, which take plain
 integers (`tests/common/tree_view.rs`), and gives the scripted root the
 focused state, so a focus handed to an outpost passes NVDA's

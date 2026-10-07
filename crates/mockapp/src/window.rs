@@ -78,6 +78,7 @@ pub(crate) fn run(
     backend: Backend,
     tree: SharedTree,
     native: &[crate::fixture::FixtureNode],
+    edit_version_6: bool,
     title: &str,
     show: bool,
 ) -> Result<(), WindowError> {
@@ -110,7 +111,8 @@ pub(crate) fn run(
     }?;
 
     // MSAA has no text interface: the first node with text is served by a
-    // real edit control, read through its messages.
+    // real edit control, read through its messages, the classic one or, as
+    // the fixture asks, Common Controls version 6's.
     if backend == Backend::Msaa {
         let text = tree
             .lock()
@@ -119,7 +121,7 @@ pub(crate) fn run(
             .iter()
             .find_map(|node| node.text.clone());
         if let Some(text) = text {
-            crate::edit::create(hwnd, &text)?;
+            crate::edit::create(hwnd, &text, edit_version_6)?;
         }
         // Real controls, read through their own MSAA implementations.
         for node in native {
