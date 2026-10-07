@@ -668,7 +668,12 @@ Implementation notes:
     forgotten once 64 newer ones were minted for the node, and a request
     naming it is answered `AnchorLost`. A released node's anchors and text
     patterns go with it.
-  - Chunks are at most 64 KB of UTF-8, cut at a character boundary; offsets
+  - Chunks are at most 64 KB of UTF-8, cut between whole characters
+    (grapheme clusters): a unit cut short by the byte limit ends at the
+    last cluster boundary before it, and one the source read only in part
+    loses its last cluster, which may have been cut, a surrogate pair's
+    first half among them; a copied range and a selection's text are cut
+    the same way. Offsets
     are converted from UTF-16 at character boundaries, a position inside a
     surrogate pair moving past it. UIA reads carry the range's `Culture`
     as one language run over the chunk (a mixed range carries none);

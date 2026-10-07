@@ -831,3 +831,29 @@ fn utf16_converts_to_utf8_with_offsets_at_character_boundaries() {
     let (text, _, cut) = to_utf8(&units, 3, &[]);
     assert_eq!((text.as_str(), cut), ("a", true));
 }
+
+#[test]
+fn text_cut_short_ends_at_a_whole_character() {
+    // Read up to the first half of an emoji's surrogate pair.
+    let units: Vec<u16> = "ab😀".encode_utf16().take(3).collect();
+    let (mut text, _, _) = to_utf8(&units, 100, &[]);
+    keep_whole_characters(&mut text);
+    assert_eq!(text, "ab");
+    // Read up to a letter whose combining accent the limit left out.
+    let mut text = "ae".to_owned();
+    keep_whole_characters(&mut text);
+    assert_eq!(text, "a");
+    // A limit inside a letter and its accent cuts before the letter.
+    assert_eq!(grapheme_floor("ae\u{301}b", 3), 1);
+    assert_eq!(grapheme_floor("ae\u{301}b", 4), 4);
+    // So does a byte limit met between them, and one met before a new
+    // character keeps everything before it.
+    let units: Vec<u16> = "ae\u{301}b".encode_utf16().collect();
+    let (text, offsets, cut) = to_utf8(&units, 2, &[3]);
+    assert_eq!(
+        (text.as_str(), offsets.as_slice(), cut),
+        ("a", &[1][..], true)
+    );
+    let (text, _, cut) = to_utf8(&units, 4, &[]);
+    assert_eq!((text.as_str(), cut), ("ae\u{301}", true));
+}
