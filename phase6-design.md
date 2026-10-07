@@ -1894,13 +1894,19 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      control type: UIA and MSAA, edit controls, terminals, lists, trees,
      dialogs), and every difference is fixed with a test or recorded in
      `docs/parity.md`.
-  2. Links in text: the formatting stage reports links (UIA's link
-     attribute or a link element in the range), checked against what
-     Windows Terminal exposes for its hyperlinks.
+  2. What text attributes terminals expose: every UIA text attribute
+     and annotation that Windows Terminal and the console host report
+     (fonts, colors foreground and background, bold, italic, underline
+     styles, strikethrough, links, and anything else), surveyed live and
+     written down, then the useful ones reported through the formatting
+     stage, links among them.
   3. A typed space at the end of a terminal's line is spoken when typed,
      using the outpost's knowledge of which trailing white space is real.
   4. The terminal flood: why reporting slowed the console host 5.68 times
-     under load, and the run whose speech did not account for every line.
+     under load, and the run whose speech did not account for every line,
+     by measuring what Verbatim does during a flood: each read's
+     duration, its calls and how long each takes, how often it reads,
+     and how long the provider is blocked.
   5. A dialog's text through MSAA costs 14 calls: measure its wall-clock
      cost against NVDA's, then reduce it.
   6. An audit of demonstrations against end-to-end coverage.
