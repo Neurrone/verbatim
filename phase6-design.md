@@ -2062,3 +2062,9 @@ Fixed on 2026-10-07, each with mockapp and Core tests and not yet run against Ex
 - The outpost reads, in the focus's remote operation, whether the element a runtime id's node stands for still has the keyboard focus, and gives the id a new node when it does not or cannot be read (`docs/parity.md`, "Duplicate focus suppression"). A held element that is gone fails a whole program before it runs, so the program is run once more without it.
 - NVDA's focus event carries only its base cache; its states, value, and details are fetched when the focus is handled. The outpost now takes those from the focused element it reads when it handles the focus, at no extra call (`docs/parity.md`, "How an outpost turns events into focus reports").
 - A focus change now goes before the events of other objects queued ahead of it, in the batch and in the batch in progress (`docs/crates/verbatim-outpost.md`, the queue). Reproduced in mockapp with every provider call answered 20 ms late: the focus waited about 610 ms behind ten selections before, and about 0.1 ms after (`docs/performance.md`, "A focus behind other objects' events").
+
+## Terminal decisions (2026-10-07, after the measurements)
+
+- The outpost keeps reading a terminal while output reporting is off: typed echo depends on those reads.
+- The console host's slowdown under a flood (about twice as long, half of it the console host's own events) is compared with NVDA's on the same flood before anything else is decided; no minimum interval between reads.
+- The anchor search always uses FindText, with no line bound, for a predictable cost (about 4 ms remotely), replacing the 256-line walk.
