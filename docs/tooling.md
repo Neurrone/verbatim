@@ -449,7 +449,13 @@ More environment variables matter for less common cases:
   (`DEFAULT_RUST_LOG`), so a failed run's artifacts hold the outposts'
   debug lines: what each read and how long it took, what it released, and
   what it reported. The focus listener runs from the outpost binary, so
-  the filter covers it, but it has no log lines of its own yet. Set but
+  the filter covers it, but it has no log lines of its own yet. The
+  debug lines cost nothing measurable: over six runs each of
+  `menu_and_settings_dialog` and `settings_dialog_keys` (2026-10-07),
+  event to queued speech had a median of 7 ms and a 90th percentile of
+  39 ms both with this filter and with `info` alone, and event to audio
+  a median of 8 ms and a 90th percentile of 40 ms with it, 42 ms
+  without. Set but
   empty, Verbatim logs as its own configuration says. For a terminal's
   reads during a flood, set it to `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
   each tail read then logs `terminal tail timing` (whether it started at
