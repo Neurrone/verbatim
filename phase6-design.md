@@ -1940,3 +1940,17 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       against Windows 11 Notepad itself (time per batch, gaps between
       pieces, calls), with remote operations on and off and against NVDA,
       which reads one piece at a time as the previous one starts.
+  11. The instruction limit (Dickson, 2026-10-07): measure UIA's
+      unpublished cap on instructions a remote program may execute, count
+      what each of Verbatim's programs executes at typical and worst-case
+      sizes, and make every program that loops resumable: it stops at a
+      budget well under the cap and returns where it stopped, and the
+      outpost sends a follow-up to continue, so no program fails on the
+      cap and falls back mid-way. The terminal's upward search bound
+      (256 lines, never approved) is brought to Dickson with these
+      measurements to decide: a fixed number, one derived from the
+      terminal's size, or an unbounded resumable search.
+
+The order from here: the say-all change (item 10), then the terminal
+measurements (items 2 and 4), with the instruction-limit work (item 11)
+alongside as build slots allow.
