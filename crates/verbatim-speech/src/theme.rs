@@ -62,8 +62,10 @@ pub struct ActiveTheme {
 impl Default for ActiveTheme {
     /// The built-in default theme with no sounds: everything is spoken,
     /// since an indication whose sound is unavailable is spoken instead.
+    /// Having no sounds is this placeholder's design, so its missing sounds
+    /// are not logged as problems.
     fn default() -> Self {
-        Self::new(Theme::builtin_default(), |_| None, ThemeOptions::default())
+        Self::resolve(Theme::builtin_default(), |_| None, ThemeOptions::default())
     }
 }
 
@@ -75,6 +77,19 @@ impl ActiveTheme {
     /// [`problems`](Self::problems) and logged, and the indications using
     /// it are spoken instead.
     pub fn new(
+        theme: Theme,
+        sound_path: impl Fn(&str) -> Option<PathBuf>,
+        options: ThemeOptions,
+    ) -> Self {
+        let active = Self::resolve(theme, sound_path, options);
+        for problem in &active.problems {
+            warn!(target: "verbatim::speech", theme = %active.theme.id, %problem, "theme sound unavailable");
+        }
+        active
+    }
+
+    /// [`new`](Self::new) without logging its problems.
+    fn resolve(
         theme: Theme,
         sound_path: impl Fn(&str) -> Option<PathBuf>,
         options: ThemeOptions,
@@ -119,9 +134,6 @@ impl ActiveTheme {
                     reason,
                 }),
             }
-        }
-        for problem in &problems {
-            warn!(target: "verbatim::speech", theme = %theme.id, %problem, "theme sound unavailable");
         }
         Self {
             theme,
