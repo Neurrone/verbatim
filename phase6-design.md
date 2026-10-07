@@ -1906,7 +1906,13 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      indication set to off is never fetched), and the survey measures the
      cost of each attribute and of querying all of them, in calls and in
      time, within the caret's one remote operation and in the classic
-     fallback, so the choice is made knowing the price.
+     fallback, so the choice is made knowing the price. Language is
+     part of the survey: terminal output switches voice only if the
+     terminal itself reports a language per line (the Culture
+     attribute), checked once for the whole read and line by line only
+     when that answer is mixed. Otherwise terminal output is spoken in
+     one language, as NVDA speaks it; Verbatim does not guess the
+     language from the text (Dickson, 2026-10-07).
   3. A typed space at the end of a terminal's line is spoken when typed,
      using the outpost's knowledge of which trailing white space is real.
   4. The terminal flood: why reporting slowed the console host 5.68 times
