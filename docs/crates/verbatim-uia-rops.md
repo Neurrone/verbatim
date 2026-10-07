@@ -289,7 +289,11 @@ text that line and the line before it held) or afresh
 `TailStart::Text`, the element and its text pattern, from which the
 program reads the document range itself, so a fresh read is one round
 trip where the other is two), and says how
-many of the last lines to read. The answer, a `Tail`, gives the text as the provider gave it,
+many of the last lines to read. With `caret` (a `CaretLineQuery`), the
+caret and its line are read too, in the same program or, classically,
+after the text, as `caret_read` reads them with nothing to compare and no
+unit or formatting, and come back as `Tail::caret`, a `CaretAnswer`: a
+terminal raises no caret event for every character typed. The answer, a `Tail`, gives the text as the provider gave it,
 padding and line breaks included, so comparisons are exact and the caller
 trims:
 

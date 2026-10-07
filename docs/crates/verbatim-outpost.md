@@ -812,7 +812,13 @@ finds it.
   while a read is in progress are coalesced by the intake into one more
   read, one waiting entry per element). It is one remote program
   (`verbatim_uia_rops::terminal_tail`), with the classic fallback behind
-  the same entry point; a window whose elements cannot be imported is read
+  the same entry point, which reads the caret and its line too: the
+  worker reports the caret as `CaretMoved` after the output
+  (`UiaText::caret_read_from` and `text::caret_report_from` make the
+  report of it), since a terminal raises no caret event for every
+  character typed (the console host's come on a schedule of their own),
+  and Core works out what a Backspace deleted from the caret it last
+  heard of; a window whose elements cannot be imported is read
   classically from then on, as for the focus ancestry. `after_anchor`
   turns the read into a `TerminalOutput`: the anchor's line compared
   character by character with what it held (grown: the text added;

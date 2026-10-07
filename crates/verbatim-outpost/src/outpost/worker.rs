@@ -839,23 +839,34 @@ impl Worker<'_> {
                 .dequeued_at_us
                 .saturating_sub(self.timing.observed_at_us),
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            lines = read.as_ref().map_or(0, |output| output.lines.len()),
+            lines = read.as_ref().map_or(0, |(output, _)| output.lines.len()),
             "terminal read timing"
         );
-        let Some(output) = read else {
+        let Some((output, caret)) = read else {
             return;
         };
-        if output.is_empty() {
-            return;
-        }
         let window = self.context.tracking().window;
-        self.emit(
-            trace,
-            observed_at_ms,
-            Backend::Uia,
-            window,
-            NormalizedEvent::TerminalOutput { node_id, output },
-        );
+        if !output.is_empty() {
+            self.emit(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                window,
+                NormalizedEvent::TerminalOutput { node_id, output },
+            );
+        }
+        // The caret read with the text: the console host raises no caret
+        // event for every character typed, so this keeps Core's copy of it
+        // following typing.
+        if let Some(caret) = caret {
+            self.emit(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                window,
+                NormalizedEvent::CaretMoved { node_id, caret },
+            );
+        }
     }
 
     /// Asks for the caret of a newly reported focus that may have text, or

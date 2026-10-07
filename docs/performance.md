@@ -784,6 +784,27 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   ranges during a flood), when the read is set aside for the next.
 - Target: 1.
 
+### A terminal's caret
+
+A terminal raises no caret event for every character typed: the console
+host raises its caret events on a schedule of its own, so a character
+echoed between two of them leaves Core's copy of the caret behind, and a
+Backspace then says the character the caret was last heard after. So each
+read of a focused terminal's changed text reads the caret and its line
+too (`verbatim_uia_rops::TailQuery::caret`), and the outpost reports it
+after the output (`docs/crates/verbatim-outpost.md`, "Terminals").
+
+- Minimum: no call more, since it goes in the program the text's read
+  already runs.
+- Today: no call more remotely, for 27 more instructions and, from
+  mockapp, the text pattern got from the element (5 provider calls), the
+  selection, and the caret's line read (1 selection, 3 clones, 1
+  comparison, 1 expansion, 2 reads, and 2 other range calls). Classically,
+  8 calls more: 35 for a grown prompt where the read without the caret
+  is 27. Both are pinned (`tests/terminal.rs`,
+  `a_read_with_the_caret_costs_exactly`).
+- Target: the minimum, met.
+
 ### A terminal flood
 
 What Verbatim costs a terminal while ten thousand lines are written as
@@ -1228,9 +1249,11 @@ share of the limit in brackets:
   position with its lines in three languages, each line's then read; 647
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
-- A terminal's tail: 1,137 (11 percent) when its fingerprint is nowhere
-  and the search checks its 64 matches (`SEARCH_MATCHES`), about 16 each;
-  110 for an anchor in place under new output, 9 of them deciding whether
-  to read the first of the new lines too, when more follow than the last
-  lines read (the start of a flood). The count does not grow with the
+- A terminal's tail, with the caret and its line read in the same
+  program as the outpost reads a focused terminal: 1,164 (12 percent)
+  when its fingerprint is nowhere and the search checks its 64 matches
+  (`SEARCH_MATCHES`), about 16 each; 137 for an anchor in place under new
+  output, 9 of them deciding whether to read the first of the new lines
+  too, when more follow than the last lines read (the start of a flood),
+  and 27 the caret's (1,137 and 110 before 2026-10-08, without it). The count does not grow with the
   scrollback or the lines read.

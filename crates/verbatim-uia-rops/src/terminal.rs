@@ -29,6 +29,7 @@ use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
+use crate::caret::{CaretAnswer, CaretLineQuery, caret_line_classic, emit_caret_line};
 use crate::error::Error;
 use crate::focus::Path;
 use crate::opcode::Comparison;
@@ -148,6 +149,11 @@ pub struct TailQuery<'a> {
     pub start: TailStart<'a>,
     /// The most lines to read from the end of the text.
     pub lines_wanted: u32,
+    /// The caret and its line to read too, in the same round trip
+    /// ([`Tail::caret`]): a terminal raises no caret event for every
+    /// character typed (the console host's come on a schedule of their
+    /// own), so its caret is read with each change of its text.
+    pub caret: Option<CaretLineQuery<'a>>,
 }
 
 /// Where the anchor's fingerprint was found.
@@ -216,6 +222,9 @@ pub struct Tail {
     /// that the read did not see, rather than only the last lines being
     /// written to.
     pub scrolled: bool,
+    /// The caret and its line, when the query asked for them
+    /// ([`TailQuery::caret`]), read after the text.
+    pub caret: Option<CaretAnswer>,
 }
 
 impl Tail {
@@ -242,6 +251,7 @@ impl Tail {
             last,
             settled: end.settled,
             scrolled: end.scrolled,
+            caret: None,
         }
     }
 }
@@ -629,15 +639,18 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 }
             };
             let tail = emit_tail(&mut b, &c, document, None, query.lines_wanted);
+            let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
             let outcome = b.finish().execute()?;
-            Ok(Tail::new(
+            let mut answer = Tail::new(
                 Found::Afresh,
                 (String::new(), String::new(), String::new()),
                 tail.end(&outcome)?,
                 outcome
                     .get(tail.last)?
                     .ok_or(Error::MissingResult(tail.last.id()))?,
-            ))
+            );
+            answer.caret = caret.map(|caret| caret.read(&outcome)).transpose()?;
+            Ok(answer)
         }
         TailStart::Anchor { range, fingerprint } => {
             let anchor = b.import_text_range(range);
@@ -714,13 +727,14 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 b.if_(short, |b| b.set(shift, c.one));
                 b.set(found, shift);
             });
+            let caret = query.caret.map(|caret| emit_caret_line(&mut b, &caret));
             let outcome = b.finish().execute()?;
             let found = match outcome.get(found)? {
                 0 => Found::AtAnchor,
                 shift if shift > 0 => Found::Moved(count_of(shift)),
                 _ => Found::NotFound,
             };
-            Ok(Tail::new(
+            let mut answer = Tail::new(
                 found,
                 (
                     string_of(&outcome, line)?,
@@ -731,7 +745,9 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 outcome
                     .get(tail.last)?
                     .ok_or(Error::MissingResult(tail.last.id()))?,
-            ))
+            );
+            answer.caret = caret.map(|caret| caret.read(&outcome)).transpose()?;
+            Ok(answer)
         }
     }
 }
@@ -1129,6 +1145,15 @@ fn classic_walk(
 /// [`Error::Uia`] when a call fails, as one on a range from before a
 /// terminal switched screens does.
 pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, Error> {
+    let mut tail = classic_text(query)?;
+    if let Some(caret) = &query.caret {
+        tail.caret = Some(caret_line_classic(caret)?);
+    }
+    Ok(tail)
+}
+
+/// The tail's text the classic way, as [`terminal_tail_classic`] reads it.
+fn classic_text(query: &TailQuery<'_>) -> Result<Tail, Error> {
     match query.start {
         TailStart::Document(_) | TailStart::Text { .. } => {
             let document = match query.start {
