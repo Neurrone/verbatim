@@ -424,10 +424,18 @@ carry the formatting the outpost read for them (`TextChunk::formats`).
 The state keeps the formatting last reported and the node it was in
 (`reported_format`, NVDA's per-object cache); a new focus starts with
 none. The unit is spoken with the formatting at its start that differs
-from that (`text::format_changes`: font name, size, and color when
-present and different; bold, italic, and underline starting, or ending
-after having been on; a spelling or grammar error starting), then its
-text, with each later change placed where it happens
+from that (`text::format_changes`, in NVDA's order: font name, size, and
+color when present and different, the background color after the color
+when both change, "dark red on light grey", or alone, "light grey
+background"; bold, italic, strikethrough, and underline starting, or
+ending after having been on, a strikethrough's or an underline's kind
+when it changes, and the underline by its kind in place of
+"underlined" when the kind was read; a link starting or ending, at every
+unit, as NVDA says it; a spelling or grammar error starting), then a
+list item's bullet, when the unit is read as text (a line or a say-all
+chunk, never a word or a character), at every line that has one, as NVDA
+speaks a line prefix rather than as a change; then its text, with each
+later change placed where it happens
 (`text::formatted_segments`), and the formatting at its end becomes the
 one reported. For a character or a word, the extra detail of NVDA's
 review and caret units, an error's end is also said ("out of spelling

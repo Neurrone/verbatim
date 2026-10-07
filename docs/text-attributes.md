@@ -207,18 +207,80 @@ What this means for the choice:
 
 ## What Verbatim could add
 
-Verbatim reads today, each behind its theme indication: the annotation
-types (spelling and grammar errors), FontName and FontSize, FontWeight,
-IsItalic and UnderlineStyle, and ForegroundColor. Reported by these
-applications and not read:
+Verbatim read, when the survey was taken, each behind its theme
+indication: the annotation types (spelling and grammar errors), FontName
+and FontSize, FontWeight, IsItalic and UnderlineStyle, and
+ForegroundColor. Reported by these applications and not read:
 
 - BackgroundColor (both terminals and Notepad; it varies in the
   terminals).
 - StrikethroughStyle (both terminals and Notepad's Markdown).
-- The underline style's kind: double and wavy, which Verbatim now reads
-  only as underlined or not.
+- The underline style's kind: double and wavy, which Verbatim read only
+  as underlined or not.
 - In Notepad's Markdown: FontSize for headings (read with the font
   group), BulletStyle and the indentations for lists, and IsHidden for a
   link's target.
 
-Dickson chooses which of these are read, and under which indications.
+## What Verbatim fetches now
+
+Decided by Dickson on 2026-10-07 (`phase6-design.md`, "Terminal
+decisions"), and in place since: what is read is generic, never chosen
+by application. Verbatim reads the attributes the theme's indications
+ask for, among those the focused text control supports, and never
+`IsHidden`. By indication:
+
+- Spelling and grammar errors: AnnotationTypes.
+- Font name: FontName. Font size, which is how Notepad shows a heading:
+  FontSize. Each is now read on its own, where the two were read
+  together.
+- Font attributes: FontWeight, IsItalic, and UnderlineStyle.
+- The kind of underline: UnderlineStyle, the same read, spoken by its
+  kind.
+- Strikethrough: StrikethroughStyle.
+- Color: ForegroundColor. Background color: BackgroundColor.
+- Bullet style: BulletStyle.
+- Link in text: the Link attribute. None of the three applications
+  supports it, so no link they show is reported; an application that
+  supports it gets "link" and "out of link".
+
+The default theme reads the annotation types and the link, as NVDA
+reports spelling errors and links by default; every other formatting
+indication is off.
+
+Support is learned from the control. While an attribute's support is
+not known, the caret's read asks the line it reads for that attribute
+once, inside the same remote operation (or the same
+`GetAttributeValues` call classically): UIA's "not supported" means the
+control does not support it, and the outpost no longer asks for it while
+it keeps that control's node; any other answer means it does, and it is
+no longer checked. Only a line or another unit with text teaches this; a
+character's read and an empty line's do not. Applied to the survey, once
+learned:
+
+- Windows Terminal and the console host are asked for none of FontSize,
+  BulletStyle, or the Link attribute, which would each cost Windows
+  Terminal about 0.05 milliseconds per stretch inside a remote
+  operation.
+- Notepad is not asked for the Link attribute.
+
+The annotation types cannot be learned that way: Notepad answers "not
+supported" for text without annotations, so an error-free line would
+make spelling errors look unsupported. Instead the caret's read asks the
+whole line for them first, and reads them stretch by stretch only when
+the line has some. A line with nothing else to read and no annotations
+is then not walked by the format unit at all. Applied to the survey,
+with the default theme:
+
+- Windows Terminal and the console host, which support no annotations:
+  one read of the line in place of one per stretch, and no walk of the
+  stretches, so the caret's read costs about what it costs with no
+  attributes (0.43 milliseconds remotely in Windows Terminal, against
+  0.54 to 0.71 with one group read stretch by stretch; classically 9
+  calls in place of 17 to 23 for a line of one stretch, and about 88 for
+  a line of 13).
+- Notepad: a line without spelling errors costs one read and no walk (9
+  calls classically in place of 46 to 76 for a line of 5 stretches); a
+  line with one costs one read more than before.
+
+`docs/performance.md`, "The caret report after a focus, UIA", has the
+counts pinned against mockapp and the times measured there.

@@ -93,16 +93,54 @@ does not settle what a caret movement says.
   likewise "italic" and "no italic", "underlined" and "not underlined".
   A value that was never known (absent in the cache) and is off says
   nothing.
+- The background color, under the same setting as the color. When both
+  the color and the background change at the same point, one phrase
+  names both, the color on the background: "dark red on light grey".
+  When only the color changes, the color alone; when only the
+  background, the background with the word after it: "light grey
+  background". A background that becomes absent says nothing.
+- Strikethrough, under the font attributes setting with bold and italic:
+  "strikethrough" when it starts, "double strikethrough" for a double
+  line, and "no strikethrough" when it ends after having been reported,
+  by the same rule as bold.
+- Links (the links setting, on by default). Text in a link says "link"
+  where the link starts and "out of link" where it ends, at every unit,
+  a line included, unlike the errors.
+- Line prefixes. A list item's bullet or number that is not part of the
+  text itself (Word's, through UIA) is a prefix spoken after every other
+  formatting change and before the text, each time a line, sentence,
+  paragraph, or say-all chunk starting there is read, not only when it
+  changes; never for a word or a character. It is spoken as its
+  character is, so a round bullet is "bullet". There is no setting for
+  it. NVDA does not read UIA's bullet style attribute.
 - The order within one change follows the setting groups: font name,
-  font size, color, then bold, italic, underline, then spelling error
-  and grammar error.
+  font size, color and background, then bold, italic, strikethrough,
+  underline, then link, then spelling error and grammar error, then a
+  line prefix.
+- The defaults: font name, font size, color, and the font attributes are
+  off; links and spelling errors (as words) are on.
 - UIA providers. NVDA walks a range by UIA's format unit and reads each
   stretch's attributes. A spelling error is the spelling error
   annotation type in the range's `AnnotationTypes` attribute (grammar
   error likewise); bold is a font weight of 700 or more; underline is
-  any underline style but none; the color is the foreground color,
-  named by its nearest hue, saturation, and brightness ("dark red",
-  "light pale blue", "grey"); the size is in points, "11.0 pt".
+  any underline style but none, and strikethrough any strikethrough
+  style but none (UIA's kind of line, double or wavy, is not spoken);
+  the color is the foreground color and the background the background
+  color, each named by its nearest hue, saturation, and brightness
+  ("dark red", "light pale blue", "grey"); the size is in points,
+  "11.0 pt"; a link is any value of the `Link` attribute (the range it
+  leads to). An attribute UIA answers as "not supported" is left out.
+  NVDA asks for every attribute its settings want on every read; it
+  does not remember what a control does not support.
+- Microsoft Word names its kinds of underline in its font dialog, and
+  NVDA uses those names when a Word underline command toggles one:
+  "Words only", "Double", "Dotted", "Thick", "Dash", "Dot dash", "Dot dot
+  dash", "Wave", "Dotted heavy", "Dashed heavy", "Dot dash heavy", "Dot
+  dot dash heavy", "Wave heavy", "Dashed long", "Wave double", "Dashed
+  long heavy"; a single underline has no name of its own there.
+- A UIA text range move. Some providers answer a backward `Move` or
+  `MoveEndpointByUnit` with a positive count; NVDA makes the count
+  negative whenever the move asked to go backward.
 
 Some attributes are not spoken as words at every level:
 line indentation can be *tones* (pitch encodes depth), spelling

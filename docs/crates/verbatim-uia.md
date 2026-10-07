@@ -183,7 +183,9 @@ Public API:
   `document_range`; `caret_range(pattern2)` is `GetCaretRange`; and
   `TextRangeExt` on a range has `clone_range`, `compare_endpoints`,
   `expand`, `move_by`, `move_endpoint_to` (by another range's end),
-  `move_endpoint_by_unit`, `text` (UTF-16, up to a limit), `select`,
+  `move_endpoint_by_unit` (both moves' counts negative for a backward
+  move whatever sign the provider gave, `signed_move`, as NVDA corrects
+  them), `text` (UTF-16, up to a limit), `select`,
   `find_text` (`FindText`, case sensitive, forward or backward, `None`
   when the provider returns no range),
   `bounding_rectangles`, and `culture` (the `Culture` attribute as a BCP 47
