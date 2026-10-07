@@ -387,11 +387,47 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn FindText(
         &self,
-        _text: &BSTR,
-        _backward: windows_core::BOOL,
-        _ignorecase: windows_core::BOOL,
+        text: &BSTR,
+        backward: windows_core::BOOL,
+        ignorecase: windows_core::BOOL,
     ) -> WinResult<ITextRangeProvider> {
-        Err(Error::empty())
+        hits::hit(Method::RangeFindText);
+        let all = text_of(&self.tree, self.index);
+        let end = self.end.get().min(all.len());
+        let start = self.start.get().min(end);
+        let fold = |unit: u16| {
+            if ignorecase.as_bool() {
+                char::from_u32(u32::from(unit)).map_or(unit, |c| {
+                    u16::try_from(u32::from(c.to_ascii_lowercase())).unwrap_or(unit)
+                })
+            } else {
+                unit
+            }
+        };
+        let needle: Vec<u16> = text.iter().copied().map(fold).collect();
+        let haystack: Vec<u16> = all[start..end].iter().copied().map(fold).collect();
+        if needle.is_empty() || needle.len() > haystack.len() {
+            // No match: a null range, as UIA's own providers return.
+            return Err(Error::empty());
+        }
+        let matches = |at: &usize| haystack[*at..*at + needle.len()] == needle[..];
+        let mut candidates = 0..=haystack.len() - needle.len();
+        let found = if backward.as_bool() {
+            candidates.rev().find(matches)
+        } else {
+            candidates.find(matches)
+        };
+        match found {
+            Some(at) => Ok(TextRange {
+                tree: self.tree.clone(),
+                hwnd: self.hwnd,
+                index: self.index,
+                start: Cell::new(start + at),
+                end: Cell::new(start + at + needle.len()),
+            }
+            .into()),
+            None => Err(Error::empty()),
+        }
     }
     fn GetAttributeValue(&self, attributeid: UIA_TEXTATTRIBUTE_ID) -> WinResult<VARIANT> {
         hits::hit(Method::RangeGetAttributeValue);

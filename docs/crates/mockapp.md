@@ -122,7 +122,10 @@ its crate-internal modules are the reviewable surface:
   neither italic nor underlined, weighing 700 within a bold stretch, 400
   outside, and mixed across both; every other attribute is unsupported. A range handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
-  offsets are read from its implementation.
+  offsets are read from its implementation. `FindText` matches the text
+  within the range exactly (or ignoring ASCII case), the last match when
+  searching backward, and returns no range when there is none;
+  `FindAttribute` is not implemented.
 - `edit` — the MSAA backend's real edit control: created inside the host
   window, found by class, and selected with `EM_SETSEL` on the window
   thread.

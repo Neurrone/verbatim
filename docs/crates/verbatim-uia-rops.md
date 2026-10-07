@@ -317,7 +317,26 @@ read one call at a time came back twice or out of order; the outpost sets
 an unsettled read aside, and the text change that disturbed it causes the
 next read.
 The classic implementation makes the same calls one at a time, through
-`verbatim-uia`'s text wrappers, so each is counted. A range from before
+`verbatim-uia`'s text wrappers, so each is counted, but for one step: it
+searches for a fingerprint whose line before is not blank by its text.
+`FindText` backward for that line, without its padding and line break
+(`Fingerprint::needle`: Windows Terminal matches neither, and threw an
+exception searching for padding), over the lines the walk would read,
+each match taken only when it starts its line and the line holds exactly
+the fingerprint's line before, nearest first; the distance up is the walk
+to the end of the text from where it was found less the same walk from
+the anchor. It finds what the walk finds (mockapp's
+`a_fingerprint_found_by_text_is_the_one_found_line_by_line` checks it
+past lines that hold or start with the same text), and a failed
+`FindText` falls back to the walk. Measured against both terminals with a
+full scrollback on 2026-10-07, it costs 65 calls and 6 to 10 milliseconds
+whether the fingerprint is 10, 100, or 256 lines up, where the walk took
+104, 644, and 1,580 calls and up to 170 milliseconds. The remote program
+keeps the walk: `FindText` on a range the program made itself (a clone,
+or a document range) cost UIA about 3 milliseconds in both terminals,
+against 0.2 on an imported range, and a program cannot search an
+imported range without changing the caller's own; the walk takes 0.5 to
+2.5 milliseconds up to 256 lines. A range from before
 a terminal switched to or from its alternate screen fails to compare
 with the text; the program then fails, the classic implementation fails
 the same way, and the caller reads afresh.

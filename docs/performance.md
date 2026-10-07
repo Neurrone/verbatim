@@ -735,3 +735,38 @@ another engineer's tests started seven mockapp processes and Verbatim's
 audio ran dry thirteen times in the fourth flood alone: the machine was
 starved. Twelve busy threads at normal priority make the same flood take
 75 to 99 seconds in Windows Terminal with no screen reader at all.
+
+### A terminal's upward search
+
+When a full scrollback has moved the text beneath the anchor, the tail
+read searches up to `SEARCH_LINES` (256) lines above it for the
+fingerprint (`docs/crates/verbatim-uia-rops.md`, "Layer 3: a terminal's
+tail"). Measured on 2026-10-07 against Windows Terminal and the console
+host, each with a full scrollback of 9,001 lines, the fingerprint 0, 10,
+100, and 256 lines up:
+
+- The remote program, searching line by line: Windows Terminal 0.5, 0.7,
+  1.4, and 2.5 milliseconds; the console host 0.4, 0.5, 1.1, and 1.9. One
+  call each.
+- The classic search line by line, before 2026-10-07: 43, 104, 644, and
+  1,580 calls; Windows Terminal 4, 11, 69, and 169 milliseconds, the
+  console host 2, 5, 32, and 79.
+- The classic search by `FindText`, now: 43 calls with no search and 65
+  with one at any distance; Windows Terminal 4, 9, 10, and 10
+  milliseconds, the console host 3, 6, 6, and 7.
+- `FindText` itself, one call over the 256 lines or over the whole
+  scrollback alike: 0.1 to 0.2 milliseconds classically, whether it finds
+  the text or not. Inside a program, 0.2 milliseconds on an imported range
+  but about 3 on a range the program made, which is why the program does
+  not use it.
+
+So the bound costs the remote program about 0.01 milliseconds per line
+searched, 2.5 at 256 lines, and costs the classic search nothing beyond
+the first match: a larger bound, the whole scrollback included, would
+cost the classic search no more, and the remote program about 0.01
+milliseconds for each line it adds that the search reaches. In a console
+host whose scrollback is not yet full the text does not move beneath the
+anchor, so no search runs there; but its lines are slow to walk (about
+1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), and
+there the line-by-line program took 413 milliseconds at 256 lines where
+the classic read with `FindText` took 18.

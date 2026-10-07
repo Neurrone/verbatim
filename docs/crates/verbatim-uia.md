@@ -167,6 +167,8 @@ Public API:
   `TextRangeExt` on a range has `clone_range`, `compare_endpoints`,
   `expand`, `move_by`, `move_endpoint_to` (by another range's end),
   `move_endpoint_by_unit`, `text` (UTF-16, up to a limit), `select`,
+  `find_text` (`FindText`, case sensitive, forward or backward, `None`
+  when the provider returns no range),
   `bounding_rectangles`, and `culture` (the `Culture` attribute as a BCP 47
   tag through `LCIDToLocaleName`, `None` when the range mixes languages or
   the provider does not say; `locale_name` makes the tag from a locale
