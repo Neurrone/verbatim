@@ -204,6 +204,10 @@ pub struct Scenario {
     /// Harness folders named by [`Scenario::harness_folder`], deleted on
     /// drop once every launched application has ended.
     folders: Vec<String>,
+    /// Whether [`Scenario::open_document_with`] had Verbatim report the
+    /// focus, because a window of the application was already open (see
+    /// [`Scenario::take_focus_reported`]).
+    focus_reported: bool,
     /// The path this launch's Verbatim has its stdout and stderr captured
     /// into (see [`verbatim_stderr_log_path`]), readable back through
     /// [`process_agent`](Self::process_agent)'s `read_file` — what
@@ -388,6 +392,7 @@ impl Scenario {
             timeline,
             launched: Vec::new(),
             folders: Vec::new(),
+            focus_reported: false,
             stderr_log_path: stderr_path,
             recording,
         })
@@ -663,9 +668,10 @@ impl Scenario {
     /// in Notepad, the document's tab is closed rather than its window, so
     /// Notepad does not keep it for its next session, and the window too
     /// only when the harness opened it. The document is then deleted. When
-    /// a window of the application was already open, the window is
-    /// announced afresh once it holds the document (see
-    /// `announce_afresh`), so a scenario hears it whether or not one was.
+    /// a window of the application was already open, Verbatim is asked to
+    /// report the focus once the window holds the document (see
+    /// `report_focus`), so a scenario hears the focus in full whether or
+    /// not one was; [`Scenario::take_focus_reported`] tells which it hears.
     ///
     /// # Errors
     ///
@@ -718,29 +724,39 @@ impl Scenario {
             close_application: !already_open,
         });
         self.require_window_in_front(&image, Some(&marker))?;
+        self.focus_reported = already_open;
         if already_open {
-            self.announce_afresh()?;
+            self.report_focus()?;
         }
         Ok(pid)
     }
 
-    /// Has Verbatim announce the harness document's window afresh, once it
+    /// Whether [`Scenario::open_document_with`] found a window of the
+    /// application already open, and so had Verbatim report the focus with
+    /// Verbatim+Tab: the scenario then hears the focus reported, the
+    /// harness tab's text area and the line at its caret, rather than the
+    /// window coming to the foreground and its text area taking the focus.
+    /// It concerns only what is heard first after opening, so it is cleared
+    /// as it is read: a later return to the window is heard as the window
+    /// coming to the foreground again, whichever way it was opened.
+    pub fn take_focus_reported(&mut self) -> bool {
+        std::mem::take(&mut self.focus_reported)
+    }
+
+    /// Has Verbatim report the focus, once the harness document's window
     /// is in front holding the document. Windows 11 Notepad opens a
     /// document in a window already open as a new tab: the window comes to
     /// the foreground still showing the tab it had, whose text area takes
     /// the focus and is announced, and only then switches to the new tab,
     /// whose text area takes the focus again and cuts that announcement
-    /// off. The window's title naming the harness document is the evidence
-    /// the switch has happened; once everything said up to then has ended,
-    /// Verbatim's menu is opened, its announcement is heard, and Escape
-    /// closes it, which returns the focus to the window, so a scenario hears
-    /// the window and the harness tab's text area announced once, in full.
-    fn announce_afresh(&mut self) -> io::Result<()> {
+    /// off. The window's title naming the harness document, which the
+    /// caller has waited for, is the evidence the switch has happened; once
+    /// everything said up to then has ended, Verbatim+Tab reports the
+    /// focus, as a user would ask where they are, and the scenario hears
+    /// the harness tab's text area reported once, in full.
+    fn report_focus(&mut self) -> io::Result<()> {
         self.speech.wait_until_quiet(LAUNCH_FOREGROUND_TIMEOUT);
-        self.send_gesture("kb:verbatim+v")?;
-        self.speech
-            .expect_in_order(&["Context", "menu"], LAUNCH_FOREGROUND_TIMEOUT);
-        self.send_keys(&["escape"])
+        self.send_gesture("kb:verbatim+tab")
     }
 
     /// Saves the harness document `name` ([`Scenario::open_document_with`])

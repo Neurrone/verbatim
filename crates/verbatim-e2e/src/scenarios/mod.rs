@@ -82,15 +82,43 @@ pub(crate) fn type_slowly(scenario: &mut Scenario, text: &str, timeout: Duration
 /// Waits for Notepad's window, then its text area, then the text the text
 /// area's announcement ends with, and returns that text once heard in full.
 ///
+/// The text area is announced as [`expect_notepad_text_area`] describes,
+/// leaving the text's value out, and is followed by the caret's line, or
+/// the selection, as its own utterance (`docs/nvda/speech.md`, "What an
+/// object with text says"): the next utterance after the text area, which
+/// is what is returned. Waiting for it to be heard means the caller's next
+/// key cannot cut it off.
+pub(crate) fn expect_notepad_text(scenario: &mut Scenario, timeout: Duration) -> String {
+    let text_area = expect_notepad_text_area(scenario, timeout);
+    scenario
+        .speech()
+        .expect_change_capturing(&text_area, timeout)
+}
+
+/// Waits for Notepad's text area to be announced after
+/// [`Scenario::open_document`], and returns the announcement.
+///
 /// The text area is Windows 11 Notepad's UIA document, "Text editor
 /// document", or classic Notepad's Win32 edit control, "Text Editor edit",
-/// as GitHub's Windows Server runners have it; both hold. Either way the
-/// announcement leaves the text's value out and is followed by the caret's
-/// line, or the selection, as its own utterance (`docs/nvda/speech.md`,
-/// "What an object with text says"): the next utterance after the text
-/// area, which is what is returned. Waiting for it to be heard means the
-/// caller's next key cannot cut it off.
-pub(crate) fn expect_notepad_text(scenario: &mut Scenario, timeout: Duration) -> String {
+/// as GitHub's Windows Server runners have it; both hold. When Notepad was
+/// not open before, its window comes to the foreground and is announced,
+/// "Notepad" in its title, and then its text area takes the focus and is
+/// announced by its name and role alone. When a Notepad window was already
+/// open, the harness reports the focus instead
+/// ([`Scenario::take_focus_reported`]): only the text area is reported, as a
+/// query, which speaks its states as well, "focused" among them
+/// (`docs/nvda/focus-and-navigator.md`, "Reporting the focus").
+pub(crate) fn expect_notepad_text_area(scenario: &mut Scenario, timeout: Duration) -> String {
+    if scenario.take_focus_reported() {
+        let text_area = scenario
+            .speech()
+            .expect_in_order_capturing(&["Text "], timeout);
+        assert!(
+            REPORTED_TEXT_AREAS.contains(&text_area.as_str()),
+            "reporting the focus spoke Notepad's text area as {text_area:?}"
+        );
+        return text_area;
+    }
     let text_area = scenario
         .speech()
         .expect_in_order_capturing(&["Notepad", "Text "], timeout);
@@ -98,10 +126,15 @@ pub(crate) fn expect_notepad_text(scenario: &mut Scenario, timeout: Duration) ->
         ["Text editor document", "Text Editor edit"].contains(&text_area.as_str()),
         "Notepad's text area was announced as {text_area:?}, not by its name and role alone"
     );
-    scenario
-        .speech()
-        .expect_change_capturing(&text_area, timeout)
+    text_area
 }
+
+/// Notepad's text area as reporting the focus speaks it, for each Notepad
+/// [`expect_notepad_text_area`] names.
+const REPORTED_TEXT_AREAS: [&str; 2] = [
+    "Text editor document focused",
+    "Text Editor edit focused multi line",
+];
 
 /// Opens the Verbatim menu with Verbatim+V and waits for the popup to be
 /// announced before returning, so the caller's very next arrow key lands
