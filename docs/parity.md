@@ -1197,7 +1197,14 @@ verified.
   last 8 caret reports with the time each was observed or read, and works
   from the newest observed before the key was pressed, not the caret it
   holds when the key arrives (fixed 2026-10-07 after `notepad_editing`
-  heard "n" for a Backspace over "x" under load). Terminals are recognized by
+  heard "n" for a Backspace over "x" under load). The caret Core holds is
+  the newest by the time each report was observed or read, not the last to
+  arrive, so a caret key's reply read before a caret event that reached
+  Core first does not move the caret, or the review cursor following it,
+  back; a report without a time is taken as it arrives. Review commands and
+  say-all from the caret carry their key's press time too, and read the
+  caret as it was before the key; a gesture the control plane injects has
+  no press time and uses the current caret (both fixed 2026-10-07). Terminals are recognized by
   their UIA class (`TermControl`, `WPFTermControl`) and the console host's
   window class, never by title. The console host's text area is announced
   as "terminal" without its English-only name, "Text Area", as NVDA's

@@ -157,6 +157,11 @@ pub(crate) struct CaretContext {
     /// when the caret's own line has none (the last line).
     #[serde(default)]
     pub(crate) line_break: Option<String>,
+    /// When the report this caret came from was observed or read, 0 when
+    /// unknown. A timed report observed before this one, arriving later,
+    /// does not replace it, so the caret is always the newest known.
+    #[serde(default)]
+    pub(crate) observed_at_ms: u64,
 }
 
 impl CaretContext {

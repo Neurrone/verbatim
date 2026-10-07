@@ -71,12 +71,15 @@ pub(crate) enum Outcome {
 }
 
 /// Runs a review command against the navigator's text, reading the line at
-/// its caret first when the review cursor has no line yet.
+/// its caret first when the review cursor has no line yet: the caret as the
+/// command's key, pressed at `pressed_at_ms` (0 when unknown), found it
+/// ([`crate::editing::caret_before`]).
 pub(crate) fn run(
     state: &mut SrState,
     trace_id: TraceId,
     command: ReviewCommand,
     repeat: u8,
+    pressed_at_ms: u64,
 ) -> Outcome {
     let Some(navigator) = state.navigator.as_mut() else {
         return Outcome::Done(Vec::new());
@@ -91,16 +94,18 @@ pub(crate) fn run(
         }
         ReviewText::Flat => Outcome::Flat,
         ReviewText::Unknown => {
-            let grid = is_grid(navigator.object.role);
-            if let Some(caret) = state.caret.as_ref().filter(|caret| caret.node == node) {
-                let position = position_at(&caret.line, caret.line.offset as usize, grid);
-                navigator.text = ReviewText::At(position.clone());
+            let role = navigator.object.role;
+            if let Some(caret) = crate::editing::caret_before(state, node, pressed_at_ms) {
+                let position = position_at(caret.line, caret.line.offset as usize, is_grid(role));
+                set_position(state, position.clone());
                 return Outcome::Done(execute(state, trace_id, node, command, repeat, &position));
             }
-            if may_have_text(navigator.object.role) {
+            if may_have_text(role) {
                 Outcome::Done(seed(state, node, TextPoint::Caret, command, repeat))
             } else {
-                navigator.text = ReviewText::Flat;
+                if let Some(navigator) = state.navigator.as_mut() {
+                    navigator.text = ReviewText::Flat;
+                }
                 Outcome::Flat
             }
         }

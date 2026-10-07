@@ -287,7 +287,8 @@ knowing for review:
   Verbatim+V, which pops the menu, the lock keys, whose new state it
   announces, and every gesture in the active layout's bindings table:
   review and object-navigation scripts become `Input::Command`s for the
-  reducer thread, while Verbatim+F12 speaks the time
+  reducer thread, carrying the gesture's `pressed_at_ms` (0 for a gesture
+  the control plane injected), while Verbatim+F12 speaks the time
   (an Interrupt-priority text-span utterance with no source node), and
   Verbatim+F11 opens the system tray list via
   `GuiCommand::OpenShellItemList`. A quick second press speaks the date or

@@ -34,7 +34,9 @@ Num Lock is on (`DecisionMachine::set_num_lock`, from the keyboard's own
 toggle state, a local read), calls `speech` with the decision's
 speech effect before sending the gesture, so speech the gesture causes is
 never the speech the key press cancels, forwards emitted gestures with a
-non-blocking `try_send` that drops on a full channel, also sends the
+non-blocking `try_send` that drops on a full channel, stamping each
+emitted and observed gesture's `pressed_at_ms` from the same time as
+`pressed_at_us`, also sends the
 lock-key gesture (`ToggleKey::gesture`, with a repeat of 0) when a Caps
 Lock, Num Lock, or Scroll Lock press passes to the operating system, so
 its new state can be announced (not for the Verbatim key passed in share

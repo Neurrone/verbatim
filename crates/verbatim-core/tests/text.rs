@@ -109,6 +109,7 @@ fn command(command: ReviewCommand, repeat: u8) -> Input {
         trace_id: TraceId::mint(),
         command,
         repeat,
+        pressed_at_ms: 0,
     }
 }
 
@@ -636,6 +637,100 @@ fn backspace_deletes_from_the_caret_event_of_the_key_before_it() {
         ),
     );
     assert_eq!(spoken(&effects), vec![character("n")]);
+}
+
+#[test]
+fn a_late_reply_read_before_a_newer_caret_event_leaves_the_caret_newest() {
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = caret_event_at(&mut state, line("abc", 100, 0), 300);
+    let effects = reduce(&mut state, &key_at(CaretMotion::NextCharacter, 400));
+    // A caret event observed after the reply was read reaches Core first.
+    let _ = caret_event_at(&mut state, line("abc", 100, 2), 500);
+    let _ = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply_at(line("abc", 100, 1), 450),
+        ),
+    );
+    // The review cursor, following the caret, stays on the newest caret.
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(spoken(&effects), vec![character("c")]);
+    // A key after both finds the newest caret too.
+    let effects = reduce(&mut state, &key_at(CaretMotion::NextCharacter, 600));
+    let TextOp::AwaitCaret(watch) = request(&effects).op else {
+        panic!("expected a caret wait");
+    };
+    assert_eq!(
+        watch.since,
+        Some(TextPosition {
+            anchor: TextAnchor(100),
+            offset: 2
+        })
+    );
+}
+
+/// A command whose key the hook saw at `pressed_at_ms`.
+fn command_at(command: ReviewCommand, pressed_at_ms: u64) -> Input {
+    Input::Command {
+        trace_id: TraceId::mint(),
+        command,
+        repeat: 0,
+        pressed_at_ms,
+    }
+}
+
+#[test]
+fn a_command_reads_the_caret_from_before_its_key_though_a_later_caret_event_came_first() {
+    // The review cursor does not follow the caret, so the first review
+    // command starts it at the caret.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
+    let _ = caret_event_at(&mut state, line("abc", 100, 0), 100);
+    // Observed after the command's key was pressed, but reaching Core first.
+    let _ = caret_event_at(&mut state, line("abc", 100, 1), 210);
+    let mut review = state.clone();
+    let effects = reduce(
+        &mut review,
+        &command_at(ReviewCommand::ReviewCurrentCharacter, 200),
+    );
+    assert_eq!(spoken(&effects), vec![character("a")]);
+    // A gesture the control plane injected has no press time: the current
+    // caret.
+    let effects = reduce(
+        &mut state.clone(),
+        &command_at(ReviewCommand::ReviewCurrentCharacter, 0),
+    );
+    assert_eq!(spoken(&effects), vec![character("b")]);
+
+    let before = TextPoint::At(TextPosition {
+        anchor: TextAnchor(100),
+        offset: 0,
+    });
+    let effects = reduce(
+        &mut state.clone(),
+        &command_at(ReviewCommand::SayAllFromCaret, 200),
+    );
+    assert_eq!(
+        request(&effects).op,
+        read_ahead(before, None, TextUnit::Sentence)
+    );
+    let effects = reduce(
+        &mut state.clone(),
+        &command_at(ReviewCommand::ReportCaretLocation, 200),
+    );
+    assert_eq!(request(&effects).op, TextOp::Location(before));
+    // With no report since the key, the outpost reads the caret itself.
+    let effects = reduce(
+        &mut state,
+        &command_at(ReviewCommand::ReportCaretLocation, 300),
+    );
+    assert_eq!(request(&effects).op, TextOp::Location(TextPoint::Caret));
 }
 
 #[test]

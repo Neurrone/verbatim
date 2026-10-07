@@ -155,6 +155,7 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
         trace_id: TraceId::mint(),
         command: ReviewCommand::Parent,
         repeat: 0,
+        pressed_at_ms: 0,
     };
     let mut small = state_with_chain(SMALL_CHAIN);
     let mut large = state_with_chain(LARGE_CHAIN);
@@ -272,6 +273,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         trace_id: TraceId::mint(),
         command: ReviewCommand::ReviewNextWord,
         repeat: 0,
+        pressed_at_ms: 0,
     });
 }
 

@@ -358,7 +358,10 @@ Which objects have text. A focus or navigator object whose role is an
 edit field, a document, or a terminal may have text, and so does any node
 the outpost sent a caret report for. For those, caret keys wait for
 evidence and the review cursor reads lines through the protocol; the
-first review command reads the line at the caret, and a `NoText` answer
+first review command reads the line at the caret (Core's copy of the
+caret as the command's key found it, `Input::Command`'s `pressed_at_ms`,
+taken as a caret key takes it; the current caret for an injected gesture,
+which has no press time), and a `NoText` answer
 makes the object flat text, reviewed by its value or name as in M3. Any
 other object is flat text without asking.
 
@@ -378,7 +381,12 @@ key arrives may already show what the key did, since the application's
 caret event can reach Core before the key does. With no time for the
 key, or no timed report (a report without a time empties the history),
 the caret Core holds stands in; with timed reports but none from before
-the key, the caret before the key is not known. A newer caret key supersedes one still
+the key, the caret before the key is not known. The caret Core holds is
+the newest by observed time, not the last to arrive: a timed report
+observed before it, such as a caret key's reply read before a caret
+event that reached Core first, only joins the history, and neither the
+caret nor the review cursor following it moves back. A report without a
+time is taken as it arrives. A newer caret key supersedes one still
 waiting, and a focus change drops it, so a focus announcement wins and
 speech never lags behind fast typing. The answer updates the caret and,
 when the review cursor follows the caret, moves the review cursor to it,
@@ -520,7 +528,11 @@ the text, known from a chunk marked as the last or a read that could not
 move on, and stops on any command, caret key, typed text, cancelled speech
 (`Input::SpeechCancelled`, from any key), a focus change (which also cuts
 its speech off), or the end of its outpost, dropping the buffer and leaving
-the cursor where reading got to.
+the cursor where reading got to. Say-all from the caret, and the caret's
+location, use the caret as the command's key found it when a caret
+report observed since has replaced it, as when an application's late caret
+event reached Core before the key; otherwise the caret the outpost
+reads.
 
 ## Terminals (milestone M4 item 9)
 

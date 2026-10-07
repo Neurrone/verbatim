@@ -325,22 +325,28 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
             state.machine.set_num_lock(num_lock);
             let decision = state.machine.on_key(event, Instant::now());
+            // When the key was pressed, on the outposts' clock, for both a
+            // bound gesture and an observed caret key: the application
+            // receives the key only after this procedure returns.
+            let pressed_at_us = unix_us();
             let own = kbd.dwExtraInfo == OWN_INPUT_TAG;
             if let Some(effect) = decision.speech
                 && !own
             {
                 (state.speech)(effect);
             }
-            if let Some(emitted) = decision.emitted {
+            if let Some(mut emitted) = decision.emitted {
+                emitted.pressed_at_ms = pressed_at_us / 1_000;
                 // Never block: drop the gesture if the consumer is backed up.
                 let _ = state.events.try_send(emitted);
             }
-            if let Some(observed) = decision.observed
+            if let Some(mut observed) = decision.observed
                 && !own
             {
+                observed.pressed_at_ms = pressed_at_us / 1_000;
                 (state.reports)(KeyReport::Observed {
                     gesture: observed,
-                    pressed_at_us: unix_us(),
+                    pressed_at_us,
                 });
             }
             if event.pressed
@@ -368,6 +374,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                     trace_id: verbatim_model::TraceId::mint(),
                     gesture: key.gesture(),
                     repeat: 0,
+                    pressed_at_ms: pressed_at_us / 1_000,
                 });
             }
             decision.decision

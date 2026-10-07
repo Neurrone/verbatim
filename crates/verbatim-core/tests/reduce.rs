@@ -1710,6 +1710,7 @@ fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
         trace_id,
         command: cmd,
         repeat,
+        pressed_at_ms: 0,
     }
 }
 

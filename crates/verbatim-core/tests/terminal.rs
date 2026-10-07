@@ -394,6 +394,7 @@ fn report_new_output_toggles_with_verbatim_5() {
         trace_id: TraceId::mint(),
         command: ReviewCommand::ToggleReportNewOutput,
         repeat: 0,
+        pressed_at_ms: 0,
     };
     let effects = reduce(&mut state, &toggle);
     assert!(effects.iter().any(|effect| matches!(

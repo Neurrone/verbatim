@@ -446,6 +446,13 @@ pub enum Input {
         /// commands spell on a repeat, and a third press of current
         /// character speaks its character code. Other commands ignore it.
         repeat: u8,
+        /// Milliseconds since the Unix epoch when the keyboard hook saw the
+        /// gesture's key, as for [`Input::CaretKey`]'s `pressed_at_ms`: a
+        /// command that reads the caret takes the caret as it was before
+        /// this time. 0 when unknown, as for a gesture the control plane
+        /// injected, which uses the current caret.
+        #[serde(default)]
+        pressed_at_ms: u64,
     },
     /// An activation the reducer asked for finished: `activated` is whether
     /// the navigator object, or one of its ancestors, was activated, and

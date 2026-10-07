@@ -34,7 +34,7 @@ use verbatim_model::{
 
 use crate::state::{
     CARET_HISTORY, CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText,
-    ReviewPosition, ReviewText, SrState, TextFollowUp, TimedCaret,
+    ReviewPosition, ReviewText, SharedChunk, SrState, TextFollowUp, TimedCaret,
 };
 use crate::text;
 
@@ -168,17 +168,19 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     effects
 }
 
-/// The caret of a node as a caret key found it: its line, with the caret
-/// at the chunk's offset, and the selection.
+/// The caret of a node as a key found it: its line, with the caret at the
+/// chunk's offset, the selection, and when the report it came from was
+/// observed (0 when unknown).
 #[derive(Clone, Copy)]
-struct CaretBefore<'a> {
-    line: &'a TextChunk,
-    selection: Option<Selection>,
+pub(crate) struct CaretBefore<'a> {
+    pub(crate) line: &'a SharedChunk,
+    pub(crate) selection: Option<Selection>,
+    pub(crate) observed_at_ms: u64,
 }
 
 impl CaretBefore<'_> {
     /// Where the caret was.
-    fn caret(self) -> TextPosition {
+    pub(crate) fn caret(self) -> TextPosition {
         TextPosition {
             anchor: self.line.start,
             offset: self.line.offset,
@@ -193,8 +195,13 @@ impl CaretBefore<'_> {
 /// same millisecond as the key, or later, may already show what the key
 /// did, so it is never the caret before the key. With no time for the key, or no timed report,
 /// the caret Core has now stands in; with timed reports but none from
-/// before the key, the caret before the key is not known.
-fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<CaretBefore<'_>> {
+/// before the key, the caret before the key is not known. Caret keys and
+/// every command that reads the caret take the caret from here.
+pub(crate) fn caret_before(
+    state: &SrState,
+    node: NodeId,
+    pressed_at_ms: u64,
+) -> Option<CaretBefore<'_>> {
     let mut timed = state
         .caret_history
         .iter()
@@ -209,6 +216,7 @@ fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<Car
             .map(|caret| CaretBefore {
                 line: &caret.line,
                 selection: caret.selection,
+                observed_at_ms: caret.observed_at_ms,
             });
     }
     // Reports arrive in the order their paths deliver them, not the order
@@ -220,7 +228,27 @@ fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<Car
         .map(|report| CaretBefore {
             line: &report.line,
             selection: report.selection,
+            observed_at_ms: report.observed_at_ms,
         })
+}
+
+/// Where a command that asks the outpost about the caret of `node` (say-all
+/// from the caret, the caret's location) should ask about, for a key pressed
+/// at `pressed_at_ms`: the caret before the key ([`caret_before`]) when a
+/// report observed since has replaced it, as when the key's own caret event
+/// reached Core first; otherwise the caret as the outpost finds it.
+pub(crate) fn caret_point_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> TextPoint {
+    let current = state
+        .caret
+        .as_ref()
+        .filter(|caret| caret.node == node)
+        .map(|caret| caret.observed_at_ms);
+    match caret_before(state, node, pressed_at_ms) {
+        Some(before) if current.is_some_and(|current| current != before.observed_at_ms) => {
+            TextPoint::At(before.caret())
+        }
+        _ => TextPoint::Caret,
+    }
 }
 
 /// What a Backspace is about to delete, from the caret's line before the
@@ -462,8 +490,11 @@ fn selection_segments(changes: &[SelectionChange]) -> Vec<UtteranceSegment> {
 /// review cursor to it when the review cursor follows the caret and the
 /// navigator is on that node. `observed_at_ms` is when the report was
 /// observed or read, 0 when unknown; a timed report is also kept for a
-/// later caret key to find the caret as it was when that key was pressed
-/// ([`caret_before`]).
+/// later key to find the caret as it was when that key was pressed
+/// ([`caret_before`]). A timed report observed before the caret Core holds,
+/// such as a caret key's reply read before a caret event that reached Core
+/// first, is only kept: the caret stays the newest known, and the review
+/// cursor stays with it. An untimed report is taken as it arrives.
 pub(crate) fn update_caret(
     state: &mut SrState,
     node: NodeId,
@@ -485,6 +516,15 @@ pub(crate) fn update_caret(
             line: Arc::clone(&line),
             selection: caret.selection,
         });
+    }
+    if let Some(known) = state.caret.as_mut().filter(|known| {
+        known.node == node && observed_at_ms != 0 && known.observed_at_ms > observed_at_ms
+    }) {
+        // The older report still shows the kind of line break the text uses.
+        if known.line_break.is_none() {
+            known.line_break = text::line_break(&line.text).map(str::to_owned);
+        }
+        return;
     }
     if state.settings.follow_caret
         && let Some(navigator) = state.navigator.as_mut()
@@ -511,6 +551,7 @@ pub(crate) fn update_caret(
         line,
         selection: caret.selection,
         line_break,
+        observed_at_ms,
     });
 }
 

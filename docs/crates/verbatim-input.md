@@ -163,6 +163,10 @@ rules):
   Control-plane gesture injection (which builds an `EmittedGesture`
   directly in `verbatim-app`, bypassing the machine) always injects
   `repeat: 0`, a single first press.
+- Press time: every `EmittedGesture` also carries `pressed_at_ms`, the
+  Unix time in milliseconds when the platform's keyboard hook saw the key.
+  The machine has no such clock and leaves it 0 for the hook to stamp;
+  control-plane injection leaves it 0, unknown.
 
 The hook shell that drives the machine is described in
 [verbatim-input-windows](verbatim-input-windows.md).
