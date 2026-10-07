@@ -263,8 +263,16 @@ pub(super) fn uia_enrichment(
     uia.within(ENRICHMENT_BUDGET, |uia| {
         let ancestors = uia_ancestors(context, uia, cache, element, previous, Some(deadline));
         let selected = if wants_selected_child(role) {
-            uia.selected_child(element, cache, &context.uia_registry)
-                .unwrap_or(None)
+            match uia.selected_child(element, cache, &context.uia_registry) {
+                Ok(selected) => selected,
+                // The application did not answer in time, or the list is
+                // gone: there is no selected child to report, and the log
+                // says it was not read rather than that none was selected.
+                Err(error) => {
+                    tracing::debug!(%error, "the selected child could not be read");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -397,7 +405,9 @@ pub(super) enum RemoteEnrichment {
 /// A program that fails is answered by the classic walk for this call,
 /// and logged with the instruction that failed and the Rust line that
 /// emitted it; one whose element could not be imported (a client-side
-/// proxy) also has `window` read the classic way from then on.
+/// proxy) also has `window` read the classic way from then on. A walk that
+/// fails, the program by UIA's transaction timeout or the classic walk any
+/// way, reports the containers unknown.
 pub(super) fn uia_remote_enrichment(
     context: &Context,
     uia: &Uia,
@@ -437,11 +447,13 @@ pub(super) fn uia_remote_enrichment(
         Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
         Ok((FocusAncestry::NotFocused, _)) => return Some(RemoteEnrichment::NotFocused),
         Err(error) => {
-            // As the classic walk's failure does: no containers, and the
-            // window found the usual way.
+            // The walk failed, by UIA's transaction timeout or otherwise:
+            // the focus is reported with its containers unknown, as when
+            // the walk runs out of time, never as having none, and its
+            // window is found the usual way.
             tracing::debug!(%error, "the focus ancestry could not be read");
             return Some(RemoteEnrichment::Read {
-                enrichment: (Some(Vec::new()), None),
+                enrichment: (None, None),
                 window: verbatim_uia::nearest_window_handle(element),
                 held_focused: None,
             });

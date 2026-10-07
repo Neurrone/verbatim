@@ -292,7 +292,8 @@ Mark fallback. When the active driver's `places_marks` is `false` and the
 sequence has marks, the synth thread splits it with `split_at_marks` and
 speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
-synthesis boundary at each mark.
+synthesis boundary at each mark. No built-in driver needs it: OneCore and
+eSpeak NG place marks themselves.
 
 Pitch changes. `ThemePresenter` renders a `SegmentContent::SpelledCapital`,
 and a capital letter spoken as a character or by its description,

@@ -90,22 +90,31 @@ pub struct SpeechSequence {
 }
 
 impl SpeechSequence {
-    /// The sequence's text alone, every text item joined in order with
-    /// single spaces, with each sound in its place as `sound:` and its
-    /// indication's id (`sound: spelling-error`): what is reported as
-    /// queued, so the control plane and the end-to-end suite see sounds in
-    /// the stream like words, not what is synthesized.
+    /// The sequence's text alone, every text item joined in order with a
+    /// single space where neither side of the join already has whitespace
+    /// (say-all's text runs on across a mark with its own space), with each
+    /// sound in its place as `sound:` and its indication's id (`sound:
+    /// spelling-error`): what is reported as queued, so the control plane
+    /// and the end-to-end suite see sounds in the stream like words, not
+    /// what is synthesized.
     #[must_use]
     pub fn text(&self) -> String {
-        self.items
-            .iter()
-            .filter_map(|item| match item {
-                SpeechItem::Text(text) => Some(text.clone()),
-                SpeechItem::Sound(cue) => Some(format!("sound: {}", cue.indication)),
-                SpeechItem::Mark(_) | SpeechItem::Pitch(_) => None,
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+        let mut joined = String::new();
+        let words = self.items.iter().filter_map(|item| match item {
+            SpeechItem::Text(text) => Some(text.clone()),
+            SpeechItem::Sound(cue) => Some(format!("sound: {}", cue.indication)),
+            SpeechItem::Mark(_) | SpeechItem::Pitch(_) => None,
+        });
+        for (index, words) in words.enumerate() {
+            if index > 0
+                && !joined.ends_with(char::is_whitespace)
+                && !words.starts_with(char::is_whitespace)
+            {
+                joined.push(' ');
+            }
+            joined.push_str(&words);
+        }
+        joined
     }
 
     /// Whether the sequence holds any text to speak.
@@ -332,5 +341,21 @@ mod tests {
                 (String::new(), None),
             ]
         );
+    }
+
+    #[test]
+    fn text_items_are_joined_by_one_space() {
+        let sequence = SpeechSequence {
+            utterance: UtteranceId(1),
+            trace_id: TraceId::mint(),
+            language: None,
+            items: vec![
+                SpeechItem::Text("one".to_owned()),
+                SpeechItem::Text("two ".to_owned()),
+                SpeechItem::Mark(IndexMark(1)),
+                SpeechItem::Text("three".to_owned()),
+            ],
+        };
+        assert_eq!(sequence.text(), "one two three");
     }
 }

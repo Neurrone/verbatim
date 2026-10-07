@@ -20,6 +20,14 @@ Windows API, and `cargo xtask ci` checks that it does not.
   tag when the provider gives one, and otherwise from its characters (Han
   without kana is Chinese; Japanese mixes kanji with kana).
 - `Segmenter::sentences`: sentences by Unicode's sentence rules.
+- `last_pause`: where say-all's speech without pauses splits a piece of
+  text (`docs/nvda/speech.md`, "Say-all speaks without pauses"): just past
+  its last sentence end, a full stop, exclamation mark, or question mark
+  after a character that is neither whitespace nor another such mark, with
+  at most one closing quotation mark or parenthesis after it and then
+  whitespace or the text's end, together with that whitespace. There is no
+  list of abbreviations, so "Dr. " ends a sentence; a decimal point and an
+  ellipsis do not.
 - `is_line_break`, `lines`, and `line_at`: lines of text Core holds whole,
   such as an object's value reviewed as flat text. Any line break ends a
   line: a carriage return and line feed together are one break, and a

@@ -320,9 +320,9 @@ impl StartMarker {
     }
 }
 
-/// A piece say-all read and has not yet handed to speech: the chunk it is
-/// in, shared with the chunk's other pieces, and its byte range of the
-/// chunk's text.
+/// A piece of text say-all read and has not yet handed to speech: the
+/// chunk it is in, shared with the chunk's other pieces, its byte range of
+/// the chunk's text, and whether it starts a unit read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BufferedPiece {
     #[serde(
@@ -332,6 +332,23 @@ pub(crate) struct BufferedPiece {
     pub(crate) chunk: SharedChunk,
     pub(crate) start: u32,
     pub(crate) end: u32,
+    /// Whether the piece starts a unit read (a line or a sentence), so
+    /// playback reaching it moves the cursor there; not for the rest of a
+    /// unit held back after its last sentence end.
+    pub(crate) marked: bool,
+}
+
+/// An index mark say-all handed to speech and playback has not reached
+/// yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct QueuedMark {
+    pub(crate) mark: SpeechMark,
+    /// Where the cursor moves when playback reaches the mark: the start of
+    /// the unit read that follows it, or `None` for the mark opening an
+    /// utterance that starts with the rest of a unit already reached.
+    pub(crate) position: Option<TextPosition>,
+    /// Whether the mark opens its utterance.
+    pub(crate) opens: bool,
 }
 
 impl BufferedPiece {
@@ -358,14 +375,24 @@ pub(crate) struct SayAll {
     /// The start of the last chunk read and its unit, which the next read
     /// moves on from.
     pub(crate) last_chunk: Option<(TextPosition, TextUnit)>,
-    /// Pieces handed to speech whose marks playback has not reached yet,
-    /// oldest first, with where each starts. At most `say_all::HANDED`.
-    pub(crate) queued: std::collections::VecDeque<(SpeechMark, TextPosition)>,
-    /// Pieces read and not yet handed to speech, in order: the chunk and
-    /// the byte range of its text. At most one read-ahead batch's worth
-    /// (`verbatim_model::MAX_READ_AHEAD_TEXT`).
+    /// The marks of utterances handed to speech that playback has not
+    /// reached yet, oldest first. At most `say_all::HANDED` of them open
+    /// an utterance.
+    pub(crate) queued: std::collections::VecDeque<QueuedMark>,
+    /// Utterances read and not yet handed to speech, in order, each its
+    /// pieces. At most one read-ahead batch's worth
+    /// (`verbatim_model::MAX_READ_AHEAD_TEXT`), with what was held back.
     #[serde(default)]
-    pub(crate) buffer: std::collections::VecDeque<BufferedPiece>,
+    pub(crate) buffer: std::collections::VecDeque<Vec<BufferedPiece>>,
+    /// Text read with no sentence end after it, held back to be spoken
+    /// with what follows it (`docs/nvda/speech.md`, "Say-all speaks
+    /// without pauses").
+    #[serde(default)]
+    pub(crate) held: Vec<BufferedPiece>,
+    /// How many units in a row were read with no sentence end, blank ones
+    /// included: at `say_all::MAX_HELD`, what is held back is spoken.
+    #[serde(default)]
+    pub(crate) held_units: usize,
     /// The trace of the latest read, which pieces handed out later carry.
     #[serde(default)]
     pub(crate) trace: Option<TraceId>,
@@ -657,10 +684,10 @@ impl SrState {
             if let Some((position, _)) = say_all.last_chunk {
                 insert(say_all.node, position);
             }
-            for (_, position) in &say_all.queued {
-                insert(say_all.node, *position);
+            for position in say_all.queued.iter().filter_map(|queued| queued.position) {
+                insert(say_all.node, position);
             }
-            for piece in &say_all.buffer {
+            for piece in say_all.buffer.iter().flatten().chain(&say_all.held) {
                 insert(say_all.node, TextPosition::at(piece.chunk.start));
             }
         }

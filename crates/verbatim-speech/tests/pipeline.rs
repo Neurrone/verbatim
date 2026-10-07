@@ -511,6 +511,107 @@ fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact(
     );
 }
 
+/// A silent synth that places marks itself: it records each sequence it is
+/// given, pushes audio for each text item, and reports each mark where it
+/// stands.
+struct MarkPlacingSynth {
+    given: Arc<Mutex<Vec<Vec<SpeechItem>>>>,
+}
+
+impl SynthDriver for MarkPlacingSynth {
+    fn id(&self) -> SynthId {
+        SynthId::new("marks")
+    }
+
+    fn display_name(&self) -> String {
+        "Mark-placing synth".to_owned()
+    }
+
+    fn supported_settings(&self) -> Vec<verbatim_speech::SettingDescriptor> {
+        Vec::new()
+    }
+
+    fn setting(&self, _id: &SettingId) -> Option<SettingValue> {
+        None
+    }
+
+    fn set_setting(&mut self, id: &SettingId, _value: SettingValue) -> Result<(), SynthError> {
+        Err(SynthError::Setting(format!("no setting {id}")))
+    }
+
+    fn places_marks(&self) -> bool {
+        true
+    }
+
+    fn speak(
+        &mut self,
+        sequence: &SpeechSequence,
+        sink: &mut dyn SynthSink,
+    ) -> Result<(), SynthError> {
+        self.given.lock().unwrap().push(sequence.items.clone());
+        for item in &sequence.items {
+            match item {
+                SpeechItem::Text(_) => {
+                    let _ = sink.push_pcm(FORMAT, &[1_000i16; 64]);
+                }
+                SpeechItem::Mark(mark) => sink.index_reached(*mark),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A synthesizer that places marks itself, as eSpeak NG and `OneCore` do, is
+/// given the whole sequence, marks included, in one call, and the marks it
+/// reports are the ones playback reaches.
+#[test]
+fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
+    let given = Arc::new(Mutex::new(Vec::new()));
+    let for_factory = Arc::clone(&given);
+    let mut registry = SynthRegistry::new();
+    registry.register(
+        SynthId::new("marks"),
+        "Mark-placing synth",
+        Box::new(move || {
+            Ok(Box::new(MarkPlacingSynth {
+                given: Arc::clone(&for_factory),
+            }) as Box<dyn SynthDriver>)
+        }),
+    );
+    let recorder = Arc::new(Recorder::default());
+    let manager = SpeechManager::new(SpeechManagerConfig {
+        registry,
+        initial_synth: SynthId::new("marks"),
+        saved_settings: Box::new(|_| Vec::new()),
+        mixer: mixer(),
+        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        theme: theme_without_sounds(),
+        presenter: Some(Box::new(MarkingTheme)),
+    })
+    .expect("pipeline starts");
+
+    let id = manager.speak(Utterance {
+        segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
+        ..queued("unused")
+    });
+
+    assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
+    assert_eq!(
+        *given.lock().unwrap(),
+        vec![vec![
+            SpeechItem::Text("one".to_owned()),
+            SpeechItem::Mark(IndexMark(1)),
+            SpeechItem::Text("two".to_owned()),
+            SpeechItem::Mark(IndexMark(2)),
+        ]]
+    );
+    assert_eq!(
+        *recorder.marks.lock().unwrap(),
+        vec![(id, IndexMark(1)), (id, IndexMark(2))]
+    );
+}
+
 #[test]
 fn settings_host_get_set_commit_revert() {
     type Persisted = Arc<Mutex<Vec<(SynthId, Vec<(SettingId, SettingValue)>)>>>;

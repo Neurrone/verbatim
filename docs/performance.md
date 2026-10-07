@@ -619,6 +619,14 @@ path, a batch arrives with ten pieces, several seconds of speech, still
 to speak, and the gaps are the same with remote operations on and off:
 the pieces already with speech hide the read entirely.
 
+Since 2026-10-07 say-all speaks without pauses, as NVDA does
+(`docs/nvda/speech.md`, "Say-all speaks without pauses"): a piece is an
+utterance ending at a sentence end, which may hold the rest of one line
+and the start of the next, and the counts above (20 units a read, the next
+read below 10 pieces) count units read and utterances left respectively.
+The measurements above were taken before that change, with a piece a
+line.
+
 A batch of twenty lines, classically, after the text range audit of
 2026-10-07 (`phase6-design.md`, item 14 of the work scheduled that day),
 pinned against mockapp's text replaced by forty-five short lines

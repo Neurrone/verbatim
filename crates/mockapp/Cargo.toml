@@ -16,6 +16,7 @@ windows-core.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+verbatim-core.workspace = true
 verbatim-ia2.workspace = true
 verbatim-outpost.workspace = true
 verbatim-uia.workspace = true

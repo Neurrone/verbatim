@@ -340,6 +340,46 @@ fn espeak_ng_speaks_from_a_folder_with_a_non_ascii_name() {
     assert!(!samples(&received).is_empty(), "eSpeak NG speaks");
 }
 
+/// eSpeak NG in its host places marks itself: the host says so, and a mark
+/// where a sentence's second half starts is relayed after exactly the
+/// samples before it, 16,829 (as the driver's own test finds), in one
+/// synthesis whose audio is a new host's unmarked sentence, sample for
+/// sample.
+#[test]
+fn hosted_espeak_ng_places_a_mark_within_one_synthesis() {
+    let espeak =
+        || HostedSynth::start(host_exe(), SynthId::new("espeak")).expect("the host starts");
+    let mut synth = espeak();
+    assert!(synth.places_marks(), "eSpeak NG places marks itself");
+    let received = spoken(
+        &mut synth,
+        1,
+        vec![
+            SpeechItem::Text("The quick brown fox ".to_owned()),
+            SpeechItem::Mark(IndexMark(2)),
+            SpeechItem::Text("jumps over the lazy dog.".to_owned()),
+        ],
+    );
+    let marks: Vec<(usize, IndexMark)> = received
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            Received::Mark(mark) => Some((samples(&received[..index]).len(), *mark)),
+            Received::Audio(_) => None,
+        })
+        .collect();
+    assert_eq!(marks, [(16_829, IndexMark(2))]);
+    assert!(
+        samples(&received)
+            == samples(&spoken(
+                &mut espeak(),
+                1,
+                text("The quick brown fox jumps over the lazy dog.")
+            )),
+        "the mark changes nothing that is heard"
+    );
+}
+
 /// A host that died between utterances, and has exited, is found gone
 /// before the next request, which a new host speaks.
 #[test]

@@ -489,8 +489,8 @@ Not yet, or known limitations:
   are not offered; Verbatim always behaves as their defaults.
 - Device recovery has not been verified live (this machine has one render
   device); the mixer's unit tests cover reopening and rewinding.
-- eSpeak NG drops an index mark after a full stop, so its sequences are
-  split at marks; OneCore ignores a sequence's language.
+- eSpeak NG drops an index mark after a full stop, so its driver starts a
+  new synthesis at such a mark; OneCore ignores a sequence's language.
 
 ## 4. The life of a query: a tree dump that times out
 

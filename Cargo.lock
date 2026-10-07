@@ -884,6 +884,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "verbatim-core",
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-outpost",

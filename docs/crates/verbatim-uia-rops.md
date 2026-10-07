@@ -223,14 +223,26 @@ caches, or, when it stopped before reaching one, from
 ### The entry point
 
 `focus_ancestry(uia, query, remote)` is what call sites use. With `remote`
-true it runs the program and, when that fails for any reason, runs the
-classic walk for the same call; with `remote` false it runs the classic
-walk alone. It returns the answer with a `Path` (whose `name()` is the
-word a log line gives it): `Remote`, `Classic`, or
+true it runs the program and, when that fails, runs the classic walk for
+the same call; with `remote` false it runs the classic walk alone. It
+returns the answer with a `Path` (whose `name()` is the word a log line
+gives it): `Remote`, `Classic`, or
 `Fallback(error)`, the program's error, so the caller can log it (an
 `Error::Failed` prints the failing instruction, its opcode, and the Rust
 line that emitted it) and stop trying for a window whose import failed.
-Only the classic walk's own failure is returned as an error.
+A program that fails because the provider did not answer within UIA's
+transaction timeout, or because its element is gone (once the run
+without a gone `previous` element has been tried), is not answered by the
+classic walk, which would fail the same way after waiting on a stalled
+application a second time: its error is returned, as are the classic
+walk's own failures. The classic walk fails when its read of `previous`
+or a hop times out, or its read of the selected child times out or finds
+an element gone, rather than taking a hop that did not answer as the
+root or a selection that did not answer as nothing selected, so a walk that hit the timeout is never reported as a short but
+complete ancestry; any other failed hop still ends the walk as the root,
+as NVDA's parent read answers no parent. Pinned against mockapp with
+`slow` and `stall` (`crates/mockapp/tests/remote_ops.rs`,
+`a_focus_walk_that_times_out_fails`).
 
 NVDA makes each call site choose instead: code that can use remote
 operations asks `remote.isSupported()` before building a program and
@@ -652,10 +664,12 @@ A provider whose process has gone and one that times out
 `ExecutionFailure`) are not program failures: the classic
 implementation would fail the same way, so they are answered as the
 outpost answers a gone or unresponsive element. The entry points of the
-caret read, the text reads, and the navigation step return them without
-running the classic calls, which would wait a second time on a stalled
-application; a navigation step from an element reported gone is then
-searched for by runtime id, as the classic step always was.
+focus ancestry, the caret read, the text reads, and the navigation step
+return them without running the classic calls, which would wait a second
+time on a stalled application; a navigation step from an element
+reported gone is then searched for by runtime id, as the classic step
+always was, and a focus whose ancestry failed is reported with its
+containers unknown.
 
 ### Where NVDA declines remote operations, and whether it applies here
 
