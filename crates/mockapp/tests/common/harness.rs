@@ -41,7 +41,8 @@ use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
 const FAILED: u32 = 101;
 
 /// Runs `tests` (name and function) with libtest's command-line filtering
-/// (name substrings, `--exact`, `--test-threads`, `--list`) and output, then
+/// (name substrings, `--skip`, `--exact`, `--ignored`, `--test-threads`,
+/// `--list`) and output, then
 /// ends the process with libtest's exit code, as explained in the module
 /// documentation.
 pub fn run(tests: &[(&'static str, fn())]) -> ! {
@@ -114,52 +115,95 @@ fn end(code: u32) -> ! {
     std::process::abort();
 }
 
-/// The libtest options this runner honors; any other argument is ignored.
+/// The libtest options this runner honors. Any other option ends the run
+/// with an error rather than being ignored, so a run never reports a
+/// different set of tests than was asked for.
 struct Options {
     filters: Vec<String>,
+    skips: Vec<String>,
     exact: bool,
     list: bool,
+    /// `--ignored`: run only the ignored tests, of which these binaries
+    /// have none.
+    ignored_only: bool,
     threads: usize,
 }
 
 impl Options {
     fn parse() -> Self {
+        match Self::parse_from(std::env::args().skip(1)) {
+            Ok(options) => options,
+            Err(error) => {
+                eprintln!("error: {error}");
+                end(FAILED);
+            }
+        }
+    }
+
+    fn parse_from(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
         let mut options = Self {
             filters: Vec::new(),
+            skips: Vec::new(),
             exact: false,
             list: false,
+            ignored_only: false,
             threads: std::thread::available_parallelism().map_or(1, std::num::NonZero::get),
         };
-        let mut args = std::env::args().skip(1);
+        let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            match arg.as_str() {
+            let (flag, inline) = match arg.split_once('=') {
+                Some((flag, value)) if flag.starts_with("--") => {
+                    (flag.to_owned(), Some(value.to_owned()))
+                }
+                _ => (arg.clone(), None),
+            };
+            let mut value = |name: &str| {
+                inline
+                    .clone()
+                    .or_else(|| args.next())
+                    .ok_or_else(|| format!("{name} needs a value"))
+            };
+            match flag.as_str() {
                 "--exact" => options.exact = true,
                 "--list" => options.list = true,
+                "--ignored" => options.ignored_only = true,
+                // Every test runs anyway, since none is ignored, and output
+                // is never captured, so these change nothing.
+                "--include-ignored" | "--nocapture" | "--show-output" | "--quiet" | "-q" => {}
                 "--test-threads" => {
-                    if let Some(threads) = args.next().and_then(|value| value.parse().ok()) {
-                        options.threads = threads;
+                    let threads = value("--test-threads")?;
+                    options.threads = threads
+                        .parse()
+                        .map_err(|_| format!("--test-threads {threads} is not a number"))?;
+                }
+                "--skip" => options.skips.push(value("--skip")?),
+                "--color" | "--format" => {
+                    let wanted = value(&flag)?;
+                    if !matches!(wanted.as_str(), "auto" | "always" | "never" | "pretty") {
+                        return Err(format!("{flag} {wanted} is not supported by this runner"));
                     }
                 }
-                _ if arg.starts_with("--test-threads=") => {
-                    if let Ok(threads) = arg["--test-threads=".len()..].parse() {
-                        options.threads = threads;
-                    }
+                other if other.starts_with('-') => {
+                    return Err(format!("{other} is not supported by this runner"));
                 }
-                _ if arg.starts_with('-') => {}
                 _ => options.filters.push(arg),
             }
         }
-        options
+        Ok(options)
+    }
+
+    fn matches(&self, name: &str, pattern: &str) -> bool {
+        if self.exact {
+            name == pattern
+        } else {
+            name.contains(pattern)
+        }
     }
 
     fn selects(&self, name: &str) -> bool {
-        self.filters.is_empty()
-            || self.filters.iter().any(|filter| {
-                if self.exact {
-                    name == filter
-                } else {
-                    name.contains(filter.as_str())
-                }
-            })
+        !self.ignored_only
+            && (self.filters.is_empty()
+                || self.filters.iter().any(|filter| self.matches(name, filter)))
+            && !self.skips.iter().any(|skip| self.matches(name, skip))
     }
 }

@@ -208,7 +208,12 @@ fn lines_stop_at_the_end<S: TextSource>(
             ]
         )
     );
-    assert!(chunks.last().is_some_and(|chunk| chunk.last));
+    let last: Vec<bool> = chunks.iter().map(|chunk| chunk.last).collect();
+    assert_eq!(
+        last,
+        [false, false, true],
+        "only the empty last line is last"
+    );
     // Two lines asked for: two read.
     let reply = perform(
         source,
@@ -221,14 +226,31 @@ fn lines_stop_at_the_end<S: TextSource>(
         }),
         &mut AlreadyMoved,
     );
-    let TextReply::Chunks { chunks, .. } = reply else {
+    let TextReply::Chunks { moved, chunks } = reply else {
         panic!("chunks, not {reply:?}");
     };
-    assert_eq!(chunks.len(), 2);
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(
+        (moved, texts),
+        (
+            0,
+            vec![
+                &*format!("alpha beta{break_text}"),
+                &*format!("gamma{break_text}")
+            ]
+        )
+    );
+    let last: Vec<bool> = chunks.iter().map(|chunk| chunk.last).collect();
+    assert_eq!(last, [false, false], "more lines follow");
 }
 
-/// The first word and character, and a word reached inside the line.
-fn words_and_characters<S: TextSource>(source: &mut S, anchors: &mut NodeText<'_, S::Pos>) {
+/// The first word and character, and `second_word`, the word reached
+/// inside the line, as the source ends a word at a line's end.
+fn words_and_characters<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    second_word: &str,
+) {
     let (_, word) = chunk(read(
         source,
         anchors,
@@ -256,16 +278,25 @@ fn words_and_characters<S: TextSource>(source: &mut S, anchors: &mut NodeText<'_
         Some((TextUnit::Word, 1)),
         TextUnit::Word,
     ));
-    assert!(next.text.starts_with("beta"), "{next:?}");
+    assert_eq!(next.text, second_word);
 }
 
-/// A caret key's answer: the caret moved to 6, the word there, and then a
-/// selection of the first word reported as selected.
+/// The word "beta" through UIA: mockapp's word is a run of letters with
+/// the spaces after it, so the line feed after it is a word of its own.
+const UIA_SECOND_WORD: &str = "beta";
+
+/// The word "beta" through the edit control, whose last word on a line
+/// takes the line break (`plain_word` in the outpost's `text/edit.rs`).
+const EDIT_SECOND_WORD: &str = "beta\r\n";
+
+/// A caret key's answer: the caret moved to 6, the word there,
+/// `second_word`, and then a selection of the first word reported as
+/// selected.
 fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
-    app: &mut common::MockApp,
-    hwnd: HWND,
+    (app, hwnd): (&mut common::MockApp, HWND),
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
+    second_word: &str,
 ) {
     common::apply(app, hwnd, "caret doc 0");
     let (before, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
@@ -288,7 +319,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     };
     assert!(reply.moved);
     assert_eq!(reply.caret.line.offset, 6);
-    assert!(reply.unit.expect("the word").text.starts_with("beta"));
+    assert_eq!(reply.unit.expect("the word").text, second_word);
 
     common::apply(app, hwnd, "caret doc 0");
     let (collapsed, _) = caret_report(source, anchors, &mut || 0, false).expect("the caret");
@@ -328,7 +359,7 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
     let mut anchors = store.node(1);
 
     lines_stop_at_the_end(&mut source, &mut anchors, "\n");
-    words_and_characters(&mut source, &mut anchors);
+    words_and_characters(&mut source, &mut anchors, UIA_SECOND_WORD);
     // UIA has no sentence: Core reads by line instead.
     assert_eq!(
         read(
@@ -349,14 +380,24 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
         TextUnit::Line,
     ));
     assert_eq!(line.language_at(0), Some("en-US"));
-    a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut source, &mut anchors);
+    a_caret_key_is_answered_with_what_it_did(
+        (&mut app, hwnd),
+        &mut source,
+        &mut anchors,
+        UIA_SECOND_WORD,
+    );
     // And the same keys answered the classic way, with remote operations
     // off.
     let mut classic = uia_notes(hwnd, false);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
-    a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut classic, &mut anchors);
-    app.send("quit");
+    a_caret_key_is_answered_with_what_it_did(
+        (&mut app, hwnd),
+        &mut classic,
+        &mut anchors,
+        UIA_SECOND_WORD,
+    );
+    app.quit();
 }
 
 /// Runs a caret read both ways and checks that they agree; returns the
@@ -539,7 +580,7 @@ fn remote_and_classic_caret_reads_agree() {
         ..query(None, None)
     });
     assert!(!again.moved && !again.selection_moved);
-    app.send("quit");
+    app.quit();
 }
 
 /// A provider whose `IsItalic` read fails: the failed attribute is not
@@ -585,7 +626,7 @@ fn a_failing_attribute_is_not_supported() {
     );
     let remote = caret_read_remote(&query).expect("the remote program runs");
     assert_eq!(summary(&remote).runs, summary(&classic).runs);
-    app.send("quit");
+    app.quit();
 }
 
 /// What a units read found, comparable across the two implementations.
@@ -675,7 +716,17 @@ fn remote_and_classic_text_reads_agree() {
             true
         )
     );
-    assert_eq!(units(TextFrom::Start, None, 2).1.len(), 2);
+    assert_eq!(
+        units(TextFrom::Start, None, 2),
+        (
+            0,
+            vec![
+                ("alpha beta\n".to_owned(), 0, en()),
+                ("gamma\n".to_owned(), 0, en()),
+            ],
+            false
+        )
+    );
 
     // A position Core found inside a line: the start's range, and the
     // text before the position.
@@ -755,7 +806,7 @@ fn remote_and_classic_text_reads_agree() {
         assert_eq!(remote.location, classic.location);
         assert_eq!(remote.location, Some(expected));
     }
-    app.send("quit");
+    app.quit();
 }
 
 fn edit_control_text_reads_moves_and_answers_caret_keys() {
@@ -768,7 +819,7 @@ fn edit_control_text_reads_moves_and_answers_caret_keys() {
     let mut anchors = store.node(1);
 
     lines_stop_at_the_end(&mut source, &mut anchors, "\r\n");
-    words_and_characters(&mut source, &mut anchors);
+    words_and_characters(&mut source, &mut anchors, EDIT_SECOND_WORD);
     // An edit control's sentences are Core's to split: the paragraph comes
     // back, and a paragraph is a line.
     let (_, paragraph) = chunk(read(
@@ -790,8 +841,13 @@ fn edit_control_text_reads_moves_and_answers_caret_keys() {
         ),
         TextReply::UnsupportedUnit(TextUnit::Page)
     );
-    a_caret_key_is_answered_with_what_it_did(&mut app, hwnd, &mut source, &mut anchors);
-    app.send("quit");
+    a_caret_key_is_answered_with_what_it_did(
+        (&mut app, hwnd),
+        &mut source,
+        &mut anchors,
+        EDIT_SECOND_WORD,
+    );
+    app.quit();
 }
 
 /// Runs this file's tests through the UIA test runner, which explains why

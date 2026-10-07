@@ -7,7 +7,9 @@
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
-//! message.
+//! message. The window thread acknowledges each command on stdout once it
+//! has taken effect: `applied`, or `rejected: <reason>`; `stall` with its
+//! own two lines instead, and `quit` not at all.
 
 use std::io::BufRead;
 use std::sync::mpsc::Sender;
@@ -60,11 +62,14 @@ pub(crate) enum Command {
     Stall(u64),
     /// `quit`.
     Quit,
+    /// A line that is no command, rejected on the window thread, so its
+    /// acknowledgement keeps its place among the others'.
+    Unrecognized(String),
 }
 
 /// Parses one stdin line into a [`Command`]. Blank lines and unrecognized
-/// verbs yield `None` (a stray blank line is silently ignored; an unknown
-/// verb is reported to stderr by the caller).
+/// verbs yield `None` (a stray blank line is ignored; the caller hands an
+/// unknown verb on as [`Command::Unrecognized`], to be rejected).
 pub(crate) fn parse_command(line: &str) -> Option<Command> {
     let line = line.trim();
     if line.is_empty() {
@@ -151,7 +156,13 @@ pub(crate) fn run(sink: &Sender<Command>, wake: impl Fn()) {
             }
             None => {
                 if !line.trim().is_empty() {
-                    eprintln!("mockapp: unrecognized command: {line}");
+                    if sink
+                        .send(Command::Unrecognized(line.trim().to_owned()))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    wake();
                 }
             }
         }
