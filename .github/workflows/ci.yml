@@ -192,7 +192,7 @@ jobs:
             Write-Error "verbatim-agent never started listening on 127.0.0.1:44001"
             exit 1
           }
-          cargo test -p verbatim-e2e -- --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+          cargo test -p verbatim-e2e --no-fail-fast -- --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
           $status = $LASTEXITCODE
           Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue
           exit $status
