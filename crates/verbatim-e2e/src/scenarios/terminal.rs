@@ -15,8 +15,9 @@
 //! terminal a scenario gets is decided by what is installed: a scenario
 //! that prefers Windows Terminal asks the agent to start `wt.exe`, and when
 //! that fails, because Windows Terminal is not installed, it says so and
-//! uses the console host. CI's `e2e` job installs Windows Terminal on its
-//! Windows Server runner, so there it is used too. Nothing depends on the
+//! uses the console host. GitHub's Windows Server runner image ships
+//! Windows Terminal, and CI's `e2e` job checks it is there, so there it is
+//! used too. Nothing depends on the
 //! machine's name.
 //!
 //! The shell is Windows PowerShell, present on both, started with

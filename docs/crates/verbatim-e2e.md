@@ -401,8 +401,8 @@ that prefers Windows Terminal asks the agent to start `wt.exe` and, when
 that fails because Windows Terminal is not installed, prints so and uses
 the console host; nothing depends on the machine's name, so the same
 scenarios hold on Windows 11 and on a Windows Server runner with only the
-console host. CI's `e2e` job installs Windows Terminal first
-(`docs/tooling.md`), so there they use it as well. The shell is Windows PowerShell, started with `-NoProfile
+console host. GitHub's runner image ships Windows Terminal, and CI's `e2e` job
+checks it is there (`docs/tooling.md`), so there they use it as well. The shell is Windows PowerShell, started with `-NoProfile
 -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`; the start script
 removes `PSReadLine`, moves to the scenario's folder, sets the title, and
 sets the prompt `ready> `, which writes a file the first time it runs, the
