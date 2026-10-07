@@ -1,0 +1,22 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Formatting Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Notes",
+      "states": ["focusable"],
+      "text": "Title\nplain struck double link\nitem\n",
+      "styles": {
+        "font_sizes": [[0, 5, 28.0]],
+        "underlines": [[19, 25, 3]],
+        "strikethroughs": [[12, 18, 1]],
+        "backgrounds": [[6, 11, 12632256]],
+        "bullets": [[31, 36, 2]],
+        "links": [[26, 30]]
+      }
+    }
+  ]
+}

@@ -990,7 +990,12 @@ pub fn indication_name(indication: verbatim_model::Indication) -> String {
         Indication::FontName => i18n_embed_fl::fl!(loader, "indication-font-name"),
         Indication::FontSize => i18n_embed_fl::fl!(loader, "indication-font-size"),
         Indication::Color => i18n_embed_fl::fl!(loader, "indication-color"),
+        Indication::BackgroundColor => i18n_embed_fl::fl!(loader, "indication-background-color"),
         Indication::FontAttributes => i18n_embed_fl::fl!(loader, "indication-font-attributes"),
+        Indication::Strikethrough => i18n_embed_fl::fl!(loader, "indication-strikethrough"),
+        Indication::UnderlineStyle => i18n_embed_fl::fl!(loader, "indication-underline-style"),
+        Indication::BulletStyle => i18n_embed_fl::fl!(loader, "indication-bullet-style"),
+        Indication::Link => i18n_embed_fl::fl!(loader, "indication-link"),
         Indication::Capital => i18n_embed_fl::fl!(loader, "indication-capital"),
         Indication::Blank => i18n_embed_fl::fl!(loader, "indication-blank"),
         Indication::SkippedLines => i18n_embed_fl::fl!(loader, "indication-skipped-lines"),
@@ -1033,11 +1038,16 @@ pub fn presentation_name(presentation: verbatim_model::Presentation) -> String {
 
 /// The spoken words for a formatting span (`SegmentContent::Format`):
 /// NVDA's "spelling error" and "out of spelling error", "bold" and "no
-/// bold" and the other font attributes, and a font name, size, or color as
-/// the application words it.
+/// bold" and the other font attributes, "strikethrough", "link" and "out
+/// of link", a background color as "light grey background" or, after a
+/// color, "on light grey", and a font name, size, or color as the
+/// application words it (`docs/nvda/document-formatting.md`). The kind of
+/// an underline is named as Microsoft Word names it ("double underline",
+/// "wave underline"), a single one as NVDA's "underlined"; a bullet as
+/// NVDA names its character ("bullet", "white bullet", "black square").
 #[must_use]
 pub fn format_text(format: &verbatim_model::TextFormat) -> String {
-    use verbatim_model::TextFormat;
+    use verbatim_model::{LineStyle, TextFormat};
     let loader = loader();
     match format {
         TextFormat::SpellingError => i18n_embed_fl::fl!(loader, "format-spelling-error"),
@@ -1053,9 +1063,73 @@ pub fn format_text(format: &verbatim_model::TextFormat) -> String {
         TextFormat::FontName(text) | TextFormat::FontSize(text) | TextFormat::Color(text) => {
             text.clone()
         }
+        TextFormat::BackgroundColor(color) => {
+            i18n_embed_fl::fl!(loader, "format-background-color", color = color.as_str())
+        }
+        TextFormat::OnBackgroundColor(color) => {
+            i18n_embed_fl::fl!(loader, "format-on-background-color", color = color.as_str())
+        }
+        TextFormat::Strikethrough(LineStyle::None) => {
+            i18n_embed_fl::fl!(loader, "format-not-strikethrough")
+        }
+        TextFormat::Strikethrough(LineStyle::Double) => {
+            i18n_embed_fl::fl!(loader, "format-double-strikethrough")
+        }
+        TextFormat::Strikethrough(_) => i18n_embed_fl::fl!(loader, "format-strikethrough"),
+        TextFormat::UnderlineStyle(style) => underline_text(*style),
+        TextFormat::Bullet(style) => bullet_text(*style),
+        TextFormat::Link => i18n_embed_fl::fl!(loader, "format-link"),
+        TextFormat::NotLink => i18n_embed_fl::fl!(loader, "format-not-link"),
         // `TextFormat` is non_exhaustive; an unmapped future format speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
+    }
+}
+
+/// The words for an underline of `style`: NVDA's "underlined" for a
+/// single one or one the application does not name, and Microsoft Word's
+/// name for the others ("double underline", "wave underline").
+fn underline_text(style: verbatim_model::LineStyle) -> String {
+    use i18n_embed_fl::fl;
+    use verbatim_model::LineStyle;
+    let loader = loader();
+    match style {
+        LineStyle::None => fl!(loader, "format-not-underline"),
+        LineStyle::WordsOnly => fl!(loader, "format-underline-words-only"),
+        LineStyle::Double => fl!(loader, "format-underline-double"),
+        LineStyle::Dotted => fl!(loader, "format-underline-dotted"),
+        LineStyle::Dashed => fl!(loader, "format-underline-dashed"),
+        LineStyle::DotDash => fl!(loader, "format-underline-dot-dash"),
+        LineStyle::DotDotDash => fl!(loader, "format-underline-dot-dot-dash"),
+        LineStyle::Wavy => fl!(loader, "format-underline-wavy"),
+        LineStyle::Thick => fl!(loader, "format-underline-thick"),
+        LineStyle::DoubleWavy => fl!(loader, "format-underline-double-wavy"),
+        LineStyle::ThickWavy => fl!(loader, "format-underline-thick-wavy"),
+        LineStyle::LongDash => fl!(loader, "format-underline-long-dash"),
+        LineStyle::ThickDashed => fl!(loader, "format-underline-thick-dashed"),
+        LineStyle::ThickDotDash => fl!(loader, "format-underline-thick-dot-dash"),
+        LineStyle::ThickDotDotDash => fl!(loader, "format-underline-thick-dot-dot-dash"),
+        LineStyle::ThickDotted => fl!(loader, "format-underline-thick-dotted"),
+        LineStyle::ThickLongDash => fl!(loader, "format-underline-thick-long-dash"),
+        LineStyle::Single | LineStyle::Other => fl!(loader, "format-underline"),
+    }
+}
+
+/// The words for a bullet of `style`, as NVDA names the character Word
+/// shows for it: "bullet", "white bullet", "black square", "white square",
+/// "dash".
+fn bullet_text(style: verbatim_model::BulletStyle) -> String {
+    use i18n_embed_fl::fl;
+    use verbatim_model::BulletStyle;
+    let loader = loader();
+    match style {
+        BulletStyle::HollowRound => fl!(loader, "format-bullet-hollow-round"),
+        BulletStyle::HollowSquare => fl!(loader, "format-bullet-hollow-square"),
+        BulletStyle::FilledSquare => fl!(loader, "format-bullet-filled-square"),
+        BulletStyle::Dash => fl!(loader, "format-bullet-dash"),
+        BulletStyle::None | BulletStyle::FilledRound | BulletStyle::Other => {
+            fl!(loader, "format-bullet")
+        }
     }
 }
 
@@ -1359,7 +1433,12 @@ mod tests {
             (Indication::FontName, "font name"),
             (Indication::FontSize, "font size"),
             (Indication::Color, "color"),
+            (Indication::BackgroundColor, "background color"),
             (Indication::FontAttributes, "font attributes"),
+            (Indication::Strikethrough, "strikethrough"),
+            (Indication::UnderlineStyle, "underline style"),
+            (Indication::BulletStyle, "bullet style"),
+            (Indication::Link, "link in text"),
             (Indication::Capital, "capital letter"),
             (Indication::Blank, "blank"),
             (Indication::SkippedLines, "skipped lines"),
@@ -1426,7 +1505,7 @@ mod tests {
 
     #[test]
     fn theme_words_are_worded() {
-        use verbatim_model::{Earcon, Indication, Phrase, TextFormat, ThemeProblem};
+        use verbatim_model::{Earcon, TextFormat};
         assert_eq!(format_text(&TextFormat::SpellingError), "spelling error");
         assert_eq!(
             format_text(&TextFormat::NotSpellingError),
@@ -1435,6 +1514,122 @@ mod tests {
         assert_eq!(format_text(&TextFormat::NotBold), "no bold");
         assert_eq!(format_text(&TextFormat::Underline), "underlined");
         assert_eq!(earcon_text(Earcon::Progress(40)), "40 percent");
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "every wording listed in full")]
+    fn every_new_format_is_worded() {
+        use verbatim_model::{BulletStyle, LineStyle, TextFormat};
+        let grey = || "light grey".to_owned();
+        let worded = [
+            (TextFormat::BackgroundColor(grey()), "light grey background"),
+            (TextFormat::OnBackgroundColor(grey()), "on light grey"),
+            (
+                TextFormat::Strikethrough(LineStyle::Single),
+                "strikethrough",
+            ),
+            (TextFormat::Strikethrough(LineStyle::Wavy), "strikethrough"),
+            (
+                TextFormat::Strikethrough(LineStyle::Double),
+                "double strikethrough",
+            ),
+            (
+                TextFormat::Strikethrough(LineStyle::None),
+                "no strikethrough",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::None),
+                "not underlined",
+            ),
+            (TextFormat::UnderlineStyle(LineStyle::Single), "underlined"),
+            (TextFormat::UnderlineStyle(LineStyle::Other), "underlined"),
+            (
+                TextFormat::UnderlineStyle(LineStyle::WordsOnly),
+                "words only underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::Double),
+                "double underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::Dotted),
+                "dotted underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::Dashed),
+                "dash underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::DotDash),
+                "dot dash underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::DotDotDash),
+                "dot dot dash underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::Wavy),
+                "wave underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::Thick),
+                "thick underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::DoubleWavy),
+                "wave double underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::ThickWavy),
+                "wave heavy underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::LongDash),
+                "dashed long underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::ThickDashed),
+                "dashed heavy underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::ThickDotDash),
+                "dot dash heavy underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::ThickDotDotDash),
+                "dot dot dash heavy underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::ThickDotted),
+                "dotted heavy underline",
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::ThickLongDash),
+                "dashed long heavy underline",
+            ),
+            (TextFormat::Bullet(BulletStyle::FilledRound), "bullet"),
+            (TextFormat::Bullet(BulletStyle::Other), "bullet"),
+            (TextFormat::Bullet(BulletStyle::HollowRound), "white bullet"),
+            (
+                TextFormat::Bullet(BulletStyle::FilledSquare),
+                "black square",
+            ),
+            (
+                TextFormat::Bullet(BulletStyle::HollowSquare),
+                "white square",
+            ),
+            (TextFormat::Bullet(BulletStyle::Dash), "dash"),
+            (TextFormat::Link, "link"),
+            (TextFormat::NotLink, "out of link"),
+        ];
+        for (format, words) in worded {
+            assert_eq!(format_text(&format), words, "{format:?}");
+        }
+    }
+
+    #[test]
+    fn theme_phrases_are_worded() {
+        use verbatim_model::{Indication, Phrase, ThemeProblem};
         assert_eq!(phrase_text(&Phrase::SkippedLines(1)), "skipped 1 line");
         assert_eq!(phrase_text(&Phrase::SkippedLines(120)), "skipped 120 lines");
         assert_eq!(phrase_text(&Phrase::SkippedUncountedLines), "skipped lines");

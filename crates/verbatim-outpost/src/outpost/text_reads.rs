@@ -184,9 +184,23 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
     let class = element.cached_string(windows::Win32::UI::Accessibility::UIA_ClassNamePropertyId);
     let terminal = is_terminal_class(class.as_deref()) || console_focus(context, node_id);
     let remote = context.tries_remote(context.tracking().window());
+    let support = context
+        .text_support()
+        .get(&node_id.number())
+        .copied()
+        .unwrap_or_default();
     Ok(UiaText::new(element, text_pattern, caret_pattern, terminal)
         .remote(remote)
-        .fetches(context.fetches()))
+        .fetches(context.fetches())
+        .support(support))
+}
+
+/// Keeps what `source`, `node_id`'s text, is now known to support, for the
+/// node's next read.
+fn keep_support(context: &Context, node_id: NodeId, source: &UiaText) {
+    context
+        .text_support()
+        .insert(node_id.number(), source.known_support());
 }
 
 /// Logs a caret read that fell back from its remote operation to the
@@ -267,6 +281,7 @@ pub(super) fn answer(
             );
             drop(anchors);
             note_fallback(context, &mut source);
+            keep_support(context, node_id, &source);
             reply
         }
         Source::Edit(mut source) => {
@@ -304,6 +319,7 @@ pub(super) fn report_caret(
             .map(|(report, _)| report);
             drop(anchors);
             note_fallback(context, &mut source);
+            keep_support(context, node_id, &source);
             report
         }
         Source::Edit(mut source) => {
@@ -396,11 +412,13 @@ pub(super) fn active_position(
 pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>) {
     let released: Vec<u64> = released.into_iter().collect();
     let mut patterns = context.patterns();
+    let mut support = context.text_support();
     let mut uia = context.uia_anchors();
     let mut edit = context.edit_anchors();
     let mut terminals = context.terminals();
     for node in released {
         patterns.remove(&node);
+        support.remove(&node);
         uia.forget_node(node);
         edit.forget_node(node);
         terminals.remove(&node);

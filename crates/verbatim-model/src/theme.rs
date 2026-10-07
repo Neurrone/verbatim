@@ -114,9 +114,23 @@ pub enum Indication {
     FontSize,
     /// The color of text; id `color`.
     Color,
+    /// The background color of text; id `background-color`.
+    BackgroundColor,
     /// Bold, italic, and underlined text, NVDA's font attributes; id
     /// `font-attributes`.
     FontAttributes,
+    /// Text struck through, and how: "strikethrough", "double
+    /// strikethrough"; id `strikethrough`.
+    Strikethrough,
+    /// The kind of underline: "double underline", "wave underline"; when
+    /// it is on, underlining is reported with its kind in place of the
+    /// font attributes' "underlined"; id `underline-style`.
+    UnderlineStyle,
+    /// The bullet of a list item, spoken at the start of its line; id
+    /// `bullet-style`.
+    BulletStyle,
+    /// A link within text, where it starts and ends; id `link`.
+    Link,
     /// A capital letter spoken on its own: speech raises its pitch, a sound
     /// plays a tone; id `capital`.
     Capital,
@@ -147,7 +161,7 @@ pub enum Indication {
 
 /// The fixed ids of the indications that carry no role or state, in
 /// catalogue order (which is category order).
-const FIXED: [(Indication, &str); 22] = [
+const FIXED: [(Indication, &str); 27] = [
     (Indication::Description, "description"),
     (Indication::Shortcut, "shortcut"),
     (Indication::Position, "position"),
@@ -157,7 +171,12 @@ const FIXED: [(Indication, &str); 22] = [
     (Indication::FontName, "font-name"),
     (Indication::FontSize, "font-size"),
     (Indication::Color, "color"),
+    (Indication::BackgroundColor, "background-color"),
     (Indication::FontAttributes, "font-attributes"),
+    (Indication::Strikethrough, "strikethrough"),
+    (Indication::UnderlineStyle, "underline-style"),
+    (Indication::BulletStyle, "bullet-style"),
+    (Indication::Link, "link"),
     (Indication::Capital, "capital"),
     (Indication::Blank, "blank"),
     (Indication::SkippedLines, "skipped-lines"),
@@ -203,7 +222,12 @@ impl Indication {
             | Self::FontName
             | Self::FontSize
             | Self::Color
+            | Self::BackgroundColor
             | Self::FontAttributes
+            | Self::Strikethrough
+            | Self::UnderlineStyle
+            | Self::BulletStyle
+            | Self::Link
             | Self::Capital => IndicationCategory::TextFormatting,
             Self::Blank | Self::SkippedLines => IndicationCategory::Structure,
             Self::AppNotResponding
@@ -289,12 +313,19 @@ impl Indication {
                 TextFormat::FontName(_) => Self::FontName,
                 TextFormat::FontSize(_) => Self::FontSize,
                 TextFormat::Color(_) => Self::Color,
+                TextFormat::BackgroundColor(_) | TextFormat::OnBackgroundColor(_) => {
+                    Self::BackgroundColor
+                }
                 TextFormat::Bold
                 | TextFormat::NotBold
                 | TextFormat::Italic
                 | TextFormat::NotItalic
                 | TextFormat::Underline
                 | TextFormat::NotUnderline => Self::FontAttributes,
+                TextFormat::Strikethrough(_) => Self::Strikethrough,
+                TextFormat::UnderlineStyle(_) => Self::UnderlineStyle,
+                TextFormat::Bullet(_) => Self::BulletStyle,
+                TextFormat::Link | TextFormat::NotLink => Self::Link,
             },
             _ => return None,
         })
@@ -321,8 +352,12 @@ impl Indication {
     /// default (the mode switches, suggestions, errors, start and exit,
     /// and the spelling error sound alongside its words), plus Verbatim's
     /// own cues for an application not responding and skipped terminal
-    /// lines, and tones for progress bars. Font name, size, and color are
-    /// off, as NVDA's are by default; a capital is raised in pitch.
+    /// lines, and tones for progress bars. Font name, size, color,
+    /// background color, the font attributes, strikethrough, and the kind
+    /// of underline are off, as NVDA's font and color reporting is by
+    /// default; links are spoken, as NVDA reports them by default; bullets
+    /// are off, since NVDA does not report UIA's bullet style
+    /// (`docs/nvda/document-formatting.md`). A capital is raised in pitch.
     #[must_use]
     pub fn default_setting(self) -> IndicationSetting {
         let file = |name: &str| Some(SoundSource::File(name.to_owned()));
@@ -334,9 +369,14 @@ impl Indication {
         };
         let (report, sound) = match self {
             Self::SpellingError => (Presentation::SpeechAndSound, file("textError.wav")),
-            Self::FontName | Self::FontSize | Self::Color | Self::FontAttributes => {
-                (Presentation::Off, None)
-            }
+            Self::FontName
+            | Self::FontSize
+            | Self::Color
+            | Self::BackgroundColor
+            | Self::FontAttributes
+            | Self::Strikethrough
+            | Self::UnderlineStyle
+            | Self::BulletStyle => (Presentation::Off, None),
             Self::Capital => (Presentation::Speech, tone(1_760, 40)),
             Self::SkippedLines => (Presentation::SpeechAndSound, tone(330, 80)),
             Self::AppNotResponding => (Presentation::Sound, tone(220, 150)),
@@ -651,9 +691,15 @@ impl Theme {
             level: on(Indication::Level),
             spelling_errors: on(Indication::SpellingError),
             grammar_errors: on(Indication::GrammarError),
-            font: on(Indication::FontName) || on(Indication::FontSize),
+            font_name: on(Indication::FontName),
+            font_size: on(Indication::FontSize),
             color: on(Indication::Color),
+            background_color: on(Indication::BackgroundColor),
             font_attributes: on(Indication::FontAttributes),
+            strikethrough: on(Indication::Strikethrough),
+            underline_style: on(Indication::UnderlineStyle),
+            bullet_style: on(Indication::BulletStyle),
+            link: on(Indication::Link),
         }
     }
 
@@ -824,12 +870,24 @@ pub struct Fetches {
     pub spelling_errors: bool,
     /// Grammar errors in text.
     pub grammar_errors: bool,
-    /// Font name and size of text.
-    pub font: bool,
+    /// Font name of text.
+    pub font_name: bool,
+    /// Font size of text.
+    pub font_size: bool,
     /// Color of text.
     pub color: bool,
+    /// Background color of text.
+    pub background_color: bool,
     /// Bold, italic, and underline of text.
     pub font_attributes: bool,
+    /// Strikethrough of text.
+    pub strikethrough: bool,
+    /// The kind of underline of text.
+    pub underline_style: bool,
+    /// The bullets of list items.
+    pub bullet_style: bool,
+    /// Links in text.
+    pub link: bool,
 }
 
 impl Default for Fetches {
@@ -842,9 +900,15 @@ impl Default for Fetches {
             level: true,
             spelling_errors: true,
             grammar_errors: true,
-            font: true,
+            font_name: true,
+            font_size: true,
             color: true,
+            background_color: true,
             font_attributes: true,
+            strikethrough: true,
+            underline_style: true,
+            bullet_style: true,
+            link: true,
         }
     }
 }
@@ -878,6 +942,7 @@ impl Default for ThemeOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::{BulletStyle, LineStyle};
 
     #[test]
     fn every_catalogue_id_round_trips_and_is_unique() {
@@ -906,6 +971,12 @@ mod tests {
             "state-not-checked"
         );
         assert_eq!(Indication::SpellingError.id(), "spelling-error");
+        assert_eq!(Indication::BackgroundColor.id(), "background-color");
+        assert_eq!(Indication::Strikethrough.id(), "strikethrough");
+        assert_eq!(Indication::UnderlineStyle.id(), "underline-style");
+        assert_eq!(Indication::BulletStyle.id(), "bullet-style");
+        assert_eq!(Indication::Link.id(), "link");
+        assert_eq!(Indication::from_id("link"), Some(Indication::Link));
         assert_eq!(Indication::from_id("state-unheard-of"), None);
     }
 
@@ -924,7 +995,7 @@ mod tests {
         }
         assert_eq!(
             catalogue.len(),
-            Role::ALL.len() + SPOKEN_STATES.len() + NEGATED_STATES.len() + 22
+            Role::ALL.len() + SPOKEN_STATES.len() + NEGATED_STATES.len() + 27
         );
     }
 
@@ -962,8 +1033,26 @@ mod tests {
         }
         assert_eq!(theme.problems(), Vec::new());
         let fetches = theme.fetches();
-        assert!(fetches.description && fetches.spelling_errors);
-        assert!(!fetches.font && !fetches.color);
+        assert_eq!(
+            fetches,
+            Fetches {
+                description: true,
+                shortcut: true,
+                position: true,
+                level: true,
+                spelling_errors: true,
+                grammar_errors: true,
+                font_name: false,
+                font_size: false,
+                color: false,
+                background_color: false,
+                font_attributes: false,
+                strikethrough: false,
+                underline_style: false,
+                bullet_style: false,
+                link: true,
+            }
+        );
     }
 
     #[test]
@@ -1013,6 +1102,35 @@ mod tests {
             Indication::of_segment(&SegmentContent::Message(Message::Blank)),
             Some(Indication::Blank)
         );
+        for (format, indication) in [
+            (
+                TextFormat::BackgroundColor("grey".to_owned()),
+                Indication::BackgroundColor,
+            ),
+            (
+                TextFormat::OnBackgroundColor("grey".to_owned()),
+                Indication::BackgroundColor,
+            ),
+            (
+                TextFormat::Strikethrough(LineStyle::None),
+                Indication::Strikethrough,
+            ),
+            (
+                TextFormat::UnderlineStyle(LineStyle::Wavy),
+                Indication::UnderlineStyle,
+            ),
+            (
+                TextFormat::Bullet(BulletStyle::FilledRound),
+                Indication::BulletStyle,
+            ),
+            (TextFormat::Link, Indication::Link),
+            (TextFormat::NotLink, Indication::Link),
+        ] {
+            assert_eq!(
+                Indication::of_segment(&SegmentContent::Format(format)),
+                Some(indication)
+            );
+        }
         assert_eq!(
             Indication::of_segment(&SegmentContent::Label("OK".to_owned())),
             None

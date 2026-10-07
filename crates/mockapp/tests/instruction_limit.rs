@@ -21,8 +21,9 @@ use verbatim_uia::{CACHED_PROPERTIES, ElementExt, Uia, runtime_id};
 use verbatim_uia_rops::{
     Attributes, Builder, CaretQuery, Comparison, Error, Fingerprint, FocusAncestry, FocusQuery,
     FormatSpan, Found, Movement, NavigationDirection, Position, RangeEnd, Status, StepQuery,
-    TailQuery, TailStart, TextFrom, TextTarget, UnitsQuery, caret_read_remote, counting,
-    focus_ancestry_remote, navigation_step_remote, terminal_tail_remote, text_units_remote,
+    TailQuery, TailStart, TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
+    counting, focus_ancestry_remote, navigation_step_remote, terminal_tail_remote,
+    text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -256,12 +257,8 @@ fn caret_query<'a>(
         previous_selection: old.map(|old| (old, old)),
         unit: None,
         formats: Some(FormatSpan::Line),
-        attributes: Attributes {
-            annotations: true,
-            font: true,
-            font_attributes: true,
-            color: true,
-        },
+        attributes: Attributes::ALL,
+        learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
     }
@@ -269,9 +266,10 @@ fn caret_query<'a>(
 
 /// The caret read: a line of 64 stretches, reached by walking one mixed
 /// stretch by words and a mixed word by characters (`italic.json`), every
-/// attribute read, with a word, the evidence, and a selection's change; and,
-/// typically, the report after a focus on a line of plain text with the
-/// default theme's one attribute.
+/// attribute read and learned, with a word, the evidence, and a selection's
+/// change; and, typically, the report after a focus on a line of plain text
+/// with the default theme's two attributes, the annotation types and the
+/// link, whose support is known.
 fn caret_reads_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("italic.json", "mockapp-instructions-caret");
@@ -295,22 +293,20 @@ fn caret_reads_execute_exactly() {
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
     let typical = counted(|| {
         let mut typical = caret_query(&notes, &pattern, pattern2.as_ref(), None);
-        typical.attributes = Attributes {
-            annotations: true,
-            ..Attributes::default()
-        };
+        typical.attributes = Attributes::of(&[TextAttribute::Annotations, TextAttribute::Link]);
+        typical.learning = Attributes::NONE;
         let answer = caret_read_remote(&typical).expect("the program runs");
         assert_eq!(answer.runs.len(), 1);
     });
     fixture.app.quit();
-    assert_eq!([worst, typical], [4884, 85], "caret read worst and typical");
+    assert_eq!([worst, typical], [4425, 84], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one
 /// in italics (`mixed.json`), so each is walked by words and its word by
 /// characters: lines of 16 and 32 characters, and their line feeds,
-/// counted, which grow by the same amount, 239 instructions, for each
-/// stretch; and a line of 80, cut at 64 stretches, about 7,700 by that
+/// counted, which grow by the same amount, 249 instructions, for each
+/// stretch; and a line of 80, cut at 64 stretches, about 8,000 by that
 /// growth, which the counting form cannot run, since it executes twice as
 /// many: run as Verbatim runs it, it stays under the limit.
 fn densely_mixed_formatting_executes_exactly() {
@@ -332,7 +328,7 @@ fn densely_mixed_formatting_executes_exactly() {
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 50");
     let eighty = caret_read_remote(&query).map(|answer| answer.runs.len());
     fixture.app.quit();
-    assert_eq!([sixteen, thirty_two], [2049, 3961], "17 and 33 stretches");
+    assert_eq!([sixteen, thirty_two], [2148, 4140], "17 and 33 stretches");
     match eighty {
         Ok(runs) => assert_eq!(runs, 64),
         Err(error) => panic!("80 characters: {error}"),

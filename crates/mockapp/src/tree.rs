@@ -55,8 +55,8 @@ pub(crate) struct NodeData {
 /// A text's formatting: stretches that are spelling errors, that are bold,
 /// and that are italic, each a start and an end UTF-16 offset, whether its
 /// `IsItalic` attribute fails to read, whether `FindText` fails, stretches
-/// in another language, each with its locale id, and whether a backward
-/// move answers with a positive count.
+/// in another language, each with its locale id, its other formatting, and
+/// whether a backward move answers with a positive count.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Formats {
     pub(crate) spelling_errors: Vec<(usize, usize)>,
@@ -65,6 +65,7 @@ pub(crate) struct Formats {
     pub(crate) italic_fails: bool,
     pub(crate) find_text_fails: bool,
     pub(crate) cultures: Vec<(usize, usize, i32)>,
+    pub(crate) styles: crate::fixture::Styles,
     pub(crate) backward_moves_positive: bool,
 }
 
@@ -185,6 +186,7 @@ fn insert(
             italic_fails: node.italic_fails,
             find_text_fails: node.find_text_fails,
             cultures: node.cultures,
+            styles: *node.styles,
             backward_moves_positive: node.backward_moves_positive,
         },
         parent,
@@ -235,6 +237,7 @@ mod tests {
             italic_fails: false,
             find_text_fails: false,
             cultures: Vec::new(),
+            styles: Box::default(),
             backward_moves_positive: false,
             children,
         }
