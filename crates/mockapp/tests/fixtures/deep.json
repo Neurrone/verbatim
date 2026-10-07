@@ -1,0 +1,460 @@
+{
+ "id": "root",
+ "role": "window",
+ "name": "Mockapp Deep Fixture",
+ "children": [
+  {
+   "id": "group1",
+   "role": "group",
+   "name": "Group 1",
+   "children": [
+    {
+     "id": "group2",
+     "role": "group",
+     "name": "Group 2",
+     "children": [
+      {
+       "id": "group3",
+       "role": "group",
+       "name": "Group 3",
+       "children": [
+        {
+         "id": "group4",
+         "role": "group",
+         "name": "Group 4",
+         "children": [
+          {
+           "id": "group5",
+           "role": "group",
+           "name": "Group 5",
+           "children": [
+            {
+             "id": "group6",
+             "role": "group",
+             "name": "Group 6",
+             "children": [
+              {
+               "id": "group7",
+               "role": "group",
+               "name": "Group 7",
+               "children": [
+                {
+                 "id": "group8",
+                 "role": "group",
+                 "name": "Group 8",
+                 "children": [
+                  {
+                   "id": "group9",
+                   "role": "group",
+                   "name": "Group 9",
+                   "children": [
+                    {
+                     "id": "group10",
+                     "role": "group",
+                     "name": "Group 10",
+                     "children": [
+                      {
+                       "id": "group11",
+                       "role": "group",
+                       "name": "Group 11",
+                       "children": [
+                        {
+                         "id": "group12",
+                         "role": "group",
+                         "name": "Group 12",
+                         "children": [
+                          {
+                           "id": "group13",
+                           "role": "group",
+                           "name": "Group 13",
+                           "children": [
+                            {
+                             "id": "group14",
+                             "role": "group",
+                             "name": "Group 14",
+                             "children": [
+                              {
+                               "id": "group15",
+                               "role": "group",
+                               "name": "Group 15",
+                               "children": [
+                                {
+                                 "id": "group16",
+                                 "role": "group",
+                                 "name": "Group 16",
+                                 "children": [
+                                  {
+                                   "id": "group17",
+                                   "role": "group",
+                                   "name": "Group 17",
+                                   "children": [
+                                    {
+                                     "id": "group18",
+                                     "role": "group",
+                                     "name": "Group 18",
+                                     "children": [
+                                      {
+                                       "id": "group19",
+                                       "role": "group",
+                                       "name": "Group 19",
+                                       "children": [
+                                        {
+                                         "id": "group20",
+                                         "role": "group",
+                                         "name": "Group 20",
+                                         "children": [
+                                          {
+                                           "id": "group21",
+                                           "role": "group",
+                                           "name": "Group 21",
+                                           "children": [
+                                            {
+                                             "id": "group22",
+                                             "role": "group",
+                                             "name": "Group 22",
+                                             "children": [
+                                              {
+                                               "id": "group23",
+                                               "role": "group",
+                                               "name": "Group 23",
+                                               "children": [
+                                                {
+                                                 "id": "group24",
+                                                 "role": "group",
+                                                 "name": "Group 24",
+                                                 "children": [
+                                                  {
+                                                   "id": "group25",
+                                                   "role": "group",
+                                                   "name": "Group 25",
+                                                   "children": [
+                                                    {
+                                                     "id": "group26",
+                                                     "role": "group",
+                                                     "name": "Group 26",
+                                                     "children": [
+                                                      {
+                                                       "id": "group27",
+                                                       "role": "group",
+                                                       "name": "Group 27",
+                                                       "children": [
+                                                        {
+                                                         "id": "group28",
+                                                         "role": "group",
+                                                         "name": "Group 28",
+                                                         "children": [
+                                                          {
+                                                           "id": "group29",
+                                                           "role": "group",
+                                                           "name": "Group 29",
+                                                           "children": [
+                                                            {
+                                                             "id": "group30",
+                                                             "role": "group",
+                                                             "name": "Group 30",
+                                                             "children": [
+                                                              {
+                                                               "id": "group31",
+                                                               "role": "group",
+                                                               "name": "Group 31",
+                                                               "children": [
+                                                                {
+                                                                 "id": "group32",
+                                                                 "role": "group",
+                                                                 "name": "Group 32",
+                                                                 "children": [
+                                                                  {
+                                                                   "id": "group33",
+                                                                   "role": "group",
+                                                                   "name": "Group 33",
+                                                                   "children": [
+                                                                    {
+                                                                     "id": "group34",
+                                                                     "role": "group",
+                                                                     "name": "Group 34",
+                                                                     "children": [
+                                                                      {
+                                                                       "id": "group35",
+                                                                       "role": "group",
+                                                                       "name": "Group 35",
+                                                                       "children": [
+                                                                        {
+                                                                         "id": "group36",
+                                                                         "role": "group",
+                                                                         "name": "Group 36",
+                                                                         "children": [
+                                                                          {
+                                                                           "id": "group37",
+                                                                           "role": "group",
+                                                                           "name": "Group 37",
+                                                                           "children": [
+                                                                            {
+                                                                             "id": "group38",
+                                                                             "role": "group",
+                                                                             "name": "Group 38",
+                                                                             "children": [
+                                                                              {
+                                                                               "id": "group39",
+                                                                               "role": "group",
+                                                                               "name": "Group 39",
+                                                                               "children": [
+                                                                                {
+                                                                                 "id": "group40",
+                                                                                 "role": "group",
+                                                                                 "name": "Group 40",
+                                                                                 "children": [
+                                                                                  {
+                                                                                   "id": "group41",
+                                                                                   "role": "group",
+                                                                                   "name": "Group 41",
+                                                                                   "children": [
+                                                                                    {
+                                                                                     "id": "group42",
+                                                                                     "role": "group",
+                                                                                     "name": "Group 42",
+                                                                                     "children": [
+                                                                                      {
+                                                                                       "id": "group43",
+                                                                                       "role": "group",
+                                                                                       "name": "Group 43",
+                                                                                       "children": [
+                                                                                        {
+                                                                                         "id": "group44",
+                                                                                         "role": "group",
+                                                                                         "name": "Group 44",
+                                                                                         "children": [
+                                                                                          {
+                                                                                           "id": "group45",
+                                                                                           "role": "group",
+                                                                                           "name": "Group 45",
+                                                                                           "children": [
+                                                                                            {
+                                                                                             "id": "group46",
+                                                                                             "role": "group",
+                                                                                             "name": "Group 46",
+                                                                                             "children": [
+                                                                                              {
+                                                                                               "id": "group47",
+                                                                                               "role": "group",
+                                                                                               "name": "Group 47",
+                                                                                               "children": [
+                                                                                                {
+                                                                                                 "id": "group48",
+                                                                                                 "role": "group",
+                                                                                                 "name": "Group 48",
+                                                                                                 "children": [
+                                                                                                  {
+                                                                                                   "id": "group49",
+                                                                                                   "role": "group",
+                                                                                                   "name": "Group 49",
+                                                                                                   "children": [
+                                                                                                    {
+                                                                                                     "id": "group50",
+                                                                                                     "role": "group",
+                                                                                                     "name": "Group 50",
+                                                                                                     "children": [
+                                                                                                      {
+                                                                                                       "id": "group51",
+                                                                                                       "role": "group",
+                                                                                                       "name": "Group 51",
+                                                                                                       "children": [
+                                                                                                        {
+                                                                                                         "id": "group52",
+                                                                                                         "role": "group",
+                                                                                                         "name": "Group 52",
+                                                                                                         "children": [
+                                                                                                          {
+                                                                                                           "id": "group53",
+                                                                                                           "role": "group",
+                                                                                                           "name": "Group 53",
+                                                                                                           "children": [
+                                                                                                            {
+                                                                                                             "id": "group54",
+                                                                                                             "role": "group",
+                                                                                                             "name": "Group 54",
+                                                                                                             "children": [
+                                                                                                              {
+                                                                                                               "id": "group55",
+                                                                                                               "role": "group",
+                                                                                                               "name": "Group 55",
+                                                                                                               "children": [
+                                                                                                                {
+                                                                                                                 "id": "group56",
+                                                                                                                 "role": "group",
+                                                                                                                 "name": "Group 56",
+                                                                                                                 "children": [
+                                                                                                                  {
+                                                                                                                   "id": "group57",
+                                                                                                                   "role": "group",
+                                                                                                                   "name": "Group 57",
+                                                                                                                   "children": [
+                                                                                                                    {
+                                                                                                                     "id": "group58",
+                                                                                                                     "role": "group",
+                                                                                                                     "name": "Group 58",
+                                                                                                                     "children": [
+                                                                                                                      {
+                                                                                                                       "id": "group59",
+                                                                                                                       "role": "group",
+                                                                                                                       "name": "Group 59",
+                                                                                                                       "children": [
+                                                                                                                        {
+                                                                                                                         "id": "group60",
+                                                                                                                         "role": "group",
+                                                                                                                         "name": "Group 60",
+                                                                                                                         "children": [
+                                                                                                                          {
+                                                                                                                           "id": "fruits",
+                                                                                                                           "role": "list",
+                                                                                                                           "name": "Fruits",
+                                                                                                                           "states": [
+                                                                                                                            "focusable"
+                                                                                                                           ],
+                                                                                                                           "children": [
+                                                                                                                            {
+                                                                                                                             "id": "apple",
+                                                                                                                             "role": "list_item",
+                                                                                                                             "name": "Apple",
+                                                                                                                             "states": [
+                                                                                                                              "focusable",
+                                                                                                                              "selectable",
+                                                                                                                              "selected"
+                                                                                                                             ],
+                                                                                                                             "position_in_set": 1,
+                                                                                                                             "set_size": 2
+                                                                                                                            },
+                                                                                                                            {
+                                                                                                                             "id": "banana",
+                                                                                                                             "role": "list_item",
+                                                                                                                             "name": "Banana",
+                                                                                                                             "states": [
+                                                                                                                              "focusable",
+                                                                                                                              "selectable"
+                                                                                                                             ],
+                                                                                                                             "position_in_set": 2,
+                                                                                                                             "set_size": 2
+                                                                                                                            }
+                                                                                                                           ]
+                                                                                                                          }
+                                                                                                                         ]
+                                                                                                                        }
+                                                                                                                       ]
+                                                                                                                      }
+                                                                                                                     ]
+                                                                                                                    }
+                                                                                                                   ]
+                                                                                                                  }
+                                                                                                                 ]
+                                                                                                                }
+                                                                                                               ]
+                                                                                                              }
+                                                                                                             ]
+                                                                                                            }
+                                                                                                           ]
+                                                                                                          }
+                                                                                                         ]
+                                                                                                        }
+                                                                                                       ]
+                                                                                                      }
+                                                                                                     ]
+                                                                                                    }
+                                                                                                   ]
+                                                                                                  }
+                                                                                                 ]
+                                                                                                }
+                                                                                               ]
+                                                                                              }
+                                                                                             ]
+                                                                                            }
+                                                                                           ]
+                                                                                          }
+                                                                                         ]
+                                                                                        }
+                                                                                       ]
+                                                                                      }
+                                                                                     ]
+                                                                                    }
+                                                                                   ]
+                                                                                  }
+                                                                                 ]
+                                                                                }
+                                                                               ]
+                                                                              }
+                                                                             ]
+                                                                            }
+                                                                           ]
+                                                                          }
+                                                                         ]
+                                                                        }
+                                                                       ]
+                                                                      }
+                                                                     ]
+                                                                    }
+                                                                   ]
+                                                                  }
+                                                                 ]
+                                                                }
+                                                               ]
+                                                              }
+                                                             ]
+                                                            }
+                                                           ]
+                                                          }
+                                                         ]
+                                                        }
+                                                       ]
+                                                      }
+                                                     ]
+                                                    }
+                                                   ]
+                                                  }
+                                                 ]
+                                                }
+                                               ]
+                                              }
+                                             ]
+                                            }
+                                           ]
+                                          }
+                                         ]
+                                        }
+                                       ]
+                                      }
+                                     ]
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

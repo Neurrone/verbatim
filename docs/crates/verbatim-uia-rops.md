@@ -591,6 +591,28 @@ Two of the design's rules are not implemented yet: marking a window after
 repeated run failures, and retrying a run that exceeds the instruction
 limit with a smaller depth limit. Neither has been seen to happen.
 
+## The instruction limit and counting
+
+UIA lets one run execute 10,000 instructions and stops it past that with
+`Status::InstructionLimitExceeded`, measured against mockapp on Windows
+11 build 26200 (`crates/mockapp/tests/instruction_limit.rs`, which pins
+it). `counting` measures programs against it: `counting::start()` turns it
+on for the thread, every program the thread then runs is run in its
+counting form, and `counting::stop()` returns how many of each program's
+own instructions its run executed. The counting form puts an `Add` of one
+to a register of its own before each instruction, doubles each jump's
+offset less one so the jump lands on the `Add` before its target, and asks
+for the register with the results, so its results and effects are the
+program's; it executes twice as many instructions and two more, and so
+counts only programs under half the limit. It is never on in Verbatim
+itself. Each program's worst case against mockapp is pinned by the same
+test and recorded in `docs/performance.md`, "The instruction limit": every
+one stays under half the limit but the caret read's walk of a span whose
+every format stretch is mixed, about 7,700 at its 64 stretches, which
+runs under it; a run that exceeded it would be answered classically for
+that call. Programs are not resumable (Dickson, 2026-10-07): their work is
+bounded by their queries.
+
 A provider whose process has gone and one that times out
 (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`, both as an
 `ExecutionFailure`) are not program failures: the classic

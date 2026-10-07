@@ -1056,3 +1056,61 @@ location from a held position (`UiaText`'s `unit_at`, `move_by`, and
 longer collapses the range after it moves, since UIA keeps a collapsed
 range collapsed when it moves; the ledger's operations above do not reach
 those reads, so their counts are unchanged.
+
+## The instruction limit
+
+UIA stops a remote operation that executes too many instructions, with
+the status `InstructionLimitExceeded` (2). The limit is not published;
+NVDA's local emulator of remote operations assumes 10,000
+(`phase6-design.md`, item 11 of the work scheduled on 2026-10-07). Measured
+on 2026-10-07 on this machine (Windows 11, build 26200, x64) against
+mockapp (`crates/mockapp/tests/instruction_limit.rs`), it is exactly
+10,000: a loop of 2,498 passes, which executes 10,000 instructions, runs,
+and one more instruction stops it. The test finds it by halving the
+number of passes and then adding single instructions, and pins it.
+
+Each program's count is taken by running it as Verbatim runs it with
+`verbatim_uia_rops::counting` on, which runs the program's counting form
+(an `Add` to a counter before each instruction, every jump adjusted) and
+records how many of the program's own instructions the run executed. The
+counting form executes twice as many, so it can count only programs under
+half the limit. Pinned exactly, worst case against mockapp first, the
+share of the limit in brackets:
+
+- The focus ancestry: 2,180 (22 percent) for a list sixty groups deep,
+  every ancestor up to the window returned under the outpost's depth limit
+  of 64, against 64 known ancestors none of which it meets, with the
+  list's selected item and a held element's focus read; 1,686 for the same
+  stopped at a depth limit of 30, walking on to the window without
+  returning the rest; 1,038 for the list whose group is known, its window
+  still sixty-one levels up. A deeper tree adds a level of the window walk
+  for each level beyond the depth limit, a dozen or so instructions (the
+  navigation step's walk, much the same, takes 12): about two hundred more
+  levels before half the limit. mockapp's fixtures cannot nest
+  deeper than about sixty levels (its JSON parser's recursion limit).
+- The navigation step: 875 (9 percent) from an item sixty-two levels
+  below its window, 144 from right under it, about 12 for each level
+  walked.
+- The caret read: 4,884 (49 percent) for a line of 64 stretches reached by
+  walking one mixed format stretch by words and a mixed word by
+  characters, every attribute read, with a word, the evidence, and a
+  selection's change; 85 for the report after a focus on a line of plain
+  text with the default theme's one attribute. Where every format stretch
+  is mixed (mockapp's `mixed.json`: stretches of two characters, one of
+  them italic), each is walked by words and its word by characters, and
+  each stretch adds 239 instructions: 2,049 for 17 stretches and 3,961 for
+  33, so the 64 stretches a span may have come to about 7,700 (77 percent),
+  which runs under the limit but cannot be counted. This is the one
+  program that can come within a factor of two of the limit. A run that
+  exceeded it would be answered classically for that call
+  (`Path::Fallback`), at a cost of hundreds of calls; programs are not
+  made resumable (Dickson, 2026-10-07), and none is needed while the 64
+  stretches bound the walk.
+- Say-all's batch of twenty lines: 626 (6 percent) a line on from a held
+  position with its lines in three languages, each line's then read; 647
+  for a first batch from the caret in one language. The count does not
+  grow with the lines' length.
+- A terminal's tail: 1,126 (11 percent) when its fingerprint is nowhere
+  and the search checks its 64 matches (`SEARCH_MATCHES`), about 16 each;
+  99 for an anchor in place under new output. The count does not grow
+  with the scrollback or the lines read.

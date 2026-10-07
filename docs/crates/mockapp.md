@@ -235,7 +235,8 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
-`events.rs`, `focus_reports.rs`, `remote_ops.rs`, `text.rs`, `uia_tree.rs`)
+`events.rs`, `focus_reports.rs`, `instruction_limit.rs`, `remote_ops.rs`,
+`terminal.rs`, `text.rs`, `uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
@@ -344,6 +345,15 @@ forty-five lines, and a batch whose lines differ in language over
 `tests/fixtures/languages.json` (lines in English, French, and German, by
 its `cultures`), which `text.rs` also reads both ways; and a line's
 formatting whose one stretch is mixed for italics, over
-`tests/fixtures/italic.json`, read again by words and characters. On a
+`tests/fixtures/italic.json`, read again by words and characters.
+`instruction_limit.rs` finds UIA's limit on the instructions one remote
+operation may execute and pins it, and pins how many each of Verbatim's
+programs executes, counted with `verbatim_uia_rops::counting`, at its
+worst against mockapp and at a typical size: over
+`tests/fixtures/deep.json` (a list sixty groups deep) for the focus
+ancestry and navigation, `tests/fixtures/mixed.json` (format stretches of
+two characters, each with one italic) and `italic.json` for the caret
+read, and `languages.json` and `terminal.json` for say-all and a
+terminal's tail. On a
 mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.
