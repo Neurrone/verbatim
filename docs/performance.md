@@ -529,8 +529,34 @@ fewer than 10 pieces are left to speak, handed out and buffered together
 (`docs/crates/verbatim-core.md`, "Say-all"). It replaced a low-water mark
 in time (three seconds at a pace of speech measured from the marks): a
 count needs no estimate, and ten pieces, even of a few words each, last
-far longer than a batch's read, which the measurements against Windows 11
-Notepad below confirm.
+far longer than a batch's read, as measured against Windows 11 Notepad:
+
+Measured on 2026-10-07 on this machine (x64), debug build, otherwise
+quiet, reading a 300-line document of prose (lines of 40 to 80 characters
+taken from `docs/architecture.md`) from its top to its end, with eSpeak NG
+at the end-to-end rate (376 words a minute) in Verbatim and in NVDA. Each
+batch's read time and calls are the outpost read stage of Verbatim's
+latency log; the gap between two pieces is the silence in the system's
+loopback audio where the second piece starts, found from each piece's
+reported start (Verbatim's `SpeechStarted` frames, NVDA's index marks),
+and zero where the pieces ran together. Fifteen batches of 20 lines each;
+the read that then finds the end is left out.
+
+- Remote operations on: a batch read in 3.3 ms at the median, 9.3 ms at
+  the 95th percentile and at worst, in 1 call each; the gaps between
+  pieces 1.5 ms at the median, 14.5 ms at the 95th percentile, and 23.3
+  ms at worst, over 297 boundaries.
+- Remote operations off: a batch read in 21.1 ms at the median, 30.8 ms
+  at the 95th percentile and at worst, in 166 calls each (165 for the
+  first); the gaps 1.5, 13.9, and 25.3 ms.
+- NVDA, which reads a piece at a time, a few lines per call to the
+  synthesizer: the gaps 1.2, 30.2, and 62.5 ms, over 299 boundaries.
+
+Each batch's request also waited 5 ms at the median (10.8 at worst)
+behind the application's other events in the outpost's queue. With either
+path, a batch arrives with ten pieces, several seconds of speech, still
+to speak, and the gaps are the same with remote operations on and off:
+the pieces already with speech hide the read entirely.
 
 ### The caret's location, UIA
 
