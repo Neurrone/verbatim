@@ -466,22 +466,34 @@ pub fn snapshot_parts_from_cached_element(element: &IUIAutomationElement) -> Cac
     ) {
         role = Role::Dialog;
     }
+    let mut name = element.cached_string(UIA_NamePropertyId);
+    let mut value = value_of(
+        element.cached_string(UIA_ValueValuePropertyId),
+        // Gated on the pattern, as `ValueIsReadOnly` is: a remotely
+        // filled cache stores the default of zero.
+        element
+            .cached_bool(UIA_IsRangeValuePatternAvailablePropertyId)
+            .then(|| element.cached_f64(UIA_RangeValueValuePropertyId))
+            .flatten(),
+    )
+    .filter(|_| !reports_no_value(class_name.as_deref()));
+    let mut details = details_from_cached(element);
+    // File Explorer's dates and the clock put left-to-right marks between
+    // their numbers, which NVDA strips; so are they here, and every other
+    // bidirectional formatting character with them.
+    for text in [&mut name, &mut value, &mut details.description]
+        .into_iter()
+        .flatten()
+    {
+        verbatim_text::strip_bidi_controls(text);
+    }
     CachedUiaParts {
         runtime_id,
         role,
-        name: element.cached_string(UIA_NamePropertyId),
-        value: value_of(
-            element.cached_string(UIA_ValueValuePropertyId),
-            // Gated on the pattern, as `ValueIsReadOnly` is: a remotely
-            // filled cache stores the default of zero.
-            element
-                .cached_bool(UIA_IsRangeValuePatternAvailablePropertyId)
-                .then(|| element.cached_f64(UIA_RangeValueValuePropertyId))
-                .flatten(),
-        )
-        .filter(|_| !reports_no_value(class_name.as_deref())),
+        name,
+        value,
         states: states_from_cached(element, role),
-        details: details_from_cached(element),
+        details,
     }
 }
 

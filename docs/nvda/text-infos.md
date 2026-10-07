@@ -104,6 +104,14 @@ strategy (`textUtils/_wordSeg/wordSegStrategy.py`) from the
   (`NVDAObjects/window/edit.py`) forces `WordSegFlag.UNISCRIBE` to
   match the edit control and Notepad.
 
+Before segmenting, the line has its null characters and no-break spaces
+replaced by spaces, so words break on them. A plain (not rich) edit
+control adds one special case in `EditTextInfo._getWordOffsets`: when the
+character at the offset is a carriage return or a line feed, that one
+character is the word; any other offset gets the line's word as above.
+Rich edit controls (edit API version 2 and later) ask the control instead
+(`EM_FINDWORDBREAK`).
+
 A plain whitespace/punctuation fallback (`findStartOfWord` /
 `findEndOfWord`) remains for backends that opt out (the deprecated
 `useUniscribe = False`) or when the chosen strategy fails. Range-based backends

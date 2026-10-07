@@ -27,6 +27,12 @@ use common::tree_view::{focus_item, tree_view};
 /// state, as the content of each utterance in order. Every effect but
 /// the speech-validity one a focus always makes is spoken speech.
 fn spoken(reported: &Reported) -> Vec<Vec<SegmentContent>> {
+    spoken_in(&mut SrState::new(), reported)
+}
+
+/// The speech the reducer in `state` makes for the focus `reported`, as
+/// [`spoken`] gives it.
+fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent>> {
     let mut event = NormalizedEvent::FocusChanged {
         node: reported.node.clone(),
         foreground: false,
@@ -36,7 +42,7 @@ fn spoken(reported: &Reported) -> Vec<Vec<SegmentContent>> {
     };
     event.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(
-        &mut SrState::new(),
+        state,
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: 0,
@@ -368,6 +374,72 @@ fn a_report_view_item_is_named_by_its_columns() {
     app.quit();
 }
 
+/// A list view item's name with left-to-right marks between its numbers,
+/// as File Explorer's dates have, is read without them, as NVDA reads it:
+/// the focus speaks the date alone, and the review cursor's next character
+/// from the start is its second digit.
+fn bidirectional_marks_are_stripped_from_a_name() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    common::init_com();
+    let title = common::unique_title("mockapp-bidi-marks");
+    let app = common::spawn("bidi_marks.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let list = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            w!("SysListView32"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the list view");
+    let outpost = OutpostUnderTest::new(app.pid());
+    let date = outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+        hwnd: list.0 as isize,
+        id_object: OBJID_CLIENT.0,
+        id_child: 1,
+    });
+    assert_eq!(date.node.name.as_deref(), Some("08/10/2026"));
+    let mut state = SrState::new();
+    assert_eq!(
+        spoken_in(&mut state, &date),
+        [
+            vec![SegmentContent::Role(Role::List)],
+            vec![
+                SegmentContent::Label("08/10/2026".to_owned()),
+                SegmentContent::NegatedState(State::Selected),
+                SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(1)
+                },
+            ],
+        ]
+    );
+    let effects = verbatim_core::reduce(
+        &mut state,
+        &Input::Command {
+            trace_id: TraceId::mint(),
+            command: verbatim_model::ReviewCommand::ReviewNextCharacter,
+            repeat: 0,
+        },
+    );
+    let spoken: Vec<Vec<SegmentContent>> = effects
+        .into_iter()
+        .map(|effect| match effect {
+            Effect::Speak(utterance) => utterance
+                .segments
+                .into_iter()
+                .map(|segment| segment.content)
+                .collect(),
+            other => panic!("a review command makes no {other:?}"),
+        })
+        .collect();
+    assert_eq!(spoken, [vec![SegmentContent::Text("8".to_owned())]]);
+    app.quit();
+}
+
 /// The roles of `nodes`, in order.
 fn roles(nodes: &[NodeSnapshot]) -> Vec<Role> {
     nodes.iter().map(|node| node.role).collect()
@@ -386,6 +458,10 @@ fn main() {
         (
             "a_report_view_item_is_named_by_its_columns",
             a_report_view_item_is_named_by_its_columns,
+        ),
+        (
+            "bidirectional_marks_are_stripped_from_a_name",
+            bidirectional_marks_are_stripped_from_a_name,
         ),
         (
             "a_group_box_is_the_context_of_the_controls_inside_it",

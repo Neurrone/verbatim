@@ -49,7 +49,10 @@ Public API:
   `character_description(character, language)` (milestone M4) — the
   character table: the name a character is spoken by on its own ("comma",
   "space", "superscript minus") and its description ("Alfa" for a, a
-  capital taking its small letter's). Both are keyed by locale: the table
+  capital taking its small letter's, by the language's casing, so in
+  Turkish and Azerbaijani I takes the dotless ı's and İ takes i's). A character is looked up in its
+  composed form (`verbatim_text::composed`), so a letter written with a
+  combining accent is found as the precomposed one. Both are keyed by locale: the table
   is the `character-name-` and `character-description-` messages of each
   locale's Fluent file, one per code point in lowercase hexadecimal
   (`character-name-002c = comma`), so another language's table is data, not

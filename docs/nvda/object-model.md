@@ -236,6 +236,19 @@ windows of their own are seen with their own roles rather than as windows.
 The text is gathered each time the description is asked for, which is each
 time the dialog is announced.
 
+### Direction marks in names and values
+
+Some Windows controls put the invisible left-to-right mark (U+200E) or
+right-to-left mark (U+200F) into their text, most visibly between the
+numbers of a date. NVDA removes both marks, and no other characters, from
+a few places: a list view item's name, both the one built from its
+columns and its value (`sysListView32.py`); File Explorer's item values
+and window text (the `explorer` app module); and the taskbar clock's name
+and value (`IAccessible/__init__.py`). Everywhere else they stay in the
+text: flowing speech says nothing for them, and reading by character names
+them ("left to right mark", "right to left mark"), since the English
+symbol table gives them those names at the character level only.
+
 The design fact that matters: these are *mixins keyed by role and
 context, not per-app code* — NVDA's per-app modules mostly just
 attach or tune them. A normalized-model equivalent needs a home for

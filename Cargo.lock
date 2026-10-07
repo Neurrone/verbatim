@@ -634,6 +634,49 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fdcc9ac77c6d74ff5cf6e65ef3181d6af32003b16fce3a77fb451d2f695993"
 
 [[package]]
+name = "icu_normalizer"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c56e5ee99d6e3d33bd91c5d85458b6005a22140021cc324cea84dd0e72cff3b4"
+dependencies = [
+ "icu_collections",
+ "icu_normalizer_data",
+ "icu_properties",
+ "icu_provider",
+ "smallvec",
+ "utf16_iter",
+ "utf8_iter",
+ "write16",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_normalizer_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da3be0ae77ea334f4da67c12f149704f19f81d1adf7c51cf482943e84a2bad38"
+
+[[package]]
+name = "icu_properties"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bee3b67d0ea5c2cca5003417989af8996f8604e34fb9ddf96208a033901e70de"
+dependencies = [
+ "icu_collections",
+ "icu_locale_core",
+ "icu_properties_data",
+ "icu_provider",
+ "zerotrie",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_properties_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e2bbb201e0c04f7b4b3e14382af113e17ba4f63e2c9d2ee626b720cbce54a14"
+
+[[package]]
 name = "icu_provider"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1543,6 +1586,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
+name = "utf16_iter"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8232dd3cdaed5356e0f716d285e4b40b932ac434100fe9b7e0e8e935b9e6246"
+
+[[package]]
 name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1720,6 +1769,7 @@ dependencies = [
  "rust-embed",
  "unic-langid",
  "verbatim-model",
+ "verbatim-text",
  "workspace-hack",
 ]
 
@@ -1729,6 +1779,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-model",
+ "verbatim-text",
  "windows",
  "workspace-hack",
 ]
@@ -1817,6 +1868,7 @@ dependencies = [
  "verbatim-i18n",
  "verbatim-model",
  "verbatim-synth-capture",
+ "verbatim-text",
  "workspace-hack",
 ]
 
@@ -1888,6 +1940,9 @@ dependencies = [
 name = "verbatim-text"
 version = "0.1.0"
 dependencies = [
+ "icu_locale_core",
+ "icu_normalizer",
+ "icu_properties",
  "icu_segmenter",
  "jieba-rs",
  "unicode-width",
@@ -1900,6 +1955,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-model",
+ "verbatim-text",
  "windows",
  "windows-core",
  "workspace-hack",
@@ -2085,7 +2141,6 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
- "cc",
  "crc32fast",
  "foldhash",
  "i18n-embed",
@@ -2109,6 +2164,12 @@ dependencies = [
  "zerofrom",
  "zerovec",
 ]
+
+[[package]]
+name = "write16"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1890f4022759daae28ed4fe62859b1236caebfc61ede2f63ed4e695f3f6d936"
 
 [[package]]
 name = "writeable"
@@ -2181,6 +2242,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f9152d31db0792fa83f70fb2f83148effb5c1f5b8c7686c3459e361d9bc20bf"
 dependencies = [
  "displaydoc",
+ "yoke",
+ "zerofrom",
  "zerovec",
 ]
 

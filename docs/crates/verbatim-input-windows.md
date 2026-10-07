@@ -104,6 +104,20 @@ does):
   helper (decision D2, milestone M6) can do, and announcing compositions is
   a later milestone (`phase6-design.md`, "Internationalization in the text
   model").
+- Keyboard text services. Outside Chinese, Japanese, and Korean, Windows'
+  text-service keyboards (Vietnamese Telex and VNI, the Indic Phonetic
+  keyboards) also compose characters from several keys, but under the
+  language's ordinary layout, so the layout handle cannot tell them
+  apart. The hook thread enters a COM apartment and asks the text
+  services' profile manager (`ITfInputProcessorProfileMgr`) for the active
+  keyboard profile; when it is a text service
+  (`TF_PROFILETYPE_INPUTPROCESSOR`) for the foreground layout's language,
+  nothing is translated, so Verbatim stays silent rather than echoing the
+  raw keys (decided 2026-10-08). Windows switches input methods for every
+  application together unless the user chose otherwise, which is why the
+  hook thread's active profile stands for the foreground application's.
+  Echoing the composed text needs the injection helper and is on the
+  roadmap for M6.
 - A key typed as a Unicode packet (`VK_PACKET`, from an on-screen keyboard
   or `SendInput` with `KEYEVENTF_UNICODE`) carries its UTF-16 unit, a
   surrogate pair as two keys, which are joined.

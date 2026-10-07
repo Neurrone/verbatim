@@ -83,8 +83,11 @@ Public API:
   in the control's process (`VirtualAllocEx`, `WriteProcessMemory`,
   `ReadProcessMemory`, freed on drop), with the text range's pointer field
   sized for that process: four bytes for a 32-bit (WOW64) process, by
-  `IsWow64Process2`. An ANSI rich edit window's text is converted from the
-  system code page. Every message goes through `SendMessageTimeoutW` with
+  `IsWow64Process2`. A rich edit window that is not Unicode may still
+  answer in UTF-16, so its whole text buffer is read back and decoded as
+  NVDA decodes it (`decode_text_range`): UTF-16 when more than one
+  character was copied and a byte past the copied count is not zero, and
+  otherwise ANSI text converted from the system code page. Every message goes through `SendMessageTimeoutW` with
   `SMTO_ABORTIFHUNG` and half a second's wait, and counts as one window
   message; the memory calls are the kernel's and are not counted. A
   password field (`ES_PASSWORD`) reads as stars, as NVDA reads it.
@@ -225,7 +228,9 @@ Public API:
   header's item count, `LVM_GETCOLUMNORDERARRAY`, `LVM_GETSUBITEMRECT`,
   `LVM_GETITEMTEXTW`, and `LVM_GETCOLUMNW`, their structures written into
   the list view's process through `edit`'s target process, with pointer
-  fields sized for it).
+  fields sized for it). Every name, value, and description read loses its
+  bidirectional formatting characters (`verbatim_text::strip_bidi_controls`),
+  as NVDA strips the direction marks from list view items and the clock.
 - `calls` — the count of the cross-process calls `acquire` makes, kept per
   thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
   Every `IAccessible` method, `IAccIdentity`'s identity string, the

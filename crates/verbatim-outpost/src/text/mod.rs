@@ -676,6 +676,11 @@ fn to_utf8(units: &[u16], max_bytes: usize, offsets: &[usize]) -> (String, Vec<u
         };
         if text.len() + character.len_utf8() > max_bytes {
             truncated = true;
+            // Cut between whole characters: back to the last grapheme
+            // boundary unless the character left out starts a cluster.
+            let mut probe = text.clone();
+            probe.push(character);
+            text.truncate(grapheme_floor(&probe, text.len()));
             break;
         }
         text.push(character);
@@ -684,9 +689,33 @@ fn to_utf8(units: &[u16], max_bytes: usize, offsets: &[usize]) -> (String, Vec<u
     let end = text.len();
     let mapped = mapped
         .into_iter()
-        .map(|offset| offset.unwrap_or(end))
+        .map(|offset| offset.map_or(end, |offset| offset.min(end)))
         .collect();
     (text, mapped, truncated)
+}
+
+/// Cuts `text`, which a read limit cut short, back to the end of its last
+/// whole character, so a surrogate pair or a letter with its marks is never
+/// split: the last grapheme cluster may have lost its rest to the cut (a
+/// surrogate cut in half reads as a replacement character), so it goes
+/// too. Text of one cluster is kept as it is.
+fn keep_whole_characters(text: &mut String) {
+    let clusters = verbatim_text::graphemes(text);
+    if clusters.len() > 1
+        && let Some(last) = clusters.last()
+    {
+        text.truncate(last.start);
+    }
+}
+
+/// The largest grapheme cluster boundary of `text` at or before `offset`.
+fn grapheme_floor(text: &str, offset: usize) -> usize {
+    verbatim_text::graphemes(text)
+        .into_iter()
+        .map(|range| range.end)
+        .take_while(|&end| end <= offset)
+        .last()
+        .unwrap_or(0)
 }
 
 /// The number of characters (grapheme clusters) in `text`.
@@ -797,7 +826,15 @@ fn chunk<S: TextSource>(
         wanted.push(*start);
         wanted.push(*end);
     }
-    let (text, mapped, cut) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &wanted);
+    let (mut text, mut mapped, cut) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &wanted);
+    // A cut by bytes is already between whole characters; a unit the
+    // source cut short may end inside one.
+    if unit.truncated {
+        keep_whole_characters(&mut text);
+        for offset in &mut mapped {
+            *offset = (*offset).min(text.len());
+        }
+    }
     let languages = runs
         .iter()
         .enumerate()
@@ -1381,7 +1418,10 @@ fn change_of(selected: bool, units: &[u16]) -> Option<SelectionChange> {
     let (full, _, _) = to_utf8(units, MAX_RANGE_BYTES, &[]);
     let count = characters(&full);
     let mut text = full;
-    text.truncate(floor_boundary(&text, MAX_SELECTION_TEXT_BYTES));
+    // Cut, when it is cut, between whole characters.
+    if text.len() > MAX_SELECTION_TEXT_BYTES {
+        text.truncate(grapheme_floor(&text, MAX_SELECTION_TEXT_BYTES));
+    }
     Some(SelectionChange {
         selected,
         text,
@@ -1681,7 +1721,10 @@ fn read_range<S: TextSource>(
         };
         let read_cut = read.text.len() > MAX_RANGE_UNITS;
         let units = &read.text[..read.text.len().min(MAX_RANGE_UNITS)];
-        let (text, _, cut) = to_utf8(units, MAX_RANGE_BYTES, &[]);
+        let (mut text, _, cut) = to_utf8(units, MAX_RANGE_BYTES, &[]);
+        if read_cut && !cut {
+            keep_whole_characters(&mut text);
+        }
         return Ok(TextReply::Range {
             text,
             truncated: read_cut || cut,
@@ -1692,7 +1735,10 @@ fn read_range<S: TextSource>(
         Err(reply) => return Ok(reply),
     };
     let (units, read_cut) = source.text(&start, &end, MAX_RANGE_UNITS)?;
-    let (text, _, cut) = to_utf8(&units, MAX_RANGE_BYTES, &[]);
+    let (mut text, _, cut) = to_utf8(&units, MAX_RANGE_BYTES, &[]);
+    if read_cut && !cut {
+        keep_whole_characters(&mut text);
+    }
     Ok(TextReply::Range {
         text,
         truncated: read_cut || cut,

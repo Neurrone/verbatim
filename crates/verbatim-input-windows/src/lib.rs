@@ -56,6 +56,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::Sender;
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
@@ -274,6 +275,10 @@ fn hook_thread(
     (speech, reports): (SpeechEffectFn, KeyReportFn),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
+    // COM for the text services' profile manager, which typing asks which
+    // keyboard profile is active (`typed`); it lives as long as the thread
+    // and is released before COM is uninitialized.
+    let _apartment = Apartment::enter();
     // SAFETY: `GetModuleHandleW(None)` takes no pointer and returns this
     // process's module handle, the standard `hmod` for a low-level hook
     // whose procedure lives in this module; a failure is reported below.
@@ -306,7 +311,7 @@ fn hook_thread(
             events,
             speech,
             reports,
-            typing: typed::Typing::default(),
+            typing: typed::Typing::with_text_services(),
         });
     });
 
@@ -318,6 +323,7 @@ fn hook_thread(
         unsafe {
             let _ = UnhookWindowsHookEx(hook);
         }
+        HOOK_STATE.with(|state| *state.borrow_mut() = None);
         return;
     }
 
@@ -328,6 +334,38 @@ fn hook_thread(
         let _ = UnhookWindowsHookEx(hook);
     }
     HOOK_STATE.with(|state| *state.borrow_mut() = None);
+}
+
+/// COM initialized on this thread as a single-threaded apartment, which
+/// the hook thread's message loop serves, until dropped.
+struct Apartment {
+    entered: bool,
+}
+
+impl Apartment {
+    /// Enters the apartment; a failure is logged, and leaves typing without
+    /// the text services.
+    fn enter() -> Self {
+        // SAFETY: called once at the start of the hook thread, which has
+        // not initialized COM.
+        let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        if let Err(error) = result.ok() {
+            tracing::warn!(%error, "COM could not be initialized on the hook thread");
+        }
+        Self {
+            entered: result.is_ok(),
+        }
+    }
+}
+
+impl Drop for Apartment {
+    fn drop(&mut self) {
+        if self.entered {
+            // SAFETY: balances the successful `CoInitializeEx` on this
+            // thread, after every COM object it made was released.
+            unsafe { CoUninitialize() };
+        }
+    }
 }
 
 /// Microseconds since the Unix epoch, as outposts stamp their observations.

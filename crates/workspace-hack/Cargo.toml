@@ -34,7 +34,6 @@ zerofrom = { version = "0.1", default-features = false, features = ["alloc", "de
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 
 [build-dependencies]
-cc = { version = "1", default-features = false, features = ["parallel"] }
 crc32fast = { version = "1" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 i18n-embed = { version = "0.16", features = ["filesystem-assets", "fluent-system"] }

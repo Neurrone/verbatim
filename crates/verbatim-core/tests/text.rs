@@ -950,6 +950,37 @@ fn word_echo_speaks_a_word_when_it_ends() {
     );
 }
 
+/// Combining marks and the zero-width non-joiner, each typed as a key of
+/// its own, continue the word: a Devanagari conjunct (ka, virama, ssa), a
+/// Thai syllable with a tone mark (ko kai, mai ek, sara aa), and Persian
+/// with a zero-width non-joiner (mim, yeh, the non-joiner, khah) are each
+/// spoken as one word when a space ends it.
+#[test]
+fn word_echo_keeps_combining_marks_and_joiners_in_the_word() {
+    let mut state = editing("", 0);
+    let _ = reduce(
+        &mut state,
+        &Input::Settings(ReaderSettings {
+            speak_typed_characters: TypingEcho::Off,
+            speak_typed_words: TypingEcho::Always,
+            ..ReaderSettings::default()
+        }),
+    );
+    for (keys, word) in [
+        (&["क", "\u{94D}", "ष"][..], "क्ष"),
+        (&["ก", "\u{E48}", "า"][..], "ก่า"),
+        (&["م", "ی", "\u{200C}", "خ"][..], "می\u{200C}خ"),
+    ] {
+        for key in keys {
+            assert_eq!(spoken(&reduce(&mut state, &typed(key))), [], "{word}");
+        }
+        assert_eq!(
+            spoken(&reduce(&mut state, &typed(" "))),
+            vec![UtteranceSegment::text(word)]
+        );
+    }
+}
+
 #[test]
 fn control_characters_end_a_word_but_are_never_spelled() {
     let mut state = editing("", 0);

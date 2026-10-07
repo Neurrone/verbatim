@@ -386,7 +386,10 @@ clipboard-characters = { $count } characters
 ## The character table: how one character is named when it is spoken on its
 ## own (caret and review movement by character, spelling), keyed by its
 ## code point in lowercase hexadecimal. NVDA's English symbol names, with
-## its corrected ones ("superscript minus", "three eighths").
+## its corrected ones ("superscript minus", "three eighths"). The
+## bidirectional formatting characters other than the two marks, which
+## NVDA does not name, have their Unicode names, so text read by character
+## names them rather than saying nothing.
 
 character-name-0009 = tab
 character-name-000a = line feed
@@ -450,6 +453,8 @@ character-name-00be = three quarters
 character-name-00bf = inverted question
 character-name-00d7 = times
 character-name-00f7 = divide by
+character-name-200e = left to right mark
+character-name-200f = right to left mark
 character-name-2013 = en dash
 character-name-2014 = em dash
 character-name-2018 = left tick
@@ -460,7 +465,16 @@ character-name-2022 = bullet
 character-name-2026 = dot dot dot
 character-name-2028 = line separator
 character-name-2029 = paragraph separator
+character-name-202a = left to right embedding
+character-name-202b = right to left embedding
+character-name-202c = pop directional formatting
+character-name-202d = left to right override
+character-name-202e = right to left override
 character-name-2030 = per mille
+character-name-2066 = left to right isolate
+character-name-2067 = right to left isolate
+character-name-2068 = first strong isolate
+character-name-2069 = pop directional isolate
 character-name-207b = superscript minus
 character-name-20ac = euro
 character-name-2122 = trademark
@@ -474,6 +488,7 @@ character-name-2192 = right arrow
 character-name-2193 = down arrow
 character-name-2713 = check
 character-name-2714 = check
+character-name-3000 = ideographic space
 
 ## Character descriptions, spoken when the current character is asked for
 ## twice and when text is spelled with descriptions; keyed like the names.

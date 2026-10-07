@@ -246,8 +246,8 @@ the contract the Windows side implements.
   formatting with a caret report after a focus (the line) and with a caret
   key's answer (the character, word, or line spoken), at most 64
   stretches per chunk, and with nothing else yet.
-- A chunk's text is at most `MAX_CHUNK_BYTES` (64 KB), cut at a character
-  boundary, so one unit can never grow Core's state without bound.
+- A chunk's text is at most `MAX_CHUNK_BYTES` (64 KB), cut between whole
+  characters (grapheme clusters), so one unit can never grow Core's state without bound.
 - `TextUnit` is `Character` (a grapheme cluster, whatever the provider's
   own character unit says), `Word` (the provider's word), `Line` (the
   provider's line, soft-wrapped lines included; Core never splits text on

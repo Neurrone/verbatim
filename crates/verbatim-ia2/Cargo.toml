@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 tracing.workspace = true
 verbatim-model.workspace = true
+verbatim-text.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 

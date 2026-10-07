@@ -30,10 +30,17 @@
 
 #![forbid(unsafe_code)]
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::OnceLock;
 
-use icu_segmenter::options::{SentenceBreakInvariantOptions, WordBreakInvariantOptions};
+use icu_locale_core::LanguageIdentifier;
+use icu_normalizer::ComposingNormalizerBorrowed;
+use icu_properties::CodePointMapData;
+use icu_properties::props::{GeneralCategory, GeneralCategoryGroup, Script};
+use icu_segmenter::options::{
+    SentenceBreakInvariantOptions, WordBreakInvariantOptions, WordBreakOptions,
+};
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
 
@@ -67,6 +74,73 @@ pub fn cell_width(text: &str) -> usize {
 #[must_use]
 pub fn trim_padding(line: &str) -> &str {
     line.trim_end_matches(char::is_whitespace)
+}
+
+/// `text` in Unicode's composed normal form (NFC): a letter typed or
+/// stored as a base letter and a combining accent ("E" and U+0301) becomes
+/// the precomposed letter ("É") where Unicode has one, so a character is
+/// named and its case found the same way however it was written.
+#[must_use]
+pub fn composed(text: &str) -> Cow<'_, str> {
+    ComposingNormalizerBorrowed::new_nfc().normalize(text)
+}
+
+/// Whether the grapheme cluster `grapheme` is a capital, raised in pitch
+/// when it is spoken on its own: in its composed form ([`composed`]) some
+/// code point is uppercase and none is lowercase, so a capital with
+/// accents that have no precomposed form is still a capital.
+#[must_use]
+pub fn is_capital(grapheme: &str) -> bool {
+    let grapheme = composed(grapheme);
+    grapheme.chars().any(char::is_uppercase) && !grapheme.chars().any(char::is_lowercase)
+}
+
+/// Whether the grapheme cluster `grapheme` belongs in a word: every code
+/// point in it is a letter, a mark, or a number by its general category,
+/// or the zero-width non-joiner or joiner, which shape the letters around
+/// them. So a virama, a Thai tone mark, or a Persian zero-width non-joiner
+/// typed on its own continues the word it is typed into.
+#[must_use]
+pub fn is_word_grapheme(grapheme: &str) -> bool {
+    let categories = CodePointMapData::<GeneralCategory>::new();
+    let word = GeneralCategoryGroup::Letter
+        .union(GeneralCategoryGroup::Mark)
+        .union(GeneralCategoryGroup::Number);
+    !grapheme.is_empty()
+        && grapheme
+            .chars()
+            .all(|c| matches!(c, '\u{200C}' | '\u{200D}') || word.contains(categories.get(c)))
+}
+
+/// Whether `c` is a bidirectional formatting character: the left-to-right
+/// and right-to-left marks, the embeddings and overrides with the pop that
+/// ends them, and the isolates with theirs. They order text on screen and
+/// have nothing to say.
+#[must_use]
+pub fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// Removes every bidirectional formatting character ([`is_bidi_control`])
+/// from `text`, as an application's names and values are read: File
+/// Explorer's dates and the clock put left-to-right marks between their
+/// numbers.
+pub fn strip_bidi_controls(text: &mut String) {
+    if text.contains(is_bidi_control) {
+        text.retain(|c| !is_bidi_control(c));
+    }
+}
+
+/// Whether `c` separates words as white space does: a character with
+/// Unicode's `White_Space` property, or the zero-width space or the
+/// zero-width no-break space (the byte order mark), which have no width but
+/// mark a word break, as Khmer, Thai, and Burmese text uses them.
+#[must_use]
+pub fn is_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200B}' | '\u{FEFF}')
 }
 
 /// Whether `c` ends a line: a carriage return, a line feed, the vertical
@@ -170,10 +244,22 @@ impl Segmenter {
     /// whitespace, with each run of whitespace merged into one segment.
     #[must_use]
     pub fn words(&self, text: &str, rules: WordRules) -> Vec<Range<usize>> {
+        self.words_in(text, rules, None)
+    }
+
+    /// [`words`](Self::words) for text in `language` (a BCP 47 tag, or
+    /// `None` when unknown): Unicode's rules take the language's tailoring
+    /// where ICU has one, so in Finnish or Swedish a colon inside a word
+    /// ("EU:n") does not break it.
+    #[must_use]
+    pub fn words_in(
+        &self,
+        text: &str,
+        rules: WordRules,
+        language: Option<&str>,
+    ) -> Vec<Range<usize>> {
         let segments = match rules {
-            WordRules::Unicode => ranges(
-                WordSegmenter::new_auto(WordBreakInvariantOptions::default()).segment_str(text),
-            ),
+            WordRules::Unicode => unicode_words(text, language),
             WordRules::Chinese => jieba()
                 .cut(text, true)
                 .into_iter()
@@ -205,29 +291,30 @@ impl Segmenter {
 /// pauses"). Say-all speaks the text before the offset now and holds back
 /// the rest to speak with what follows it.
 ///
-/// A sentence end is a full stop, exclamation mark, or question mark that
-/// directly follows a character that is neither whitespace nor one of
-/// those marks, with at most one closing quotation mark or parenthesis
-/// after it, and then whitespace or the end of the text. There is no list
-/// of abbreviations: "Dr. Smith" splits after "Dr. ". A decimal point is
-/// followed by a numeral, and the last full stop of an ellipsis follows
-/// another, so neither is a sentence end.
+/// A sentence end is a sentence-ending mark ([`is_sentence_end`]) that
+/// directly follows a character that is neither whitespace nor such a
+/// mark, with at most one closing quotation mark, guillemet, corner
+/// bracket, or parenthesis ([`is_closing`]) after it, and then whitespace
+/// or the end of the text. Chinese and Japanese leave no space after their
+/// full-width marks, so after one of those ([`is_full_width_end`]) the
+/// next sentence may follow at once. There is no list of abbreviations:
+/// "Dr. Smith" splits after "Dr. ". A decimal point is followed by a
+/// numeral, and the last full stop of an ellipsis follows another, so
+/// neither is a sentence end.
 #[must_use]
 pub fn last_pause(text: &str) -> Option<usize> {
-    let is_terminator = |c: char| matches!(c, '.' | '!' | '?');
-    let is_closing = |c: char| matches!(c, '"' | '\'' | '\u{201D}' | '\u{2019}' | ')');
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     (1..chars.len()).rev().find_map(|index| {
         let (_, mark) = chars[index];
         let (_, before) = chars[index - 1];
-        if !is_terminator(mark) || before.is_whitespace() || is_terminator(before) {
+        if !is_sentence_end(mark) || before.is_whitespace() || is_sentence_end(before) {
             return None;
         }
         let mut next = index + 1;
         if chars.get(next).is_some_and(|&(_, c)| is_closing(c)) {
             next += 1;
         }
-        if chars.get(next).is_some_and(|&(_, c)| !c.is_whitespace()) {
+        if !is_full_width_end(mark) && chars.get(next).is_some_and(|&(_, c)| !c.is_whitespace()) {
             return None;
         }
         while chars.get(next).is_some_and(|&(_, c)| c.is_whitespace()) {
@@ -235,6 +322,73 @@ pub fn last_pause(text: &str) -> Option<usize> {
         }
         Some(chars.get(next).map_or(text.len(), |&(offset, _)| offset))
     })
+}
+
+/// Whether `c` ends a sentence: a full stop, exclamation mark, or question
+/// mark; their Chinese and Japanese full-width forms; the Devanagari danda
+/// and double danda; the Arabic question mark and the Urdu full stop; the
+/// Armenian full stop; and the Ethiopic full stop and question mark.
+fn is_sentence_end(c: char) -> bool {
+    matches!(
+        c,
+        '.' | '!'
+            | '?'
+            | '\u{3002}'
+            | '\u{FF01}'
+            | '\u{FF1F}'
+            | '\u{0964}'
+            | '\u{0965}'
+            | '\u{061F}'
+            | '\u{06D4}'
+            | '\u{0589}'
+            | '\u{1362}'
+            | '\u{1367}'
+    )
+}
+
+/// Whether `c` is a full-width sentence end of Chinese and Japanese (the
+/// ideographic full stop and the full-width exclamation and question
+/// marks), after which the next sentence follows without a space.
+fn is_full_width_end(c: char) -> bool {
+    matches!(c, '\u{3002}' | '\u{FF01}' | '\u{FF1F}')
+}
+
+/// Whether `c` may close a sentence after its end: a quotation mark or
+/// apostrophe, a guillemet either way round (French closes with », German
+/// with «), the low and high double quotation marks German closes with
+/// („ and “), a corner bracket or white corner bracket, or a parenthesis,
+/// full-width or not.
+fn is_closing(c: char) -> bool {
+    matches!(
+        c,
+        '"' | '\''
+            | '\u{201D}'
+            | '\u{2019}'
+            | ')'
+            | '\u{00BB}'
+            | '\u{00AB}'
+            | '\u{201E}'
+            | '\u{201C}'
+            | '\u{300D}'
+            | '\u{300F}'
+            | '\u{FF09}'
+    )
+}
+
+/// The boundaries of `text` by Unicode's word rules with ICU's dictionaries,
+/// tailored for `language` when the tag parses and ICU has a tailoring for
+/// it.
+fn unicode_words(text: &str, language: Option<&str>) -> Vec<Range<usize>> {
+    let locale =
+        language.and_then(|tag| LanguageIdentifier::try_from_str(&tag.replace('_', "-")).ok());
+    if let Some(locale) = &locale {
+        let mut options = WordBreakOptions::default();
+        options.content_locale = Some(locale);
+        if let Ok(segmenter) = WordSegmenter::try_new_auto(options) {
+            return ranges(segmenter.as_borrowed().segment_str(text));
+        }
+    }
+    ranges(WordSegmenter::new_auto(WordBreakInvariantOptions::default()).segment_str(text))
 }
 
 /// The shared jieba segmenter, with its built-in dictionary.
@@ -254,10 +408,11 @@ fn ranges(boundaries: impl Iterator<Item = usize>) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// `segments` with each run of adjacent whitespace-only segments merged
-/// into one, so spaces and tabs together are a single segment.
+/// `segments` with each run of adjacent white-space-only segments
+/// ([`is_space`]) merged into one, so spaces and tabs together are a
+/// single segment.
 fn merge_whitespace_runs(text: &str, segments: Vec<Range<usize>>) -> Vec<Range<usize>> {
-    let is_space = |range: &Range<usize>| text[range.clone()].chars().all(char::is_whitespace);
+    let is_space = |range: &Range<usize>| text[range.clone()].chars().all(is_space);
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(segments.len());
     for segment in segments {
         match merged.last_mut() {
@@ -270,15 +425,20 @@ fn merge_whitespace_runs(text: &str, segments: Vec<Range<usize>>) -> Vec<Range<u
     merged
 }
 
-/// Whether `c` is a Han character (CJK Unified Ideographs and their
-/// extensions in the Basic Multilingual Plane).
+/// Whether `c` is a Han character, by its Unicode script: the CJK Unified
+/// Ideographs and every extension, those outside the Basic Multilingual
+/// Plane included, and the compatibility ideographs.
 fn is_han(c: char) -> bool {
-    matches!(c, '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}')
+    CodePointMapData::<Script>::new().get(c) == Script::Han
 }
 
-/// Whether `c` is Japanese kana (Hiragana or Katakana).
+/// Whether `c` is Japanese kana: Hiragana or Katakana by its Unicode
+/// script, or the prolonged sound mark and the other marks the two share.
 fn is_kana(c: char) -> bool {
-    matches!(c, '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}')
+    matches!(
+        CodePointMapData::<Script>::new().get(c),
+        Script::Hiragana | Script::Katakana
+    ) || matches!(c, '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}')
 }
 
 #[cfg(test)]
@@ -344,8 +504,45 @@ mod tests {
         );
         // Two closing characters are not a sentence end.
         assert_eq!(split("(he said \"stop.\") Then"), None);
-        // The ideographic full stop is not one of the marks.
-        assert_eq!(split("\u{4F60}\u{597D}\u{3002}\u{518D}"), None);
+        // Guillemets either way round, and German quotation marks.
+        assert_eq!(split("«Oui.» Puis"), Some(("«Oui.» ", "Puis")));
+        assert_eq!(split("»Ja.« Dann"), Some(("»Ja.« ", "Dann")));
+        assert_eq!(split("„Ja.“ Dann"), Some(("„Ja.“ ", "Dann")));
+        assert_eq!(split("Ja.„ Dann"), Some(("Ja.„ ", "Dann")));
+    }
+
+    #[test]
+    fn chinese_and_japanese_marks_need_no_space_after_them() {
+        assert_eq!(
+            split("\u{4F60}\u{597D}\u{3002}\u{518D}"),
+            Some(("\u{4F60}\u{597D}\u{3002}", "\u{518D}"))
+        );
+        assert_eq!(split("好吗？好的！谢谢"), Some(("好吗？好的！", "谢谢")));
+        // A corner bracket or a full-width parenthesis may close it.
+        assert_eq!(split("「はい。」次"), Some(("「はい。」", "次")));
+        assert_eq!(split("『終。』次"), Some(("『終。』", "次")));
+        assert_eq!(split("（注意。）再"), Some(("（注意。）", "再")));
+        // A space after one goes before the split.
+        assert_eq!(split("好。 再"), Some(("好。 ", "再")));
+        // An ideographic full stop opening the text is no sentence end.
+        assert_eq!(split("\u{3002}再"), None);
+    }
+
+    #[test]
+    fn other_scripts_end_sentences_with_their_own_marks() {
+        // Devanagari danda and double danda.
+        assert_eq!(split("यह ठीक है। अब"), Some(("यह ठीक है। ", "अब")));
+        assert_eq!(split("श्लोक॥ अब"), Some(("श्लोक॥ ", "अब")));
+        // Arabic question mark and Urdu full stop.
+        assert_eq!(split("هل أنت؟ نعم"), Some(("هل أنت؟ ", "نعم")));
+        assert_eq!(split("یہ ہے۔ اب"), Some(("یہ ہے۔ ", "اب")));
+        // Armenian full stop.
+        assert_eq!(split("Բարեւ։ Ինչ"), Some(("Բարեւ։ ", "Ինչ")));
+        // Ethiopic full stop and question mark.
+        assert_eq!(split("ሰላም። እንዴት"), Some(("ሰላም። ", "እንዴት")));
+        assert_eq!(split("ደህና፧ አዎ"), Some(("ደህና፧ ", "አዎ")));
+        // These still need whitespace or the end after them.
+        assert_eq!(split("है।अब"), None);
     }
 
     #[test]
@@ -483,6 +680,49 @@ mod tests {
             WordRules::Chinese
         );
         assert_eq!(WordRules::for_text("中文", Some("ja")), WordRules::Unicode);
+        // Han outside the Basic Multilingual Plane (Extension B) is Han.
+        assert_eq!(
+            WordRules::for_text("\u{20000}\u{20001}", None),
+            WordRules::Chinese
+        );
+        // Japanese kana outside the main blocks, half-width katakana.
+        assert_eq!(
+            WordRules::for_text("東京\u{FF83}\u{FF9E}", None),
+            WordRules::Unicode
+        );
+    }
+
+    #[test]
+    fn a_language_tailors_the_word_rules() {
+        let segmenter = Segmenter::new();
+        let text = "EU:n";
+        assert_eq!(
+            texts(text, &segmenter.words_in(text, WordRules::Unicode, None)),
+            ["EU", ":", "n"]
+        );
+        // In Finnish and Swedish a colon joins a word to its ending.
+        for language in ["fi", "sv_SE"] {
+            assert_eq!(
+                texts(
+                    text,
+                    &segmenter.words_in(text, WordRules::Unicode, Some(language))
+                ),
+                ["EU:n"],
+                "{language}"
+            );
+        }
+        // A language with no tailoring, or a tag that does not parse,
+        // takes Unicode's rules.
+        for language in ["en", "not a tag"] {
+            assert_eq!(
+                texts(
+                    text,
+                    &segmenter.words_in(text, WordRules::Unicode, Some(language))
+                ),
+                ["EU", ":", "n"],
+                "{language}"
+            );
+        }
     }
 
     #[test]
@@ -500,6 +740,51 @@ mod tests {
         assert_eq!(cell_width("ab"), 2);
         assert_eq!(cell_width("中文"), 4);
         assert_eq!(cell_width("e\u{301}"), 1);
+    }
+
+    #[test]
+    fn capitals_are_found_in_composed_form() {
+        assert_eq!(composed("E\u{301}"), "\u{C9}");
+        assert!(is_capital("E\u{301}"));
+        assert!(is_capital("\u{C9}"));
+        // A capital A with a dot below and an acute: composed, the acute
+        // stays a combining mark, which has no case.
+        assert!(is_capital("A\u{323}\u{301}"));
+        assert!(!is_capital("e\u{301}"));
+        assert!(!is_capital("7"));
+        assert!(!is_capital(","));
+    }
+
+    #[test]
+    fn a_zero_width_space_is_white_space() {
+        let segmenter = Segmenter::new();
+        let text = "ក\u{200B}ខ \u{FEFF}គ";
+        assert_eq!(
+            texts(text, &segmenter.words(text, WordRules::Unicode)),
+            ["ក", "\u{200B}", "ខ", " \u{FEFF}", "គ"]
+        );
+    }
+
+    #[test]
+    fn letters_marks_numbers_and_joiners_are_word_characters() {
+        for grapheme in [
+            "a", "É", "7", "\u{94D}", "\u{E48}", "\u{200C}", "\u{200D}", "ก่",
+        ] {
+            assert!(is_word_grapheme(grapheme), "{grapheme:?}");
+        }
+        for grapheme in [" ", ",", "\t", "-", "😀", ""] {
+            assert!(!is_word_grapheme(grapheme), "{grapheme:?}");
+        }
+    }
+
+    #[test]
+    fn bidirectional_formatting_characters_are_stripped() {
+        let mut date = "\u{200E}08/\u{200E}10/\u{200E}2026".to_owned();
+        strip_bidi_controls(&mut date);
+        assert_eq!(date, "08/10/2026");
+        let mut text = "\u{202B}a\u{202C}\u{2067}b\u{2069}\u{200F}".to_owned();
+        strip_bidi_controls(&mut text);
+        assert_eq!(text, "ab");
     }
 
     #[test]

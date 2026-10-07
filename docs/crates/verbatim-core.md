@@ -272,8 +272,13 @@ Implementation notes, `reduce`:
   focus, announcing it, so a dead node never presents as a command doing
   nothing. The review-cursor line, word, and character
   motions walk the navigator object's flat text (its value or name) in the
-  pure `review` module — grapheme-cluster characters and word-boundary
-  segmentation wait for M4's text model. All of this is pure and unit-tested
+  pure `review` module, by the same units as text with a text pattern:
+  characters are grapheme clusters and words come from `text::words`
+  (Unicode's word rules with dictionaries), so a Hindi vowel sign stays
+  with its letter and a Thai name has words; a space read as a character
+  is "space", and a one-character word is spoken by its name. Flat text
+  carries no language, so the word rules are chosen from the text. All of
+  this is pure and unit-tested
   in `verbatim-core`. Since M4 this flat walk serves only objects with no
   text interface (see "Text" below); its spelling goes by grapheme
   clusters, a punctuation character is spoken by its name, the current
@@ -460,8 +465,9 @@ a `Format` span, which the theme reports as words, a sound, both, or not
 at all. Review commands and say-all read no formatting yet.
 
 Typing echo. `Input::CharacterTyped` is echoed by the settings: a finished
-word first, when word echo applies and a character that is not a letter or
-digit ends it, then each printable character (a tab included), each in
+word first, when word echo applies and a character that is not a letter,
+mark, number, or zero-width joiner or non-joiner ends it
+(`verbatim_text::is_word_grapheme`), then each printable character (a tab included), each in
 its own queued utterance. "Only in edit controls" means a focus that is an
 edit field, a terminal, or a document that is not read-only. A protected
 field echoes only the protected character, spoken "star", and no words.

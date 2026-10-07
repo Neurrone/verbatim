@@ -208,7 +208,10 @@ Public API:
   of one node's text in its own positions and UTF-16: `uia::UiaText`, over
   a text pattern, where a position (`UiaPos`) is one end of a text range,
   and `edit::EditText`, over an edit control's messages, where it is an
-  offset; `UiaText::new` takes the element too, which a remote operation
+  offset (a plain edit control's word is the line segmented by
+  `verbatim-text`'s word rules, each word with the white space after it,
+  a no-break space read as a space, and a carriage return or line feed a
+  word of its own, as NVDA finds it); `UiaText::new` takes the element too, which a remote operation
   starts from, and `remote` and `fetches` say whether caret reads try a
   remote operation and which formatting they read; `support` gives what
   the control is already known to support of the text attributes
@@ -670,7 +673,12 @@ Implementation notes:
     forgotten once 64 newer ones were minted for the node, and a request
     naming it is answered `AnchorLost`. A released node's anchors and text
     patterns go with it.
-  - Chunks are at most 64 KB of UTF-8, cut at a character boundary; offsets
+  - Chunks are at most 64 KB of UTF-8, cut between whole characters
+    (grapheme clusters): a unit cut short by the byte limit ends at the
+    last cluster boundary before it, and one the source read only in part
+    loses its last cluster, which may have been cut, a surrogate pair's
+    first half among them; a copied range and a selection's text are cut
+    the same way. Offsets
     are converted from UTF-16 at character boundaries, a position inside a
     surrogate pair moving past it. UIA reads carry the range's `Culture`
     as one language run over the chunk (a mixed range carries none);

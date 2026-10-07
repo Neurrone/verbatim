@@ -118,9 +118,10 @@ pub(crate) fn boundary(text: &str, offset: usize) -> usize {
     offset
 }
 
-/// Whether `text` has nothing to read: empty, or only whitespace.
+/// Whether `text` has nothing to read: empty, or only white space, the
+/// zero-width space among it (`verbatim_text::is_space`).
 pub(crate) fn is_blank(text: &str) -> bool {
-    text.trim().is_empty()
+    text.chars().all(verbatim_text::is_space)
 }
 
 /// The grapheme cluster of `content` starting at or containing `offset`,
@@ -176,11 +177,11 @@ pub(crate) fn offset_at_column(content: &str, column: usize, grid: bool) -> usiz
 }
 
 /// Words: the segments of `content` that are not whitespace, by the rules
-/// for its language.
+/// for its language, tailored for it where ICU has a tailoring.
 pub(crate) fn words(content: &str, language: Option<&str>) -> Vec<Range<usize>> {
     let rules = WordRules::for_text(content, language);
     Segmenter::new()
-        .words(content, rules)
+        .words_in(content, rules, language)
         .into_iter()
         .filter(|range| !is_blank(&content[range.clone()]))
         .collect()
@@ -264,10 +265,12 @@ pub(crate) fn character_segments(
     }
 }
 
-/// `text` spelled one character (grapheme cluster) at a time: a space as
-/// "space", a capital raised in pitch, a letter or digit as itself, any
-/// other character by its name; with `descriptions`, each character by its
-/// description where it has one ("Alpha"), as NVDA spells on a third press.
+/// `text` spelled one character (grapheme cluster) at a time, each in its
+/// composed form (`verbatim_text::composed`): a space as "space", a capital
+/// (`verbatim_text::is_capital`) raised in pitch, a letter or digit as
+/// itself, any other character by its name; with `descriptions`, each
+/// character by its description where it has one ("Alpha"), as NVDA spells
+/// on a third press.
 pub(crate) fn spelled(
     text: &str,
     descriptions: bool,
@@ -276,17 +279,19 @@ pub(crate) fn spelled(
     verbatim_text::graphemes(text)
         .into_iter()
         .map(|range| {
-            let character = &text[range];
+            // Composed first, so a capital or a letter written with a
+            // combining accent is found as the precomposed one is.
+            let character = verbatim_text::composed(&text[range]).into_owned();
             let content = if descriptions {
-                SegmentContent::CharacterDescription(character.to_owned())
+                SegmentContent::CharacterDescription(character)
             } else if character == " " {
                 SegmentContent::Message(Message::Space)
-            } else if is_single_uppercase(character) {
-                SegmentContent::SpelledCapital(character.to_owned())
+            } else if verbatim_text::is_capital(&character) {
+                SegmentContent::SpelledCapital(character)
             } else if character.chars().all(char::is_alphanumeric) {
-                SegmentContent::Text(character.to_owned())
+                SegmentContent::Text(character)
             } else {
-                SegmentContent::Character(character.to_owned())
+                SegmentContent::Character(character)
             };
             in_language(content, language)
         })
@@ -517,14 +522,6 @@ pub(crate) fn formatted_segments(
     Some(segments)
 }
 
-/// Whether `text` is one uppercase letter.
-fn is_single_uppercase(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_uppercase() && chars.next().is_none())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +626,27 @@ mod tests {
                 "\u{1F469}\u{200D}\u{1F4BB}".into()
             ))]
         );
+    }
+
+    #[test]
+    fn a_decomposed_capital_is_spelled_composed() {
+        // E with a combining acute accent is the capital É.
+        assert_eq!(
+            spelled("E\u{301}", false, None),
+            vec![UtteranceSegment::new(SegmentContent::SpelledCapital(
+                "\u{C9}".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn a_zero_width_space_separates_words_and_reads_as_blank() {
+        // Khmer "ka" and "kha" with a zero-width space between them, as
+        // Khmer marks its word breaks.
+        assert_eq!(words("ក\u{200B}ខ", None), vec![0..3, 6..9]);
+        assert!(is_blank("\u{200B}"));
+        assert!(is_blank(" \u{FEFF}\t"));
+        assert!(!is_blank("\u{200B}a"));
     }
 
     #[test]

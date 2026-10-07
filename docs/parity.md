@@ -836,7 +836,14 @@ verified.
   within one synthesis, as SSML prosody written as NVDA's drivers write
   it, so a capital brings no pause; a synthesizer that cannot is given
   the change as a pitch setting between separate synthesis calls, which
-  can leave a short pause.
+  can leave a short pause. Since 2026-10-08 a character is composed (NFC)
+  before its case is judged and before the table is looked up, so "E"
+  written with a combining acute accent is spelled as the capital "É",
+  and a capital is a character with some uppercase letter and no
+  lowercase one, so a capital with accents that have no precomposed form
+  is still raised. A capital's description is its small letter's by the
+  text's language, so Turkish İ is described as i, and the table names
+  the ideographic space (U+3000), since 2026-10-08.
 - Toggle key announcements ("caps lock on", "num lock off", "scroll lock
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:
@@ -913,9 +920,11 @@ verified.
   Page Down), the selection's start and end (Verbatim+Alt+Home and End),
   and the review cursor's and caret's locations ("Positioned at x, y") are
   new. An object with no text interface is reviewed by its value or name,
-  NVDA's fallback, through the M3 flat walk, whose start and end of line
-  still speak the line rather than the character there (**different**,
-  a follow-up).
+  NVDA's fallback, through the M3 flat walk, which since 2026-10-08 walks
+  the same grapheme clusters and words as text with a text pattern (it had
+  walked code points and white space, so a Hindi vowel sign stopped alone
+  and a Thai name was one word); its start and end of line still speak the
+  line rather than the character there (**different**, a follow-up).
 - Review cursor columns. NVDA moves the review cursor to the start of the
   next or previous line. Verbatim: **different, deliberately** (decided
   2026-10-06, `phase6-design.md`, M4 item 5): moving to another line,
@@ -1275,7 +1284,16 @@ verified.
   sentence running across lines. Both eSpeak NG and OneCore speak such a
   sentence in one synthesis call, the mark inside it, as NVDA's eSpeak NG
   driver does; with eSpeak NG the audio is the unmarked sentence's, sample
-  for sample.
+  for sample. **Different, deliberately, since 2026-10-08:** NVDA's
+  sentence ends are only the full stop, exclamation mark, and question
+  mark, so a line of Chinese, Japanese, Hindi, Arabic, Urdu, Armenian, or
+  Amharic never splits. Verbatim also ends a sentence at the Chinese and
+  Japanese full-width marks (。！？, with no space needed after them), the
+  Devanagari danda and double danda, the Arabic question mark, the Urdu
+  full stop, the Armenian full stop, and the Ethiopic full stop and
+  question mark, and also takes guillemets either way round, German
+  quotation marks („ and “), corner brackets, and the full-width
+  parenthesis as the one closing character.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.
@@ -1458,7 +1476,12 @@ verified.
   Core since 2026-10-06**: "Speak typed characters" (only in edit controls, by default)
   and "Speak typed words" (off), each off, only in edit controls, or
   always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
-  character that is not a letter or digit ends it, before that character;
+  character that is not a letter, mark, or number by its general category
+  ends it, before that character (matched since 2026-10-08, so a virama or
+  a Thai tone mark continues the word, as in NVDA; before then any mark
+  ended it), and the zero-width non-joiner and joiner also continue it,
+  which NVDA's rule does not (**different**, deliberately: Persian and
+  Indic words are typed with them);
   a protected field echoes only the protected character ("star") and no
   words; typing into a terminal waits until the terminal's text changes
   unless "Speak passwords" is on, so a password prompt speaks nothing, and
@@ -1472,6 +1495,11 @@ verified.
   needs a decision — NVDA's implementation is injection-dependent).
   **Different:** with an input method's layout active, text committed from
   a composition is not echoed; NVDA echoes it from inside the application.
+  The same holds since 2026-10-08 for a keyboard text service outside
+  Chinese, Japanese, and Korean (Vietnamese Telex and VNI, the Indic
+  Phonetic keyboards), found by the active keyboard profile: Verbatim
+  stays silent rather than echoing the raw keys, until composed echo
+  arrives with the injection helper (M6).
 - Mouse tracking (text-unit speech, audio coordinates, injection
   filtering) and touch interaction. NVDA:
   [Mouse and touch](nvda/mouse-and-touch.md). Verbatim: **not yet**
@@ -1488,7 +1516,10 @@ verified.
   protocol") is **matched since 2026-10-06** for UIA text and the Win32
   edit and rich edit controls (the `notepad_editing` and
   `notepad_review_cursor` scenarios); an MSAA object that is neither has
-  no text. Caret keys pass
+  no text. A rich edit window that is not Unicode has its text decoded
+  by what its buffer holds, UTF-16 or ANSI, as NVDA decodes it ("Rich
+  edit text" in [Editable text and terminals](nvda/editable-text-and-terminals.md)),
+  since 2026-10-08; it had been decoded by the window's flag. Caret keys pass
   to the application and Core asks the outpost to wait for evidence (a
   caret event, the caret leaving where Core knew it, the text at the caret
   changing for Delete, or the selection changing), up to 100 milliseconds,
@@ -1603,9 +1634,34 @@ verified.
   [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched
   since 2026-10-06** in `verbatim-text` (grapheme clusters, Unicode's word
   rules with dictionaries, jieba for Chinese, a run of spaces and tabs as
-  one segment), used by the review cursor over text and by spelling; where
+  one segment), used by the review cursor over text and by spelling; a
+  zero-width space or zero-width no-break space counts as white space, not
+  as a word, and text of nothing else reads as blank (since 2026-10-08);
+  Han outside the Basic Multilingual Plane counts as Chinese for choosing
+  jieba, and the text's language, when the provider gives one, tailors
+  Unicode's word rules where ICU has a tailoring (Finnish and Swedish
+  "EU:n" is one word), since 2026-10-08; Japanese written only in kanji
+  with no language given is segmented as Chinese, as NVDA's automatic
+  choice does;
+  where
   the application moves the caret by word, the provider's word is spoken.
-  The paragraph-style setting is **not yet**.
+  A plain Win32 edit control's word, which the outpost finds itself, is
+  **matched since 2026-10-08**: the line segmented by the same rules, each
+  word with the white space after it, null characters and no-break spaces
+  read as spaces, and a carriage return or line feed a word of its own (it
+  had been a run of characters other than white space, so Thai or Chinese
+  in such a control was one word). The paragraph-style setting is
+  **not yet**.
+- Direction marks in names and values. NVDA removes the left-to-right
+  and right-to-left marks from list view items, File Explorer's values,
+  and the clock ("Direction marks in names and values" in
+  [NVDAObjects](nvda/object-model.md)). Verbatim: **different, deliberately,
+  since 2026-10-08**: the outposts remove them, and the embeddings,
+  overrides, and isolates with them, from every name, value, and
+  description they read, through UIA and MSAA alike, so a date reads the
+  same in any application. In text read by character, each is named in
+  the character table: NVDA's two names, and the Unicode names for the
+  others.
 - Line breaks. NVDA speaks carriage returns and line feeds inside text as
   spaces ("Line breaks in spoken text" in [Speech](nvda/speech.md)).
   Verbatim: **matched since 2026-10-06**, for every kind of line break, at
