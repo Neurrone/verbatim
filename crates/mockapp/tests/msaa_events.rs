@@ -19,7 +19,7 @@ use verbatim_core::SrState;
 use verbatim_model::{
     Backend, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent, State, TraceId,
 };
-use verbatim_outpost::protocol::OutpostToSupervisor;
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 
 use common::outpost::{OutpostUnderTest, Reported};
 
@@ -209,8 +209,47 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
     app.quit();
 }
 
+/// A tooltip window's show event (which the listener forwards only from
+/// `tooltips_class32` windows) is spoken as NVDA's notification behavior
+/// speaks a help balloon, which NVDA reports by default; an ordinary
+/// tooltip is not, as NVDA does not report tooltips by default.
+fn a_help_balloon_shown_is_spoken() {
+    /// mockapp's scripted help balloon and tooltip, by their index in its
+    /// tree.
+    const BALLOON: usize = 5;
+    const TIP: usize = 6;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-help-balloon");
+    let app = common::spawn("tree_view.json", "msaa", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let outpost = OutpostUnderTest::new(app.pid());
+    let show = |index: usize| DeliveredFact::Show {
+        hwnd,
+        id_object: i32::try_from(index + 1).expect("a small index"),
+        id_child: 0,
+    };
+
+    outpost.deliver(show(TIP));
+    outpost.settled();
+    outpost.deliver(show(BALLOON));
+    let event = next_event(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken(&mut SrState::new(), event),
+        [vec![
+            SegmentContent::Label("Updates are ready".to_owned()),
+            SegmentContent::Role(verbatim_model::Role::HelpBalloon)
+        ]]
+    );
+    app.quit();
+}
+
 fn main() {
     harness::run(&[
+        (
+            "a_help_balloon_shown_is_spoken",
+            a_help_balloon_shown_is_spoken,
+        ),
         (
             "a_progress_bar_off_the_focus_indicates_its_percentage",
             a_progress_bar_off_the_focus_indicates_its_percentage,

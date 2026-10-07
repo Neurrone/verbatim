@@ -1493,6 +1493,11 @@ impl Worker<'_> {
                 id_object,
                 id_child,
             } => self.alert(hwnd, id_object, id_child, trace, observed_at_ms),
+            DeliveredFact::Show {
+                hwnd,
+                id_object,
+                id_child,
+            } => self.tooltip_shown(hwnd, id_object, id_child, trace, observed_at_ms),
             // Menu openings are planned separately; one reaching here is
             // handled the same way.
             menu @ (DeliveredFact::MenuPopup { .. } | DeliveredFact::UiaMenuOpened { .. }) => {
@@ -1504,6 +1509,36 @@ impl Worker<'_> {
                 });
             }
         }
+    }
+
+    /// A tooltip window shown. A help balloon is reported as an alert, for
+    /// the reducer to speak queued from any application, as NVDA's
+    /// notification behavior speaks a help balloon, which NVDA reports by
+    /// default; an ordinary tooltip is not, as NVDA does not report
+    /// tooltips by default.
+    fn tooltip_shown(
+        &mut self,
+        hwnd: isize,
+        id_object: i32,
+        id_child: i32,
+        trace: TraceId,
+        observed_at_ms: u64,
+    ) {
+        let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
+        else {
+            return;
+        };
+        if object.role() != Role::HelpBalloon {
+            return;
+        }
+        let node = object.read(&self.context.msaa_registry, Purpose::Announce);
+        self.emit(
+            trace,
+            observed_at_ms,
+            Backend::Msaa,
+            Some(hwnd),
+            NormalizedEvent::Alert { node },
+        );
     }
 
     /// An MSAA alert. Only a toast (its window's parent has the class

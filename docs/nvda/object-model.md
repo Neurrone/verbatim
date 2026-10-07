@@ -144,7 +144,14 @@ The inventory, because parity work will meet every one:
   in report view, and friends).
 - `ToolTip` and `Notification` — tooltip and toast/balloon
   reporting, gated by the object presentation settings
-  ([Event handling](events.md)).
+  ([Event handling](events.md)). A standard tooltip window
+  (`tooltips_class32`) raises a show event as it appears, which NVDA
+  accepts from any application, for a client or custom object. Its
+  object is a `ToolTip` when its role is tool tip, spoken only when
+  "report tooltips" is on, which it is not by default, and a
+  `Notification` when its role is help balloon, spoken, as a focus is,
+  when "report help balloons" is on, which it is by default. A
+  notification's alert event is spoken the same way.
 - `FocusableUnfocusableContainer` — the workaround mixin for
   containers that take focus but shouldn't present it.
 

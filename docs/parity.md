@@ -456,9 +456,19 @@ verified.
   application, which differs in Settings, where ApplicationFrameHost
   holds attention and the focus is in SystemSettings). Accepted background events
   never move focus or the navigator and are spoken queued.
-  **matched (unverified)** for these; the tooltip and notification-bar
-  windows, background progress bars, and a per-source cap on
-  background events are **not yet**.
+  **matched (unverified)** for these. A help balloon, shown in a
+  standard tooltip window (`tooltips_class32`), is spoken from any
+  application as NVDA speaks it by default (the listener hooks the show
+  event desktop-wide and forwards only a tooltip window's), and an
+  ordinary tooltip is not, as NVDA's tooltip reporting is off by default:
+  **matched since 2026-10-07** (`msaa_events` mockapp test, scripted;
+  the end-to-end scenario is still to be written). The setting that
+  turns tooltips on is **not yet**. Background progress bars and a
+  per-source cap on background events are **not yet**. The other window
+  classes NVDA accepts show events from belong to one application or
+  input method (Internet Explorer's notification bar, a chat
+  application's tray alert, IME candidate windows) and are deferred with
+  application support.
 - Recovery after an outpost is replaced. NVDA has no equivalent: it
   is one process, and after an application crash it re-queries the
   real focus ([Focus and the navigator](nvda/focus-and-navigator.md)).

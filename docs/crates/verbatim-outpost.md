@@ -233,7 +233,9 @@ Public API:
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
-  menu-popup, menu and switcher end, and alert), and desktop-wide UIA
+  menu-popup, menu and switcher end, alert, and a tooltip window shown,
+  forwarded as `DeliveredFact::Show`, whose help balloon the worker
+  reports as an alert), and desktop-wide UIA
   subscriptions for the events NVDA registers globally on Windows 11: an
   element selected, a menu opened, and notifications, registered together
   as one event handler group on the desktop's root element, and only then

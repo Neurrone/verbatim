@@ -27,7 +27,10 @@ Public API:
   (`EVENT_SYSTEM_MENUPOPUPSTART`), and the end of a menu or of the Alt+Tab
   switcher (`WinEventKind::MenuEnd` and `WinEventKind::SwitchEnd`), which
   is global because focus returns to whichever application is then in
-  front. A popup menu opening announces the menu
+  front, and a tooltip window shown (`WinEventKind::Show`:
+  `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
+  custom object, every other show event dropped at the hook, as NVDA
+  accepts no others from a standard control). A popup menu opening announces the menu
   itself the moment it opens, NVDA's menu-start behavior — the app outpost
   emits it as focus on the menu's client object with no ancestry, the
   identical node its foreground-announce fallback produces for a menu-class
