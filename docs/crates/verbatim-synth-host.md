@@ -91,5 +91,10 @@ rate does; a cancelled utterance ending within 20 ms of the cancel,
 without anything relayed after it, and the same host process speaking
 the next utterance; an utterance cancelled before any audio relaying
 nothing and keeping the host; eSpeak NG speaking from a folder whose
-name the ANSI code page cannot represent; and a host that died while
-idle, and has exited, being replaced before the next utterance.
+name the ANSI code page cannot represent; a host that died while
+idle, and has exited, being replaced before the next utterance; and an
+utterance sent to a host that dies before relaying any of it being sent
+once more, to a new host, and spoken exactly as a new host's first
+utterance (the host's threads are suspended, so the request reaches a
+live host that answers nothing, and the host is ended while the driver
+waits for its first answer, from the sink's cancellation check).

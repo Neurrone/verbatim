@@ -23,8 +23,12 @@ use verbatim_speech::{
 };
 use verbatim_synth_hosted::HostedSynth;
 use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+    OpenProcess, OpenThread, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, SuspendThread,
+    THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
 };
 
 /// The longest a cancelled utterance may take to end, from the sink asking
@@ -350,6 +354,97 @@ fn a_host_that_died_while_idle_is_replaced_before_the_next_utterance() {
     );
     let second_pid = synth.process_id().expect("a new host is running");
     assert_ne!(second_pid, first_pid);
+}
+
+/// Suspends every thread of process `pid`: the process stays alive, so a
+/// request reaches it, but it answers nothing.
+fn suspend(pid: u32) {
+    // SAFETY: a snapshot of the system's threads; the handle is closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
+        .expect("takes a snapshot of the threads");
+    let mut entry = THREADENTRY32 {
+        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).expect("a small struct"),
+        ..THREADENTRY32::default()
+    };
+    let mut suspended = 0;
+    // SAFETY: the snapshot just taken, and an entry whose size is set.
+    let mut more = unsafe { Thread32First(snapshot, &raw mut entry) }.is_ok();
+    while more {
+        if entry.th32OwnerProcessID == pid {
+            // SAFETY: opening a thread by id; the handle is closed below.
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) }
+                .expect("opens the host's thread");
+            // SAFETY: the handle just opened, with suspend access.
+            let previous = unsafe { SuspendThread(thread) };
+            assert_ne!(previous, u32::MAX, "suspends the host's thread");
+            suspended += 1;
+            // SAFETY: the handle opened above, closed once.
+            unsafe { CloseHandle(thread) }.expect("closes the thread handle");
+        }
+        // SAFETY: as for `Thread32First`.
+        more = unsafe { Thread32Next(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the snapshot handle, closed once.
+    unsafe { CloseHandle(snapshot) }.expect("closes the snapshot");
+    assert!(suspended > 0, "the host has threads to suspend");
+}
+
+/// A sink that ends `host` the first time the driver, waiting for the
+/// host's first answer, asks whether the utterance was cancelled, and
+/// collects everything relayed.
+struct EndsTheHost {
+    host: u32,
+    ended: Cell<bool>,
+    received: Vec<Received>,
+}
+
+impl SynthSink for EndsTheHost {
+    fn push_pcm(&mut self, _format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
+        self.received.push(Received::Audio(samples.to_vec()));
+        ControlFlow::Continue(())
+    }
+
+    fn index_reached(&mut self, mark: IndexMark) {
+        self.received.push(Received::Mark(mark));
+    }
+
+    fn is_cancelled(&self) -> bool {
+        if !self.ended.replace(true) {
+            kill(self.host);
+        }
+        false
+    }
+}
+
+/// A request that reaches a host as it dies, before anything of the
+/// utterance was relayed, is sent once more, to a new host, and the
+/// utterance is spoken whole. The host is alive and has sent nothing when
+/// the request goes out, so the request reaches it; it is suspended, so it
+/// answers nothing, and it is ended while the driver waits for its first
+/// answer. The utterance is then exactly a new host's first utterance of
+/// the same text.
+#[test]
+fn an_utterance_sent_to_a_dying_host_is_sent_again_to_a_new_one() {
+    let espeak =
+        || HostedSynth::start(host_exe(), SynthId::new("espeak")).expect("the host starts");
+    let mut synth = espeak();
+    let first_pid = synth.process_id().expect("a host is running");
+    suspend(first_pid);
+    let mut sink = EndsTheHost {
+        host: first_pid,
+        ended: Cell::new(false),
+        received: Vec::new(),
+    };
+    synth
+        .speak(&sequence(1, text("hello")), &mut sink)
+        .expect("the utterance is spoken");
+    assert!(sink.ended.get(), "the host was ended during the request");
+    let second_pid = synth.process_id().expect("a new host is running");
+    assert_ne!(second_pid, first_pid);
+    assert!(
+        samples(&sink.received) == samples(&spoken(&mut espeak(), 1, text("hello"))),
+        "the utterance is a new host's first utterance of the same text"
+    );
 }
 
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
