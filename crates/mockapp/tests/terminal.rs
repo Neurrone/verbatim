@@ -272,17 +272,19 @@ fn a_fingerprint_far_up_is_found_and_costs_exactly() {
         assert_eq!(tail.found, Found::Moved(300));
         costs.push((verbatim_uia::calls::take(), common::read_hits(hwnd)));
     }
+    // The lines after the fingerprint, more than are read, are read from
+    // their start too (the first of a flood).
     let hits: Hits = &[
-        ("Clone", 19),
+        ("Clone", 21),
         ("CompareEndpoints", 4),
         ("ExpandToEnclosingUnit", 9),
         ("FindText", 1),
-        ("GetText", 8),
-        ("Move", 7),
+        ("GetText", 9),
+        ("Move", 9),
         ("MoveEndpointByUnit", 1),
-        ("MoveEndpointByRange", 9),
+        ("MoveEndpointByRange", 11),
     ];
-    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(58), hits)];
+    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(65), hits)];
     for ((calls, hits), (expected_calls, expected_hits)) in costs.iter().zip(expected) {
         assert_eq!(
             (*calls, hits.as_slice()),
@@ -534,7 +536,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
             ("baseline", uia_calls(1), REMOTE_BASELINE_HITS),
             ("typed", uia_calls(1), TYPED_HITS),
             ("output line", uia_calls(1), LINE_HITS),
-            ("overflow", uia_calls(1), LINE_HITS),
+            ("overflow", uia_calls(1), OVERFLOW_HITS),
             ("redraw", uia_calls(2), REMOTE_REDRAW_HITS),
             ("cleared", uia_calls(2), REMOTE_CLEARED_HITS),
         ]
@@ -543,7 +545,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
             ("baseline", uia_calls(31), BASELINE_HITS),
             ("typed", uia_calls(27), TYPED_HITS),
             ("output line", uia_calls(39), LINE_HITS),
-            ("overflow", uia_calls(39), LINE_HITS),
+            ("overflow", uia_calls(46), OVERFLOW_HITS),
             ("redraw", uia_calls(58), REDRAW_HITS),
             ("cleared", uia_calls(61), CLEARED_HITS),
         ]
@@ -615,6 +617,18 @@ const LINE_HITS: &[(&str, u32)] = &[
     ("GetText", 6),
     ("Move", 5),
     ("MoveEndpointByRange", 7),
+];
+
+/// The provider hits of a read that found more new lines than it reads: a
+/// line's read, and the read of the first of them too, from the anchor's
+/// line on.
+const OVERFLOW_HITS: &[(&str, u32)] = &[
+    ("Clone", 15),
+    ("CompareEndpoints", 2),
+    ("ExpandToEnclosingUnit", 6),
+    ("GetText", 7),
+    ("Move", 7),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// The provider hits of a read that found nothing new after a skip,

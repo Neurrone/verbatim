@@ -742,8 +742,9 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   the focus, the baseline (1 call, 2 before). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
   call per provider method: 31 for the baseline of a six-line text, 27 for
-  a grown prompt, 39 for an output line and a new prompt, 39 for more
-  lines than a read takes, 58 for a read that finds nothing new and reads
+  a grown prompt, 39 for an output line and a new prompt, 46 for more
+  lines than a read takes (39 before the first of them were read too, on
+  2026-10-07), 58 for a read that finds nothing new and reads
   afresh, and 61 for a cleared screen (34, 30, 43, 43, 64, and 67 before
   the text range audit of 2026-10-07, which reads a line's text from a
   copy expanded to its line without collapsing the copy first, since
@@ -862,9 +863,9 @@ made, about 4 in all, wherever the fingerprint is, where its walk took
 
 Against mockapp (`a_fingerprint_far_up_is_found_and_costs_exactly` in
 `crates/mockapp/tests/terminal.rs`), a fingerprint 300 lines up, which
-the bound of 256 missed, is found in 1 call remotely and 58 classically,
-with one `FindText` either way, and the provider calls of both are
-pinned.
+the bound of 256 missed, is found in 1 call remotely and 65 classically
+(58 before the first of the lines after it were read too), with one
+`FindText` either way, and the provider calls of both are pinned.
 
 In a console
 host whose scrollback is not yet full the text does not move beneath the
@@ -1131,7 +1132,9 @@ share of the limit in brackets:
   position with its lines in three languages, each line's then read; 647
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
-- A terminal's tail: 1,126 (11 percent) when its fingerprint is nowhere
+- A terminal's tail: 1,135 (11 percent) when its fingerprint is nowhere
   and the search checks its 64 matches (`SEARCH_MATCHES`), about 16 each;
-  99 for an anchor in place under new output. The count does not grow
-  with the scrollback or the lines read.
+  108 for an anchor in place under new output, 9 of them deciding whether
+  to read the first of the new lines too, when more follow than the last
+  lines read (the start of a flood). The count does not grow with the
+  scrollback or the lines read.
