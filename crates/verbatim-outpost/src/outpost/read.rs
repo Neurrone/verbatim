@@ -168,7 +168,8 @@ pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
 /// window whose accessible object cannot be read (a freshly created msinfo32
 /// window, found live) is still reported, from local window data, and a
 /// window whose accessible name is still empty takes its window text: NVDA
-/// names a top-level window by its text.
+/// names a top-level window by its text. A window read through MSAA is
+/// named by its window text whenever it has one ([`top_level_name`]).
 pub(super) fn foreground_window(
     context: &Context,
     client: &mut Client,
@@ -176,6 +177,9 @@ pub(super) fn foreground_window(
 ) -> (Backend, NodeSnapshot) {
     let (backend, mut node) = window_snapshot(context, client, hwnd)
         .unwrap_or_else(|| (Backend::Msaa, local_window_snapshot(context, hwnd)));
+    if backend == Backend::Msaa {
+        node.name = top_level_name(hwnd, OBJID_CLIENT.0, CHILDID_SELF, node.name);
+    }
     if node
         .name
         .as_deref()
@@ -184,6 +188,27 @@ pub(super) fn foreground_window(
         node.name = window_text(hwnd);
     }
     (backend, node)
+}
+
+/// The name of the MSAA object `(hwnd, id_object, id_child)`, whose
+/// accessible name is `name`: a top-level window's client area is named by
+/// the window's text when it has text, whatever its accessible name says.
+/// This differs from NVDA, which names it by its accessible name
+/// (`docs/parity.md`, "A top-level window's name"): Windows 11 Notepad
+/// resets its client area's accessible name to "Notepad" for a moment each
+/// time its window is activated, while its window text keeps naming the
+/// document, so the name a screen reader reads as the window takes the
+/// foreground would depend on timing. Every other object keeps `name`.
+pub(super) fn top_level_name(
+    hwnd: isize,
+    id_object: i32,
+    id_child: i32,
+    name: Option<String>,
+) -> Option<String> {
+    if id_object != OBJID_CLIENT.0 || id_child != CHILDID_SELF || top_level_of(hwnd) != hwnd {
+        return name;
+    }
+    window_text(hwnd).or(name)
 }
 
 /// A window's own snapshot, through its backend. A popup menu window (the

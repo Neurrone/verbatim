@@ -72,6 +72,23 @@ verified.
 
 ## Focus and announcements
 
+- A top-level window's name. NVDA names a window read through MSAA by
+  its client area's accessible name (`IAccessible._get_name`, `accName`),
+  for its foreground announcement and for a name change. Verbatim:
+  **deliberately different since 2026-10-07**, decided by the owner: a
+  top-level window's client area is named by the window's text whenever
+  the window has text. Windows 11 Notepad resets its client area's
+  accessible name to "Notepad" for a moment each time its window is
+  activated, then names the document again with a name change, while
+  its window text names the document throughout; read by the accessible
+  name, whether Notepad's activation is announced as "Notepad" and then
+  the document, or the document alone, depends on timing, in NVDA too.
+  By the window text it is always the document, and the name change that
+  only restores the accessible name says nothing. A real rename, the
+  window's text changing, is announced as NVDA announces a name change
+  on the focus. Pinned by mockapp's `window_names.rs` and the Notepad
+  end-to-end scenarios.
+
 - Focus announcement content and property order (name, role, value,
   states in fixed order, description, shortcut, position, level).
   NVDA: `speakObject` ordering ([Speech](nvda/speech.md)). Verbatim:
