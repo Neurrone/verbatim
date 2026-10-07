@@ -280,13 +280,18 @@ pub fn after_fresh(
     let old = &memory.screen;
     let new = &remembered.screen;
     let blank = |lines: &[String]| lines.iter().all(|line| line.trim().is_empty());
-    // The old screen's end reappears at the new one's start, its last line
-    // as it was or grown since (the line output was still being written
-    // to when it was read). The lines that reappear as they were must not
-    // all be blank, or a blank last line, which any line starts with, would
-    // match anywhere.
-    let reappears = |m: usize| {
-        let (end, start) = (&old[old.len() - m..], &new[..m]);
+    // The old screen's end reappears in the new one, ending at `at`, its
+    // last line as it was or grown since (the line output was still being
+    // written to when it was read): as much of the old screen as fits
+    // above `at`. When both screens hold as many lines, it reappears at the
+    // new one's start once the text scrolled; an old screen of fewer lines
+    // (an unsettled read remembers only the lines it read) reappears
+    // further down. The lines that reappear as they were must not all be
+    // blank, or a blank last line, which any line starts with, would match
+    // anywhere.
+    let reappears = |at: usize| {
+        let m = old.len().min(at);
+        let (end, start) = (&old[old.len() - m..], &new[at - m..at]);
         let (same, grown) = if end[m - 1] == start[m - 1] {
             (m, true)
         } else {
@@ -296,11 +301,15 @@ pub fn after_fresh(
     };
     let output = if old == new {
         TerminalOutput::default()
-    } else if let Some(overlap) = (1..=old.len().min(new.len())).rev().find(|&m| reappears(m)) {
-        // It scrolled: what the last line gained, and what follows, is new.
+    } else if let Some(at) = (!old.is_empty())
+        .then(|| (1..=new.len()).rev().find(|&at| reappears(at)))
+        .flatten()
+    {
+        // What the last line gained, and what follows, is new. The latest
+        // place it reappears is taken, so nothing read before is new again.
         TerminalOutput {
-            changed: line_change(&old[old.len() - 1], &new[overlap - 1]),
-            lines: new[overlap..].to_vec(),
+            changed: line_change(&old[old.len() - 1], &new[at - 1]),
+            lines: new[at..].to_vec(),
             ..TerminalOutput::default()
         }
     } else {
@@ -338,13 +347,21 @@ fn set_aside(tail: &TailText, memory: &Memory, wanted: usize) -> (TerminalOutput
     if !tail.scrolled {
         return (TerminalOutput::default(), memory.clone());
     }
+    let skipped = TerminalOutput {
+        skipped: Some(Skipped::Uncounted),
+        ..TerminalOutput::default()
+    };
+    // A read that read no lines (none followed the line where the
+    // fingerprint was found, which is the last line, the next anchor) has
+    // no last line of its own to remember: the fingerprint stays, and it
+    // describes that line still.
+    if tail.rows == 0 {
+        return (skipped, memory.clone());
+    }
     let mut screen: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
     keep_last(&mut screen, wanted);
     (
-        TerminalOutput {
-            skipped: Some(Skipped::Uncounted),
-            ..TerminalOutput::default()
-        },
+        skipped,
         Memory {
             previous: tail.before_last.clone(),
             line: tail.last_line.clone(),
@@ -403,7 +420,12 @@ pub fn read_new<S: TailSource>(
         && let Some(memory) = memory
         && let Some(tail) = source.anchored(memory, wanted)?
     {
-        if !tail.settled {
+        // A read that did not find the fingerprint has nowhere to start
+        // from, settled or not: the terminal is read afresh. Set aside, it
+        // would count from the anchor, which a full scrollback keeps on
+        // its last row, and so read no lines to take the next fingerprint
+        // from.
+        if !tail.settled && tail.found != Found::NotFound {
             return Ok(set_aside(&tail, memory, lines));
         }
         if let Next::Output(output, remembered) = after_anchor(memory, &tail, lines) {
@@ -476,7 +498,35 @@ struct UiaTail<'a> {
 
 impl UiaTail<'_> {
     fn run(&mut self, query: &TailQuery<'_>) -> Result<TailText, RopsError> {
-        let (tail, path) = terminal_tail(self.uia, query, self.remote)?;
+        let started = std::time::Instant::now();
+        let calls_before = verbatim_uia::calls::peek().uia;
+        let result = terminal_tail(self.uia, query, self.remote);
+        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let calls = verbatim_uia::calls::peek().uia.saturating_sub(calls_before);
+        let start = match query.start {
+            TailStart::Anchor { .. } => "anchor",
+            TailStart::Document(_) | TailStart::Text { .. } => "fresh",
+        };
+        let (tail, path) = match result {
+            Ok(answer) => answer,
+            Err(error) => {
+                tracing::debug!(start, elapsed_us, calls, %error, "terminal tail read failed");
+                return Err(error);
+            }
+        };
+        // What each read costs, which a flood repeats back to back
+        // (`docs/performance.md`, "A terminal flood").
+        tracing::debug!(
+            start,
+            path = path.name(),
+            elapsed_us,
+            calls,
+            found = ?tail.found,
+            count = tail.count,
+            settled = tail.settled,
+            scrolled = tail.scrolled,
+            "terminal tail timing"
+        );
         self.paths.push(path);
         let text = TailText::from(&tail);
         if !text.settled {
@@ -506,6 +556,11 @@ impl TailSource for UiaTail<'_> {
         let Some(anchor) = self.anchor.clone() else {
             return Ok(None);
         };
+        tracing::debug!(
+            line = ?memory.line,
+            previous = ?memory.previous,
+            "terminal fingerprint sought"
+        );
         let query = TailQuery {
             start: TailStart::Anchor {
                 range: &anchor,

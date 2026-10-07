@@ -166,6 +166,8 @@ pub(crate) enum Method {
     RangeCompareEndpoints,
     /// `ITextRangeProvider::ExpandToEnclosingUnit`.
     RangeExpandToEnclosingUnit,
+    /// `ITextRangeProvider::FindText`.
+    RangeFindText,
     /// `ITextRangeProvider::GetAttributeValue`.
     RangeGetAttributeValue,
     /// `ITextRangeProvider::GetBoundingRectangles`.
@@ -191,7 +193,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 74] = [
+    pub(crate) const ALL: [Method; 75] = [
         Method::CommandApplied,
         Method::GetObject,
         Method::ProviderOptions,
@@ -259,6 +261,7 @@ impl Method {
         Method::RangeCompare,
         Method::RangeCompareEndpoints,
         Method::RangeExpandToEnclosingUnit,
+        Method::RangeFindText,
         Method::RangeGetAttributeValue,
         Method::RangeGetBoundingRectangles,
         Method::RangeGetText,
@@ -342,6 +345,7 @@ impl Method {
             Method::RangeCompare => "Compare",
             Method::RangeCompareEndpoints => "CompareEndpoints",
             Method::RangeExpandToEnclosingUnit => "ExpandToEnclosingUnit",
+            Method::RangeFindText => "FindText",
             Method::RangeGetAttributeValue => "GetAttributeValue",
             Method::RangeGetBoundingRectangles => "GetBoundingRectangles",
             Method::RangeGetText => "GetText",

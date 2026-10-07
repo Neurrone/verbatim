@@ -127,7 +127,10 @@ its crate-internal modules are the reviewable surface:
   and a node with `italic_fails` set fails its `IsItalic` read with
   `E_FAIL`, as a provider that fails an attribute read. A range handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
-  offsets are read from its implementation.
+  offsets are read from its implementation. `FindText` matches the text
+  within the range exactly (or ignoring ASCII case), the last match when
+  searching backward, and returns no range when there is none;
+  `FindAttribute` is not implemented.
 - `edit` — the MSAA backend's real edit control: created inside the host
   window, found by class, and selected with `EM_SETSEL` on the window
   thread.

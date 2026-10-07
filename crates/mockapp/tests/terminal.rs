@@ -149,6 +149,58 @@ fn remote_and_classic_terminal_tails_agree() {
     app.send("quit");
 }
 
+/// The classic search finds the fingerprint by its text (`FindText`), the
+/// remote program line by line; both must find the same line, the same
+/// distance up, past lines holding the line before as part of their text
+/// or starting with it.
+fn a_fingerprint_found_by_text_is_the_one_found_line_by_line() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-find");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (_, pattern) = terminal_text(&uia, hwnd);
+
+    // The anchor on "last", under "ready>".
+    common::apply(
+        &mut app,
+        hwnd,
+        r"set-text term aaaaaaaaa\naaaaaaaa\naaaaaaaa\nready>\nlast",
+    );
+    let document =
+        verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the document range");
+    let fresh = TailQuery {
+        start: TailStart::Document(&document),
+        lines_wanted: WANTED,
+        search_lines: SEARCH_LINES,
+    };
+    let (tail, last) = both(&uia, &fresh);
+    assert_eq!(tail.last_line, "last");
+
+    // The first line discarded and lines written: "ready>" now also ends
+    // one line and starts two others above where the anchor's range lies.
+    common::apply(
+        &mut app,
+        hwnd,
+        r"set-text term ready>\nlast\nx ready>\nready>x\nready> extra\nmore\nmore2",
+    );
+    let (tail, _) = both(
+        &uia,
+        &anchored(
+            &last, "last", "ready>
+",
+        ),
+    );
+    assert_eq!(tail.found, Found::Moved(4));
+    assert_eq!(
+        tail.found_line,
+        "last
+"
+    );
+    assert_eq!(tail.count, 5);
+    app.send("quit");
+}
+
 /// Calls by kind, in the order `CallCounts` lists them.
 fn uia_calls(uia: u32) -> CallCounts {
     CallCounts {
@@ -364,6 +416,10 @@ fn main() {
         (
             "remote_and_classic_terminal_tails_agree",
             remote_and_classic_terminal_tails_agree,
+        ),
+        (
+            "a_fingerprint_found_by_text_is_the_one_found_line_by_line",
+            a_fingerprint_found_by_text_is_the_one_found_line_by_line,
         ),
         (
             "terminal_reads_cost_exactly_remote",

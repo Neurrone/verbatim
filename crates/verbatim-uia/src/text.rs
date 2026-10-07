@@ -18,7 +18,7 @@ use windows::Win32::UI::Accessibility::{
     TextUnit_Paragraph, TextUnit_Word, UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID,
     UIA_TextPattern2Id, UIA_TextPatternId,
 };
-use windows::core::Interface;
+use windows::core::{BSTR, Interface};
 
 use verbatim_model::CallKind;
 
@@ -260,6 +260,19 @@ pub trait TextRangeExt {
         &self,
         attributes: &[UIA_TEXTATTRIBUTE_ID],
     ) -> windows::core::Result<Vec<VARIANT>>;
+
+    /// The sub-range of this range holding `text`, matched case
+    /// sensitively: the last such when `backward`, the first otherwise;
+    /// `None` when there is none.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails.
+    fn find_text(
+        &self,
+        text: &str,
+        backward: bool,
+    ) -> windows::core::Result<Option<IUIAutomationTextRange>>;
 }
 
 impl TextRangeExt for IUIAutomationTextRange {
@@ -374,6 +387,22 @@ impl TextRangeExt for IUIAutomationTextRange {
                 read => Ok(read.unwrap_or_default()),
             })
             .collect()
+    }
+
+    fn find_text(
+        &self,
+        text: &str,
+        backward: bool,
+    ) -> windows::core::Result<Option<IUIAutomationTextRange>> {
+        count(CallKind::Uia);
+        // SAFETY: as in `clone_range`; the string is owned for the call.
+        match unsafe { self.FindText(&BSTR::from(text), backward, false) } {
+            Ok(range) => Ok(Some(range)),
+            // The provider found nothing: a null range, which the `windows`
+            // crate reports as an error carrying no failure code.
+            Err(error) if error.code().is_ok() => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     fn culture(&self) -> windows::core::Result<Option<String>> {

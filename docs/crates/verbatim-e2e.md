@@ -53,7 +53,10 @@ Public API:
   the default, sets `VERBATIM_TEST_AUDIO=null`, so Verbatim plays through
   the silent real-time device; an audible run (`AUDIBLE_ENV`, which
   `cargo xtask vm test` always sets) omits that variable, so Verbatim
-  speaks through the real `WasapiDevice`. The two differ only in the
+  speaks through the real `WasapiDevice`. `RUST_LOG_ENV`
+  (`VERBATIM_E2E_RUST_LOG`), when set, is passed to Verbatim as
+  `RUST_LOG`, which its outposts inherit, so a run can log at debug what
+  it does not by default. The two differ only in the
   device: the same synthesizer speaks the same audio, and every utterance
   takes its real duration either way. Before launching Verbatim it starts
   the scenario's recording (see `recording` below) when recording is

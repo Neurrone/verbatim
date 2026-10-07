@@ -63,6 +63,10 @@ NVDA says, to decide what Verbatim should say.
   a cross-process call, cold and steady state, cancelled traces, the
   floor and the ratio, and for each operation and backend the minimum,
   current, and target call counts that CI asserts exactly.
+- [Text attributes](text-attributes.md) — the survey of every UIA text
+  attribute and annotation in Windows Terminal, the console host, and
+  Windows 11 Notepad: what each reports, whether it varies, and what
+  reading each costs, for choosing which attributes Verbatim fetches.
 - [The NVDA transcript](nvda-transcript.md) — the NVDA add-on and
   `cargo xtask nvda capture`, for recording what NVDA says in a scenario.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary, each term
