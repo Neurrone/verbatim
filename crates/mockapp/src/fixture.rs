@@ -353,7 +353,7 @@ fn role_from_fixture_str(name: &str) -> Option<Role> {
 
 /// Maps a fixture's snake-case state name to a [`State`]. `None` for any
 /// name outside the vocabulary a fixture author might use.
-fn state_from_fixture_str(name: &str) -> Option<State> {
+pub(crate) fn state_from_fixture_str(name: &str) -> Option<State> {
     Some(match name {
         "focused" => State::Focused,
         "focusable" => State::Focusable,

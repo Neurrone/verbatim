@@ -81,6 +81,10 @@ pub enum PropertyChange {
     /// decide what to announce (a check box toggling, a control becoming
     /// unavailable).
     States(StateSet),
+    /// The description changed (MSAA `EVENT_OBJECT_DESCRIPTIONCHANGE`),
+    /// carrying the new description; `None` also when the active theme does
+    /// not read descriptions.
+    Description(Option<String>),
 }
 
 /// An accessibility event, normalized by an outpost from either backend.

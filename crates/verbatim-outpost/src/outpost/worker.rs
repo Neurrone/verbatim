@@ -1140,13 +1140,7 @@ impl Worker<'_> {
             self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
             return;
         }
-        // A name, value, or state change is spoken only for the focus, as
-        // NVDA speaks it, so an object that is not the focus is not read:
-        // it is told from the focus by its identity first, without reading
-        // any of its properties.
-        let focus = self.context.tracking().focus;
-        let Some(focus) = focus.filter(|&focus| object.which_of(&[focus], registry).is_some())
-        else {
+        let Some(focus) = self.focus_if_spoken(kind, &object) else {
             return;
         };
         let node = object.read(registry, Purpose::Context);
@@ -1158,6 +1152,11 @@ impl Worker<'_> {
             WinEventKind::NameChange => NormalizedEvent::PropertyChanged {
                 node_id: node.id,
                 change: PropertyChange::Name(node.name),
+                child_count: None,
+            },
+            WinEventKind::DescriptionChange => NormalizedEvent::PropertyChanged {
+                node_id: node.id,
+                change: PropertyChange::Description(node.details.description),
                 child_count: None,
             },
             // An expanded Win32 tree view item's children are counted with
@@ -1187,6 +1186,31 @@ impl Worker<'_> {
             _ => return,
         };
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+    }
+
+    /// The focus's node, when a change of `kind` on `object` is spoken: a
+    /// name, description, or value change only for the focus, and a state
+    /// change for the focus or one of its ancestors, as NVDA speaks them.
+    /// Any other object is not read: it is told from those by its identity
+    /// first, without reading any of its properties.
+    fn focus_if_spoken(
+        &self,
+        kind: WinEventKind,
+        object: &verbatim_ia2::acquire::EventObject,
+    ) -> Option<NodeId> {
+        let (focus, mut candidates) = {
+            let tracking = self.context.tracking();
+            let ancestors: Vec<NodeId> = if kind == WinEventKind::StateChange {
+                tracking.chain.iter().map(|node| node.id).collect()
+            } else {
+                Vec::new()
+            };
+            (tracking.focus?, ancestors)
+        };
+        candidates.push(focus);
+        object
+            .which_of(&candidates, &self.context.msaa_registry)
+            .map(|_| focus)
     }
 
     /// A UIA event from this outpost's own subscriptions.

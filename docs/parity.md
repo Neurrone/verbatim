@@ -230,12 +230,20 @@ verified.
     reading column texts needs a cross-process read not yet written.
   - UIA read-only state from a text pattern's document range, which
     NVDA falls back to when `ValueIsReadOnly` is unsupported.
-  - Events NVDA handles that Verbatim does not subscribe to:
-    description changes (MSAA `EVENT_OBJECT_DESCRIPTIONCHANGE`, UIA
-    `HelpText`), UIA live region changes and system alerts, and UIA
-    elements added to or removed from a selection. NVDA also speaks
-    state changes on the focus's ancestors, where Verbatim speaks them
-    only on the focus.
+  - Events NVDA handles that Verbatim does not subscribe to: UIA
+    description changes (`HelpText`), UIA live region changes and system
+    alerts, and UIA elements added to or removed from a selection. MSAA
+    description changes (`EVENT_OBJECT_DESCRIPTIONCHANGE`) on the focus,
+    and state changes, a selection included, on the focus's ancestors:
+    **matched since 2026-10-07** (reducer tests and the `msaa_events`
+    mockapp test, an ancestor in a real tree view collapsed). An ancestor
+    is recognized by the address it was reported at or by its COM object,
+    so an event on a windowless ancestor reached through `accParent`, at
+    an address made up for it, is not recognized unless the application
+    hands out the same object each time; NVDA compares such objects by
+    their properties too. UIA delivers no ancestor's events to the
+    focus-following registration ("UIA event registration"), so a UIA
+    ancestor's state change is still not spoken.
   - Dialog text, which NVDA reads on entering a dialog: a message box's
     question, read after the dialog's title and role and before its
     focused button. **Matched since 2026-10-07** ("A dialog's own text" in

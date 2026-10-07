@@ -16,7 +16,8 @@ use verbatim_model::{Role, State, StateSet};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_VALUECHANGE,
+    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
+    EVENT_OBJECT_SELECTION, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_VALUECHANGE,
 };
 
 use crate::stdin::Command;
@@ -73,6 +74,18 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
             notify(hwnd, EVENT_OBJECT_SELECTION, index);
         }
+        Command::SetDescription(id, text) => {
+            let index = with_node(tree, &id, |node| {
+                node.description = (!text.is_empty()).then_some(text);
+            })
+            .ok_or_else(|| unknown(&id))?;
+            notify(hwnd, EVENT_OBJECT_DESCRIPTIONCHANGE, index);
+        }
+        Command::SetStates(id, states) => {
+            let index =
+                with_node(tree, &id, |node| node.states = states).ok_or_else(|| unknown(&id))?;
+            notify(hwnd, EVENT_OBJECT_STATECHANGE, index);
+        }
         // MSAA has no notification event; `notify` is a UIA-backend command
         // (see crate::stdin::Command::Notify).
         Command::Notify(_) => return Err("notify is not supported on the msaa backend".into()),
@@ -119,6 +132,20 @@ fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
         guard.nodes[previous].states.remove(State::Selected);
     }
     guard.nodes[index].states.insert(State::Selected);
+    Some(index)
+}
+
+/// Changes the node `id` with `change`, returning its index.
+fn with_node(
+    tree: &SharedTree,
+    id: &str,
+    change: impl FnOnce(&mut crate::tree::NodeData),
+) -> Option<usize> {
+    let mut guard = tree
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let index = guard.index_of(id)?;
+    change(&mut guard.nodes[index]);
     Some(index)
 }
 

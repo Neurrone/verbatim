@@ -220,7 +220,11 @@ Implementation notes, `reduce`:
   between outposts. A foreground change to a nameless window becomes the
   focus and moves attention without speaking, though it still cancels
   speech. A window nameless when focus
-  enters it is not announced later: a name change speaks only on the focused node, where the new name
+  enters it is not announced later: a description change speaks the new
+  description alone on the focused node, and a state change speaks on the
+  focus or one of its ancestors, diffed against the ancestor's states as
+  the focus was reported with them, as NVDA's base handlers do (a
+  selection of an ancestor is such a state change); a name change speaks only on the focused node, where the new name
   alone is spoken, queued. Order within an outpost comes from its queue;
   across outposts, a focus observed before the focus already applied is
   dropped as stale (`observed_at_ms`, `docs/parity.md` "Stale focus

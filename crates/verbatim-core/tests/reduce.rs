@@ -622,6 +622,122 @@ fn states_changed_with_children(
     }
 }
 
+/// A state change on an ancestor of the focus is spoken, as NVDA's base
+/// state change handler speaks one (a focused button that changes the
+/// state of the container above it), diffed against the ancestor's states
+/// as the focus was reported with them; one on a node that is neither the
+/// focus nor an ancestor stays silent.
+#[test]
+fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
+    let source = Pid(1);
+    let header = node(
+        31,
+        Role::ColumnHeader,
+        Some("Name"),
+        None,
+        states(&[State::Collapsed]),
+    );
+    let button = node(
+        32,
+        Role::Button,
+        Some("Sort"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &event_in(
+            source,
+            None,
+            NormalizedEvent::FocusChanged {
+                node: button,
+                foreground: false,
+                ancestors: vec![header],
+                ancestors_unknown: false,
+                selected_child: None,
+            },
+        ),
+    );
+
+    let (reader, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(31),
+            states(&[State::Expanded]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![queued(vec![state(State::Expanded)])]);
+
+    let (reader, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(31),
+            states(&[State::Expanded]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![], "the same states again say nothing");
+
+    let (_, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(99),
+            states(&[State::Checked]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![], "another node's change is silent");
+}
+
+/// A description change on the focus speaks the new description alone, as
+/// NVDA's base handler does; the same description again, one that only
+/// repeats the name, or another node's change says nothing.
+#[test]
+fn a_description_change_on_the_focus_is_spoken() {
+    let source = Pid(1);
+    let field = node(
+        41,
+        Role::EditableText,
+        Some("Password"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, field),
+    );
+    let described = |node: u64, description: &str| Input::Event {
+        observed_at_ms: 0,
+        trace_id: TraceId::mint(),
+        source,
+        backend: Backend::Msaa,
+        window: None,
+        event: NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(node),
+            change: PropertyChange::Description(Some(description.to_owned())),
+            child_count: None,
+        },
+    };
+
+    let (state, effects) = reduce(&state, &described(41, "Too short"));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(
+            SegmentContent::Description("Too short".to_owned())
+        )])]
+    );
+    let (state, effects) = reduce(&state, &described(41, "Too short"));
+    assert_eq!(heard(&effects), vec![], "unchanged");
+    let (state, effects) = reduce(&state, &described(41, "Password"));
+    assert_eq!(heard(&effects), vec![], "only the name again");
+    let (_, effects) = reduce(&state, &described(42, "Elsewhere"));
+    assert_eq!(heard(&effects), vec![], "not the focus");
+}
+
 #[test]
 fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
     let source = Pid(1);

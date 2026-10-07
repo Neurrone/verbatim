@@ -12,7 +12,7 @@ Public API:
   since its hooks share one callback; a second install on the same thread
   fails. Two constant sets name the two
   callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
-  installs — value, state, name, and selection changes
+  installs — value, state, name, description, and selection changes
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
   remove, and within events are reported as `WinEventKind::StateChange`, as
   NVDA handles them), and since milestone M4 the caret

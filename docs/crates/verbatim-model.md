@@ -57,9 +57,9 @@ Public API:
   the container's selected child, both gathered by the outpost on a query
   worker before emitting: deadline-guarded, degrading to empty on failure,
   so enrichment never blocks or loses a focus announcement),
-  `PropertyChanged` (name, value, or the complete new `States` set, with
-  a `child_count` the outpost reads only for a state change that leaves a
-  Win32 tree view item expanded),
+  `PropertyChanged` (name, value, description, or the complete new
+  `States` set, with a `child_count` the outpost reads only for a state
+  change that newly expands the focus, a Win32 tree view item),
   `ValueChanged`, `SelectionChanged` (a node was selected within its
   container, carrying its snapshot), `ControlledSelection` (a node was
   selected inside an element the focus controls through UIA's

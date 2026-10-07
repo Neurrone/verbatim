@@ -78,7 +78,10 @@ on the machine, a running screen reader included, calls into mockapp in
 response; for the tests that count an operation's calls exactly, which
 hand the focus to the outpost themselves), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
-property-change or name/value-change notification), `select <id>` (marks
+property-change or name/value-change notification), `set-description <id>
+<text>` and `set-states <id> <state>...` (MSAA only: replace the
+description, or the whole state set, named as in fixtures, and raise
+`EVENT_OBJECT_DESCRIPTIONCHANGE` or `EVENT_OBJECT_STATECHANGE`), `select <id>` (marks
 the node selected, moving the state off any previous selection, and raises
 `SelectionItem_ElementSelected` for UIA or `EVENT_OBJECT_SELECTION` for
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
