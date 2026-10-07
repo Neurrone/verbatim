@@ -25,15 +25,29 @@
 //!   "Internationalization in the text model"), and NVDA reads them from
 //!   inside the application, which Verbatim's injection helper (decision
 //!   D2) will do.
+//! - A keyboard text service outside those languages (Vietnamese Telex and
+//!   VNI, the Indic Phonetic keyboards) composes characters from several
+//!   keys under the language's ordinary layout, whose handle cannot tell
+//!   it apart. The active keyboard profile can: when it is a text service
+//!   for the foreground layout's language, nothing is translated, so
+//!   Verbatim stays silent rather than echoing the raw keys (decided
+//!   2026-10-08). Echoing the composed text needs the injection helper and
+//!   is on the roadmap for M6 (`docs/roadmap.md`, "Typed-character echo of
+//!   composed text").
 //!
 //! Keys typed with `KEYEVENTF_UNICODE` (an on-screen keyboard, the
 //! end-to-end harness) arrive as `VK_PACKET` carrying the UTF-16 unit
 //! itself, a surrogate pair as two keys.
 
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardLayout, HKL, ToUnicodeEx, VK_CAPITAL, VK_CONTROL,
     VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_PACKET, VK_RCONTROL, VK_RMENU,
     VK_RSHIFT, VK_RWIN, VK_SHIFT,
+};
+use windows::Win32::UI::TextServices::{
+    CLSID_TF_InputProcessorProfiles, GUID_TFCAT_TIP_KEYBOARD, ITfInputProcessorProfileMgr,
+    TF_INPUTPROCESSORPROFILE, TF_PROFILETYPE_INPUTPROCESSOR,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -50,9 +64,49 @@ const INPUT_METHOD_LANGUAGES: [u16; 3] = [0x04, 0x11, 0x12];
 #[derive(Default)]
 pub(crate) struct Typing {
     high_surrogate: Option<u16>,
+    /// The text services' profile manager, which says whether the active
+    /// keyboard profile is a text service; `None` when it could not be
+    /// made, and then no layout is taken for a text service.
+    profiles: Option<ITfInputProcessorProfileMgr>,
 }
 
 impl Typing {
+    /// A translator that also asks the text services which keyboard
+    /// profile is active. COM must be initialized on the calling thread,
+    /// the thread that translates.
+    pub(crate) fn with_text_services() -> Self {
+        // SAFETY: the class id and interface are the text services' own,
+        // and the caller initialized COM on this thread.
+        let profiles = unsafe {
+            CoCreateInstance::<_, ITfInputProcessorProfileMgr>(
+                &CLSID_TF_InputProcessorProfiles,
+                None,
+                CLSCTX_INPROC_SERVER,
+            )
+        };
+        if let Err(error) = &profiles {
+            tracing::warn!(%error, "the text services' profile manager could not be made");
+        }
+        Self {
+            high_surrogate: None,
+            profiles: profiles.ok(),
+        }
+    }
+
+    /// The active keyboard profile's type and language, or `None` when it
+    /// cannot be read. Windows switches input methods for every application
+    /// together unless the user chose otherwise, so this thread's active
+    /// profile is the foreground application's; [`is_text_service`]
+    /// requires its language to be the foreground layout's as well.
+    fn active_keyboard_profile(&self) -> Option<(u32, u16)> {
+        let profiles = self.profiles.as_ref()?;
+        let mut profile = TF_INPUTPROCESSORPROFILE::default();
+        // SAFETY: the category is a constant and the profile a local the
+        // call fills.
+        unsafe { profiles.GetActiveProfile(&GUID_TFCAT_TIP_KEYBOARD, &raw mut profile) }.ok()?;
+        Some((profile.dwProfileType, profile.langid))
+    }
+
     /// The text a key-down passed to the application types, or `None`.
     pub(crate) fn translate(&mut self, vk: u16, scan_code: u32) -> Option<String> {
         if vk == VK_PACKET.0 {
@@ -64,7 +118,7 @@ impl Typing {
             return None;
         }
         let layout = foreground_layout();
-        if is_input_method(layout) {
+        if is_input_method(layout) || is_text_service(self.active_keyboard_profile(), layout) {
             return None;
         }
         let state = modifiers.key_state();
@@ -204,6 +258,16 @@ fn is_input_method(layout: HKL) -> bool {
     INPUT_METHOD_LANGUAGES.contains(&language) || device & 0xF000 == 0xE000
 }
 
+/// Whether the active keyboard `profile` (its type and language) is a
+/// keyboard text service for `layout`'s language, which composes text the
+/// hook cannot know: Vietnamese Telex and VNI, or an Indic Phonetic
+/// keyboard, each under its language's ordinary layout.
+fn is_text_service(profile: Option<(u32, u16)>, layout: HKL) -> bool {
+    let language = u16::try_from(layout.0 as usize & 0xFFFF).unwrap_or(0);
+    profile
+        .is_some_and(|(kind, langid)| kind == TF_PROFILETYPE_INPUTPROCESSOR && langid == language)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +310,24 @@ mod tests {
             is_input_method(layout(0xE001_0409)),
             "an older input method"
         );
+    }
+
+    #[test]
+    fn a_text_service_for_the_layouts_language_is_known() {
+        let vietnamese = HKL(0x042A_042A as *mut core::ffi::c_void);
+        // Vietnamese Telex: a text service under the Vietnamese layout.
+        assert!(is_text_service(
+            Some((TF_PROFILETYPE_INPUTPROCESSOR, 0x042A)),
+            vietnamese
+        ));
+        // The Vietnamese keyboard layout itself.
+        assert!(!is_text_service(Some((2, 0x042A)), vietnamese));
+        // A text service for another language than the foreground's.
+        assert!(!is_text_service(
+            Some((TF_PROFILETYPE_INPUTPROCESSOR, 0x0439)),
+            vietnamese
+        ));
+        assert!(!is_text_service(None, vietnamese));
     }
 
     #[test]
