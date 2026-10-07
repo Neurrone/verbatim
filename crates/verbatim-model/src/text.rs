@@ -354,6 +354,12 @@ pub struct CaretReply {
     pub moved: bool,
     /// The caret as it is now.
     pub caret: CaretReport,
+    /// Milliseconds since the Unix epoch when the outpost read `caret`, on
+    /// the clock of an event's `observed_at_ms`; 0 when unknown. Core
+    /// compares it with a later key's `pressed_at_ms` to tell whether this
+    /// caret was where that key found it.
+    #[serde(default)]
+    pub read_at_ms: u64,
     /// The watch's unit at the caret; `None` when the unit is
     /// [`TextUnit::Line`], which `caret.line` already is.
     #[serde(default)]

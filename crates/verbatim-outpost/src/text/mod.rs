@@ -1262,6 +1262,7 @@ fn answer_caret<S: TextSource>(
     Ok(TextReply::Caret(Box::new(CaretReply {
         moved,
         caret,
+        read_at_ms,
         unit,
         selection_changes,
     })))

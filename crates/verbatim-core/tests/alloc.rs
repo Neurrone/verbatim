@@ -8,7 +8,8 @@
 //! one another's counts. Today the parts of the state that grow with the
 //! application are the focus ancestor chain (and the navigator that follows
 //! focus) and the text Core keeps for the caret and the review cursor (a
-//! line, up to 64 KB), and a terminal's output waiting to be spoken is
+//! line, up to 64 KB, and the lines of the caret's last 8 timed reports,
+//! shared rather than copied by a checkpoint), and a terminal's output waiting to be spoken is
 //! bounded by the flood policy; the large state here has a previous focus with
 //! 10,000 ancestors and the small one has 10. Each step's input is the same
 //! in both cases, so only the state varies.
@@ -196,7 +197,8 @@ fn long_line(anchor: u64, offset: u32) -> TextChunk {
 }
 
 /// A state whose focus is an edit field under a chain of `depth` groups,
-/// its caret on a long line.
+/// its caret on a long line, reported often enough to fill Core's history
+/// of timed caret reports.
 fn editing_with_chain(depth: u64) -> SrState {
     let ancestors = (0..depth)
         .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
@@ -206,14 +208,16 @@ fn editing_with_chain(depth: u64) -> SrState {
         &mut state,
         &focus_event(node(1, Role::EditableText, "Body"), ancestors),
     );
-    let _ = reduce(&mut state, &caret_moved(long_line(10, 0)));
+    for observed_at_ms in 1..=10 {
+        let _ = reduce(&mut state, &caret_moved(long_line(10, 0), observed_at_ms));
+    }
     state
 }
 
-fn caret_moved(line: TextChunk) -> Input {
+fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
+        observed_at_ms,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -245,7 +249,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
             motion: CaretMotion::NextCharacter,
             select: false,
         },
-        pressed_at_ms: 0,
+        pressed_at_ms: 100,
     });
     let Some(Effect::Text(request)) = effects.first() else {
         panic!("expected a caret wait, got {effects:?}");
@@ -255,6 +259,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         query_id: request.query_id,
         reply: TextReply::Caret(Box::new(CaretReply {
             moved: true,
+            read_at_ms: 101,
             caret: CaretReport {
                 line: long_line(10, 1),
                 selection: None,

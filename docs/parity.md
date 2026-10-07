@@ -1190,7 +1190,14 @@ verified.
   is the baseline: the outpost's own newest report, when the read behind it
   finished before the hook saw the key, else where Core knew it; a report
   read after the key, from the application's caret event for that very key
-  arriving before Core's request, is not. Terminals are recognized by
+  arriving before Core's request, is not. Core does the same for what
+  Backspace deleted and the text Delete compares: the key's path to Core
+  (the hook, then Verbatim) can be slower than the application's caret
+  event (the application, then the outpost, then Core), so Core keeps its
+  last 8 caret reports with the time each was observed or read, and works
+  from the newest observed before the key was pressed, not the caret it
+  holds when the key arrives (fixed 2026-10-07 after `notepad_editing`
+  heard "n" for a Backspace over "x" under load). Terminals are recognized by
   their UIA class (`TermControl`, `WPFTermControl`) and the console host's
   window class, never by title. The console host's text area is announced
   as "terminal" without its English-only name, "Text Area", as NVDA's

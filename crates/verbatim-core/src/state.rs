@@ -169,6 +169,30 @@ impl CaretContext {
     }
 }
 
+/// How many of the focus's timed caret reports Core keeps, as the outpost
+/// keeps its own: enough to reach back past the reports a fast typist's
+/// keys raise while one key is on its way to Core.
+pub(crate) const CARET_HISTORY: usize = 8;
+
+/// A report of the focus's caret with the time it was observed: an event's
+/// `observed_at_ms`, or the time the outpost read a caret key's reply. A
+/// caret key's own path to Core (the hook, then the application, then
+/// Core) can be slower than the application's (the application, then the
+/// outpost, then Core), so the report Core holds when a key arrives may
+/// already show what the key did. The newest report observed before the
+/// key was pressed is the caret the key found.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TimedCaret {
+    pub(crate) observed_at_ms: u64,
+    pub(crate) node: NodeId,
+    #[serde(
+        serialize_with = "serialize_chunk",
+        deserialize_with = "deserialize_chunk"
+    )]
+    pub(crate) line: SharedChunk,
+    pub(crate) selection: Option<Selection>,
+}
+
 /// A caret key passed to the application, waiting for the outpost's
 /// evidence of what it did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,6 +424,12 @@ pub struct SrState {
     /// The focus's caret, when the focus has text.
     #[serde(default)]
     pub(crate) caret: Option<CaretContext>,
+    /// The focus's latest caret reports whose time is known, oldest first,
+    /// all for the node of `caret`: up to [`CARET_HISTORY`], held inline so
+    /// a checkpoint copies them without allocating. A report whose time is
+    /// not known empties it, since its order among them is unknown.
+    #[serde(default)]
+    pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
     /// The focus whose text is still to be spoken.
     #[serde(default)]
     pub(crate) focus_text: Option<FocusText>,
@@ -454,6 +484,12 @@ impl SrState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Forgets the focus's caret and its timed reports.
+    pub(crate) fn forget_caret(&mut self) {
+        self.caret = None;
+        self.caret_history = Default::default();
     }
 
     /// The currently focused node and the application it came from, if

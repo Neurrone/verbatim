@@ -368,7 +368,17 @@ evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
 the key was pressed, the unit
 to report, for Delete the character or word at the caret (whose change is
 evidence), for a selecting key the selection before it, and a wait three
-times longer in a terminal. A newer caret key supersedes one still
+times longer in a terminal. The caret, the Delete text, the selection,
+and what Backspace deletes all come from the caret as the key found it:
+Core keeps the focus's last 8 caret reports (`CARET_HISTORY`, held
+inline in the state) with the time each was observed, a caret event's
+`observed_at_ms` or a reply's `read_at_ms`, and takes the newest observed
+strictly before the key's `pressed_at_ms`. The caret it holds when the
+key arrives may already show what the key did, since the application's
+caret event can reach Core before the key does. With no time for the
+key, or no timed report (a report without a time empties the history),
+the caret Core holds stands in; with timed reports but none from before
+the key, the caret before the key is not known. A newer caret key supersedes one still
 waiting, and a focus change drops it, so a focus announcement wins and
 speech never lags behind fast typing. The answer updates the caret and,
 when the review cursor follows the caret, moves the review cursor to it,
@@ -388,7 +398,7 @@ then speaks, queued:
 - Control with Up or Down Arrow: the provider's paragraph, or the line when
   the provider has no paragraphs.
 - Backspace: the character before the caret before the key, worked out from
-  Core's copy of the caret, once the caret moved; Control+Backspace the
+  Core's copy of the caret as the key found it, once the caret moved; Control+Backspace the
   text from the start of the word before the caret. At the start of a
   line, the line break it deleted, of the kind the text was last seen to
   use (the caret's line's own break, or the one remembered from an

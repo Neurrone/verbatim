@@ -301,7 +301,9 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   `previous_selection`. Wait up to 100 milliseconds for
   `CaretWait::Standard` and 300 for `CaretWait::Extended` (terminals), and
   answer when the wait runs out too, with `moved` false. The reply carries
-  the caret as it now is, the requested `unit` at the caret as a chunk
+  the caret as it now is, with `read_at_ms`, when the outpost read it on
+  the clock of `observed_at_ms` (0 when unknown, which Core compares with
+  a later key's `pressed_at_ms`), the requested `unit` at the caret as a chunk
   (`None` when the unit is `Line`, which the caret's line already is, or
   when the provider does not have the unit, in which case Core speaks the
   line), and `selection_changes` when the watch carried a

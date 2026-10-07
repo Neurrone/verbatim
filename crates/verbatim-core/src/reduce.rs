@@ -401,7 +401,7 @@ fn reduce_event(
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
         NormalizedEvent::CaretMoved { node_id, caret } => {
-            editing::update_caret(state, *node_id, caret.clone());
+            editing::update_caret(state, *node_id, caret.clone(), observed_at_ms);
             editing::focus_caret(state, trace_id, *node_id)
         }
         NormalizedEvent::NoText { node_id } => editing::focus_value(state, trace_id, *node_id),
@@ -684,7 +684,7 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     state.held_typing.clear();
     crate::terminal::focus_moved(state, node);
     if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
-        state.caret = None;
+        state.forget_caret();
     }
 }
 
@@ -856,7 +856,7 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
         .as_ref()
         .is_some_and(|caret| caret.node.outpost() == outpost)
     {
-        state.caret = None;
+        state.forget_caret();
     }
     if state
         .pending_caret

@@ -26,14 +26,15 @@ use std::sync::Arc;
 
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWait, CaretWatch, Effect, FocusValidity,
-    NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, SelectionChange,
-    SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint, TextRead,
-    TextReply, TextRequest, TextUnit, TraceId, TypingEcho, Utterance, UtteranceSegment,
+    NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection,
+    SelectionChange, SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp,
+    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
+    Utterance, UtteranceSegment,
 };
 
 use crate::state::{
-    CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText, ReviewPosition, ReviewText,
-    SrState, TextFollowUp,
+    CARET_HISTORY, CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText,
+    ReviewPosition, ReviewText, SrState, TextFollowUp, TimedCaret,
 };
 use crate::text;
 
@@ -100,14 +101,20 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     };
     let node = focus.snapshot.id;
     let role = focus.snapshot.role;
-    let context = state.caret.as_ref().filter(|caret| caret.node == node);
-    if context.is_none() && !may_have_text(role) {
+    let current = state.caret.as_ref().filter(|caret| caret.node == node);
+    if current.is_none() && !may_have_text(role) {
         return effects;
     }
     let grid = is_grid(role);
     let unit = key.motion.unit();
-    let deleted = context.and_then(|caret| deleted_text(caret, key.motion, grid));
-    let compare = context.and_then(|caret| compared_text(caret, key.motion, grid));
+    // What the key deletes, the text whose change is evidence, where the
+    // caret starts, and the selection the key may change all come from the
+    // caret as it was when the key was pressed, which may be older than the
+    // caret Core now has.
+    let line_break = current.and_then(|caret| caret.line_break.as_deref());
+    let context = caret_before(state, node, pressed_at_ms);
+    let deleted = context.and_then(|caret| deleted_text(caret.line, line_break, key.motion, grid));
+    let compare = context.and_then(|caret| compared_text(caret.line, key.motion, grid));
     let previous_selection = context.and_then(|caret| {
         if key.select || key.motion == CaretMotion::SelectAll {
             Some(match caret.selection {
@@ -135,7 +142,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         }
     });
     let watch = CaretWatch {
-        since: context.map(CaretContext::caret),
+        since: context.map(CaretBefore::caret),
         pressed_at_ms,
         unit,
         compare,
@@ -161,25 +168,85 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     effects
 }
 
-/// What a Backspace is about to delete, from the caret before the key: the
-/// character before the caret, or for Control+Backspace the text from the
-/// start of the word before the caret up to the caret. At the start of a
-/// line other than a terminal's, a Backspace deletes the line break before
-/// it, the kind of break the text uses ([`CaretContext::line_break`]),
-/// which NVDA names (`docs/nvda/editable-text-and-terminals.md`, "A line
-/// break as a character"). `None` when that is not known, and for other
-/// keys.
-fn deleted_text(caret: &CaretContext, motion: CaretMotion, grid: bool) -> Option<String> {
-    let content = text::line_content(&caret.line.text, grid);
-    let offset = text::boundary(content, caret.line.offset as usize);
+/// The caret of a node as a caret key found it: its line, with the caret
+/// at the chunk's offset, and the selection.
+#[derive(Clone, Copy)]
+struct CaretBefore<'a> {
+    line: &'a TextChunk,
+    selection: Option<Selection>,
+}
+
+impl CaretBefore<'_> {
+    /// Where the caret was.
+    fn caret(self) -> TextPosition {
+        TextPosition {
+            anchor: self.line.start,
+            offset: self.line.offset,
+        }
+    }
+}
+
+/// The caret of `node` as a key pressed at `pressed_at_ms` found it: the
+/// newest of Core's timed caret reports observed before the key was
+/// pressed, as the outpost picks its own baseline (`docs/parity.md`, "Text,
+/// documents, terminals", caret-key reporting). A report observed in the
+/// same millisecond as the key, or later, may already show what the key
+/// did, so it is never the caret before the key. With no time for the key, or no timed report,
+/// the caret Core has now stands in; with timed reports but none from
+/// before the key, the caret before the key is not known.
+fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<CaretBefore<'_>> {
+    let mut timed = state
+        .caret_history
+        .iter()
+        .flatten()
+        .filter(|report| report.node == node)
+        .peekable();
+    if pressed_at_ms == 0 || timed.peek().is_none() {
+        return state
+            .caret
+            .as_ref()
+            .filter(|caret| caret.node == node)
+            .map(|caret| CaretBefore {
+                line: &caret.line,
+                selection: caret.selection,
+            });
+    }
+    // Reports arrive in the order their paths deliver them, not the order
+    // they were observed, so the newest is the latest observed; of two
+    // observed in the same millisecond, the later to arrive.
+    timed
+        .filter(|report| report.observed_at_ms < pressed_at_ms)
+        .max_by_key(|report| report.observed_at_ms)
+        .map(|report| CaretBefore {
+            line: &report.line,
+            selection: report.selection,
+        })
+}
+
+/// What a Backspace is about to delete, from the caret's line before the
+/// key: the character before the caret, or for Control+Backspace the text
+/// from the start of the word before the caret up to the caret. At the
+/// start of a line other than a terminal's, a Backspace deletes the line
+/// break before it, the kind of break the text uses, `line_break`
+/// ([`CaretContext::line_break`]), which NVDA names
+/// (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
+/// character"). `None` when that is not known, and for other keys.
+fn deleted_text(
+    line: &TextChunk,
+    line_break: Option<&str>,
+    motion: CaretMotion,
+    grid: bool,
+) -> Option<String> {
+    let content = text::line_content(&line.text, grid);
+    let offset = text::boundary(content, line.offset as usize);
     match motion {
         CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
             Some(range) => Some(content[range].to_owned()),
-            None if !grid && !caret.line.first => caret.line_break.clone(),
+            None if !grid && !line.first => line_break.map(str::to_owned),
             None => None,
         },
         CaretMotion::BackspaceWord => {
-            let words = text::words(content, caret.line.language_at(0));
+            let words = text::words(content, line.language_at(0));
             let start = words.iter().rev().find(|range| range.start < offset)?.start;
             Some(content[start..offset].to_owned())
         }
@@ -188,17 +255,18 @@ fn deleted_text(caret: &CaretContext, motion: CaretMotion, grid: bool) -> Option
 }
 
 /// The text at the caret before a Delete, whose change is evidence the key
-/// did something even though the caret stays where it is.
-fn compared_text(caret: &CaretContext, motion: CaretMotion, grid: bool) -> Option<String> {
-    let content = text::line_content(&caret.line.text, grid);
-    let offset = caret.line.offset as usize;
+/// did something even though the caret stays where it is, from the caret's
+/// line before the key.
+fn compared_text(line: &TextChunk, motion: CaretMotion, grid: bool) -> Option<String> {
+    let content = text::line_content(&line.text, grid);
+    let offset = line.offset as usize;
     match motion {
         CaretMotion::Delete => Some(
             text::grapheme_at(content, offset)
                 .map_or(String::new(), |range| content[range].to_owned()),
         ),
         CaretMotion::DeleteWord => {
-            let words = text::words(content, caret.line.language_at(0));
+            let words = text::words(content, line.language_at(0));
             Some(
                 text::word_at(&words, offset)
                     .map_or(String::new(), |range| content[range].to_owned()),
@@ -230,6 +298,7 @@ pub(crate) fn caret_reply(
     let CaretReply {
         moved,
         caret,
+        read_at_ms,
         unit,
         selection_changes,
     } = *reply;
@@ -250,7 +319,7 @@ pub(crate) fn caret_reply(
             }
         }
     };
-    update_caret(state, pending.node, caret);
+    update_caret(state, pending.node, caret, read_at_ms);
     let mut effects = Vec::new();
     if !segments.is_empty() {
         effects.push(speak(trace_id, segments));
@@ -391,12 +460,32 @@ fn selection_segments(changes: &[SelectionChange]) -> Vec<UtteranceSegment> {
 
 /// Takes a caret report for `node` as the focus's caret, and moves the
 /// review cursor to it when the review cursor follows the caret and the
-/// navigator is on that node.
-pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: CaretReport) {
+/// navigator is on that node. `observed_at_ms` is when the report was
+/// observed or read, 0 when unknown; a timed report is also kept for a
+/// later caret key to find the caret as it was when that key was pressed
+/// ([`caret_before`]).
+pub(crate) fn update_caret(
+    state: &mut SrState,
+    node: NodeId,
+    caret: CaretReport,
+    observed_at_ms: u64,
+) {
     if !state.focus_matches(node) {
         return;
     }
     let line = Arc::new(caret.line);
+    if observed_at_ms == 0 || state.caret.as_ref().is_some_and(|known| known.node != node) {
+        state.caret_history = Default::default();
+    }
+    if observed_at_ms != 0 {
+        state.caret_history.rotate_left(1);
+        state.caret_history[CARET_HISTORY - 1] = Some(TimedCaret {
+            observed_at_ms,
+            node,
+            line: Arc::clone(&line),
+            selection: caret.selection,
+        });
+    }
     if state.settings.follow_caret
         && let Some(navigator) = state.navigator.as_mut()
         && navigator.object.id == node

@@ -156,6 +156,7 @@ fn message(message: Message) -> UtteranceSegment {
 fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextReply {
     TextReply::Caret(Box::new(CaretReply {
         moved,
+        read_at_ms: 0,
         caret: CaretReport {
             line,
             selection: None,
@@ -345,6 +346,7 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
     );
     let reply = TextReply::Caret(Box::new(CaretReply {
         moved: true,
+        read_at_ms: 0,
         caret: CaretReport {
             line: line("hello, world\n", 100, 6),
             selection: None,
@@ -404,6 +406,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
     let reply = TextReply::Caret(Box::new(CaretReply {
         moved: true,
+        read_at_ms: 0,
         caret: CaretReport {
             line: line(
                 "hello, world
@@ -434,6 +437,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     );
     let reply = TextReply::Caret(Box::new(CaretReply {
         moved: true,
+        read_at_ms: 0,
         caret: CaretReport {
             line: line(
                 "hello, world
@@ -470,6 +474,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     let effects = reduce(&mut state, &key(CaretMotion::NextWord, true));
     let reply = TextReply::Caret(Box::new(CaretReply {
         moved: true,
+        read_at_ms: 0,
         caret: CaretReport {
             line: line(
                 "hello, world
@@ -488,6 +493,149 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
         panic!("expected a caret wait");
     };
     assert_eq!(watch.previous_selection, None);
+}
+
+/// A caret event for node 5 observed at `observed_at_ms`.
+fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> Vec<Effect> {
+    reduce(
+        state,
+        &Input::Event {
+            trace_id: TraceId::mint(),
+            observed_at_ms,
+            source: Pid(1),
+            backend: Backend::Uia,
+            window: None,
+            event: NormalizedEvent::CaretMoved {
+                node_id: id(5),
+                caret: CaretReport {
+                    line,
+                    selection: None,
+                },
+            },
+        },
+    )
+}
+
+/// A caret key pressed at `pressed_at_ms`.
+fn key_at(motion: CaretMotion, pressed_at_ms: u64) -> Input {
+    Input::CaretKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion,
+            select: false,
+        },
+        pressed_at_ms,
+    }
+}
+
+/// A caret reply the outpost read at `read_at_ms`.
+fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
+    TextReply::Caret(Box::new(CaretReply {
+        moved: true,
+        caret: CaretReport {
+            line,
+            selection: None,
+        },
+        read_at_ms,
+        unit: None,
+        selection_changes: Vec::new(),
+    }))
+}
+
+#[test]
+fn backspace_deletes_from_the_caret_it_found_though_its_own_caret_event_came_first() {
+    // From a flight recorder, Notepad under load: "xy" typed after "delta
+    // epsilon", then two Backspaces. The second key's path to Core was
+    // slower than Notepad's caret event for what it did.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = caret_event_at(&mut state, line("delta epsilonxy", 100, 15), 300);
+    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 400));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply_at(line("delta epsilonx", 100, 14), 420),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("y")]);
+    let _ = caret_event_at(&mut state, line("delta epsilonx", 100, 14), 491);
+    // The second Backspace's own caret event reaches Core before the key.
+    let _ = caret_event_at(&mut state, line("delta epsilon", 100, 13), 611);
+    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 603));
+    let asked = request(&effects);
+    let TextOp::AwaitCaret(watch) = &asked.op else {
+        panic!("expected a caret wait, got {:?}", asked.op);
+    };
+    // The caret the key found, not the one it left.
+    assert_eq!(
+        watch.since,
+        Some(TextPosition {
+            anchor: TextAnchor(100),
+            offset: 14
+        })
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            asked.query_id,
+            caret_reply_at(line("delta epsilon", 100, 13), 615),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("x")]);
+
+    // Delete compares the text the key found at the caret: "a", not the
+    // "b" its own caret event already shows.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = caret_event_at(&mut state, line("abc", 100, 0), 100);
+    let _ = caret_event_at(&mut state, line("bc", 100, 0), 210);
+    let effects = reduce(&mut state, &key_at(CaretMotion::Delete, 200));
+    let TextOp::AwaitCaret(watch) = request(&effects).op else {
+        panic!("expected a caret wait");
+    };
+    assert_eq!(watch.compare.as_deref(), Some("a"));
+}
+
+#[test]
+fn backspace_deletes_from_the_caret_event_of_the_key_before_it() {
+    // The first Backspace's caret event, observed before the second key was
+    // pressed, is where the second key found the caret, though the first
+    // key's reply, read earlier, still showed "xy".
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = caret_event_at(&mut state, line("delta epsilonxy", 100, 15), 300);
+    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 400));
+    let _ = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply_at(line("delta epsilonxy", 100, 15), 401),
+        ),
+    );
+    let _ = caret_event_at(&mut state, line("delta epsilonx", 100, 14), 491);
+    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 603));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply_at(line("delta epsilon", 100, 13), 615),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("x")]);
+
+    // A report observed in the same millisecond as the key may already show
+    // what it did, so it is not the caret the key found.
+    let _ = caret_event_at(&mut state, line("delta epsilo", 100, 12), 700);
+    let effects = reduce(&mut state, &key_at(CaretMotion::Backspace, 700));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply_at(line("delta epsilo", 100, 12), 705),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("n")]);
 }
 
 #[test]
