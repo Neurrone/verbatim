@@ -130,7 +130,12 @@ pub(crate) fn expect_notepad_text_area(scenario: &mut Scenario, timeout: Duratio
 }
 
 /// Notepad's text area as reporting the focus speaks it, for each Notepad
-/// [`expect_notepad_text_area`] names.
+/// [`expect_notepad_text_area`] names. Windows 11 Notepad's was pinned
+/// live on 2026-10-07, where NVDA+Tab in NVDA says the same, "Text editor
+/// document focused", with the line at the caret ("Text editor document
+/// focused alpha beta", in one utterance, where Verbatim speaks the line
+/// as its own). Classic Notepad's, on GitHub's runners, follows from the
+/// same rules: an edit control's "multi line" after its states.
 const REPORTED_TEXT_AREAS: [&str; 2] = [
     "Text editor document focused",
     "Text Editor edit focused multi line",

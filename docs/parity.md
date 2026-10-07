@@ -676,7 +676,12 @@ verified.
   spelled on the second press ("blank" with no name), and spelled with
   character descriptions on the third and later; "No focus" with none
   ([Focus and the navigator](nvda/focus-and-navigator.md), "Reporting the
-  focus"). Verbatim: **matched since 2026-10-07** on Verbatim+Tab. One
+  focus"). Verbatim: **matched since 2026-10-07** on Verbatim+Tab,
+  checked live in Windows 11 Notepad against an NVDA transcript the same
+  day: both say "Text editor document focused" and the line at the caret,
+  NVDA in one utterance and Verbatim in two, the line as its own, as for
+  any focus with text (the Notepad scenarios, when a Notepad window was
+  already open). One
   difference with no counterpart in NVDA: while the outpost that reported
   the focus has ended and its replacement has not yet reported the focus
   again, Verbatim says "No focus", as its node ids name nothing then.
