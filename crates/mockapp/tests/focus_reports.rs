@@ -1,5 +1,6 @@
 //! How a real outpost reports a UIA focus from mockapp's provider: under
-//! which node, when the provider reuses a dead element's runtime id.
+//! which node, when the provider reuses a dead element's runtime id, and
+//! with which states, when they changed after the focus event.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -9,6 +10,7 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use verbatim_model::{Role, State, StateSet};
 use verbatim_outpost::OutpostOptions;
 use verbatim_uia::{ElementExt as _, Uia};
 use windows::Win32::Foundation::HWND;
@@ -123,6 +125,47 @@ fn a_reused_runtime_id_names_a_new_node_classic() {
     reused_runtime_id(false);
 }
 
+/// File Explorer, going back from a subfolder, raised Inner's focus event
+/// before it selected Inner, so the event's states said "not selected".
+/// NVDA reads a focus's states when it handles the focus, not from the
+/// event, and said "Inner 1 of 4"; the outpost reports the states it reads
+/// with the focused element, and its name and role from the event.
+fn a_focus_reports_the_states_read_when_it_is_handled() {
+    let title = common::unique_title("mockapp-live-states");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    app.send("set-focus inner");
+    let event = client.focused();
+    app.send("select inner");
+    let read = client.focused();
+    let reported = outpost.uia_focus_read_later(&event, &read);
+    let node = reported.node;
+    assert_eq!(
+        (node.role, node.name.as_deref(), node.states),
+        (
+            Role::ListItem,
+            Some("Inner"),
+            [
+                State::Focused,
+                State::Focusable,
+                State::Selectable,
+                State::Selected
+            ]
+            .into_iter()
+            .collect::<StateSet>()
+        )
+    );
+    assert_eq!(
+        (node.details.position_in_set, node.details.set_size),
+        (Some(1), Some(2))
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run(&[
         (
@@ -132,6 +175,10 @@ fn main() {
         (
             "a_reused_runtime_id_names_a_new_node_classic",
             a_reused_runtime_id_names_a_new_node_classic,
+        ),
+        (
+            "a_focus_reports_the_states_read_when_it_is_handled",
+            a_focus_reports_the_states_read_when_it_is_handled,
         ),
     ]);
 }

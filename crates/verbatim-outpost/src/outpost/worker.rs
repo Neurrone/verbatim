@@ -634,6 +634,25 @@ fn describe(item: &Item) -> String {
     }
 }
 
+/// A UIA focus's parts as NVDA reads them when it announces the focus: its
+/// name and role from the event, whose cache NVDA reads them from, and its
+/// value, states, and details from `element`, the focused element the
+/// outpost read live, as NVDA fetches those afresh when the focus is
+/// handled (`docs/parity.md`, "How an outpost turns events into focus
+/// reports"). The element has the keyboard focus, as the event said.
+fn with_live_reads(fact: &UiaSnapshotFact, element: &IUIAutomationElement) -> UiaSnapshotFact {
+    // `element` was read with the base cache request.
+    let live = snapshot_parts_from_cached_element(element);
+    UiaSnapshotFact {
+        runtime_id: fact.runtime_id.clone(),
+        role: fact.role,
+        name: fact.name.clone(),
+        value: live.value,
+        states: live.states.with(State::Focused),
+        details: live.details,
+    }
+}
+
 /// A focus that is not reported, for the reason logged where it was found.
 struct Dropped;
 
@@ -1522,17 +1541,20 @@ impl Worker<'_> {
     }
 
     /// A UIA focus fact. What the focus is comes from the event, as NVDA
-    /// builds the focus from the event's sender and its cached properties,
-    /// and only when the event says the element has the keyboard focus
-    /// (NVDA's `shouldAllowUIAFocusEvent`). The element itself is in the
-    /// listener's process and cannot cross to this one, so the outpost finds
-    /// its own copy, for the ancestors and for navigation, by reading the
+    /// builds the focus from the event's sender, and only when the event
+    /// says the element has the keyboard focus (NVDA's
+    /// `shouldAllowUIAFocusEvent`): its name and role from the event's
+    /// cache, and its value, states, and details from the focused element
+    /// read live, as NVDA reads those afresh when it handles the focus
+    /// ([`with_live_reads`]). The element itself is in the listener's
+    /// process and cannot cross to this one, so the outpost finds its own
+    /// copy, for those reads, the ancestors, and navigation, by reading the
     /// focused element, with a short wait: an application busy starting up
     /// can leave that read unanswered for more than ten seconds, or answer
     /// with UIA's stand-in for its window (Windows 11 Notepad's text area as
-    /// a nameless edit). Without it the focus is still reported, with its
-    /// ancestors unknown, and a follow-up finds the element later for the
-    /// focus-following property subscription.
+    /// a nameless edit). Without it the focus is still reported, from the
+    /// event alone, with its ancestors unknown, and a follow-up finds the
+    /// element later for the focus-following property subscription.
     ///
     /// A fact whose element has lost the keyboard focus to another
     /// application is dropped: the newer focus's own event reports it, and
@@ -1633,7 +1655,8 @@ impl Worker<'_> {
         if let Some(held) = held {
             self.reissue_unless_focused(&fact.runtime_id, held, held_focused);
         }
-        let node = Self::uia_node(context, fact, Some(&element));
+        let parts = with_live_reads(fact, &element);
+        let node = Self::uia_node(context, &parts, Some(&element));
         let node = with_legacy_checked_state(&element, node); // Menu items only.
         let enrichment = match remote {
             Some((enrichment, _)) => enrichment,

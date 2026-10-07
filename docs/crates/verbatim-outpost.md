@@ -425,12 +425,16 @@ Implementation notes:
   and whether it is in `GetForegroundWindow`'s window by NVDA's test), all
   local calls.
 - A UIA focus fact is reported from the fact itself, as NVDA builds the
-  focus from the event's sender: its properties are the focus's, and it is
-  accepted only when they say the element has the keyboard focus. The
-  outpost reads the focused element (`live_focus_element`, waiting at most
-  `FOCUS_READ_WAIT`, one second) only to get its own live copy of the
-  element, for the ancestors, the selected child, the element's window,
-  and navigation. Without it the focus is emitted with
+  focus from the event's sender, and it is accepted only when its
+  properties say the element has the keyboard focus. Its name and role
+  are the event's, which NVDA reads from the sender's cache; its value,
+  states, and details are read when the focus is handled, as NVDA fetches
+  them then (`with_live_reads`; `docs/parity.md`, "How an outpost turns
+  events into focus reports"), from the focused element the outpost reads
+  (`live_focus_element`, waiting at most `FOCUS_READ_WAIT`, one second)
+  to get its own live copy of the element, which also serves for the
+  ancestors, the selected child, the element's window, and navigation.
+  Without it the focus is emitted from the event alone, with
   `ancestors_unknown`, and a queued `Item::ResolveFocus` follow-up (up to
   three attempts, while the focus is unchanged) finds the element and
   moves the focus-following subscription to it. When the focused element

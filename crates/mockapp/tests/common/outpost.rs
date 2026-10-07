@@ -199,10 +199,22 @@ impl OutpostUnderTest {
     /// `element` carries the listener's cache request, and is what the
     /// outpost's read of the focused element answers.
     pub fn uia_focus(&self, element: &IUIAutomationElement) -> Reported {
+        self.uia_focus_read_later(element, element)
+    }
+
+    /// Hands the outpost a UIA focus on `event`, the element as the focus
+    /// event carried it, and returns the focus it reports, when the
+    /// outpost's read of the focused element answers `read`, the same
+    /// element as fetched afresh later, as the system's read is.
+    pub fn uia_focus_read_later(
+        &self,
+        event: &IUIAutomationElement,
+        read: &IUIAutomationElement,
+    ) -> Reported {
         let ListenerFact { pid: _, fact } =
-            uia_focus_fact(element).expect("mockapp's element has its process");
+            uia_focus_fact(event).expect("mockapp's element has its process");
         *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
-            Some(AgileReference::new(element).expect("an agile reference"));
+            Some(AgileReference::new(read).expect("an agile reference"));
         self.focus(fact)
     }
 

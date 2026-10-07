@@ -298,7 +298,10 @@ focused element from the test rather than the system. With remote
 operations and without, a focus on an item whose runtime id
 `take-runtime-id` gave it from a dead item is reported under a new node,
 a repeated focus on it keeps that node, and each costs exactly the calls
-pinned there.
+pinned there. A focus whose event was captured before its item was
+selected (`select` after the capture, the outpost's read of the focused
+element answering the item fetched afterwards) is reported with the item
+selected, its name and role from the event.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
 over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a

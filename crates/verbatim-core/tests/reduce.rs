@@ -4473,3 +4473,58 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
     );
     assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
 }
+
+/// The same return to the parent folder with the states the outpost reads
+/// when it handles the focus, after Explorer selected Inner: "Inner 1 of 4",
+/// as NVDA says it, and the selection and repeated focus that follow are
+/// silent, since Inner was announced selected.
+#[test]
+fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection() {
+    let app = Pid(1);
+    let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
+    let selected = [
+        State::Focused,
+        State::Focusable,
+        State::Selectable,
+        State::Selected,
+    ];
+    let delta = explorer_item(28, "delta.txt", &selected, 1, 1);
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(app, window(7000), delta, vec![list(24)]),
+    );
+
+    let inner = explorer_item(30, "Inner", &selected, 1, 4);
+    let (state, effects) = reduce(
+        &state,
+        &focus_in(app, window(7000), inner.clone(), vec![list(29)]),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 30, &[29], None),
+            vec![vec![
+                UtteranceSegment::label("Inner"),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(4),
+                }),
+            ]]
+        )
+    );
+
+    let (state, effects) = reduce(
+        &state,
+        &event_in(
+            app,
+            Some(window(7000)),
+            NormalizedEvent::SelectionChanged {
+                node: inner.clone(),
+            },
+        ),
+    );
+    assert_eq!(heard(&effects), vec![], "the selection was already heard");
+
+    let (_, effects) = reduce(&state, &focus_in(app, window(7000), inner, vec![list(29)]));
+    assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
+}
