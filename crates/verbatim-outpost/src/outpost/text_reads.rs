@@ -374,6 +374,24 @@ pub(super) fn terminal_output(
     }
 }
 
+/// The position in `node_id`'s text where `range`, the range an active text
+/// position change carried, starts: a new anchor there, read from nothing,
+/// so it costs no call.
+pub(super) fn active_position(
+    context: &Context,
+    node_id: NodeId,
+    range: &AgileReference<windows::Win32::UI::Accessibility::IUIAutomationTextRange>,
+) -> Option<verbatim_model::TextPosition> {
+    let range = range.resolve().ok()?;
+    let pos = crate::text::uia::UiaPos::start_of(&range).ok()?;
+    Some(
+        context
+            .uia_anchors()
+            .node(node_id.number())
+            .position_at(pos),
+    )
+}
+
 /// Forgets what was kept for released nodes.
 pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>) {
     let released: Vec<u64> = released.into_iter().collect();

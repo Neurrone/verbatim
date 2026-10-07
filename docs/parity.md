@@ -962,6 +962,24 @@ verified.
     it (comparing it with `GetFocusedElement`, a call). Verbatim does
     not: a registration's thread registers only the newest focus it was
     handed, and a newer focus replaces it.
+- The active text position (UIA's active text position changed event,
+  raised when an application scrolls to a place in a document without
+  moving the caret, such as an in-page link's target). NVDA: registered
+  desktop-wide in its global group; the event is handed to the object,
+  and only a UIA browse mode document acts on it, moving its caret to the
+  range's line and speaking the line when the caret was not already on
+  it; an event whose element is gone, or from an application that is not
+  responding, is dropped, and outside browse mode nothing happens.
+  Verbatim: **matched as far as it goes, since 2026-10-07**: the outpost
+  registers for it on a text focus, in the same event handler group as
+  its caret and text changes (the range belongs to the application and
+  cannot travel to another process, so the focus listener cannot carry
+  it), keeps the range's start as a position in the focus's text, and
+  sends it to Core (`ActiveTextPositionChanged`), dropping an event whose
+  element or range cannot be had, or whose window is hung. Core does
+  nothing with it. **Not yet (M6):** browse mode, which moves its caret
+  there and speaks the line, as NVDA's does; it will need the
+  registration on the document a focus is inside, not only a text focus.
 - Text attributes through UIA. NVDA: a range's formatting is fetched in
   one `IUIAutomationTextRange3::GetAttributeValues` call where the range
   has it, else attribute by attribute, and an attribute whose read fails

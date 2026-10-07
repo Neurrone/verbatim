@@ -23,9 +23,11 @@ use verbatim_uia::{
     map::{notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::UI::Accessibility::{
-    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
+    IUIAutomationTextRange, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
+use windows::core::AgileReference;
 
 fn uia_set_name_raises_a_property_changed_event() {
     let title = common::unique_title("mockapp-events-uia-name");
@@ -281,6 +283,62 @@ fn uia_notify_raises_a_notification_event() {
     app.send("quit");
 }
 
+/// An active text position change as a test saw it: the raising element's
+/// name and the range.
+type SeenPosition = (
+    Option<String>,
+    Option<AgileReference<IUIAutomationTextRange>>,
+);
+
+/// The active text position changed event arrives with the element that
+/// raised it and the range now active, whose text the client reads.
+fn uia_active_text_position_arrives_with_its_range() {
+    use verbatim_uia::text::TextRangeExt;
+
+    let title = common::unique_title("mockapp-events-uia-active-position");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+
+    let seen = Arc::new(Mutex::new(Vec::<SeenPosition>::new()));
+    let seen_cb = seen.clone();
+    let _registration = Registration::new(
+        vec![Subscription::ActiveTextPosition {
+            callback: Arc::new(move |element, range| {
+                let name = element.cached_string(UIA_NamePropertyId);
+                let range = range.and_then(|range| AgileReference::new(range).ok());
+                seen_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((name, range));
+            }),
+        }],
+        Scope::Windows(vec![hwnd.0 as isize]),
+    )
+    .expect("Registration::new");
+
+    app.send("active-text-position doc 6 10");
+
+    common::wait_until("the active text position changed event", || {
+        !seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    });
+    let (name, range) = seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(0);
+    assert_eq!(name.as_deref(), Some("Notes"));
+    let range = range
+        .expect("the event's range")
+        .resolve()
+        .expect("the range");
+    let text = range.text(-1).expect("the range's text");
+    assert_eq!(String::from_utf16_lossy(&text), "beta");
+
+    app.send("quit");
+}
+
 /// One registration of several subscriptions, as the focus listener makes,
 /// is one event handler group, and each of its handlers hears its own
 /// events.
@@ -477,6 +535,10 @@ fn main() {
         (
             "uia_one_group_delivers_each_of_its_subscriptions",
             uia_one_group_delivers_each_of_its_subscriptions,
+        ),
+        (
+            "uia_active_text_position_arrives_with_its_range",
+            uia_active_text_position_arrives_with_its_range,
         ),
         (
             "uia_only_the_focus_is_followed",

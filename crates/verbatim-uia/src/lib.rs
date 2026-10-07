@@ -66,8 +66,8 @@ pub use nearest::nearest_window_handle;
 pub use probe::{has_server_side_provider, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
-    ElementCallback, EventCallback, FOCUS_PROPERTIES, NotificationCallback, PropertyCallback,
-    Registration, Scope, Subscription,
+    ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES,
+    NotificationCallback, PropertyCallback, Registration, Scope, Subscription,
 };
 
 /// Releases the UIA objects this crate keeps for the calling thread: the

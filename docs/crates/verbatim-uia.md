@@ -225,7 +225,10 @@ Public API:
   through one handler whose callback receives the event id, such as a text
   control's `Text_TextSelectionChanged` and `Text_TextChanged`), or
   `Subscription::Notifications` (delivering the raising element plus
-  kind, processing, display string, and activity id). The
+  kind, processing, display string, and activity id), or
+  `Subscription::ActiveTextPosition` (`IUIAutomation6`'s active text
+  position changed event, delivering the raising element and the range now
+  active, when the event carries one). The
   `Scope` is nothing yet, the subtree of given top-level windows, the whole
   desktop (the subtree of the root element), or exactly given elements.
   A registration takes any number of subscriptions and registers them as
@@ -245,7 +248,8 @@ Public API:
   one group, where it held three registrations, each with its own thread
   and client, before; each outpost holds one focus-following property
   subscription and one focus-following subscription to a text focus's
-  caret and text changes. Registering the listener's group took 9.9 ms at
+  caret and text changes and active text position changes, one group.
+  Registering the listener's group took 9.9 ms at
   the median against mockapp where its three registrations took 18.5 ms
   (`docs/performance.md`, "Event handler groups").
 - `has_server_side_provider(hwnd)` — the arbitration probe. Sends

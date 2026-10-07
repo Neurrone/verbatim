@@ -182,7 +182,9 @@ Public API:
   formatting when asked (the report after a focus), and remembers when
   its read finished. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share; `NodeText` is one
-  node's. `CaretSignal` is a caret key's wait: whether a caret event
+  node's, and its `position_at` mints a position at a backend position
+  without a call, as the worker keeps an active text position change's
+  range (`UiaPos::start_of`). `CaretSignal` is a caret key's wait: whether a caret event
   arrived, waiting for one, and the clocks (an `Instant` for the wait
   and Unix milliseconds for when a caret was read), so the unit tests run
   on fake clocks. Details under "Text" below.
@@ -670,7 +672,12 @@ Implementation notes:
   a second focus-following UIA subscription, moved to the focus when it
   has text and to nothing otherwise, delivers `Text_TextSelectionChanged`,
   reported as `CaretMoved`, and `Text_TextChanged`, reported as
-  `TextChanged`; for an edit control, the hooks' caret
+  `TextChanged`, and, in the same event handler group, the active text
+  position changed event, reported as `ActiveTextPositionChanged` with the
+  start of its range kept as a position in the focus's text (an anchor
+  minted for it, no call), and dropped when its element is not a node the
+  outpost knows or it carries no range, as NVDA's handler drops it; the
+  intake keeps the newest one per element. For an edit control, the hooks' caret
   (`EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET`) and text selection
   events are reported as `CaretMoved`, and its value change as
   `TextChanged` without reading the control's whole text as its MSAA value.

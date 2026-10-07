@@ -787,3 +787,20 @@ mockapp's `tests/fixtures/ancestry.json`, whose list has
   in place of `GetSelection`, and for the tab control one more
   `GetPatternProvider`); 1.10 ms at the median before and after for the
   list, 1.07 for the tab control.
+
+### The active text position
+
+A text focus's caret and text changes and its active text position
+changes are registered as one event handler group on the focus, and an
+active text position change is kept as a position in the focus's text
+without reading anything (`docs/crates/verbatim-outpost.md`). Pinned by
+the ratchet (`uia_active_text_position_costs_exactly`), the same with
+remote operations on or off.
+
+- Registering the group on mockapp's text: 1 `HostRawElementProvider` and
+  2 `FragmentRoot` provider calls, as for the caret and text changes
+  alone; 0.89 ms at the median with the new handler and 0.72 without (30
+  runs each).
+- Handling a change: no call and no provider call, 0.002 ms at the
+  median. A change reached a registration 0.13 ms at the median after
+  mockapp was told to raise it (100 runs).

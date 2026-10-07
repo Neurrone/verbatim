@@ -21,13 +21,13 @@ use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationEventHandler,
-    IUIAutomationEventHandlerGroup, IUIAutomationNotificationEventHandler,
-    IUIAutomationPropertyChangedEventHandler, NotificationKind, NotificationProcessing, TreeScope,
-    TreeScope_Element, TreeScope_Subtree, UIA_EVENT_ID,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId,
-    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
-    UIA_ValueValuePropertyId,
+    IUIAutomation6, IUIAutomationActiveTextPositionChangedEventHandler, IUIAutomationCacheRequest,
+    IUIAutomationElement, IUIAutomationEventHandler, IUIAutomationEventHandlerGroup,
+    IUIAutomationNotificationEventHandler, IUIAutomationPropertyChangedEventHandler,
+    IUIAutomationTextRange, NotificationKind, NotificationProcessing, TreeScope, TreeScope_Element,
+    TreeScope_Subtree, UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId,
+    UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -59,6 +59,14 @@ pub type NotificationCallback = Arc<
         ) + Send
         + Sync,
 >;
+
+/// Invoked on a UIA callback thread when a text control's active position
+/// changed (`IUIAutomation6`'s active text position changed event, raised
+/// when the application moves the place being read without moving the
+/// caret, such as scrolling to an in-page link's target), with the cached
+/// element and the range that is now active, when the event carries one.
+pub type ActiveTextPositionCallback =
+    Arc<dyn Fn(&IUIAutomationElement, Option<&IUIAutomationTextRange>) + Send + Sync>;
 
 /// The properties an outpost follows on the focus, and only there: name,
 /// value (of the `Value` or the `RangeValue` pattern, as NVDA follows both),
@@ -115,6 +123,11 @@ pub enum Subscription {
         events: Vec<UIA_EVENT_ID>,
         /// Called for each event, with its id.
         callback: EventCallback,
+    },
+    /// Active text position changes (`IUIAutomation6`).
+    ActiveTextPosition {
+        /// Called for each change.
+        callback: ActiveTextPositionCallback,
     },
 }
 
@@ -190,6 +203,7 @@ enum Handler {
     Event(IUIAutomationEventHandler, UIA_EVENT_ID),
     Events(IUIAutomationEventHandler, Vec<UIA_EVENT_ID>),
     Notifications(IUIAutomationNotificationEventHandler),
+    ActiveTextPosition(IUIAutomationActiveTextPositionChangedEventHandler),
 }
 
 impl Handler {
@@ -211,6 +225,9 @@ impl Handler {
             }
             Subscription::Notifications { callback } => {
                 Self::Notifications(handlers::NotificationHandler { callback }.into())
+            }
+            Subscription::ActiveTextPosition { callback } => {
+                Self::ActiveTextPosition(handlers::ActiveTextPositionHandler { callback }.into())
             }
         }
     }
@@ -240,6 +257,10 @@ impl Handler {
             // SAFETY: as above.
             Self::Notifications(handler) => unsafe {
                 group.AddNotificationEventHandler(tree_scope, cache, handler)
+            },
+            // SAFETY: as above.
+            Self::ActiveTextPosition(handler) => unsafe {
+                group.AddActiveTextPositionChangedEventHandler(tree_scope, cache, handler)
             },
         }
     }
@@ -368,13 +389,39 @@ mod handlers {
 
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        IUIAutomationElement, IUIAutomationEventHandler_Impl,
-        IUIAutomationNotificationEventHandler_Impl, IUIAutomationPropertyChangedEventHandler_Impl,
-        NotificationKind, NotificationProcessing, UIA_EVENT_ID, UIA_PROPERTY_ID,
+        IUIAutomationActiveTextPositionChangedEventHandler_Impl, IUIAutomationElement,
+        IUIAutomationEventHandler_Impl, IUIAutomationNotificationEventHandler_Impl,
+        IUIAutomationPropertyChangedEventHandler_Impl, IUIAutomationTextRange, NotificationKind,
+        NotificationProcessing, UIA_EVENT_ID, UIA_PROPERTY_ID,
     };
     use windows_core::implement;
 
-    use super::{EventCallback, NotificationCallback, PropertyCallback};
+    use super::{
+        ActiveTextPositionCallback, EventCallback, NotificationCallback, PropertyCallback,
+    };
+
+    /// The active text position handler.
+    #[implement(
+        windows::Win32::UI::Accessibility::IUIAutomationActiveTextPositionChangedEventHandler
+    )]
+    pub struct ActiveTextPositionHandler {
+        pub callback: ActiveTextPositionCallback,
+    }
+
+    impl IUIAutomationActiveTextPositionChangedEventHandler_Impl for ActiveTextPositionHandler_Impl {
+        fn HandleActiveTextPositionChangedEvent(
+            &self,
+            sender: windows_core::Ref<IUIAutomationElement>,
+            range: windows_core::Ref<IUIAutomationTextRange>,
+        ) -> windows_core::Result<()> {
+            if let Some(element) = sender.as_ref() {
+                crate::com::guarded("active text position", || {
+                    (self.callback)(element, range.as_ref());
+                });
+            }
+            Ok(())
+        }
+    }
 
     /// The property-change handler.
     #[implement(windows::Win32::UI::Accessibility::IUIAutomationPropertyChangedEventHandler)]

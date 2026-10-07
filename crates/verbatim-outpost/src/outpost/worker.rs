@@ -1113,6 +1113,10 @@ impl Worker<'_> {
                 }
                 return;
             }
+            UiaKind::ActiveTextPosition(range) => {
+                let event = (&event.parts.runtime_id[..], range, hwnd);
+                return self.active_text_position(event, (trace, observed_at_ms));
+            }
             UiaKind::TextChanged => {
                 if let Some(node_id) = self
                     .context
@@ -1162,9 +1166,36 @@ impl Worker<'_> {
                 node_id: node.id,
                 notification,
             },
-            UiaKind::TextSelection | UiaKind::TextChanged => return,
+            UiaKind::TextSelection | UiaKind::TextChanged | UiaKind::ActiveTextPosition(_) => {
+                return;
+            }
         };
         self.emit(trace, observed_at_ms, Backend::Uia, hwnd, normalized);
+    }
+
+    /// An active text position change for the text focus whose runtime id
+    /// it carries, the start of its range reported as a position in the
+    /// node's text. As NVDA's
+    /// handler, an event whose element or range cannot be had is dropped,
+    /// and one from a window the system reports hung never gets this far.
+    fn active_text_position(
+        &mut self,
+        (runtime_id, range, hwnd): (&[i32], Option<super::intake::ActiveRange>, Option<isize>),
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
+        let node_id = self.context.uia_registry.existing_id(runtime_id);
+        let (Some(node_id), Some(range)) = (node_id, range) else {
+            return;
+        };
+        if let Some(position) = text_reads::active_position(self.context, node_id, &range.0) {
+            self.emit(
+                trace,
+                observed_at_ms,
+                Backend::Uia,
+                hwnd,
+                NormalizedEvent::ActiveTextPositionChanged { node_id, position },
+            );
+        }
     }
 
     /// The selection of the element `runtime_id` names as a selection in a

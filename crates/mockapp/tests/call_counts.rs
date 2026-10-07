@@ -54,7 +54,7 @@ use verbatim_outpost::protocol::{
     SupervisorToOutpost, read_message,
 };
 use verbatim_outpost::text::edit::EditText;
-use verbatim_outpost::text::uia::UiaText;
+use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, CaretSignal, TextSource, caret_report, perform};
 use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state};
 use verbatim_uia::{
@@ -68,7 +68,8 @@ use verbatim_uia_rops::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationElement, UIA_MenuOpenedEventId,
-    UIA_SelectionItem_ElementSelectedEventId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId,
 };
 use windows::core::AgileReference;
 
@@ -1358,6 +1359,82 @@ fn uia_selected_children_cost_exactly() {
     app.send("quit");
 }
 
+/// The active text position changed event: registering for it, with a text
+/// focus's caret and text changes, as one group on the focus, and handling
+/// one, which keeps the event's range as a position in the focus's text and
+/// reads nothing, the same with remote operations on or off.
+fn uia_active_text_position_costs_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-active-position");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+
+    let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&ranges);
+    let notes = AgileReference::new(under_test.element("Notes")).expect("an agile reference");
+    let (registration, cost) = under_test.measure(hwnd, |_| {
+        Registration::new(
+            vec![
+                Subscription::Events {
+                    events: vec![
+                        UIA_Text_TextSelectionChangedEventId,
+                        UIA_Text_TextChangedEventId,
+                    ],
+                    callback: Arc::new(|_, _| {}),
+                },
+                Subscription::ActiveTextPosition {
+                    callback: Arc::new(move |_, range| {
+                        if let Some(range) = range.and_then(|range| AgileReference::new(range).ok())
+                        {
+                            seen.lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .push(range);
+                        }
+                    }),
+                },
+            ],
+            Scope::Elements(vec![notes]),
+        )
+        .expect("the text focus's registration")
+    });
+    ratchet.check(
+        "UIA text focus registration",
+        &cost,
+        calls(0, 0, 0),
+        &[("HostRawElementProvider", 1), ("FragmentRoot", 2)],
+    );
+
+    app.send("active-text-position doc 6 10");
+    common::wait_until("the active text position changed event", || {
+        !ranges
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    });
+    let range = ranges
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(0)
+        .resolve()
+        .expect("the event's range");
+    let mut store = Anchors::new(Arc::default());
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        let start = UiaPos::start_of(&range).expect("the range's start");
+        store.node(1).position_at(start)
+    });
+    ratchet.check(
+        "UIA active text position change",
+        &cost,
+        calls(0, 0, 0),
+        &[],
+    );
+
+    drop(registration);
+    ratchet.finish();
+    app.send("quit");
+}
+
 /// A caret key's wait that never waits: the caret has already moved.
 struct AlreadyMoved;
 
@@ -2196,6 +2273,10 @@ fn main() {
         (
             "uia_selected_children_cost_exactly",
             uia_selected_children_cost_exactly,
+        ),
+        (
+            "uia_active_text_position_costs_exactly",
+            uia_active_text_position_costs_exactly,
         ),
     ]);
 }

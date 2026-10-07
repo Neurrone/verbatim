@@ -673,6 +673,23 @@ pub(super) fn has_text(tree: &SharedTree, index: usize) -> bool {
         .is_some()
 }
 
+/// A range of the text of the node at `index`, from `start` to `end`
+/// (clamped to the text), for an event that carries one.
+pub(super) fn range_provider(
+    tree: &SharedTree,
+    hwnd: HWND,
+    index: usize,
+    (start, end): (usize, usize),
+) -> ITextRangeProvider {
+    let length = text_of(tree, index).len();
+    TextProvider {
+        tree: tree.clone(),
+        hwnd,
+        index,
+    }
+    .range(start.min(length), end.min(length))
+}
+
 /// The text pattern's interface pointer for `GetPatternProvider`.
 pub(super) fn provider(tree: &SharedTree, hwnd: HWND, index: usize) -> IUnknown {
     let provider: ITextProvider2 = TextProvider {

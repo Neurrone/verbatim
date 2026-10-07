@@ -588,6 +588,12 @@ impl<P: Clone> NodeText<'_, P> {
             .insert((position.anchor.0, position.offset), pos);
     }
 
+    /// A position minted for `pos` alone, a new anchor there at offset 0,
+    /// remembered as one the outpost reported. No call.
+    pub fn position_at(&mut self, pos: P) -> TextPosition {
+        self.position_of(pos)
+    }
+
     /// A position minted for `pos` alone: a new anchor there, offset 0.
     fn position_of(&mut self, pos: P) -> TextPosition {
         let anchor = self.mint(pos.clone(), "");

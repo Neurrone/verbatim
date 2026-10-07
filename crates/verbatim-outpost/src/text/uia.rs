@@ -70,6 +70,16 @@ impl UiaPos {
         })
     }
 
+    /// The start of `range`, as a position. Local: the range is kept, not
+    /// read.
+    ///
+    /// # Errors
+    ///
+    /// [`TextError::Failed`] when the range cannot be kept.
+    pub fn start_of(range: &IUIAutomationTextRange) -> TextResult<Self> {
+        Self::new(range, Endpoint::Start, false)
+    }
+
     fn range(&self) -> TextResult<IUIAutomationTextRange> {
         self.range.resolve().map_err(failed)
     }

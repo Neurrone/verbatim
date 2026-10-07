@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings::ReaderSettings;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{CaretKey, CaretReport, TextReply, TextRequest};
+use crate::text::{CaretKey, CaretReport, TextPosition, TextReply, TextRequest};
 use crate::tree::{Backend, NodeSnapshot, StateSet};
 use crate::{NodeId, OutpostId, TraceId};
 
@@ -234,6 +234,18 @@ pub enum NormalizedEvent {
         /// What changed.
         output: crate::TerminalOutput,
     },
+    /// The place being read in a node's text moved without the caret: the
+    /// application scrolled to it, as a document does to an in-page link's
+    /// target (UIA's active text position changed event). Core speaks
+    /// nothing for it until it has a browse mode, which moves its own caret
+    /// there, as NVDA's does; outside browse mode NVDA does nothing with it
+    /// either (`docs/parity.md`).
+    ActiveTextPositionChanged {
+        /// The node whose text it is.
+        node_id: NodeId,
+        /// The start of the text now active.
+        position: TextPosition,
+    },
 }
 
 impl NormalizedEvent {
@@ -268,7 +280,8 @@ impl NormalizedEvent {
             | NormalizedEvent::CaretMoved { node_id, .. }
             | NormalizedEvent::NoText { node_id }
             | NormalizedEvent::TextChanged { node_id }
-            | NormalizedEvent::TerminalOutput { node_id, .. } => {
+            | NormalizedEvent::TerminalOutput { node_id, .. }
+            | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
                 *node_id = node_id.with_outpost(outpost);
             }
         }

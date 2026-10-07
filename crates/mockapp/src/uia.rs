@@ -27,7 +27,8 @@ use windows::Win32::UI::Accessibility::{
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
     UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
     UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
-    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
+    UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -77,6 +78,15 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
             }
         }
         Command::Notify(text) => raise_notification(tree, hwnd, &text),
+        Command::ActiveTextPosition(id, start, end) => {
+            let index = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&id);
+            if let Some(index) = index.filter(|&index| text::has_text(tree, index)) {
+                raise_active_text_position(tree, hwnd, index, (start, end));
+            }
+        }
         Command::Caret(id, start, end) => {
             let mut guard = tree
                 .lock()
@@ -167,6 +177,25 @@ fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) {
     // SAFETY: `provider` is a live COM object for the just-updated node.
     unsafe {
         let _ = UiaRaiseAutomationEvent(&provider, UIA_AutomationFocusChangedEventId);
+    }
+}
+
+/// Raises UIA's active text position changed event from the text node at
+/// `index`, with the range of its text from `start` to `end`.
+fn raise_active_text_position(
+    tree: &SharedTree,
+    hwnd: HWND,
+    index: usize,
+    (start, end): (usize, usize),
+) {
+    let fragment = props::provider_for(tree.clone(), hwnd, index);
+    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
+        return;
+    };
+    let range = text::range_provider(tree, hwnd, index, (start, end));
+    // SAFETY: `provider` and `range` are live COM objects for the node.
+    unsafe {
+        let _ = UiaRaiseActiveTextPositionChangedEvent(&provider, &range);
     }
 }
 
