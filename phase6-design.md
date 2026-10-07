@@ -1958,6 +1958,27 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       reusing what the focus walk already fetched, and anything else the
       measurements point to.
 
+  13. Newer UIA (Dickson, 2026-10-07: UIA support must be as robust and
+      performant as possible). Not used by Verbatim today, though NVDA
+      uses most of them:
+      - `IUIAutomation6`: `CoalesceEvents` (UIA filters duplicate events
+        before they reach the client; NVDA enables it) and
+        `ConnectionRecoveryBehavior` (UIA adjusts its timeouts for a
+        provider that stops responding; NVDA enables it), and event
+        handler groups (many registrations in one call).
+      - `IUIAutomationTextRange3`: `GetAttributeValues` (every attribute
+        for a range in one call, for the classic path),
+        `GetEnclosingElementBuildCache` and `GetChildrenBuildCache` (the
+        element or embedded objects with their cache, in one call).
+      - `SelectionPattern2` (first, last, and current selected item and
+        the count without fetching the whole selection).
+      - The active text position changed event, and `FindText` (item 11).
+      Each is weighed by measurement and adopted where it helps; the
+      text attribute survey (item 2) covers the full list of UIA text
+      attributes, including annotations, link, culture, font weight,
+      colors, decoration styles, sub- and superscript, hidden and
+      read-only text, style names, and paragraph spacing.
+
 The order from here: the say-all change (item 10), then the terminal
 measurements (items 2 and 4), then the MSAA call counts (item 12, which
 item 5 is part of), with the instruction-limit measurements (item 11)
