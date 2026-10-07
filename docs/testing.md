@@ -16,6 +16,10 @@ A test runs against one fixed application and exercises one backend. Nothing abo
 
 A test never falls back to another target when its own is missing, and never chooses its expectation from what the application answered. When a target is missing, the test fails.
 
+### One target, one scenario
+
+Where a scenario exists for two targets, each target's scenario is its own code: one straight sequence of steps with its own exact expectations written inline, such as "line feed" in the text box's editing scenario and "carriage return" in Notepad's. Shared helpers are for mechanics only: opening a target, saving, pressing a key and asserting the utterances the caller gives. Nothing chooses a step or an expectation by target, so no enum or flag naming the target decides what is pressed or what is heard, and reading one scenario's code tells exactly what it does and expects.
+
 ## Exact assertions
 
 - Speech is asserted as an exact sequence: every utterance in order, with its exact text, each heard in full, with nothing else in between and nothing after the last one. There is no substring matching, no "any of these", and no skipping of utterances that do not match.

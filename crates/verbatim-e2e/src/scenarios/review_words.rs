@@ -1,6 +1,6 @@
 //! The review cursor's current word, its column kept going up, and its
 //! repeated presses (milestone M4 item 5), as `text_box_review_words` and
-//! `notepad_review_words` ([`super::editor`]): the test of what the
+//! `notepad_review_words` (each its own code, as `docs/testing.md` requires): the test of what the
 //! `demo_review_cursor` demonstration shows beyond `notepad_review_cursor`,
 //! on the same table. Numpad 5 reads the current word; going back up the
 //! table with numpad 7 keeps the column, as going down does (Verbatim's
@@ -21,7 +21,6 @@
 
 use std::io;
 
-use super::editor::Editor;
 use crate::registry::ScenarioState;
 use crate::scenario::{Document, Scenario};
 use crate::speech::{Expected, cut_off, heard};
@@ -46,10 +45,6 @@ pub(crate) fn document() -> Document {
         name: NAME,
         contents: ROWS.iter().flat_map(|(row, _)| [*row, "\r\n"]).collect(),
     }
-}
-
-fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    editor.open(scenario, &document())
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -79,26 +74,64 @@ fn press_hearing(scenario: &mut Scenario, keys: &[&str], said: &[&str]) {
 
 /// Opens the scenario's document in the Windows Forms text box.
 pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    setup(scenario, Editor::TextBox)
+    super::text_box::open(
+        scenario,
+        NAME,
+        super::text_box::BOX_NAME,
+        &document().contents,
+    )?;
+    Ok(ScenarioState::None)
 }
 
-/// Opens the scenario's document in Windows 11 Notepad.
+/// Brings the scenario's document forward in Windows 11 Notepad, which
+/// opened it before Verbatim started.
 pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    setup(scenario, Editor::Notepad)
+    scenario.bring_document_forward(NAME)?;
+    Ok(ScenarioState::None)
 }
 
 /// The scenario in the Windows Forms text box.
 pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    body(scenario, Editor::TextBox);
+    super::text_box::expect_announced(scenario, NAME, super::text_box::BOX_NAME, ROWS[0].0);
+    scenario
+        .send_keys(&["control+home"])
+        .expect("sends control+home");
+    scenario.speech().expect(&[ROWS[0].0]);
+
+    // The current word, then the next ones across the header row.
+    review(scenario, "kb:numpad5", "Fruit");
+    review(scenario, "kb:numpad6", "Color");
+    review(scenario, "kb:numpad6", "Price");
+
+    // Down the Price column past the shorter row, then back up past it:
+    // the column is kept both ways.
+    for (row, cell) in &ROWS[1..] {
+        review(scenario, "kb:numpad9", row);
+        review(scenario, "kb:numpad2", cell);
+    }
+    for (row, cell) in ROWS[1..3].iter().rev() {
+        review(scenario, "kb:numpad7", row);
+        review(scenario, "kb:numpad2", cell);
+    }
+
+    // On the Apple row: its first word read and spelled, its first
+    // character described and given as a code.
+    review(scenario, "kb:shift+numpad1", "A");
+    review(scenario, "kb:numpad5", "Apple");
+    press_hearing(scenario, &["numpad5", "numpad5"], &["Apple", "A p p l e"]);
+    press_hearing(scenario, &["numpad2", "numpad2"], &["A", "Alfa"]);
+    press_hearing(scenario, &["numpad3"], &["p"]);
+    press_hearing(scenario, &["numpad1"], &["A"]);
+    press_hearing(
+        scenario,
+        &["numpad2", "numpad2", "numpad2"],
+        &["A", "Alfa", "65, 0 x 4 1"],
+    );
 }
 
 /// The scenario in Windows 11 Notepad.
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    body(scenario, Editor::Notepad);
-}
-
-fn body(scenario: &mut Scenario, editor: Editor) {
-    editor.expect_in_front(scenario, NAME, ROWS[0].0);
+    super::expect_notepad_in_front(scenario, NAME, ROWS[0].0);
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");

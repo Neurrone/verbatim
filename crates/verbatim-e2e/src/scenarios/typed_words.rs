@@ -1,5 +1,5 @@
 //! Typed character and word echo (milestone M4 item 4), as
-//! `text_box_typed_words` and `notepad_typed_words` ([`super::editor`]): the test
+//! `text_box_typed_words` and `notepad_typed_words` (each its own code, as `docs/testing.md` requires): the test
 //! of what the `demo_notepad_editing` demonstration shows beyond
 //! `notepad_editing`. Typed punctuation and spaces are echoed by name
 //! ("comma", "dot", "space"); Verbatim+3 turns typed-word echo on, saying
@@ -18,9 +18,8 @@
 
 use std::io;
 
-use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::{Document, Scenario};
+use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -81,32 +80,51 @@ pub(crate) fn document() -> Document {
     }
 }
 
-fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    editor.open(scenario, &document())
-}
-
 /// Opens the scenario's document in the Windows Forms text box.
 pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    setup(scenario, Editor::TextBox)
+    super::text_box::open(
+        scenario,
+        NAME,
+        super::text_box::BOX_NAME,
+        &document().contents,
+    )?;
+    Ok(ScenarioState::None)
 }
 
-/// Opens the scenario's document in Windows 11 Notepad.
+/// Brings the scenario's document forward in Windows 11 Notepad, which
+/// opened it before Verbatim started.
 pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    setup(scenario, Editor::Notepad)
+    scenario.bring_document_forward(NAME)?;
+    Ok(ScenarioState::None)
 }
 
 /// The scenario in the Windows Forms text box.
 pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    body(scenario, Editor::TextBox);
+    super::text_box::expect_announced(
+        scenario,
+        NAME,
+        super::text_box::BOX_NAME,
+        "Typing at the end:",
+    );
+    scenario
+        .send_keys(&["control+end"])
+        .expect("sends control+end");
+    scenario.speech().expect(&["blank"]);
+
+    type_each(scenario, &CHARACTERS);
+
+    scenario
+        .send_gesture("kb:verbatim+3")
+        .expect("sends Verbatim+3");
+    scenario
+        .speech()
+        .expect(&["speak typed words only in edit controls"]);
+    type_each(scenario, &WORDS);
 }
 
 /// The scenario in Windows 11 Notepad.
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    body(scenario, Editor::Notepad);
-}
-
-fn body(scenario: &mut Scenario, editor: Editor) {
-    editor.expect_in_front(scenario, NAME, "Typing at the end:");
+    super::expect_notepad_in_front(scenario, NAME, "Typing at the end:");
     scenario
         .send_keys(&["control+end"])
         .expect("sends control+end");
@@ -122,5 +140,7 @@ fn body(scenario: &mut Scenario, editor: Editor) {
         .expect(&["speak typed words only in edit controls"]);
     type_each(scenario, &WORDS);
 
-    editor.save(scenario, NAME);
+    scenario
+        .save_document(NAME, WINDOW_TIMEOUT)
+        .expect("saves the document");
 }

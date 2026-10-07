@@ -11,8 +11,15 @@
 //! its name, role, and state, then the caret's line ([`announcement`]).
 
 use std::io;
+use std::time::Instant;
 
-use crate::scenario::{Scenario, harness_marker};
+use verbatim_control::protocol::Frame;
+use verbatim_model::NormalizedEvent;
+
+use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
+
+/// The text box's accessible name in the editing scenarios.
+pub(crate) const BOX_NAME: &str = "Text";
 
 /// The script showing the text box's window, titled `title`, the box named
 /// `box_name`, its text read from `text`.
@@ -93,6 +100,36 @@ pub(crate) fn announcement(name: &str, box_name: &str, line: &str) -> Vec<String
         format!("{box_name} edit multi line"),
         line.to_owned(),
     ]
+}
+
+/// Pastes the clipboard at the caret with Control+V, which says nothing,
+/// and waits for the evidence that the text changed: the text box's change
+/// of value as Core receives it.
+pub(crate) fn paste(scenario: &mut Scenario) {
+    let mut events = scenario
+        .subscribe_events()
+        .expect("subscribes to Verbatim's events");
+    scenario.send_keys(&["control+v"]).expect("sends control+v");
+    let deadline = Instant::now() + WINDOW_TIMEOUT;
+    loop {
+        match events.next_frame() {
+            Ok(Frame::Event {
+                event: NormalizedEvent::TextChanged { .. },
+                ..
+            }) => return,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => panic!("the event subscription failed: {error}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the text box's text did not change within {WINDOW_TIMEOUT:?} of the paste"
+        );
+    }
 }
 
 /// Asserts [`announcement`].

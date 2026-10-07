@@ -20,7 +20,6 @@ pub(crate) mod demo_say_all;
 pub(crate) mod demo_settings_dialog_keys;
 pub(crate) mod demo_terminal_session;
 pub(crate) mod editing;
-pub(crate) mod editor;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod menu_and_settings_dialog;
@@ -113,6 +112,16 @@ pub(crate) fn expect_notepad_in_front(scenario: &mut Scenario, name: &str, line:
     scenario
         .speech()
         .expect(&[&title, "Text editor document", line]);
+}
+
+/// Pastes the clipboard at the caret in Windows 11 Notepad with Control+V,
+/// which says nothing, and waits until the harness document `name`'s title
+/// marks unsaved changes: the evidence that the paste reached it.
+pub(crate) fn paste_in_notepad(scenario: &mut Scenario, name: &str) {
+    scenario.send_keys(&["control+v"]).expect("sends control+v");
+    scenario
+        .expect_unsaved(name, crate::scenario::WINDOW_TIMEOUT)
+        .expect("the paste reaches the document");
 }
 
 /// Opens the Verbatim menu with Verbatim+V and asserts its announcement:
