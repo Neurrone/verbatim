@@ -2090,4 +2090,9 @@ A read-only study of NVDA's terminal code found these risks in Verbatim's design
 - A scrollback full of identical lines goes silent.
 - The legacy console (no UIA text) and terminals without UIA are silent.
 
-Decisions for Dickson: spinners and one-character rewrites in place (NVDA silences them through its one-character rule); inline prediction ghost text (PSReadLine, fish); symbol-only lines such as vim's "~" rows and box-drawing rules before symbol processing (M8).
+Decisions (Dickson, 2026-10-07):
+
+- A line whose only change is a single symbol replaced in place (a spinner) is silent; the line is spoken once it changes to text.
+- Inline prediction ghost text (PSReadLine, fish, zsh-autosuggestions) is spoken, since users need it to use those features; typing that matches it must still be echoed.
+- Lines made only of symbols (vim's "~" rows, box-drawing rules) are skipped until symbol processing exists, as a stand-in for NVDA's default symbol level; the code says so in a comment, and the roadmap's M8 entry revisits it so that such lines then follow the user's symbol level.
+- Pausing speech with Shift: a paused queue does not drain, so Core does not ask for more output, and resuming lets it drain and ask again; on-demand reading needs no special case for it.
