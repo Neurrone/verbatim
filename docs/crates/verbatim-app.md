@@ -62,10 +62,9 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   plus the marks: every index mark playback reaches becomes
   `Input::MarkReached` on the same command channel, so say-all advances.
   Every synthesizer reports marks: `OneCore` from its own bookmarks, and
-  eSpeak NG, whose marks are unreliable after a full stop, through the
-  speech manager's split of each sequence at its marks
-  ([verbatim-speech](verbatim-speech.md), "Mark fallback"), so neither
-  degrades say-all.
+  eSpeak NG from its mark events
+  ([verbatim-synth-espeak](verbatim-synth-espeak.md), "Index marks"), so
+  neither degrades say-all.
 - `Effect::KeepDisplayOn` calls `SetThreadExecutionState` on the reducer
   thread, which lives as long as Verbatim: the display and the system
   required while say-all reads, released when it ends.

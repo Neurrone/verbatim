@@ -83,7 +83,9 @@ with OneCore, which every Windows 11 machine and GitHub's Windows runners
 have, and with eSpeak NG. A new host's first utterance is reproducible on
 one machine, so the tests compare speech sample for sample. It covers
 audio and marks arriving in order (exactly one mark, between the two
-words' audio); a raised capital spoken at the raised pitch (differing
+words' audio); eSpeak NG in its host placing a mark itself, relayed
+after exactly the 16,829 samples before it, in speech that is a new
+host's unmarked sentence sample for sample; a raised capital spoken at the raised pitch (differing
 from the plain letter, and shorter than its markup read aloud); a host
 killed mid-utterance failing that utterance, with the next utterance
 getting a new host process that speaks exactly as a host set to the same

@@ -263,8 +263,16 @@ pub(super) fn uia_enrichment(
     uia.within(ENRICHMENT_BUDGET, |uia| {
         let ancestors = uia_ancestors(context, uia, cache, element, previous, Some(deadline));
         let selected = if wants_selected_child(role) {
-            uia.selected_child(element, cache, &context.uia_registry)
-                .unwrap_or(None)
+            match uia.selected_child(element, cache, &context.uia_registry) {
+                Ok(selected) => selected,
+                // The application did not answer in time, or the list is
+                // gone: there is no selected child to report, and the log
+                // says it was not read rather than that none was selected.
+                Err(error) => {
+                    tracing::debug!(%error, "the selected child could not be read");
+                    None
+                }
+            }
         } else {
             None
         };

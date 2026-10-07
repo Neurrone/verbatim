@@ -75,10 +75,20 @@ Public API:
   and for a provider without `SelectionPattern2`, whose property reads
   "not supported", three (`GetCurrentSelection` on the cached pattern
   between), the count the `Selection` pattern alone took.
-  Any failure, a missing pattern, or an empty selection is `None`, so the
-  focus is still reported, without a selected child;
-  `Uia::selected_child` maps it to a snapshot, and `verbatim-uia-rops`'s
-  classic focus ancestry uses it as it is.
+  A missing pattern or an empty selection is `Ok(None)`, and so is a call
+  that fails in any other way than two: a call the provider did not
+  answer within UIA's transaction timeout (`timed_out`), and one that
+  finds the container or its selected item gone (`element_is_gone`), are
+  errors, never "nothing selected". `Uia::selected_child` maps the
+  element to a snapshot with the same errors; the outpost logs such an
+  error and reports the focus without a selected child, and
+  `verbatim-uia-rops`'s classic focus ancestry fails with it, as it does
+  for a hop that timed out. Pinned against mockapp with `slow` and
+  `stall` (`crates/mockapp/tests/remote_ops.rs`,
+  `a_selection_read_that_times_out_or_finds_the_list_gone_fails`).
+- `timed_out(error)` — whether a failed call ended at UIA's transaction
+  timeout (`UIA_E_TIMEOUT`): a busy or stalled application, which has
+  said nothing about what was asked.
 - `Uia::navigate` — one raw-view tree-walker step (parent, next or
   previous sibling, first child, named by a navigation `QueryKind` from
   `verbatim-model`) returning

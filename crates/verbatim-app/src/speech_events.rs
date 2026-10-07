@@ -4,11 +4,11 @@
 //! "Say-all").
 //!
 //! Every synthesizer reports its marks: `OneCore` places them itself from its
-//! bookmarks; eSpeak NG, whose marks are unreliable after a full stop, has
-//! each sequence split at its marks by the speech manager, which places
-//! each mark after the piece it ended (`docs/crates/verbatim-speech.md`,
-//! "Mark fallback"). Either way the mixer reports a mark when the device has
-//! played the audio before it.
+//! bookmarks, and eSpeak NG from its mark events
+//! (`docs/crates/verbatim-synth-espeak.md`, "Index marks"); a driver that
+//! cannot place marks has each sequence split at them by the speech manager
+//! (`docs/crates/verbatim-speech.md`, "Mark fallback"). Either way the mixer
+//! reports a mark when the device has played the audio before it.
 
 use std::sync::Arc;
 use std::time::Instant;

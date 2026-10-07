@@ -1112,8 +1112,8 @@ verified.
   when the device has played it, for every synthesizer (D17). Since
   2026-10-06 utterances carry marks (`SegmentContent::Mark`) and Core's
   say-all moves the caret or review cursor by them; the shell turns each
-  reported mark into `Input::MarkReached`. OneCore places marks itself;
-  eSpeak NG's are split out by the speech manager, so both drive say-all.
+  reported mark into `Input::MarkReached`. OneCore and eSpeak NG both
+  place marks themselves, so both drive say-all.
 - Say-all. NVDA: reads by "Say all reads by" (sentence where possible,
   paragraph, or line; UIA by line), moves the caret or review cursor as
   audio plays, keeps a bounded lookahead, stops on any key, and keeps the
@@ -1148,11 +1148,10 @@ verified.
   same rule's cases are matched: no abbreviation list ("Dr. " ends a
   sentence), no split at a decimal point or after an ellipsis, blank units
   counted among the ten. **Unverified** against an NVDA transcript of a
-  sentence running across lines. With eSpeak NG, which places no marks of
-  its own, the speech manager synthesizes the parts on either side of a
-  mark separately, so such a sentence is spoken in two synthesis calls
-  where NVDA's eSpeak NG driver speaks it in one; OneCore speaks it in
-  one.
+  sentence running across lines. Both eSpeak NG and OneCore speak such a
+  sentence in one synthesis call, the mark inside it, as NVDA's eSpeak NG
+  driver does; with eSpeak NG the audio is the unmarked sentence's, sample
+  for sample.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.

@@ -501,9 +501,11 @@ impl RemoteCache {
 /// # Errors
 ///
 /// [`Error::Uia`] when the focus read, the cache request, or the tree
-/// walker fails, or when the previous element's focus read or a hop finds
-/// the provider did not answer within UIA's transaction timeout; a hop
-/// that finds no parent, or fails otherwise, ends the walk.
+/// walker fails, when the previous element's focus read or a hop finds
+/// the provider did not answer within UIA's transaction timeout, or when
+/// the selected child's read does or finds an element gone
+/// ([`Uia::selected_element`]); a hop that finds no parent, or fails
+/// otherwise, ends the walk.
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
     if !query.element.has_keyboard_focus()? {
         return Ok(FocusAncestry::NotFocused);
@@ -517,8 +519,10 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(_)) => Some(false),
     };
     let cache = uia.cache_request(query.properties)?;
+    // A selection that timed out, or whose container or item is gone, has
+    // not said nothing is selected: the walk fails, as a hop's would.
     let selected_child = if wants_selected_child(query.element) {
-        uia.selected_element(query.element, &cache)
+        uia.selected_element(query.element, &cache)?
     } else {
         None
     };

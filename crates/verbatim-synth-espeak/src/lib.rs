@@ -12,11 +12,14 @@
 //! times faster than real time, and the callback's return value aborts
 //! synthesis, which is how a cancel takes effect within one chunk.
 //!
-//! Index marks. eSpeak NG drops an SSML mark that follows a full stop
-//! (up to at least master in September 2026), so the driver does not place
-//! marks: it says [`SynthDriver::places_marks`] is false, and the speech
-//! manager splits sequences at their marks, which keeps every mark exact
-//! (decision D17). Text is passed as plain UTF-8, not SSML.
+//! Index marks. A sequence with marks is spoken in one synthesis, as SSML
+//! with each mark a `<mark>` element named by its number, as NVDA's eSpeak
+//! NG driver speaks it, so a sentence with a mark inside it keeps its
+//! intonation and has no pause at the mark. eSpeak NG reports each mark as
+//! an event carrying the sample it falls at, counted from the start of the
+//! synthesis; the callback pushes the audio up to that sample, reports the
+//! mark, and pushes the rest, so every mark is exact (decision D17). A
+//! sequence with neither marks nor pitch changes is passed as plain UTF-8.
 //!
 //! Determinism. eSpeak NG adds noise from a pseudo-random generator it seeds
 //! from the clock when it starts. The driver seeds it with a fixed value
@@ -33,7 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
-    SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
+    IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
     SynthError, SynthId, SynthSink,
 };
 
@@ -70,8 +73,12 @@ const ESPEAK_INITIALIZE_DONT_EXIT: c_int = 0x8000;
 const ESPEAK_CHARS_UTF8: c_uint = 1;
 /// `espeakSSML`: the text is SSML.
 const ESPEAK_SSML: c_uint = 0x10;
+/// `espeakENDPAUSE`: the last clause keeps its pause.
+const ESPEAK_ENDPAUSE: c_uint = 0x1000;
 const POS_CHARACTER: c_int = 1;
 const EE_OK: c_int = 0;
+const ESPEAK_EVENT_LIST_TERMINATED: c_int = 0;
+const ESPEAK_EVENT_MARK: c_int = 3;
 const ESPEAK_RATE: c_int = 1;
 const ESPEAK_VOLUME: c_int = 2;
 const ESPEAK_PITCH: c_int = 3;
@@ -79,7 +86,8 @@ const ESPEAK_RANGE: c_int = 4;
 const ESPEAK_RATE_MINIMUM: i32 = 80;
 const ESPEAK_RATE_MAXIMUM: i32 = 450;
 
-/// `espeak_EVENT`; only its type and user data are read here.
+/// `espeak_EVENT`; its type, sample, user data, and a mark's name are read
+/// here.
 #[repr(C)]
 struct EspeakEvent {
     kind: c_int,
@@ -87,9 +95,20 @@ struct EspeakEvent {
     text_position: c_int,
     length: c_int,
     audio_position: c_int,
+    /// The sample the event falls at, counted from the start of the
+    /// synthesis.
     sample: c_int,
     user_data: *mut c_void,
-    id: [u8; 8],
+    id: EventId,
+}
+
+/// The `id` union of `espeak_EVENT`.
+#[repr(C)]
+union EventId {
+    number: c_int,
+    /// A mark's name, for a mark event.
+    name: *const c_char,
+    string: [c_char; 8],
 }
 
 /// `espeak_VOICE`.
@@ -161,6 +180,82 @@ struct Synthesis<'a> {
     sink: &'a mut dyn SynthSink,
     format: PcmFormat,
     stopped: bool,
+    /// The samples eSpeak NG has handed over so far in this synthesis.
+    delivered: usize,
+    /// The marks reported so far, in order.
+    reported: Vec<IndexMark>,
+}
+
+impl Synthesis<'_> {
+    /// Pushes one chunk of audio, reporting each mark between the sample
+    /// before it and the sample at it. `marks` are each mark's sample,
+    /// counted from the start of the synthesis, in order.
+    fn deliver(&mut self, samples: &[i16], marks: &[(usize, IndexMark)]) -> ControlFlow<()> {
+        let mut start = 0;
+        for &(sample, mark) in marks {
+            let at = sample.saturating_sub(self.delivered);
+            if at > samples.len() {
+                tracing::warn!(
+                    mark = mark.0,
+                    sample,
+                    chunk_end = self.delivered + samples.len(),
+                    "eSpeak NG placed a mark after the audio it came with; it is placed at the chunk's end"
+                );
+            }
+            let at = at.clamp(start, samples.len());
+            if at > start {
+                self.sink.push_pcm(self.format, &samples[start..at])?;
+            }
+            self.sink.index_reached(mark);
+            self.reported.push(mark);
+            start = at;
+        }
+        self.delivered += samples.len();
+        if start < samples.len() {
+            self.sink.push_pcm(self.format, &samples[start..])?;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+/// The marks among the events eSpeak NG gives with one chunk, each with its
+/// sample counted from the start of the synthesis.
+///
+/// # Safety
+///
+/// `events` is eSpeak NG's event list for the current callback: non-null,
+/// ending with a terminating event, each mark's name a NUL-terminated
+/// string.
+unsafe fn marks_in(events: *const EspeakEvent) -> Vec<(usize, IndexMark)> {
+    let mut marks = Vec::new();
+    let mut event = events;
+    loop {
+        // SAFETY: the list runs up to and including its terminating event.
+        let current = unsafe { &*event };
+        match current.kind {
+            ESPEAK_EVENT_LIST_TERMINATED => break,
+            ESPEAK_EVENT_MARK => {
+                // SAFETY: a mark event's id is its name.
+                let pointer = unsafe { current.id.name };
+                // SAFETY: the name is a NUL-terminated string eSpeak NG owns.
+                let name = unsafe { read_c(pointer) };
+                match name.parse::<u64>() {
+                    Ok(number) => marks.push((
+                        usize::try_from(current.sample).unwrap_or(0),
+                        IndexMark(number),
+                    )),
+                    Err(_) => {
+                        tracing::error!(%name, "eSpeak NG reported a mark this driver did not place");
+                    }
+                }
+            }
+            _ => {}
+        }
+        // SAFETY: the current event was not the terminator, so the next one
+        // is within the list.
+        event = unsafe { event.add(1) };
+    }
+    marks
 }
 
 /// Receives each chunk of audio from `espeak_Synth`.
@@ -180,17 +275,24 @@ unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEv
     if synthesis.stopped {
         return 1;
     }
-    let samples = match usize::try_from(count) {
+    let samples: &[i16] = match usize::try_from(count) {
         // SAFETY: `wav` holds `count` samples for the length of this call.
         Ok(count) if count > 0 && !wav.is_null() => unsafe {
             std::slice::from_raw_parts(wav, count)
         },
-        _ => return 0,
+        // The end of the synthesis, or a chunk with no audio, which can
+        // still carry marks.
+        _ => &[],
     };
+    // SAFETY: `events` is this callback's event list, checked non-null.
+    let marks = unsafe { marks_in(events) };
+    if samples.is_empty() && marks.is_empty() {
+        return 0;
+    }
     // A panic in the sink would abort the process at this C boundary; caught,
     // it stops the synthesis instead, as a sink asking to stop does.
     let pushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        synthesis.sink.push_pcm(synthesis.format, samples)
+        synthesis.deliver(samples, &marks)
     }));
     match pushed {
         Ok(ControlFlow::Continue(())) => 0,
@@ -572,7 +674,7 @@ impl SynthDriver for EspeakSynth {
     }
 
     fn places_marks(&self) -> bool {
-        false
+        true
     }
 
     fn speak(
@@ -580,32 +682,73 @@ impl SynthDriver for EspeakSynth {
         sequence: &SpeechSequence,
         sink: &mut dyn SynthSink,
     ) -> Result<(), SynthError> {
-        let plain: String = sequence
-            .items
+        let pieces = syntheses(&sequence.items);
+        let last = pieces.len() - 1;
+        for (index, items) in pieces.iter().enumerate() {
+            if sink.is_cancelled() {
+                break;
+            }
+            // A piece that ends at a sentence end, before a mark, keeps the
+            // pause eSpeak NG gives a sentence end within one synthesis.
+            if self.synthesize(items, sink, index < last)?.is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl EspeakSynth {
+    /// Speaks `items` in one call to eSpeak NG, with the pause after its
+    /// last clause when `end_pause`. Breaks when the sink stopped it.
+    fn synthesize(
+        &self,
+        items: &[SpeechItem],
+        sink: &mut dyn SynthSink,
+        end_pause: bool,
+    ) -> Result<ControlFlow<()>, SynthError> {
+        let marks: Vec<IndexMark> = items
+            .iter()
+            .filter_map(|item| match item {
+                SpeechItem::Mark(mark) => Some(*mark),
+                _ => None,
+            })
+            .collect();
+        let plain: String = items
             .iter()
             .filter_map(|item| match item {
                 SpeechItem::Text(text) => Some(text.as_str()),
                 _ => None,
             })
             .collect();
-        if plain.trim().is_empty() || sink.is_cancelled() {
-            return Ok(());
+        if plain.trim().is_empty() {
+            // Nothing to hear: the marks all stand where the silence is.
+            for mark in marks {
+                sink.index_reached(mark);
+            }
+            return Ok(ControlFlow::Continue(()));
         }
-        // A pitch change is spoken within the one synthesis, as SSML, as
-        // NVDA's eSpeak NG driver speaks it; otherwise the text is plain.
-        let (text, flags) = if sequence.has_pitch_changes() {
-            (
-                ssml_with_pitch(sequence, self.pitch),
-                ESPEAK_CHARS_UTF8 | ESPEAK_SSML,
-            )
+        // Marks and pitch changes are spoken within the one synthesis, as
+        // SSML, as NVDA's eSpeak NG driver speaks them; otherwise the text
+        // is plain.
+        let markup = items
+            .iter()
+            .any(|item| matches!(item, SpeechItem::Mark(_) | SpeechItem::Pitch(_)));
+        let (text, mut flags) = if markup {
+            (ssml(items, self.pitch), ESPEAK_CHARS_UTF8 | ESPEAK_SSML)
         } else {
             (plain, ESPEAK_CHARS_UTF8)
         };
+        if end_pause {
+            flags |= ESPEAK_ENDPAUSE;
+        }
         let text = c_string(&text)?;
         let mut synthesis = Synthesis {
             sink,
             format: self.format,
             stopped: false,
+            delivered: 0,
+            reported: Vec::with_capacity(marks.len()),
         };
         // SAFETY: `text` is NUL-terminated UTF-8 alive for the call;
         // `synthesis` outlives it, and the synchronous call delivers every
@@ -622,26 +765,86 @@ impl SynthDriver for EspeakSynth {
                 (&raw mut synthesis).cast(),
             )
         };
-        match result {
-            EE_OK => Ok(()),
-            error => Err(SynthError::Synthesis(format!(
-                "eSpeak NG failed: error {error}"
-            ))),
+        if result != EE_OK {
+            return Err(SynthError::Synthesis(format!(
+                "eSpeak NG failed: error {result}"
+            )));
         }
+        // A synthesis that ran to its end reported every mark, in order; one
+        // missing would leave whatever waits for it waiting.
+        if synthesis.stopped {
+            return Ok(ControlFlow::Break(()));
+        }
+        if synthesis.reported != marks {
+            return Err(SynthError::Synthesis(format!(
+                "eSpeak NG reported marks {:?} for marks {marks:?}",
+                synthesis.reported
+            )));
+        }
+        Ok(ControlFlow::Continue(()))
     }
 }
 
-/// The sequence as SSML for eSpeak NG, its text escaped and each pitch
-/// change a `prosody` element, as NVDA's driver writes it: the new pitch as
-/// a percentage of the configured `pitch` (0 to 100), so 50 raised by 30
-/// is 160%. Marks are left out; this driver does not place them.
-fn ssml_with_pitch(sequence: &SpeechSequence, pitch: i32) -> String {
+/// Divides a sequence's items into the pieces eSpeak NG speaks in one call
+/// each: the whole sequence, except that a new piece starts at each mark
+/// that follows a full stop and whitespace. Within one synthesis, eSpeak NG
+/// drops such a mark when an upper-case letter or anything but a letter
+/// follows it (it ends the clause at the full stop and discards what the
+/// mark wrote after it; true up to at least eSpeak NG master in October
+/// 2026). Where eSpeak NG ends the sentence there anyway, the call ending
+/// there, with its end pause, costs nothing that is heard. Where a
+/// lower-case letter follows, as after "e.g. ", eSpeak NG would have run
+/// on, and the division ends a sentence there instead; say-all never asks
+/// for that, since it ends its calls at such a full stop. A pitch change in
+/// force at a division is repeated at the start of the next piece.
+fn syntheses(items: &[SpeechItem]) -> Vec<Vec<SpeechItem>> {
+    let mut pieces = Vec::new();
+    let mut piece = Vec::new();
+    // The last character of the current piece's text that is not
+    // whitespace is a full stop, and whitespace follows it.
+    let mut full_stop = false;
+    let mut space_after = false;
+    let mut pitch = 0;
+    for item in items {
+        match item {
+            SpeechItem::Mark(_) if full_stop && space_after => {
+                pieces.push(std::mem::take(&mut piece));
+                if pitch != 0 {
+                    piece.push(SpeechItem::Pitch(pitch));
+                }
+                full_stop = false;
+            }
+            SpeechItem::Text(text) if !text.is_empty() => {
+                let trimmed = text.trim_end();
+                if !trimmed.is_empty() {
+                    full_stop = trimmed.ends_with('.');
+                    space_after = false;
+                }
+                space_after |= trimmed.len() < text.len();
+            }
+            SpeechItem::Pitch(offset) => pitch = *offset,
+            _ => {}
+        }
+        piece.push(item.clone());
+    }
+    pieces.push(piece);
+    pieces
+}
+
+/// Items as SSML for eSpeak NG, as NVDA's driver writes it: its text
+/// escaped, each mark a `mark` element named by its number, and each pitch
+/// change a `prosody` element giving the new pitch as a percentage of the
+/// configured `pitch` (0 to 100), so 50 raised by 30 is 160%.
+fn ssml(items: &[SpeechItem], pitch: i32) -> String {
     use std::fmt::Write as _;
     let mut ssml = String::new();
     let mut open = false;
-    for item in &sequence.items {
+    for item in items {
         match item {
             SpeechItem::Text(text) => ssml.push_str(&escape_xml(text)),
+            SpeechItem::Mark(mark) => {
+                let _ = write!(ssml, "<mark name=\"{}\"/>", mark.0);
+            }
             SpeechItem::Pitch(offset) => {
                 if open {
                     ssml.push_str("</prosody>");
@@ -674,22 +877,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_pitch_change_is_a_prosody_element_relative_to_the_pitch_setting() {
+    fn ssml_escapes_text_names_marks_by_number_and_raises_pitch_relative_to_the_setting() {
         let sequence = SpeechSequence {
             utterance: verbatim_model::UtteranceId(1),
             trace_id: verbatim_model::TraceId::mint(),
             language: None,
             items: vec![
+                SpeechItem::Mark(IndexMark(3)),
                 SpeechItem::Text("a & ".to_owned()),
                 SpeechItem::Pitch(30),
                 SpeechItem::Text("B".to_owned()),
                 SpeechItem::Pitch(0),
+                SpeechItem::Mark(IndexMark(4)),
                 SpeechItem::Text(" c".to_owned()),
             ],
         };
         assert_eq!(
-            ssml_with_pitch(&sequence, 50),
-            "a &amp; <prosody pitch=\"160%\">B</prosody> c"
+            ssml(&sequence.items, 50),
+            "<mark name=\"3\"/>a &amp; <prosody pitch=\"160%\">B</prosody><mark name=\"4\"/> c"
+        );
+    }
+
+    /// A mark within a sentence stays in its synthesis; one after a full
+    /// stop and whitespace, even whitespace in a text item of its own,
+    /// starts the next, which repeats the pitch change in force. A full stop
+    /// with no whitespace after it divides nothing.
+    #[test]
+    fn a_mark_after_a_full_stop_and_whitespace_starts_a_synthesis_of_its_own() {
+        let text = |text: &str| SpeechItem::Text(text.to_owned());
+        let items = vec![
+            SpeechItem::Mark(IndexMark(1)),
+            text("The quick brown fox "),
+            SpeechItem::Mark(IndexMark(2)),
+            text("jumps."),
+            SpeechItem::Mark(IndexMark(3)),
+            SpeechItem::Pitch(30),
+            text(" B."),
+            text(" "),
+            SpeechItem::Mark(IndexMark(4)),
+            text("Another."),
+        ];
+        assert_eq!(
+            syntheses(&items),
+            vec![
+                items[..8].to_vec(),
+                vec![
+                    SpeechItem::Pitch(30),
+                    SpeechItem::Mark(IndexMark(4)),
+                    text("Another."),
+                ],
+            ]
         );
     }
 
