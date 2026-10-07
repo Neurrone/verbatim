@@ -32,7 +32,7 @@ and how to read a failure.
 
 ## The starting state
 
-`Scenario::launch_with_settings` brings the desktop to the same state for
+`Scenario::launch_with` brings the desktop to the same state for
 every scenario, recorded or not, and recording changes nothing else:
 
 1. In runner-direct mode, builds `verbatim-app`, `verbatim-outpost`,
@@ -47,11 +47,18 @@ every scenario, recorded or not, and recording changes nothing else:
    Notepad's harness tabs are closed as tabs, other windows titled with
    `DOCUMENT_MARKER` are closed, and harness files and folders in the run
    directory are deleted. Anything that will not go fails the launch.
-3. Minimizes every window, as the taskbar's Show Desktop does, waits until
+3. Opens the scenario's Windows 11 Notepad document, when its definition
+   names one (`ScenarioDef::document`, a `Document`), and waits on window
+   events until it is in the foreground titled with the document; it
+   fails if a Notepad window is already open, so the window and the
+   process are the scenario's own. Opened before Verbatim starts, the
+   window's first-showing rename from "Notepad" to the document cannot
+   race Verbatim's announcement of it.
+4. Minimizes every window, as the taskbar's Show Desktop does, waits until
    every window that can be minimized is (cloaked windows, which are not
    shown, aside), and brings the desktop, Program Manager, to the
    foreground, all through the agent and with no input injected.
-4. Starts the recording, when recording, creates a named event through
+5. Starts the recording, when recording, creates a named event through
    the agent, launches Verbatim with its name in `VERBATIM_READY_EVENT`,
    and waits for Verbatim to set it once it is ready for input; then opens the command connection and the speech
    connection and checks the status reports it ready.
@@ -142,10 +149,9 @@ and the input methods above:
   which the console host scenarios use; `launch_target` refuses to run when
   a window so titled is already open; `launched_children` lists what the
   last launched program started.
-- `open_document_with(name, contents)` opens a harness document in Windows
-  11 Notepad and fails if a Notepad window is already open, so the window
-  and the process are the scenario's own; `save_document` and
-  `expect_unsaved` wait on its title.
+- `bring_document_forward(name)` brings the Notepad document opened
+  before launch to the foreground, as its taskbar button does;
+  `save_document` and `expect_unsaved` wait on its title.
 - `open_folder` opens a File Explorer window on a harness folder;
   `open_settings_page` opens a page of the Settings app.
 - `subscribe_events` opens a connection subscribed to the normalized

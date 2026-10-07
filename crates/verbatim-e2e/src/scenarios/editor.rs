@@ -13,7 +13,7 @@ use verbatim_control::protocol::Frame;
 use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
-use crate::scenario::{Scenario, WINDOW_TIMEOUT};
+use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT};
 
 /// The text box's accessible name.
 const BOX_NAME: &str = "Text";
@@ -28,8 +28,9 @@ pub(crate) enum Editor {
 }
 
 impl Editor {
-    /// Opens `text`, its caret at the start, as the document named for
-    /// `name`.
+    /// Opens `document`, its caret at the start, in the text box, or
+    /// brings it forward in Notepad, which opened it before Verbatim
+    /// started ([`Document`]).
     ///
     /// # Errors
     ///
@@ -38,35 +39,23 @@ impl Editor {
     pub(crate) fn open(
         self,
         scenario: &mut Scenario,
-        name: &str,
-        text: &str,
+        document: &Document,
     ) -> io::Result<ScenarioState> {
         match self {
             Self::TextBox => {
-                super::text_box::open(scenario, name, BOX_NAME, text)?;
+                super::text_box::open(scenario, document.name, BOX_NAME, &document.contents)?;
             }
-            Self::Notepad => {
-                scenario.open_document_with(name, text)?;
-            }
+            Self::Notepad => scenario.bring_document_forward(document.name)?,
         }
         Ok(ScenarioState::None)
     }
 
-    /// Asserts what the editor's window says as it opens with its caret on
-    /// `line`.
-    pub(crate) fn expect_opened(self, scenario: &mut Scenario, name: &str, line: &str) {
+    /// Asserts what the editor's window says as it comes to the foreground
+    /// with its caret on `line`.
+    pub(crate) fn expect_in_front(self, scenario: &mut Scenario, name: &str, line: &str) {
         match self {
             Self::TextBox => super::text_box::expect_announced(scenario, name, BOX_NAME, line),
-            Self::Notepad => super::expect_notepad_opened(scenario, name, line),
-        }
-    }
-
-    /// Asserts what the editor's window says as it comes back to the
-    /// foreground with its caret on `line`.
-    pub(crate) fn expect_returned(self, scenario: &mut Scenario, name: &str, line: &str) {
-        match self {
-            Self::TextBox => super::text_box::expect_announced(scenario, name, BOX_NAME, line),
-            Self::Notepad => super::expect_notepad_returned(scenario, name, line),
+            Self::Notepad => super::expect_notepad_in_front(scenario, name, line),
         }
     }
 

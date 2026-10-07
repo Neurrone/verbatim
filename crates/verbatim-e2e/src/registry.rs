@@ -114,7 +114,7 @@ use std::panic::{self, AssertUnwindSafe};
 use verbatim_config::Settings;
 
 use crate::artifacts::{self, ScenarioSummary};
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
     demo_terminal_session, editing, explorer_folder_window, lock_key_announcements,
@@ -257,7 +257,7 @@ pub struct ScenarioDef {
     /// The coarse group this scenario belongs to, for `--group` selection.
     pub group: Group,
     /// Changes the fixed settings this scenario's Verbatim is launched
-    /// with ([`Scenario::launch_with_settings`]), for a scenario that needs
+    /// with ([`Scenario::launch_with`]), for a scenario that needs
     /// a reader setting other than its default; `None` for most.
     pub settings: Option<fn(&mut Settings)>,
     /// Whether this scenario needs something only a Windows 11 desktop
@@ -266,6 +266,10 @@ pub struct ScenarioDef {
     /// VM run includes it; a run with [`SKIP_LOCAL_ONLY_ENV`] set to `1`,
     /// as GitHub's `e2e` job sets it, skips it ([`skips`]).
     pub local_only: bool,
+    /// The document the scenario edits in Windows 11 Notepad, opened
+    /// before Verbatim starts ([`crate::scenario::Document`]); `None` for
+    /// most.
+    pub document: Option<fn() -> Document>,
     /// Declares and creates whatever state `body` needs beyond
     /// `Scenario::launch` itself.
     ///
@@ -292,6 +296,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: menu_and_settings_dialog::setup,
         body: menu_and_settings_dialog::body,
         teardown: menu_and_settings_dialog::teardown,
@@ -301,6 +306,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         settings: None,
         local_only: false,
+        document: None,
         setup: second_application_and_verbatim_menu::setup,
         body: second_application_and_verbatim_menu::body,
         teardown: second_application_and_verbatim_menu::teardown,
@@ -310,6 +316,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: rapid_tabbing_in_settings::setup,
         body: rapid_tabbing_in_settings::body,
         teardown: rapid_tabbing_in_settings::teardown,
@@ -319,6 +326,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Navigation,
         settings: None,
         local_only: false,
+        document: None,
         setup: object_navigation_in_settings::setup,
         body: object_navigation_in_settings::body,
         teardown: object_navigation_in_settings::teardown,
@@ -328,6 +336,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: switch_to_onecore::setup,
         body: switch_to_onecore::body,
         teardown: switch_to_onecore::teardown,
@@ -337,6 +346,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: synth_host_crash_recovery::setup,
         body: synth_host_crash_recovery::body,
         teardown: synth_host_crash_recovery::teardown,
@@ -346,6 +356,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         settings: None,
         local_only: false,
+        document: None,
         setup: outpost_crash_recovery::setup,
         body: outpost_crash_recovery::body,
         teardown: outpost_crash_recovery::teardown,
@@ -355,6 +366,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: lock_key_announcements::setup,
         body: lock_key_announcements::body,
         teardown: lock_key_announcements::teardown,
@@ -364,6 +376,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         settings: None,
         local_only: false,
+        document: None,
         setup: explorer_folder_window::setup,
         body: explorer_folder_window::body,
         teardown: explorer_folder_window::teardown,
@@ -373,6 +386,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: settings_dialog_keys::setup,
         body: settings_dialog_keys::body,
         teardown: settings_dialog_keys::teardown,
@@ -382,6 +396,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         settings: None,
         local_only: false,
+        document: None,
         setup: settings_system_page::setup,
         body: settings_system_page::body,
         teardown: settings_system_page::teardown,
@@ -391,6 +406,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(editing::document),
         setup: editing::notepad_setup,
         body: editing::notepad_body,
         teardown: editing::teardown,
@@ -400,6 +416,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: editing::text_box_setup,
         body: editing::text_box_body,
         teardown: editing::teardown,
@@ -409,6 +426,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(review_cursor::document),
         setup: review_cursor::notepad_setup,
         body: review_cursor::notepad_body,
         teardown: review_cursor::teardown,
@@ -418,6 +436,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: review_cursor::text_box_setup,
         body: review_cursor::text_box_body,
         teardown: review_cursor::teardown,
@@ -427,6 +446,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(notepad_say_all::document),
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
@@ -436,6 +456,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(word_selection::document),
         setup: word_selection::notepad_setup,
         body: word_selection::notepad_body,
         teardown: word_selection::teardown,
@@ -445,6 +466,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: word_selection::text_box_setup,
         body: word_selection::text_box_body,
         teardown: word_selection::teardown,
@@ -454,6 +476,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(typed_words::document),
         setup: typed_words::notepad_setup,
         body: typed_words::notepad_body,
         teardown: typed_words::teardown,
@@ -463,6 +486,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: typed_words::text_box_setup,
         body: typed_words::text_box_body,
         teardown: typed_words::teardown,
@@ -472,6 +496,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(review_words::document),
         setup: review_words::notepad_setup,
         body: review_words::notepad_body,
         teardown: review_words::teardown,
@@ -481,6 +506,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: review_words::text_box_setup,
         body: review_words::text_box_body,
         teardown: review_words::teardown,
@@ -490,6 +516,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: text_box_say_all::setup,
         body: text_box_say_all::body,
         teardown: text_box_say_all::teardown,
@@ -499,6 +526,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: spelling_errors::setup,
         body: spelling_errors::body,
         teardown: spelling_errors::teardown,
@@ -512,6 +540,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: true,
+        document: Some(notepad_spelling_errors::document),
         setup: notepad_spelling_errors::setup,
         body: notepad_spelling_errors::body,
         teardown: notepad_spelling_errors::teardown,
@@ -521,6 +550,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: theme_panel::setup,
         body: theme_panel::body,
         teardown: theme_panel::teardown,
@@ -530,6 +560,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         settings: None,
         local_only: false,
+        document: None,
         setup: terminal_settings_page::setup,
         body: terminal_settings_page::body,
         teardown: terminal_settings_page::teardown,
@@ -539,6 +570,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: terminal_commands::setup_windows_terminal,
         body: terminal_commands::body,
         teardown: terminal_commands::teardown,
@@ -548,6 +580,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: terminal_commands::setup_console_host,
         body: terminal_commands::body,
         teardown: terminal_commands::teardown,
@@ -557,6 +590,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: Some(terminal_commands::speak_passwords),
         local_only: false,
+        document: None,
         setup: terminal_commands::setup_spoken_password,
         body: terminal_commands::body_spoken_password,
         teardown: terminal_commands::teardown,
@@ -566,6 +600,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: terminal_flood::setup,
         body: terminal_flood::body,
         teardown: terminal_flood::teardown,
@@ -575,6 +610,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: terminal_editing::setup,
         body: terminal_editing::body,
         teardown: terminal_editing::teardown,
@@ -584,6 +620,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         settings: None,
         local_only: false,
+        document: None,
         setup: terminal_review_grid::setup,
         body: terminal_review_grid::body,
         teardown: terminal_review_grid::teardown,
@@ -593,6 +630,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Navigation,
         settings: None,
         local_only: false,
+        document: None,
         setup: system_information_tree::setup,
         body: system_information_tree::body,
         teardown: system_information_tree::teardown,
@@ -602,6 +640,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         settings: None,
         local_only: false,
+        document: Some(demo_notepad_editing::document),
         setup: demo_notepad_editing::setup,
         body: demo_notepad_editing::body,
         teardown: demo_notepad_editing::teardown,
@@ -611,6 +650,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         settings: None,
         local_only: false,
+        document: Some(demo_review_cursor::document),
         setup: demo_review_cursor::setup,
         body: demo_review_cursor::body,
         teardown: demo_review_cursor::teardown,
@@ -620,6 +660,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         settings: None,
         local_only: false,
+        document: None,
         setup: demo_say_all::setup,
         body: demo_say_all::body,
         teardown: demo_say_all::teardown,
@@ -629,6 +670,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         settings: None,
         local_only: false,
+        document: None,
         setup: demo_terminal_session::setup,
         body: demo_terminal_session::body,
         teardown: demo_terminal_session::teardown,
@@ -638,6 +680,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         settings: None,
         local_only: false,
+        document: None,
         setup: demo_settings_dialog_keys::setup,
         body: demo_settings_dialog_keys::body,
         teardown: demo_settings_dialog_keys::teardown,
@@ -774,12 +817,13 @@ fn run(def: &ScenarioDef) {
         });
     }
 
-    let mut scenario = Scenario::launch_with_settings(def.settings).unwrap_or_else(|error| {
-        panic!(
-            "scenario {:?}: launching Verbatim through the agent failed: {error}",
-            def.name
-        )
-    });
+    let mut scenario = Scenario::launch_with(def.settings, def.document.map(|document| document()))
+        .unwrap_or_else(|error| {
+            panic!(
+                "scenario {:?}: launching Verbatim through the agent failed: {error}",
+                def.name
+            )
+        });
     let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
     let mut problems: Vec<String> = Vec::new();
 
@@ -932,6 +976,7 @@ mod tests {
                 group: Group::Speech,
                 settings: None,
                 local_only: false,
+                document: None,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -941,6 +986,7 @@ mod tests {
                 group: Group::Shell,
                 settings: None,
                 local_only: false,
+                document: None,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -950,6 +996,7 @@ mod tests {
                 group: Group::Shell,
                 settings: None,
                 local_only: false,
+                document: None,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,

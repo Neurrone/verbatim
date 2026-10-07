@@ -21,7 +21,7 @@ use std::io;
 
 use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -31,8 +31,16 @@ const NAME: &str = "editing";
 /// The document the scenario edits.
 const DOCUMENT: &str = "alpha beta gamma\r\ndelta epsilon\r\n";
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: DOCUMENT.to_owned(),
+    }
+}
+
 fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    editor.open(scenario, NAME, DOCUMENT)
+    editor.open(scenario, &document())
 }
 
 /// Presses `keys` and asserts exactly `heard`.
@@ -62,7 +70,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 }
 
 fn body(scenario: &mut Scenario, editor: Editor) {
-    editor.expect_opened(scenario, NAME, "alpha beta gamma");
+    editor.expect_in_front(scenario, NAME, "alpha beta gamma");
     press(scenario, "control+home", &["alpha beta gamma"]);
     press(scenario, "rightarrow", &["l"]);
     press(scenario, "control+rightarrow", &["beta"]);
@@ -72,7 +80,7 @@ fn body(scenario: &mut Scenario, editor: Editor) {
     // the line the caret is on, the second.
     super::open_verbatim_menu(scenario);
     scenario.send_keys(&["escape"]).expect("sends escape");
-    editor.expect_returned(scenario, NAME, "delta epsilon");
+    editor.expect_in_front(scenario, NAME, "delta epsilon");
 
     // End puts the caret on the line break, which is named. Shift+Home
     // selects back to the start of the line; Shift+Right Arrow then

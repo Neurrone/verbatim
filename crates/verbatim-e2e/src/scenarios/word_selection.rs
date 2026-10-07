@@ -19,7 +19,7 @@ use std::io;
 
 use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -32,9 +32,16 @@ const FIRST: &str = "Verbatim reads this short note";
 /// The second line.
 const SECOND: &str = "one line at a time as the caret moves.";
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: format!("{FIRST}\r\n{SECOND}\r\n"),
+    }
+}
+
 fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    let document = format!("{FIRST}\r\n{SECOND}\r\n");
-    editor.open(scenario, NAME, &document)
+    editor.open(scenario, &document())
 }
 
 /// Presses `keys` and asserts exactly `heard`.
@@ -64,7 +71,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 }
 
 fn body(scenario: &mut Scenario, editor: Editor) {
-    editor.expect_opened(scenario, NAME, FIRST);
+    editor.expect_in_front(scenario, NAME, FIRST);
 
     // Down to the second line and back up: Up Arrow speaks the line too.
     press(scenario, "control+home", FIRST);

@@ -23,7 +23,7 @@ use std::io;
 
 use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 use crate::speech::{Expected, cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
@@ -40,9 +40,16 @@ const ROWS: [(&str, &str); 4] = [
     ("Banana  yellow  0.50", "0"),
 ];
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: ROWS.iter().flat_map(|(row, _)| [*row, "\r\n"]).collect(),
+    }
+}
+
 fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    let document: String = ROWS.iter().flat_map(|(row, _)| [*row, "\r\n"]).collect();
-    editor.open(scenario, NAME, &document)
+    editor.open(scenario, &document())
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -91,7 +98,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 }
 
 fn body(scenario: &mut Scenario, editor: Editor) {
-    editor.expect_opened(scenario, NAME, ROWS[0].0);
+    editor.expect_in_front(scenario, NAME, ROWS[0].0);
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");

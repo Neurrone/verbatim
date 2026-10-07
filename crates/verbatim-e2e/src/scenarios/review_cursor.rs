@@ -22,7 +22,7 @@ use std::io;
 
 use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -32,8 +32,16 @@ const NAME: &str = "review";
 /// The document: a table whose quantity column starts at column 8.
 const DOCUMENT: &str = "Name    Qty\r\nApple   3\r\nFig\r\nBanana  12\r\n";
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: DOCUMENT.to_owned(),
+    }
+}
+
 fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    editor.open(scenario, NAME, DOCUMENT)
+    editor.open(scenario, &document())
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -65,7 +73,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 fn body(scenario: &mut Scenario, editor: Editor) {
     // Notepad's text area, and the line at its caret, at the top of the
     // new document.
-    editor.expect_opened(scenario, NAME, "Name    Qty");
+    editor.expect_in_front(scenario, NAME, "Name    Qty");
     // The caret to the top; the review cursor follows it there.
     scenario
         .send_keys(&["control+home"])

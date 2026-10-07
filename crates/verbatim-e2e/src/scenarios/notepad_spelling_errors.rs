@@ -30,7 +30,7 @@
 use std::io;
 
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -48,8 +48,16 @@ const FINE_LINE: &str = "All fine here.";
 /// marked.
 const ERROR_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .";
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: DOCUMENT.to_owned(),
+    }
+}
+
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    scenario.open_document_with(NAME, DOCUMENT)?;
+    scenario.bring_document_forward(NAME)?;
     Ok(ScenarioState::None)
 }
 
@@ -60,7 +68,7 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::expect_notepad_opened(scenario, NAME, FINE_LINE);
+    super::expect_notepad_in_front(scenario, NAME, FINE_LINE);
     assert_eq!(
         scenario
             .misspelt_words()

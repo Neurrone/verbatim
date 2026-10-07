@@ -58,7 +58,7 @@ const LATENCY_FILE_NAME: &str = "latency.csv";
 const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
 
 /// Text in the title of every window the harness opens on purpose: the
-/// document [`Scenario::open_document_with`] writes is named with it, so
+/// document a [`Document`] names is named with it, so
 /// its window can be told from the user's own windows of the same
 /// application, found by title, and closed by title (a Notepad harness tab
 /// as a tab), as NVDA's system tests name their Notepad documents.
@@ -95,7 +95,7 @@ const VERBATIM_IMAGES: [&str; 3] = [
 ];
 
 /// The extensions of the harness files the pre-launch sweep deletes: the
-/// documents [`Scenario::open_document_with`] writes, and the fixtures
+/// documents a [`Document`] names, and the fixtures
 /// written at [`Scenario::harness_file`] paths.
 const HARNESS_FILE_EXTENSIONS: [&str; 2] = ["txt", "json"];
 
@@ -210,19 +210,21 @@ impl Scenario {
     ///
     /// # Errors
     ///
-    /// As [`Scenario::launch_with_settings`].
+    /// As [`Scenario::launch_with`].
     pub fn launch() -> io::Result<Self> {
-        Self::launch_with_settings(None)
+        Self::launch_with(None, None)
     }
 
     /// Launches a fresh Verbatim with `configure` applied to the fixed
-    /// settings, from the desktop every scenario starts from.
+    /// settings, from the desktop every scenario starts from, with
+    /// `document` open in Windows 11 Notepad when there is one.
     ///
     /// In order: ends every process the agent launched for an earlier run
     /// that is still running, by its own handle; stages the binaries and
     /// writes the settings (runner-direct mode); closes any window an
     /// earlier run left open by its harness title (a Notepad harness tab as
-    /// a tab) and deletes the harness files it left; minimizes every
+    /// a tab) and deletes the harness files it left; opens `document`
+    /// ([`Document`]); minimizes every
     /// window, as Show Desktop does, and waits until they are and the
     /// desktop is in front; starts the recording, when recording; creates the
     /// event Verbatim sets when it is ready, launches it, and waits for the
@@ -240,7 +242,10 @@ impl Scenario {
         clippy::too_many_lines,
         reason = "the launch's steps in order, each one's failure cleaned up where it happens"
     )]
-    pub fn launch_with_settings(configure: Option<fn(&mut Settings)>) -> io::Result<Self> {
+    pub fn launch_with(
+        configure: Option<fn(&mut Settings)>,
+        document: Option<Document>,
+    ) -> io::Result<Self> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let lock = live_instance_lock()
@@ -297,6 +302,10 @@ impl Scenario {
         // Leftovers are closed first, while a window of theirs is still where
         // it was, not minimized.
         sweep_leftovers(&mut agent, &run_dir)?;
+        let mut opened = Vec::new();
+        if let Some(document) = document {
+            opened.push(open_document(&mut agent, &run_dir, &document)?);
+        }
         let (minimized, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
         if !minimized {
             return Err(io::Error::other(format!(
@@ -379,7 +388,7 @@ impl Scenario {
             control,
             speech,
             timeline,
-            launched: Vec::new(),
+            launched: opened,
             folders: Vec::new(),
             files: Vec::new(),
             stderr_log_path: stderr_path,
@@ -690,65 +699,25 @@ impl Scenario {
         self.launch_titled(command, &args, title, true)
     }
 
-    /// Opens a harness document holding `contents` in Windows 11 Notepad,
-    /// named with [`DOCUMENT_MARKER`] and `name`, and brings its window to
-    /// the foreground. Notepad opens minimized and inactive, and is
-    /// brought forward, as clicking its taskbar button does, only once its
-    /// window is titled with the document: a window that takes the
-    /// foreground as it opens is first titled "Notepad" alone for a moment,
-    /// and whether Verbatim reads it then is a race. No Notepad window may
-    /// be open before, so the window is the scenario's own and Notepad's
-    /// process exits once it closes; at cleanup the harness tab is closed
-    /// as a tab, so Notepad does not keep it for its next session, and the
-    /// document is deleted.
+    /// Brings the harness document `name`, which Notepad opened before
+    /// Verbatim started ([`Document`]) and the starting state minimized, to
+    /// the foreground, as clicking its taskbar button does, and waits on
+    /// window events until it is in front.
     ///
     /// # Errors
     ///
-    /// Returns an error if a Notepad window is already open, a request
-    /// fails, the window is not titled with the document in time, or it
-    /// does not take the foreground.
-    pub fn open_document_with(&mut self, name: &str, contents: &str) -> io::Result<WindowInfo> {
+    /// Returns an error if a request fails, no window is titled with the
+    /// document, or it does not take the foreground in time.
+    pub fn bring_document_forward(&mut self, name: &str) -> io::Result<()> {
         let marker = harness_marker(name);
-        let open: Vec<String> = self
-            .agent
-            .foreground_info()?
-            .windows
-            .into_iter()
-            .filter(|window| is_notepad(&window.image))
-            .map(|window| window.title)
-            .collect();
-        if !open.is_empty() {
-            return Err(io::Error::other(format!(
-                "Notepad must not be open when a scenario starts, so its window is the scenario's own; close these first: {open:?}"
-            )));
-        }
-        let path = format!(r"{}\{marker}.txt", self.run_dir);
-        self.agent.write_file(&path, contents.as_bytes())?;
-        let launch = self
-            .agent
-            .launch_minimized("notepad.exe", std::slice::from_ref(&path))?;
-        self.launched.push(Launched {
-            pid: launch.pid,
-            title: Some(marker.clone()),
-            owners: Vec::new(),
-            owners_exit: true,
-            document: Some(path),
-            notepad: true,
-            also_exit: Vec::new(),
-        });
-        let (present, desktop) = self.agent.wait_for_window(
-            WindowCondition::Present {
-                title_contains: marker.clone(),
-            },
-            WINDOW_TIMEOUT,
-        )?;
+        let desktop = self.agent.foreground_info()?;
         let window = desktop
             .windows
             .iter()
-            .find(|window| present && window.title.contains(&marker))
+            .find(|window| window.title.contains(&marker))
             .ok_or_else(|| {
                 io::Error::other(format!(
-                    "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
+                    "no window is titled {marker:?}: {}",
                     describe_foreground(&desktop)
                 ))
             })?;
@@ -759,7 +728,14 @@ impl Scenario {
                 describe_foreground(&desktop)
             )));
         }
-        self.require_in_front(&marker, launch)
+        self.wait_for(
+            WindowCondition::Foreground {
+                title_contains: marker.clone(),
+                unsaved: None,
+            },
+            WINDOW_TIMEOUT,
+            &format!("{marker} to be in front"),
+        )
     }
 
     /// Saves the harness document `name` with Control+S, as its window is
@@ -1598,6 +1574,100 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
         agent.delete_folder(&format!(r"{directory}\{name}"))?;
     }
     Ok(())
+}
+
+/// A harness document a scenario edits in Windows 11 Notepad, opened
+/// before Verbatim starts ([`Scenario::launch_with`]): the starting state
+/// minimizes it with every other window, and the scenario brings it
+/// forward ([`Scenario::bring_document_forward`]), so what Verbatim says of
+/// it is what it says of a window coming back to the foreground. A window
+/// Windows 11 Notepad opens is titled "Notepad" alone for a moment as it
+/// first takes the foreground, and then renamed with the document; opened
+/// while Verbatim runs, whether Verbatim announces it before or after the
+/// rename is a race.
+#[derive(Clone, Debug)]
+pub struct Document {
+    /// The document's name, after [`DOCUMENT_MARKER`].
+    pub name: &'static str,
+    /// The document's text, its caret at the start.
+    pub contents: String,
+}
+
+/// Opens `document` in Windows 11 Notepad and waits on window events until
+/// it is in the foreground titled with the document. Notepad opens
+/// minimized and inactive and is brought forward once its window is
+/// titled with the document. No Notepad window may be open before, so the
+/// window is the scenario's own and Notepad's process exits once it
+/// closes; at cleanup the harness tab is closed as a tab, so Notepad does
+/// not keep it for its next session, and the document is deleted.
+fn open_document(
+    agent: &mut AgentClient,
+    run_dir: &str,
+    document: &Document,
+) -> io::Result<Launched> {
+    let marker = harness_marker(document.name);
+    let open: Vec<String> = agent
+        .foreground_info()?
+        .windows
+        .into_iter()
+        .filter(|window| is_notepad(&window.image))
+        .map(|window| window.title)
+        .collect();
+    if !open.is_empty() {
+        return Err(io::Error::other(format!(
+            "Notepad must not be open when a scenario starts, so its window is the scenario's own; close these first: {open:?}"
+        )));
+    }
+    let path = format!(r"{run_dir}\{marker}.txt");
+    agent.write_file(&path, document.contents.as_bytes())?;
+    let launch = agent.launch_minimized("notepad.exe", std::slice::from_ref(&path))?;
+    let mut launched = Launched {
+        pid: launch.pid,
+        title: Some(marker.clone()),
+        owners: Vec::new(),
+        owners_exit: true,
+        document: Some(path),
+        notepad: true,
+        also_exit: Vec::new(),
+    };
+    let (present, desktop) = agent.wait_for_window(
+        WindowCondition::Present {
+            title_contains: marker.clone(),
+        },
+        WINDOW_TIMEOUT,
+    )?;
+    let window = desktop
+        .windows
+        .iter()
+        .find(|window| present && window.title.contains(&marker))
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
+                describe_foreground(&desktop)
+            ))
+        })?;
+    if !agent.set_foreground(window.window)? {
+        return Err(io::Error::other(format!(
+            "Notepad's window {:?} could not be brought to the foreground: {}",
+            window.title,
+            describe_foreground(&desktop)
+        )));
+    }
+    let (met, desktop) = agent.wait_for_window(
+        WindowCondition::Foreground {
+            title_contains: marker.clone(),
+            unsaved: None,
+        },
+        WINDOW_TIMEOUT,
+    )?;
+    let window = desktop.foreground.clone().filter(|_| met).ok_or_else(|| {
+        io::Error::other(format!(
+            "the window titled {marker:?} did not take the foreground within {WINDOW_TIMEOUT:?}: {}",
+            describe_foreground(&desktop)
+        ))
+    })?;
+    launched.owners.push(window.pid);
+    Ok(launched)
 }
 
 /// Whether `image` is Windows 11 Notepad's.

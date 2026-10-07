@@ -20,7 +20,7 @@ use std::io;
 
 use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -73,8 +73,16 @@ fn type_each(scenario: &mut Scenario, typed: &[(char, &[&str])]) {
     }
 }
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: DOCUMENT.to_owned(),
+    }
+}
+
 fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
-    editor.open(scenario, NAME, DOCUMENT)
+    editor.open(scenario, &document())
 }
 
 /// Opens the scenario's document in the Windows Forms text box.
@@ -98,7 +106,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 }
 
 fn body(scenario: &mut Scenario, editor: Editor) {
-    editor.expect_opened(scenario, NAME, "Typing at the end:");
+    editor.expect_in_front(scenario, NAME, "Typing at the end:");
     scenario
         .send_keys(&["control+end"])
         .expect("sends control+end");

@@ -17,7 +17,7 @@
 use std::io;
 
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Document, Scenario};
 use crate::speech::Ending;
 
 pub(crate) use super::no_teardown as teardown;
@@ -40,14 +40,21 @@ const SECOND_SECOND_PART: &str = "with nothing much to say.";
 /// The third line, queued and never heard.
 const THIRD: &str = "Nobody hears this third line.";
 
+/// The scenario's document, which Notepad opens before Verbatim starts.
+pub(crate) fn document() -> Document {
+    Document {
+        name: NAME,
+        contents: format!("{FIRST}\r\n{SECOND}\r\n{THIRD}\r\n"),
+    }
+}
+
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let document = format!("{FIRST}\r\n{SECOND}\r\n{THIRD}\r\n");
-    scenario.open_document_with(NAME, &document)?;
+    scenario.bring_document_forward(NAME)?;
     Ok(ScenarioState::None)
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::expect_notepad_opened(scenario, NAME, FIRST);
+    super::expect_notepad_in_front(scenario, NAME, FIRST);
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
