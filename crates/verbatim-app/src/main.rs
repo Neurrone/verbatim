@@ -1628,10 +1628,11 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             // listener is running, the outpost reading Verbatim's own
             // windows (its menu and dialogs) is ready, and Core knows the
             // focus, so the first focus report cannot arrive after, and cut
-            // off, the speech of a key pressed straight away.
+            // off, the speech of a key pressed straight away. With no
+            // foreground window at all there is no focus to wait for.
             let ready = ready_handle.get().is_some()
                 && listener_ready.load(Ordering::Acquire)
-                && focus_known.load(Ordering::Acquire)
+                && (focus_known.load(Ordering::Acquire) || foreground_pid().is_none())
                 && outposts.iter().any(|outpost| {
                     outpost.target_pid == Pid(own_pid) && outpost.state == OutpostState::Ready
                 });
