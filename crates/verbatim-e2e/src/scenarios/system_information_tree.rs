@@ -13,10 +13,9 @@
 //! back to the previous sibling ("Hardware Resources"), up to the parent
 //! ("System Summary"), up again onto the tree control itself (role "tree
 //! view", never an item), and finally snap the navigator back to focus.
-//! Substring matches, tolerant of state wording, like the other scenarios.
-//! A tree item is spoken as NVDA speaks it on focus and object navigation,
-//! by name without its "tree view item" role, so each step is anchored on
-//! the item's name and level. As in NVDA, the level comes before the name
+//! Every step asserts exactly what is said. A tree item is spoken as NVDA
+//! speaks it on focus and object navigation, by name without its "tree
+//! view item" role. As in NVDA, the level comes before the name
 //! when it differs from the last level spoken that way, and after the rest
 //! when it does not ("Where the level goes" in `docs/nvda/speech.md`). The
 //! tree control itself is spoken by its bare role, never as an item.

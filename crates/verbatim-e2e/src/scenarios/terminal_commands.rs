@@ -1,7 +1,6 @@
 //! Commands, their output, typed echo, and a password prompt in a terminal
 //! (milestone M4 item 9; `phase6-design.md`, "Terminal end-to-end
-//! scenarios"): `windows_terminal_commands` in Windows Terminal (the
-//! console host, saying so, where Windows Terminal is not installed),
+//! scenarios"): `windows_terminal_commands` in Windows Terminal,
 //! `conhost_commands` in the console host, and `terminal_spoken_password`
 //! with the "speak passwords" setting on. The shared setup is described in
 //! the `terminal` module.
@@ -10,8 +9,9 @@
 //! (numpad 8) and hears "ready>", so typing starts only once Verbatim reads
 //! this terminal. Then:
 //!
-//! 1. It types `echo hello`: each character is spoken, exactly and in
-//!    order (the space as "space"). Enter then gives exactly "hello" and
+//! 1. It types `echo hello` a character at a time, hearing each echo
+//!    before the next (the space as "space", with the letter after it, as
+//!    the terminal shows a space only once something follows it). Enter then gives exactly "hello" and
 //!    then the prompt, "ready>". This shows echo works in this window, so
 //!    the silence that follows means something.
 //! 2. It runs `.\password.ps1`, a written script that calls
@@ -22,7 +22,8 @@
 //!    each character is not spoken: Windows PowerShell's console shows an
 //!    asterisk for it, and that new output is what is spoken. With "speak
 //!    passwords" on (`terminal_spoken_password`), each character is spoken.
-//! 4. Enter: the line read again, "done", and then "ready>".
+//! 4. Enter: "done", and then "ready>". Every asterisk was spoken as it
+//!    was shown, so the line is not read again.
 //!
 //! Every step asserts exactly what it says before the next key.
 

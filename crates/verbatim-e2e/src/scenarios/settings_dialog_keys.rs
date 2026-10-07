@@ -23,8 +23,8 @@
 //!
 //! The walk is fixed: the Speech page's controls in their Tab order, so
 //! every Tab is asserted by the control it reaches. Every time the dialog
-//! closes, the scenario waits for it to leave the foreground and asserts
-//! the desktop, where the focus returns.
+//! closes, the scenario waits for the desktop, where the focus returns, to
+//! take the foreground and asserts its announcement.
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;

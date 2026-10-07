@@ -10,9 +10,7 @@
 //! then snap the navigator back to focus. Last, it tabs to the rate slider,
 //! whose MSAA object answers next and previous with itself, and checks that
 //! object navigation reports the edge ("No next", "No previous") rather than
-//! landing on the slider again. Assertions are substring matches,
-//! tolerant of the platform controls' own wording, matching the M1
-//! regression's style.
+//! landing on the slider again. Every step asserts exactly what is said.
 //!
 //! Gestures use the desktop layout's bindings (the default), addressed by
 //! their stable identifiers rather than raw numpad keystrokes, so `NumLock`

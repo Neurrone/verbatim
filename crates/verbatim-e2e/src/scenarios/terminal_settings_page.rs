@@ -18,8 +18,8 @@
 //! closes the dialog without applying it.
 //!
 //! Every step asserts exactly what it says; each time the dialog closes,
-//! the scenario waits for it to leave the foreground and asserts the
-//! desktop, where the focus returns.
+//! the scenario waits for the desktop, where the focus returns, to take
+//! the foreground and asserts its announcement.
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;

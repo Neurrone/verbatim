@@ -7,8 +7,7 @@
 //! Explorer", then "Items View list", and the first item, not yet
 //! selected, with its position; each arrow press the item and its
 //! position; Enter on the subfolder its first item; Backspace back to the
-//! subfolder's entry, which Explorer selects once it has the focus, which
-//! is announced as "selected".
+//! subfolder's entry, selected again, with its position, as NVDA says it.
 
 use std::io;
 
@@ -39,7 +38,7 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
         ("uparrow", &["alpha.txt 2 of 4"]),
         ("uparrow", &["Inner 1 of 4"]),
         ("enter", &["delta.txt not selected 1 of 1"]),
-        ("backspace", &["Inner not selected 1 of 4", "selected"]),
+        ("backspace", &["Inner 1 of 4"]),
     ];
     for (key, heard) in steps {
         scenario.send_keys(&[key]).expect("sends the key");

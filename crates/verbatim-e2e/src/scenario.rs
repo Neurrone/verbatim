@@ -5,7 +5,9 @@
 //! scenario starts from the same desktop: every window minimized, as the
 //! taskbar's Show Desktop leaves it, whether or not the run is recorded.
 //! Cleanup ([`Scenario::clean_up`]) closes each window the scenario opened
-//! by its title, checks that the process that owned it has exited when the
+//! by its title (a Windows 11 Notepad document by closing its tab, never
+//! its window, since Notepad keeps the tabs of a closed window for its next
+//! session), checks that the process that owned it has exited when the
 //! scenario started that program, ends anything else it launched by its
 //! process id, and fails the scenario when anything will not close.
 //! Nothing is ever ended by its image name.
@@ -56,10 +58,10 @@ const LATENCY_FILE_NAME: &str = "latency.csv";
 const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
 
 /// Text in the title of every window the harness opens on purpose: the
-/// document [`Scenario::open_document`] writes is named with it, so its
-/// window can be told from the user's own windows of the same application,
-/// found by title, and closed by title, as NVDA's system tests name their
-/// Notepad documents.
+/// document [`Scenario::open_document_with`] writes is named with it, so
+/// its window can be told from the user's own windows of the same
+/// application, found by title, and closed by title (a Notepad harness tab
+/// as a tab), as NVDA's system tests name their Notepad documents.
 pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 
 /// How long a window the harness waits for is given to appear and take the
@@ -217,11 +219,12 @@ impl Scenario {
     /// settings, from the desktop every scenario starts from.
     ///
     /// In order: stages the binaries and writes the settings (runner-direct
-    /// mode); minimizes every window, as Show Desktop does, and waits until
-    /// they are; ends every process the agent launched for an earlier run
+    /// mode); ends every process the agent launched for an earlier run
     /// that is still running, by its own handle; closes any window an
-    /// earlier run left open by its harness title and deletes the harness
-    /// files it left; starts the recording, when recording; creates the
+    /// earlier run left open by its harness title (a Notepad harness tab as
+    /// a tab) and deletes the harness files it left; minimizes every
+    /// window, as Show Desktop does, and waits until they are and the
+    /// desktop is in front; starts the recording, when recording; creates the
     /// event Verbatim sets when it is ready, launches it, and waits for the
     /// event; then opens the command connection and the speech connection.
     /// The first speech subscription receives the speech Verbatim queued
