@@ -753,7 +753,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         settings: None,
         local_only: false,
-        document: None,
+        document: Some(notepad_say_all::document),
         setup: demo_say_all::setup,
         body: demo_say_all::body,
         teardown: demo_say_all::teardown,

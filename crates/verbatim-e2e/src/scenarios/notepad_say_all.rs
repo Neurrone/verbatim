@@ -5,12 +5,13 @@
 //! Local-only: GitHub's Windows Server runner has classic Notepad.
 //!
 //! Notepad's text is UIA, which has no sentence unit, so say-all reads by
-//! line, as Notepad lays the lines out: the long second line wraps, and is
-//! read as its two lines. Say-all hands speech two pieces ahead of the one
-//! playing (`docs/performance.md`, "Say-all"), so once the second line's
-//! first part has started, its second part and the third line are queued.
-//! Control then cuts all three off, as any key does, and say-all stops:
-//! the third line is never heard. Home speaks the first
+//! line, as Notepad lays the lines out (the long second line wraps, and is
+//! read as its two lines), and speaks by sentence: the second line's one
+//! sentence is one utterance, with a mark where its wrapped second part
+//! starts. Say-all hands speech two utterances ahead of the one playing
+//! (`docs/performance.md`, "Say-all"), so once the second line has started,
+//! the third is queued. Control then cuts both off, as any key does, and
+//! say-all stops: the third line is never heard. Home speaks the first
 //! character of the caret's line, the second line's, and numpad 8 reads
 //! the line there, since the review cursor follows the caret.
 
@@ -31,11 +32,9 @@ const FIRST: &str = "Reading starts on this line.";
 /// The second line, long enough to be playing when the key is pressed.
 const SECOND: &str = "Mostly this second line is long enough to be playing when a key interrupts it, since it goes on for quite a while with nothing much to say.";
 
-/// The second line's first part, as Notepad wraps it.
+/// The second line's first part, as Notepad wraps it, where the caret
+/// stays when speech stops before the second part starts.
 const SECOND_FIRST_PART: &str = "Mostly this second line is long enough to be playing when a key interrupts it, since it goes on for quite a while ";
-
-/// The second line's second part.
-const SECOND_SECOND_PART: &str = "with nothing much to say.";
 
 /// The third line, queued and never heard.
 const THIRD: &str = "Nobody hears this third line.";
@@ -64,10 +63,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .send_gesture("kb:verbatim+downarrow")
         .expect("sends say all");
     scenario.speech().expect(&[FIRST]);
-    let playing = scenario.speech().expect_started(SECOND_FIRST_PART);
-    let queued = scenario
-        .speech()
-        .expect_queued(&[SECOND_SECOND_PART, THIRD]);
+    let playing = scenario.speech().expect_started(SECOND);
+    let queued = scenario.speech().expect_queued(&[THIRD]);
     scenario.send_keys(&["control"]).expect("sends control");
     scenario.speech().expect_ended(&playing, Ending::Cancelled);
     for heard in &queued {
