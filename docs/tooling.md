@@ -362,7 +362,9 @@ notion of "only one verbatim.exe" — two scenarios running concurrently
 would each think they own an instance the other just replaced out from
 under it (`single_instance::acquire_replacing`'s own algorithm). This is
 exactly what `.github/workflows/ci.yml`'s `e2e` job does, on a plain
-`windows-latest` runner, with the same two environment variables.
+`windows-latest` runner, with the same environment variable, and with
+`VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
+below).
 
 On a development VM reached over Remote Desktop, a run needs the session
 unlocked with a real foreground window, and disconnecting the RDP client
@@ -432,6 +434,9 @@ More environment variables matter for less common cases:
   defaulting to `ffmpeg` found on that machine's `PATH`. `cargo xtask vm
   test` sets it to the guest's vendored copy,
   `C:\VerbatimLab\tools\ffmpeg.exe`.
+- `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` skips the local-only scenarios; unset,
+  empty, or `0` runs them, and any other value fails each test saying so.
+  CI's `e2e` job sets it; see the local-only scenarios below.
 
 Every speech assertion waits for the matched utterance to end (its
 `SpeechEnded` frame) before the scenario injects its next input, and fails
@@ -473,7 +478,9 @@ Win32 tree view — the regression scenario for the flat MSAA tree-view
 exposure).
 Milestone M4's text scenarios add Notepad editing, word selection, typed
 word echo, the review cursor, and say-all, say-all in a Win32 edit
-control, and the terminal scenarios: `windows_terminal_commands`,
+control, spelling errors in `mockapp`'s scripted text (`spelling_errors`)
+and in Windows 11 Notepad (`notepad_spelling_errors`, local-only), and
+the terminal scenarios: `windows_terminal_commands`,
 `conhost_commands`, and `terminal_spoken_password` (commands, typed echo,
 and a password prompt whose typing is spoken only with "speak passwords"
 on), `terminal_flood` (ten thousand lines of output, the skipped-lines
@@ -487,7 +494,20 @@ Each terminal scenario opens a window of its own titled
 terminals are left alone, and runs its shell in a folder of the same name
 in `target/e2e-stage`, deleted once the window has closed; it uses Windows Terminal when `wt.exe` can be
 started and the console host otherwise (`conhost_commands` always uses the
-console host), and prints which. They type through the agent's `TypeText`,
+console host), and prints which. The agent starts `wt.exe` by searching
+`PATH`, so Windows Terminal's execution alias folder,
+`%LOCALAPPDATA%\Microsoft\WindowsApps`, must be on the agent's `PATH`, as
+it is on Windows 11 by default. CI's `e2e` job installs Windows Terminal
+before the suite, so the terminal scenarios use it there too: a step
+downloads the release's preinstall kit for a pinned version (1.24.12741.0,
+the version these scenarios were checked against), checks it against its
+pinned SHA-256, installs the bundle with `Add-AppxPackage` and the kit's
+x64 `Microsoft.UI.Xaml.2.8` framework as its one dependency (Windows
+Server lacks it; the bundle declares no VCLibs dependency), puts the
+alias folder on `PATH` for the later steps, and fails unless the package
+and its `wt.exe` alias are there. To move to a newer release, change the
+version and the hash in the step together, taking the hash from the
+release asset's digest. They type through the agent's `TypeText`,
 which maps each character with the foreground window's keyboard layout, so
 any layout that can type the commands works. `crates/verbatim-e2e/src/
 scenarios/` documents exactly what each asserts, at the top of its module.
@@ -501,6 +521,21 @@ scenario's name is also its
 --test-threads=1` runs exactly that one scenario runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
 VM (see "cargo xtask vm verbs" below).
+
+Some scenarios are local-only: they need something only a Windows 11
+desktop has, and are marked `local_only` in the registry. Today that is one,
+`notepad_spelling_errors`, which reads Windows 11 Notepad's own spell
+checker; GitHub's Windows Server runner has classic Notepad, a Win32 edit
+control with no spell checker. The other Notepad scenarios hold for
+classic Notepad's edit control as well as Windows 11 Notepad's UIA
+document, and run everywhere. A local-only scenario is part of the suite:
+every local run and every `cargo xtask vm test` run includes it. A run
+with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` skips it, its test printing a
+notice and passing, and CI's `e2e` job sets that variable. The skip comes
+from that setting alone, never from detecting the machine, so a local run
+cannot silently lose a scenario. Mark a new scenario local-only only when
+it cannot hold on the runner's Windows Server, and name what it needs in
+the comment above its registry entry.
 
 The registry also holds demonstrations, its `demo` group
 (`demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,

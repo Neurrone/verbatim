@@ -14,9 +14,10 @@
 //! sets its size with `mode con cols=120 lines=30` and its title. Which
 //! terminal a scenario gets is decided by what is installed: a scenario
 //! that prefers Windows Terminal asks the agent to start `wt.exe`, and when
-//! that fails, because Windows Terminal is not installed (as on a Windows
-//! Server runner), it says so and uses the console host. Nothing depends on
-//! the machine's name.
+//! that fails, because Windows Terminal is not installed, it says so and
+//! uses the console host. CI's `e2e` job installs Windows Terminal on its
+//! Windows Server runner, so there it is used too. Nothing depends on the
+//! machine's name.
 //!
 //! The shell is Windows PowerShell, present on both, started with
 //! `-NoProfile -NoLogo -NoExit -ExecutionPolicy Bypass -File start.ps1`.
