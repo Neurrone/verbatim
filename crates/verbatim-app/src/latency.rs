@@ -265,6 +265,9 @@ pub struct LatencyLedger {
     /// subscribers. A `OnceLock` because the server is constructed after the
     /// speech pipeline that owns this observer.
     server: Arc<OnceLock<ControlServer>>,
+    /// The ledger's clock, in microseconds since the Unix epoch: the
+    /// outpost's [`now_us`], which a test replaces with its own.
+    clock: fn() -> u64,
 }
 
 impl LatencyLedger {
@@ -287,6 +290,16 @@ impl LatencyLedger {
             capacity,
             max_bytes,
             server,
+            clock: now_us,
+        }
+    }
+
+    /// A ledger with no control server that reads `clock` for the time.
+    #[cfg(test)]
+    fn with_clock(capacity: usize, max_bytes: usize, clock: fn() -> u64) -> Self {
+        Self {
+            clock,
+            ..Self::new(capacity, max_bytes, Arc::new(OnceLock::new()))
         }
     }
 
@@ -310,7 +323,7 @@ impl LatencyLedger {
     /// `trace_id` from its outpost, with when it passed each point there and
     /// the cross-process calls the outpost made for it.
     pub fn event_received(&self, trace_id: TraceId, timing: EventTiming) {
-        let now = now_us();
+        let now = (self.clock)();
         self.update(trace_id, |entry| {
             entry.stages.event = Some(timing);
             entry.stages.core_received = Some(now);
@@ -322,7 +335,7 @@ impl LatencyLedger {
     /// otherwise the trace's own input (a caret key or a command), which
     /// may ask an outpost.
     pub fn reduced(&self, trace_id: TraceId) {
-        let now = now_us();
+        let now = (self.clock)();
         self.update(trace_id, |entry| {
             let stages = &mut entry.stages;
             if stages.core_received.is_some() {
@@ -341,7 +354,7 @@ impl LatencyLedger {
         trace_id: TraceId,
         stage: impl FnOnce(&mut Stages) -> &mut Option<u64>,
     ) {
-        let now = now_us();
+        let now = (self.clock)();
         self.update(trace_id, |entry| {
             if entry.stages.utterance == Some(utterance) {
                 stage(&mut entry.stages).get_or_insert(now);
@@ -416,8 +429,8 @@ impl SpeechEvents for LatencyLedger {
         text: &str,
         _at: std::time::Instant,
     ) {
-        let at_ms = now_ms();
-        let now = now_us();
+        let now = (self.clock)();
+        let at_ms = now / 1_000;
         let event_observed_at_ms = self.update(trace_id, |entry| {
             // The first utterance of a trace is queued first and heard
             // first, so its queue time pairs with the trace's audio start.
@@ -445,10 +458,10 @@ impl SpeechEvents for LatencyLedger {
     }
 
     fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, _at: std::time::Instant) {
-        let at_ms = now_ms();
         // A trace's timeline ends at its first audio: when several
         // utterances share a trace, the first to be heard counts.
-        let now = now_us();
+        let now = (self.clock)();
+        let at_ms = now / 1_000;
         let line = self.update(trace_id, |entry| {
             entry.audio_started_at_ms.get_or_insert(at_ms);
             if entry.stages.utterance != Some(utterance) || entry.stages.audio_started.is_some() {
@@ -517,6 +530,23 @@ impl SpeechEvents for LatencyLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        /// The time a test's ledger reads, in microseconds since the Unix
+        /// epoch, set by the test on its own thread.
+        static FAKE_US: Cell<u64> = const { Cell::new(0) };
+    }
+
+    fn fake_clock() -> u64 {
+        FAKE_US.get()
+    }
+
+    /// A ledger whose clock reads `FAKE_US`, starting at `at_us`.
+    fn ledger_at(at_us: u64) -> LatencyLedger {
+        FAKE_US.set(at_us);
+        LatencyLedger::with_clock(3, LatencyLedger::DEFAULT_MAX_BYTES, fake_clock)
+    }
 
     fn ledger() -> LatencyLedger {
         LatencyLedger::new(
@@ -546,14 +576,20 @@ mod tests {
             assert_eq!(timelines.bytes, actual, "the running total is exact");
             assert!(timelines.bytes <= max_bytes);
         }
+        // The newest are kept, as many as fit the bound: one more, the
+        // newest of those dropped, would not have fitted.
         let records = ledger.recent(256);
-        assert!(records.len() < 100, "the byte bound dropped timelines");
-        assert_eq!(records[0].trace_id, traces[99], "the newest is kept");
-        assert_eq!(
-            records.last().map(|record| record.trace_id),
-            Some(traces[100 - records.len()]),
-            "the oldest were dropped first"
+        let kept = records.len();
+        let bytes_of = |index: usize| size_of::<Entry>() + 10_000 + index;
+        let kept_bytes: usize = (100 - kept..100).map(bytes_of).sum();
+        assert!(kept_bytes <= max_bytes, "{kept} kept in {kept_bytes} bytes");
+        assert!(
+            kept_bytes + bytes_of(99 - kept) > max_bytes,
+            "{kept} kept, though one more fitted"
         );
+        let kept_traces: Vec<TraceId> = records.iter().map(|record| record.trace_id).collect();
+        let newest: Vec<TraceId> = traces[100 - kept..].iter().rev().copied().collect();
+        assert_eq!(kept_traces, newest, "the oldest were dropped first");
     }
 
     #[test]
@@ -573,7 +609,7 @@ mod tests {
 
     #[test]
     fn assembles_a_full_timeline() {
-        let ledger = ledger();
+        let ledger = ledger_at(250_400);
         let trace = TraceId::mint();
         ledger.event_observed(trace, 100);
         ledger.utterance_queued(
@@ -582,40 +618,37 @@ mod tests {
             "Rate slider 50",
             std::time::Instant::now(),
         );
+        FAKE_US.set(262_900);
         ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
 
-        let records = ledger.recent(10);
-        assert_eq!(records.len(), 1);
-        let record = &records[0];
-        assert_eq!(record.trace_id, trace);
-        assert_eq!(record.event_observed_at_ms, 100);
-        assert!(record.speech_queued_at_ms.is_some());
-        assert!(record.audio_started_at_ms.is_some());
+        assert_eq!(
+            ledger.recent(10),
+            [LatencyRecord {
+                trace_id: trace,
+                event_observed_at_ms: 100,
+                speech_queued_at_ms: Some(250),
+                audio_started_at_ms: Some(262),
+                stages: Vec::new(),
+            }]
+        );
     }
 
     #[test]
     fn a_trace_keeps_its_first_utterances_queue_time() {
         // A window, then its control, in one trace: the timeline runs from
         // the first utterance's queuing to the first audio.
-        let ledger = ledger();
+        let ledger = ledger_at(1_000_000);
         let trace = TraceId::mint();
         let now = std::time::Instant::now;
         ledger.utterance_queued(UtteranceId(1), trace, "Notepad", now());
-        let first_queued = ledger.recent(1)[0].speech_queued_at_ms;
-        // The ledger reads the clock itself; once it has moved on, a queue
-        // time taken from the second utterance would differ from the first.
-        let first_ms = first_queued.expect("the first utterance's queue time");
-        let deadline = now() + std::time::Duration::from_secs(1);
-        while now_ms() <= first_ms {
-            assert!(now() < deadline, "the clock moves on");
-            std::thread::yield_now();
-        }
+        FAKE_US.set(1_020_000);
         ledger.audio_started(UtteranceId(1), trace, now());
+        FAKE_US.set(1_030_000);
         ledger.utterance_queued(UtteranceId(2), trace, "Text editor", now());
 
         let record = &ledger.recent(1)[0];
-        assert_eq!(record.speech_queued_at_ms, first_queued);
-        assert!(record.speech_queued_at_ms <= record.audio_started_at_ms);
+        assert_eq!(record.speech_queued_at_ms, Some(1_000));
+        assert_eq!(record.audio_started_at_ms, Some(1_020));
     }
 
     #[test]
@@ -641,15 +674,15 @@ mod tests {
             audio_to_mixer: Some(60_700),
             audio_started: Some(62_500),
         };
-        let line = stages.line().expect("spoken");
-        assert!(
-            line.starts_with("12.5 ms for \"OK button\": 9.5 ms to speech and 3.0 ms to sound, not counting 50.0 ms waiting"),
-            "{line}"
-        );
-        assert!(line.contains("outpost read 7.0, to Core"), "{line}");
-        assert!(
-            line.contains("synthesis 1.0, leading silence 0.2, mixer and device 1.8"),
-            "{line}"
+        assert_eq!(
+            stages.line().as_deref(),
+            Some(
+                "12.5 ms for \"OK button\": 9.5 ms to speech and 3.0 ms to sound, \
+                 not counting 50.0 ms waiting behind earlier speech. \
+                 Event: Windows 1.0, listener to outpost 0.5, outpost queue 0.5, \
+                 outpost read 7.0, to Core 0.3, reducer 0.1, to speech 0.1. \
+                 Speech: synthesis 1.0, leading silence 0.2, mixer and device 1.8."
+            )
         );
     }
 
@@ -701,8 +734,15 @@ mod tests {
             audio_started: Some(10_000),
             ..Stages::default()
         };
-        let line = stages.line().expect("spoken");
-        assert!(line.contains("outpost read 7.0 (4 calls)"), "{line}");
+        assert_eq!(
+            stages.line().as_deref(),
+            Some(
+                "9.0 ms for \"\": 8.5 ms to speech and 0.5 ms to sound, \
+                 not counting 0.0 ms waiting behind earlier speech. \
+                 Event: outpost queue 1.0, outpost read 7.0 (4 calls), to Core 0.3. \
+                 Speech: ."
+            )
+        );
     }
 
     #[test]
@@ -754,20 +794,16 @@ mod tests {
                 LatencyStageKind::MixerAndDevice,
             ]
         );
-        let line = stages.line().expect("spoken");
-        assert!(
-            line.starts_with(
-                "105.5 ms for \"alpha beta gamma\": 103.5 ms to speech and 2.0 ms to sound"
-            ),
-            "{line}"
-        );
-        assert!(
-            line.contains(
-                "Event: hook to Core 0.4, Core to outpost 0.2, outpost queue 0.1, \
+        assert_eq!(
+            stages.line().as_deref(),
+            Some(
+                "105.5 ms for \"alpha beta gamma\": 103.5 ms to speech and 2.0 ms to sound, \
+                 not counting 0.0 ms waiting behind earlier speech. \
+                 Event: hook to Core 0.4, Core to outpost 0.2, outpost queue 0.1, \
                  caret wait 100.0 (60 calls), outpost read 2.0 (9 calls), to Core 0.3, \
-                 reducer 0.1, to speech 0.4."
-            ),
-            "{line}"
+                 reducer 0.1, to speech 0.4. \
+                 Speech: synthesis 1.0, leading silence 0.1, mixer and device 0.9."
+            )
         );
     }
 

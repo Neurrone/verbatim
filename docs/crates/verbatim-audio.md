@@ -56,7 +56,8 @@ Public API:
   `tone(frequency_hz, duration_ms)` generates a sine at 48 kHz, about
   10 dB below full scale, fading in and out over at most 5 ms so it does
   not click (20 Hz to 20 kHz, up to five seconds). A sound longer than a
-  minute is refused. `format` and `duration` describe it. It is converted
+  minute is refused. `format` and `duration` describe it, and `samples`
+  returns its interleaved samples in that format. It is converted
   to the device's format through the same converter as speech the first
   time it plays in that format, and kept converted.
 - `PlaybackEvent` — `Started` (the utterance's first frame has played),

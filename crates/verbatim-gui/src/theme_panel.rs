@@ -1040,9 +1040,10 @@ mod tests {
         assert_eq!(page.themes, [verbatim_i18n::theme_default_name()]);
         assert_eq!(page.selected, 0);
         assert!(!page.can_rename && !page.can_remove, "the built-in theme");
-        assert!(
-            page.description
-                .contains(&verbatim_i18n::theme_default_description())
+        assert_eq!(
+            page.description,
+            "Everything spoken as NVDA speaks it, with NVDA's sounds where NVDA plays them.\n\
+             No problems found."
         );
         assert_eq!(page.volume, 100);
         assert!(page.say_all && !page.speak_sounded);
@@ -1184,7 +1185,11 @@ mod tests {
         let mut panel = with_user_theme(&host);
         assert_eq!(panel.apply(), "");
         assert!(!panel.page().can_remove);
-        assert_ne!(panel.remove(), "", "the configured theme stays");
+        assert_eq!(
+            panel.remove(),
+            "The configuration uses Mine, so it cannot be removed.",
+            "the configured theme stays"
+        );
 
         assert_eq!(panel.new_theme("Other"), "");
         assert!(panel.page().can_remove);
@@ -1199,13 +1204,17 @@ mod tests {
         let host = FakeHost::new("files");
         let mut panel = with_user_theme(&host);
         assert_eq!(panel.rename("Renamed"), "");
-        assert!(panel.page().themes.contains(&"Renamed".to_owned()));
+        assert_eq!(panel.page().themes, ["Default", "Renamed"]);
         let package = host.themes_dir.with_file_name("mine.zip");
         assert_eq!(panel.export(&package), "");
         panel.choose(0);
         panel.cancel();
         assert_eq!(panel.page().themes.len(), 2);
-        assert!(!panel.import(&package).is_empty(), "the id is taken");
+        assert_eq!(
+            panel.import(&package),
+            "a theme with the id `mine` is installed",
+            "the id is taken"
+        );
         themes::remove_theme(&host.themes_dir, "mine").unwrap();
         assert_eq!(panel.import(&package), "");
         let page = panel.page();
@@ -1221,13 +1230,19 @@ mod tests {
         let mut panel = ThemePanel::open(Arc::clone(&host) as Arc<dyn ThemeHost>);
         panel.select(Some(catalogue_index(LINK)));
         panel.preview();
-        let spoken = host.spoken.lock().unwrap().clone();
-        assert_eq!(spoken.len(), 1);
-        assert!(
-            spoken[0]
-                .segments
-                .iter()
-                .any(|segment| segment.content == SegmentContent::Role(Role::Link))
+        let spoken: Vec<Vec<UtteranceSegment>> = host
+            .spoken
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|utterance| utterance.segments.clone())
+            .collect();
+        assert_eq!(
+            spoken,
+            [vec![
+                UtteranceSegment::label("Sample"),
+                UtteranceSegment::new(SegmentContent::Role(Role::Link)),
+            ]]
         );
         panel.select(Some(catalogue_index(Indication::Exit)));
         panel.preview();

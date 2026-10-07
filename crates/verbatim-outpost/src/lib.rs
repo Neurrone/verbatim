@@ -30,5 +30,5 @@ pub mod terminal;
 pub mod text;
 
 pub use listener::run_listener;
-pub use outpost::{Outpost, OutpostOptions, run_attach, run_pipe};
+pub use outpost::{FocusedElementReader, Outpost, OutpostOptions, run_attach, run_pipe};
 pub use supervisor::{OutpostMessage, Supervisor};

@@ -15,7 +15,8 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::mpsc;
 
 use verbatim_uia::{ElementExt, Registration, Scope, Subscription, Uia};
 use windows::Win32::System::Variant::VARIANT;
@@ -53,16 +54,13 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     let mut app = common::spawn("controller.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
-    let selected = Arc::new(Mutex::new(Vec::<(Option<String>, Vec<i32>)>::new()));
-    let selected_cb = selected.clone();
+    let (selected_tx, selected) = mpsc::channel();
     let _registration = Registration::new(
         vec![Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element| {
-                selected_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push((name_of(element), runtime_id(element)));
+                // The test may have finished.
+                let _ = selected_tx.send((name_of(element), runtime_id(element)));
             }),
         }],
         Scope::Windows(vec![hwnd.0 as isize]),
@@ -78,18 +76,13 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     let other = find(&uia, &root, "Other box", &cache);
     let results = find(&uia, &root, "Suggestions", &cache);
 
+    // The next selection event, which must be the one for `name`.
     let selected_id = |name: &str| -> Vec<i32> {
-        let mut found = None;
-        common::wait_until(&format!("UIA element-selected event for {name}"), || {
-            found = selected
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .iter()
-                .find(|(selected_name, _)| selected_name.as_deref() == Some(name))
-                .map(|(_, id)| id.clone());
-            found.is_some()
-        });
-        found.expect("waited for it")
+        let (selected_name, id) = selected
+            .recv_timeout(common::WAIT_TIMEOUT)
+            .unwrap_or_else(|_| panic!("no element-selected event for {name}"));
+        assert_eq!(selected_name.as_deref(), Some(name), "the selected element");
+        id
     };
 
     app.send("select result2");
@@ -99,6 +92,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
         .expect("controlled_descendant")
         .expect("the selected result is inside the list the search box controls");
     assert_eq!(name_of(&found).as_deref(), Some("Sound settings"));
+    assert_eq!(runtime_id(&found), result, "the selected element itself");
 
     let from_other = uia
         .controlled_descendant(&other, &result, &cache)
@@ -126,7 +120,11 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
         "an item outside the controlled list is not a controlled selection"
     );
 
-    app.send("quit");
+    assert!(
+        selected.try_recv().is_err(),
+        "one selection event for each select"
+    );
+    app.quit();
 }
 
 /// Runs this file's tests through the UIA test runner, which explains why

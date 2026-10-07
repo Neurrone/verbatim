@@ -544,13 +544,40 @@ fn write_toml_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), ConfigE
 mod tests {
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir()
-            .join("verbatim-config-tests")
-            .join(name);
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("create temp root");
-        root
+    /// A folder of one test's own under the system temp folder, named for
+    /// the test and this process, so no two tests or runs share one. It is
+    /// created empty, failing if it already exists, and removed when the
+    /// test ends; a failure to remove it fails the test. A test that failed
+    /// leaves its folder for inspection.
+    pub(crate) struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        pub(crate) fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("verbatim-config-{name}-{}", std::process::id()));
+            fs::create_dir(&root).expect("create the test's own temp folder");
+            Self(root)
+        }
+    }
+
+    impl std::ops::Deref for TempRoot {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            if !std::thread::panicking() {
+                fs::remove_dir_all(&self.0).expect("remove the test's temp folder");
+            }
+        }
+    }
+
+    fn temp_root(name: &str) -> TempRoot {
+        TempRoot::new(name)
     }
 
     #[test]
@@ -579,6 +606,7 @@ mod tests {
         store.save_settings().expect("saves settings");
 
         let reloaded = ConfigStore::load(&root).expect("reloads");
+        assert_eq!(reloaded.settings(), store.settings());
         assert_eq!(reloaded.settings().locale.as_deref(), Some("de"));
         assert!(!reloaded.settings().verbatim_keys.numpad_insert);
         let active = reloaded.active();
@@ -590,6 +618,10 @@ mod tests {
         assert_eq!(
             active.synth_setting("onecore", "rate-boost"),
             Some(&ConfigValue::Flag(true))
+        );
+        assert_eq!(
+            active.synth_setting("onecore", "voice"),
+            Some(&ConfigValue::Text("Microsoft David".into()))
         );
     }
 
@@ -673,13 +705,17 @@ mod tests {
         store.settings_mut().keyboard.speech_interrupt_for_enter = false;
         store.save_settings().expect("saves settings");
 
+        // The file names the setting's value as the documented word.
         let text =
             fs::read_to_string(root.join(ConfigStore::SETTINGS_FILE)).expect("reads the file");
-        assert!(
-            text.contains("speak_typed_words = \"edit_controls\""),
+        let file: toml::Table = text.parse().expect("the file is TOML");
+        assert_eq!(
+            file["reader"]["speak_typed_words"],
+            toml::Value::String("edit_controls".to_owned()),
             "{text}"
         );
         let reloaded = ConfigStore::load(&root).expect("reloads");
+        assert_eq!(reloaded.settings(), store.settings());
         assert_eq!(
             reloaded.settings().reader.speak_typed_words,
             TypingEcho::EditControls

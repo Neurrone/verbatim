@@ -348,15 +348,22 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             acknowledge("stall started");
             std::thread::sleep(std::time::Duration::from_millis(ms));
             acknowledge(&format!("stall ended {}", unix_micros()));
-        } else {
-            match context.backend {
+            continue;
+        }
+        let applied = match command {
+            Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
+            command => match context.backend {
                 Backend::Uia => uia::apply_command(&context.tree, hwnd, command),
                 Backend::Msaa => msaa::apply_command(&context.tree, hwnd, command),
-            }
+            },
+        };
+        // Acknowledged once it has taken effect, events raised, so a test
+        // that waits for the line knows; a command that cannot be applied,
+        // such as one naming a node the fixture lacks, says why instead.
+        match applied {
+            Ok(()) => acknowledge("applied"),
+            Err(reason) => acknowledge(&format!("rejected: {reason}")),
         }
-        // Counted once applied, so a test that waits for the count knows
-        // the command has taken effect.
-        hits::hit(hits::Method::CommandApplied);
     }
 }
 

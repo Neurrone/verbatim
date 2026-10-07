@@ -21,8 +21,10 @@ use verbatim_outpost::Outpost;
 use verbatim_outpost::protocol::{
     DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
 };
+use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
+    PeekMessageW, QS_ALLINPUT, TranslateMessage,
 };
 
 /// Longer than the old focus deadline, well under NVDA's ten seconds.
@@ -63,10 +65,17 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
             }
         }
     });
+    assert_eq!(
+        messages.recv_timeout(common::WAIT_TIMEOUT).ok(),
+        Some(OutpostToSupervisor::Ready {
+            outpost_pid: verbatim_model::Pid(std::process::id()),
+            target_pid: verbatim_model::Pid(pid),
+        }),
+        "the outpost announces itself first"
+    );
 
     // The window thread is stalled before the fact arrives.
     app.stall(STALL);
-    let delivered = Instant::now();
     outpost.handle_command(&SupervisorToOutpost::DeliverFact {
         trace_id: TraceId::mint(),
         observed_at_ms: 0,
@@ -78,55 +87,58 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
         },
     });
 
-    let deadline = delivered + common::WAIT_TIMEOUT;
-    loop {
-        let wait = deadline.saturating_duration_since(Instant::now());
-        let message = messages
-            .recv_timeout(wait)
-            .expect("the outpost reports the focus before the wait times out");
-        if let OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
-            timing,
-            ..
-        } = message
-        {
-            assert_eq!(node.name.as_deref(), Some("Original Name"));
-            // The outpost's worker took the fact, and began reading, before
-            // the stall ended, so the read waited on the stalled window
-            // thread and the test exercised a slow read.
-            let ended = app.stall_ended(STALL);
-            assert!(
-                timing.dequeued_at_us < ended,
-                "the read began at {} us, after the stall ended at {ended} us",
-                timing.dequeued_at_us
-            );
-            break;
-        }
-    }
-    app.send("quit");
+    let message = messages
+        .recv_timeout(STALL + common::WAIT_TIMEOUT)
+        .expect("the outpost reports the focus before the wait times out");
+    let OutpostToSupervisor::Event {
+        event: NormalizedEvent::FocusChanged { node, .. },
+        timing,
+        ..
+    } = message
+    else {
+        panic!("the outpost said {message:?}, not the focus");
+    };
+    assert_eq!(node.name.as_deref(), Some("Original Name"));
+    // The outpost's worker took the fact, and began reading, before the
+    // stall ended, and reported the focus after it: the read waited on the
+    // stalled window thread for the whole stall, longer than the old
+    // deadline, and the test exercised a slow read.
+    let ended = app.stall_ended(STALL);
+    assert!(
+        timing.dequeued_at_us < ended,
+        "the read began at {} us, after the stall ended at {ended} us",
+        timing.dequeued_at_us
+    );
+    assert!(
+        timing.published_at_us >= ended,
+        "the focus was reported at {} us, before the stall ended at {ended} us",
+        timing.published_at_us
+    );
+    app.quit();
 }
 
 /// Pumps this thread's messages, which out-of-context `WinEvent`s are
-/// delivered through, until `value` yields something.
+/// delivered through, until `value` yields something, waiting for each
+/// message rather than polling.
 fn pump_until<T>(mut value: impl FnMut() -> Option<T>) -> T {
     let deadline = Instant::now() + common::WAIT_TIMEOUT;
     let mut msg = MSG::default();
     loop {
-        if let Some(value) = value() {
-            return value;
-        }
-        // A standard non-blocking message pump.
         // SAFETY: `msg` is a local the call writes when it returns a message.
-        if unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+        while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
             // SAFETY: `msg` is the message just retrieved.
             let _ = unsafe { TranslateMessage(&raw const msg) };
             // SAFETY: as above.
             unsafe { DispatchMessageW(&raw const msg) };
         }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for mockapp's focus event"
-        );
-        std::thread::sleep(Duration::from_millis(5));
+        if let Some(value) = value() {
+            return value;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        let left = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: no handles; wakes when a message arrives or the time is up.
+        let woke =
+            unsafe { MsgWaitForMultipleObjectsEx(None, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+        assert_ne!(woke, WAIT_TIMEOUT, "mockapp's focus event did not arrive");
     }
 }

@@ -63,7 +63,7 @@ pub use com::{
 pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::{FocusCallback, FocusRegistration};
 pub use nearest::nearest_window_handle;
-pub use probe::{has_server_side_provider, probe_server_side_provider};
+pub use probe::{PROBE_BUDGET, Probe, has_server_side_provider, probe, probe_server_side_provider};
 pub use registry::{NodeIdRegistry, Released};
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES,

@@ -326,7 +326,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use verbatim_model::{Backend, NodeDetails, NodeId, Role, StateSet};
+    use verbatim_model::{Backend, NodeDetails, NodeId, Role, StateSet, WindowHandle};
     use verbatim_outpost::protocol::{DumpedTree, FocusedControl};
 
     use super::*;
@@ -565,17 +565,99 @@ mod tests {
     #[test]
     fn a_focus_now_answer_becomes_a_foreground_change_then_a_focus() {
         let mut table = RequestTable::default();
+        let trace_id = TraceId::mint();
         let id = table.begin(
             OutpostId(1),
             Asker::FocusNow {
                 source: Pid(5),
-                trace_id: TraceId::mint(),
+                trace_id,
             },
         );
+        let window = node(Role::Window, "Untitled - Notepad");
+        let window_facts = WindowFacts {
+            top_level: WindowHandle(0x10),
+            root_owner: WindowHandle(0x10),
+            topmost: false,
+            under_active_window: None,
+            in_foreground: true,
+        };
+        // The control's own window facts, told apart from the window's.
+        let control_facts = WindowFacts {
+            top_level: WindowHandle(0x10),
+            root_owner: WindowHandle(0x10),
+            topmost: false,
+            under_active_window: Some(true),
+            in_foreground: true,
+        };
+        let control = node(Role::Button, "OK");
+        let ancestors = vec![node(Role::Pane, "Buttons")];
+        let selected_child = Some(node(Role::ListItem, "First"));
+        let answer = FocusNow {
+            window: Some((window.clone(), window_facts)),
+            focus: Some(FocusedControl {
+                node: control.clone(),
+                ancestors: ancestors.clone(),
+                selected_child: selected_child.clone(),
+                window: Some(control_facts),
+            }),
+            observed_at_ms: 1234,
+        };
+        let inputs = table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Focus(answer)),
+        );
+        assert_eq!(
+            inputs,
+            [
+                Input::Event {
+                    trace_id,
+                    observed_at_ms: 1234,
+                    source: Pid(5),
+                    backend: Backend::Uia,
+                    window: Some(window_facts),
+                    event: NormalizedEvent::FocusChanged {
+                        node: window,
+                        foreground: true,
+                        ancestors: Vec::new(),
+                        ancestors_unknown: false,
+                        selected_child: None,
+                    },
+                },
+                Input::Event {
+                    trace_id,
+                    observed_at_ms: 1234,
+                    source: Pid(5),
+                    backend: Backend::Uia,
+                    window: Some(control_facts),
+                    event: NormalizedEvent::FocusChanged {
+                        node: control,
+                        foreground: false,
+                        ancestors,
+                        ancestors_unknown: false,
+                        selected_child,
+                    },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_focus_now_answer_outside_the_foreground_is_only_a_focus() {
+        let mut table = RequestTable::default();
+        let trace_id = TraceId::mint();
+        let id = table.begin(
+            OutpostId(1),
+            Asker::FocusNow {
+                source: Pid(5),
+                trace_id,
+            },
+        );
+        let control = node(Role::Button, "OK");
         let answer = FocusNow {
             window: None,
             focus: Some(FocusedControl {
-                node: node(Role::Button, "OK"),
+                node: control.clone(),
                 ancestors: Vec::new(),
                 selected_child: None,
                 window: None,
@@ -587,17 +669,22 @@ mod tests {
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(answer)),
         );
-        assert!(matches!(
-            inputs.as_slice(),
+        assert_eq!(
+            inputs,
             [Input::Event {
-                source: Pid(5),
+                trace_id,
                 observed_at_ms: 1234,
+                source: Pid(5),
+                backend: Backend::Uia,
+                window: None,
                 event: NormalizedEvent::FocusChanged {
+                    node: control,
                     foreground: false,
-                    ..
+                    ancestors: Vec::new(),
+                    ancestors_unknown: false,
+                    selected_child: None,
                 },
-                ..
             }]
-        ));
+        );
     }
 }

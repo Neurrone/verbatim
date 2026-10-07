@@ -1282,52 +1282,54 @@ mod tests {
         session.join().expect("session thread does not panic");
     }
 
-    // Exercises the real named-pipe transport end to end: a distinct test
-    // pipe name so it never collides with an already-running Verbatim
-    // instance. Run explicitly (`cargo test -p verbatim-control -- --ignored`)
-    // since it is unsuited to unattended CI parallelism (one pipe name, one
-    // process).
+    /// A pipe name of this test process's own, so tests running at once,
+    /// in this process or another, never contend for one pipe, nor with a
+    /// running Verbatim.
+    fn test_pipe_name(test: &str) -> String {
+        format!(
+            r"\\.\pipe\verbatim-control-test-{test}-{}",
+            std::process::id()
+        )
+    }
+
+    /// Connects to the server just started on `pipe_name`: the pipe exists
+    /// once `ControlServer::start_on` returns, so the first attempt must
+    /// succeed.
+    fn connect(pipe_name: &str) -> (std::fs::File, io::BufReader<std::fs::File>) {
+        let client = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(pipe_name)
+            .expect("connects to the test pipe");
+        let reader = io::BufReader::new(client.try_clone().expect("duplicates the pipe handle"));
+        (client, reader)
+    }
+
+    /// Sends request `id` and returns the next frame, which must be there.
+    fn ask(
+        (client, reader): &mut (std::fs::File, io::BufReader<std::fs::File>),
+        id: u64,
+        request: Request,
+    ) -> Frame {
+        write_message(client, &RequestEnvelope { id, request }).expect("writes the request");
+        read_message(reader).expect("reads").expect("not EOF")
+    }
+
+    // Exercises the real named-pipe transport end to end.
     #[test]
-    #[ignore = "starts a real named pipe; run explicitly, not part of the default suite"]
     fn integration_hello_status_subscribe_and_broadcast_over_a_real_pipe() {
-        let pipe_name = r"\\.\pipe\verbatim-control-test-ws-e";
-        let server = ControlServer::start_on(pipe_name, test_handlers()).expect("starts");
+        let pipe_name = test_pipe_name("ws-e");
+        let server = ControlServer::start_on(&pipe_name, test_handlers()).expect("starts");
+        let mut connection = connect(&pipe_name);
 
-        // The accept thread creates its first pipe instance asynchronously;
-        // retry briefly rather than racing it.
-        let mut client = None;
-        for _ in 0..100 {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(pipe_name)
-            {
-                Ok(opened) => {
-                    client = Some(opened);
-                    break;
-                }
-                Err(_) => thread::sleep(Duration::from_millis(10)),
-            }
-        }
-        let mut client = client.expect("connects to the test pipe within the retry window");
-        let mut client_reader =
-            io::BufReader::new(client.try_clone().expect("duplicates the pipe handle"));
-
-        write_message(
-            &mut client,
-            &RequestEnvelope {
-                id: 1,
-                request: Request::Hello {
+        assert_eq!(
+            ask(
+                &mut connection,
+                1,
+                Request::Hello {
                     protocol_version: PROTOCOL_VERSION,
                 },
-            },
-        )
-        .expect("writes Hello");
-        let reply: Frame = read_message(&mut client_reader)
-            .expect("reads")
-            .expect("not EOF");
-        assert_eq!(
-            reply,
+            ),
             Frame::Reply {
                 to: 1,
                 payload: ReplyPayload::Hello {
@@ -1335,39 +1337,21 @@ mod tests {
                 },
             }
         );
-
-        write_message(
-            &mut client,
-            &RequestEnvelope {
-                id: 2,
-                request: Request::Status,
-            },
-        )
-        .expect("writes Status");
-        let reply: Frame = read_message(&mut client_reader)
-            .expect("reads")
-            .expect("not EOF");
-        assert!(matches!(
-            reply,
+        assert_eq!(
+            ask(&mut connection, 2, Request::Status),
             Frame::Reply {
                 to: 2,
-                payload: ReplyPayload::Status(_),
+                payload: ReplyPayload::Status(StatusInfo {
+                    pid: Pid(4242),
+                    version: "test".to_owned(),
+                    active_synth: None,
+                    outposts: Vec::new(),
+                    ready: true,
+                }),
             }
-        ));
-
-        write_message(
-            &mut client,
-            &RequestEnvelope {
-                id: 3,
-                request: Request::SubscribeEvents,
-            },
-        )
-        .expect("writes SubscribeEvents");
-        let reply: Frame = read_message(&mut client_reader)
-            .expect("reads")
-            .expect("not EOF");
+        );
         assert_eq!(
-            reply,
+            ask(&mut connection, 3, Request::SubscribeEvents),
             Frame::Reply {
                 to: 3,
                 payload: ReplyPayload::Ok,
@@ -1375,27 +1359,26 @@ mod tests {
         );
 
         let trace_id = TraceId::mint();
-        server.broadcast_event(
-            trace_id,
-            Pid(999),
-            Backend::Msaa,
-            None,
-            NormalizedEvent::ValueChanged {
-                node_id: NodeId::new(1),
-                value: Some("hi".to_owned()),
-            },
-        );
-
-        let event_frame: Frame = read_message(&mut client_reader)
+        let event = NormalizedEvent::ValueChanged {
+            node_id: NodeId::new(1),
+            value: Some("hi".to_owned()),
+        };
+        server.broadcast_event(trace_id, Pid(999), Backend::Msaa, None, event.clone());
+        let event_frame: Frame = read_message(&mut connection.1)
             .expect("reads")
             .expect("not EOF");
-        match event_frame {
-            Frame::Event { trace_id: got, .. } => assert_eq!(got, trace_id),
-            other => panic!("unexpected frame: {other:?}"),
-        }
+        assert_eq!(
+            event_frame,
+            Frame::Event {
+                trace_id,
+                source: Pid(999),
+                backend: Backend::Msaa,
+                window: None,
+                event,
+            }
+        );
 
-        drop(client_reader);
-        drop(client);
+        drop(connection);
         drop(server);
     }
 
@@ -1403,54 +1386,73 @@ mod tests {
     // connected and silently missing frames: a test waiting for an
     // utterance's ending would otherwise wait for a frame that was dropped.
     #[test]
-    #[ignore = "starts a real named pipe; run explicitly, not part of the default suite"]
     fn a_subscriber_that_falls_behind_is_disconnected_not_skipped() {
-        let pipe_name = r"\\.\pipe\verbatim-control-test-slow-subscriber";
-        let server = ControlServer::start_on(pipe_name, test_handlers()).expect("starts");
-        let mut client = None;
-        for _ in 0..100 {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(pipe_name)
-            {
-                Ok(opened) => {
-                    client = Some(opened);
-                    break;
-                }
-                Err(_) => thread::sleep(Duration::from_millis(10)),
-            }
-        }
-        let mut client = client.expect("connects to the test pipe within the retry window");
-        let mut reader =
-            io::BufReader::new(client.try_clone().expect("duplicates the pipe handle"));
-        for (id, request) in [
-            (
+        const SENT: u64 = 20_000;
+        let pipe_name = test_pipe_name("slow-subscriber");
+        let server = ControlServer::start_on(&pipe_name, test_handlers()).expect("starts");
+        let mut connection = connect(&pipe_name);
+        assert_eq!(
+            ask(
+                &mut connection,
                 1,
                 Request::Hello {
                     protocol_version: PROTOCOL_VERSION,
                 },
             ),
-            (2, Request::SubscribeSpeech),
-        ] {
-            write_message(&mut client, &RequestEnvelope { id, request }).expect("writes");
-            let _: Frame = read_message(&mut reader).expect("reads").expect("not EOF");
-        }
+            Frame::Reply {
+                to: 1,
+                payload: ReplyPayload::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            }
+        );
+        assert_eq!(
+            ask(&mut connection, 2, Request::SubscribeSpeech),
+            Frame::Reply {
+                to: 2,
+                payload: ReplyPayload::Ok,
+            }
+        );
 
         // Far more frames than the connection's queue and the pipe's buffer
         // hold, with nobody reading.
-        for index in 0..20_000 {
+        for index in 0..SENT {
             server.broadcast_speech_ended(UtteranceId(index), UtteranceEnding::Completed);
         }
 
-        // Reading now finds the stream ends, after only part of the frames.
+        // Reading now finds every frame in order, from the first, with none
+        // skipped, until the connection ends: what the pipe still held when
+        // the server disconnected it is gone with it, so the read fails as
+        // a pipe with no server does.
         let mut received = 0;
-        while let Ok(Some(_)) = read_message::<_, Frame>(&mut reader) {
-            received += 1;
-        }
+        let ended = loop {
+            match read_message::<_, Frame>(&mut connection.1) {
+                Ok(Some(frame)) => {
+                    assert_eq!(
+                        frame,
+                        Frame::SpeechEnded {
+                            utterance: UtteranceId(received),
+                            ending: UtteranceEnding::Completed,
+                        },
+                        "frames arrive in order, none skipped"
+                    );
+                    received += 1;
+                }
+                ended => break ended,
+            }
+        };
         assert!(
-            received < 20_000,
-            "the stream ended early, after {received} frames"
+            received < SENT,
+            "the subscriber was cut off, after {received} frames"
+        );
+        let error = ended.expect_err("the connection ends by being cut off");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(
+                i32::try_from(windows::Win32::Foundation::ERROR_PIPE_NOT_CONNECTED.0)
+                    .expect("small")
+            ),
+            "the server disconnected the pipe: {error}"
         );
         drop(server);
     }

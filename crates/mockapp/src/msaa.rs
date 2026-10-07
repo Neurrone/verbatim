@@ -51,51 +51,46 @@ pub(crate) fn index_from_objid(objid: i32) -> Option<usize> {
 
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
 /// `WinEvent`. Runs on the window thread.
-pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
+pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> Result<(), String> {
+    let unknown = |id: &str| format!("no node has the id {id}");
     match command {
         Command::Focus(id) => {
-            if let Some(index) = focus_node(tree, &id) {
-                notify(hwnd, EVENT_OBJECT_FOCUS, index);
-            }
+            let index = focus_node(tree, &id).ok_or_else(|| unknown(&id))?;
+            notify(hwnd, EVENT_OBJECT_FOCUS, index);
         }
         Command::SetFocus(id) => {
-            focus_node(tree, &id);
+            focus_node(tree, &id).ok_or_else(|| unknown(&id))?;
         }
         Command::SetName(id, text) => {
-            if let Some(index) = set_name(tree, &id, text) {
-                notify(hwnd, EVENT_OBJECT_NAMECHANGE, index);
-            }
+            let index = set_name(tree, &id, text).ok_or_else(|| unknown(&id))?;
+            notify(hwnd, EVENT_OBJECT_NAMECHANGE, index);
         }
         Command::SetValue(id, text) => {
-            if let Some(index) = set_value(tree, &id, text) {
-                notify(hwnd, EVENT_OBJECT_VALUECHANGE, index);
-            }
+            let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
+            notify(hwnd, EVENT_OBJECT_VALUECHANGE, index);
         }
         Command::Select(id) => {
-            if let Some(index) = select_node(tree, &id) {
-                notify(hwnd, EVENT_OBJECT_SELECTION, index);
-            }
+            let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
+            notify(hwnd, EVENT_OBJECT_SELECTION, index);
         }
-        Command::Notify(_) => {
-            // MSAA has no notification event; `notify` is a UIA-backend
-            // command (see crate::stdin::Command::Notify).
-            eprintln!("mockapp: notify is not supported on the msaa backend");
-        }
+        // MSAA has no notification event; `notify` is a UIA-backend command
+        // (see crate::stdin::Command::Notify).
+        Command::Notify(_) => return Err("notify is not supported on the msaa backend".into()),
         Command::Caret(_, start, end) => {
             // The text is the edit control's, in its own offsets.
-            if let Some(edit) = crate::edit::find(hwnd) {
-                crate::edit::select(edit, start, end);
-            }
+            let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
+            crate::edit::select(edit, start, end);
         }
         Command::SetText(..) => {
-            eprintln!("mockapp: set-text is not supported on the msaa backend");
+            return Err("set-text is not supported on the msaa backend".into());
         }
         Command::ActiveTextPosition(..) => {
-            eprintln!("mockapp: active-text-position is not supported on the msaa backend");
+            return Err("active-text-position is not supported on the msaa backend".into());
         }
         // Handled by the window thread before dispatch.
-        Command::Stall(_) | Command::Quit => {}
+        Command::Stall(_) | Command::Quit | Command::Unrecognized(_) => {}
     }
+    Ok(())
 }
 
 fn focus_node(tree: &SharedTree, id: &str) -> Option<usize> {

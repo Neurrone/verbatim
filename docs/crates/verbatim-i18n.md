@@ -58,11 +58,14 @@ Implementation notes: the loader disables Fluent's bidi argument isolation
 globally — Fluent wraps interpolated arguments in invisible directional
 isolate marks by default, which protects visually rendered mixed-direction
 text but would leak invisible characters into spoken text, dictionary and
-symbol processing, and braille. `LocaleDirAssets` exists because
+symbol processing, and braille. Languages loaded from a locale folder
+come with isolation on again, so `load_locale_dir_into` turns it off
+after loading them. `LocaleDirAssets` exists because
 i18n-embed's own filesystem assets type yields bare file names without the
 language folder, which breaks language negotiation; this implementation
 yields `language/file` paths. The pseudo-locale test (required from M1) generates
 a bracket-wrapped translation of every English message into a temporary
-locale, loads it, and asserts every message id resolves through it — proof
-no string bypasses the loader. It parses the `.ftl` line by line, which is
+locale, loads it, and asserts every message id resolves through it to
+exactly its English text in brackets — proof no string bypasses the
+loader, and that no argument or isolation mark is lost or added. It parses the `.ftl` line by line, which is
 why the resource file keeps every message on a single line.

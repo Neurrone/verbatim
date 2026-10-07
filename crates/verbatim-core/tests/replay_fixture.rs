@@ -1,9 +1,11 @@
 //! Regression test: a flight-recorder dump captured from a scripted reducer
-//! session, replayed and checked against the effect counts recorded
-//! alongside it (architecture section 9, milestone M2 — "reducer replay
-//! tests built from live dumps"). The committed fixture pins this sequence
-//! forever; [`regenerate_fixture`] below is how it was produced and how a
-//! future intentional change to the scripted shapes regenerates it.
+//! session, replayed and checked against the exact effects that session
+//! must produce, which the test states input by input, and against the
+//! effect counts the dump recorded alongside each input (architecture
+//! section 9, milestone M2 — "reducer replay tests built from live dumps").
+//! The committed fixture pins this sequence forever; [`regenerate_fixture`]
+//! below is how it was produced and how a future intentional change to the
+//! scripted shapes regenerates it.
 
 use std::fs;
 use std::io::BufReader;
@@ -11,8 +13,9 @@ use std::path::PathBuf;
 
 use verbatim_core::{RecordedInput, SrState, dump, reduce, replay};
 use verbatim_model::{
-    Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, PropertyChange, Role,
-    State, StateSet, TraceId,
+    Backend, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeId, NodeSnapshot,
+    NormalizedEvent, Pid, PropertyChange, Role, SegmentContent, SpeechPriority, State, StateSet,
+    TraceId, Utterance, UtteranceSegment, UtteranceSource,
 };
 
 fn fixture_path() -> PathBuf {
@@ -76,29 +79,91 @@ fn scripted_inputs() -> Vec<Input> {
     ]
 }
 
+/// The exact effects each scripted input must produce: the focus drops
+/// expired speech and announces the slider with its value, the drag speaks
+/// the new value alone, and disabling it says "unavailable". Only the
+/// focus announcement carries a focus validity; the changes after it are
+/// ended early only by a cancel. The trace ids are the recorded inputs'
+/// own.
+fn expected_effects(traces: &[TraceId]) -> Vec<Vec<Effect>> {
+    let slider = NodeId::new(1);
+    let speech = |trace_id, segments, validity| {
+        Effect::Speak(Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(UtteranceSource {
+                role: Role::Slider,
+                rect: None,
+            }),
+            validity,
+            say_all: false,
+        })
+    };
+    vec![
+        vec![
+            Effect::DropExpiredSpeech(FocusNow {
+                focus: slider,
+                ancestors: Vec::new(),
+                foreground: None,
+            }),
+            speech(
+                traces[0],
+                vec![
+                    UtteranceSegment::label("Rate"),
+                    UtteranceSegment::new(SegmentContent::Role(Role::Slider)),
+                    UtteranceSegment::value("50"),
+                ],
+                Some(FocusValidity {
+                    node: slider,
+                    had_focus: true,
+                }),
+            ),
+        ],
+        vec![speech(traces[1], vec![UtteranceSegment::value("55")], None)],
+        vec![speech(
+            traces[2],
+            vec![UtteranceSegment::new(SegmentContent::State(
+                State::Disabled,
+            ))],
+            None,
+        )],
+    ]
+}
+
 #[test]
-fn replays_the_committed_fixture_deterministically_and_matches_recorded_effect_counts() {
+fn replays_the_committed_fixture_deterministically_to_the_exact_effects() {
     let file = fs::File::open(fixture_path()).expect("fixture file exists");
     let mut reader = BufReader::new(file);
     let contents = dump::read_dump(&mut reader).expect("fixture parses");
 
     assert!(!contents.truncated, "the committed fixture is complete");
-    assert_ne!(contents.inputs, [] as [verbatim_core::RecordedInput; 0]);
 
     let inputs: Vec<Input> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let traces: Vec<TraceId> = inputs
+        .iter()
+        .map(|input| match input {
+            Input::Event { trace_id, .. } => *trace_id,
+            other => panic!("the fixture holds only events, found {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        traces.len(),
+        3,
+        "the fixture holds the three scripted inputs"
+    );
 
     let first = replay(&contents.base, &inputs);
     let second = replay(&contents.base, &inputs);
     assert_eq!(first, second, "replay is deterministic");
+    assert_eq!(first, expected_effects(&traces));
 
-    assert_eq!(first.len(), contents.inputs.len());
-    for (effects, recorded) in first.iter().zip(&contents.inputs) {
-        assert_eq!(
-            effects.len(),
-            recorded.effect_count,
-            "replayed effect count must match what the live session recorded"
-        );
-    }
+    let recorded_counts: Vec<usize> = contents.inputs.iter().map(|r| r.effect_count).collect();
+    let replayed_counts: Vec<usize> = first.iter().map(Vec::len).collect();
+    assert_eq!(
+        replayed_counts, recorded_counts,
+        "replayed effect counts must match what the live session recorded"
+    );
 }
 
 /// Regenerates the committed fixture from [`scripted_inputs`] by actually

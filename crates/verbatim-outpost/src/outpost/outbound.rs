@@ -18,11 +18,23 @@ use crate::protocol::{OutpostToSupervisor, write_message};
 /// How many ordinary messages may wait for the pipe.
 const OUTBOUND_CAPACITY: usize = 256;
 
+/// What waits in the ordinary queue.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "messages travel unboxed, as they did before the rare flush marker joined them"
+)]
+enum Ordinary {
+    /// A message to write.
+    Message(OutpostToSupervisor),
+    /// Answered once every ordinary message queued before it is written.
+    Flushed(std::sync::mpsc::Sender<()>),
+}
+
 /// The sending side of the writer.
 #[derive(Clone)]
 pub(crate) struct Outbound {
     urgent: Sender<OutpostToSupervisor>,
-    ordinary: Sender<OutpostToSupervisor>,
+    ordinary: Sender<Ordinary>,
 }
 
 impl Outbound {
@@ -49,14 +61,24 @@ impl Outbound {
 
     /// Queues an ordinary message, waiting while the queue is full.
     pub(crate) fn send(&self, message: OutpostToSupervisor) {
-        let _ = self.ordinary.send(message);
+        let _ = self.ordinary.send(Ordinary::Message(message));
+    }
+
+    /// Waits until every ordinary message queued before this call has been
+    /// written to the pipe, or the writer has stopped.
+    pub(crate) fn flush(&self) {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        if self.ordinary.send(Ordinary::Flushed(done_tx)).is_ok() {
+            // An error means the writer stopped, with nothing left to write.
+            let _ = done_rx.recv();
+        }
     }
 }
 
 fn write_loop(
     mut pipe: Box<dyn Write + Send>,
     urgent: &Receiver<OutpostToSupervisor>,
-    ordinary: &Receiver<OutpostToSupervisor>,
+    ordinary: &Receiver<Ordinary>,
 ) {
     loop {
         let message = if let Ok(message) = urgent.try_recv() {
@@ -68,7 +90,11 @@ fn write_loop(
                     Err(_) => return,
                 },
                 recv(ordinary) -> message => match message {
-                    Ok(message) => message,
+                    Ok(Ordinary::Message(message)) => message,
+                    Ok(Ordinary::Flushed(done)) => {
+                        let _ = done.send(());
+                        continue;
+                    }
                     Err(_) => return,
                 },
             }

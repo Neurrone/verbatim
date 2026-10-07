@@ -205,6 +205,7 @@ fn crc32(data: &[u8]) -> u32 {
 
 /// One thing `capture` does, in the order given, before waiting for NVDA's
 /// speech to settle and printing it.
+#[derive(Debug, PartialEq, Eq)]
 enum Step {
     /// Press a key combination through the agent, or several joined by
     /// commas in one batch, so `numpad8,numpad8` is a double press.
@@ -729,7 +730,10 @@ mod tests {
         let args = ["tab", "--json", "--type", "hi"].map(str::to_owned);
         let options = parse_capture_args(&args).unwrap();
         assert!(options.json);
-        assert_eq!(options.steps.len(), 2);
+        assert_eq!(
+            options.steps,
+            [Step::Key("tab".to_owned()), Step::Type("hi".to_owned())]
+        );
     }
 
     #[test]

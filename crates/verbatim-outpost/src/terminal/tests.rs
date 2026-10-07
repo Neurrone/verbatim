@@ -450,9 +450,17 @@ fn a_line_rewritten_in_place_speaks_from_the_word_that_changed() {
 #[test]
 fn a_redraw_with_the_same_text_speaks_nothing() {
     let mut reader = Reader::new(Sim::new(100, &["a", "b", "ready>"]));
-    let rows = reader.sim.rows.clone();
-    reader.sim.rows = rows;
-    assert!(reader.read().is_empty());
+    // A program redraws the whole screen with the text it already had, as
+    // on a resize: the rows are written anew, so the anchor no longer
+    // compares with the text, and the read made while they were being
+    // written does not settle.
+    reader.sim.replace(&["a", "b", "ready>"], false);
+    reader.sim.unsettled = 1;
+    assert_eq!(reader.read(), TerminalOutput::default());
+    // The settled read compares the redrawn screen with the one before it,
+    // read afresh as the baseline was, and finds nothing new.
+    assert_eq!(reader.read(), TerminalOutput::default());
+    assert_eq!(reader.sim.fresh_reads, 3);
 }
 
 #[test]
@@ -516,8 +524,15 @@ fn padding_of_any_white_space_is_trimmed() {
     assert_eq!(trimmed("total 42      \r\n"), "total 42");
     // An ideographic space pads as well as an ASCII one; inner spaces stay.
     assert_eq!(trimmed("合計 42\u{3000}\u{3000}\n"), "合計 42");
+    // A long line is cut at the limit, which here falls between two
+    // characters, and back to the start of a character it falls inside.
     let long = "é".repeat(MAX_TERMINAL_LINE_BYTES);
-    assert!(trimmed(&long).len() <= MAX_TERMINAL_LINE_BYTES);
+    assert_eq!(trimmed(&long), "é".repeat(MAX_TERMINAL_LINE_BYTES / 2));
+    let long = format!("a{long}");
+    assert_eq!(
+        trimmed(&long),
+        format!("a{}", "é".repeat((MAX_TERMINAL_LINE_BYTES - 1) / 2))
+    );
 }
 
 #[test]

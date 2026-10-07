@@ -198,14 +198,20 @@ mod tests {
 
     #[test]
     fn every_named_key_round_trips() {
+        // Every named key is named back as itself, except numpad 0, which
+        // is the same key as numpad Insert and is named that way.
         for &(name, vk, extended) in NAMED_KEYS {
-            let resolved = vk_from_name(name).expect("name resolves");
-            assert_eq!(resolved.vk, vk);
-            let round_tripped = name_from_vk(vk, extended.unwrap_or(false)).expect("vk resolves");
-            // Twins that share a vk with `extended: None` entries (enter and
-            // numpad enter) may name the sibling; the vk must match either way.
-            let back = vk_from_name(round_tripped).expect("round-tripped name resolves");
-            assert_eq!(back.vk, vk);
+            assert_eq!(vk_from_name(name), Some(KeyName { vk, extended }));
+            let expected = if name == "numpad0" {
+                "numpadinsert"
+            } else {
+                name
+            };
+            assert_eq!(
+                name_from_vk(vk, extended.unwrap_or(false)),
+                Some(expected),
+                "{name}"
+            );
         }
     }
 

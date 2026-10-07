@@ -1561,16 +1561,49 @@ mod tests {
             },
             |b, status| b.set(caught, status),
         );
-        let program = instructions(b);
-        // Constants: 0 NewInt (zero). Main: 1 NewInt, 2 NewInt,
-        // 3 NewTryBlock, 4 NewInt, 5 Set, 6 EndTryBlock, 7 Fork,
-        // 8 GetOperationStatus, 9 SetOperationStatus, 10 Set, 11 Halt.
-        assert_eq!(program[3], Instruction::NewTryBlock { catch_offset: 5 });
-        assert_eq!(program[6], Instruction::EndTryBlock);
-        assert_eq!(program[7], Instruction::Fork { offset: 4 });
-        assert!(matches!(program[8], Instruction::GetOperationStatus { .. }));
-        assert!(matches!(program[9], Instruction::SetOperationStatus { .. }));
-        assert_eq!(program[11], Instruction::Halt);
+        // Registers are numbered as they are made: x 1, caught 2, the body's
+        // one 3, the status 4, and the shared zero constant 5, which is
+        // emitted first. The try block's handler starts at the status read;
+        // the fork after the body skips the handler.
+        assert_eq!(
+            instructions(b),
+            vec![
+                Instruction::NewInt {
+                    result: OperandId(5),
+                    value: 0
+                },
+                Instruction::NewInt {
+                    result: OperandId(1),
+                    value: 0
+                },
+                Instruction::NewInt {
+                    result: OperandId(2),
+                    value: 0
+                },
+                Instruction::NewTryBlock { catch_offset: 5 },
+                Instruction::NewInt {
+                    result: OperandId(3),
+                    value: 1
+                },
+                Instruction::Set {
+                    target: OperandId(1),
+                    value: OperandId(3)
+                },
+                Instruction::EndTryBlock,
+                Instruction::Fork { offset: 4 },
+                Instruction::GetOperationStatus {
+                    result: OperandId(4)
+                },
+                Instruction::SetOperationStatus {
+                    status: OperandId(5)
+                },
+                Instruction::Set {
+                    target: OperandId(2),
+                    value: OperandId(4)
+                },
+                Instruction::Halt,
+            ]
+        );
     }
 
     #[test]

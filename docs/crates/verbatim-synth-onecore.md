@@ -41,6 +41,20 @@ writes it (50 raised by 30 is "30%"). `places_marks` is `true`: the driver
 reads `SpeechSynthesisStream.Markers()`
 for the time OneCore placed each numbered mark, pushes the audio up to
 that time, reports the mark through `index_reached`, and carries on. The
-display name resolves through `verbatim-i18n`. A `#[ignore]`d integration
-test audibly speaks the word "test" through the mixer and the real
-`WasapiDevice`, and waits for the utterance to end completed.
+display name resolves through `verbatim-i18n`.
+
+Tests: the unit tests check the rate curve and its boost, the SSML for
+pitch changes, escaping and marks, and reading a WAV stream. The driver
+speaking through the real OneCore synthesizer is tested in
+`crates/verbatim-synth-host/tests/hosting.rs`, which runs it in the
+synthesizer host as Verbatim does: audio and marks in order, a raised
+capital, cancelling, and a host that dies. The crate once had an ignored
+test that spoke "test" through the real default audio device; it was
+removed on 2026-10-07, since it could not run in `cargo xtask ci` (a
+runner may have no audio device, and a test must not speak aloud on a
+developer's machine) and so never ran. What it showed is covered
+elsewhere: OneCore's synthesis by the host tests, the speech manager and
+mixer by `verbatim-speech`'s and `verbatim-audio`'s tests, OneCore in the
+whole application by the `switch_to_onecore` end-to-end scenario, and
+the real `WasapiDevice` by every `cargo xtask vm test` run, which is
+always audible.

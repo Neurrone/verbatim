@@ -15,9 +15,12 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use windows::Win32::Foundation::HWND;
+use std::os::windows::io::AsRawHandle;
+
+use windows::Win32::Foundation::{HWND, WAIT_OBJECT_0};
+use windows::Win32::System::Threading::WaitForSingleObject;
 use windows::core::PCWSTR;
 
 /// Joins this thread to a COM apartment, required before any MSAA call that
@@ -78,17 +81,67 @@ pub struct MockApp {
 
 impl Drop for MockApp {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Already ended by `quit` or by the test, the kill has nothing to
+        // do; otherwise it must work, or the window is left behind.
+        let killed = self.child.kill();
+        let ended = self.child.wait();
+        if !std::thread::panicking() {
+            if let Err(error) = &killed {
+                assert!(
+                    matches!(self.child.try_wait(), Ok(Some(_))),
+                    "mockapp {} could not be ended: {error}",
+                    self.child.id()
+                );
+            }
+            ended.unwrap_or_else(|error| panic!("mockapp could not be reaped: {error}"));
+        }
     }
 }
 
 impl MockApp {
-    /// Sends one stdin command line (a `focus`, `set-name`, `set-value`, or
-    /// `quit` command, without the trailing newline).
+    /// Sends one stdin command line (without the trailing newline) and
+    /// waits for mockapp's acknowledgement that it has taken effect, events
+    /// included, failing the test if mockapp rejects it (a node id the
+    /// fixture lacks, say). Not for `stall` or `quit`, which have
+    /// [`stall`](Self::stall) and [`quit`](Self::quit).
     pub fn send(&mut self, line: &str) {
-        let _ = writeln!(self.stdin, "{line}");
-        let _ = self.stdin.flush();
+        self.write_line(line);
+        let acknowledged = self.next_line(&format!("{line:?}"), WAIT_TIMEOUT);
+        assert_eq!(acknowledged, "applied", "mockapp's answer to {line:?}");
+    }
+
+    /// Sends `line` and returns mockapp's acknowledgement, whatever it is:
+    /// for a test of the acknowledgement itself.
+    pub fn send_answered(&mut self, line: &str) -> String {
+        self.write_line(line);
+        self.next_line(&format!("{line:?}"), WAIT_TIMEOUT)
+    }
+
+    /// Asks mockapp to quit and waits for it to exit, which it must do
+    /// cleanly.
+    pub fn quit(mut self) {
+        self.write_line("quit");
+        let handle = windows::Win32::Foundation::HANDLE(self.child.as_raw_handle());
+        let timeout = u32::try_from(WAIT_TIMEOUT.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: the child's process handle, live while `self` owns it.
+        let waited = unsafe { WaitForSingleObject(handle, timeout) };
+        assert_eq!(
+            waited, WAIT_OBJECT_0,
+            "mockapp did not quit within {WAIT_TIMEOUT:?}"
+        );
+        let status = self
+            .child
+            .wait()
+            .unwrap_or_else(|error| panic!("mockapp's exit could not be read: {error}"));
+        assert!(status.success(), "mockapp quit with {status}");
+    }
+
+    /// Writes one line to mockapp's stdin, failing the test if mockapp is
+    /// no longer reading it.
+    fn write_line(&mut self, line: &str) {
+        writeln!(self.stdin, "{line}")
+            .and_then(|()| self.stdin.flush())
+            .unwrap_or_else(|error| panic!("mockapp did not take {line:?}: {error}"));
     }
 
     /// The child process id, for scoping a `WinEventHook` to this instance.
@@ -101,7 +154,7 @@ impl MockApp {
     /// thread has acknowledged that the stall began, so every cross-process
     /// call made from here on waits on it.
     pub fn stall(&mut self, duration: Duration) {
-        self.send(&format!("stall {}", duration.as_millis()));
+        self.write_line(&format!("stall {}", duration.as_millis()));
         let line = self.next_line("the stall to begin", WAIT_TIMEOUT);
         assert_eq!(line, "stall started", "mockapp's acknowledgement");
     }
@@ -193,68 +246,17 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
     }
 }
 
-/// Polls `FindWindowW` for a top-level window titled exactly `title`,
-/// retrying until [`WAIT_TIMEOUT`] elapses. Panics with a clear message on
-/// timeout, since every caller needs the handle to proceed.
+/// The top-level window titled exactly `title`. mockapp creates its window
+/// before it prints `ready`, so a window [`spawn`] returned is there at
+/// once; the test fails if it is not.
 #[must_use]
 pub fn find_window(title: &str) -> HWND {
     let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-    let deadline = Instant::now() + WAIT_TIMEOUT;
-    loop {
-        // SAFETY: `wide` is a live, NUL-terminated buffer for the call.
-        let found = unsafe {
-            windows::Win32::UI::WindowsAndMessaging::FindWindowW(
-                PCWSTR::null(),
-                PCWSTR(wide.as_ptr()),
-            )
-        };
-        if let Ok(hwnd) = found {
-            return hwnd;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "window titled {title:?} did not appear within {WAIT_TIMEOUT:?}"
-        );
-        std::thread::sleep(Duration::from_millis(20));
+    // SAFETY: `wide` is a live, NUL-terminated buffer for the call.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()))
     }
-}
-
-/// Polls `condition` until it returns `true` or [`WAIT_TIMEOUT`] elapses,
-/// panicking with `message` on timeout. Used for event-delivery assertions,
-/// where the client-side registration callback runs asynchronously.
-pub fn wait_until(message: &str, mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + WAIT_TIMEOUT;
-    loop {
-        if condition() {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out after {WAIT_TIMEOUT:?} waiting for: {message}"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// Retries `probe` (a blocking, deadline-guarded check such as
-/// `has_server_side_provider`, per architecture section 4) up to
-/// [`WAIT_TIMEOUT`], returning `true` as soon as it does. `UiaHasServerSideProvider`
-/// blocks on the target's message pump and, under the heavy CPU contention
-/// of a full-workspace `cargo test` run, can spuriously read as "no
-/// provider" if mockapp's message loop is momentarily slow to answer rather
-/// than genuinely absent; a single immediate check does not distinguish
-/// those cases; retrying does.
-pub fn eventually_true(mut probe: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + WAIT_TIMEOUT;
-    loop {
-        if probe() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    .unwrap_or_else(|error| panic!("no window is titled {title:?} once mockapp is ready: {error}"))
 }
 
 /// mockapp's provider-side hit counters (`src/hits.rs`), compiled into the
@@ -305,10 +307,6 @@ pub fn read_hits(hwnd: HWND) -> Vec<(&'static str, u32)> {
 /// Sends `line` to mockapp and waits until it has taken effect, then zeroes
 /// the hit counters, so what is measured next starts from nothing.
 pub fn apply(app: &mut MockApp, hwnd: HWND, line: &str) {
-    reset_hits(hwnd);
     app.send(line);
-    wait_until(&format!("mockapp to apply {line:?}"), || {
-        read_hits(hwnd).contains(&("command applied", 1))
-    });
     reset_hits(hwnd);
 }

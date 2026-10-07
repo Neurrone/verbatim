@@ -191,17 +191,21 @@ mod tests {
             .record_input(Input::Tick, 0, &SrState::new());
 
         let path = dump_now(&recorder, &dir).expect("dump succeeds");
-        assert!(path.exists());
-        assert_eq!(path.parent(), Some(dir.as_path()));
+        assert_only_a_tick_is_dumped(&path, &dir);
 
-        let file = fs::File::open(&path).expect("opens the dump");
+        fs::remove_dir_all(&dir).expect("removes the test's folder");
+    }
+
+    /// Asserts that `path` is a dump in `dir` holding exactly one input, a
+    /// tick, and nothing truncated.
+    fn assert_only_a_tick_is_dumped(path: &Path, dir: &Path) {
+        assert_eq!(path.parent(), Some(dir));
+        let file = fs::File::open(path).expect("opens the dump");
         let mut reader = io::BufReader::new(file);
         let contents = dump::read_dump(&mut reader).expect("dump parses");
         assert!(!contents.truncated);
-        assert_eq!(contents.inputs.len(), 1);
-        assert_eq!(contents.inputs[0].input, Input::Tick);
-
-        let _ = fs::remove_dir_all(&dir);
+        let inputs: Vec<&Input> = contents.inputs.iter().map(|entry| &entry.input).collect();
+        assert_eq!(inputs, [&Input::Tick]);
     }
 
     #[test]
@@ -210,18 +214,25 @@ mod tests {
         let recorder = Arc::new(Mutex::new(ReducerRecorder::with_default_bounds(
             SrState::new(),
         )));
+        recorder
+            .lock()
+            .expect("lock")
+            .record_input(Input::Tick, 0, &SrState::new());
 
         // Poison the lock the way a panicking reducer thread would.
         let poisoning_recorder = Arc::clone(&recorder);
-        let _ = std::thread::spawn(move || {
+        let joined = std::thread::spawn(move || {
             let _guard = poisoning_recorder.lock().expect("lock");
             panic!("simulated reducer-thread panic while holding the recorder lock");
         })
         .join();
+        assert!(joined.is_err(), "the thread panicked");
+        assert!(recorder.is_poisoned());
 
+        // What was recorded before the panic is dumped whole.
         let path = dump_now(&recorder, &dir).expect("dump succeeds despite the poisoned lock");
-        assert!(path.exists());
+        assert_only_a_tick_is_dumped(&path, &dir);
 
-        let _ = fs::remove_dir_all(&dir);
+        fs::remove_dir_all(&dir).expect("removes the test's folder");
     }
 }

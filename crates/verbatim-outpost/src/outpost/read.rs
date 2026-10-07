@@ -674,7 +674,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     }
     if window_uses_uia(context, hwnd) {
         let (uia, cache) = client.uia_and_cache(context).ok()?;
-        let element = uia.focused_element(&cache).ok()?;
+        let element = (context.focused_element)(uia, &cache).ok()?;
         let node = with_legacy_checked_state(
             &element,
             snapshot_from_cached_element(&element, &context.uia_registry),

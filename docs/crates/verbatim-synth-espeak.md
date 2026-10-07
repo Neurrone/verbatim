@@ -57,17 +57,25 @@ directory; the driver always passes its own path.
 Implementation notes, one driver per process. eSpeak NG keeps its state
 in globals, so `new` refuses a second driver while one exists, using an
 atomic flag that `Drop` clears after calling `espeak_Terminate`, so a
-later driver in the same process starts eSpeak NG from a clean state.
+later driver in the same process can start eSpeak NG again. That later
+driver does not start from a clean state: some of eSpeak NG's globals
+survive `espeak_Terminate`, as they run on from one utterance to the
+next.
 Before starting eSpeak NG, `new` checks that its data directory holds
 `phontab`: given a path without data, eSpeak NG would otherwise fall back
 to an environment variable or another installation's registry entry and
 load data that is not its own. A voice or variant eSpeak NG refuses is
 reported and not stored. The synthesizer host builds exactly one
-driver, so this costs Verbatim nothing; it is why the crate's
-integration test is a single test function.
+driver, so this costs Verbatim nothing.
+
+Determinism. eSpeak NG seeds the generator for its noise from the clock
+when it starts. The driver seeds it with a fixed value right after, so a
+new process's speech depends only on what it is asked to say: the same
+utterances with the same settings give the same samples.
 
 Synthesis. eSpeak NG runs in synchronous mode: `espeak_Synth` blocks and
-hands audio to a callback in chunks of about 20 ms as it synthesizes,
+hands audio to a callback in chunks of 60 ms (1,324 samples, the
+shortest eSpeak NG allows) as it synthesizes,
 many times faster than real time. The callback pushes each chunk to the
 sink, and returns non-zero to abort synthesis when the sink's `push_pcm`
 returns `Break`, so a cancel takes effect within one chunk. A sink that
@@ -116,9 +124,17 @@ its parameters when the voice changes, so every successful change
 reapplies all four numerics.
 
 Tests: a unit test checks the rate mapping's two ends.
-`tests/espeak.rs`, against the real library and its built data, checks
-in one function that a second driver is refused, that `places_marks` is
-false, that a sentence produces more than a second of 22050 Hz mono audio
-in several chunks, that synthesis stops at the push that asks it to,
-that the highest rate gives shorter audio, and that an unknown voice is
-refused.
+`tests/espeak.rs`, against the real library and its built data, has its
+own small runner (`harness = false`). Tests that compare speech exactly
+have each utterance spoken by a process of their own, the test binary run
+again with `--speak` and the name of a case, since only a new process's
+speech is reproducible. It checks that a second driver is refused with
+its message, that `places_marks` is false, that an unknown voice is
+refused and the voice kept, that a sentence comes as 22050 Hz mono audio
+in full 1,324-sample chunks but the last, that the same utterance gives
+the same samples in two processes, that synthesis stopped at the first
+push gives exactly the sentence's first chunk, that the highest rate
+gives shorter audio and setting the rate back gives the same samples as
+never changing it, and that a raised capital's markup changes the speech
+but is not read aloud (a B spoken through SSML with no change of pitch
+is the plain B, sample for sample).

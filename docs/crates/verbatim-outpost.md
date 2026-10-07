@@ -162,7 +162,17 @@ Public API:
   `OutpostOptions`, fixed for the outpost's life, whose one field,
   `remote_operations`, says whether a UIA focus's ancestry may be read
   with a remote operation (`Outpost::with_options`; `Outpost::new` uses
-  the default, on). The worker and its reads (`worker.rs`, `read.rs`), the
+  the default, on). `Outpost::with_focused_element_reader` takes a
+  `FocusedElementReader` too, the function the worker reads a UIA focus's
+  element with, which is otherwise the system's keyboard focus
+  (`Uia::focused_element`): mockapp's tests hand a real outpost a UIA
+  focus in a window that does not have the keyboard focus, and measure
+  everything it does with it. `Outpost::settle` waits until the worker has
+  handled everything queued, follow-ups included, the focus-following
+  subscriptions have made every move asked of them, and every message
+  published has been written to the pipe: the evidence those tests wait on
+  before they read what the application answered, and before they assert
+  the outpost said nothing more. The worker and its reads (`worker.rs`, `read.rs`), the
   intake, the writer, the protocol, and the supervisor's owner, policy, and
   writer modules forbid `unsafe` code: every UIA and MSAA read goes through
   the backend crates' safe wrappers, and what remains `unsafe` in the crate
@@ -212,7 +222,9 @@ Public API:
   2026-10-06). The event thread (`EventThread::spawn`) likewise returns
   only once its hooks are installed. Each event becomes a `FocusFact` (a
   `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
-  cached and hang-safe local reads. A foreground event is forwarded without
+  cached and hang-safe local reads (`uia_focus_fact` builds a UIA focus's,
+  public so a test hands an outpost the fact the listener would). A
+  foreground event is forwarded without
   checking the foreground: a starting application's window raises it before
   it actually becomes the foreground window, so the check waits for the
   outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are

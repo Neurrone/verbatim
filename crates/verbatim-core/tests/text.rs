@@ -1353,7 +1353,8 @@ fn the_next_word_past_the_line_moves_to_the_next_line_first_word() {
 
 /// The index mark and text of each say-all utterance among `effects`, each
 /// checked to be marked as read by say-all, so the theme's "play sounds
-/// during say all" setting applies to it.
+/// during say all" setting applies to it. Any utterance of another shape
+/// fails the test, so no speech is skipped unchecked.
 fn say_all_pieces(effects: &[Effect]) -> Vec<(SpeechMark, String)> {
     effects
         .iter()
@@ -1364,9 +1365,9 @@ fn say_all_pieces(effects: &[Effect]) -> Vec<(SpeechMark, String)> {
                         assert!(utterance.say_all, "{utterance:?} is read by say-all");
                         Some((*mark, text.clone()))
                     }
-                    _ => None,
+                    _ => panic!("say-all speech is a mark and its text: {utterance:?}"),
                 },
-                _ => None,
+                _ => panic!("say-all speech is a mark and its text: {utterance:?}"),
             },
             _ => None,
         })
@@ -1488,20 +1489,37 @@ fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
     let pieces = say_all_pieces(&effects);
     let texts: Vec<&str> = pieces.iter().map(|(_, text)| text.as_str()).collect();
     assert_eq!(texts, ["one", "two"]);
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Text(_)))
-    );
-    // Reaching the first hands on the third, with its own mark.
+    assert_eq!(effects.len(), 2, "nothing but the two pieces: {effects:?}");
+    // Reaching the first moves the caret there and hands on the third,
+    // with its own mark.
     let effects = reduce(&mut state, &reached(pieces[0].0));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(100))))
+    );
     let third = say_all_pieces(&effects);
     assert_eq!(third.len(), 1);
     assert_eq!(third[0].1, "three");
-    let _ = reduce(&mut state, &reached(pieces[1].0));
-    // The last piece reached: say-all ends.
+    assert_eq!(effects.len(), 2, "{effects:?}");
+    // Reaching the second moves the caret on.
+    let effects = reduce(&mut state, &reached(pieces[1].0));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(101))))
+    );
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    // The last piece reached: the caret moves to it and say-all ends.
     let effects = reduce(&mut state, &reached(third[0].0));
-    assert!(effects.contains(&Effect::KeepDisplayOn(false)));
+    assert_eq!(
+        effects,
+        vec![
+            Effect::Text(TextRequest {
+                op: TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(102)))),
+                ..request(&effects)
+            }),
+            Effect::KeepDisplayOn(false),
+        ]
+    );
 }
 
 #[test]
@@ -1585,28 +1603,21 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     // Reaching the second sentence moves the caret there and hands on the
     // third.
     let effects = reduce(&mut state, &reached(pieces[1].0));
-    assert!(effects.contains(&Effect::Text(TextRequest {
-        query_id: request(&effects).query_id,
-        node_id: request(&effects).node_id,
-        op: TextOp::MoveCaret(TextPoint::At(TextPosition {
+    assert_eq!(
+        request(&effects).op,
+        TextOp::MoveCaret(TextPoint::At(TextPosition {
             anchor: TextAnchor(400),
             offset: 5
-        })),
-    })));
+        }))
+    );
     let third = say_all_pieces(&effects);
+    assert_eq!(third.len(), 1);
     assert_eq!(third[0].1, "Three!");
+    assert_eq!(effects.len(), 2, "{effects:?}");
     // A key stops it, dropping what was waiting; a late mark is ignored.
     let effects = reduce(&mut state, &Input::SpeechCancelled);
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
-    let late = reads_query(&reduce(&mut state, &reached(third[0].0)));
-    assert!(late.is_none());
-}
-
-fn reads_query(effects: &[Effect]) -> Option<QueryId> {
-    effects.iter().find_map(|effect| match effect {
-        Effect::Text(request) => Some(request.query_id),
-        _ => None,
-    })
+    assert_eq!(reduce(&mut state, &reached(third[0].0)), vec![]);
 }
 
 #[test]
@@ -1657,11 +1668,20 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
 fn held_anchors_name_every_position_the_state_keeps() {
     let mut state = editing("abc\n", 1);
     let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    let held = state.held_anchors();
-    let anchors = held.get(&OUTPOST).expect("the outpost's anchors");
-    assert!(anchors.contains(&TextAnchor(100)));
-    assert_eq!(anchors.len(), 1);
-    assert!(state.held_nodes()[&OUTPOST].contains(&id(5)));
+    // The caret and the start marker are both on the line at anchor 100,
+    // in the one edit field.
+    let anchors: Vec<(OutpostId, Vec<TextAnchor>)> = state
+        .held_anchors()
+        .into_iter()
+        .map(|(outpost, anchors)| (outpost, anchors.into_iter().collect()))
+        .collect();
+    assert_eq!(anchors, [(OUTPOST, vec![TextAnchor(100)])]);
+    let nodes: Vec<(OutpostId, Vec<NodeId>)> = state
+        .held_nodes()
+        .into_iter()
+        .map(|(outpost, nodes)| (outpost, nodes.into_iter().collect()))
+        .collect();
+    assert_eq!(nodes, [(OUTPOST, vec![id(5)])]);
 }
 
 /// Focuses a document holding `value`, returning what the focus
@@ -1779,11 +1799,13 @@ fn a_protected_field_never_says_its_text() {
     let mut state = SrState::new();
     let protected = StateSet::new().with(State::Protected);
     let announced = focus_with_value(&mut state, protected, "secret");
-    assert!(
-        !announced
-            .iter()
-            .any(|segment| matches!(segment.content, SegmentContent::Value(_))),
-        "{announced:?}"
+    assert_eq!(
+        announced,
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Document)),
+            UtteranceSegment::new(SegmentContent::State(State::Protected)),
+        ]
     );
     assert_eq!(
         spoken(&reduce(&mut state, &caret_moved(None, "secret"))),

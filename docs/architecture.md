@@ -873,8 +873,8 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
    local Hyper-V VM (D3);
    speech asserted on the control plane's speech stream, spoken by
    eSpeak NG through the silent real-time device in a silent run or the
-   real device in an audible one; a separate WASAPI smoke test in the
-   interactive loop proves audio actually reaches a device.
+   real device in an audible one; every `cargo xtask vm test` run is
+   audible, playing its speech through the real `WasapiDevice`.
 
 Expected behaviour comes from NVDA, used as a reference rather than as an
 oracle in the tests: a small NVDA add-on captures what NVDA speaks for a

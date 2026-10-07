@@ -19,7 +19,19 @@ const ANSWERED_WITHIN: Duration = Duration::from_secs(1);
 /// How long the whole probe may take, within the outpost's ten-second
 /// deadline for handling one event: UIA's own check can take five seconds
 /// on a busy window, and the wait for the window to respond takes the rest.
-const PROBE_BUDGET: Duration = Duration::from_secs(8);
+pub const PROBE_BUDGET: Duration = Duration::from_secs(8);
+
+/// What [`probe`] found: the window's answer, and how many times it was
+/// asked, which shows whether UIA gave up on a busy window first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Probe {
+    /// Whether the window has a provider; `None` when it did not answer.
+    pub answer: Option<bool>,
+    /// How many times `UiaHasServerSideProvider` asked the window: 1 when
+    /// its first answer was trusted, 2 when it was asked again once it
+    /// answered.
+    pub asks: u8,
+}
 
 /// Asks a window whether it exposes a native UIA server-side provider — the
 /// third rung of the arbitration ladder (architecture section 4), after the
@@ -39,6 +51,13 @@ const PROBE_BUDGET: Duration = Duration::from_secs(8);
 /// thread.
 #[must_use]
 pub fn probe_server_side_provider(hwnd: isize) -> Option<bool> {
+    probe(hwnd).answer
+}
+
+/// [`probe_server_side_provider`], saying how many times the window was
+/// asked as well as what it answered.
+#[must_use]
+pub fn probe(hwnd: isize) -> Probe {
     // The probe is a way into UIA's first-time setup too; a failed setup
     // leaves the probe to try anyway.
     let _ = crate::client::ensure_ready();
@@ -54,20 +73,21 @@ pub fn probe_server_side_provider(hwnd: isize) -> Option<bool> {
         let has = unsafe { UiaHasServerSideProvider(window) }.as_bool();
         (has, asked.elapsed() < ANSWERED_WITHIN)
     };
-    match ask() {
-        (true, _) => return Some(true),
-        (false, true) => return Some(false),
-        (false, false) => {}
+    let answered = |asks| {
+        move |(has, in_time): (bool, bool)| Probe {
+            answer: (has || in_time).then_some(has),
+            asks,
+        }
+    };
+    let first = answered(1)(ask());
+    if first.answer.is_some() {
+        return first;
     }
     let remaining = PROBE_BUDGET.saturating_sub(started.elapsed());
     if remaining.is_zero() || !responds(window, remaining) {
-        return None;
+        return first;
     }
-    match ask() {
-        (true, _) => Some(true),
-        (false, true) => Some(false),
-        (false, false) => None,
-    }
+    answered(2)(ask())
 }
 
 /// [`probe_server_side_provider`], taking a window that did not answer as

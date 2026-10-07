@@ -168,16 +168,19 @@ mod tests {
     #[test]
     fn focused_focusable_states_combine() {
         let states = states_from_msaa(STATE_SYSTEM_FOCUSED | STATE_SYSTEM_FOCUSABLE);
-        assert!(states.contains(State::Focused));
-        assert!(states.contains(State::Focusable));
-        assert!(!states.contains(State::Checked));
+        assert_eq!(
+            states,
+            StateSet::new().with(State::Focused).with(State::Focusable)
+        );
     }
 
     #[test]
     fn unavailable_maps_to_disabled_and_mixed_to_mixed() {
         let states = states_from_msaa(STATE_SYSTEM_UNAVAILABLE | STATE_SYSTEM_MIXED);
-        assert!(states.contains(State::Disabled));
-        assert!(states.contains(State::Mixed));
+        assert_eq!(
+            states,
+            StateSet::new().with(State::Disabled).with(State::Mixed)
+        );
     }
 
     /// A focused, hot-tracked menu item reports `accState = 0x00100084`
@@ -187,11 +190,10 @@ mod tests {
     #[test]
     fn focused_hot_tracked_menu_item_is_not_mixed() {
         let states = states_from_msaa(0x0010_0084);
-        assert!(states.contains(State::Focused));
-        assert!(states.contains(State::Focusable));
-        assert!(!states.contains(State::Mixed));
-        assert!(!states.contains(State::Checked));
-        assert!(!states.contains(State::Pressed));
+        assert_eq!(
+            states,
+            StateSet::new().with(State::Focused).with(State::Focusable)
+        );
     }
 
     /// A selected list item reports `accState = 0x00300002`
@@ -200,18 +202,23 @@ mod tests {
     #[test]
     fn selected_list_item_is_not_mixed() {
         let states = states_from_msaa(0x0030_0002);
-        assert!(states.contains(State::Selected));
-        assert!(states.contains(State::Focusable));
-        assert!(states.contains(State::Selectable));
-        assert!(!states.contains(State::Mixed));
-        assert!(!states.contains(State::Checked));
+        assert_eq!(
+            states,
+            StateSet::new()
+                .with(State::Selected)
+                .with(State::Focusable)
+                .with(State::Selectable)
+        );
     }
 
-    /// A genuinely tri-state (indeterminate) check box does carry Mixed.
+    /// A genuinely tri-state (indeterminate) check box carries exactly Mixed
+    /// and Focusable, never Checked.
     #[test]
     fn indeterminate_check_box_is_mixed() {
         let states = states_from_msaa(STATE_SYSTEM_FOCUSABLE | STATE_SYSTEM_MIXED);
-        assert!(states.contains(State::Mixed));
-        assert!(!states.contains(State::Checked));
+        assert_eq!(
+            states,
+            StateSet::new().with(State::Focusable).with(State::Mixed)
+        );
     }
 }

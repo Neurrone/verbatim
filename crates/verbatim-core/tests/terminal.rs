@@ -11,7 +11,7 @@ use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, Effect, Input, LineChange, Message, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Phrase, Pid, ReaderSettings, ReviewCommand, Role, SegmentContent,
-    Skipped, SpeechMark, StateSet, TerminalOutput, TraceId,
+    Skipped, SpeechMark, SpeechPriority, StateSet, TerminalOutput, TraceId,
 };
 
 const OUTPOST: OutpostId = OutpostId(1);
@@ -96,17 +96,19 @@ fn typed(text: &str) -> Input {
     }
 }
 
-/// What one utterance says, as text.
+/// What one utterance says, as text. Every segment kind terminal speech
+/// may hold is written out; any other kind fails the test, so nothing
+/// unexpected is spoken unseen.
 fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
     segments
         .iter()
-        .filter_map(|segment| match &segment.content {
-            SegmentContent::Text(text) | SegmentContent::Character(text) => Some(text.clone()),
-            SegmentContent::Phrase(Phrase::SkippedLines(count)) => Some(format!("skipped {count}")),
-            SegmentContent::Phrase(Phrase::SkippedUncountedLines) => Some("skipped".to_owned()),
-            SegmentContent::Message(Message::ReportNewOutputOn) => Some("on".to_owned()),
-            SegmentContent::Message(Message::ReportNewOutputOff) => Some("off".to_owned()),
-            _ => None,
+        .map(|segment| match &segment.content {
+            SegmentContent::Text(text) | SegmentContent::Character(text) => text.clone(),
+            SegmentContent::Phrase(Phrase::SkippedLines(count)) => format!("skipped {count}"),
+            SegmentContent::Phrase(Phrase::SkippedUncountedLines) => "skipped".to_owned(),
+            SegmentContent::Message(Message::ReportNewOutputOn) => "on".to_owned(),
+            SegmentContent::Message(Message::ReportNewOutputOff) => "off".to_owned(),
+            other => panic!("unexpected segment in terminal speech: {other:?}"),
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -121,23 +123,26 @@ struct Playback {
 }
 
 impl Playback {
-    /// Takes in a step's effects.
+    /// Takes in a step's effects. Terminal speech is queued, and starts
+    /// with its index mark when it has one; any effect other than speech
+    /// and a stop fails the test, since none of these steps should
+    /// produce one unasserted.
     fn take(&mut self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
                 Effect::Speak(utterance) => {
-                    let mark =
-                        utterance
-                            .segments
-                            .iter()
-                            .find_map(|segment| match segment.content {
-                                SegmentContent::Mark(mark) => Some(mark),
-                                _ => None,
-                            });
-                    self.queued.push_back((mark, words(&utterance.segments)));
+                    assert_eq!(utterance.priority, SpeechPriority::Queued, "{utterance:?}");
+                    let (mark, rest) = match utterance.segments.split_first() {
+                        Some((first, rest)) => match first.content {
+                            SegmentContent::Mark(mark) => (Some(mark), rest),
+                            _ => (None, utterance.segments.as_slice()),
+                        },
+                        None => panic!("an utterance with nothing in it: {utterance:?}"),
+                    };
+                    self.queued.push_back((mark, words(rest)));
                 }
                 Effect::StopSpeech => self.queued.clear(),
-                _ => {}
+                other => panic!("unexpected effect: {other:?}"),
             }
         }
     }
@@ -174,8 +179,14 @@ fn output_under_the_limit_is_spoken_whole_across_batches() {
     playback.feed(&mut state, &output(lines(1..=10)));
     playback.feed(&mut state, &output(lines(11..=20)));
     playback.feed(&mut state, &output(lines(21..=25)));
-    // Only a little is handed to speech ahead of playback.
-    assert!(playback.queued.len() <= 2, "{:?}", playback.queued);
+    // Only two lines are handed to speech ahead of playback: one playing
+    // and one ready behind it.
+    let queued: Vec<&str> = playback
+        .queued
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect();
+    assert_eq!(queued, ["line 1", "line 2"]);
     assert_eq!(playback.play_all(&mut state), lines(1..=25));
 }
 
@@ -395,15 +406,24 @@ fn report_new_output_toggles_with_verbatim_5() {
         command: ReviewCommand::ToggleReportNewOutput,
         repeat: 0,
     };
-    let effects = reduce(&mut state, &toggle);
-    assert!(effects.iter().any(|effect| matches!(
-        effect,
-        Effect::SettingsChanged(settings) if !settings.report_terminal_output
-    )));
-    playback.take(effects);
+    // Each press speaks its new value, then reports the settings, with the
+    // toggle changed and nothing else, for the shell to save.
+    let press = |state: &mut SrState, playback: &mut Playback, on: bool| {
+        let mut effects = reduce(state, &toggle);
+        assert_eq!(
+            effects.pop(),
+            Some(Effect::SettingsChanged(ReaderSettings {
+                report_terminal_output: on,
+                ..ReaderSettings::default()
+            }))
+        );
+        assert_eq!(effects.len(), 1, "{effects:?}");
+        playback.take(effects);
+    };
+    press(&mut state, &mut playback, false);
     playback.feed(&mut state, &output(lines(1..=3)));
     assert_eq!(playback.play_all(&mut state), ["off"]);
-    playback.feed(&mut state, &toggle);
+    press(&mut state, &mut playback, true);
     playback.feed(&mut state, &output(lines(4..=4)));
     assert_eq!(playback.play_all(&mut state), ["on", "line 4"]);
 }
@@ -418,13 +438,12 @@ fn turning_report_new_output_off_in_the_settings_drops_what_is_waiting() {
     settings.report_terminal_output = false;
     playback.feed(&mut state, &Input::Settings(settings));
     // Only what speech already had plays; the rest of the output is gone,
-    // as when Verbatim+5 turns reporting off.
-    // "line 1" played before the change, and speech held the next two.
-    let heard = playback.play_all(&mut state);
-    for waiting in 4..=10 {
-        let line = format!("line {waiting}");
-        assert!(!heard.contains(&line), "{line} was spoken: {heard:?}");
-    }
+    // as when Verbatim+5 turns reporting off. "line 1" played before the
+    // change, and speech held the next two.
+    assert_eq!(
+        playback.play_all(&mut state),
+        ["line 1", "line 2", "line 3"]
+    );
 }
 
 #[test]

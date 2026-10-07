@@ -214,11 +214,13 @@ mod tests {
     #[test]
     fn root_is_index_zero_and_children_follow() {
         let tree = Tree::build(sample());
-        assert_eq!(tree.index_of("root"), Some(0));
-        assert!(tree.index_of("a").is_some());
-        assert!(tree.index_of("b").is_some());
-        assert!(tree.index_of("b1").is_some());
-        assert_eq!(tree.nodes[0].children.len(), 2);
+        let indices: Vec<_> = ["root", "a", "b", "b1"]
+            .iter()
+            .map(|id| tree.index_of(id))
+            .collect();
+        assert_eq!(indices, [Some(0), Some(1), Some(2), Some(3)], "depth first");
+        assert_eq!(tree.index_of("nosuch"), None);
+        assert_eq!(tree.nodes[0].children, [1, 2]);
     }
 
     #[test]

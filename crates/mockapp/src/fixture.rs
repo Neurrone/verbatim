@@ -272,70 +272,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_role_name_round_trips() {
-        for name in [
-            "window",
-            "dialog",
-            "pane",
-            "property_page",
-            "group",
-            "menu_bar",
-            "menu",
-            "menu_item",
-            "button",
-            "toggle_button",
-            "check_box",
-            "radio_button",
-            "combo_box",
-            "list",
-            "list_item",
-            "slider",
-            "spin_button",
-            "tab_control",
-            "tab",
-            "static_text",
-            "editable_text",
-            "link",
-            "tool_bar",
-            "status_bar",
-            "tree",
-            "tree_item",
-            "unknown",
+    fn every_role_name_maps_to_its_role() {
+        for (name, expected) in [
+            ("window", Role::Window),
+            ("dialog", Role::Dialog),
+            ("pane", Role::Pane),
+            ("property_page", Role::PropertyPage),
+            ("group", Role::Group),
+            ("menu_bar", Role::MenuBar),
+            ("menu", Role::Menu),
+            ("menu_item", Role::MenuItem),
+            ("button", Role::Button),
+            ("toggle_button", Role::ToggleButton),
+            ("check_box", Role::CheckBox),
+            ("radio_button", Role::RadioButton),
+            ("combo_box", Role::ComboBox),
+            ("list", Role::List),
+            ("list_item", Role::ListItem),
+            ("slider", Role::Slider),
+            ("spin_button", Role::SpinButton),
+            ("tab_control", Role::TabControl),
+            ("tab", Role::Tab),
+            ("static_text", Role::StaticText),
+            ("editable_text", Role::EditableText),
+            ("link", Role::Link),
+            ("tool_bar", Role::ToolBar),
+            ("status_bar", Role::StatusBar),
+            ("tree", Role::Tree),
+            ("tree_item", Role::TreeItem),
+            ("unknown", Role::Unknown),
         ] {
-            assert!(
-                role_from_fixture_str(name).is_some(),
-                "role name {name:?} did not map to a Role"
+            assert_eq!(
+                role_from_fixture_str(name),
+                Some(expected),
+                "role name {name:?}"
             );
         }
+        assert_eq!(role_from_fixture_str("no_such_name"), None);
     }
 
     #[test]
-    fn every_state_name_round_trips() {
-        for name in [
-            "focused",
-            "focusable",
-            "selected",
-            "selectable",
-            "checked",
-            "mixed",
-            "disabled",
-            "read_only",
-            "expanded",
-            "collapsed",
-            "pressed",
-            "has_popup",
-            "protected",
-            "required",
-            "invalid_entry",
-            "checkable",
-            "offscreen",
-            "busy",
+    fn every_state_name_maps_to_its_state() {
+        for (name, expected) in [
+            ("focused", State::Focused),
+            ("focusable", State::Focusable),
+            ("selected", State::Selected),
+            ("selectable", State::Selectable),
+            ("checked", State::Checked),
+            ("mixed", State::Mixed),
+            ("disabled", State::Disabled),
+            ("read_only", State::ReadOnly),
+            ("expanded", State::Expanded),
+            ("collapsed", State::Collapsed),
+            ("pressed", State::Pressed),
+            ("has_popup", State::HasPopup),
+            ("protected", State::Protected),
+            ("required", State::Required),
+            ("invalid_entry", State::InvalidEntry),
+            ("checkable", State::Checkable),
+            ("offscreen", State::Offscreen),
+            ("busy", State::Busy),
         ] {
-            assert!(
-                state_from_fixture_str(name).is_some(),
-                "state name {name:?} did not map to a State"
+            assert_eq!(
+                state_from_fixture_str(name),
+                Some(expected),
+                "state name {name:?}"
             );
         }
+        assert_eq!(state_from_fixture_str("no_such_name"), None);
     }
 
     #[test]

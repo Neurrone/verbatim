@@ -3,9 +3,7 @@
 //! (`docs/performance.md`, the operation ledger).
 //!
 //! One counter per provider method, shared by every node's provider object,
-//! plus one for `WM_GETOBJECT`, which the host window answers, and one for
-//! the stdin commands applied, which a test waits on to know a command such
-//! as `set-focus` has taken effect before it measures anything. A test reads
+//! plus one for `WM_GETOBJECT`, which the host window answers. A test reads
 //! and resets them with two window messages sent to the host window, so the
 //! read is synchronous with the window thread that runs every provider call:
 //! once a client's call has returned, every hit it caused is counted.
@@ -31,9 +29,6 @@ pub(crate) const WM_HITS_RESET: u32 = WM_APP + 3;
 /// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Method {
-    /// A stdin command applied: not a provider call, but counted alongside
-    /// them so a test can wait for a command to take effect.
-    CommandApplied,
     /// `WM_GETOBJECT`, answered by the host window.
     GetObject,
     /// `IRawElementProviderSimple::ProviderOptions`.
@@ -193,8 +188,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 75] = [
-        Method::CommandApplied,
+    pub(crate) const ALL: [Method; 74] = [
         Method::GetObject,
         Method::ProviderOptions,
         Method::GetPatternProvider,
@@ -278,7 +272,6 @@ impl Method {
     )]
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Method::CommandApplied => "command applied",
             Method::GetObject => "WM_GETOBJECT",
             Method::ProviderOptions => "ProviderOptions",
             Method::GetPatternProvider => "GetPatternProvider",

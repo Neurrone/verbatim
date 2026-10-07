@@ -110,6 +110,10 @@ pub(super) enum Item {
         /// follow-up finds its element focused after all.
         held: Option<Box<HeldFocus>>,
     },
+    /// [`Outpost::settle`](super::Outpost::settle): answered once nothing
+    /// else is waiting, the focus-following subscriptions have made every
+    /// move asked of them, and every message published has been written.
+    Settle(std::sync::mpsc::Sender<()>),
 }
 
 /// A UIA focus fact the worker held back as possibly stale
@@ -300,6 +304,12 @@ impl Intake {
         before != state.waiting.len() + state.batch.len()
     }
 
+    /// Whether anything is waiting to be handled, planned or not.
+    pub(super) fn busy(&self) -> bool {
+        let state = self.lock();
+        !state.waiting.is_empty() || !state.batch.is_empty()
+    }
+
     /// Records the object the worker last reported as the focus: its events
     /// are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
@@ -414,7 +424,9 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        Item::Query { .. } | Item::ResolveFocus { .. } => (None, Category::Exempt, 0),
+        Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) => {
+            (None, Category::Exempt, 0)
+        }
     }
 }
 
@@ -651,10 +663,13 @@ mod tests {
         waiting.extend((2..=12).map(|child| msaa(WinEventKind::ValueChange, 7, child)));
         let focused = Object::Msaa(7, -4, 1);
         let planned = plan(waiting, Some(&focused), never_hung);
-        let kept = observed(&planned);
-        assert_eq!(kept[0], 1, "the focused object's event survives the limit");
-        assert_eq!(kept[1], 0, "the query survives");
-        assert!(!kept.contains(&2), "the oldest other event is dropped");
+        // The focused object's event and the query survive the limit and
+        // do not count toward it: the newest ten other events are kept, and
+        // only the oldest, observed at 2, is dropped.
+        assert_eq!(
+            observed(&planned),
+            vec![1, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        );
     }
 
     #[test]

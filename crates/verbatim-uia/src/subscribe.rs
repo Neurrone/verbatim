@@ -11,7 +11,9 @@
 //! client registered and registers the group again on the new scope, on
 //! that thread, so the caller never waits: removing a UIA handler waits for
 //! its running callbacks to finish, which is why callbacks must never wait
-//! on whoever moves the subscription. Dropping a registration unregisters
+//! on whoever moves the subscription. [`Registration::settle`] waits for
+//! every move asked for so far to be made, for a caller that measures what
+//! the moves cost the application. Dropping a registration unregisters
 //! and ends its thread. Every handler is registered with the base cache
 //! request, so the element arrives with its properties prefetched and the
 //! callback reads them without a cross-process call.
@@ -134,7 +136,7 @@ pub enum Subscription {
 /// A live subscription: one or more [`Subscription`]s registered together
 /// as one event handler group. Dropping it unregisters and ends its thread.
 pub struct Registration {
-    retarget: Option<mpsc::Sender<Scope>>,
+    retarget: Option<mpsc::Sender<Command>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -149,7 +151,7 @@ impl Registration {
     /// or on which the group cannot be registered, is skipped rather than
     /// failing the registration.
     pub fn new(subscriptions: Vec<Subscription>, scope: Scope) -> windows::core::Result<Self> {
-        let (retarget_tx, retarget_rx) = mpsc::channel::<Scope>();
+        let (retarget_tx, retarget_rx) = mpsc::channel::<Command>();
         let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
         let join = thread::Builder::new()
             .name("verbatim-uia-subscription".to_owned())
@@ -180,9 +182,32 @@ impl Registration {
     /// own thread removes the old handlers and registers the new ones.
     pub fn retarget(&self, scope: Scope) {
         if let Some(sender) = &self.retarget {
-            let _ = sender.send(scope);
+            let _ = sender.send(Command::Retarget(scope));
         }
     }
+
+    /// Waits until every move [`retarget`](Self::retarget) was asked for
+    /// before this call has been made: the old handlers removed and the new
+    /// ones registered, so every call those make into an application has
+    /// returned. Returns at once if the registration's thread has ended.
+    pub fn settle(&self) {
+        let Some(sender) = &self.retarget else {
+            return;
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        if sender.send(Command::Settle(done_tx)).is_ok() {
+            // An error means the thread ended, with nothing left to move.
+            let _ = done_rx.recv();
+        }
+    }
+}
+
+/// What a registration's thread is asked to do.
+enum Command {
+    /// Move the subscription to this scope.
+    Retarget(Scope),
+    /// Reply once every move asked for before has been made.
+    Settle(mpsc::Sender<()>),
 }
 
 impl Drop for Registration {
@@ -280,7 +305,7 @@ fn run(
     subscriptions: Vec<Subscription>,
     scope: &Scope,
     ready: &mpsc::Sender<windows::core::Result<()>>,
-    retarget: &mpsc::Receiver<Scope>,
+    retarget: &mpsc::Receiver<Command>,
 ) {
     let setup = (|| -> windows::core::Result<Parts> {
         let uia = Uia::new()?;
@@ -300,23 +325,50 @@ fn run(
     };
     register(&parts, scope);
     let _ = ready.send(Ok(()));
-    while let Ok(mut scope) = retarget.recv() {
-        // Only the newest scope matters: skip any that queued up behind it.
+    while let Ok(command) = retarget.recv() {
+        let mut scope = match command {
+            Command::Retarget(scope) => scope,
+            Command::Settle(done) => {
+                let _ = done.send(());
+                continue;
+            }
+        };
+        // Only the newest scope matters: skip any that queued up behind it,
+        // up to a request to settle, which waits for that scope.
+        let mut settled: Vec<mpsc::Sender<()>> = Vec::new();
         while let Ok(newer) = retarget.try_recv() {
-            scope = newer;
+            match newer {
+                Command::Retarget(newer) if settled.is_empty() => scope = newer,
+                Command::Retarget(newer) => {
+                    move_to(&parts, &scope);
+                    for done in settled.drain(..) {
+                        let _ = done.send(());
+                    }
+                    scope = newer;
+                }
+                Command::Settle(done) => settled.push(done),
+            }
         }
-        // SAFETY: removing this thread's own client's registrations. One on
-        // an element that has gone since is forgotten by UIA itself, as NVDA
-        // notes.
-        unsafe {
-            let _ = parts.uia.client().RemoveAllEventHandlers();
+        move_to(&parts, &scope);
+        for done in settled {
+            let _ = done.send(());
         }
-        register(&parts, &scope);
     }
     // SAFETY: as above, before teardown.
     unsafe {
         let _ = parts.uia.client().RemoveAllEventHandlers();
     }
+}
+
+/// Removes everything this registration's client registered and registers
+/// the handlers again on `scope`.
+fn move_to(parts: &Parts, scope: &Scope) {
+    // SAFETY: removing this thread's own client's registrations. One on an
+    // element that has gone since is forgotten by UIA itself, as NVDA notes.
+    unsafe {
+        let _ = parts.uia.client().RemoveAllEventHandlers();
+    }
+    register(parts, scope);
 }
 
 /// Registers the handlers, as one group, on every element of `scope`.
