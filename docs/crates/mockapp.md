@@ -78,7 +78,9 @@ the window waits, as with an application that is starting up or busy;
 the window thread prints `stall started` on stdout as it begins and
 `stall ended <us>`, the time in microseconds since the Unix epoch, as it
 ends, so a test waits for the stall itself rather than for a guessed
-time), and `quit`.
+time), `slow <ms>` (every provider call on either backend from then on is
+answered that many milliseconds late, as by an application busy building
+a window, until `slow 0`; acknowledged `applied`), and `quit`.
 
 Every other command is acknowledged on stdout by the window thread once it
 has taken effect, events included: `applied`, or `rejected: <reason>` for a
@@ -301,7 +303,11 @@ a repeated focus on it keeps that node, and each costs exactly the calls
 pinned there. A focus whose event was captured before its item was
 selected (`select` after the capture, the outpost's read of the focused
 element answering the item fetched afterwards) is reported with the item
-selected, its name and role from the event.
+selected, its name and role from the event. And with every provider call
+answered 20 ms late (`slow 20`), a focus queued behind ten selections,
+which wait behind a query for an item's ancestors while mockapp is
+stalled, is handled right after the query and before the selections,
+waiting less than one slow call after the query's answer.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
 over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a

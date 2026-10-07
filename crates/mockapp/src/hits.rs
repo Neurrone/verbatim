@@ -14,8 +14,12 @@
 //!
 //! The tests compile this file into their own shared module, for
 //! [`Method`] and the message numbers, so the two sides cannot disagree.
+//!
+//! Counting is also where every provider call starts, so the `slow`
+//! command's delay is applied here: each counted call is answered that
+//! much later ([`set_delay`]).
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 
@@ -364,9 +368,25 @@ const _: () = {
     }
 };
 
-/// Counts one call to `method`.
+/// How long each provider call waits before it is answered, in
+/// milliseconds: the `slow` command's delay, 0 for none.
+static DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Counts one call to `method`, then waits the `slow` command's delay, so
+/// the call is answered that much later, as by an application busy
+/// building a window.
 pub(crate) fn hit(method: Method) {
     HITS[method.index()].fetch_add(1, Ordering::Relaxed);
+    let delay = DELAY_MS.load(Ordering::Relaxed);
+    if delay > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
+}
+
+/// Makes every provider call from now on wait `ms` milliseconds before it
+/// is answered; 0 answers at once again.
+pub(crate) fn set_delay(ms: u64) {
+    DELAY_MS.store(ms, Ordering::Relaxed);
 }
 
 /// The count for the method at `index` in [`Method::ALL`], or 0 for an

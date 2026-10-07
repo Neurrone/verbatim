@@ -18,6 +18,13 @@
 //!   one whose backend does not own the window, as NVDA's separate MSAA and
 //!   UIA limiters do), and the newest menu opening from each backend is
 //!   handled last.
+//! - A focus change is never kept waiting behind reads of other objects
+//!   ([`overtaken`]): within a batch that holds a foreground change or a
+//!   focus, the events of objects that are neither the focus nor the
+//!   object the change moves to are handled after it, menus included, in
+//!   their own order; and a focus change that arrives while the worker is
+//!   in the middle of a batch takes such events of that batch that have not
+//!   started back into the queue, where the next batch puts them after it.
 //!
 //! Intake callbacks only push and return: they never call into the
 //! application and never wait on the worker.
@@ -27,9 +34,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex, PoisonError};
 
-use verbatim_ia2::WinEventKind;
+use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{Notification, TraceId};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
+use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 use windows::core::AgileReference;
 
 use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact};
@@ -162,6 +170,29 @@ impl Key {
             Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
         }
     }
+
+    /// Whether this is a focus change: a foreground change or a focus, the
+    /// entries that overtake reads of other objects ([`overtaken`]).
+    fn is_focus_change(&self) -> bool {
+        matches!(
+            self,
+            Key::Foreground(_) | Key::MsaaFocus(..) | Key::UiaFocus(_)
+        )
+    }
+
+    /// The objects a focus change moves to: the focus's own, or a
+    /// foreground window's window and client objects, which the foreground
+    /// report reads.
+    fn moves_to(&self) -> Vec<Object> {
+        match self {
+            Key::Foreground(hwnd) => vec![
+                Object::Msaa(*hwnd, OBJID_WINDOW.0, CHILDID_SELF),
+                Object::Msaa(*hwnd, OBJID_CLIENT.0, CHILDID_SELF),
+            ],
+            Key::MsaaFocus(..) | Key::UiaFocus(_) => self.object().into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// An accessible object, by its event address or runtime id.
@@ -189,6 +220,10 @@ struct Waiting {
     category: Category,
     hwnd: isize,
     thread: u32,
+    /// An event an earlier batch admitted and a focus change took back into
+    /// the queue before it was handled ([`overtaken`]): the limits, which
+    /// it has already passed, keep it.
+    admitted: bool,
     entry: Entry,
 }
 
@@ -236,6 +271,81 @@ pub(super) struct Intake {
     ready: Condvar,
 }
 
+impl State {
+    /// Takes the events of the batch in progress that have not started and
+    /// that a focus change overtakes back into the queue, ahead of what is
+    /// waiting, in their order, so the next batch puts them after the
+    /// focus change ([`overtaken`]). One that a newer entry for the same
+    /// object and kind already replaces is dropped.
+    fn take_back_overtaken(&mut self) {
+        let focused = self.focused.clone();
+        let mut kept = VecDeque::with_capacity(self.batch.len());
+        let mut taken = Vec::new();
+        for planned in self.batch.drain(..) {
+            let Planned::Run(entry) = planned else {
+                kept.push_back(planned);
+                continue;
+            };
+            let (key, category, hwnd) = classify(&entry.item);
+            if overtaken(key.as_ref(), category, focused.as_ref(), &[]) {
+                taken.push(Waiting {
+                    key,
+                    category,
+                    hwnd,
+                    thread: super::window::window_thread(hwnd),
+                    admitted: true,
+                    entry,
+                });
+            } else {
+                kept.push_back(Planned::Run(entry));
+            }
+        }
+        self.batch = kept;
+        for waiting in taken.into_iter().rev() {
+            let replaced = waiting.key.as_ref().is_some_and(|key| {
+                self.waiting
+                    .iter()
+                    .any(|newer| newer.key.as_ref() == Some(key))
+            });
+            if !replaced {
+                self.waiting.push_front(waiting);
+            }
+        }
+    }
+}
+
+/// Whether an entry is an event a focus change overtakes: an event, not a
+/// notification or an alert, of an object that is neither the focus
+/// (`focused`) nor one the change moves to (`moving_to`).
+///
+/// NVDA queues a UIA focus event the moment its UIA thread receives it,
+/// and reads an MSAA event of another object with one call (the object
+/// from the event), judging what it says against the focus when it runs: a
+/// state change speaks only for the focus. The outpost reads each event's
+/// whole snapshot, up to ten calls, and an application building a window
+/// answers each slowly: File Explorer's first focus in a new window waited
+/// 2.6 seconds behind such reads (`docs/performance.md`). So a focus change
+/// goes first. The focus's own events, and those of the object focus moves
+/// to, keep their place: they can change what the focus says. So do
+/// notifications and alerts, which are spoken whatever the focus.
+fn overtaken(
+    key: Option<&Key>,
+    category: Category,
+    focused: Option<&Object>,
+    moving_to: &[Object],
+) -> bool {
+    let event = match key {
+        Some(Key::Msaa(kind, ..)) => *kind != WinEventKind::Alert as u8,
+        Some(Key::Uia(..)) => true,
+        _ => false,
+    };
+    category == Category::Other
+        && event
+        && key
+            .and_then(Key::object)
+            .is_some_and(|object| Some(&object) != focused && !moving_to.contains(&object))
+}
+
 impl Intake {
     /// Adds an entry. `thread_of` and the window are read here, with local
     /// calls, so the limiter never needs them later.
@@ -248,11 +358,15 @@ impl Intake {
                 .waiting
                 .retain(|waiting| waiting.key.as_ref() != Some(key));
         }
+        if key.as_ref().is_some_and(Key::is_focus_change) {
+            state.take_back_overtaken();
+        }
         state.waiting.push_back(Waiting {
             key,
             category,
             hwnd,
             thread,
+            admitted: false,
             entry,
         });
         drop(state);
@@ -430,15 +544,14 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
     }
 }
 
-/// Plans one batch from everything that was waiting, oldest first: drops
-/// events from hung windows, applies the batch limits, keeps only the newest
-/// foreground change and the newest focus from each backend, and moves the
-/// newest menu opening to the end.
-fn plan(
+/// What the batch limits keep of everything that was waiting, oldest
+/// first: events from hung windows are dropped, and so are all but the
+/// newest focus events and the newest other events of each UI thread.
+fn admit(
     waiting: Vec<Waiting>,
     focused: Option<&Object>,
     window_is_hung: impl Fn(isize) -> bool,
-) -> Vec<Planned> {
+) -> Vec<Waiting> {
     let mut hung: HashMap<isize, bool> = HashMap::new();
     let mut keep = vec![false; waiting.len()];
     let mut focus_kept = 0;
@@ -456,6 +569,7 @@ fn plan(
             focused.is_some() && item.key.as_ref().and_then(Key::object).as_ref() == focused;
         keep[index] = match item.category {
             Category::Exempt => true,
+            _ if item.admitted => true,
             _ if of_focus => true,
             Category::Focus => {
                 focus_kept += 1;
@@ -469,11 +583,24 @@ fn plan(
         };
     }
 
-    let kept: Vec<Waiting> = waiting
+    waiting
         .into_iter()
         .zip(keep)
         .filter_map(|(item, keep)| keep.then_some(item))
-        .collect();
+        .collect()
+}
+
+/// Plans one batch from everything that was waiting, oldest first: drops
+/// events from hung windows, applies the batch limits, keeps only the newest
+/// foreground change and the newest focus from each backend, moves the
+/// newest menu opening after them, and, when the batch changes the focus,
+/// the events it overtakes after all of those ([`overtaken`]).
+fn plan(
+    waiting: Vec<Waiting>,
+    focused: Option<&Object>,
+    window_is_hung: impl Fn(isize) -> bool,
+) -> Vec<Planned> {
+    let kept = admit(waiting, focused, window_is_hung);
     let newest = |wanted: fn(&Key) -> bool| {
         kept.iter()
             .rposition(|item| item.key.as_ref().is_some_and(wanted))
@@ -495,9 +622,19 @@ fn plan(
     let uia_candidates = candidates(|key| matches!(key, Key::UiaFocus(_)));
     let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
     let uia_menu = newest(|key| matches!(key, Key::UiaMenuOpened(_)));
+    // What the batch's focus changes move to, when it holds any: the
+    // events of other objects are handled after them.
+    let changes: Vec<&Key> = kept
+        .iter()
+        .filter_map(|item| item.key.as_ref())
+        .filter(|key| key.is_focus_change())
+        .collect();
+    let moving_to: Vec<Object> = changes.iter().flat_map(|key| key.moves_to()).collect();
+    let focus_changes = !changes.is_empty();
 
     let mut planned = Vec::with_capacity(kept.len());
     let mut deferred = Vec::new();
+    let mut after_focus = Vec::new();
     // Focus candidates are gathered newest first and placed where the
     // newest was.
     let mut slots: Vec<Option<Entry>> = kept.iter().map(|_| None).collect();
@@ -536,6 +673,11 @@ fn plan(
                     deferred.push(item.entry);
                 }
             }
+            _ if focus_changes
+                && overtaken(item.key.as_ref(), item.category, focused, &moving_to) =>
+            {
+                after_focus.push(item.entry);
+            }
             _ => planned.push(Planned::Run(item.entry)),
         }
     }
@@ -545,6 +687,7 @@ fn plan(
         }
     }
     planned.extend(deferred.into_iter().map(Planned::Menu));
+    planned.extend(after_focus.into_iter().map(Planned::Run));
     planned
 }
 
@@ -581,6 +724,7 @@ mod tests {
             category,
             hwnd,
             thread: u32::try_from(hwnd).unwrap_or(0),
+            admitted: false,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -598,6 +742,7 @@ mod tests {
             category,
             hwnd,
             thread: 1,
+            admitted: false,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -618,6 +763,7 @@ mod tests {
             category,
             hwnd,
             thread: 0,
+            admitted: false,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -850,7 +996,9 @@ mod tests {
             focus(4, 5),
             msaa(WinEventKind::NameChange, 3, 60),
         ];
-        let planned = plan(waiting, None, never_hung);
+        // The focus's own event keeps its place; the other is overtaken.
+        let focused = Object::Msaa(3, -4, 30);
+        let planned = plan(waiting, Some(&focused), never_hung);
         let focus_groups: Vec<Vec<u64>> = planned
             .iter()
             .filter_map(|planned| match planned {
@@ -870,5 +1018,75 @@ mod tests {
             vec![30, 5, 4, 2, 60],
             "the group takes the newest focus's place"
         );
+    }
+
+    #[test]
+    fn a_focus_change_goes_before_the_events_of_other_objects_queued_ahead_of_it() {
+        let waiting = vec![
+            msaa(WinEventKind::NameChange, 7, 1),
+            msaa(WinEventKind::ValueChange, 8, 2),
+            msaa(WinEventKind::Selection, 9, 3),
+            fact(
+                DeliveredFact::MsaaFocus {
+                    hwnd: 9,
+                    id_object: -4,
+                    id_child: 3,
+                },
+                4,
+            ),
+            msaa(WinEventKind::NameChange, 7, 5),
+        ];
+        let focused = Object::Msaa(8, -4, 2);
+        let planned = plan(waiting, Some(&focused), never_hung);
+        assert_eq!(
+            observed(&planned),
+            vec![2, 3, 4, 1, 5],
+            "the focus's event and the event of the object focus moves to keep their place; the other objects' events follow the focus, in their order"
+        );
+    }
+
+    #[test]
+    fn a_focus_change_takes_back_the_unstarted_events_of_the_batch_in_progress() {
+        let intake = Intake::default();
+        let push = |item: Item, observed_at_ms: u64| {
+            intake.push(Entry {
+                item,
+                trace: TraceId::mint(),
+                observed_at_ms,
+                timing: crate::protocol::EventTiming::default(),
+            });
+        };
+        let name_change = |child: i32| Item::Msaa {
+            kind: WinEventKind::NameChange,
+            hwnd: 0,
+            id_object: -4,
+            id_child: child,
+        };
+        push(name_change(1), 1);
+        push(name_change(2), 2);
+        push(name_change(3), 3);
+        let mut order = Vec::new();
+        let (first, batch, _) = intake.next().expect("an entry");
+        order.extend(first.entries().iter().map(|entry| entry.observed_at_ms));
+        push(
+            Item::Fact(DeliveredFact::MsaaFocus {
+                hwnd: 0,
+                id_object: -4,
+                id_child: 4,
+            }),
+            4,
+        );
+        let mut batches = Vec::new();
+        while intake.busy() {
+            let (planned, number, _) = intake.next().expect("an entry");
+            order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
+            batches.push(number);
+        }
+        assert_eq!(
+            order,
+            vec![1, 4, 2, 3],
+            "the events not yet started wait for the focus"
+        );
+        assert_eq!(batches, vec![batch + 1; 3], "in the next batch");
     }
 }

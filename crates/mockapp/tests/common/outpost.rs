@@ -148,9 +148,9 @@ impl OutpostUnderTest {
         }
     }
 
-    /// Hands the outpost `fact` and returns the focus it reports, which
-    /// must be the next thing it says, and the only thing.
-    pub fn focus(&self, fact: DeliveredFact) -> Reported {
+    /// Hands the outpost `fact`, as the listener would, and returns at
+    /// once.
+    pub fn deliver(&self, fact: DeliveredFact) {
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: TraceId::mint(),
@@ -158,6 +158,31 @@ impl OutpostUnderTest {
                 timing: EventTiming::default(),
                 fact,
             });
+    }
+
+    /// Asks the outpost `query`, as Core would, and returns its request id
+    /// at once.
+    pub fn ask(&mut self, query: Query) -> u64 {
+        let request_id = self.next_request;
+        self.next_request += 1;
+        self.outpost.handle_command(&SupervisorToOutpost::Query {
+            trace_id: TraceId::mint(),
+            request_id,
+            query,
+        });
+        request_id
+    }
+
+    /// Makes the outpost's read of the focused element answer `element`.
+    pub fn read_focus_as(&self, element: &IUIAutomationElement) {
+        *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(AgileReference::new(element).expect("an agile reference"));
+    }
+
+    /// Hands the outpost `fact` and returns the focus it reports, which
+    /// must be the next thing it says, and the only thing.
+    pub fn focus(&self, fact: DeliveredFact) -> Reported {
+        self.deliver(fact);
         let reported = match self.next() {
             OutpostToSupervisor::Event {
                 event:
@@ -213,8 +238,7 @@ impl OutpostUnderTest {
     ) -> Reported {
         let ListenerFact { pid: _, fact } =
             uia_focus_fact(event).expect("mockapp's element has its process");
-        *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
-            Some(AgileReference::new(read).expect("an agile reference"));
+        self.read_focus_as(read);
         self.focus(fact)
     }
 
@@ -222,13 +246,7 @@ impl OutpostUnderTest {
     /// returns the neighbor and the calls it made; the reply must be the
     /// next thing the outpost says, and the only thing.
     pub fn navigate(&mut self, node_id: NodeId, kind: QueryKind) -> (NodeSnapshot, CallCounts) {
-        let request_id = self.next_request;
-        self.next_request += 1;
-        self.outpost.handle_command(&SupervisorToOutpost::Query {
-            trace_id: TraceId::mint(),
-            request_id,
-            query: Query::Navigate { node_id, kind },
-        });
+        let request_id = self.ask(Query::Navigate { node_id, kind });
         let answer = match self.next() {
             OutpostToSupervisor::Reply {
                 request_id: answered,

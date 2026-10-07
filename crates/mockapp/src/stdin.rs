@@ -4,7 +4,7 @@
 //! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
 //! `caret <id> <start> [<end>]`, `set-text <id> <text>`, `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
-//! `stall <ms>`, and `quit`.
+//! `stall <ms>`, `slow <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -61,6 +61,11 @@ pub(crate) enum Command {
     /// `stall started` on stdout as it begins, and `stall ended <us>`, with
     /// the time in microseconds since the Unix epoch, as it ends.
     Stall(u64),
+    /// `slow <ms>`: every provider call from now on is answered that many
+    /// milliseconds late, as by an application busy building a window; 0
+    /// answers at once again. Applied on the window thread, so the calls
+    /// before it are answered at the old pace.
+    Slow(u64),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -91,6 +96,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
+        "slow" => rest.parse().ok().map(Command::Slow),
         "take-runtime-id" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;
@@ -268,7 +274,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_take_runtime_id() {
+    fn parses_slow_and_take_runtime_id() {
+        assert!(matches!(parse_command("slow 20"), Some(Command::Slow(20))));
+        assert!(parse_command("slow soon").is_none());
         match parse_command("take-runtime-id inner delta") {
             Some(Command::TakeRuntimeId(id, from)) => {
                 assert_eq!((id.as_str(), from.as_str()), ("inner", "delta"));

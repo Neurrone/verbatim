@@ -1,6 +1,7 @@
 //! How a real outpost reports a UIA focus from mockapp's provider: under
 //! which node, when the provider reuses a dead element's runtime id, and
-//! with which states, when they changed after the focus event.
+//! with which states, when they changed after the focus event, and how soon,
+//! when the application is slow to answer the reads queued before it.
 //!
 //! The outpost runs in this process and reads the focused element from the
 //! test (`common::outpost`), as `call_counts.rs` describes; mockapp's focus
@@ -10,14 +11,21 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_model::{Role, State, StateSet};
+use std::time::Duration;
+
+use verbatim_model::{NormalizedEvent, Role, State, StateSet};
 use verbatim_outpost::OutpostOptions;
+use verbatim_outpost::listener::uia_focus_fact;
+use verbatim_outpost::protocol::{
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
+};
 use verbatim_uia::{ElementExt as _, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
 };
+use windows::core::BSTR;
 
 use common::outpost::OutpostUnderTest;
 
@@ -50,6 +58,22 @@ impl Client {
         root.find_first_build_cache(TreeScope_Descendants, &condition, &cache)
             .expect("the search")
             .expect("mockapp reports a focused element")
+    }
+
+    /// The element named `name`, built with the listener's cache request.
+    fn named(&self, name: &str) -> IUIAutomationElement {
+        let cache = self.uia.base_cache_request().expect("a cache request");
+        let root = self
+            .uia
+            .element_from_handle(self.hwnd.0 as isize, &cache)
+            .expect("mockapp's root element");
+        let condition = self
+            .uia
+            .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
+            .expect("a condition");
+        root.find_first_build_cache(TreeScope_Descendants, &condition, &cache)
+            .expect("the search")
+            .unwrap_or_else(|| panic!("no element is named {name:?}"))
     }
 }
 
@@ -166,6 +190,125 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
     app.quit();
 }
 
+/// How long each of mockapp's provider calls waits in the busy test: an
+/// application building a window, as File Explorer was when the first focus
+/// in a new window waited 2.6 seconds behind reads queued before it.
+const SLOW_CALL: Duration = Duration::from_millis(20);
+
+/// How long mockapp's window thread is stalled while the test queues
+/// everything, so the outpost handles none of it before all of it is queued.
+const STALL: Duration = Duration::from_secs(1);
+
+/// The timing of the one message in `said` that `pick` picks.
+fn timing_of(
+    said: &[OutpostToSupervisor],
+    pick: impl Fn(&OutpostToSupervisor) -> bool,
+) -> EventTiming {
+    match said.iter().find(|message| pick(message)) {
+        Some(
+            OutpostToSupervisor::Event { timing, .. } | OutpostToSupervisor::Reply { timing, .. },
+        ) => *timing,
+        other => panic!("no such message: {other:?}"),
+    }
+}
+
+/// A focus is never kept waiting behind reads of other objects queued
+/// before it. Ten selections in a list are queued, each a read mockapp
+/// answers slowly, and then a focus on another item; the outpost's worker
+/// is busy with a query for an item's ancestors when they arrive (mockapp
+/// is stalled under it), so all of them wait together. The focus is
+/// handled first, after the query, and the selections after it, in their
+/// own order; between the query's answer and the focus, the worker reads
+/// nothing, so the focus waits less than one of the slow application's
+/// calls takes.
+fn a_focus_is_handled_before_slow_reads_queued_ahead_of_it() {
+    let title = common::unique_title("mockapp-busy");
+    let mut app = common::spawn("busy.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let mut outpost = OutpostUnderTest::new(app.pid());
+
+    app.send("set-focus item1");
+    let first = outpost.uia_focus(&client.focused()).node;
+    let selections: Vec<DeliveredFact> = (2..=11)
+        .map(|n| {
+            let element = client.named(&format!("File {n}"));
+            match uia_focus_fact(&element).expect("mockapp's element has its process") {
+                ListenerFact {
+                    fact: DeliveredFact::UiaFocus { hwnd, snapshot, .. },
+                    ..
+                } => DeliveredFact::UiaSelection { hwnd, snapshot },
+                other => panic!("the listener's fact for a list item was {other:?}"),
+            }
+        })
+        .collect();
+    app.send("set-focus item12");
+    let focused = client.focused();
+    let ListenerFact { fact: focus, .. } =
+        uia_focus_fact(&focused).expect("mockapp's element has its process");
+    outpost.read_focus_as(&focused);
+
+    app.send(&format!("slow {}", SLOW_CALL.as_millis()));
+    app.stall(STALL);
+    let request = outpost.ask(Query::Ancestors { node_id: first.id });
+    for selection in selections {
+        outpost.deliver(selection);
+    }
+    outpost.deliver(focus);
+    app.stall_ended(STALL);
+
+    let said: Vec<OutpostToSupervisor> = (0..12).map(|_| outpost.next()).collect();
+    app.send("slow 0");
+    outpost.settled();
+    let answered = timing_of(&said, |message| {
+        matches!(message, OutpostToSupervisor::Reply { .. })
+    });
+    let focus = timing_of(&said, |message| {
+        matches!(
+            message,
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::FocusChanged { .. },
+                ..
+            }
+        )
+    });
+    let waited = Duration::from_micros(
+        focus
+            .dequeued_at_us
+            .saturating_sub(answered.published_at_us),
+    );
+    eprintln!("the focus waited {waited:?} after the query ahead of it was answered");
+
+    let heard: Vec<String> = said
+        .iter()
+        .map(|message| match message {
+            OutpostToSupervisor::Reply {
+                request_id,
+                outcome: QueryOutcome::Done(QueryResult::Ancestors(_)),
+                ..
+            } => format!("ancestors {request_id}"),
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::FocusChanged { node, .. },
+                ..
+            } => format!("focus {}", node.name.as_deref().unwrap_or_default()),
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::SelectionChanged { node },
+                ..
+            } => format!("selection {}", node.name.as_deref().unwrap_or_default()),
+            other => panic!("the outpost said {other:?}"),
+        })
+        .collect();
+    let mut expected = vec![format!("ancestors {request}"), "focus File 12".to_owned()];
+    expected.extend((2..=11).map(|n| format!("selection File {n}")));
+    assert_eq!(heard, expected);
+    assert!(
+        waited < SLOW_CALL,
+        "the focus waited {waited:?} after the query, for nothing else"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run(&[
         (
@@ -179,6 +322,10 @@ fn main() {
         (
             "a_focus_reports_the_states_read_when_it_is_handled",
             a_focus_reports_the_states_read_when_it_is_handled,
+        ),
+        (
+            "a_focus_is_handled_before_slow_reads_queued_ahead_of_it",
+            a_focus_is_handled_before_slow_reads_queued_ahead_of_it,
         ),
     ]);
 }

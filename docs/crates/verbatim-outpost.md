@@ -128,10 +128,27 @@ Public API:
     dropped before any read; and within a batch only the newest foreground
     change and the newest focus are handled, with the newest menu opening
     last.
+  - A focus change is never kept waiting behind reads of other objects
+    (`intake::overtaken`, since 2026-10-07): in a batch that holds a
+    foreground change or a focus, the events of objects that are neither
+    the focus nor an object the change moves to (the focus's own object, a
+    foreground window's window and client objects) are handled after it,
+    and after any menu opening, in their own order; and a focus change that
+    arrives while the worker is in the middle of a batch takes that batch's
+    such events that have not started back into the queue, where the next
+    batch puts them after it, the limits they already passed not applied
+    again. Notifications, alerts, queries, and the events of the focus and
+    of the object it moves to keep their place. NVDA reads another
+    object's event with one call and judges it against the focus when it
+    runs; the outpost reads a whole snapshot, and the first focus in a new
+    File Explorer window waited 2.6 seconds behind such reads while
+    Explorer built the window (`docs/performance.md`, "A focus behind other
+    objects' events").
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. It is the only thread that calls into the
     application, so events and replies leave in the order their entries
-    joined the queue. It replaces the announce lane, the query pool, the
+    were planned: the order they joined the queue, but for the events a
+    focus change overtakes. It replaces the announce lane, the query pool, the
     announce poll, the probe threads, and the late window retry. Being the
     only such thread, it is where the calls are counted: the backend crates
     count each call on the thread that makes it, and the worker takes both

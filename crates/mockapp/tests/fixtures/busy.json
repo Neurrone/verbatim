@@ -1,0 +1,149 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Busy Fixture",
+  "children": [
+    {
+      "id": "files",
+      "role": "list",
+      "name": "Files",
+      "states": [
+        "focusable"
+      ],
+      "children": [
+        {
+          "id": "item1",
+          "role": "list_item",
+          "name": "File 1",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 1,
+          "set_size": 12
+        },
+        {
+          "id": "item2",
+          "role": "list_item",
+          "name": "File 2",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 2,
+          "set_size": 12
+        },
+        {
+          "id": "item3",
+          "role": "list_item",
+          "name": "File 3",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 3,
+          "set_size": 12
+        },
+        {
+          "id": "item4",
+          "role": "list_item",
+          "name": "File 4",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 4,
+          "set_size": 12
+        },
+        {
+          "id": "item5",
+          "role": "list_item",
+          "name": "File 5",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 5,
+          "set_size": 12
+        },
+        {
+          "id": "item6",
+          "role": "list_item",
+          "name": "File 6",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 6,
+          "set_size": 12
+        },
+        {
+          "id": "item7",
+          "role": "list_item",
+          "name": "File 7",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 7,
+          "set_size": 12
+        },
+        {
+          "id": "item8",
+          "role": "list_item",
+          "name": "File 8",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 8,
+          "set_size": 12
+        },
+        {
+          "id": "item9",
+          "role": "list_item",
+          "name": "File 9",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 9,
+          "set_size": 12
+        },
+        {
+          "id": "item10",
+          "role": "list_item",
+          "name": "File 10",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 10,
+          "set_size": 12
+        },
+        {
+          "id": "item11",
+          "role": "list_item",
+          "name": "File 11",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 11,
+          "set_size": 12
+        },
+        {
+          "id": "item12",
+          "role": "list_item",
+          "name": "File 12",
+          "states": [
+            "focusable",
+            "selectable"
+          ],
+          "position_in_set": 12,
+          "set_size": 12
+        }
+      ]
+    }
+  ]
+}

@@ -350,6 +350,11 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             acknowledge(&format!("stall ended {}", unix_micros()));
             continue;
         }
+        if let Command::Slow(ms) = command {
+            hits::set_delay(ms);
+            acknowledge("applied");
+            continue;
+        }
         let applied = match command {
             Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
             command => match context.backend {

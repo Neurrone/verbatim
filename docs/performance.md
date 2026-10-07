@@ -219,6 +219,31 @@ window whose elements cannot be imported into a program).
 - Target: 2, met with remote operations: phase 6 step 2's exit criterion,
   asserted exactly.
 
+### A focus behind other objects' events
+
+Not a count of calls but of what a focus waits for. A failed
+`explorer_folder_window` run on 2026-10-07 had the first focus in a new
+File Explorer window wait 2,589.6 ms in the outpost's queue ("outpost
+queue 2589.6, outpost read 20.8 (84 calls)"). Its flight recorder shows
+what the worker was doing: the MSAA events Explorer raised while it built
+the window, observed in the half second before the focus, state changes
+of tree items (one expanded, its 23 children counted) and a value change,
+reported, and ten more, whose trace ids are missing from the record,
+handled without being reported. Each was read as a full snapshot of an
+object the focus was not on, while Explorer answered slowly. NVDA reads such an event with one call and judges it against the
+focus when it runs. Since then a focus change goes before the events of
+other objects queued ahead of it (`docs/crates/verbatim-outpost.md`, the
+queue), and the events of the focus and of the object focus moves to keep
+their place.
+
+mockapp's `a_focus_is_handled_before_slow_reads_queued_ahead_of_it`
+reproduces it: every provider call answered 20 ms late (`slow 20`), ten
+selections in a list queued behind a query, then a focus. Before the
+change the focus was taken up 611.7 and 610.6 ms after the query was
+answered (two runs), after the ten selections; after it, 35 and 115 µs,
+before them. The test asserts the order exactly and that the focus waits
+less than one of the slow application's calls after the query.
+
 ### A focus change, UIA, cold
 
 - Minimum: 1 window message and 2 UIA calls. The window's provider must be
