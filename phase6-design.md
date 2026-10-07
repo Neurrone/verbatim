@@ -1934,3 +1934,9 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      again rather than a demonstration.
   9. GitHub's runner installs Windows Terminal (Dickson, 2026-10-07), so
      the terminal scenarios run against it there as well as here.
+  10. Say-all batches by count (Dickson, 2026-10-07): read 20 lines or
+      sentences at a time, and read the next 20 once fewer than 10 remain
+      to be spoken, replacing the estimate of speaking time. Measured
+      against Windows 11 Notepad itself (time per batch, gaps between
+      pieces, calls), with remote operations on and off and against NVDA,
+      which reads one piece at a time as the previous one starts.
