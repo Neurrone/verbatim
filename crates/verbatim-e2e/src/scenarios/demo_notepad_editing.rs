@@ -1,7 +1,8 @@
 //! Demonstration: editing a short paragraph in Windows 11 Notepad
 //! (milestone M4 items 3 and 4), recorded by `cargo xtask demo` for
-//! `videos/demos`. The `notepad_editing` scenario tests the same features;
-//! this one shows them at a viewer's pace.
+//! `videos/demos`. The `notepad_editing`, `notepad_word_selection`, and
+//! `notepad_typed_words` scenarios test the same features; this one shows
+//! them at a viewer's pace.
 //!
 //! The walk, each step heard in full before the next key:
 //!

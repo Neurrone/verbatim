@@ -70,8 +70,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Verbatim+V brings Verbatim's own hidden frame and popup menu to
     // foreground (the shared helper waits for the popup's announcement —
     // see `scenarios::open_verbatim_menu` for the cold-guest race that
-    // wait closes). The hidden frame itself must never be announced
-    // (decision D9's hidden-frame suppression); the menu opens with
+    // wait closes). The hidden frame's own focus and foreground events are
+    // never announced (decision D9's hidden-frame suppression); it is named
+    // once, "Verbatim", as the window the menu opens from, before the
+    // menu, as NVDA names the foreground window. The menu opens with
     // nothing selected, so the first Down arrow is what produces a real,
     // ordinary WinEvent focus announcement for "Settings..." — proving
     // Verbatim's own outpost works correctly while Notepad's outpost is

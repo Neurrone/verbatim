@@ -374,9 +374,12 @@ speech never lags behind fast typing. The answer updates the caret and,
 when the review cursor follows the caret, moves the review cursor to it,
 then speaks, queued:
 
-- Left and Right Arrow, Home, and End: the character at the caret, a line
-  break or the end of the text as "blank", a punctuation character by its
-  name, a capital raised in pitch.
+- Left and Right Arrow, Home, and End: the character at the caret, a
+  punctuation character by its name, a capital raised in pitch, a line
+  break by its name ("carriage return", "line feed"), and the end of the
+  text as "blank". Each character of a line break is a character of its
+  own, so End in a standard edit control lands on its carriage return
+  (`text::characters`, which the review cursor also moves by).
 - Control with Left or Right Arrow: the provider's word the outpost sent;
   a word of one character, such as the full stop Notepad counts as a word,
   as that character, by its name.
@@ -386,8 +389,12 @@ then speaks, queued:
   the provider has no paragraphs.
 - Backspace: the character before the caret before the key, worked out from
   Core's copy of the caret, once the caret moved; Control+Backspace the
-  text from the start of the word before the caret. Nothing at the start
-  of a line or of the text.
+  text from the start of the word before the caret. At the start of a
+  line, the line break it deleted, of the kind the text was last seen to
+  use (the caret's line's own break, or the one remembered from an
+  earlier line), a carriage return and line feed spoken as the line feed,
+  as NVDA does. Nothing at the start of the text, or when no break has
+  been seen.
 - Delete and Control+Delete: the character or word now at the caret.
 - Any of them with Shift, and Control+A: what became selected and
   unselected, NVDA's "hello selected" and "hello unselected", a single
@@ -438,7 +445,11 @@ and landed on. NVDA's messages and repeated presses hold as in M3, with
 last and otherwise from a movement that did not move; the current character
 pressed twice gives its description and three times its code; the current
 line or word pressed twice is spelled and three times spelled with
-descriptions; start and end of line speak the character there; previous
+descriptions; start and end of line speak the character there, the end
+of a line being its last character with its line break included, so
+"carriage return" in Windows 11 Notepad and "line feed" in a standard
+edit control, as in NVDA, and moving by character crosses each character
+of the break, outside a terminal, whose row has no break; previous
 and next word cross lines, landing on the next line's first word or the
 previous line's last; a word of one character is spoken by its name, as
 the caret's word is; a unit the text does not have says "Not supported in

@@ -65,6 +65,12 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// title still marks unsaved changes.
 const SAVE_POLL: Duration = Duration::from_millis(50);
 
+/// The extensions of the harness files the pre-launch sweep deletes: the
+/// documents [`Scenario::open_document_with`] writes, and the fixtures
+/// written at [`Scenario::harness_file`] paths, such as the spelling errors
+/// scenario's `mockapp` fixture.
+const HARNESS_FILE_EXTENSIONS: [&str; 2] = ["txt", "json"];
+
 /// One application a scenario launched, for cleanup.
 struct Launched {
     pid: u32,
@@ -204,6 +210,9 @@ pub struct Scenario {
     /// Harness folders named by [`Scenario::harness_folder`], deleted on
     /// drop once every launched application has ended.
     folders: Vec<String>,
+    /// Harness files named by [`Scenario::harness_file`], deleted on drop
+    /// once every launched application has ended.
+    files: Vec<String>,
     /// Whether [`Scenario::open_document_with`] had Verbatim report the
     /// focus, because a window of the application was already open (see
     /// [`Scenario::take_focus_reported`]).
@@ -392,6 +401,7 @@ impl Scenario {
             timeline,
             launched: Vec::new(),
             folders: Vec::new(),
+            files: Vec::new(),
             focus_reported: false,
             stderr_log_path: stderr_path,
             recording,
@@ -516,6 +526,28 @@ impl Scenario {
             self.folders.push(folder.clone());
         }
         Ok(folder)
+    }
+
+    /// The path, on the agent's machine, of the harness file `name` of this
+    /// run with `extension`: named with [`harness_marker`], in
+    /// [`Scenario::run_directory`], such as a fixture an application reads.
+    /// Write it with [`Scenario::write_agent_file`]. It is deleted when the
+    /// scenario is dropped, after the applications it launched have ended;
+    /// one an aborted run left behind is deleted by the next launch's sweep.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::run_directory`].
+    pub fn harness_file(&mut self, name: &str, extension: &str) -> io::Result<String> {
+        let file = format!(
+            r"{}\{}.{extension}",
+            self.run_directory()?,
+            harness_marker(name)
+        );
+        if !self.files.contains(&file) {
+            self.files.push(file.clone());
+        }
+        Ok(file)
     }
 
     /// Writes a file on the agent's machine, creating or replacing it and
@@ -1333,6 +1365,11 @@ impl Drop for Scenario {
                 tracing::warn!(folder, %error, "failed to delete a harness folder");
             }
         }
+        for file in std::mem::take(&mut self.files) {
+            if let Err(error) = self.process_agent.delete_file(&file) {
+                tracing::warn!(file, %error, "failed to delete a harness file");
+            }
+        }
         // Best-effort clean quit first (a no-op if the connection is
         // already gone), then guarantee Verbatim is actually gone via the
         // agent regardless of whether Quit landed — the guard's whole
@@ -1358,9 +1395,10 @@ impl Drop for Scenario {
 /// from as clean a state as possible even after a prior run aborted without
 /// running its own Drop cleanup (a killed test process, a Ctrl+C, a panic
 /// that unwound past Scenario somehow). A harness tab left in Notepad is
-/// closed as a tab ([`close_notepad_tabs`]), and the harness documents and
-/// folders left in `directory`, Verbatim's launch directory, are deleted.
-/// Best-effort: a failure is logged, not fatal to the launch.
+/// closed as a tab ([`close_notepad_tabs`]), and the harness documents,
+/// files ([`HARNESS_FILE_EXTENSIONS`]), and folders left in `directory`,
+/// Verbatim's launch directory, are deleted. Best-effort: a failure is
+/// logged, not fatal to the launch.
 fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
     for name in crate::registry::swept_target_image_names() {
         if let Err(error) = agent.kill_processes_by_name(name) {
@@ -1377,12 +1415,14 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
         Ok(names) => {
             for name in names.iter().filter(|name| {
                 name.starts_with(DOCUMENT_MARKER)
-                    && Path::new(name)
-                        .extension()
-                        .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+                    && Path::new(name).extension().is_some_and(|extension| {
+                        HARNESS_FILE_EXTENSIONS
+                            .iter()
+                            .any(|harness| extension.eq_ignore_ascii_case(harness))
+                    })
             }) {
                 if let Err(error) = agent.delete_file(&format!("{directory}\\{name}")) {
-                    tracing::warn!(name, %error, "failed to delete a leftover harness document");
+                    tracing::warn!(name, %error, "failed to delete a leftover harness file");
                 }
             }
         }

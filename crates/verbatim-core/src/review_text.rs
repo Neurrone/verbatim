@@ -107,10 +107,11 @@ pub(crate) fn run(
     }
 }
 
-/// A review position on `line` at byte `offset`, its column worked out.
+/// A review position on `line` at byte `offset`, which may be on its line
+/// break ([`text::position_in`]), its column worked out.
 fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition {
     let content = text::line_content(&line.text, grid);
-    let offset = text::boundary(content, offset);
+    let offset = text::position_in(&line.text, offset, grid);
     ReviewPosition {
         line: Arc::clone(line),
         offset,
@@ -223,7 +224,7 @@ fn execute(
             return vec![speak(trace_id, segments)];
         }
         ReviewCommand::ReviewCurrentCharacter => {
-            let character = character_at(content, position.offset);
+            let character = text::character_at(&line.text, position.offset, grid);
             let segments = match (character, repeat) {
                 (None, _) | (Some(_), 0) => text::character_segments(character, language),
                 (Some(character), 1) => vec![UtteranceSegment {
@@ -238,8 +239,11 @@ fn execute(
             return land_here(state, trace_id, position, 0, grid);
         }
         ReviewCommand::ReviewEndOfLine => {
-            let last =
-                text::previous_grapheme(content, content.len()).map_or(0, |range| range.start);
+            // The line's last character, its line break when it has one, as
+            // in NVDA.
+            let last = text::characters(&line.text, grid)
+                .last()
+                .map_or(0, |range| range.start);
             return land_here(state, trace_id, position, last, grid);
         }
         ReviewCommand::ReviewPreviousCharacter => {
@@ -249,18 +253,18 @@ fn execute(
                 // the left.
                 return move_column(state, trace_id, position, position.column - 1, grid);
             }
-            return match text::previous_grapheme(content, position.offset) {
+            return match text::previous_character(&line.text, position.offset, grid) {
                 Some(range) => land_here(state, trace_id, position, range.start, grid),
                 None => edge(
                     trace_id,
                     Message::Left,
-                    character_at(content, position.offset),
+                    text::character_at(&line.text, position.offset, grid),
                     language,
                 ),
             };
         }
         ReviewCommand::ReviewNextCharacter => {
-            let character = character_at(content, position.offset);
+            let character = text::character_at(&line.text, position.offset, grid);
             if grid {
                 // Cells, up to the row's width, padding included.
                 let next = position.column
@@ -273,7 +277,7 @@ fn execute(
                 }
                 return move_column(state, trace_id, position, next, grid);
             }
-            return match text::next_grapheme(content, position.offset) {
+            return match text::next_character(&line.text, position.offset, grid) {
                 Some(range) => land_here(state, trace_id, position, range.start, grid),
                 None => edge(trace_id, Message::Right, character, language),
             };
@@ -416,9 +420,10 @@ fn execute(
                 }
             };
             // Up to and including the character at the review cursor.
-            let end = character_at(content, position.offset).map_or(position.offset, |character| {
-                position.offset + character.len()
-            });
+            let end = text::character_at(&line.text, position.offset, grid)
+                .map_or(position.offset, |character| {
+                    position.offset + character.len()
+                });
             let end = TextPoint::At(TextPosition {
                 anchor: line.start,
                 offset: u32::try_from(end).unwrap_or(u32::MAX),
@@ -499,12 +504,6 @@ pub(crate) fn spell_or_blank(
     }
 }
 
-/// The character at `offset` of `content`, `None` at its end (a blank
-/// cell past a terminal row's text).
-fn character_at(content: &str, offset: usize) -> Option<&str> {
-    text::grapheme_at(content, offset).map(|range| &content[range])
-}
-
 /// A character's code, in decimal and then spelled in hexadecimal, one
 /// code point after another (NVDA's third press of the current character).
 fn code_segments(character: &str) -> Vec<UtteranceSegment> {
@@ -533,9 +532,8 @@ fn land_here(
     grid: bool,
 ) -> Vec<Effect> {
     let landed = position_at(&position.line, offset, grid);
-    let content = text::line_content(&landed.line.text, grid);
     let segments = text::character_segments(
-        character_at(content, landed.offset),
+        text::character_at(&landed.line.text, landed.offset, grid),
         landed.line.language_at(landed.offset),
     );
     set_position(state, landed);
@@ -553,7 +551,7 @@ fn move_column(
 ) -> Vec<Effect> {
     let content = text::line_content(&position.line.text, grid);
     let offset = text::offset_at_column(content, column, grid);
-    let character = character_at(content, offset);
+    let character = text::character_at(&position.line.text, offset, grid);
     let language = position.line.language_at(offset);
     set_position(
         state,
@@ -695,9 +693,10 @@ fn land(
     };
     let language = line.language_at(position.offset);
     let segments = match landing.speak {
-        TextUnit::Character => {
-            text::character_segments(character_at(content, position.offset), language)
-        }
+        TextUnit::Character => text::character_segments(
+            text::character_at(&line.text, position.offset, grid),
+            language,
+        ),
         TextUnit::Word => {
             let words = words();
             let word = text::word_at(&words, position.offset).map_or("", |range| &content[range]);

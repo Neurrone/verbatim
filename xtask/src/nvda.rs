@@ -16,7 +16,9 @@
 //! speech to settle, and prints what NVDA queued for speech after it. With
 //! `--verbatim`, it prints what the Verbatim running on this machine queued
 //! instead, read from its control pipe, so the same steps give two
-//! transcripts that can be compared line by line.
+//! transcripts that can be compared line by line. With `--json`, every
+//! step and entry is printed as one JSON object per line instead, for a
+//! script comparing transcripts, since spoken text can hold a line break.
 
 use std::collections::HashMap;
 use std::fs;
@@ -45,6 +47,9 @@ const PROTOCOL_VERSION: u64 = 1;
 /// How often `capture` polls for new entries. NVDA's own system tests poll
 /// no faster than every 10 ms so as not to starve NVDA's core.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// The image `--front` takes to mean whichever program's window has the
+/// title given.
+const ANY_IMAGE: &str = "*";
 
 /// Runs `cargo xtask nvda <verb>`.
 pub fn run(args: &[String]) -> ExitCode {
@@ -57,9 +62,10 @@ pub fn run(args: &[String]) -> ExitCode {
             eprintln!("  build    write {PACKAGE} from {SOURCE_DIR}");
             eprintln!(
                 "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] [--verbatim] \
-                 <step>...: run each step through the agent and print what NVDA (or, with \
-                 --verbatim, the local Verbatim) speaks after it; a step is a key, --launch \
-                 <program> [--arg <arg>]..., --front <image>[=<title>], or --gesture <id> (sent \
+                 [--json] <step>...: run each step through the agent and print what NVDA (or, \
+                 with --verbatim, the local Verbatim) speaks after it, as JSON lines with \
+                 --json; a step is a key, --launch <program> [--arg <arg>]..., --front \
+                 <image>[=<title>] (* for any image), --type <text>, or --gesture <id> (sent \
                  to the local Verbatim)"
             );
             return ExitCode::from(2);
@@ -239,6 +245,9 @@ struct CaptureOptions {
     agent: String,
     /// Record the local Verbatim's speech rather than NVDA's.
     verbatim: bool,
+    /// Print one JSON object per step and per entry, rather than lines for
+    /// reading.
+    json: bool,
     quiet: Duration,
     timeout: Duration,
     steps: Vec<Step>,
@@ -248,6 +257,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
     let mut options = CaptureOptions {
         agent: format!("127.0.0.1:{}", verbatim_agent::protocol::DEFAULT_PORT),
         verbatim: false,
+        json: false,
         quiet: Duration::from_secs(1),
         timeout: Duration::from_secs(10),
         steps: Vec::new(),
@@ -266,6 +276,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
         match arg.as_str() {
             "--agent" => options.agent.clone_from(value()?),
             "--verbatim" => options.verbatim = true,
+            "--json" => options.json = true,
             "--quiet-ms" => options.quiet = millis(value()?)?,
             "--timeout-ms" => options.timeout = millis(value()?)?,
             "--launch" => options.steps.push(Step::Launch {
@@ -422,8 +433,8 @@ impl Source {
     }
 
     /// The entries recorded since the last call, each with its time on
-    /// this source's clock and its line.
-    fn poll(&mut self) -> io::Result<Vec<(i64, String)>> {
+    /// this source's clock.
+    fn poll(&mut self) -> io::Result<Vec<(i64, Entry)>> {
         match self {
             Self::Nvda {
                 transcript,
@@ -450,7 +461,13 @@ impl Source {
                             ..
                         } => {
                             texts.insert(utterance.0, text.clone());
-                            lines.push((millis(queued_at_ms), format!("[{utterance}] {text}")));
+                            lines.push((
+                                millis(queued_at_ms),
+                                Entry::Speech {
+                                    tag: utterance.to_string(),
+                                    text,
+                                },
+                            ));
                         }
                         Frame::SpeechEnded { utterance, ending } => {
                             let text = texts.remove(&utterance.0).unwrap_or_default();
@@ -459,10 +476,17 @@ impl Source {
                                 UtteranceEnding::Cancelled => "cancelled".to_owned(),
                                 UtteranceEnding::Failed(why) => format!("failed ({why})"),
                             };
-                            lines.push((epoch_ms(), format!("{how} [{utterance}] {text}")));
+                            lines.push((
+                                epoch_ms(),
+                                Entry::Ended {
+                                    how,
+                                    tag: utterance.to_string(),
+                                    text,
+                                },
+                            ));
                         }
                         Frame::Sound { indication, at_ms } => {
-                            lines.push((millis(at_ms), format!("sound: {indication}")));
+                            lines.push((millis(at_ms), Entry::Sound(indication)));
                         }
                         _ => {}
                     }
@@ -496,8 +520,19 @@ fn capture(args: &[String]) -> io::Result<()> {
     } else {
         Source::nvda(&mut agent)?
     };
-    for step in &options.steps {
+    let print = |step: usize, ms: Option<i64>, entry: &Entry| {
+        if options.json {
+            println!("{}", entry.to_json(step, ms));
+        } else {
+            match ms {
+                Some(ms) => println!("  {ms:+} ms  {}", entry.line()),
+                None => println!("  ({})", entry.line()),
+            }
+        }
+    };
+    for (index, step) in options.steps.iter().enumerate() {
         let sent_ms = source.now_ms();
+        let mut note = None;
         match step {
             Step::Key(keys) => {
                 let keys: Vec<String> = keys.split(',').map(str::to_owned).collect();
@@ -507,14 +542,32 @@ fn capture(args: &[String]) -> io::Result<()> {
                 agent.launch_process(program, args, None, &[], None)?;
             }
             Step::Front { image, title } => {
-                if !agent.bring_to_foreground(image, title.as_deref(), options.timeout)? {
-                    println!("  (no matching window took the foreground)");
+                let image = if image == ANY_IMAGE {
+                    titled_window_image(&mut agent, title.as_deref(), options.timeout)?
+                } else {
+                    Some(image.clone())
+                };
+                let taken = match image {
+                    Some(image) => {
+                        agent.bring_to_foreground(&image, title.as_deref(), options.timeout)?
+                    }
+                    None => false,
+                };
+                if !taken {
+                    note = Some("no matching window took the foreground".to_owned());
                 }
             }
             Step::Gesture(identifier) => send_gesture(identifier)?,
             Step::Type(text) => agent.type_text(text)?,
         }
-        println!("> {}", step.label());
+        if options.json {
+            println!("{}", json!({"step": index, "label": step.label()}));
+        } else {
+            println!("> {}", step.label());
+        }
+        if let Some(note) = note {
+            print(index, None, &Entry::Note(note));
+        }
         let mut last_activity = Instant::now();
         let deadline = last_activity + options.timeout;
         loop {
@@ -523,20 +576,52 @@ fn capture(args: &[String]) -> io::Result<()> {
             if !entries.is_empty() {
                 last_activity = Instant::now();
             }
-            for (ms, line) in entries {
-                println!("  {:+} ms  {line}", ms - sent_ms);
+            for (ms, entry) in entries {
+                print(index, Some(ms - sent_ms), &entry);
             }
             let now = Instant::now();
             if now.duration_since(last_activity) >= options.quiet {
                 break;
             }
             if now >= deadline {
-                println!("  (speech did not settle within {:?})", options.timeout);
+                let note = format!("speech did not settle within {:?}", options.timeout);
+                print(index, None, &Entry::Note(note));
                 break;
             }
         }
     }
     Ok(())
+}
+
+/// The image of the first visible window whose title contains `title`,
+/// waiting up to `timeout` for one to appear, for `--front *=<title>`: a
+/// console window belongs to the console host, or to the shell it runs,
+/// depending on how it was started, so the title is what names it.
+fn titled_window_image(
+    agent: &mut AgentClient,
+    title: Option<&str>,
+    timeout: Duration,
+) -> io::Result<Option<String>> {
+    let Some(title) = title else {
+        return Err(io::Error::other(format!(
+            "--front {ANY_IMAGE} needs a title: {ANY_IMAGE}=<title>"
+        )));
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        let info = agent.foreground_info()?;
+        if let Some(window) = info
+            .windows
+            .iter()
+            .find(|window| window.title.contains(title))
+        {
+            return Ok(Some(window.image.clone()));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
 }
 
 /// Sends one gesture to the local Verbatim's control pipe.
@@ -552,23 +637,100 @@ fn send_gesture(identifier: &str) -> io::Result<()> {
     }
 }
 
-/// One line for an entry's event: the speech text with its priority, or a
-/// cancellation.
-fn describe(event: &Value) -> String {
+/// One thing a transcript records after a step.
+#[derive(Debug, PartialEq, Eq)]
+enum Entry {
+    /// Text queued for speech, tagged with NVDA's priority or Verbatim's
+    /// utterance id.
+    Speech { tag: String, text: String },
+    /// Any other event NVDA records, such as a cancellation, by its name.
+    Event(String),
+    /// A Verbatim utterance that ended without being heard in full: how it
+    /// ended, its id, and its text.
+    Ended {
+        how: String,
+        tag: String,
+        text: String,
+    },
+    /// A sound Verbatim played, by its indication.
+    Sound(String),
+    /// Something the capture itself has to say about the step.
+    Note(String),
+}
+
+impl Entry {
+    /// The entry as a line for reading.
+    fn line(&self) -> String {
+        match self {
+            Self::Speech { tag, text } => format!("[{tag}] {text}"),
+            Self::Event(name) | Self::Note(name) => name.clone(),
+            Self::Ended { how, tag, text } => format!("{how} [{tag}] {text}"),
+            Self::Sound(indication) => format!("sound: {indication}"),
+        }
+    }
+
+    /// The entry as one JSON object: the step it follows, its time since
+    /// that step was sent (absent for a note), its kind, and its fields.
+    fn to_json(&self, step: usize, ms: Option<i64>) -> Value {
+        let mut value = match self {
+            Self::Speech { tag, text } => json!({"kind": "speech", "tag": tag, "text": text}),
+            Self::Event(name) => json!({"kind": "event", "text": name}),
+            Self::Ended { how, tag, text } => {
+                json!({"kind": "ended", "how": how, "tag": tag, "text": text})
+            }
+            Self::Sound(indication) => json!({"kind": "sound", "text": indication}),
+            Self::Note(note) => json!({"kind": "note", "text": note}),
+        };
+        value["step"] = json!(step);
+        if let Some(ms) = ms {
+            value["ms"] = json!(ms);
+        }
+        value
+    }
+}
+
+/// The entry for one of the add-on's events: the speech text with its
+/// priority, or another event, such as a cancellation, by its name.
+fn describe(event: &Value) -> Entry {
     if let Some(speech) = event.get("Speech") {
-        format!(
-            "[{}] {}",
-            speech["priority"].as_str().unwrap_or("?"),
-            speech["text"].as_str().unwrap_or("")
-        )
+        Entry::Speech {
+            tag: speech["priority"].as_str().unwrap_or("?").to_owned(),
+            text: speech["text"].as_str().unwrap_or("").to_owned(),
+        }
     } else {
-        event.as_str().unwrap_or("?").to_lowercase()
+        Entry::Event(event.as_str().unwrap_or("?").to_lowercase())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entry_reads_the_same_as_a_line_and_as_json() {
+        let speech = describe(&json!({"Speech": {"priority": "normal", "text": "a\nb"}}));
+        assert_eq!(speech.line(), "[normal] a\nb");
+        assert_eq!(
+            speech.to_json(3, Some(-5)),
+            json!({"kind": "speech", "tag": "normal", "text": "a\nb", "step": 3, "ms": -5})
+        );
+        assert_eq!(
+            describe(&json!("CANCEL")),
+            Entry::Event("cancel".to_owned())
+        );
+        assert_eq!(
+            Entry::Note("late".to_owned()).to_json(0, None),
+            json!({"kind": "note", "text": "late", "step": 0})
+        );
+    }
+
+    #[test]
+    fn json_is_an_option_anywhere_among_the_steps() {
+        let args = ["tab", "--json", "--type", "hi"].map(str::to_owned);
+        let options = parse_capture_args(&args).unwrap();
+        assert!(options.json);
+        assert_eq!(options.steps.len(), 2);
+    }
 
     #[test]
     fn crc32_matches_the_standard_check_value() {

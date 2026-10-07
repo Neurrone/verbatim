@@ -471,14 +471,17 @@ Start/Search surface and Verbatim announces its search box), and
 reaches Verbatim, and logical object navigation works through its real
 Win32 tree view — the regression scenario for the flat MSAA tree-view
 exposure).
-Milestone M4's text scenarios add Notepad editing, the review cursor, and
-say-all, and the terminal scenarios: `windows_terminal_commands`,
+Milestone M4's text scenarios add Notepad editing, word selection, typed
+word echo, the review cursor, and say-all, say-all in a Win32 edit
+control, and the terminal scenarios: `windows_terminal_commands`,
 `conhost_commands`, and `terminal_spoken_password` (commands, typed echo,
 and a password prompt whose typing is spoken only with "speak passwords"
 on), `terminal_flood` (ten thousand lines of output, the skipped-lines
 policy, Verbatim+5, responsiveness, and the wall-time ratio, saved as
-`wall-time-ratio.txt` in its artifacts directory), and
-`terminal_review_grid` (the review cursor down a column of a text table).
+`wall-time-ratio.txt` in its artifacts directory), `terminal_editing` (a
+command corrected with Backspace, punctuation echoed by name, and the
+review cursor's current word down a column), and `terminal_review_grid`
+(the review cursor down a column of a text table).
 Each terminal scenario opens a window of its own titled
 `verbatim-e2e-<name>-<token>` and closes it by that title, so your own
 terminals are left alone, and runs its shell in a folder of the same name

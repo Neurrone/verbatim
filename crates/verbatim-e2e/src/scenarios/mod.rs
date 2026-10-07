@@ -14,14 +14,18 @@ pub(crate) mod demo_review_cursor;
 pub(crate) mod demo_say_all;
 pub(crate) mod demo_settings_dialog_keys;
 pub(crate) mod demo_terminal_session;
+pub(crate) mod edit_control_say_all;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod menu_and_settings_dialog;
 pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod notepad_editing;
 pub(crate) mod notepad_review_cursor;
+pub(crate) mod notepad_review_words;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
+pub(crate) mod notepad_typed_words;
+pub(crate) mod notepad_word_selection;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod rapid_tabbing_in_settings;
 pub(crate) mod settings_dialog_keys;
@@ -33,6 +37,7 @@ pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
 pub(crate) mod terminal;
 pub(crate) mod terminal_commands;
+pub(crate) mod terminal_editing;
 pub(crate) mod terminal_flood;
 pub(crate) mod terminal_review_grid;
 pub(crate) mod terminal_settings_page;
@@ -130,7 +135,12 @@ pub(crate) fn expect_notepad_text_area(scenario: &mut Scenario, timeout: Duratio
 }
 
 /// Notepad's text area as reporting the focus speaks it, for each Notepad
-/// [`expect_notepad_text_area`] names.
+/// [`expect_notepad_text_area`] names. Windows 11 Notepad's was pinned
+/// live on 2026-10-07, where NVDA+Tab in NVDA says the same, "Text editor
+/// document focused", with the line at the caret ("Text editor document
+/// focused alpha beta", in one utterance, where Verbatim speaks the line
+/// as its own). Classic Notepad's, on GitHub's runners, follows from the
+/// same rules: an edit control's "multi line" after its states.
 const REPORTED_TEXT_AREAS: [&str; 2] = [
     "Text editor document focused",
     "Text Editor edit focused multi line",
@@ -150,14 +160,17 @@ const REPORTED_TEXT_AREAS: [&str; 2] = [
 /// the platform names menu popups "Context", spoken with the menu role —
 /// emitted by the `MenuPopupStart` `WinEvent` the moment the menu opens
 /// (NVDA's menu-start behavior), with the foreground-announce path
-/// producing the identical node as its fallback.
+/// producing the identical node as its fallback. Before it, the menu's
+/// owner window, Verbatim's frame, is named "Verbatim", as NVDA names the
+/// foreground window a menu opens from (`docs/parity.md`, the Verbatim
+/// menu's owner window).
 pub(crate) fn open_verbatim_menu(scenario: &mut Scenario, timeout: Duration) {
     scenario
         .send_gesture("kb:verbatim+v")
         .expect("sends the Verbatim+V gesture");
     scenario
         .speech()
-        .expect_in_order(&["Context", "menu"], timeout);
+        .expect_exactly(&["Verbatim", "Context menu"], timeout);
 }
 
 /// Opens Verbatim's settings dialog from its menu and waits until focus has

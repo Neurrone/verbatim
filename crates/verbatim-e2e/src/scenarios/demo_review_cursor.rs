@@ -1,7 +1,8 @@
 //! Demonstration: the review cursor over a plain-text table in Notepad
 //! (milestone M4 item 5), recorded by `cargo xtask demo` for
-//! `videos/demos`. The `notepad_review_cursor` scenario tests the same
-//! commands; this one shows them at a viewer's pace.
+//! `videos/demos`. The `notepad_review_cursor` and `notepad_review_words`
+//! scenarios test the same commands; this one shows them at a viewer's
+//! pace.
 //!
 //! The table has three columns, the third, Price, starting at column 16 on
 //! every row long enough to have one; the "Fig" row is shorter. The walk,
@@ -9,7 +10,7 @@
 //!
 //! 1. The caret moves to the top, and the review cursor, following it,
 //!    reads the header row (numpad 8), then across it by word: "Fruit"
-//!    (numpad 5), "Color" and "Price" (numpad 6).
+//!    (numpad 5), "Shade" and "Price" (numpad 6).
 //! 2. Down the Price column: numpad 9 reads each next row and numpad 2 the
 //!    character in the kept column, "1" on the Apple row, "e" on the
 //!    shorter Fig row (its last character), and "0" and "3" on the rows
@@ -23,8 +24,9 @@
 //!    between them keeps the third press from counting with the earlier
 //!    two, which a press within half a second of them would.
 //! 4. Verbatim+F9 marks the start of the row, Shift+numpad 3 moves to its
-//!    end, and Verbatim+F10 pressed twice copies the row. Pasted at the end
-//!    of the text, the copy is read back with numpad 8.
+//!    end, its line break ("carriage return"), numpad 1 back to its last
+//!    character ("0"), and Verbatim+F10 pressed twice copies the row.
+//!    Pasted at the end of the text, the copy is read back with numpad 8.
 //!
 //! Single presses are sent as gestures. Presses that count, the spelling,
 //! the description, the character code, and the copy, are real key presses
@@ -46,7 +48,7 @@ const NAME: &str = "demo-review";
 /// The table's rows, each with the character the review cursor reads in
 /// the Price column, column 16, or on the last character of a shorter row.
 const ROWS: [(&str, &str); 5] = [
-    ("Fruit   Color   Price", "P"),
+    ("Fruit   Shade   Price", "P"),
     ("Apple   red     1.20", "1"),
     ("Fig     purple", "e"),
     ("Banana  yellow  0.50", "0"),
@@ -92,7 +94,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Across the header row by word.
     review(scenario, "kb:numpad8", ROWS[0].0);
     review_text(scenario, "kb:numpad5", "Fruit");
-    review_text(scenario, "kb:numpad6", "Color");
+    review_text(scenario, "kb:numpad6", "Shade");
     review_text(scenario, "kb:numpad6", "Price");
 
     // Down the Price column, past the shorter row and back into the
@@ -117,7 +119,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
     // The row marked, copied, pasted at the end, and read back.
     review(scenario, "kb:verbatim+f9", "Start marked");
-    review(scenario, "kb:shift+numpad3", "0");
+    review(scenario, "kb:shift+numpad3", "carriage return");
+    review(scenario, "kb:numpad1", "0");
     press_hearing(
         scenario,
         &["insert+f10", "insert+f10"],

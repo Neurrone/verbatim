@@ -74,12 +74,16 @@
 //!   [`system_information_tree`](crate::scenarios::system_information_tree)
 //!   against msinfo32's real Win32 tree view over MSAA, which is also the
 //!   suite's MSAA-only legacy application (the M3 exit item).
-//! - [`Group::Text`]: milestone M4's text — editing, the review cursor, and
-//!   say-all in Notepad, and the terminal scenarios
+//! - [`Group::Text`]: milestone M4's text — editing, word selection, typed
+//!   word echo, the review cursor, and say-all in Notepad, say-all in a
+//!   Win32 edit control
+//!   ([`edit_control_say_all`](crate::scenarios::edit_control_say_all)),
+//!   and the terminal scenarios
 //!   ([`terminal_commands`](crate::scenarios::terminal_commands)'s
 //!   `windows_terminal_commands`, `conhost_commands`, and
 //!   `terminal_spoken_password`,
-//!   [`terminal_flood`](crate::scenarios::terminal_flood), and
+//!   [`terminal_flood`](crate::scenarios::terminal_flood),
+//!   [`terminal_editing`](crate::scenarios::terminal_editing), and
 //!   [`terminal_review_grid`](crate::scenarios::terminal_review_grid)).
 //! - [`Group::Demo`]: demonstrations, recorded as videos for
 //!   `videos/demos` by `cargo xtask demo` and never part of the suite: a
@@ -100,12 +104,13 @@ use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
-    demo_terminal_session, explorer_folder_window, lock_key_announcements,
+    demo_terminal_session, edit_control_say_all, explorer_folder_window, lock_key_announcements,
     menu_and_settings_dialog, notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor,
-    notepad_say_all, notepad_spelling_errors, object_navigation_in_settings,
-    rapid_tabbing_in_settings, settings_dialog_keys, settings_system_page, spelling_errors,
-    start_menu_search, switch_to_onecore, synth_host_crash_recovery, system_information_tree,
-    terminal_commands, terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
+    notepad_review_words, notepad_say_all, notepad_spelling_errors, notepad_typed_words,
+    notepad_word_selection, object_navigation_in_settings, rapid_tabbing_in_settings,
+    settings_dialog_keys, settings_system_page, spelling_errors, start_menu_search,
+    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
+    terminal_editing, terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
 };
 
 /// The longest a scenario's speech may take to end after its body.
@@ -359,6 +364,42 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: notepad_say_all::teardown,
     },
     ScenarioDef {
+        name: "notepad_word_selection",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: notepad_word_selection::setup,
+        body: notepad_word_selection::body,
+        teardown: notepad_word_selection::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_typed_words",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: notepad_typed_words::setup,
+        body: notepad_typed_words::body,
+        teardown: notepad_typed_words::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_review_words",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: notepad_review_words::setup,
+        body: notepad_review_words::body,
+        teardown: notepad_review_words::teardown,
+    },
+    ScenarioDef {
+        name: "edit_control_say_all",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: edit_control_say_all::setup,
+        body: edit_control_say_all::body,
+        teardown: edit_control_say_all::teardown,
+    },
+    ScenarioDef {
         name: "spelling_errors",
         group: Group::Text,
         target_images: &["mockapp.exe"],
@@ -420,6 +461,15 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: terminal_flood::setup,
         body: terminal_flood::body,
         teardown: terminal_flood::teardown,
+    },
+    ScenarioDef {
+        name: "terminal_editing",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        setup: terminal_editing::setup,
+        body: terminal_editing::body,
+        teardown: terminal_editing::teardown,
     },
     ScenarioDef {
         name: "terminal_review_grid",

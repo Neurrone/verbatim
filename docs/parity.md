@@ -146,15 +146,20 @@ verified.
     title either: **matched since 2026-10-07**, by matching a window's
     own MSAA object by the address its identity string names (Held
     objects, below; the `settings_dialog_keys` scenario). NVDA's
-    "Verbatim" is **different by decision** (2026-10-07): NVDA names the
-    foreground window, and Verbatim's hidden frame, titled "Verbatim",
-    is shown and brought forward for the menu, since without NVDA's
-    `uiAccess` privilege a hidden window cannot take the foreground.
-    NVDA's own menu has no such frame announced: NVDA keeps its frame
-    hidden and says only "NVDA menu" (a transcript of NVDA+N on
-    2026-10-07). Verbatim's menu is the counterpart of NVDA's, so its
-    frame stays unannounced (the hidden-frame suppression in
-    `docs/crates/verbatim-outpost.md`). The Terminal page's "Lines spoken in full"
+    "Verbatim": NVDA names the foreground window a menu opens from, and
+    Verbatim's hidden frame, titled "Verbatim", is shown and brought
+    forward for the menu, since without NVDA's `uiAccess` privilege a
+    hidden window cannot take the foreground. (NVDA's own menu has no such
+    frame: NVDA keeps its frame hidden and says only "NVDA menu", a
+    transcript of NVDA+N on 2026-10-07.) **Matched since 2026-10-07, by
+    decision**: Verbatim+V says "Verbatim", then "Context menu", as NVDA
+    does. The frame's own focus and foreground events stay suppressed,
+    since it transits focus (the hidden-frame suppression in
+    `docs/crates/verbatim-outpost.md`); the menu's opening is reported in
+    the frame's window with the frame as its ancestor, and the reducer
+    names a new foreground window from the top of the focus's ancestry, as
+    NVDA does when no foreground event named it (every scenario that opens
+    the menu asserts both). The Terminal page's "Lines spoken in full"
     and "Last lines to speak" sliders read 29 for the setting's 30 in
     both screen readers: a standard trackbar's MSAA value is its position
     as a percentage of its range, which is 1 to 100 there. **Fixed since
@@ -671,7 +676,12 @@ verified.
   spelled on the second press ("blank" with no name), and spelled with
   character descriptions on the third and later; "No focus" with none
   ([Focus and the navigator](nvda/focus-and-navigator.md), "Reporting the
-  focus"). Verbatim: **matched since 2026-10-07** on Verbatim+Tab. One
+  focus"). Verbatim: **matched since 2026-10-07** on Verbatim+Tab,
+  checked live in Windows 11 Notepad against an NVDA transcript the same
+  day: both say "Text editor document focused" and the line at the caret,
+  NVDA in one utterance and Verbatim in two, the line as its own, as for
+  any focus with text (the Notepad scenarios, when a Notepad window was
+  already open). One
   difference with no counterpart in NVDA: while the outpost that reported
   the focus has ended and its replacement has not yet reported the focus
   again, Verbatim says "No focus", as its node ids name nothing then.
@@ -1157,8 +1167,22 @@ verified.
   focus after its caret event, such as one made with the mouse; Verbatim
   reports those that keys make. **Different:** Verbatim never swallows and resends the key,
   so what Backspace deleted is worked out from Core's copy of the caret's
-  line rather than read before the key; a backspace over a line break says
-  nothing. NVDA's `caretMovementFailed` event is not offered. **Different:**
+  line rather than read before the key; a backspace over a line break
+  names the kind of break the text was last seen to use, which is what
+  NVDA reads, since a text uses one kind throughout, and says nothing
+  when Core has seen no line break in it yet. A line break a unit lands on
+  is named as NVDA names it, **matched since 2026-10-07** ("A line break
+  as a character" in [Editable text and
+  terminals](nvda/editable-text-and-terminals.md)): End and Right Arrow
+  at a line's end say "carriage return"; the review cursor's end of line
+  is the line's last character, its break included, "carriage return" in
+  Windows 11 Notepad and "line feed" in a standard edit control, and
+  moving by character crosses each character of the break; Backspace
+  over a line break says "carriage return" in Notepad and "line feed" in
+  a standard edit control (the `notepad_editing` and
+  `notepad_review_cursor` scenarios). A terminal's row is cells, as
+  before, with no line break to land on. NVDA's `caretMovementFailed`
+  event is not offered. **Different:**
   a caret event alone is not evidence when the caret's position is known,
   since an application's late caret event can belong to an earlier key; the
   position, the characters either side of the caret, or the selection must
@@ -1228,20 +1252,11 @@ verified.
   value reviewed as flat text) ends a line at a carriage return and line
   feed, either alone (Windows 11 Notepad's bare carriage return), or
   Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
-- A line break spoken on its own. NVDA names the line-break character a
-  unit lands on: End at the end of a line says "carriage return" in
-  Windows 11 Notepad and in a standard edit control, the review cursor's
-  end of line and next character there say "carriage return" in Notepad
-  and "line feed" in a standard edit control, and Backspace over a line
-  break says what it deleted (NVDA transcripts, 2026-10-07). Verbatim
-  says "blank" for a caret or review position on a line break, keeps the
-  review cursor's end of line on the line's last character, and says
-  nothing for a Backspace over a line break (see the caret entry above).
-  **Different, awaiting a decision**: Verbatim's choice is written into
-  `verbatim-core` but was never recorded against NVDA. A related detail:
-  in a standard edit control NVDA's review bottom (Shift+Numpad 9) is the
-  last line with text, while Verbatim's, like NVDA's in Notepad, is the
-  empty line after a final line break.
+- The review cursor's bottom in a standard edit control. NVDA's review
+  bottom (Shift+Numpad 9) there is the last line with text, while
+  Verbatim's, like NVDA's in Windows 11 Notepad, is the empty line after a
+  final line break (NVDA transcripts, 2026-10-07). **Different, not yet
+  decided.**
 - Browse mode, quick nav, pass-through rules, virtual-buffer
   equivalent: **not yet (M6)**; references
   [Browse mode](nvda/browse-mode.md), [Virtual buffers](nvda/virtual-buffers.md).

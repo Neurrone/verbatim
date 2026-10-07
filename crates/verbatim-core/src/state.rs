@@ -150,6 +150,13 @@ pub(crate) struct CaretContext {
     )]
     pub(crate) line: SharedChunk,
     pub(crate) selection: Option<Selection>,
+    /// The line break last seen ending a line of the node's text, such as
+    /// a carriage return in Windows 11 Notepad or a carriage return and line
+    /// feed in a standard edit control: what a Backspace at the start of a
+    /// line deletes, since a text uses one kind of line break throughout,
+    /// when the caret's own line has none (the last line).
+    #[serde(default)]
+    pub(crate) line_break: Option<String>,
 }
 
 impl CaretContext {

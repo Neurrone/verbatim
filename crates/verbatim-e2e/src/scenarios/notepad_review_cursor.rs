@@ -1,6 +1,7 @@
 //! The review cursor over Notepad's text (milestone M4 item 5): reading
 //! the current line, word, and character without moving the caret, moving
-//! by line, word, and character, the line's ends and the text's top and
+//! by line, word, and character, the line's ends (the end being its line
+//! break, named as NVDA names it) and the text's top and
 //! bottom, and Verbatim+F9 and F10 copying a range, checked by pasting it.
 //!
 //! The document is a small text table whose second column starts at column
@@ -44,7 +45,10 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Notepad's text area, and the line at its caret, wherever Notepad put
     // the caret on opening.
-    let _ = super::expect_notepad_text(scenario, STEP_TIMEOUT);
+    let text_area = super::expect_notepad_text_area(scenario, STEP_TIMEOUT);
+    let _ = scenario
+        .speech()
+        .expect_change_capturing(&text_area, STEP_TIMEOUT);
     // The caret to the top; the review cursor follows it there.
     scenario
         .send_keys(&["control+home"])
@@ -71,11 +75,25 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     review(scenario, "kb:numpad9", "Bottom blank");
     review(scenario, "kb:numpad7", "Banana  12");
 
-    // Back up a line, by character, and to the line's ends.
+    // Back up a line, by character, and to the line's ends. The end of a
+    // line is its last character, its line break included, named as NVDA
+    // names it (`docs/nvda/editable-text-and-terminals.md`, "A line break
+    // as a character"): Windows 11 Notepad's carriage return, or the line
+    // feed after classic Notepad's carriage return. Next character there
+    // says the edge and the break again; previous character crosses back
+    // to the line's last letter.
     review(scenario, "kb:numpad7", "Fig");
     review(scenario, "kb:numpad1", "i");
     review(scenario, "kb:shift+numpad1", "F");
-    review(scenario, "kb:shift+numpad3", "g");
+    if text_area.starts_with("Text editor document") {
+        review(scenario, "kb:shift+numpad3", "carriage return");
+        review(scenario, "kb:numpad3", "Right carriage return");
+    } else {
+        review(scenario, "kb:shift+numpad3", "line feed");
+        review(scenario, "kb:numpad3", "Right line feed");
+        review(scenario, "kb:numpad1", "carriage return");
+    }
+    review(scenario, "kb:numpad1", "g");
 
     // The top, and a range copied from the start marker to the review
     // cursor, the word "Name".

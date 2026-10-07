@@ -368,7 +368,13 @@ Implementation notes:
   alone, and was announcing as a bare "pane" until the ancestor check was added.
   A marked window counts only when it belongs to Core's process, the
   outpost's parent (read once from a process snapshot), since any process
-  can set the property on its own windows.
+  can set the property on its own windows. The frame is named once, on
+  purpose: when a popup menu opens while the frame holds the foreground
+  (Verbatim+V), the menu's focus is reported in the frame's window, with
+  the frame's own snapshot, read as a foreground window is read, as its
+  only ancestor, so the reducer says "Verbatim" and then "Context menu",
+  as NVDA names the foreground window a menu opens from
+  (`docs/parity.md`).
 - `verbatim-gui`'s `force_foreground` (see that crate's section) injects a
   bare `VK_CONTROL` tap before attempting `SetForegroundWindow`: a gesture
   that arrived via the control plane (no physical input, as every E2E test

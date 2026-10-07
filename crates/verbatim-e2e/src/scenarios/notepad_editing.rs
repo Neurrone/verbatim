@@ -1,7 +1,10 @@
 //! Editing in Notepad (milestone M4 items 3 and 4): focus on the text
 //! saying the caret's line rather than the whole text; the caret by
 //! character, word, and line; selecting and unselecting with Shift; typing
-//! with character echo; and deleting with Backspace and Delete. It holds for
+//! with character echo; deleting with Backspace and Delete; and End and
+//! Backspace naming the line break they meet, as NVDA does
+//! (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
+//! character"). It holds for
 //! Windows 11 Notepad (UIA) and classic Notepad's edit control alike.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to
@@ -46,7 +49,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Focus on the text area says its name and role, then the line at the
     // caret, never the whole text. Notepad may have put the caret on any
     // line, so any of them will do here.
-    let line = super::expect_notepad_text(scenario, STEP_TIMEOUT);
+    let text_area = super::expect_notepad_text_area(scenario, STEP_TIMEOUT);
+    let line = scenario
+        .speech()
+        .expect_change_capturing(&text_area, STEP_TIMEOUT);
     assert!(
         ["alpha beta gamma", "delta epsilon", "blank"].contains(&line.as_str()),
         "focusing the text area spoke {line:?}, not the line at the caret"
@@ -55,8 +61,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Notepad may restore the caret where an earlier session left it, so
     // Control+Home first takes it to the top, speaking the line there.
     // Right Arrow then speaks the character it reached, Control+Right Arrow
-    // the word, Down Arrow the line, and End the end of the line, which is
-    // blank.
+    // the word, and Down Arrow the line.
     press(scenario, "control+home", "alpha beta gamma");
     press(scenario, "rightarrow", "l");
     press(scenario, "control+rightarrow", "beta");
@@ -72,7 +77,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "focus returning spoke the wrong text"
     );
 
-    press(scenario, "end", "blank");
+    // End puts the caret on the line break, which is named, as NVDA names
+    // it: its carriage return in either Notepad.
+    press(scenario, "end", "carriage return");
 
     // Shift+Home selects back to the start of the line; Shift+Right Arrow
     // then unselects its first character, the text first, in NVDA's word
@@ -81,9 +88,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "shift+home", "delta epsilon selected");
     press(scenario, "shift+rightarrow", "d unselected");
     scenario.send_keys(&["end"]).expect("sends end");
-    scenario
-        .speech()
-        .expect_exactly(&["blank", "elta epsilon unselected"], STEP_TIMEOUT);
+    scenario.speech().expect_exactly(
+        &["carriage return", "elta epsilon unselected"],
+        STEP_TIMEOUT,
+    );
 
     // Typed characters are echoed; Backspace speaks what it deleted.
     press(scenario, "x", "x");
@@ -94,6 +102,17 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Delete speaks the character that took the deleted one's place.
     press(scenario, "home", "d");
     press(scenario, "delete", "e");
+
+    // Backspace at the line's start deletes the line break before it, and
+    // names it as NVDA does: Windows 11 Notepad breaks lines with a
+    // carriage return, and classic Notepad's edit control with a carriage
+    // return and line feed, which is spoken as the line feed.
+    let line_break = if text_area.starts_with("Text editor document") {
+        "carriage return"
+    } else {
+        "line feed"
+    };
+    press(scenario, "backspace", line_break);
     scenario
         .save_document(NAME, STEP_TIMEOUT)
         .expect("saves the document");

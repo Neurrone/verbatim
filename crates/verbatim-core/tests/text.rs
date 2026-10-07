@@ -196,7 +196,8 @@ fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
         ),
     );
     assert_eq!(spoken(&effects), vec![character("e")]);
-    // At the end of the line, the line break is blank.
+    // At the end of the line, the caret is on the line break, named by its
+    // first character, as NVDA names it.
     let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, false));
     let effects = reduce(
         &mut state,
@@ -205,7 +206,42 @@ fn an_arrow_key_waits_for_evidence_then_speaks_the_character_at_the_caret() {
             caret_reply(true, line("Hello\r\n", 100, 5), None),
         ),
     );
+    assert_eq!(spoken(&effects), vec![character("\r")]);
+    // At the end of the text there is no character: blank.
+    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, false));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("Bye", 101, 3), None),
+        ),
+    );
     assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
+}
+
+#[test]
+fn a_line_break_the_caret_reaches_is_named_with_its_formatting_read() {
+    // The outpost cuts the character from the line, a carriage return and
+    // line feed as one cluster; it is named by its carriage return.
+    let mut state = editing("Hello\r\n", 0);
+    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, false));
+    let unit = TextChunk {
+        unit: TextUnit::Character,
+        formats: vec![FormatRun {
+            start: 0,
+            end: 2,
+            attributes: TextAttributes::default(),
+        }],
+        ..line("\r\n", 102, 0)
+    };
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("Hello\r\n", 100, 5), Some(unit)),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("\r")]);
 }
 
 fn request_of(effects: &[Effect]) -> QueryId {
@@ -481,6 +517,57 @@ fn backspace_speaks_what_it_deleted_once_the_caret_moved() {
 }
 
 #[test]
+fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
+    // Windows 11 Notepad's text breaks lines with a carriage return.
+    let mut state = editing("def\r", 0);
+    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("abcdef\r", 99, 3), None),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("\r")]);
+
+    // A standard edit control's carriage return and line feed are spoken
+    // as the line feed. On the text's last line, which has no break, the
+    // break is the one the text was last seen to use.
+    let mut state = editing("abc\r\n", 1);
+    caret_event(&mut state, 5, line("def", 101, 0));
+    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("abcdef", 100, 3), None),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("\n")]);
+
+    // On the text's first line there is no break to delete.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    caret_event(
+        &mut state,
+        5,
+        TextChunk {
+            first: true,
+            ..line("abc\r\n", 100, 0)
+        },
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("abc\r\n", 100, 0), None),
+        ),
+    );
+    assert_eq!(spoken(&effects), []);
+}
+
+#[test]
 fn delete_compares_the_character_and_speaks_the_new_one() {
     let mut state = editing("abc\n", 1);
     let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
@@ -720,6 +807,44 @@ fn the_review_cursor_follows_the_caret_and_keeps_its_column_across_lines() {
         &command(ReviewCommand::ReviewCurrentCharacter, 0),
     );
     assert_eq!(spoken(&effects), vec![character("4")]);
+}
+
+#[test]
+fn the_review_cursor_meets_each_character_of_a_line_break() {
+    // A standard edit control's line: the end of the line is its line
+    // feed, and moving by character crosses the carriage return first.
+    let mut state = editing("ab\r\n", 1);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
+    assert_eq!(spoken(&effects), vec![character("\n")]);
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewPreviousCharacter, 0),
+    );
+    assert_eq!(spoken(&effects), vec![character("\r")]);
+    let effects = reduce(
+        &mut state,
+        &command(ReviewCommand::ReviewPreviousCharacter, 0),
+    );
+    assert_eq!(spoken(&effects), vec![character("b")]);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+    assert_eq!(spoken(&effects), vec![character("\r")]);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+    assert_eq!(spoken(&effects), vec![character("\n")]);
+    // The line feed is the line's last character.
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+    assert_eq!(
+        spoken(&effects),
+        vec![message(Message::Right), character("\n")]
+    );
+
+    // Windows 11 Notepad's line ends with a carriage return alone, and the
+    // text's last line, with no break, ends on its last character.
+    let mut state = editing("ab\r", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
+    assert_eq!(spoken(&effects), vec![character("\r")]);
+    let mut state = editing("ab", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
+    assert_eq!(spoken(&effects), vec![character("b")]);
 }
 
 #[test]
