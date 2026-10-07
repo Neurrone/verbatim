@@ -809,6 +809,73 @@ fn remote_and_classic_text_reads_agree() {
     app.quit();
 }
 
+/// A read ahead over lines in three languages, whose `Culture` over the
+/// whole batch is UIA's "mixed", gives each line its own language, the same
+/// remotely and classically; a batch in one language and a single line
+/// read give theirs.
+fn a_batch_in_several_languages_gives_each_line_its_own() {
+    common::init_com();
+    let title = common::unique_title("mockapp-text-languages");
+    let mut app = common::spawn("languages.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let target = TextTarget {
+        element: &element,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+    };
+    let units = |movement, count| {
+        let query = UnitsQuery {
+            target,
+            from: TextFrom::Start,
+            movement,
+            unit: TextUnit_Line,
+            count,
+            max_text: 1024,
+            max_total: 1024,
+            culture: true,
+        };
+        let remote = text_units_remote(&query).expect("the remote program runs");
+        let classic = text_units_classic(&query).expect("the classic reads run");
+        let remote = units_summary(&remote);
+        assert_eq!(remote, units_summary(&classic));
+        remote
+    };
+    let tag = |tag: &str| Some(tag.to_owned());
+    assert_eq!(
+        units(None, 16),
+        (
+            0,
+            vec![
+                ("hello\n".to_owned(), 0, tag("en-US")),
+                ("bonjour\n".to_owned(), 0, tag("fr-FR")),
+                ("hallo\n".to_owned(), 0, tag("de-DE")),
+                (String::new(), 0, tag("en-US")),
+            ],
+            true
+        )
+    );
+    assert_eq!(
+        units(Some(Movement::By(TextUnit_Line, 1)), 1),
+        (1, vec![("bonjour\n".to_owned(), 0, tag("fr-FR"))], false)
+    );
+    // The French stretch now holds two whole lines.
+    common::apply(&mut app, hwnd, r"set-text doc hello\nab\ncd\nef\n");
+    assert_eq!(
+        units(Some(Movement::By(TextUnit_Line, 1)), 2),
+        (
+            1,
+            vec![
+                ("ab\n".to_owned(), 0, tag("fr-FR")),
+                ("cd\n".to_owned(), 0, tag("fr-FR")),
+            ],
+            false
+        )
+    );
+    app.quit();
+}
+
 fn edit_control_text_reads_moves_and_answers_caret_keys() {
     common::init_com();
     let title = common::unique_title("mockapp-text-edit");
@@ -865,6 +932,10 @@ fn main() {
         (
             "remote_and_classic_text_reads_agree",
             remote_and_classic_text_reads_agree,
+        ),
+        (
+            "a_batch_in_several_languages_gives_each_line_its_own",
+            a_batch_in_several_languages_gives_each_line_its_own,
         ),
         (
             "uia_text_reads_moves_and_answers_caret_keys",

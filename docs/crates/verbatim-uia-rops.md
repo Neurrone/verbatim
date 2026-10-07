@@ -482,18 +482,26 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
 
 - `text_units` (`UnitsQuery`, `UnitsAnswer`): from the point, an optional
   `Movement` (`By(unit, count)` from the start of the unit containing the
-  point, collapsed before and after as the review cursor moves; or
-  `Document(count)`, to an end, saying it moved when the point was not
-  there), then the unit containing the point reached: its range, its text
-  up to `max_text`, the point's offset in it (zero when the movement was
-  by that unit, landing on its start), and its language (`Culture`, a
-  locale id turned into a BCP 47 tag with
-  `verbatim_uia::text::locale_name`; a mixed or unsupported value is
-  null). With a `count` above one it reads on, a unit at a time from the
-  last one's start, until it has `count`, the text read reaches
-  `max_total`, or a move by one does not move (`ended`: the last unit read
-  is the text's last). That is say-all's batch: twenty lines ahead in
-  one round trip.
+  point, collapsed before it moves as the review cursor moves, and left
+  as the move leaves it, since UIA keeps a collapsed range collapsed when
+  it moves; or `Document(count)`, to an end, saying it moved when the
+  point was not there), then the unit containing the point reached: its
+  range, its text up to `max_text`, the point's offset in it (zero when
+  the movement was by that unit, landing on its start), and its language
+  (`Culture`, a locale id turned into a BCP 47 tag with
+  `verbatim_uia::text::locale_name`; an unsupported value is null). With a
+  `count` above one it reads on, a unit at a time, a collapsed copy of the
+  last one moved by one unit and expanded in place, until it has `count`,
+  the text read reaches `max_total`, or a move by one does not move
+  (`ended`: the last unit read is the text's last). That is say-all's
+  batch: twenty lines ahead in one round trip. The language of a batch is
+  read once, over a range from its first unit's start to its last one's
+  end, and unit by unit only when that answers UIA's "mixed" (both
+  sentinels are told apart, `verbatim_uia::text::Language`), so a batch in
+  one language costs one `Culture` read rather than one per unit.
+  Microsoft's guidance on `ExpandToEnclosingUnit` is that it normalizes a
+  range from its start alone, so a unit is expanded from a copy whose
+  start is the point, never collapsed first.
 - `text_range` (`RangeQuery`, `RangeAnswer`): two points (or one, for
   moving the caret), ordered by comparing them, and the text between them
   read up to a limit or selected. A selection the provider refuses is

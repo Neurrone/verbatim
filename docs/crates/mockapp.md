@@ -131,7 +131,10 @@ its crate-internal modules are the reviewable surface:
   window move the focused node's caret by these units (`caret_key`): Right
   Arrow by a character, Control+Right Arrow to the next word's start, and
   Down and Up Arrow to the same column of the next or previous line, or its
-  end when that line is shorter, raising no event; the language (`Culture`) is `en-US`; the
+  end when that line is shorter, raising no event; the language (`Culture`) is `en-US`
+  outside the node's `cultures` stretches (each a start and an end offset and
+  a Windows locale id) and theirs within one, mixed over a range holding
+  more than one; the
   annotation types are the spelling error type (60001) for a range
   touching one of the spelling errors and unsupported otherwise, as
   Windows 11 Notepad reports them; the font is 11 point Consolas in black,
@@ -330,6 +333,10 @@ subscription. A container's selected child is pinned over
 through a tab control's `Selection` pattern, classically and in the
 focus's remote program; and so are a text focus's registration, its caret
 and text changes and active text position changes as one group, and the
-handling of an active text position change, which makes no call. On a
+handling of an active text position change, which makes no call. Say-all's
+batches of twenty lines are pinned over `text.json`'s text replaced by
+forty-five lines, and a batch whose lines differ in language over
+`tests/fixtures/languages.json` (lines in English, French, and German, by
+its `cultures`), which `text.rs` also reads both ways. On a
 mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

@@ -95,6 +95,8 @@ struct RawNode {
     #[serde(default)]
     italic_fails: bool,
     #[serde(default)]
+    cultures: Vec<(usize, usize, i32)>,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -126,6 +128,10 @@ pub(crate) struct FixtureNode {
     /// Whether reading the text's `IsItalic` attribute fails, as a provider
     /// that fails an attribute read does.
     pub(crate) italic_fails: bool,
+    /// Stretches of the text in a language other than English, each a
+    /// start and an end UTF-16 offset and a Windows locale id, served as
+    /// UIA's `Culture` attribute.
+    pub(crate) cultures: Vec<(usize, usize, i32)>,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -202,6 +208,7 @@ fn convert(
         spelling_errors: raw.spelling_errors,
         bold: raw.bold,
         italic_fails: raw.italic_fails,
+        cultures: raw.cultures,
         children,
     })
 }

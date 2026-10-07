@@ -15,7 +15,8 @@
 //! unit, so a client sees the text's ends. The caret is the selection's
 //! start, as the edit controls report it, and the focused node's caret
 //! moves with the keys [`caret_key`] lists. The language is English
-//! (`en-US`); the annotation types are the spelling error type for a range
+//! (`en-US`) outside the fixture's `cultures` stretches and theirs within
+//! them, mixed over a range that holds more than one; the annotation types are the spelling error type for a range
 //! touching one of the fixture's spelling errors and unsupported
 //! otherwise, as Windows 11 Notepad reports them; the font is 11 point
 //! Consolas in black, neither italic nor underlined, its weight 700 in the
@@ -209,6 +210,23 @@ fn within(stretches: &[(usize, usize)], start: usize, end: usize) -> bool {
         return touches(stretches, start, end);
     }
     (start..end).all(|at| touches(stretches, at, at))
+}
+
+/// The locale id of the text from `start` to `end`: the id of the stretch
+/// of `cultures` holding each character, English outside them, when every
+/// character has the same; `None`, mixed, when they differ. An empty range
+/// has the id at its position.
+fn culture(cultures: &[(usize, usize, i32)], start: usize, end: usize) -> Option<i32> {
+    let at = |offset: usize| {
+        cultures
+            .iter()
+            .find(|&&(from, to, _)| from <= offset && offset < to)
+            .map_or(EN_US, |&(_, _, lcid)| lcid)
+    };
+    let first = at(start);
+    (start..end)
+        .all(|offset| at(offset) == first)
+        .then_some(first)
 }
 
 /// A variant holding `value`, an integer.
@@ -443,7 +461,12 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         // UIA names them.
         #[allow(non_upper_case_globals)]
         Ok(match attributeid {
-            UIA_CultureAttributeId => int_variant(EN_US),
+            UIA_CultureAttributeId => match culture(&formats.cultures, start, end) {
+                Some(lcid) => int_variant(lcid),
+                // SAFETY: UIA's own sentinel object, owned by the returned
+                // variant.
+                None => sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?),
+            },
             UIA_AnnotationTypesAttributeId => {
                 if touches(&formats.spelling_errors, start, end) {
                     let spelling = ANNOTATION_SPELLING_ERROR;

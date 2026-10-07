@@ -1589,19 +1589,19 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("GetAttributeValue", 1),
                 ("GetText", 1),
                 ("Move", 1),
-                ("MoveEndpointByRange", 3),
+                ("MoveEndpointByRange", 2),
             ],
         )
     } else {
         (
-            calls(9, 0, 0),
+            calls(8, 0, 0),
             &[
                 ("Clone", 2),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 1),
                 ("GetText", 1),
                 ("Move", 1),
-                ("MoveEndpointByRange", 2),
+                ("MoveEndpointByRange", 1),
             ],
         )
     };
@@ -1687,27 +1687,27 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("HostRawElementProvider", 1),
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 1),
-                ("Clone", 8),
+                ("Clone", 7),
                 ("CompareEndpoints", 1),
                 ("ExpandToEnclosingUnit", 3),
-                ("GetAttributeValue", 3),
+                ("GetAttributeValue", 1),
                 ("GetText", 4),
                 ("Move", 3),
-                ("MoveEndpointByRange", 8),
+                ("MoveEndpointByRange", 6),
             ],
         )
     } else {
         (
-            calls(29, 0, 0),
+            calls(24, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 1),
-                ("Clone", 7),
+                ("Clone", 6),
                 ("CompareEndpoints", 1),
                 ("ExpandToEnclosingUnit", 3),
-                ("GetAttributeValue", 3),
+                ("GetAttributeValue", 1),
                 ("GetText", 4),
                 ("Move", 3),
-                ("MoveEndpointByRange", 7),
+                ("MoveEndpointByRange", 5),
             ],
         )
     };
@@ -1936,6 +1936,248 @@ fn uia_text_requests_cost_exactly() {
     ratchet.finish();
 }
 
+/// Say-all's batches at their full size, as Core asks for them
+/// (`say_all::read_next`): twenty lines from the caret, then twenty more a
+/// line on from the start of the last line read, over mockapp's text
+/// replaced by forty-five short lines, remotely or classically.
+#[expect(
+    clippy::too_many_lines,
+    reason = "both batches' pinned provider hits, listed in full both ways"
+)]
+fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
+    let way = if remote { "remotely" } else { "classically" };
+    let title = common::unique_title("mockapp-counts-uia-say-all");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let lines: Vec<String> = (1..=45).map(|line| format!("line {line}\n")).collect();
+    common::apply(
+        &mut app,
+        hwnd,
+        &format!("set-text doc {}", lines.concat().replace('\n', "\\n")),
+    );
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let mut source = uia_notes(hwnd).remote(remote);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    let batch = |at: TextPoint, movement: Option<TextMovement>| {
+        TextOp::ReadAhead(TextReadAhead {
+            at,
+            movement,
+            unit: TextUnit::Line,
+            count: 20,
+        })
+    };
+
+    let (reply, first) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &batch(TextPoint::Caret, None),
+    );
+    let TextReply::Chunks { chunks, .. } = reply else {
+        panic!("chunks, not {reply:?}");
+    };
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(texts, lines[..20]);
+    assert!(chunks.iter().all(|chunk| !chunk.last));
+
+    let (reply, second) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &batch(
+            TextPoint::At(TextPosition::at(chunks[19].start)),
+            Some(TextMovement {
+                unit: TextUnit::Line,
+                count: 1,
+            }),
+        ),
+    );
+    let TextReply::Chunks { chunks, .. } = reply else {
+        panic!("chunks, not {reply:?}");
+    };
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(texts, lines[20..40]);
+    assert!(chunks.iter().all(|chunk| !chunk.last));
+
+    // Classically, the first batch: the caret (2), the first line and the
+    // caret's offset in it (5), each later line a copy collapsed, moved,
+    // expanded, and read (5 each, 95), the move that finds a next line
+    // after the twentieth (3), and one `Culture` read over the whole batch
+    // (3). The later batch starts from a held position moved by a line (4)
+    // and needs no offset (3 for its first line). 165 and 166 before
+    // (2026-10-07): two collapses and two copies per line, and a `Culture`
+    // read per line.
+    let expected: [(CallCounts, &[(&str, u32)]); 2] = if remote {
+        [
+            (
+                calls(1, 0, 0),
+                &[
+                    ("ProviderOptions", 2),
+                    ("GetPatternProvider", 1),
+                    ("GetPropertyValue", 1),
+                    ("HostRawElementProvider", 1),
+                    ("Navigate", 1),
+                    ("ITextProvider::GetSelection", 1),
+                    ("Clone", 24),
+                    ("CompareEndpoints", 1),
+                    ("ExpandToEnclosingUnit", 20),
+                    ("GetAttributeValue", 1),
+                    ("GetText", 21),
+                    ("Move", 20),
+                    ("MoveEndpointByRange", 23),
+                ],
+            ),
+            (
+                calls(1, 0, 0),
+                &[
+                    ("Clone", 24),
+                    ("ExpandToEnclosingUnit", 21),
+                    ("GetAttributeValue", 1),
+                    ("GetText", 20),
+                    ("Move", 21),
+                    ("MoveEndpointByRange", 23),
+                ],
+            ),
+        ]
+    } else {
+        [
+            (
+                calls(109, 0, 0),
+                &[
+                    ("ITextProvider::GetSelection", 1),
+                    ("Clone", 23),
+                    ("CompareEndpoints", 1),
+                    ("ExpandToEnclosingUnit", 20),
+                    ("GetAttributeValue", 1),
+                    ("GetText", 21),
+                    ("Move", 20),
+                    ("MoveEndpointByRange", 22),
+                ],
+            ),
+            (
+                calls(108, 0, 0),
+                &[
+                    ("Clone", 23),
+                    ("ExpandToEnclosingUnit", 21),
+                    ("GetAttributeValue", 1),
+                    ("GetText", 20),
+                    ("Move", 21),
+                    ("MoveEndpointByRange", 22),
+                ],
+            ),
+        ]
+    };
+    ratchet.check(
+        &format!("UIA say-all first batch of twenty lines, {way}"),
+        &first,
+        expected[0].0,
+        expected[0].1,
+    );
+    ratchet.check(
+        &format!("UIA say-all later batch of twenty lines, {way}"),
+        &second,
+        expected[1].0,
+        expected[1].1,
+    );
+    app.quit();
+}
+
+/// A say-all batch whose lines are in three languages, over mockapp's
+/// `languages.json`: the one `Culture` read over the batch answers "mixed",
+/// so each line's is read, remotely or classically.
+fn check_uia_say_all_language_costs(ratchet: &mut Ratchet, remote: bool) {
+    let way = if remote { "remotely" } else { "classically" };
+    let title = common::unique_title("mockapp-counts-uia-languages");
+    let mut app = common::spawn("languages.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let mut source = uia_notes(hwnd).remote(remote);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    let (reply, mixed) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::ReadAhead(TextReadAhead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Line,
+            count: 20,
+        }),
+    );
+    let TextReply::Chunks { chunks, .. } = reply else {
+        panic!("chunks, not {reply:?}");
+    };
+    let languages: Vec<Vec<&str>> = chunks
+        .iter()
+        .map(|chunk| {
+            chunk
+                .languages
+                .iter()
+                .map(|run| run.language.as_str())
+                .collect()
+        })
+        .collect();
+    // The empty last line has no text for a language to cover.
+    assert_eq!(
+        languages,
+        [vec!["en-US"], vec!["fr-FR"], vec!["de-DE"], Vec::new()]
+    );
+    // The batch's one read and a read for each of its four lines.
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 1),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 8),
+                ("CompareEndpoints", 1),
+                ("ExpandToEnclosingUnit", 4),
+                ("GetAttributeValue", 5),
+                ("GetText", 5),
+                ("Move", 4),
+                ("MoveEndpointByRange", 7),
+            ],
+        )
+    } else {
+        (
+            calls(33, 0, 0),
+            &[
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 7),
+                ("CompareEndpoints", 1),
+                ("ExpandToEnclosingUnit", 4),
+                ("GetAttributeValue", 5),
+                ("GetText", 5),
+                ("Move", 4),
+                ("MoveEndpointByRange", 6),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA say-all batch in three languages, {way}"),
+        &mixed,
+        expected.0,
+        expected.1,
+    );
+    app.quit();
+}
+
+fn uia_say_all_batches_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    for remote in [true, false] {
+        check_uia_say_all_batch_costs(&mut ratchet, remote);
+        check_uia_say_all_language_costs(&mut ratchet, remote);
+    }
+    ratchet.finish();
+}
+
 fn caret_moves_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -2064,6 +2306,10 @@ fn main() {
         (
             "uia_text_requests_cost_exactly",
             uia_text_requests_cost_exactly,
+        ),
+        (
+            "uia_say_all_batches_cost_exactly",
+            uia_say_all_batches_cost_exactly,
         ),
         (
             "msaa_focus_changes_cost_exactly",

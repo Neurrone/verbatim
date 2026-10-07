@@ -523,10 +523,11 @@ outpost reported: a `Read` moving by a line from the start of the line
 holding the position, then reading that line and its language.
 
 - Minimum: 1 UIA call, one program (`verbatim_uia_rops::text_units`).
-- Today: 1 remotely; classically 9, as before remote operations (a copy
-  of the position, expanded to its line, collapsed, moved, collapsed; a
-  copy expanded to the line reached and its text; its `Culture`
-  attribute). The first review command and report current object on an
+- Today: 1 remotely; classically 8 (a copy of the position, expanded to
+  its line, collapsed, moved; a copy expanded to the line reached and its
+  text; its `Culture` attribute). 9 before the text range audit of
+  2026-10-07, which dropped a second collapse after the move: UIA keeps a
+  collapsed range collapsed when it moves. The first review command and report current object on an
   edit field read the line at the caret the same way, in one program
   (classically 9: the caret's two reads, the line's three, the caret's
   offset in it three, and its language).
@@ -554,7 +555,8 @@ line break) from the caret, and moving the caret as each is reached.
 - Minimum: 1 UIA call for every batch of lines read ahead
   (`TextOp::ReadAhead`, twenty units), and 1 for each caret move.
 - Today: 1 UIA call for all three lines remotely, its end found in the
-  same program; 29 classically. Before, say-all asked for one line per
+  same program; 24 classically (29 before the text range audit, below).
+  Before, say-all asked for one line per
   request, each a round trip remotely or not: 9 calls for the first line,
   10 for each later one, and 10 more for a last request that found the
   end, 39 calls in four requests. Each caret move is 1 call remotely and 4
@@ -596,6 +598,37 @@ behind the application's other events in the outpost's queue. With either
 path, a batch arrives with ten pieces, several seconds of speech, still
 to speak, and the gaps are the same with remote operations on and off:
 the pieces already with speech hide the read entirely.
+
+A batch of twenty lines, classically, after the text range audit of
+2026-10-07 (`phase6-design.md`, item 14 of the work scheduled that day),
+pinned against mockapp's text replaced by forty-five short lines
+(`uia_say_all_batches_cost_exactly`):
+
+- Before: 165 calls for the first batch and 166 for each later one, the
+  same counts as against Windows 11 Notepad above. Each line after the
+  first cost 8: a copy of the line before, collapsed, moved by a line,
+  collapsed again, another copy, expanded, its text, and its `Culture`
+  attribute; and the move that finds whether a line follows the twentieth
+  cost 4.
+- After: 109 for the first batch and 108 for each later one. Each line
+  after the first costs 5: a copy of the line before, collapsed, moved,
+  expanded in place, and its text, since UIA keeps a collapsed range
+  collapsed when it moves (`ITextRangeProvider::Move`) and expanding
+  normalizes a range from its start alone (`ExpandToEnclosingUnit`), so
+  neither the second collapse nor the second copy did anything. The
+  language is read once for the batch, over a range from its first line's
+  start to its last line's end (3 calls), and line by line only when that
+  one read answers UIA's "mixed": 33 calls classically for mockapp's
+  `languages.json`, four lines in English, French, and German, where the
+  three-line batch above costs 24.
+- Remotely still 1 call each; the program makes the same reads inside the
+  provider, so its provider calls fell from 42 copies, 42 or 43 endpoint
+  moves, and 20 `Culture` reads per batch to 24, 23, and 1.
+- Wall clock, debug build against mockapp in its own process, 200 runs of
+  each batch through the outpost's text module, three runs: classically
+  21.6 to 24.0 ms at the median (29 to 42 at the 95th percentile) before
+  and 10.0 to 10.6 (11.7 to 13.0) after; remotely 1.7 to 2.1 ms before and
+  1.0 to 1.6 after.
 
 ### The caret's location, UIA
 
