@@ -2,6 +2,11 @@
 //! end-to-end scenarios"), so their results depend neither on the user's
 //! own terminals and settings nor on timing.
 //!
+//! A scenario in Windows Terminal and its twin in the console host are
+//! separate code, each with its own expectations (`docs/testing.md`): the
+//! helpers here open a terminal and drive the shell, and every expectation
+//! is the caller's.
+//!
 //! Each scenario opens a window of its own, titled with a marker unique to
 //! the run ([`harness_marker`]), waits for it to take the foreground, and
 //! closes it by that title at cleanup, never by class or program, so the
@@ -73,9 +78,9 @@ const SHELL_PID_FILE: &str = "shell-pid";
 /// The window class only the console host registers.
 const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 
-/// The terminal a scenario's shell runs in.
+/// The terminal a scenario's shell runs in, for launching it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Terminal {
+enum Terminal {
     /// Windows Terminal.
     WindowsTerminal,
     /// The console host, `conhost.exe`.
@@ -92,9 +97,37 @@ impl Terminal {
     }
 }
 
+/// Opens Windows Terminal running the shell, as [`open`] describes.
+///
+/// # Errors
+///
+/// As [`open`].
+pub(crate) fn open_windows_terminal(
+    scenario: &mut Scenario,
+    name: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
+    open(scenario, name, Terminal::WindowsTerminal, scripts)
+}
+
+/// Opens the console host running the shell, as [`open`] describes.
+///
+/// # Errors
+///
+/// As [`open`].
+pub(crate) fn open_console_host(
+    scenario: &mut Scenario,
+    name: &str,
+    scripts: &[(&str, &str)],
+) -> io::Result<ScenarioState> {
+    open(scenario, name, Terminal::ConsoleHost, scripts)
+}
+
 /// Writes `scripts` (file names and contents) and the start script into a
 /// folder of the run's own, opens `terminal` running the shell in it, with
-/// `name` in its title, waits for its window to take the foreground, and
+/// `name` in its title (after "console-" in the console host, so the two
+/// terminals' runs of a scenario never share a title or a folder), waits
+/// for its window to take the foreground, and
 /// asserts the program that owns it. The shell shows its first prompt once
 /// [`expect_prompt_read`] lets it. The window is closed at cleanup.
 ///
@@ -103,14 +136,18 @@ impl Terminal {
 /// Returns an error if a file cannot be written, the terminal cannot be
 /// started, its window does not take the foreground, or another program
 /// owns it.
-pub(crate) fn open(
+fn open(
     scenario: &mut Scenario,
     name: &str,
     terminal: Terminal,
     scripts: &[(&str, &str)],
 ) -> io::Result<ScenarioState> {
-    let title = harness_marker(name);
-    let directory = scenario.harness_folder(name);
+    let name = match terminal {
+        Terminal::WindowsTerminal => name.to_owned(),
+        Terminal::ConsoleHost => format!("console-{name}"),
+    };
+    let title = harness_marker(&name);
+    let directory = scenario.harness_folder(&name);
     for (file, contents) in scripts {
         scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
     }
@@ -174,16 +211,9 @@ pub(crate) fn open(
             }
         }
     }
-    // Windows Terminal names its text area with the tab's title; the
-    // console host's text area has no name.
-    let text_area = match terminal {
-        Terminal::WindowsTerminal => format!("{title} terminal"),
-        Terminal::ConsoleHost => "terminal".to_owned(),
-    };
     Ok(ScenarioState::Window {
         pid: window.pid,
         title,
-        text_area,
         directory,
     })
 }
@@ -288,8 +318,17 @@ pub(crate) fn echo_of(text: &str) -> Vec<String> {
     text.chars().map(super::character_name).collect()
 }
 
-/// Asserts what Verbatim says as the terminal's window takes the
-/// foreground, lets the shell show its first prompt, and reads the review
+/// The title of the terminal window a scenario's setup opened.
+pub(crate) fn title(state: &ScenarioState) -> &str {
+    let ScenarioState::Window { title, .. } = state else {
+        panic!("a terminal scenario's setup opens a terminal window");
+    };
+    title
+}
+
+/// Asserts that Verbatim says exactly `announcement` as the terminal's
+/// window takes the foreground, lets the shell show its first prompt, and
+/// reads the review
 /// cursor's line, which follows the caret onto it: the evidence that
 /// Verbatim reads this terminal's text before a scenario types into it.
 ///
@@ -297,18 +336,18 @@ pub(crate) fn echo_of(text: &str) -> Vec<String> {
 /// full. The console host reports its caret some time after its text, and
 /// the review cursor follows the caret, so the line is read only once Core
 /// has received the caret on the prompt.
-pub(crate) fn expect_prompt_read(scenario: &mut Scenario, state: &ScenarioState) {
+pub(crate) fn expect_prompt_read(
+    scenario: &mut Scenario,
+    state: &ScenarioState,
+    announcement: &[&str],
+) {
     let ScenarioState::Window {
-        directory,
-        title,
-        text_area,
-        ..
+        directory, title, ..
     } = state
     else {
         panic!("a terminal scenario's setup opens a terminal window");
     };
-    let window = format!("{title} window");
-    scenario.speech().expect(&[&window, text_area, "blank"]);
+    scenario.speech().expect(announcement);
     let mut events = scenario
         .subscribe_events()
         .expect("subscribes to Verbatim's events");

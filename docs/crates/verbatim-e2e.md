@@ -262,11 +262,13 @@ The groups:
   identifier through the agent).
 - Navigation: `object_navigation_in_settings` and
   `system_information_tree`.
-- Text: `edit_control_say_all`, `spelling_errors` (`mockapp`'s scripted
-  text), the local-only Windows 11 Notepad scenarios (`notepad_editing`,
-  `notepad_review_cursor`, `notepad_say_all`, `notepad_word_selection`,
-  `notepad_typed_words`, `notepad_review_words`,
-  `notepad_spelling_errors`), and the terminal scenarios.
+- Text: the editing scenarios, each in the Windows Forms text box and in
+  Windows 11 Notepad, each its own code (`text_box_editing` and
+  `notepad_editing`, `_review_cursor`, `_review_words`, `_typed_words`,
+  `_word_selection`, `_say_all`), `spelling_errors` (`mockapp`'s scripted
+  text), `notepad_spelling_errors`, and the terminal scenarios, each in
+  Windows Terminal and in the console host. The Notepad scenarios are
+  local-only.
 - Demo: `demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,
   `demo_terminal_session`, `demo_settings_dialog_keys`. Everything a
   demonstration shows is covered by a test scenario.
@@ -278,39 +280,43 @@ The groups:
   Windows PowerShell from a script the scenario writes, the same on every
   machine. It does not wrap, its caret starts at the start of the text,
   and it is announced by the window's title, the box's name with "edit
-  multi line", and the caret's line. `edit_control_say_all` and
+  multi line", and the caret's line. The `text_box_` scenarios and
   `second_application_and_verbatim_menu` use it.
-- Notepad: each scenario opens its own document, sets the caret where it
-  starts with keys it asserts, and saves what it edited. Typing is one
+- Notepad: each scenario's document is opened before Verbatim starts
+  (`ScenarioDef::document`) and brought forward by the scenario, which
+  sets the caret where it starts with keys it asserts and saves what it
+  edited. Typing is one
   character at a time, each echo heard in full before the next, since a
   character typed while an echo plays cuts it off. `notepad_spelling_errors`
   reads, through the agent, the words Notepad's spell checker marked once
   the document's opening has been announced, and fails unless they are
   exactly the two misspelt words: Notepad raises no event when it marks
   them.
-- `scenarios/terminal.rs`: each terminal scenario names its terminal and
-  gets that one or fails, with no fallback. Windows Terminal opens with
+- `scenarios/terminal.rs`: each terminal scenario opens its terminal,
+  `open_windows_terminal` or `open_console_host`, and gets that one or
+  fails, with no fallback. Windows Terminal opens with
   `wt.exe -w new --size 120,30 new-tab --title <title>
   --suppressApplicationTitle`, and its window must belong to
   `WindowsTerminal.exe`. The console host opens with `launch_console`, its
   window titled from its first frame; Windows reports a console window as
   its first client's, the shell, so the scenario asserts the window's
   class is `ConsoleWindowClass` and the shell is the launched console
-  host's child. Windows Terminal names its text area with the tab's title
-  ("<title> terminal"); the console host's has no name ("terminal"). The
-  shell writes its process id, which must exit at cleanup. Every body
-  starts with `expect_prompt_read`. `type_hearing(text, echo)` types one
+  host's child. The shell writes its process id, which must exit at
+  cleanup. Every body starts with `expect_prompt_read`, given the exact
+  announcement: Windows Terminal names its text area with the tab's title
+  ("<title> terminal"), and the console host's has no name ("terminal"). `type_hearing(text, echo)` types one
   character at a time: with `Echo::Shown`, the echo is what the terminal
   shows, and a space at the end of a line cannot be told from padding
   until something follows it, so a space is typed with the next character
   and both echoes heard together; with `Echo::Typed` ("speak passwords"
   on), each key is echoed as it is typed.
 
-`terminal_flood` asserts the flood policy exactly within the scrollback:
-3,000 lines are heard as lines 1 to 30, "skipped 2941 lines" after the
-skipped-lines sound, and lines 2,972 to 3,000 with the prompt. The ratio
-of a reported flood's time to an unreported one's is saved as
-`wall-time-ratio.txt` for trends, never asserted.
+The flood scenarios assert the flood policy exactly within the
+scrollback: 2,000 lines are heard as lines 1 to 30, "skipped 1941 lines"
+after the skipped-lines sound, and lines 1,972 to 2,000 with the prompt.
+The ratio of a reported flood's time to an unreported one's is saved as
+`wall-time-ratio.txt` for trends, never asserted. Outpost logs are collected in chunks, since a flood's
+debug log can be larger than one read of the agent's.
 
 ## Other modules
 

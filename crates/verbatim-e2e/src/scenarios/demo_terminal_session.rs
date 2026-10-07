@@ -15,7 +15,7 @@
 
 use std::io;
 
-use super::terminal::{self, Terminal};
+use super::terminal;
 use super::{terminal_commands, terminal_editing, terminal_flood};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
@@ -27,17 +27,21 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let mut scripts: Vec<(&str, &str)> = terminal_commands::SCRIPTS.to_vec();
     scripts.push((terminal_editing::SCRIPT_NAME, table.as_str()));
     scripts.push(("flood.ps1", terminal_flood::SCRIPT));
-    terminal::open(
-        scenario,
-        "demo-session",
-        Terminal::WindowsTerminal,
-        &scripts,
-    )
+    terminal::open_windows_terminal(scenario, "demo-session", &scripts)
 }
 
 pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
-    terminal::expect_prompt_read(scenario, state);
-    terminal_editing::steps(scenario);
-    terminal_commands::steps(scenario);
+    let title = terminal::title(state).to_owned();
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
+    );
+    terminal_editing::windows_terminal_steps(scenario);
+    terminal_commands::windows_terminal_steps(scenario);
     terminal_flood::heard_flood(scenario, 1);
 }

@@ -78,19 +78,23 @@
 //!   against msinfo32's real Win32 tree view over MSAA, which is also the
 //!   suite's MSAA-only legacy application (the M3 exit item).
 //! - [`Group::Text`]: milestone M4's text — editing, word selection, typed
-//!   word echo, the review cursor, and say-all in Notepad, say-all in a
-//!   Win32 edit control
-//!   ([`edit_control_say_all`](crate::scenarios::edit_control_say_all)),
-//!   spelling errors in `mockapp`'s scripted text and in Windows 11
-//!   Notepad
-//!   ([`notepad_spelling_errors`](crate::scenarios::notepad_spelling_errors),
-//!   local-only, below), and the terminal scenarios
-//!   ([`terminal_commands`](crate::scenarios::terminal_commands)'s
-//!   `windows_terminal_commands`, `conhost_commands`, and
-//!   `terminal_spoken_password`,
-//!   [`terminal_flood`](crate::scenarios::terminal_flood),
-//!   [`terminal_editing`](crate::scenarios::terminal_editing), and
-//!   [`terminal_review_grid`](crate::scenarios::terminal_review_grid)).
+//!   word echo, and the review cursor, each in the Windows Forms text box
+//!   (`text_box_`) and in Windows 11 Notepad (`notepad_`, local-only,
+//!   below); say-all in each
+//!   ([`text_box_say_all`](crate::scenarios::text_box_say_all) and
+//!   `notepad_say_all`); spelling errors in `mockapp`'s scripted text and
+//!   in Windows 11 Notepad
+//!   ([`notepad_spelling_errors`](crate::scenarios::notepad_spelling_errors));
+//!   and the terminal scenarios, each in Windows Terminal
+//!   (`windows_terminal_`) and in the console host (`conhost_`):
+//!   commands, spoken password, flood
+//!   ([`terminal_commands`](crate::scenarios::terminal_commands),
+//!   [`terminal_flood`](crate::scenarios::terminal_flood)), editing
+//!   ([`terminal_editing`](crate::scenarios::terminal_editing)), review grid
+//!   ([`terminal_review_grid`](crate::scenarios::terminal_review_grid)),
+//!   progress ([`terminal_progress`](crate::scenarios::terminal_progress)),
+//!   and short output
+//!   ([`terminal_short_output`](crate::scenarios::terminal_short_output)).
 //! - [`Group::Demo`]: demonstrations, recorded as videos for
 //!   `videos/demos` by `cargo xtask demo` and never part of the suite: a
 //!   selection with no `--scenario` or `--group` leaves them out
@@ -123,8 +127,8 @@ use crate::scenarios::{
     review_cursor, review_words, second_application_and_verbatim_menu, settings_dialog_keys,
     settings_system_page, spelling_errors, switch_to_onecore, synth_host_crash_recovery,
     system_information_tree, terminal_commands, terminal_editing, terminal_flood,
-    terminal_review_grid, terminal_settings_page, text_box_say_all, theme_panel, typed_words,
-    word_selection,
+    terminal_progress, terminal_review_grid, terminal_settings_page, terminal_short_output,
+    text_box_say_all, theme_panel, typed_words, word_selection,
 };
 
 /// Environment variable that, set to `1`, says the run has no Windows 11
@@ -236,9 +240,6 @@ pub enum ScenarioState {
         pid: u32,
         /// Its title.
         title: String,
-        /// How Verbatim announces the terminal's text area when it takes
-        /// the focus.
-        text_area: String,
         /// The folder, on the agent's machine, holding the files it uses.
         directory: String,
     },
@@ -572,7 +573,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         local_only: false,
         document: None,
         setup: terminal_commands::setup_windows_terminal,
-        body: terminal_commands::body,
+        body: terminal_commands::body_windows_terminal,
         teardown: terminal_commands::teardown,
     },
     ScenarioDef {
@@ -582,48 +583,128 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         local_only: false,
         document: None,
         setup: terminal_commands::setup_console_host,
-        body: terminal_commands::body,
+        body: terminal_commands::body_console_host,
         teardown: terminal_commands::teardown,
     },
     ScenarioDef {
-        name: "terminal_spoken_password",
+        name: "windows_terminal_spoken_password",
         group: Group::Text,
         settings: Some(terminal_commands::speak_passwords),
         local_only: false,
         document: None,
-        setup: terminal_commands::setup_spoken_password,
-        body: terminal_commands::body_spoken_password,
+        setup: terminal_commands::setup_spoken_password_windows_terminal,
+        body: terminal_commands::body_spoken_password_windows_terminal,
         teardown: terminal_commands::teardown,
     },
     ScenarioDef {
-        name: "terminal_flood",
+        name: "conhost_spoken_password",
+        group: Group::Text,
+        settings: Some(terminal_commands::speak_passwords),
+        local_only: false,
+        document: None,
+        setup: terminal_commands::setup_spoken_password_console_host,
+        body: terminal_commands::body_spoken_password_console_host,
+        teardown: terminal_commands::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_flood",
         group: Group::Text,
         settings: None,
         local_only: false,
         document: None,
-        setup: terminal_flood::setup,
-        body: terminal_flood::body,
+        setup: terminal_flood::setup_windows_terminal,
+        body: terminal_flood::body_windows_terminal,
         teardown: terminal_flood::teardown,
     },
     ScenarioDef {
-        name: "terminal_editing",
+        name: "conhost_flood",
         group: Group::Text,
         settings: None,
         local_only: false,
         document: None,
-        setup: terminal_editing::setup,
-        body: terminal_editing::body,
+        setup: terminal_flood::setup_console_host,
+        body: terminal_flood::body_console_host,
+        teardown: terminal_flood::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_editing",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_editing::setup_windows_terminal,
+        body: terminal_editing::body_windows_terminal,
         teardown: terminal_editing::teardown,
     },
     ScenarioDef {
-        name: "terminal_review_grid",
+        name: "conhost_editing",
         group: Group::Text,
         settings: None,
         local_only: false,
         document: None,
-        setup: terminal_review_grid::setup,
-        body: terminal_review_grid::body,
+        setup: terminal_editing::setup_console_host,
+        body: terminal_editing::body_console_host,
+        teardown: terminal_editing::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_review_grid",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_review_grid::setup_windows_terminal,
+        body: terminal_review_grid::body_windows_terminal,
         teardown: terminal_review_grid::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_review_grid",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_review_grid::setup_console_host,
+        body: terminal_review_grid::body_console_host,
+        teardown: terminal_review_grid::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_progress",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_progress::setup_windows_terminal,
+        body: terminal_progress::body_windows_terminal,
+        teardown: terminal_progress::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_progress",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_progress::setup_console_host,
+        body: terminal_progress::body_console_host,
+        teardown: terminal_progress::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_short_output",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_short_output::setup_windows_terminal,
+        body: terminal_short_output::body_windows_terminal,
+        teardown: terminal_short_output::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_short_output",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: terminal_short_output::setup_console_host,
+        body: terminal_short_output::body_console_host,
+        teardown: terminal_short_output::teardown,
     },
     ScenarioDef {
         name: "system_information_tree",

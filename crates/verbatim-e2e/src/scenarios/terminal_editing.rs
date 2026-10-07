@@ -1,9 +1,10 @@
 //! Correcting a command, typed punctuation, and the review cursor's current
 //! word down a column in a terminal (milestone M4 item 9): the test of what
 //! the `demo_terminal_session` demonstration shows beyond the other
-//! terminal scenarios, in Windows Terminal, or the console host where
-//! Windows Terminal is not installed. The shared setup is described in the
-//! `terminal` module.
+//! terminal scenarios, as `windows_terminal_editing` in Windows Terminal
+//! and `conhost_editing` in the console host, each its own code
+//! (`docs/testing.md`). The shared setup is described in the `terminal`
+//! module.
 //!
 //! What it asserts, each step heard in full before the next:
 //!
@@ -26,7 +27,7 @@
 
 use std::io;
 
-use super::terminal::{self, PROMPT, Terminal};
+use super::terminal::{self, PROMPT};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -54,12 +55,20 @@ pub(crate) fn table_script() -> String {
         .collect()
 }
 
-pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let script = table_script();
-    terminal::open(
+    terminal::open_windows_terminal(
         scenario,
         "terminal-editing",
-        Terminal::WindowsTerminal,
+        &[(SCRIPT_NAME, script.as_str())],
+    )
+}
+
+pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    let script = table_script();
+    terminal::open_console_host(
+        scenario,
+        "terminal-editing",
         &[(SCRIPT_NAME, script.as_str())],
     )
 }
@@ -77,15 +86,64 @@ fn review_text(scenario: &mut Scenario, gesture: &str, text: &str) {
     scenario.speech().expect(&[text]);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
-    terminal::expect_prompt_read(scenario, state);
-    steps(scenario);
+/// `windows_terminal_editing`.
+pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let title = terminal::title(state).to_owned();
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
+    );
+    windows_terminal_steps(scenario);
 }
 
-/// The scenario's steps once the prompt has been read, in a terminal
-/// whose folder holds `moon-table.ps1` ([`SCRIPT_NAME`] and
-/// [`table_script`]).
-pub(crate) fn steps(scenario: &mut Scenario) {
+/// `windows_terminal_editing`'s steps once the prompt has been read, in a
+/// Windows Terminal whose folder holds `moon-table.ps1` ([`SCRIPT_NAME`]
+/// and [`table_script`]).
+pub(crate) fn windows_terminal_steps(scenario: &mut Scenario) {
+    // A typo corrected with Backspace, which speaks what it deleted.
+    type_hearing(scenario, "echo helo");
+    scenario.send_keys(&["backspace"]).expect("sends backspace");
+    scenario.speech().expect(&["o"]);
+    type_hearing(scenario, "lo");
+    scenario.send_keys(&["enter"]).expect("presses enter");
+    scenario.speech().expect(&["hello", PROMPT]);
+
+    // Punctuation echoed by name, then the table printed.
+    type_hearing(scenario, TABLE_COMMAND);
+    scenario.send_keys(&["enter"]).expect("presses enter");
+    let mut printed: Vec<&str> = TABLE.iter().map(|(row, _)| *row).collect();
+    printed.push(PROMPT);
+    scenario.speech().expect(&printed);
+
+    // Up to the header row, onto the Moons column, and down it by word.
+    for (row, _) in TABLE.iter().rev() {
+        review_text(scenario, "kb:numpad7", row);
+    }
+    scenario
+        .send_gesture("kb:shift+numpad1")
+        .expect("sends the gesture");
+    scenario.speech().expect(&["P"]);
+    review_text(scenario, "kb:numpad6", TABLE[0].1);
+    for (row, moons) in &TABLE[1..] {
+        review_text(scenario, "kb:numpad9", row);
+        review_text(scenario, "kb:numpad5", moons);
+    }
+}
+
+/// `conhost_editing`.
+pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let title = terminal::title(state).to_owned();
+    // The console host's text area has no name.
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
     // A typo corrected with Backspace, which speaks what it deleted.
     type_hearing(scenario, "echo helo");
     scenario.send_keys(&["backspace"]).expect("sends backspace");

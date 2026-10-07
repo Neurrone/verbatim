@@ -430,8 +430,8 @@ More environment variables matter for less common cases:
   copying them), since `cargo xtask vm deploy` already staged the
   guest-side equivalent; the same fixed `settings.toml` is still written
   afresh for every scenario, through the agent, next to the guest's
-  Verbatim, so a scenario that changes a setting (`terminal_spoken_password`
-  turns "speak passwords" on) never leaves it changed for the next.
+  Verbatim, so a scenario that changes a setting
+  (`windows_terminal_spoken_password` turns "speak passwords" on) never leaves it changed for the next.
 - `VERBATIM_E2E_AUDIBLE=1` requests an audible run — see "Hearing and
   recording a run" below. Set by hand for a runner-direct audible run;
   `cargo xtask vm test` sets it automatically now, always, since a VM run
@@ -517,16 +517,19 @@ Milestone M4's text scenarios add Notepad editing, word selection, typed
 word echo, the review cursor, and say-all, say-all in a Win32 edit
 control, spelling errors in `mockapp`'s scripted text (`spelling_errors`)
 and in Windows 11 Notepad (`notepad_spelling_errors`, local-only), and
-the terminal scenarios: `windows_terminal_commands`,
-`conhost_commands`, and `terminal_spoken_password` (commands, typed echo,
-and a password prompt whose typing is spoken only with "speak passwords"
-on), `terminal_flood` (three thousand lines of output heard as their first
-30 lines, one exact "skipped 2941 lines", and the last 30; Verbatim+5; and
-the wall-time ratio, saved as `wall-time-ratio.txt` in its artifacts
-directory for trends, never asserted), `terminal_editing` (a
-command corrected with Backspace, punctuation echoed by name, and the
-review cursor's current word down a column), and `terminal_review_grid`
-(the review cursor down a column of a text table).
+the terminal scenarios, each in Windows Terminal (`windows_terminal_`) and in the console host
+(`conhost_`), each its own code: commands (commands, typed echo, and a
+password prompt), spoken_password (its typing spoken with "speak
+passwords" on), flood (two thousand lines of output heard as their first
+30 lines, one exact "skipped 1941 lines", and the last 30; Verbatim+5;
+and the wall-time ratio, saved as `wall-time-ratio.txt` in its artifacts
+directory for trends, never asserted), editing (a command corrected
+with Backspace, punctuation echoed by name, and the review cursor's
+current word down a column), review_grid (the review cursor down a
+column of a text table), progress (a line rewritten in place, each step
+written once the last was heard, spoken whole the first time and then
+by the word that changed), and short_output (one- and two-character
+lines of output, spoken like any other).
 Each terminal scenario opens a window of its own titled
 `verbatim-e2e-<name>-<token>` and closes it by that title, so your own
 terminals are left alone, and runs its shell in a folder of the same name

@@ -1,6 +1,7 @@
 //! A flood of terminal output (milestone M4 item 9 and the M4 exit
-//! criteria; `phase6-design.md`, "Test design decisions"), in Windows
-//! Terminal. The shared setup is described in the `terminal` module.
+//! criteria; `phase6-design.md`, "Test design decisions"), as
+//! `windows_terminal_flood` in Windows Terminal and `conhost_flood` in the
+//! console host. The shared setup is described in the `terminal` module.
 //!
 //! The flood policy: the first "Lines spoken in full" lines of a burst
 //! (30) are spoken whole; only once they have been spoken does Verbatim
@@ -38,16 +39,13 @@
 use std::io;
 use std::time::Duration;
 
-use super::terminal::{self, PROMPT, Terminal};
+use super::terminal::{self, PROMPT};
 use crate::artifacts;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::Ending;
 
 pub(crate) use super::no_teardown as teardown;
-
-/// The scenario's name, also its artifacts directory's.
-const NAME: &str = "terminal_flood";
 
 /// How many lines a flood prints.
 const LINES: u32 = 2_000;
@@ -70,13 +68,12 @@ const FLOOD_STEP: Duration = Duration::from_secs(120);
 const OUTPUT_OFF: &str = "report new output off";
 const OUTPUT_ON: &str = "report new output on";
 
-pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open(
-        scenario,
-        "flood",
-        Terminal::WindowsTerminal,
-        &[("flood.ps1", SCRIPT)],
-    )
+pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_windows_terminal(scenario, "flood", &[("flood.ps1", SCRIPT)])
+}
+
+pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_console_host(scenario, "flood", &[("flood.ps1", SCRIPT)])
 }
 
 /// "flood line `line`".
@@ -88,13 +85,19 @@ fn line(line: u32) -> String {
 /// last group, the burst's last [`GROUP`] lines, of which the prompt is
 /// the last: 29 flood lines and the prompt.
 pub(crate) fn flood_speech() -> Vec<String> {
-    let total = LINES + 1;
-    let mut speech: Vec<String> = (1..=GROUP).map(line).collect();
+    burst_speech(LINES, line)
+}
+
+/// What a burst of `lines` lines named by `name`, and the prompt after
+/// them, says.
+fn burst_speech(lines: u32, name: fn(u32) -> String) -> Vec<String> {
+    let total = lines + 1;
+    let mut speech: Vec<String> = (1..=GROUP).map(name).collect();
     speech.push(format!(
         "sound: skipped-lines skipped {} lines",
         total - 2 * GROUP
     ));
-    speech.extend((LINES - GROUP + 2..=LINES).map(line));
+    speech.extend((lines - GROUP + 2..=lines).map(name));
     speech.push(PROMPT.to_owned());
     speech
 }
@@ -156,20 +159,56 @@ fn silent_flood(scenario: &mut Scenario, directory: &str) -> Duration {
     unreported
 }
 
-pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
+/// `windows_terminal_flood`.
+pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     let ScenarioState::Window { directory, .. } = state else {
         panic!("the flood's setup opens a terminal window");
     };
     let directory = directory.clone();
-    terminal::expect_prompt_read(scenario, state);
-
+    let title = terminal::title(state).to_owned();
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[
+            &format!("{title} window"),
+            &format!("{title} terminal"),
+            "blank",
+        ],
+    );
     heard_flood(scenario, 1);
     let _ = elapsed(scenario, &directory, 1);
     output_off_during_flood(scenario, &directory);
     let unreported = silent_flood(scenario, &directory);
     heard_flood(scenario, 4);
     let reported = elapsed(scenario, &directory, 4);
+    record_ratio("windows_terminal_flood", reported, unreported);
+}
 
+/// `conhost_flood`.
+pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let ScenarioState::Window { directory, .. } = state else {
+        panic!("the flood's setup opens a terminal window");
+    };
+    let directory = directory.clone();
+    let title = terminal::title(state).to_owned();
+    // The console host's text area has no name.
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
+    heard_flood(scenario, 1);
+    let _ = elapsed(scenario, &directory, 1);
+    output_off_during_flood(scenario, &directory);
+    let unreported = silent_flood(scenario, &directory);
+    heard_flood(scenario, 4);
+    let reported = elapsed(scenario, &directory, 4);
+    record_ratio("conhost_flood", reported, unreported);
+}
+
+/// Records, in the artifacts of the scenario `name`, how much reporting
+/// the terminal's output slowed the flood down.
+fn record_ratio(name: &str, reported: Duration, unreported: Duration) {
     let ratio = reported.as_secs_f64() / unreported.as_secs_f64().max(0.001);
     let report = format!(
         "flood with output reported: {} ms\nflood with output not reported: {} ms\nwall-time ratio: {ratio:.2}\n",
@@ -177,7 +216,7 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
         unreported.as_millis()
     );
     print!("{report}");
-    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), NAME);
+    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), name);
     std::fs::create_dir_all(&dir)
         .and_then(|()| std::fs::write(dir.join("wall-time-ratio.txt"), &report))
         .expect("saves the wall-time ratio with the run's artifacts");

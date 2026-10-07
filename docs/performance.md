@@ -787,7 +787,7 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
 ### A terminal flood
 
 What Verbatim costs a terminal while ten thousand lines are written as
-fast as PowerShell can write them (`terminal_flood`'s script) into a full
+fast as PowerShell can write them (the flood scenarios' script) into a full
 scrollback of 9,001 lines, measured on 2026-10-07 on a 12-thread x64
 desktop with a debug build. Each time is one flood's own stopwatch; the
 probes that split the cost apart registered and read exactly as the
@@ -837,7 +837,7 @@ Windows Terminal:
   a line at a time), busy for 6 to 10 percent of the flood.
 - Read back to back with no events, it would take 1.6 to 1.8 seconds.
 
-The wall-time ratio `terminal_flood` checks compares a flood with output
+The wall-time ratio the flood scenarios record compares a flood with output
 reported against one with it turned off, and the outpost reads the
 terminal either way (turning reporting off is Core's), so the ratio is
 about 1 by construction and does not measure the reads' cost; the

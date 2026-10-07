@@ -1308,11 +1308,9 @@ impl Scenario {
         }
         for name in names {
             let remote_path = format!(r"{logs_dir}\{name}");
-            if let Err(error) = self
-                .agent
-                .read_file(&remote_path)
-                .and_then(|bytes| fs::write(dir.join(&name), bytes))
-            {
+            // In chunks: an outpost's debug log over a long flood is larger
+            // than one read may be.
+            if let Err(error) = self.agent.copy_file(&remote_path, &dir.join(&name)) {
                 problems.push(format!("could not collect {remote_path}: {error}"));
             }
         }
