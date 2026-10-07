@@ -824,7 +824,9 @@ verified.
   written with a combining acute accent is spelled as the capital "É",
   and a capital is a character with some uppercase letter and no
   lowercase one, so a capital with accents that have no precomposed form
-  is still raised.
+  is still raised. A capital's description is its small letter's by the
+  text's language, so Turkish İ is described as i, and the table names
+  the ideographic space (U+3000), since 2026-10-08.
 - Toggle key announcements ("caps lock on", "num lock off", "scroll lock
   on") when a lock key reaches the operating system, including Caps Lock
   passed through by a double tap of the Verbatim key. NVDA:

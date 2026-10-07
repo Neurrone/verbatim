@@ -773,18 +773,31 @@ pub fn character_name(character: &str, language: Option<&str>) -> Option<String>
 
 /// The description a character is spoken by when it is asked for twice
 /// ("Alfa" for a), from the character table of `language`; a capital
-/// letter has its small letter's description. `None` when the table has
-/// none for it.
+/// letter has its small letter's description, by the language's casing:
+/// in Turkish and Azerbaijani the small letter of I is the dotless ı, and
+/// of the dotted İ is i. `None` when the table has none for it.
 #[must_use]
 pub fn character_description(character: &str, language: Option<&str>) -> Option<String> {
     let code = single_code_point(character)?;
-    let mut lower = char::from_u32(code)?.to_lowercase();
-    let first = lower.next()?;
-    if lower.next().is_some() {
-        return None;
-    }
+    let capital = char::from_u32(code)?;
+    let turkic = language.is_some_and(|tag| {
+        let primary = tag.split(['-', '_']).next().unwrap_or("");
+        primary.eq_ignore_ascii_case("tr") || primary.eq_ignore_ascii_case("az")
+    });
+    let small = match capital {
+        'I' if turkic => '\u{131}',
+        '\u{130}' if turkic => 'i',
+        _ => {
+            let mut lower = capital.to_lowercase();
+            let first = lower.next()?;
+            if lower.next().is_some() {
+                return None;
+            }
+            first
+        }
+    };
     lookup(
-        &format!("character-description-{:04x}", u32::from(first)),
+        &format!("character-description-{:04x}", u32::from(small)),
         language,
     )
 }
@@ -1711,6 +1724,10 @@ mod tests {
             character_name("\u{2068}", None).as_deref(),
             Some("first strong isolate")
         );
+        assert_eq!(
+            character_name("\u{3000}", None).as_deref(),
+            Some("ideographic space")
+        );
         assert_eq!(character_name("a", None), None);
         assert_eq!(character_name("ab", None), None);
         // A language with no table of its own falls back to English.
@@ -1721,6 +1738,15 @@ mod tests {
     fn character_descriptions_are_the_phonetic_alphabet() {
         assert_eq!(character_description("a", None).as_deref(), Some("Alfa"));
         assert_eq!(character_description("X", None).as_deref(), Some("Xray"));
+        // Turkish casing: the small letter of I is the dotless ı, which the
+        // table does not describe, and of the dotted İ is i.
+        assert_eq!(character_description("I", None).as_deref(), Some("India"));
+        assert_eq!(character_description("I", Some("tr-TR")), None);
+        assert_eq!(
+            character_description("\u{130}", Some("tr")).as_deref(),
+            Some("India")
+        );
+        assert_eq!(character_description("\u{130}", None), None);
         assert_eq!(character_description(",", None), None);
     }
 

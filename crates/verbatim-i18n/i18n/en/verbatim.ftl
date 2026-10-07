@@ -488,6 +488,7 @@ character-name-2192 = right arrow
 character-name-2193 = down arrow
 character-name-2713 = check
 character-name-2714 = check
+character-name-3000 = ideographic space
 
 ## Character descriptions, spoken when the current character is asked for
 ## twice and when text is spelled with descriptions; keyed like the names.
