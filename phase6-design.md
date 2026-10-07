@@ -2166,3 +2166,5 @@ A read-only audit found these, ranked by how likely a user of the language is to
 12. ANSI rich edit windows are decoded by the window's flag rather than by the buffer, as NVDA does.
 
 Lower likelihood: kanji-only Japanese segmented as Chinese, and Han outside the BMP; locale-free word rules ("EU:n"); text chunks cut mid-surrogate or mid-grapheme; East Asian Ambiguous cell widths; Cherokee as capitals; Turkish casing for a future table; the ideographic space unnamed.
+
+Decisions on the language audit (Dickson, 2026-10-08): automatic language switching (item 6) is on the roadmap under M8, not in this package; with a text-service keyboard outside Chinese, Japanese and Korean active (item 4), Verbatim stays silent instead of echoing raw keys, until composed echo arrives with the D2 injection helper (M6, also on the roadmap).
