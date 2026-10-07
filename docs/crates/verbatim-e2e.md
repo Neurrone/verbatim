@@ -260,8 +260,9 @@ The groups:
   through a new outpost), `explorer_folder_window`, and
   `settings_system_page` (the list focused by its UI Automation
   identifier through the agent).
-- Navigation: `object_navigation_in_settings` and
-  `system_information_tree`.
+- Navigation: `object_navigation_in_settings` (over MSAA, in Verbatim's
+  own dialog), `object_navigation_over_uia` (over UIA, in `mockapp`'s
+  provider), and `system_information_tree`.
 - Text: the editing scenarios, each in the Windows Forms text box and in
   Windows 11 Notepad, each its own code (`text_box_editing` and
   `notepad_editing`, `_review_cursor`, `_review_words`, `_typed_words`,

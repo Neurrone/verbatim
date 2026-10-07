@@ -26,6 +26,7 @@ pub(crate) mod menu_and_settings_dialog;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
 pub(crate) mod object_navigation_in_settings;
+pub(crate) mod object_navigation_over_uia;
 pub(crate) mod outpost_crash_recovery;
 pub(crate) mod rapid_tabbing_in_settings;
 pub(crate) mod review_cursor;

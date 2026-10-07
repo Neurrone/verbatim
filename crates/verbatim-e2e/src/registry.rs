@@ -73,7 +73,9 @@
 //! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
 //!   commands (`docs/roadmap.md`'s M3 section) —
 //!   [`object_navigation_in_settings`](crate::scenarios::object_navigation_in_settings)
-//!   against Verbatim's own settings dialog, and
+//!   against Verbatim's own settings dialog,
+//!   [`object_navigation_over_uia`](crate::scenarios::object_navigation_over_uia)
+//!   against `mockapp`'s UIA provider, and
 //!   [`system_information_tree`](crate::scenarios::system_information_tree)
 //!   against msinfo32's real Win32 tree view over MSAA, which is also the
 //!   suite's MSAA-only legacy application (the M3 exit item).
@@ -123,12 +125,12 @@ use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
     demo_terminal_session, editing, explorer_folder_window, lock_key_announcements,
     menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
-    object_navigation_in_settings, outpost_crash_recovery, rapid_tabbing_in_settings,
-    review_cursor, review_words, second_application_and_verbatim_menu, settings_dialog_keys,
-    settings_system_page, spelling_errors, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree, terminal_commands, terminal_editing, terminal_flood,
-    terminal_progress, terminal_review_grid, terminal_settings_page, terminal_short_output,
-    text_box_say_all, theme_panel, typed_words, word_selection,
+    object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery,
+    rapid_tabbing_in_settings, review_cursor, review_words, second_application_and_verbatim_menu,
+    settings_dialog_keys, settings_system_page, spelling_errors, switch_to_onecore,
+    synth_host_crash_recovery, system_information_tree, terminal_commands, terminal_editing,
+    terminal_flood, terminal_progress, terminal_review_grid, terminal_settings_page,
+    terminal_short_output, text_box_say_all, theme_panel, typed_words, word_selection,
 };
 
 /// Environment variable that, set to `1`, says the run has no Windows 11
@@ -705,6 +707,16 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: terminal_short_output::setup_console_host,
         body: terminal_short_output::body_console_host,
         teardown: terminal_short_output::teardown,
+    },
+    ScenarioDef {
+        name: "object_navigation_over_uia",
+        group: Group::Navigation,
+        settings: None,
+        local_only: false,
+        document: None,
+        setup: object_navigation_over_uia::setup,
+        body: object_navigation_over_uia::body,
+        teardown: object_navigation_over_uia::teardown,
     },
     ScenarioDef {
         name: "system_information_tree",
