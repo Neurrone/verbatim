@@ -1157,6 +1157,22 @@ impl Worker<'_> {
         };
         let registry = &self.context.msaa_registry;
         if kind == WinEventKind::Selection {
+            // A tree view item selected on its way to the focus, from one of
+            // its children, is one of the focus's logical ancestors only:
+            // NVDA, whose ancestors are reached through `accParent`, sees it
+            // as neither the focus nor an ancestor, and says nothing of it.
+            if object
+                .which_of(&self.logical_ancestors(), registry)
+                .is_some()
+            {
+                tracing::debug!(
+                    hwnd,
+                    id_object,
+                    id_child,
+                    "MSAA selection dropped: a logical ancestor of the focus only"
+                );
+                return;
+            }
             let node = object.read(registry, Purpose::Announce);
             let event = NormalizedEvent::SelectionChanged { node };
             self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
@@ -1260,8 +1276,17 @@ impl Worker<'_> {
     ) -> Option<NodeId> {
         let (focus, mut candidates) = {
             let tracking = self.context.tracking();
+            // The ancestors NVDA has are those reached through `accParent`,
+            // not the focus's logical ones ([`Self::logical_ancestors`]):
+            // their state changes are not spoken, as selecting a tree item's
+            // parent on its way to the focus would otherwise say "selected".
             let ancestors: Vec<NodeId> = if kind == WinEventKind::StateChange {
-                tracking.chain.iter().map(|node| node.id).collect()
+                tracking
+                    .chain
+                    .iter()
+                    .map(|node| node.id)
+                    .filter(|&id| !self.is_logical_ancestor(id))
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -1271,6 +1296,33 @@ impl Worker<'_> {
         object
             .which_of(&candidates, &self.context.msaa_registry)
             .map(|_| focus)
+    }
+
+    /// Whether `node`, one of the focus's ancestors, was reached through a
+    /// tree view item's logical parents
+    /// (`verbatim_ia2::acquire::ancestor_chain`) rather than `accParent`:
+    /// `accParent` only ever reaches whole objects, so an ancestor that is a
+    /// simple child of its window's object is a logical one.
+    fn is_logical_ancestor(&self, node: NodeId) -> bool {
+        self.context
+            .msaa_registry
+            .key_of(node)
+            .is_some_and(|(_, _, child)| child != CHILDID_SELF)
+    }
+
+    /// The focus's logical ancestors ([`Self::is_logical_ancestor`]).
+    fn logical_ancestors(&self) -> Vec<NodeId> {
+        let chain: Vec<NodeId> = self
+            .context
+            .tracking()
+            .chain
+            .iter()
+            .map(|node| node.id)
+            .collect();
+        chain
+            .into_iter()
+            .filter(|&id| self.is_logical_ancestor(id))
+            .collect()
     }
 
     /// A UIA event from this outpost's own subscriptions.

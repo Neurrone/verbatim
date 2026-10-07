@@ -445,6 +445,48 @@ fn roles(nodes: &[NodeSnapshot]) -> Vec<Role> {
     nodes.iter().map(|node| node.role).collect()
 }
 
+/// Left Arrow from a tree item to its parent selects the parent and moves
+/// the focus to it. The parent is the item's logical ancestor, through the
+/// control's own messages, but NVDA's ancestors are those reached through
+/// `accParent`, of which a tree view item's is the control: the parent's
+/// state change as it is selected is not spoken, and moving to it says
+/// only its announcement.
+fn moving_to_a_tree_items_parent_says_only_the_parent() {
+    use windows::Win32::UI::Controls::{TVGN_CARET, TVM_SELECTITEM};
+    common::init_com();
+    let title = common::unique_title("mockapp-native-tree-parent");
+    let app = common::spawn("tree_view.json", "msaa", &title);
+    let tree = tree_view(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    let mut state = SrState::new();
+    let disks = focus_item(&outpost, tree, "Disks");
+    let _ = spoken_in(&mut state, &disks);
+    common::tree_view::send(
+        tree,
+        TVM_SELECTITEM,
+        TVGN_CARET as usize,
+        common::tree_view::item(tree, "Hardware"),
+    );
+    // The focus is the first thing the outpost says after the selection.
+    let hardware = focus_item(&outpost, tree, "Hardware");
+    assert_eq!(hardware.node.name.as_deref(), Some("Hardware"));
+    assert_eq!(
+        spoken_in(&mut state, &hardware),
+        [vec![
+            SegmentContent::Level(0),
+            SegmentContent::Label("Hardware".to_owned()),
+            SegmentContent::State(State::Mixed),
+            SegmentContent::State(State::Expanded),
+            SegmentContent::Position {
+                position: 1,
+                set_size: Some(3)
+            },
+        ]]
+    );
+    app.quit();
+}
+
 fn main() {
     harness::run(&[
         (
@@ -470,6 +512,10 @@ fn main() {
         (
             "other_tree_items_keep_a_value_that_is_not_a_number",
             other_tree_items_keep_a_value_that_is_not_a_number,
+        ),
+        (
+            "moving_to_a_tree_items_parent_says_only_the_parent",
+            moving_to_a_tree_items_parent_says_only_the_parent,
         ),
     ]);
 }

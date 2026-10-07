@@ -266,7 +266,14 @@ verified.
     hands out the same object each time; NVDA compares such objects by
     their properties too. UIA delivers no ancestor's events to the
     focus-following registration ("UIA event registration"), so a UIA
-    ancestor's state change is still not spoken.
+    ancestor's state change is still not spoken. The ancestors are NVDA's, those
+    reached through `accParent`: a tree view item's logical parents,
+    which Verbatim reads among the focus's ancestors through the
+    control's own messages, are not NVDA's ancestors, whose tree view
+    items are the control's children, so their state changes and
+    selections are not spoken (since 2026-10-08, after Left Arrow to a
+    tree item's parent said "selected" before the parent; the
+    `native_controls` mockapp test, on a real tree view).
   - Dialog text, which NVDA reads on entering a dialog: a message box's
     question, read after the dialog's title and role and before its
     focused button. **Matched since 2026-10-07** ("A dialog's own text" in
