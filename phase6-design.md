@@ -2098,3 +2098,22 @@ Decisions (Dickson, 2026-10-07):
 - Pausing speech with Shift: a paused queue does not drain, so Core does not ask for more output, and resuming lets it drain and ask again; on-demand reading needs no special case for it.
 - Long lines and the memory bound (Dickson, 2026-10-07): the per-line 4 KB cut is removed, so a line is spoken whole, as NVDA speaks it. Core's waiting terminal output is bounded at 10 MB in total, so extremely long output is not cut; if the bound is ever reached, the oldest waiting lines join the skipped count. A single line larger than the whole bound is cut on a grapheme boundary and Verbatim says it was cut. Long lines must be read correctly end to end: a line far longer than the terminal's width, one that keeps growing past any earlier size, and change detection on such a line, each tested exactly, with reads sized to fit the outpost's message limit.
 - A limit on outpost messages (Dickson, 2026-10-07): messages between Core and an outpost, newline-delimited JSON over anonymous pipes, had no size limit, so an enormous line from an application could make the reader allocate without bound. Each message is now limited to 32 MB in both directions (room for 10 MB of terminal output and JSON's escaping); the outpost splits a large terminal read across messages so it never reaches the limit, and a reader that receives a larger message treats the other end as failed (an outpost is restarted, as after a crash) rather than reading on. Tested: the split, the limit, and the rejection.
+
+## MSAA audit against NVDA (2026-10-07)
+
+A read-only audit compared Verbatim's MSAA handling with NVDA's. The tree view focus race (Verbatim announcing a tree view before its item, because the item's focus event is still on its way) is fixed by asking a child-0 focus's accFocus and reporting the focused child, NVDA's outcome reached deterministically. The rest form an MSAA work package, each matched to NVDA with a test meeting docs/testing.md, unless docs/parity.md records a deliberate difference, which is then brought to Dickson:
+
+- Windows Forms tree views get none of the SysTreeView32 handling (class names are compared raw, not normalized as NVDA does): no position, flat navigation, no expanded count.
+- Progress bars: NVDA beeps on value changes of any progress bar in the foreground; Verbatim never emits its progress indication.
+- Group boxes as context, and multi-column list view item names ("content; Header: content"), already recorded as gaps.
+- Tree view check boxes read from the item's state image.
+- Help balloons through the show event.
+- Owner-drawn controls' display text (needs a display model; M14).
+- Description changes, and state changes on the focus's ancestors.
+- Verbatim speaks MSAA selections, and a focused list's selected child, where NVDA does not.
+- Tree items outside SysTreeView32: NVDA keeps a non-numeric value and takes no level from it.
+- A focused list view group header.
+- MSAA roles and states with no mapping (IP address, clock, grip and others; busy indicator; traversed and linked).
+- Lower likelihood: IME candidate lists, Scintilla editors, Qt containers' focus redirect, alert-role objects, repeating accFocus until it settles, the caret show event, focus events separated by other events in one batch, and the focused-state check reading ancestors' states as last read.
+
+MSAA calls Verbatim makes more often than NVDA, for the call-count reduction: accRole twice per child-0 focus; a rejected focus read in full before the focused-state check; a repeated focus read in full; full snapshots for events on objects that are not the focus; tree item sibling counts on every read, ancestors included; expanded child counts on every state change; selected-child reads NVDA does not make.
