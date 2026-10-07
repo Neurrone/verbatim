@@ -864,7 +864,7 @@ mod tests {
         ]);
         let message = fails(move || speech.expect(&["first", "second"]));
         assert!(
-            message.contains("first difference: utterance 1, character 0"),
+            message.contains("first difference: utterance 1, character 1"),
             "{message}"
         );
     }
@@ -873,7 +873,7 @@ mod tests {
     fn a_text_that_only_contains_the_expected_text_fails() {
         let mut speech = collector(vec![queued(1, "Rate slider 119")]);
         let message = fails(move || speech.expect(&["Rate slider 19"]));
-        assert!(message.contains("character 12"), "{message}");
+        assert!(message.contains("character 13"), "{message}");
     }
 
     #[test]
