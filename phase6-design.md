@@ -2035,3 +2035,16 @@ The order from here: the say-all change (item 10), then the terminal
 measurements (items 2 and 4), then the MSAA call counts (item 12, which
 item 5 is part of), with the instruction-limit measurements (item 11)
 alongside as build slots allow.
+
+## Test design decisions (2026-10-07)
+
+An audit of the tests found shortcuts throughout; Dickson's standard is that each test targets one fixed application and one code path and asserts one exact behaviour, with no alternatives that depend on the machine. Decisions so far:
+
+- Editing scenarios exist twice: against a Windows Forms text box (MSAA and the edit control's messages, run everywhere) and against Windows 11 Notepad (UIA, local-only). Spelling errors and other formatting have tests of their own.
+- Terminal scenarios exist twice: in Windows Terminal and in the console host, each strict, with the window's owning program asserted.
+- `explorer_folder_window` keeps its own folder (deleted at the end) but asserts exact speech; Explorer's window announcement on GitHub's runner is to be understood and asserted exactly, not tolerated.
+- `settings_system_page` is acceptable; if the list can be focused directly rather than by Tabbing, do that.
+- `start_menu_search` is removed: without IAccessible2 support it tests nothing useful.
+- `switch_to_onecore` switches to Microsoft David and requires that exact voice; if GitHub's runner lacks it, that is found out there.
+- Each step gets a response-time budget, from event to queued speech and to audio, set from measurements on this machine.
+- The terminal flood test is redesigned for deterministic output (see the flood policy question put to Dickson on 2026-10-07).
