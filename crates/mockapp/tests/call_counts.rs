@@ -325,9 +325,11 @@ fn msaa_focus_changes_cost_exactly() {
     );
 
     // A value change on an object that is not the focus is told from the
-    // focus by its identity, and nothing of it is read: only its
-    // acquisition is counted, before the focus's own value change, which
-    // comes after it from the same hook and is read and reported.
+    // focus by its identity, and only its role is read, to know whether it
+    // is a progress bar, whose changes are reported off the focus too: its
+    // acquisition and role are counted before the focus's own value
+    // change, which comes after it from the same hook and is read and
+    // reported.
     common::reset_hits(hwnd);
     app.send("set-value first Changed");
     app.send("set-value item2 Picked");
@@ -353,12 +355,12 @@ fn msaa_focus_changes_cost_exactly() {
         },
         calls(0, 11, 0),
         &[
-            ("accParent", 1),
+            ("accParent", 2),
             ("get_accChild", 2),
             ("get_accName", 1),
             ("get_accValue", 1),
             ("get_accDescription", 1),
-            ("get_accRole", 2),
+            ("get_accRole", 3),
             ("get_accState", 1),
             ("get_accKeyboardShortcut", 1),
             ("accLocation", 1),

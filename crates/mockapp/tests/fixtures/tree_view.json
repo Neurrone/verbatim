@@ -13,6 +13,7 @@
         { "id": "drafts", "role": "tree_item", "name": "Drafts", "value": "Unread", "states": ["focusable"] }
       ]
     },
+    { "id": "copying", "role": "progress_bar", "name": "Copying", "value": "10" },
     {
       "id": "tree",
       "role": "tree",

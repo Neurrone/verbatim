@@ -426,8 +426,11 @@ reading any of its properties.
 
 - Before the MSAA work package (2026-10-07): every such event read the
   object in full, 7 MSAA calls and its acquisition.
-- Today: its acquisition only (mockapp answers `get_accChild` and
-  `accParent` once each for it), and the focus's change 11 MSAA calls.
+- Today: its acquisition and its role only, the role read to know
+  whether it is a progress bar, whose value changes are reported off the
+  focus too (mockapp answers `get_accChild`, `accParent`, and
+  `get_accRole` once each for it), and the focus's change 11 MSAA calls.
+  A progress bar off the focus is then read in full, as NVDA reads one.
   `WM_GETOBJECT` is not pinned here, as the window's backend probe it
   answers is renewed at a time that depends on how long the test took.
 

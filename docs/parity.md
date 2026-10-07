@@ -648,8 +648,20 @@ verified.
 - Value change on focused node speaks bare value (slider drag), not
   for an edit field or document, not when unchanged, and not for a role
   that never speaks its value. Verbatim: **matched since 2026-10-02**
-  (source-checked). Background progress bar
-  reporting (NVDA option): **not yet**.
+  (source-checked). A progress bar's value changes, focused or not, by
+  NVDA's progress bar behavior ("How a progress bar reports its value" in
+  [Object model](nvda/object-model.md)): **matched since 2026-10-07** for
+  MSAA (reducer tests and the `msaa_events` mockapp test). Verbatim's
+  progress indication, a tone by default (D12), is given once the
+  percentage moves by a percent from the last one indicated at that
+  place, and the value is not spoken; an off-screen or invisible progress
+  bar, or one whose value is no number, is an ordinary value change.
+  **Different:** a theme that reports the indication as speech speaks it
+  at the same one-percent interval, where NVDA's speech mode speaks every
+  ten percent. A UIA progress bar is reported only while it is the focus,
+  since UIA's property events are followed on the focus alone ("UIA event
+  registration"). Background progress bar reporting (NVDA option, off by
+  default): **not yet**.
 - State-change diff announcements (gained states; lost states spoken
   by their absence, including half checked becoming "not checked").
   Verbatim: **matched since 2026-10-02** (source-checked).
@@ -1256,7 +1268,8 @@ verified.
   be decided. Line indentation tones are **not yet**: indentation is not
   reported yet. Which events produce earcons (start and exit, browse and
   focus mode, suggestions, progress bars, logged errors) is the shell's
-  and later milestones' to wire; the reducer emits none of them yet.
+  and later milestones' to wire; the reducer emits the progress
+  indication since 2026-10-07, and none of the others yet.
 - Verbosity settings (report object descriptions, position information,
   keyboard shortcuts, and the document formatting options). NVDA:
   checkboxes in the Object Presentation and Document Formatting panels

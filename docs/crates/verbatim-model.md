@@ -60,7 +60,9 @@ Public API:
   `PropertyChanged` (name, value, description, or the complete new
   `States` set, with a `child_count` the outpost reads only for a state
   change that newly expands the focus, a Win32 tree view item),
-  `ValueChanged`, `SelectionChanged` (a node was selected within its
+  `ValueChanged`, `ProgressChanged` (a visible progress bar's value
+  changed, focused or not, with its snapshot, whose location the reducer
+  remembers the last indication by), `SelectionChanged` (a node was selected within its
   container, carrying its snapshot), `ControlledSelection` (a node was
   selected inside an element the focus controls through UIA's
   ControllerFor relation, carrying the controlling focus's id and the

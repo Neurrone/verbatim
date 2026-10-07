@@ -165,6 +165,7 @@ pub fn snapshot_from_event(
 pub struct EventObject {
     acc: Accessible,
     key: MsaaKey,
+    role: Prefetched,
 }
 
 /// Acquires the object a `WinEvent` names, reading nothing of it. `None`
@@ -174,6 +175,7 @@ pub fn event_object(hwnd: isize, id_object: i32, id_child: i32) -> Option<EventO
     Some(EventObject {
         acc: Accessible::from_event(hwnd, id_object, id_child)?,
         key: (hwnd, id_object, id_child),
+        role: Prefetched::Unread,
     })
 }
 
@@ -197,27 +199,43 @@ impl EventObject {
         }
     }
 
-    /// The object's role, one call.
-    #[must_use]
-    pub fn role(&self) -> Role {
-        self.acc
-            .role()
-            .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
+    /// The object's role, one call, kept for the read that may follow.
+    pub fn role(&mut self) -> Role {
+        let role = self.role.or_read(|| self.acc.role());
+        self.role = Prefetched::Read(role);
+        role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
     }
 
     /// Reads the object for `purpose`, as [`snapshot_from_event`] does.
     #[must_use]
     pub fn read(self, registry: &NodeIdRegistry, purpose: Purpose) -> NodeSnapshot {
-        read_snapshot_with(
+        self.read_with_visibility(registry, purpose).0
+    }
+
+    /// [`read`](Self::read), and whether the object is visible: MSAA's
+    /// invisible state, which the model has no state for, read with the
+    /// rest.
+    #[must_use]
+    pub fn read_with_visibility(
+        self,
+        registry: &NodeIdRegistry,
+        purpose: Purpose,
+    ) -> (NodeSnapshot, bool) {
+        let state = self.acc.state();
+        let visible = state
+            .is_none_or(|state| state.cast_unsigned() & crate::map::STATE_SYSTEM_INVISIBLE == 0);
+        let node = read_snapshot_with(
             &self.acc,
             self.key,
             Reading {
                 at_address: true,
                 purpose,
-                ..Reading::default()
+                role: self.role,
+                state: Prefetched::Read(state),
             },
             registry,
-        )
+        );
+        (node, visible)
     }
 }
 

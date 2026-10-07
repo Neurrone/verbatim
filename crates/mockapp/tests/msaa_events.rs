@@ -17,7 +17,7 @@ mod harness;
 
 use verbatim_core::SrState;
 use verbatim_model::{
-    Backend, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent, State, TraceId,
+    Backend, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent, State, TraceId,
 };
 use verbatim_outpost::protocol::OutpostToSupervisor;
 
@@ -165,8 +165,56 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
     app.quit();
 }
 
+/// A progress bar that is not the focus indicates each change of its
+/// percentage by a tone at once, as NVDA's progress bar behavior beeps,
+/// when it moves by at least one percent; a value that is not a number is
+/// an ordinary value change, silent off the focus.
+fn a_progress_bar_off_the_focus_indicates_its_percentage() {
+    /// mockapp's scripted Inbox item, by its index in its tree.
+    const INBOX: usize = 2;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-progress");
+    let mut app = common::spawn("tree_view.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut state = SrState::new();
+    let reported = outpost.msaa_focus(hwnd, INBOX);
+    let _ = spoken(&mut state, focus_event(&reported));
+
+    let mut indicated = |value: &str| {
+        app.send(&format!("set-value copying {value}"));
+        let mut event = next_event(&outpost);
+        outpost.settled();
+        assert!(
+            matches!(event, NormalizedEvent::ProgressChanged { .. }),
+            "{event:?} reports a progress bar"
+        );
+        event.assign_outpost(OutpostId(1));
+        verbatim_core::reduce(
+            &mut state,
+            &Input::Event {
+                trace_id: TraceId::mint(),
+                observed_at_ms: 0,
+                source: Pid(1),
+                backend: Backend::Msaa,
+                window: None,
+                event,
+            },
+        )
+    };
+    assert_eq!(indicated("40"), [Effect::PlayEarcon(Earcon::Progress(40))]);
+    assert_eq!(indicated("40.5"), [], "less than a percent from the last");
+    assert_eq!(indicated("55%"), [Effect::PlayEarcon(Earcon::Progress(55))]);
+    assert_eq!(indicated("Paused"), [], "not a number, and not the focus");
+    app.quit();
+}
+
 fn main() {
     harness::run(&[
+        (
+            "a_progress_bar_off_the_focus_indicates_its_percentage",
+            a_progress_bar_off_the_focus_indicates_its_percentage,
+        ),
         (
             "a_description_change_on_the_focus_is_spoken",
             a_description_change_on_the_focus_is_spoken,

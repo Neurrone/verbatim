@@ -346,6 +346,7 @@ fn role_from_fixture_str(name: &str) -> Option<Role> {
         "status_bar" => Role::StatusBar,
         "tree" => Role::Tree,
         "tree_item" => Role::TreeItem,
+        "progress_bar" => Role::ProgressBar,
         "unknown" => Role::Unknown,
         _ => return None,
     })
@@ -410,6 +411,7 @@ mod tests {
             ("status_bar", Role::StatusBar),
             ("tree", Role::Tree),
             ("tree_item", Role::TreeItem),
+            ("progress_bar", Role::ProgressBar),
             ("unknown", Role::Unknown),
         ] {
             assert_eq!(

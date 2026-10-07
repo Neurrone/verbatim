@@ -161,6 +161,16 @@ pub enum NormalizedEvent {
         /// Snapshot of the selected node.
         node: NodeSnapshot,
     },
+    /// A progress bar's value changed, whether or not it has the focus
+    /// (`docs/nvda/object-model.md`, "How a progress bar reports its
+    /// value"); reported in place of [`NormalizedEvent::ValueChanged`] for
+    /// a visible progress bar.
+    ProgressChanged {
+        /// Snapshot of the progress bar, with its new value, its states,
+        /// and its location, by whose centre the last report is
+        /// remembered.
+        node: NodeSnapshot,
+    },
     /// A node was selected inside an element the focus controls (its UIA
     /// `ControllerFor` relation), such as a search result while the focus
     /// stays in the search box. The reducer speaks it as a focus and moves
@@ -271,7 +281,9 @@ impl NormalizedEvent {
                     selected.assign_outpost(outpost);
                 }
             }
-            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+            NormalizedEvent::SelectionChanged { node }
+            | NormalizedEvent::ProgressChanged { node }
+            | NormalizedEvent::Alert { node } => {
                 node.assign_outpost(outpost);
             }
             NormalizedEvent::ControlledSelection { controller, node } => {

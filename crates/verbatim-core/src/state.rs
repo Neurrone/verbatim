@@ -506,7 +506,17 @@ pub struct SrState {
     /// `docs/nvda/speech.md`).
     #[serde(default)]
     pub(crate) last_tree_level: Option<u32>,
+    /// The percentage each progress bar last indicated, in hundredths, by
+    /// the centre of its location on the screen, as NVDA remembers it
+    /// (`docs/nvda/object-model.md`, "How a progress bar reports its
+    /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
+    #[serde(default)]
+    pub(crate) progress_reported: Vec<((i32, i32), u32)>,
 }
+
+/// How many progress bars' last indications are remembered: more than are
+/// ever reporting at once.
+pub(crate) const PROGRESS_BARS_KEPT: usize = 32;
 
 impl SrState {
     /// An initial state with no focus, no attention, and nothing pending.
