@@ -717,6 +717,27 @@ verified.
   among the focus's ancestors (`event_alert` on IAccessible objects).
   Verbatim: **not yet**: it has the alert role (UIA and MSAA map to it),
   but no alert events, so it reports no other alerts.
+- Items of the MSAA audit of 2026-10-07 still **not yet**, each found
+  against NVDA's source:
+  - A focused list view group header. When a focus event names a
+    `SysListView32` itself and one of its group headers has the focus
+    (`LVM_GETFOCUSEDGROUP`), NVDA makes the group the focus, named by its
+    header, its footer as its value, collapsed or expanded, inside the
+    list view, reading the group through its in-process helper. A
+    control's group focus exists only while it has the keyboard focus,
+    which mockapp's tests do not give it, so this waits for an end-to-end
+    scenario to be tested against.
+  - NVDA asks `accFocus` again of what `accFocus` answered, until it
+    answers the same object, when it reads the focus on request; Verbatim
+    asks once.
+  - NVDA handles the system caret's show event as a caret event on the
+    focus; Verbatim follows the caret's location changes only, and reads
+    the caret after every focus anyway.
+  - NVDA handles each focus event of a batch in order once another kind
+    of event follows it, so a focus separated from a later one by other
+    events is still handled; Verbatim handles a batch's newest focus
+    first and falls back to older ones only when it cannot be reported.
+  - An alert-role object's alert event, as above.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
 
