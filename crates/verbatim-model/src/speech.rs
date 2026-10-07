@@ -246,6 +246,8 @@ pub enum Message {
     MoveToFocus,
     /// A navigator command with no navigator — "No navigator object".
     NoNavigatorObject,
+    /// Reporting the focus with nothing focused — NVDA's "No focus".
+    NoFocus,
     /// The navigator object was activated — NVDA's "Activate".
     Activate,
     /// Nothing could be activated — NVDA's "No action".

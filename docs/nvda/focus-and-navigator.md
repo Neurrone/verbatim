@@ -44,6 +44,32 @@ announces the landed-on object via
 `speech.speakObject(obj, reason=OutputReason.FOCUS)`-style reporting;
 hitting an edge reports "No parent" / "No next" etc. and stays put.
 
+## Reporting the focus
+
+NVDA+Tab, bound for every layout, reports the focus object, wherever the
+navigator is, and moves neither the navigator nor the review cursor.
+
+- Pressed once, it speaks the focus exactly as reporting the current
+  object speaks the navigator object on its first press: the object
+  alone, without the containers above it, as a query, so the role is
+  always spoken and every state is (focused, and selected on a list item,
+  included), with the value, description, keyboard shortcut and position.
+  An object with text says its text in place of its value, as a focus
+  does: "selected" and the selected text when there is a selection,
+  otherwise the line at the caret, "blank" for an empty one ("What an
+  object with text says" in [Speech](speech.md)).
+- Pressed twice, it spells the focus object's name, and only the name:
+  not its value, and not its selected text or caret line, which
+  reporting the current object a second time spells with the name. An
+  object with no name spells nothing but says "blank".
+- Pressed three or more times, it spells the name with character
+  descriptions ("Alpha" for a). Nothing is ever copied to the clipboard,
+  which reporting the current object does on its third press.
+- With no focus object at all, it says "No focus".
+
+(`script_reportCurrentFocus` in `globalCommands.py`, with
+`getObjectSpeech` and `speakSpelling` in `speech/speech.py`.)
+
 ## Simple review off: the raw tree
 
 With `reviewCursor.simpleReviewMode` disabled, the movement commands

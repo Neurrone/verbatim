@@ -121,16 +121,12 @@ pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
     println!("status after notepad exit: {status:?}");
 }
 
-/// Waits for Notepad's window and then its text area. The text area is a
-/// UIA document named "Text editor" in current Notepad, which NVDA's UIA
-/// role table, and so Verbatim's, speaks as "document", and a UIA edit
-/// named "Text Editor" in the older Notepad on GitHub's runners.
+/// Waits for Notepad's window and then its text area, or, with a Notepad
+/// window already open, for the focus reported
+/// ([`super::expect_notepad_text_area`]). The text area is a UIA document
+/// named "Text editor" in current Notepad, which NVDA's UIA role table, and
+/// so Verbatim's, speaks as "document", and a UIA edit named "Text Editor"
+/// in the older Notepad on GitHub's runners.
 fn expect_notepad(scenario: &mut Scenario) {
-    let text_area = scenario
-        .speech()
-        .expect_in_order_capturing(&["Notepad", "Text "], STEP_TIMEOUT);
-    assert!(
-        ["Text editor document", "Text Editor edit"].contains(&text_area.as_str()),
-        "Notepad's text area was announced as {text_area:?}"
-    );
+    let _ = super::expect_notepad_text_area(scenario, STEP_TIMEOUT);
 }

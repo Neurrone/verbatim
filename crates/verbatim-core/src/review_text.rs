@@ -487,7 +487,7 @@ fn edge(
 }
 
 /// `text` spelled, or "blank" when there is nothing to spell.
-fn spell_or_blank(
+pub(crate) fn spell_or_blank(
     content: &str,
     descriptions: bool,
     language: Option<&str>,

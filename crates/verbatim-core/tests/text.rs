@@ -1752,3 +1752,104 @@ fn reporting_an_edit_field_again_spells_then_copies_its_name_and_caret_line() {
         vec![Effect::CopyToClipboard("Body chosen".to_owned())]
     );
 }
+
+#[test]
+fn reporting_the_focus_reads_the_focus_wherever_the_navigator_is() {
+    let mut state = SrState::new();
+    let mut edit = node(5, Role::EditableText, StateSet::new());
+    edit.value = Some("one two".to_owned());
+    focus(&mut state, edit);
+    caret_event(&mut state, 5, line("one two\n", 100, 4));
+    let _ = navigate_to(&mut state, node(31, Role::Button, StateSet::new()));
+
+    // The focus is announced as a query, its known caret line in place of
+    // its value, and the navigator stays where it was.
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::EditableText)),
+            UtteranceSegment::text("one two"),
+        ]
+    );
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportObject, 0));
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::label("Body"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+        ]
+    );
+
+    // A focus whose caret Core does not know is asked for its text, and the
+    // answer is spoken although the navigator is elsewhere.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = navigate_to(&mut state, node(31, Role::Button, StateSet::new()));
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
+    let selection = request(&effects);
+    assert_eq!(selection.node_id, id(5));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            selection.query_id,
+            TextReply::Range {
+                text: "two".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Preselected(SelectionText::Text("two".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn reporting_the_focus_again_spells_its_name_alone() {
+    let mut state = SrState::new();
+    let mut edit = node(5, Role::EditableText, StateSet::new());
+    edit.name = Some("Ab".to_owned());
+    focus(&mut state, edit);
+    caret_event(&mut state, 5, line("cd\n", 100, 1));
+
+    // The second press spells the name, not the caret's line.
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 1));
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::new(SegmentContent::SpelledCapital("A".to_owned())),
+            UtteranceSegment::text("b"),
+        ]
+    );
+
+    // The third and later spell it with descriptions, and copy nothing.
+    for repeat in [2, 3] {
+        let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, repeat));
+        assert_eq!(
+            spoken(&effects),
+            vec![
+                UtteranceSegment::new(SegmentContent::CharacterDescription("A".to_owned())),
+                UtteranceSegment::new(SegmentContent::CharacterDescription("b".to_owned())),
+            ]
+        );
+    }
+
+    // A focus with no name is "blank".
+    let mut state = SrState::new();
+    let mut unnamed = node(5, Role::EditableText, StateSet::new());
+    unnamed.name = None;
+    focus(&mut state, unnamed);
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 1));
+    assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
+}
+
+#[test]
+fn reporting_the_focus_with_none_says_no_focus() {
+    let mut state = SrState::new();
+    let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
+    assert_eq!(spoken(&effects), vec![message(Message::NoFocus)]);
+}

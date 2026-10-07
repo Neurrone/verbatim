@@ -102,9 +102,11 @@ Public API:
   with that title forward, and closes it by title at cleanup, so the
   user's own Notepad windows are never touched; when a Notepad window was
   already open, which then holds the document as a new tab and announces
-  its old tab first, it has Verbatim announce the window afresh, by
-  opening and closing Verbatim's menu once the title names the document
-  and speech has ended; `open_folder` does the
+  its old tab first, it has Verbatim report the focus with Verbatim+Tab
+  once the title names the document and speech has ended, and
+  `take_focus_reported` tells the scenario's first expectation that it
+  hears the focus reported rather than the window coming forward;
+  `open_folder` does the
   same for a File Explorer window on a harness folder of empty files it
   writes, never sweeping `explorer.exe`, which is also the shell, and returns the
   window's title for the body (`ScenarioState::Title`);

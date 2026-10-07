@@ -819,8 +819,9 @@ document as a new tab of that window, which first comes to the foreground
 showing the tab it had and announces that tab's text area, then switches
 tabs and announces the new one, cutting the first off; once the window's
 title names the harness document and that speech has ended, the harness
-opens Verbatim's menu and closes it, so the scenario hears the window and
-its own tab announced once, in full. It then deletes the document, and the folders the harness made for
+presses Verbatim+Tab, report focus, so the scenario hears its own tab's
+text area and the line at its caret reported once, in full, where with no
+Notepad window open it hears the window and the text area announced. It then deletes the document, and the folders the harness made for
 Explorer and terminal windows, each named with `verbatim-e2e-`; nothing
 without that marker in its name is ever deleted. It cannot run at all, though, if the test process itself is
 killed outright (Ctrl+C, a CI job cancellation, or the whole `cargo test`

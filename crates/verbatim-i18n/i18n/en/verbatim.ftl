@@ -186,6 +186,7 @@ message-right = Right
 message-blank = blank
 message-move-to-focus = Move to focus
 message-no-navigator-object = No navigator object
+message-no-focus = No focus
 message-activate = Activate
 message-no-action = No action
 message-invoke = invoke
