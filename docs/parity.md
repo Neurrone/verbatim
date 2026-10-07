@@ -797,7 +797,11 @@ verified.
   image makes the item checkable, the second checked, and the third half
   checked. **Matched since 2026-10-07** (`native_controls` mockapp test:
   "checked", "not checked", and a half-checked parent; the end-to-end
-  scenario is still to be written).
+  scenario is still to be written). A tree item outside a `SysTreeView32`
+  is NVDA's generic outline item, which drops its value only when it is a
+  number and takes no level from it; Verbatim had made any tree item's
+  numeric value its level and dropped any other value. **Matched since
+  2026-10-07** (`native_controls` mockapp test, scripted tree items).
 - Navigator death recovery: NVDA reports failure and stays; Verbatim
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side

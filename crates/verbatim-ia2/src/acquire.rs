@@ -1042,8 +1042,9 @@ fn window_sibling(
 /// same string into [`NodeDetails::level`] instead, as it is: NVDA's tree
 /// view level is the raw `accValue`, so a root item is "level 0"
 /// (confirmed by an NVDA transcript in msinfo32 on 2026-10-07; Verbatim had
-/// added one). It leaves `value` itself `None` for a tree item, matching
-/// NVDA.
+/// added one). It leaves `value` itself `None` for such an item, matching
+/// NVDA. A tree item outside a `SysTreeView32` keeps its value unless it is
+/// a number, and has no level, as NVDA's generic outline item reads it.
 fn read_snapshot(
     acc: &Accessible,
     key: MsaaKey,
@@ -1101,14 +1102,22 @@ fn read_snapshot(
     } else {
         (None, None)
     };
-    let (value, level) = if role == Role::TreeItem {
-        let level = raw_value
-            .as_deref()
-            .and_then(|v| v.parse::<u32>().ok())
-            .filter(|_| fetches.level);
-        (None, level)
-    } else {
-        (raw_value, None)
+    let (value, level) = match role {
+        Role::TreeItem if is_systreeview32(key.0) => {
+            let level = raw_value
+                .as_deref()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|_| fetches.level);
+            (None, level)
+        }
+        // Any other tree item's value is dropped only when it is a number,
+        // which some providers report as the item's depth, and gives no
+        // level, as NVDA's outline item reads it.
+        Role::TreeItem => (
+            raw_value.filter(|value| value.trim().parse::<i64>().is_err()),
+            None,
+        ),
+        _ => (raw_value, None),
     };
     // A window object — MSAA's second face of every windowed control,
     // role ROLE_SYSTEM_WINDOW alongside the client object's real role —

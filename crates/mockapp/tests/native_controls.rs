@@ -188,6 +188,64 @@ fn tree_view_items_are_checked_by_their_state_images() {
     app.quit();
 }
 
+/// A tree item outside a tree view control, one of mockapp's scripted
+/// nodes, is NVDA's generic outline item: a value that is a number is
+/// dropped, any other value kept, and neither gives a level.
+fn other_tree_items_keep_a_value_that_is_not_a_number() {
+    /// mockapp's scripted nodes, by their index in its tree.
+    const INBOX: usize = 2;
+    const DRAFTS: usize = 3;
+    common::init_com();
+    let title = common::unique_title("mockapp-scripted-tree-items");
+    let app = common::spawn("tree_view.json", "msaa", &title);
+    let host = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(app.pid());
+
+    let inbox = outpost.msaa_focus(host, INBOX);
+    assert_eq!(
+        (
+            inbox.node.name.as_deref(),
+            inbox.node.value.as_deref(),
+            inbox.node.details.level
+        ),
+        (Some("Inbox"), None, None)
+    );
+    assert_eq!(
+        spoken(&inbox),
+        [
+            vec![
+                SegmentContent::Label("Folders".to_owned()),
+                SegmentContent::Role(Role::Tree)
+            ],
+            vec![SegmentContent::Label("Inbox".to_owned())],
+        ]
+    );
+
+    let drafts = outpost.msaa_focus(host, DRAFTS);
+    assert_eq!(
+        (
+            drafts.node.name.as_deref(),
+            drafts.node.value.as_deref(),
+            drafts.node.details.level
+        ),
+        (Some("Drafts"), Some("Unread"), None)
+    );
+    assert_eq!(
+        spoken(&drafts),
+        [
+            vec![
+                SegmentContent::Label("Folders".to_owned()),
+                SegmentContent::Role(Role::Tree)
+            ],
+            vec![
+                SegmentContent::Label("Drafts".to_owned()),
+                SegmentContent::Value("Unread".to_owned())
+            ],
+        ]
+    );
+    app.quit();
+}
+
 /// The roles of `nodes`, in order.
 fn roles(nodes: &[NodeSnapshot]) -> Vec<Role> {
     nodes.iter().map(|node| node.role).collect()
@@ -202,6 +260,10 @@ fn main() {
         (
             "tree_view_items_are_checked_by_their_state_images",
             tree_view_items_are_checked_by_their_state_images,
+        ),
+        (
+            "other_tree_items_keep_a_value_that_is_not_a_number",
+            other_tree_items_keep_a_value_that_is_not_a_number,
         ),
     ]);
 }

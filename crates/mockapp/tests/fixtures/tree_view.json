@@ -5,6 +5,15 @@
   "states": ["focused"],
   "children": [
     {
+      "id": "folders",
+      "role": "tree",
+      "name": "Folders",
+      "children": [
+        { "id": "inbox", "role": "tree_item", "name": "Inbox", "value": "2", "states": ["focusable"] },
+        { "id": "drafts", "role": "tree_item", "name": "Drafts", "value": "Unread", "states": ["focusable"] }
+      ]
+    },
+    {
       "id": "tree",
       "role": "tree",
       "native": "tree_view",
