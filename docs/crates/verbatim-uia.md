@@ -25,6 +25,14 @@ Public API:
   client interfaces, and querying `IUIAutomation5` (the notification-event
   registration) on a plain `CUIAutomation` object fails with
   `E_NOINTERFACE`, observed live. NVDA likewise creates `CUIAutomation8`.
+  Every client, including the one made for UIA's first-time setup, also
+  turns on `IUIAutomation6`'s event coalescing (UIA drops an event that
+  duplicates one still waiting for this client) and connection recovery
+  (UIA adjusts its waits for a provider that stopped answering), as NVDA
+  does whenever Windows has them; Verbatim's minimum, Windows 11 24H2,
+  always does, so there is no check. Neither changed a call count or a
+  wait measured against mockapp (`docs/performance.md`, "Newer UIA
+  features").
   Every client in the crate, and the provider probe, first wait for UIA's
   first-time setup, which creates a client and builds a cache request
   from it once, under a lock, on a thread of its own (so a thread that only

@@ -11,7 +11,8 @@ use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::{InitVariantFromInt32Array, VARIANT};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest,
+    CUIAutomation8, CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled,
+    IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
     IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
@@ -742,6 +743,12 @@ pub(crate) fn ensure_ready() -> windows::core::Result<()> {
                         CLSCTX_INPROC_SERVER,
                     )
                 }
+                // Configured as every other client is, though it lives only
+                // for the setup.
+                .and_then(|client| {
+                    enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
+                    Ok(client)
+                })
                 // SAFETY: a local call on the client just created, released
                 // before the thread leaves COM.
                 .and_then(|client| unsafe { client.CreateCacheRequest() }.map(drop));
@@ -779,7 +786,24 @@ pub(crate) fn create_client() -> windows::core::Result<IUIAutomation> {
         unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)? };
     // CUIAutomation8 objects implement IUIAutomation2.
     set_connection_timeout(&client.cast::<IUIAutomation2>()?, CONNECTION_TIMEOUT_MS)?;
+    enable_recovery_and_coalescing(&client.cast::<IUIAutomation6>()?)?;
     Ok(client)
+}
+
+/// Turns on the two `IUIAutomation6` behaviors NVDA enables on its client
+/// whenever Windows has them (Windows 10 1809 and later, so always on
+/// Verbatim's Windows 11 24H2): event coalescing, where UIA drops an event
+/// that duplicates one still waiting to be delivered to this client, so a
+/// burst of identical events from one element reaches the handler once;
+/// and connection recovery, where UIA adjusts its waits for a provider
+/// that has stopped responding and reconnects when it answers again.
+/// Both are local settings of the client object.
+fn enable_recovery_and_coalescing(client: &IUIAutomation6) -> windows::core::Result<()> {
+    // SAFETY: `client` is a live IUIAutomation6; the option is a plain
+    // value.
+    unsafe { client.SetCoalesceEvents(CoalesceEventsOptions_Enabled) }?;
+    // SAFETY: as above.
+    unsafe { client.SetConnectionRecoveryBehavior(ConnectionRecoveryBehaviorOptions_Enabled) }
 }
 
 /// Sets how long `client` waits for an application's provider to answer.
@@ -979,5 +1003,26 @@ mod presentation_tests {
             Some("named"),
             None
         )));
+    }
+}
+
+#[cfg(test)]
+mod client_tests {
+    use windows::Win32::UI::Accessibility::{
+        CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled, IUIAutomation6,
+    };
+    use windows::core::Interface;
+
+    #[test]
+    fn a_client_coalesces_events_and_recovers_connections() {
+        let uia = super::Uia::new().expect("a client");
+        let client: IUIAutomation6 = uia.client().cast().expect("IUIAutomation6");
+        // SAFETY: reading a local setting of a live client.
+        let coalesce = unsafe { client.CoalesceEvents() }.expect("the coalescing setting");
+        // SAFETY: as above.
+        let recovery =
+            unsafe { client.ConnectionRecoveryBehavior() }.expect("the recovery setting");
+        assert_eq!(coalesce, CoalesceEventsOptions_Enabled);
+        assert_eq!(recovery, ConnectionRecoveryBehaviorOptions_Enabled);
     }
 }

@@ -671,3 +671,36 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   text moved while it was read (a full scrollback scrolling beneath the
   ranges during a flood), when the read is set aside for the next.
 - Target: 1.
+
+## Newer UIA features
+
+What adopting the UIA features newer than Verbatim's first UIA code
+changed (`phase6-design.md`, item 13 of the work scheduled on
+2026-10-07). Each was measured on 2026-10-07 on this machine (x64),
+release build, against mockapp in its own process, before and after the
+change, with another engineer's build running; the counts are pinned by
+`crates/mockapp/tests/call_counts.rs` as the ledger above is.
+
+### Event coalescing and connection recovery
+
+Every UIA client Verbatim creates turns on `IUIAutomation6`'s
+`CoalesceEvents` and `ConnectionRecoveryBehavior`, as NVDA does on its
+one client (`docs/crates/verbatim-uia.md`). Both are local settings of
+the client, so no operation's call count changed.
+
+- A burst of 100 name changes from one mockapp element, through a
+  property subscription: all 100 delivered before and after, the last
+  arriving 91 ms after the burst began at the median before and 88 ms
+  after; with a handler that takes 5 ms per event, still 100. mockapp's
+  provider raises each change at once, and UIA delivered every one of
+  them either way. The same burst from mockapp's MSAA backend, through
+  UIA's MSAA proxy, arrived as one event both before and after: the
+  system merges those `WinEvent`s before UIA sees them.
+- Reads while mockapp's window thread is stalled: a fetch on a new
+  connection waited out a 3 second stall and answered, and failed with
+  UIA's timeout after 10.0 seconds of a 12 second stall, before and
+  after; a read of an element already fetched waited out the stall
+  either way. Connection recovery therefore leaves Verbatim's long wait
+  for a starting application's answer as it was.
+- Creating a client: 0.038 ms at the median before, 0.036 after.
+
