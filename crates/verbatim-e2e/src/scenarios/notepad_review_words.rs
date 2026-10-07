@@ -13,13 +13,16 @@
 //! presses sent together, since a gesture sent through the control plane
 //! is always a first press, and a move comes between two counted presses
 //! of the same key so they are never taken for one longer run: each press
-//! speaks, the first what one press says, the next what the repeat adds.
+//! speaks, the first what one press says, the next what the repeat adds,
+//! and each press cuts off what the press before it said, as any key press
+//! cuts speech off; only the last press's speech is heard in full.
 //! Every step asserts exactly what it says before the next.
 
 use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
+use crate::speech::{Expected, cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -47,10 +50,23 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.speech().expect(&[heard]);
 }
 
-/// Presses the real keys `keys` in one burst and asserts exactly `heard`.
-fn press_hearing(scenario: &mut Scenario, keys: &[&str], heard: &[&str]) {
+/// Presses the real keys `keys` in one burst and asserts exactly `said`,
+/// one utterance a press: each cut off by the press after it, and the last
+/// heard in full.
+fn press_hearing(scenario: &mut Scenario, keys: &[&str], said: &[&str]) {
     scenario.send_keys(keys).expect("sends the keys");
-    scenario.speech().expect(heard);
+    let expected: Vec<Expected> = said
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            if index + 1 == said.len() {
+                heard(text)
+            } else {
+                cut_off(text)
+            }
+        })
+        .collect();
+    scenario.speech().expect_sequence(&expected);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {

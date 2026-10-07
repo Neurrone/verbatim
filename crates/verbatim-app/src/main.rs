@@ -350,9 +350,9 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         decision_config(&store),
         Arc::clone(&bound_gestures),
         gesture_tx,
-        Box::new(move |effect| match effect {
+        Box::new(move |effect, key| match effect {
             KeySpeechEffect::Cancel => {
-                speech_control.cancel();
+                speech_control.cancel_through(key);
                 let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
             }
             KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
@@ -1317,7 +1317,11 @@ impl ReducerThread<'_> {
     fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
             Effect::Speak(utterance) => {
-                self.context.manager.speak(utterance);
+                // Speech a key press caused is fenced off by a later key
+                // press's cancel (`SpeechControl::cancel_through`).
+                let key = verbatim_input_windows::key_of(trace_id)
+                    .or_else(|| verbatim_input_windows::key_of(utterance.trace_id));
+                self.context.manager.speak_for_key(utterance, key);
             }
             Effect::StopSpeech => self.context.manager.control().cancel(),
             Effect::DropExpiredSpeech(now) => self.context.manager.control().drop_expired(now),
@@ -1800,12 +1804,16 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             }
             // Its keys never pass the hook, which cancels speech for every
             // key press; executing a gesture cancels speech in NVDA too, and
-            // stops say-all.
-            speech_control.cancel();
+            // stops say-all. It is numbered as a key press is, so speech an
+            // earlier key caused cannot follow its cancel.
+            let key = verbatim_input_windows::next_key();
+            let trace_id = TraceId::mint();
+            verbatim_input_windows::record_key_origin(trace_id, key);
+            speech_control.cancel_through(key);
             let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
             gesture_tx
                 .send(Routed::Gesture(EmittedGesture {
-                    trace_id: TraceId::mint(),
+                    trace_id,
                     gesture,
                     // An injected gesture is always a single, first press;
                     // multi-press counting applies to real key streams in

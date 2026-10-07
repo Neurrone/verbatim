@@ -56,7 +56,7 @@ releases Alt. Notepad has no outpost yet.
    ([verbatim-input](crates/verbatim-input.md)). Alt and Tab are not bound,
    so they pass to Windows, but each key-down's decision carries
    `KeySpeechEffect::Cancel`, and the hook calls the speech manager's
-   `SpeechControl::cancel` (a non-blocking channel send) before anything
+   `SpeechControl::cancel_through` (a non-blocking channel send) before anything
    else. Whatever was being spoken stops. See walkthrough 3.
 2. **Windows raises events.** When Alt is released, Windows raises
    `EVENT_SYSTEM_SWITCHEND`, `EVENT_SYSTEM_FOREGROUND` for Notepad's
@@ -444,7 +444,9 @@ the device comes back in another format.
 When speech is cut off (`docs/parity.md`, "When speech is cut off"):
 
 - **A key press.** Every key-down except the volume keys cancels
-  everything (`SpeechControl::cancel`): waiting utterances end cancelled,
+  everything (`SpeechControl::cancel_through`, with the press's key
+  sequence number, so speech an earlier press caused that arrives after it
+  ends cancelled too): waiting utterances end cancelled,
   the in-flight job's flag is set, and `Source::cancel_all` ends every
   utterance the mixer holds and discards its unplayed audio at once. The
   synth thread's next write returns `Break`, and `HostedSynth` sends the

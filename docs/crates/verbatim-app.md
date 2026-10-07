@@ -310,7 +310,11 @@ knowing for review:
   is sent, as a key press does, since its keys never pass the hook),
   the keyboard hook last among input paths (given a callback that maps
   each `KeySpeechEffect` to the speech manager's `SpeechControl`: `Cancel`
-  to `cancel`, `TogglePause` to `toggle_pause`), the startup announcement, and
+  to `cancel_through` with the press's key sequence number, `TogglePause`
+  to `toggle_pause`; the reducer thread speaks each `Effect::Speak` with
+  `speak_for_key`, under the key press that caused its input or its
+  utterance's trace, if one did, and a gesture the control plane injects
+  is numbered as a key press is), the startup announcement, and
   finally the GUI loop on the main thread. The gesture router handles
   Verbatim+V, which pops the menu, the lock keys, whose new state it
   announces, and every gesture in the active layout's bindings table:

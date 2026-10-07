@@ -603,6 +603,34 @@ fn a_cancel_ends_current_and_queued_speech() {
     );
 }
 
+/// A key press's cancel fences off speech an earlier key press caused
+/// that reaches the manager after it: key 2's cancel comes before key 1's
+/// speech is queued, as when key 1's gesture is still on its way to the
+/// reducer, and key 1's speech ends cancelled without being spoken, as if
+/// it had come first, while key 2's own speech and speech no key caused
+/// are spoken.
+#[test]
+fn speech_an_earlier_key_caused_is_dropped_after_a_later_keys_cancel() {
+    let harness = control_manager();
+    harness.manager.control().cancel_through(2);
+    let earlier = harness.manager.speak_for_key(queued("key one"), Some(1));
+    let later = harness.manager.speak_for_key(queued("key two"), Some(2));
+    let unkeyed = harness.manager.speak_for_key(queued("a focus"), None);
+    assert_eq!(recv_started(&harness.started), "key two");
+    harness.finish.send(()).unwrap();
+    assert_eq!(recv_started(&harness.started), "a focus");
+    harness.finish.send(()).unwrap();
+
+    assert_eq!(
+        harness.endings_before_a_marker(),
+        vec![
+            (earlier, UtteranceEnding::Cancelled),
+            (later, UtteranceEnding::Completed),
+            (unkeyed, UtteranceEnding::Completed),
+        ]
+    );
+}
+
 /// Speech for a focus the user has left is dropped, with everything queued
 /// before it, as NVDA culls expired focus speech; speech after it stays.
 #[test]

@@ -29,7 +29,7 @@ fn main() {
         DecisionConfig::default(),
         map,
         tx,
-        Box::new(|_| {}),
+        Box::new(|_, _| {}),
         Box::new(|report| println!("{report:?}")),
     )
     .expect("install hook");
