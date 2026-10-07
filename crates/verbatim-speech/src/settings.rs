@@ -153,29 +153,45 @@ mod tests {
 
     #[test]
     fn standard_numeric_uses_nvda_range_and_steps() {
-        let descriptor = SettingDescriptor::standard_numeric("rate", "setting-rate");
-        let SettingDescriptor::Numeric {
-            min,
-            max,
-            small_step,
-            normal_step,
-            large_step,
-            ..
-        } = descriptor
-        else {
-            panic!("expected numeric descriptor");
-        };
-        assert_eq!((min, max), (0, 100));
-        assert_eq!((small_step, normal_step, large_step), (1, 5, 10));
+        assert_eq!(
+            SettingDescriptor::standard_numeric("rate", "setting-rate"),
+            SettingDescriptor::Numeric {
+                id: SettingId::new("rate"),
+                label_key: "setting-rate".to_owned(),
+                min: 0,
+                max: 100,
+                small_step: 1,
+                normal_step: 5,
+                large_step: 10,
+            }
+        );
     }
 
     #[test]
     fn descriptor_accessors_reach_every_variant() {
-        let toggle = SettingDescriptor::Toggle {
-            id: SettingId::new("rate-boost"),
-            label_key: "setting-rate-boost".into(),
-        };
-        assert_eq!(toggle.id().0, "rate-boost");
-        assert_eq!(toggle.label_key(), "setting-rate-boost");
+        let descriptors = [
+            SettingDescriptor::standard_numeric("rate", "setting-rate"),
+            SettingDescriptor::Choice {
+                id: SettingId::new("voice"),
+                label_key: "setting-voice".into(),
+                options: vec![("one".into(), "One".into())],
+            },
+            SettingDescriptor::Toggle {
+                id: SettingId::new("rate-boost"),
+                label_key: "setting-rate-boost".into(),
+            },
+        ];
+        let reached: Vec<(&str, &str)> = descriptors
+            .iter()
+            .map(|descriptor| (descriptor.id().0.as_str(), descriptor.label_key()))
+            .collect();
+        assert_eq!(
+            reached,
+            [
+                ("rate", "setting-rate"),
+                ("voice", "setting-voice"),
+                ("rate-boost", "setting-rate-boost"),
+            ]
+        );
     }
 }
