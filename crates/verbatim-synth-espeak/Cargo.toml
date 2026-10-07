@@ -20,3 +20,7 @@ verbatim-model.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "espeak"
+harness = false
