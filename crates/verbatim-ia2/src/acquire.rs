@@ -1162,15 +1162,39 @@ fn in_labelled_combo_box(acc: &Accessible) -> bool {
     visible_text(parent.name()).is_some()
 }
 
+/// More siblings than any real tree view holds, so a broken control cannot
+/// keep a walk through a `SysTreeView32`'s items going.
+const MAX_TREE_VIEW_SIBLINGS: u32 = 100_000;
+
+/// The number of children of the `SysTreeView32` item `child_id` names in
+/// `hwnd`, counted as NVDA counts them: its first child (`TVGN_CHILD`),
+/// then each next sibling (`TVGN_NEXT`). `None` when `hwnd` is not a
+/// `SysTreeView32`, `child_id` names the control itself, or the item no
+/// longer resolves. Only window messages to the control, no COM call.
+#[must_use]
+pub fn tree_view_child_count(hwnd: isize, child_id: i32) -> Option<u32> {
+    if child_id == CHILDID_SELF || hwnd == 0 || !is_systreeview32(hwnd) {
+        return None;
+    }
+    let item = htreeitem_for_acc_id(hwnd, child_id);
+    if item == 0 {
+        return None;
+    }
+    let mut count = 0u32;
+    let mut current = window::tree_view_next_item(hwnd, TVGN_CHILD, item);
+    while current != 0 && count < MAX_TREE_VIEW_SIBLINGS {
+        count += 1;
+        current = window::tree_view_next_item(hwnd, TVGN_NEXT, current);
+    }
+    Some(count)
+}
+
 /// An item's position in its set and the set's size, for an item of a
 /// comctl32 list view or tree view, which MSAA gives no way to ask for, as
 /// NVDA computes them: a list view item is at its child id among
 /// `LVM_GETITEMCOUNT` items; a tree view item is counted among its siblings
 /// through `TVM_GETNEXTITEM`. `(None, None)` for anything else.
 fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u32>) {
-    /// More siblings than any real tree view holds, so a broken control
-    /// cannot keep the walk going.
-    const MAX_SIBLINGS: u32 = 100_000;
     if child_id == CHILDID_SELF || hwnd == 0 {
         return (None, None);
     }
@@ -1191,7 +1215,7 @@ fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u
             let walk = |relation: u32| {
                 let mut count = 0u32;
                 let mut current = item;
-                while current != 0 && count < MAX_SIBLINGS {
+                while current != 0 && count < MAX_TREE_VIEW_SIBLINGS {
                     count += 1;
                     current = window::tree_view_next_item(hwnd, relation, current);
                 }

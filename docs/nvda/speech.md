@@ -132,6 +132,26 @@ and of the ones lost, those that would be spoken by their absence.
 (`processAndLabelStates` in `controlTypes/processAndLabelStates.py`,
 with the order from `controlTypes/state.py`.)
 
+### How many items an expanded tree view item holds
+
+When an item of a Win32 tree view (the `SysTreeView32` common control,
+read through MSAA) is expanded while it is the focus, NVDA says how many
+items it now holds: after the change of state, which says "expanded",
+it speaks the number of the item's own children as a message of its
+own, "1 item" for one and "52 items" otherwise, "0 items" included.
+Only the item's direct children are counted, not their descendants; NVDA
+counts them by walking the control's items, from the item's first child
+through each next sibling.
+
+It does so only on a change of state, never on the focus or object
+navigation, and only when the change makes the item expanded: the item
+is the focus, its new states include expanded, and the states last
+spoken for it did not. A further change of state while it stays
+expanded, or collapsing it, says no count. No other tree view says it:
+not a tree item read through UIA, not one of a Qt or web tree, and not
+any other role. (`TreeViewItem.event_stateChange` in
+`NVDAObjects/IAccessible/sysTreeView32.py`.)
+
 ### When values and descriptions are spoken
 
 A check box, radio button, link, menu item, application, or busy

@@ -428,6 +428,42 @@ impl AgentClient {
         }
     }
 
+    /// Lists the names of the folders directly inside `path` on the guest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn list_folders(&mut self, path: &str) -> io::Result<Vec<String>> {
+        match self.request(Request::ListFolders {
+            path: path.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::FileNames { names },
+                ..
+            } => Ok(names),
+            other => Err(unexpected("ListFolders", &other)),
+        }
+    }
+
+    /// Deletes a folder and everything in it on the guest; one already gone
+    /// is not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, for example because a process
+    /// still has the folder open.
+    pub fn delete_folder(&mut self, path: &str) -> io::Result<()> {
+        match self.request(Request::DeleteFolder {
+            path: path.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::FolderDeleted,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("DeleteFolder", &other)),
+        }
+    }
+
     /// Asks the agent to stop speaking its own protocol on this connection
     /// and relay Verbatim's control-plane pipe instead, then completes the
     /// control protocol's own `Hello` on the same socket and returns a

@@ -1042,9 +1042,17 @@ impl Worker<'_> {
             WinEventKind::NameChange => NormalizedEvent::PropertyChanged {
                 node_id: node.id,
                 change: PropertyChange::Name(node.name),
+                child_count: None,
             },
+            // An expanded Win32 tree view item's children are counted with
+            // its change, for Core to say how many it holds once it has
+            // been expanded ("How many items an expanded tree view item
+            // holds" in docs/nvda/speech.md).
             WinEventKind::StateChange => NormalizedEvent::PropertyChanged {
                 node_id: node.id,
+                child_count: (node.role == Role::TreeItem && node.states.contains(State::Expanded))
+                    .then(|| verbatim_ia2::acquire::tree_view_child_count(hwnd, id_child))
+                    .flatten(),
                 change: PropertyChange::States(node.states),
             },
             WinEventKind::Selection => NormalizedEvent::SelectionChanged { node },
@@ -1131,6 +1139,7 @@ impl Worker<'_> {
                 NormalizedEvent::PropertyChanged {
                     node_id: node.id,
                     change: PropertyChange::Name(node.name),
+                    child_count: None,
                 }
             }
             UiaKind::Property(id)
@@ -1144,6 +1153,7 @@ impl Worker<'_> {
             UiaKind::Property(_) => NormalizedEvent::PropertyChanged {
                 node_id: node.id,
                 change: PropertyChange::States(node.states),
+                child_count: None,
             },
             UiaKind::Selection => NormalizedEvent::SelectionChanged { node },
             UiaKind::Notification(notification) => NormalizedEvent::Notification {

@@ -132,6 +132,15 @@ pub enum NormalizedEvent {
         node_id: NodeId,
         /// Which property, with its new value.
         change: PropertyChange,
+        /// The node's number of children, read with the change only where
+        /// speech needs it: a change of states that leaves a Win32 tree
+        /// view item expanded, whose count is spoken when the change makes
+        /// it expanded (`docs/nvda/speech.md`, "How many items an expanded
+        /// tree view item holds"). `None` everywhere else.
+        /// `#[serde(default)]` keeps events recorded before this field
+        /// existed deserializing unchanged.
+        #[serde(default)]
+        child_count: Option<u32>,
     },
     /// The value of a node changed (slider drag, combo selection, text edit).
     ValueChanged {

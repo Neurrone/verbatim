@@ -62,7 +62,11 @@ Public API:
   `SendKeys`; from the private `typing` module; protocol version 6),
   `DeleteFile` (removes a file a test wrote, such as a harness document
   once its window has closed, a file already gone counting as success;
-  protocol version 7), `OpenControlTunnel`. `KillOutcome` makes
+  protocol version 7), `ListFolders` and `DeleteFolder` (the names of the
+  folders directly inside a directory, answered with `FileNames`, and
+  removing a folder a test laid out with everything in it, a folder
+  already gone counting as success; protocol version 8),
+  `OpenControlTunnel`. `KillOutcome` makes
   "the process was already gone" a first-class non-error reply
   (`AlreadyExited`) distinct from `Terminated`, rather than an error.
   `LaunchProcess` gives the launched child no standard handles by

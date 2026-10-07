@@ -481,7 +481,8 @@ policy, Verbatim+5, responsiveness, and the wall-time ratio, saved as
 `terminal_review_grid` (the review cursor down a column of a text table).
 Each terminal scenario opens a window of its own titled
 `verbatim-e2e-<name>-<token>` and closes it by that title, so your own
-terminals are left alone; it uses Windows Terminal when `wt.exe` can be
+terminals are left alone, and runs its shell in a folder of the same name
+in `target/e2e-stage`, deleted once the window has closed; it uses Windows Terminal when `wt.exe` can be
 started and the console host otherwise (`conhost_commands` always uses the
 console host), and prints which. They type through the agent's `TypeText`,
 which maps each character with the foreground window's keyboard layout, so
@@ -813,7 +814,15 @@ of a window that closes for its next session, so the harness closes its
 document's tab with Control+W, saving it first when it has unsaved
 changes, and then closes the window only when no Notepad window was open
 before; the tabs Notepad restored from your last session are left as they
-were. It then deletes the document. It cannot run at all, though, if the test process itself is
+were. With a Notepad window already open, Notepad opens the harness
+document as a new tab of that window, which first comes to the foreground
+showing the tab it had and announces that tab's text area, then switches
+tabs and announces the new one, cutting the first off; once the window's
+title names the harness document and that speech has ended, the harness
+opens Verbatim's menu and closes it, so the scenario hears the window and
+its own tab announced once, in full. It then deletes the document, and the folders the harness made for
+Explorer and terminal windows, each named with `verbatim-e2e-`; nothing
+without that marker in its name is ever deleted. It cannot run at all, though, if the test process itself is
 killed outright (Ctrl+C, a CI job cancellation, or the whole `cargo test`
 process being terminated). Runner-direct stray processes are usually
 self-healing on the *next* run regardless:
@@ -826,8 +835,9 @@ Notepad no longer strictly needs that: `launch_target`-launched processes
 are killed by pid and then swept by image name (Windows 11 Notepad hands
 launches off to a differently pid'd process, confirmed live even for a
 single, solo launch, so a pid-only kill can silently miss the real window),
-and `Scenario::launch` sweeps those same image names, and closes any
-harness document left open, before doing anything else, so a scenario
+and `Scenario::launch` sweeps those same image names, closes any
+harness document left open, and deletes the harness documents and folders
+left in `target/e2e-stage`, before doing anything else, so a scenario
 starts clean even after a prior run's cleanup was skipped entirely. Every
 scenario then checks that a real, uncloaked window holds the foreground
 before its setup, bringing the desktop forward if the Start menu's search

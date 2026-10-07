@@ -214,6 +214,9 @@ pub enum Phrase {
     /// scrollback overflowed past what the reader could track): "skipped
     /// lines". Marked like [`Phrase::SkippedLines`].
     SkippedUncountedLines,
+    /// The number of items a tree view item holds, said once it has been
+    /// expanded: NVDA's "1 item" and "52 items".
+    Items(u32),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.

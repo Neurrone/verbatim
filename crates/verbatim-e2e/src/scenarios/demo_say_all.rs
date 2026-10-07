@@ -150,12 +150,9 @@ fn notepad_by_line(scenario: &mut Scenario) {
 /// Part 2: say-all in a Win32 edit control, by sentence.
 fn edit_control_by_sentence(scenario: &mut Scenario) {
     let title = harness_marker("demo-edit-control");
-    let directory = format!(
-        r"{}\{title}",
-        scenario
-            .run_directory()
-            .expect("the run has a directory for harness files")
-    );
+    let directory = scenario
+        .harness_folder("demo-edit-control")
+        .expect("the run has a directory for harness files");
     let story_path = format!(r"{directory}\story.txt");
     let script_path = format!(r"{directory}\edit.ps1");
     let story: Vec<String> = SENTENCES
