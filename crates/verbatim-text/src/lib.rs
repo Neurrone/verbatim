@@ -110,6 +110,15 @@ pub fn strip_bidi_controls(text: &mut String) {
     }
 }
 
+/// Whether `c` separates words as white space does: a character with
+/// Unicode's `White_Space` property, or the zero-width space or the
+/// zero-width no-break space (the byte order mark), which have no width but
+/// mark a word break, as Khmer, Thai, and Burmese text uses them.
+#[must_use]
+pub fn is_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200B}' | '\u{FEFF}')
+}
+
 /// Whether `c` ends a line: a carriage return, a line feed, the vertical
 /// tab, the form feed, the next-line control, or Unicode's line or
 /// paragraph separator. A carriage return on its own is a line break, as
@@ -347,10 +356,11 @@ fn ranges(boundaries: impl Iterator<Item = usize>) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// `segments` with each run of adjacent whitespace-only segments merged
-/// into one, so spaces and tabs together are a single segment.
+/// `segments` with each run of adjacent white-space-only segments
+/// ([`is_space`]) merged into one, so spaces and tabs together are a
+/// single segment.
 fn merge_whitespace_runs(text: &str, segments: Vec<Range<usize>>) -> Vec<Range<usize>> {
-    let is_space = |range: &Range<usize>| text[range.clone()].chars().all(char::is_whitespace);
+    let is_space = |range: &Range<usize>| text[range.clone()].chars().all(is_space);
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(segments.len());
     for segment in segments {
         match merged.last_mut() {
@@ -630,6 +640,16 @@ mod tests {
         assert_eq!(cell_width("ab"), 2);
         assert_eq!(cell_width("中文"), 4);
         assert_eq!(cell_width("e\u{301}"), 1);
+    }
+
+    #[test]
+    fn a_zero_width_space_is_white_space() {
+        let segmenter = Segmenter::new();
+        let text = "ក\u{200B}ខ \u{FEFF}គ";
+        assert_eq!(
+            texts(text, &segmenter.words(text, WordRules::Unicode)),
+            ["ក", "\u{200B}", "ខ", " \u{FEFF}", "គ"]
+        );
     }
 
     #[test]

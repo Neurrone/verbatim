@@ -14,8 +14,11 @@ Windows API, and `cargo xtask ci` checks that it does not.
   with ICU's dictionaries for scripts written without spaces (Japanese,
   Thai, Lao, Khmer, Burmese), or by jieba's dictionary for Chinese, as NVDA
   uses cppjieba. The segments cover the whole text, punctuation and
-  whitespace included, and a run of spaces and tabs is one segment, so any
-  position in it belongs to the same word.
+  whitespace included, and a run of white space is one segment, so any
+  position in it belongs to the same word. White space (`is_space`) is
+  Unicode's, together with the zero-width space and the zero-width
+  no-break space, which Khmer, Thai, and Burmese text uses to mark word
+  breaks.
 - `WordRules::for_text`: which word rules a text takes, from its language
   tag when the provider gives one, and otherwise from its characters (Han
   without kana is Chinese; Japanese mixes kanji with kana).

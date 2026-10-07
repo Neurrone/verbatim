@@ -118,9 +118,10 @@ pub(crate) fn boundary(text: &str, offset: usize) -> usize {
     offset
 }
 
-/// Whether `text` has nothing to read: empty, or only whitespace.
+/// Whether `text` has nothing to read: empty, or only white space, the
+/// zero-width space among it (`verbatim_text::is_space`).
 pub(crate) fn is_blank(text: &str) -> bool {
-    text.trim().is_empty()
+    text.chars().all(verbatim_text::is_space)
 }
 
 /// The grapheme cluster of `content` starting at or containing `offset`,
@@ -629,6 +630,16 @@ mod tests {
                 "\u{1F469}\u{200D}\u{1F4BB}".into()
             ))]
         );
+    }
+
+    #[test]
+    fn a_zero_width_space_separates_words_and_reads_as_blank() {
+        // Khmer "ka" and "kha" with a zero-width space between them, as
+        // Khmer marks its word breaks.
+        assert_eq!(words("ក\u{200B}ខ", None), vec![0..3, 6..9]);
+        assert!(is_blank("\u{200B}"));
+        assert!(is_blank(" \u{FEFF}\t"));
+        assert!(!is_blank("\u{200B}a"));
     }
 
     #[test]

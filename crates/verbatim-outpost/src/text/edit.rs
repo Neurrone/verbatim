@@ -187,7 +187,7 @@ fn plain_word(text: &[u16], at: usize) -> (usize, usize) {
         let span = (units_before, units_before + length);
         units_before = span.1;
         match words.last_mut() {
-            Some(word) if segment.chars().all(char::is_whitespace) => word.1 = span.1,
+            Some(word) if segment.chars().all(verbatim_text::is_space) => word.1 = span.1,
             _ => words.push(span),
         }
     }

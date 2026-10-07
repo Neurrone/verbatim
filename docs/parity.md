@@ -1607,7 +1607,10 @@ verified.
   [TextInfo](nvda/text-infos.md). Verbatim: segmentation is **matched
   since 2026-10-06** in `verbatim-text` (grapheme clusters, Unicode's word
   rules with dictionaries, jieba for Chinese, a run of spaces and tabs as
-  one segment), used by the review cursor over text and by spelling; where
+  one segment), used by the review cursor over text and by spelling; a
+  zero-width space or zero-width no-break space counts as white space, not
+  as a word, and text of nothing else reads as blank (since 2026-10-08);
+  where
   the application moves the caret by word, the provider's word is spoken.
   A plain Win32 edit control's word, which the outpost finds itself, is
   **matched since 2026-10-08**: the line segmented by the same rules, each
