@@ -15,32 +15,27 @@
 //!    then the prompt, "ready>". This shows echo works in this window, so
 //!    the silence that follows means something.
 //! 2. It runs `.\password.ps1`, a written script that calls
-//!    `Read-Host -AsSecureString "Password"` and then prints "done": an
-//!    utterance containing "Password:" is spoken.
-//! 3. It types `secret` and presses Enter. With "speak passwords" off (the
-//!    default, `windows_terminal_commands` and `conhost_commands`), no
-//!    utterance from the prompt up to "done" is exactly one of the typed
-//!    characters (s, e, c, r, t) or contains "secret". Windows PowerShell's
-//!    console shows an asterisk per character, which may be spoken; that is
-//!    not asserted either way. With "speak passwords" on
-//!    (`terminal_spoken_password`), the six characters are each spoken,
-//!    exactly and in order, before Enter is pressed.
-//! 4. "done" is spoken, exactly, and then "ready>", which shows Verbatim
-//!    did not go silent for another reason.
+//!    `Read-Host -AsSecureString "Password"` and then prints "done": its
+//!    echo, then the prompt "Password:", is spoken.
+//! 3. It types `secret` one character at a time. With "speak passwords" off
+//!    (the default, `windows_terminal_commands` and `conhost_commands`),
+//!    each character is not spoken: Windows PowerShell's console shows an
+//!    asterisk for it, and that new output is what is spoken. With "speak
+//!    passwords" on (`terminal_spoken_password`), each character is spoken.
+//! 4. Enter: the line read again, "done", and then "ready>".
 //!
-//! Each step waits for its speech to be heard in full before the next key;
-//! there is no other wait.
+//! Every step asserts exactly what it says before the next key.
 
 use std::io;
 
 use verbatim_config::Settings;
 
-use super::terminal::{self, PROMPT, STEP_TIMEOUT, Terminal};
+use super::terminal::{self, Echo, PROMPT, Terminal};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 /// The script the scenario runs: a password prompt, then "done".
-const SCRIPTS: &[(&str, &str)] = &[(
+pub(crate) const SCRIPTS: &[(&str, &str)] = &[(
     "password.ps1",
     "$secure = Read-Host -AsSecureString 'Password'\r\n'done'\r\n",
 )];
@@ -72,52 +67,53 @@ pub(crate) fn speak_passwords(settings: &mut Settings) {
 
 /// Steps 1 and 2: `echo hello` with its echo and output, then the password
 /// prompt.
-fn echo_then_password_prompt(scenario: &mut Scenario, state: &ScenarioState) {
-    terminal::expect_prompt_read(scenario, state);
-    terminal::type_with_echo(scenario, "echo hello");
-    scenario
-        .speech()
-        .expect_exactly(&["hello", PROMPT], STEP_TIMEOUT);
-    terminal::run_command(scenario, r".\password.ps1");
-    scenario
-        .speech()
-        .expect_in_order(&["Password:"], STEP_TIMEOUT);
+fn echo_then_password_prompt(scenario: &mut Scenario, echo: Echo) {
+    terminal::type_with_echo(scenario, "echo hello", echo);
+    scenario.speech().expect(&["hello", PROMPT]);
+    terminal::type_with_echo(scenario, r".\password.ps1", echo);
+    scenario.speech().expect(&["Password:"]);
 }
 
+/// What the console shows for each character typed at the password
+/// prompt: an asterisk. The prompt's space was on the line already, though
+/// the outpost could not tell it from padding until the first asterisk
+/// followed it, so it is not spoken again.
+const MASKS: [&str; 6] = ["*", "*", "*", "*", "*", "*"];
+
+/// Enter at the password prompt: the script's output, and the prompt.
+const AFTER_PASSWORD: [&str; 2] = ["done", PROMPT];
+
 pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
-    echo_then_password_prompt(scenario, state);
-    terminal::run_command(scenario, SECRET);
-    let heard = terminal::listen_until(scenario, "done", STEP_TIMEOUT, false);
-    let typed = ["s", "e", "c", "r", "t"];
-    let spoken: Vec<&str> = heard
-        .iter()
-        .map(|heard| heard.text.as_str())
-        .filter(|text| typed.contains(text) || text.contains(SECRET))
-        .collect();
-    assert!(
-        spoken.is_empty(),
-        "the password's characters were spoken: {spoken:?}; everything from the prompt to \"done\": {:?}",
-        heard.iter().map(|heard| &heard.text).collect::<Vec<_>>()
-    );
-    scenario.speech().expect_exactly(&[PROMPT], STEP_TIMEOUT);
+    terminal::expect_prompt_read(scenario, state);
+    steps(scenario);
+}
+
+/// The scenario's steps, with "speak passwords" off, once the prompt has
+/// been read, in a terminal whose folder holds [`SCRIPTS`].
+pub(crate) fn steps(scenario: &mut Scenario) {
+    echo_then_password_prompt(scenario, Echo::Shown);
+    for (character, mask) in SECRET.chars().zip(MASKS) {
+        scenario
+            .type_text(&character.to_string())
+            .expect("types a character of the password");
+        scenario.speech().expect(&[mask]);
+    }
+    scenario.send_keys(&["enter"]).expect("presses enter");
+    scenario.speech().expect(&AFTER_PASSWORD);
 }
 
 pub(crate) fn body_spoken_password(scenario: &mut Scenario, state: &mut ScenarioState) {
-    echo_then_password_prompt(scenario, state);
-    scenario.type_text(SECRET).expect("types the password");
-    scenario
-        .speech()
-        .expect_exactly(&["s", "e", "c", "r", "e", "t"], STEP_TIMEOUT);
+    terminal::expect_prompt_read(scenario, state);
+    echo_then_password_prompt(scenario, Echo::Typed);
+    for (character, mask) in SECRET.chars().zip(MASKS) {
+        let spoken = character.to_string();
+        scenario
+            .type_text(&spoken)
+            .expect("types a character of the password");
+        scenario.speech().expect(&[&spoken, mask]);
+    }
     scenario.send_keys(&["enter"]).expect("presses enter");
-    scenario
-        .speech()
-        .expect_exactly(&["done", PROMPT], STEP_TIMEOUT);
+    scenario.speech().expect(&AFTER_PASSWORD);
 }
 
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    terminal::close(scenario, &state);
-}
+pub(crate) use super::no_teardown as teardown;

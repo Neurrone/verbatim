@@ -17,27 +17,26 @@
 //! operating on the already-launched [`Scenario`]:
 //!
 //! - `setup` declares and creates whatever state the scenario's body needs
-//!   beyond `Scenario::launch` itself already provides — today, just
-//!   launching a target application such as Notepad and remembering its
-//!   pid; a future scenario needing a scratch folder would create it here
-//!   too.
+//!   beyond `Scenario::launch` itself already provides: launching a target
+//!   application such as Notepad and remembering its pid or window, or
+//!   writing the harness folder a terminal's scripts run in.
 //! - `body` is the scripted walk itself: gestures, keys, and speech
 //!   assertions, exactly as today's `#[test]` functions already read, just
 //!   moved into a free function instead of the test function directly.
-//! - `teardown` restores whatever `setup` created — killing a launched
-//!   target application, removing a scratch folder — and always runs, even
+//! - `teardown` restores what `setup` changed beyond the windows and files
+//!   the harness closes and deletes itself, such as a theme the scenario
+//!   created, and always runs, even
 //!   when `body` panicked, because [`run`] wraps `body` (and `teardown`
 //!   itself) in [`std::panic::catch_unwind`] rather than letting a body
 //!   panic skip cleanup outright.
 //!
-//! None of this weakens the existing guard-struct discipline
-//! [`crate::scenario::Scenario`]'s own doc comment describes: `Scenario`'s
-//! `Drop` impl still unconditionally kills Verbatim and everything launched
-//! through it, panic or not. `setup`/`body`/`teardown` are a layer of
-//! structure *on top* of that guarantee, for scenario-specific state
-//! `Scenario` itself does not track (and, looking ahead, does not need to:
-//! a scratch folder needs no process-kill-style guard, just an ordinary
-//! `Drop` or an explicit teardown step) — not a replacement for it.
+//! None of this weakens the guard-struct discipline
+//! [`crate::scenario::Scenario`]'s own doc comment describes: [`run`] has
+//! `Scenario::clean_up` close everything the scenario opened, by process
+//! id or window, failing the run when something will not close, and
+//! `Scenario`'s `Drop` impl does the same after a panic. `setup`/`body`/
+//! `teardown` are a layer of structure on top of that guarantee, for
+//! scenario-specific state `Scenario` itself does not track.
 //!
 //! Groups (`docs/roadmap.md`'s M3 track) are a coarse selector for
 //! `cargo xtask vm test --group`, not a strict taxonomy:
@@ -64,9 +63,13 @@
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
 //!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
 //!   list names,
-//!   [`notepad_and_verbatim_menu`](crate::scenarios::notepad_and_verbatim_menu))
-//!   and opening the Start/Search surface
-//!   ([`start_menu_search`](crate::scenarios::start_menu_search)).
+//!   [`second_application_and_verbatim_menu`](crate::scenarios::second_application_and_verbatim_menu)),
+//!   an outpost replaced after it dies
+//!   ([`outpost_crash_recovery`](crate::scenarios::outpost_crash_recovery)),
+//!   a File Explorer window
+//!   ([`explorer_folder_window`](crate::scenarios::explorer_folder_window)),
+//!   and the Settings app's System page
+//!   ([`settings_system_page`](crate::scenarios::settings_system_page)).
 //! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
 //!   commands (`docs/roadmap.md`'s M3 section) —
 //!   [`object_navigation_in_settings`](crate::scenarios::object_navigation_in_settings)
@@ -96,41 +99,46 @@
 //!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
 //!   so a broken feature fails rather than recording a misleading video.
 //!
-//! A scenario marked [`ScenarioDef::local_only`] needs something only a
-//! Windows 11 desktop has, today Windows 11 Notepad's spell checker, which
-//! GitHub's Windows Server runner, with classic Notepad, lacks. Every local
-//! and VM run includes it; GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`],
-//! and [`run_named`] then skips it with a notice. The skip comes from that
-//! setting alone, never from detecting the machine.
+//! A scenario marked [`ScenarioDef::local_only`] tests Windows 11 Notepad,
+//! which GitHub's Windows Server runner, with classic Notepad, lacks; its
+//! name starts with [`LOCAL_ONLY_PREFIX`]. Every local and VM run includes
+//! it; GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by
+//! name (`--skip notepad_`), and [`run_named`] fails a local-only scenario
+//! that runs anyway with the variable set, so a skip is never reported as
+//! a pass. The skip comes from that setting alone, never from detecting
+//! the machine.
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
-use std::time::Duration;
 
 use verbatim_config::Settings;
-use verbatim_control::protocol::LatencyRecord;
 
 use crate::artifacts::{self, ScenarioSummary};
 use crate::scenario::Scenario;
 use crate::scenarios::{
     demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
     demo_terminal_session, edit_control_say_all, explorer_folder_window, lock_key_announcements,
-    menu_and_settings_dialog, notepad_and_verbatim_menu, notepad_editing, notepad_review_cursor,
-    notepad_review_words, notepad_say_all, notepad_spelling_errors, notepad_typed_words,
-    notepad_word_selection, object_navigation_in_settings, rapid_tabbing_in_settings,
-    settings_dialog_keys, settings_system_page, spelling_errors, start_menu_search,
-    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
-    terminal_editing, terminal_flood, terminal_review_grid, terminal_settings_page, theme_panel,
+    menu_and_settings_dialog, notepad_editing, notepad_review_cursor, notepad_review_words,
+    notepad_say_all, notepad_spelling_errors, notepad_typed_words, notepad_word_selection,
+    object_navigation_in_settings, outpost_crash_recovery, rapid_tabbing_in_settings,
+    second_application_and_verbatim_menu, settings_dialog_keys, settings_system_page,
+    spelling_errors, switch_to_onecore, synth_host_crash_recovery, system_information_tree,
+    terminal_commands, terminal_editing, terminal_flood, terminal_review_grid,
+    terminal_settings_page, theme_panel,
 };
 
-/// The longest a scenario's speech may take to end after its body.
-const QUIET_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Environment variable that, set to `1`, skips the local-only scenarios
-/// ([`ScenarioDef::local_only`]); unset, empty, or `0` runs them. GitHub's
-/// `e2e` job sets it, since its Windows Server runner lacks what they need;
-/// nothing detects the machine.
+/// Environment variable that, set to `1`, says the run has no Windows 11
+/// Notepad, so the local-only scenarios ([`ScenarioDef::local_only`]) must
+/// not run: GitHub's `e2e` job sets it and deselects them by name
+/// (`--skip notepad_`), and one that runs anyway fails rather than
+/// reporting a pass. Unset, empty, or `0` runs them. Nothing detects the
+/// machine.
 pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
+
+/// What the name of every local-only scenario starts with, and no other
+/// scenario's: the `--skip` filter a run without Windows 11 Notepad
+/// deselects them by. Every local-only scenario tests Windows 11 Notepad.
+pub const LOCAL_ONLY_PREFIX: &str = "notepad_";
 
 /// Whether `def` is skipped on a run whose [`SKIP_LOCAL_ONLY_ENV`] holds
 /// `setting` (`None` when it is unset): only a local-only scenario is ever
@@ -214,6 +222,9 @@ pub enum ScenarioState {
     /// The pid of a target application `setup` launched via
     /// [`Scenario::launch_target`], for `teardown` to kill.
     TargetPid(u32),
+    /// Names `setup` recorded for `teardown`, such as the folders that were
+    /// there before the scenario.
+    Names(Vec<String>),
     /// The title of a window `setup` opened, such as a harness folder's
     /// ([`Scenario::open_folder`]), for the body to listen for.
     Title(String),
@@ -225,6 +236,9 @@ pub enum ScenarioState {
         pid: u32,
         /// Its title.
         title: String,
+        /// How Verbatim announces the terminal's text area when it takes
+        /// the focus.
+        text_area: String,
         /// The folder, on the agent's machine, holding the files it uses.
         directory: String,
     },
@@ -242,14 +256,6 @@ pub struct ScenarioDef {
     pub name: &'static str,
     /// The coarse group this scenario belongs to, for `--group` selection.
     pub group: Group,
-    /// Image (executable file) names this scenario's `setup` may launch with
-    /// [`Scenario::launch_target`] — [`swept_target_image_names`] unions
-    /// these across the whole registry so [`Scenario::launch`]'s pre-launch
-    /// sweep grows automatically as scenarios are added. An application
-    /// opened on a harness document ([`Scenario::open_document`]) is not
-    /// listed: the user may have it open too, so leftovers are closed by the
-    /// document's title instead.
-    pub target_images: &'static [&'static str],
     /// Changes the fixed settings this scenario's Verbatim is launched
     /// with ([`Scenario::launch_with_settings`]), for a scenario that needs
     /// a reader setting other than its default; `None` for most.
@@ -284,7 +290,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "menu_and_settings_dialog",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: menu_and_settings_dialog::setup,
@@ -292,19 +297,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: menu_and_settings_dialog::teardown,
     },
     ScenarioDef {
-        name: "notepad_and_verbatim_menu",
+        name: "second_application_and_verbatim_menu",
         group: Group::Shell,
-        target_images: &[],
         settings: None,
         local_only: false,
-        setup: notepad_and_verbatim_menu::setup,
-        body: notepad_and_verbatim_menu::body,
-        teardown: notepad_and_verbatim_menu::teardown,
+        setup: second_application_and_verbatim_menu::setup,
+        body: second_application_and_verbatim_menu::body,
+        teardown: second_application_and_verbatim_menu::teardown,
     },
     ScenarioDef {
         name: "rapid_tabbing_in_settings",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: rapid_tabbing_in_settings::setup,
@@ -314,7 +317,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "object_navigation_in_settings",
         group: Group::Navigation,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: object_navigation_in_settings::setup,
@@ -324,7 +326,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "switch_to_onecore",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: switch_to_onecore::setup,
@@ -334,7 +335,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "synth_host_crash_recovery",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: synth_host_crash_recovery::setup,
@@ -342,9 +342,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: synth_host_crash_recovery::teardown,
     },
     ScenarioDef {
+        name: "outpost_crash_recovery",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        setup: outpost_crash_recovery::setup,
+        body: outpost_crash_recovery::body,
+        teardown: outpost_crash_recovery::teardown,
+    },
+    ScenarioDef {
         name: "lock_key_announcements",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: lock_key_announcements::setup,
@@ -352,19 +360,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: lock_key_announcements::teardown,
     },
     ScenarioDef {
-        name: "start_menu_search",
-        group: Group::Shell,
-        target_images: &[],
-        settings: None,
-        local_only: false,
-        setup: start_menu_search::setup,
-        body: start_menu_search::body,
-        teardown: start_menu_search::teardown,
-    },
-    ScenarioDef {
         name: "explorer_folder_window",
         group: Group::Shell,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: explorer_folder_window::setup,
@@ -374,7 +371,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "settings_dialog_keys",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: settings_dialog_keys::setup,
@@ -384,7 +380,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "settings_system_page",
         group: Group::Shell,
-        target_images: &["SystemSettings.exe"],
         settings: None,
         local_only: false,
         setup: settings_system_page::setup,
@@ -394,9 +389,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_editing",
         group: Group::Text,
-        target_images: &[],
         settings: None,
-        local_only: false,
+        local_only: true,
         setup: notepad_editing::setup,
         body: notepad_editing::body,
         teardown: notepad_editing::teardown,
@@ -404,9 +398,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_review_cursor",
         group: Group::Text,
-        target_images: &[],
         settings: None,
-        local_only: false,
+        local_only: true,
         setup: notepad_review_cursor::setup,
         body: notepad_review_cursor::body,
         teardown: notepad_review_cursor::teardown,
@@ -414,9 +407,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_say_all",
         group: Group::Text,
-        target_images: &[],
         settings: None,
-        local_only: false,
+        local_only: true,
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
@@ -424,9 +416,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_word_selection",
         group: Group::Text,
-        target_images: &[],
         settings: None,
-        local_only: false,
+        local_only: true,
         setup: notepad_word_selection::setup,
         body: notepad_word_selection::body,
         teardown: notepad_word_selection::teardown,
@@ -434,9 +425,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_typed_words",
         group: Group::Text,
-        target_images: &[],
         settings: None,
-        local_only: false,
+        local_only: true,
         setup: notepad_typed_words::setup,
         body: notepad_typed_words::body,
         teardown: notepad_typed_words::teardown,
@@ -444,9 +434,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_review_words",
         group: Group::Text,
-        target_images: &[],
         settings: None,
-        local_only: false,
+        local_only: true,
         setup: notepad_review_words::setup,
         body: notepad_review_words::body,
         teardown: notepad_review_words::teardown,
@@ -454,7 +443,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "edit_control_say_all",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: edit_control_say_all::setup,
@@ -464,7 +452,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "spelling_errors",
         group: Group::Text,
-        target_images: &["mockapp.exe"],
         settings: None,
         local_only: false,
         setup: spelling_errors::setup,
@@ -478,7 +465,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "notepad_spelling_errors",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: true,
         setup: notepad_spelling_errors::setup,
@@ -488,7 +474,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "theme_panel",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: theme_panel::setup,
@@ -498,7 +483,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "terminal_settings_page",
         group: Group::Speech,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: terminal_settings_page::setup,
@@ -508,7 +492,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "windows_terminal_commands",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: terminal_commands::setup_windows_terminal,
@@ -518,7 +501,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "conhost_commands",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: terminal_commands::setup_console_host,
@@ -528,7 +510,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "terminal_spoken_password",
         group: Group::Text,
-        target_images: &[],
         settings: Some(terminal_commands::speak_passwords),
         local_only: false,
         setup: terminal_commands::setup_spoken_password,
@@ -538,7 +519,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "terminal_flood",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: terminal_flood::setup,
@@ -548,7 +528,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "terminal_editing",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: terminal_editing::setup,
@@ -558,7 +537,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "terminal_review_grid",
         group: Group::Text,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: terminal_review_grid::setup,
@@ -568,7 +546,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "system_information_tree",
         group: Group::Navigation,
-        target_images: &["msinfo32.exe"],
         settings: None,
         local_only: false,
         setup: system_information_tree::setup,
@@ -578,7 +555,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "demo_notepad_editing",
         group: Group::Demo,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: demo_notepad_editing::setup,
@@ -588,7 +564,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "demo_review_cursor",
         group: Group::Demo,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: demo_review_cursor::setup,
@@ -598,7 +573,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "demo_say_all",
         group: Group::Demo,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: demo_say_all::setup,
@@ -608,7 +582,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "demo_terminal_session",
         group: Group::Demo,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: demo_terminal_session::setup,
@@ -618,7 +591,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "demo_settings_dialog_keys",
         group: Group::Demo,
-        target_images: &[],
         settings: None,
         local_only: false,
         setup: demo_settings_dialog_keys::setup,
@@ -631,22 +603,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
 #[must_use]
 pub fn find(name: &str) -> Option<&'static ScenarioDef> {
     SCENARIOS.iter().find(|def| def.name == name)
-}
-
-/// The deduplicated union of every registered scenario's
-/// [`ScenarioDef::target_images`] — what [`Scenario::launch`] sweeps clean
-/// before every run. Replaces a hand-maintained constant: a scenario that
-/// launches a new target application widens this sweep just by declaring it
-/// in its own [`ScenarioDef`], with nothing else to remember to update.
-#[must_use]
-pub fn swept_target_image_names() -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = SCENARIOS
-        .iter()
-        .flat_map(|def| def.target_images.iter().copied())
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    names
 }
 
 /// Resolves `--scenario` and `--group` selections against `scenarios`
@@ -692,18 +648,31 @@ pub fn select<'a>(
         .collect())
 }
 
-/// Looks up `name` and runs it, or panics if no such scenario is registered
-/// — the thin body every `#[test]` wrapper under `crates/verbatim-e2e/tests/`
-/// calls. Prints the same one-line skip notice every live test in this crate
-/// prints, and returns without running anything, when
-/// [`crate::ENDPOINT_ENV`] is unset; prints a notice and returns as well
-/// when [`skips`] skips the scenario.
+/// The speech every scenario starts with: Verbatim's start sound, and its
+/// startup words, cut off by the announcement of the desktop, which has the
+/// focus once every window is minimized (`Scenario::launch`) and is
+/// announced as a focus change, which interrupts. Asserted exactly before
+/// setup, the desktop after it.
+#[must_use]
+pub fn startup_speech() -> [crate::speech::Expected; 2] {
+    [
+        crate::speech::heard("sound: start"),
+        crate::speech::cut_off("Verbatim is starting."),
+    ]
+}
+
+/// Looks up `name` and runs it: the body of every `#[test]` wrapper under
+/// `crates/verbatim-e2e/tests/`. The wrappers are `#[ignore]`d, so a
+/// workspace test run lists them as ignored rather than running them, and
+/// the end-to-end job runs them with `--ignored`.
 ///
 /// # Panics
 ///
-/// Panics if `name` is not registered, if launching Verbatim fails, or if
-/// the scenario itself fails (setup, body, teardown, or the final clean
-/// quit) — the ordinary way a `#[test]` reports failure.
+/// Panics if `name` is not registered; if [`crate::ENDPOINT_ENV`] is unset,
+/// since a live scenario that cannot reach an agent has not passed; if the
+/// scenario is local-only and [`SKIP_LOCAL_ONLY_ENV`] is `1`, since such a
+/// run deselects it by name instead (a local-only scenario's name starts
+/// with [`LOCAL_ONLY_PREFIX`]); and if the scenario itself fails.
 pub fn run_named(name: &str) {
     let Some(def) = find(name) else {
         panic!(
@@ -717,41 +686,48 @@ pub fn run_named(name: &str) {
     };
     let setting = std::env::var(SKIP_LOCAL_ONLY_ENV).ok();
     match skips(def, setting.as_deref()) {
-        Ok(true) => {
-            println!(
-                "{SKIP_LOCAL_ONLY_ENV} is set; skipping {name:?}, which runs only on a Windows 11 desktop"
-            );
-            return;
-        }
+        Ok(true) => panic!(
+            "{name:?} runs only on a Windows 11 desktop, and {SKIP_LOCAL_ONLY_ENV} is 1: a run without Windows 11 Notepad deselects the local-only scenarios with --skip {LOCAL_ONLY_PREFIX} rather than running them"
+        ),
         Ok(false) => {}
         Err(error) => panic!("{error}"),
     }
-    let Some(_endpoint) = crate::endpoint() else {
-        println!("VERBATIM_E2E_ENDPOINT is not set; skipping the live E2E suite");
-        return;
-    };
+    assert!(
+        crate::endpoint().is_some(),
+        "{} is not set: a live scenario needs a running agent (docs/tooling.md)",
+        crate::ENDPOINT_ENV
+    );
     run(def);
 }
 
-/// Runs one scenario end to end: launch, setup, body, teardown, a final
-/// clean quit, failure-artifact collection, and a [`ScenarioSummary`]
-/// written to this scenario's artifacts directory regardless of outcome.
+/// Runs one scenario end to end and fails it, after collecting everything,
+/// if anything went wrong.
 ///
-/// `body` and `teardown` each run inside their own
-/// [`std::panic::catch_unwind`], not one shared one, so a panic in `body`
-/// still lets `teardown` run with whatever state `setup` produced (borrowed,
-/// not moved, into `body`'s closure — a panic there leaves `state` itself
-/// intact for `teardown` to consume next) rather than skipping cleanup
-/// outright. This is deliberately not a retry of anything: each of `body`
-/// and `teardown` runs exactly once, and a panic from either is re-raised
-/// (via [`std::panic::resume_unwind`] or a fresh `panic!`) once cleanup and
-/// artifact collection have both had their turn, so `cargo test` still
-/// reports the scenario as failed with the original panic message.
+/// The order: launch Verbatim from the minimized desktop; assert its
+/// startup speech ([`startup_speech`]); run setup and the body, which ends
+/// by asserting that nothing more was said; save Core's focus and the
+/// flight recorder while Verbatim is up; check that none of Verbatim's own
+/// processes exited unexpectedly; quit Verbatim and check it exited with
+/// code 0; run the scenario's teardown; close everything the scenario
+/// opened; collect the logs, latency report, audio, crash dumps, and video;
+/// write the summary and archive the run. Each step after the body runs
+/// whatever happened before it, and every problem it meets is a failure of
+/// the run, reported together with the body's own.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one run in order, each step's problems collected, so a failure's place in the order is plain"
+)]
 fn run(def: &ScenarioDef) {
     let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name);
-    // Clear any artifacts a previous run of this same scenario left behind,
-    // so a stale failure directory is never mistaken for this run's own.
-    let _ = std::fs::remove_dir_all(&dir);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
+            panic!(
+                "scenario {:?}: could not clear the previous run's artifacts in {}: {error}",
+                def.name,
+                dir.display()
+            )
+        });
+    }
 
     let mut scenario = Scenario::launch_with_settings(def.settings).unwrap_or_else(|error| {
         panic!(
@@ -760,150 +736,130 @@ fn run(def: &ScenarioDef) {
         )
     });
     let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
+    let mut problems: Vec<String> = Vec::new();
 
-    let setup = scenario
-        .establish_baseline()
-        .and_then(|()| (def.setup)(&mut scenario));
-    let mut state = match setup {
-        Ok(state) => state,
+    let mut state = None;
+    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        scenario.speech().expect_sequence(&startup_speech());
+        crate::scenarios::expect_desktop(&mut scenario);
+        let mut created = (def.setup)(&mut scenario)
+            .unwrap_or_else(|error| panic!("scenario {:?}: setup failed: {error}", def.name));
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            (def.body)(&mut scenario, &mut created);
+            scenario.expect_nothing_more();
+        }));
+        state = Some(created);
+        if let Err(payload) = result {
+            panic::resume_unwind(payload);
+        }
+    }));
+
+    let latency = match scenario.latency_snapshot(LATENCY_RECORDS) {
+        Ok(latency) => Some(latency),
         Err(error) => {
-            scenario.collect_run_artifacts(&dir);
-            scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)));
-            scenario.collect_flight_recorder(&dir);
-            // Setup failed before any input was driven, so a latency
-            // snapshot here would be empty; record none rather than racing
-            // the imminent quit for nothing.
-            let latency = scenario.latency_snapshot(200).ok();
-            foreground.push(format!(
-                "after setup failed: {}",
-                scenario.foreground_report()
-            ));
-            write_foreground(&dir, &foreground);
-            write_summary(&dir, def.name, false, latency.as_deref());
-            archive(&dir, def.name, false);
-            drop(scenario);
-            panic!("scenario {:?}: setup failed: {error}", def.name);
+            problems.push(format!("could not fetch the latency timelines: {error}"));
+            None
         }
     };
-
-    // A scenario's speech must be over before its teardown starts, so the
-    // last thing it asserted is heard in full and nothing it caused is still
-    // playing when the scenario's applications close.
-    let body_outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-        (def.body)(&mut scenario, &mut state);
-        scenario.speech().wait_until_quiet(QUIET_TIMEOUT);
-    }));
-    let teardown_outcome =
-        panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)));
-
-    // Snapshot latency now, while Verbatim is still up and its control
-    // connection still answers — before the quit below tears it down. Taking
-    // it after the quit is why a passing scenario used to record "unknown"
-    // latency (the snapshot raced Verbatim's exit and lost); a failing one
-    // reported real numbers only because it skips the quit.
-    let latency = scenario.latency_snapshot(200).ok();
-
-    // Dump the reducer flight recorder for every run, pass or fail, while
-    // Verbatim is still up (a passing run quits below; a failing one skipped
-    // the quit, so Verbatim is up here either way). It captures the reducer
-    // inputs a passing run leaves no other trace of — wanted for chasing
-    // symptoms the pass/fail verdict alone does not explain.
-    scenario.collect_flight_recorder(&dir);
-
-    // The M3 pipeline latency budget: reported prominently on a breach,
-    // never asserted (a recorded decision — see PIPELINE_BUDGET_MS's doc
-    // comment). Two clean-rerun episodes showed breaches tracking guest
-    // scheduling load, not code, so a hard assertion here only manufactured
-    // flaky runs; the per-scenario summary always carries the measured
-    // maxima either way, and the assertion returns with eSpeak's controlled
-    // reference measurement in M8.
-    if let Some(worst) = latency
-        .as_deref()
-        .and_then(crate::latency::max_event_to_queue_ms)
-        .filter(|worst| *worst > crate::latency::PIPELINE_BUDGET_MS)
-    {
-        println!(
-            "scenario {:?}: WARNING: pipeline latency budget exceeded: worst event-to-queue {worst} ms > {} ms (reported, not asserted)",
-            def.name,
-            crate::latency::PIPELINE_BUDGET_MS
-        );
+    if let Err(error) = scenario.collect_focus(&dir) {
+        problems.push(format!("could not save Core's focus: {error}"));
+    }
+    if let Err(error) = scenario.collect_flight_recorder(&dir) {
+        problems.push(format!("could not save the flight recorder: {error}"));
+    }
+    match scenario.unexpected_exits() {
+        Ok(exits) => problems.extend(exits.into_iter().map(|exit| {
+            format!(
+                "Verbatim's process {} (pid {}) exited unexpectedly: exit code {:?}{}",
+                exit.image,
+                exit.pid,
+                exit.exit_code,
+                if exit.abnormal {
+                    ", abnormally (a crash)"
+                } else {
+                    ""
+                }
+            )
+        })),
+        Err(error) => problems.push(format!("could not read Verbatim's process exits: {error}")),
+    }
+    if let Err(error) = scenario.quit_verbatim() {
+        problems.push(format!("quitting Verbatim failed: {error}"));
+    }
+    let teardown_outcome = state.map(|state| {
+        panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
+    });
+    if let Some(Err(payload)) = &teardown_outcome {
+        problems.push(format!(
+            "teardown failed: {}",
+            panic_message(payload.as_ref())
+        ));
+    }
+    problems.extend(scenario.clean_up());
+    problems.extend(scenario.collect_run_artifacts(&dir));
+    if let Err(error) = scenario.finish_recording(&dir.join(format!("{}.mp4", def.name))) {
+        problems.push(format!("the recording could not be saved: {error}"));
+    }
+    foreground.push(format!("after cleanup: {}", scenario.foreground_report()));
+    drop(scenario);
+    if let Err(error) = write_foreground(&dir, &foreground) {
+        problems.push(format!("could not write the foreground record: {error}"));
     }
 
-    // A clean quit is asserted only when body and teardown both succeeded:
-    // an already-failed scenario's Verbatim may be in any state, and
-    // Scenario::drop already guarantees it is killed regardless, so there is
-    // nothing more to prove by also asserting a graceful quit on top of a
-    // failure already reported.
-    let quit_outcome = if body_outcome.is_ok() && teardown_outcome.is_ok() {
-        scenario
-            .quit_verbatim()
-            .map_err(|error| format!("quit_verbatim failed: {error}"))
-    } else {
-        Ok(())
-    };
-
-    let passed = body_outcome.is_ok() && teardown_outcome.is_ok() && quit_outcome.is_ok();
-    // The timeline and stderr log are written for every run, pass or fail (so a
-    // passing run leaves its timings behind). The flight-recorder dump
-    // already happened above, before the quit, for every run.
-    scenario.collect_run_artifacts(&dir);
-    scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)));
-    foreground.push(format!("after teardown: {}", scenario.foreground_report()));
-    write_foreground(&dir, &foreground);
-    write_summary(&dir, def.name, passed, latency.as_deref());
-    archive(&dir, def.name, passed);
+    let passed = body_outcome.is_ok() && problems.is_empty();
+    if let Err(error) = ScenarioSummary::new(def.name, passed, latency.as_deref()).write(&dir) {
+        problems.push(format!("could not write the run summary: {error}"));
+    }
+    if let Err(error) = artifacts::archive_run(&artifacts::artifacts_root(), def.name, &dir, passed)
+    {
+        problems.push(format!("could not archive the run's artifacts: {error}"));
+    }
     println!(
         "scenario {:?}: {}",
         def.name,
-        if passed { "pass" } else { "fail" }
+        if body_outcome.is_ok() && problems.is_empty() {
+            "pass"
+        } else {
+            "fail"
+        }
     );
-
-    drop(scenario);
-
+    let problems = problems.join("\n");
     if let Err(payload) = body_outcome {
+        if !problems.is_empty() {
+            eprintln!(
+                "scenario {:?}: also failed after its body:\n{problems}",
+                def.name
+            );
+        }
         panic::resume_unwind(payload);
     }
-    if let Err(payload) = teardown_outcome {
-        panic::resume_unwind(payload);
-    }
-    if let Err(reason) = quit_outcome {
-        panic!("scenario {:?}: {reason}", def.name);
-    }
+    assert!(
+        problems.is_empty(),
+        "scenario {:?} failed after its body:\n{problems}",
+        def.name
+    );
 }
 
-/// Fetches a best-effort latency snapshot (never asserted — see
-/// [`crate::scenario::Scenario::latency_snapshot`]) and writes this
-/// scenario's [`ScenarioSummary`], logging rather than failing the run if
-/// the write itself fails.
-fn write_summary(
-    dir: &std::path::Path,
-    name: &str,
-    passed: bool,
-    latency: Option<&[LatencyRecord]>,
-) {
-    let summary = ScenarioSummary::new(name, passed, latency);
-    if let Err(error) = summary.write(dir) {
-        eprintln!("scenario {name:?}: could not write its run summary: {error}");
-    }
+/// How many latency timelines a scenario's summary is built from.
+const LATENCY_RECORDS: u32 = 200;
+
+/// The message a panic carried, for reporting it beside other problems.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_owned())
+        })
+        .unwrap_or_else(|| "(a panic with no message)".to_owned())
 }
 
-/// Records what held the foreground before setup and after teardown, for
-/// reading a failure against the desktop state it started from, as NVDA's
-/// system tests log the foreground window's title around every test.
-fn write_foreground(dir: &std::path::Path, lines: &[String]) {
-    if let Err(error) = std::fs::create_dir_all(dir)
-        .and_then(|()| std::fs::write(dir.join("foreground.txt"), lines.join("\n") + "\n"))
-    {
-        eprintln!("could not write the foreground record: {error}");
-    }
-}
-
-/// Keeps this run's artifacts in the scenario's history, logging rather
-/// than failing the run if that fails.
-fn archive(dir: &std::path::Path, name: &str, passed: bool) {
-    if let Err(error) = artifacts::archive_run(&artifacts::artifacts_root(), name, dir, passed) {
-        eprintln!("scenario {name:?}: could not archive its artifacts: {error}");
-    }
+/// Records what held the foreground before setup and after cleanup.
+fn write_foreground(dir: &std::path::Path, lines: &[String]) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("foreground.txt"), lines.join("\n") + "\n")
 }
 
 #[cfg(test)]
@@ -929,7 +885,6 @@ mod tests {
             ScenarioDef {
                 name: "alpha",
                 group: Group::Speech,
-                target_images: &["alpha.exe"],
                 settings: None,
                 local_only: false,
                 setup: no_setup,
@@ -939,7 +894,6 @@ mod tests {
             ScenarioDef {
                 name: "beta",
                 group: Group::Shell,
-                target_images: &["beta.exe", "alpha.exe"],
                 settings: None,
                 local_only: false,
                 setup: no_setup,
@@ -949,7 +903,6 @@ mod tests {
             ScenarioDef {
                 name: "gamma",
                 group: Group::Shell,
-                target_images: &[],
                 settings: None,
                 local_only: false,
                 setup: no_setup,
@@ -981,24 +934,8 @@ mod tests {
     #[test]
     fn find_locates_a_real_registered_scenario() {
         assert!(find("menu_and_settings_dialog").is_some());
-        assert!(find("notepad_and_verbatim_menu").is_some());
+        assert!(find("second_application_and_verbatim_menu").is_some());
         assert!(find("no_such_scenario").is_none());
-    }
-
-    #[test]
-    fn swept_target_image_names_is_deduplicated_and_sorted() {
-        let names = swept_target_image_names();
-        assert_eq!(names, {
-            let mut expected = names.clone();
-            expected.sort_unstable();
-            expected.dedup();
-            expected
-        });
-        assert!(names.contains(&"msinfo32.exe"));
-        assert!(
-            !names.contains(&"notepad.exe"),
-            "Notepad is closed by its harness document's title, never swept"
-        );
     }
 
     #[test]
@@ -1098,19 +1035,28 @@ mod tests {
     }
 
     #[test]
-    fn only_windows_11_notepads_spell_checker_is_local_only() {
-        let local_only: Vec<&str> = SCENARIOS
-            .iter()
-            .filter(|def| def.local_only)
-            .map(|def| def.name)
-            .collect();
-        assert_eq!(local_only, vec!["notepad_spelling_errors"]);
+    fn exactly_the_local_only_scenarios_are_named_for_the_skip_filter() {
+        for def in SCENARIOS {
+            assert_eq!(
+                def.local_only,
+                def.name.starts_with(LOCAL_ONLY_PREFIX),
+                "{}: a local-only scenario, and only one, is named with {LOCAL_ONLY_PREFIX:?}, which a run without Windows 11 Notepad skips",
+                def.name
+            );
+        }
         let selected = select(SCENARIOS, &[], &[]).expect("no filters never errors");
         assert!(
-            selected
-                .iter()
-                .any(|def| def.name == "notepad_spelling_errors"),
+            selected.iter().any(|def| def.local_only),
             "a run with no filters includes the local-only scenarios"
         );
+    }
+
+    #[test]
+    fn a_local_only_scenario_run_where_it_cannot_hold_fails_instead_of_passing() {
+        let local = SCENARIOS
+            .iter()
+            .find(|def| def.local_only)
+            .expect("there are local-only scenarios");
+        assert_eq!(skips(local, Some("1")), Ok(true));
     }
 }

@@ -1,32 +1,25 @@
-//! Editing in Notepad (milestone M4 items 3 and 4): focus on the text
-//! saying the caret's line rather than the whole text; the caret by
+//! Editing in Windows 11 Notepad (milestone M4 items 3 and 4): focus on the
+//! text saying the caret's line rather than the whole text; the caret by
 //! character, word, and line; selecting and unselecting with Shift; typing
 //! with character echo; deleting with Backspace and Delete; and End and
 //! Backspace naming the line break they meet, as NVDA does
 //! (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
-//! character"). It holds for
-//! Windows 11 Notepad (UIA) and classic Notepad's edit control alike.
+//! character"): Windows 11 Notepad breaks lines with a carriage return.
+//! Local-only: GitHub's Windows Server runner has classic Notepad.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to
 //! Notepad, which moves its caret; Verbatim waits for evidence that it did
 //! and reads the caret back through UIA's text pattern, so each assertion
-//! is on what Notepad's caret really reached. Typed characters are echoed
-//! from the hook's translation of each key. Each step waits for its speech
-//! to be heard in full before the next key, as a listening user would;
-//! there is no other wait.
-//!
-//! The document is saved at the end, and by the teardown when the body
-//! failed part-way, so Windows 11 Notepad never restores an edited copy of
-//! it into the next run.
+//! is on what Notepad's caret really reached. The document is new to
+//! Notepad, so its caret starts at the top. The document is saved at the
+//! end, and by cleanup when the body failed part-way.
 
 use std::io;
-use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// How long each step's speech is given to arrive.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::no_teardown as teardown;
 
 /// The harness document's name.
 const NAME: &str = "editing";
@@ -35,100 +28,55 @@ const NAME: &str = "editing";
 const DOCUMENT: &str = "alpha beta gamma\r\ndelta epsilon\r\n";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let pid = scenario.open_document_with("notepad.exe", NAME, DOCUMENT)?;
-    Ok(ScenarioState::TargetPid(pid))
+    scenario.open_document_with(NAME, DOCUMENT)?;
+    Ok(ScenarioState::None)
 }
 
-/// Presses `keys` and waits for exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
+/// Presses `keys` and asserts exactly `heard`.
+fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
     scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
+    scenario.speech().expect(heard);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // Focus on the text area says its name and role, then the line at the
-    // caret, never the whole text. Notepad may have put the caret on any
-    // line, so any of them will do here.
-    let text_area = super::expect_notepad_text_area(scenario, STEP_TIMEOUT);
-    let line = scenario
-        .speech()
-        .expect_change_capturing(&text_area, STEP_TIMEOUT);
-    assert!(
-        ["alpha beta gamma", "delta epsilon", "blank"].contains(&line.as_str()),
-        "focusing the text area spoke {line:?}, not the line at the caret"
-    );
-
-    // Notepad may restore the caret where an earlier session left it, so
-    // Control+Home first takes it to the top, speaking the line there.
-    // Right Arrow then speaks the character it reached, Control+Right Arrow
-    // the word, and Down Arrow the line.
-    press(scenario, "control+home", "alpha beta gamma");
-    press(scenario, "rightarrow", "l");
-    press(scenario, "control+rightarrow", "beta");
-    press(scenario, "downarrow", "delta epsilon");
+    super::expect_notepad_opened(scenario, NAME, "alpha beta gamma");
+    press(scenario, "control+home", &["alpha beta gamma"]);
+    press(scenario, "rightarrow", &["l"]);
+    press(scenario, "control+rightarrow", &["beta"]);
+    press(scenario, "downarrow", &["delta epsilon"]);
 
     // Focus leaves for Verbatim's menu and comes back: the text area says
     // the line the caret is on, the second.
-    super::open_verbatim_menu(scenario, STEP_TIMEOUT);
+    super::open_verbatim_menu(scenario);
     scenario.send_keys(&["escape"]).expect("sends escape");
-    let line = super::expect_notepad_text(scenario, STEP_TIMEOUT);
-    assert_eq!(
-        line, "delta epsilon",
-        "focus returning spoke the wrong text"
-    );
+    super::expect_notepad_returned(scenario, NAME, "delta epsilon");
 
-    // End puts the caret on the line break, which is named, as NVDA names
-    // it: its carriage return in either Notepad.
-    press(scenario, "end", "carriage return");
-
-    // Shift+Home selects back to the start of the line; Shift+Right Arrow
-    // then unselects its first character, the text first, in NVDA's word
-    // order. End leaves the rest of the selection: the character there,
-    // then what it unselected, as NVDA reports it.
-    press(scenario, "shift+home", "delta epsilon selected");
-    press(scenario, "shift+rightarrow", "d unselected");
-    scenario.send_keys(&["end"]).expect("sends end");
-    scenario.speech().expect_exactly(
+    // End puts the caret on the line break, which is named. Shift+Home
+    // selects back to the start of the line; Shift+Right Arrow then
+    // unselects its first character, the text first, in NVDA's word order.
+    // End leaves the rest of the selection: the character there, then what
+    // it unselected.
+    press(scenario, "end", &["carriage return"]);
+    press(scenario, "shift+home", &["delta epsilon selected"]);
+    press(scenario, "shift+rightarrow", &["d unselected"]);
+    press(
+        scenario,
+        "end",
         &["carriage return", "elta epsilon unselected"],
-        STEP_TIMEOUT,
     );
 
-    // Typed characters are echoed; Backspace speaks what it deleted.
-    press(scenario, "x", "x");
-    press(scenario, "y", "y");
-    press(scenario, "backspace", "y");
-    press(scenario, "backspace", "x");
+    // Typed characters are echoed; Backspace speaks what it deleted, and
+    // Delete the character that took the deleted one's place.
+    press(scenario, "x", &["x"]);
+    press(scenario, "y", &["y"]);
+    press(scenario, "backspace", &["y"]);
+    press(scenario, "backspace", &["x"]);
+    press(scenario, "home", &["d"]);
+    press(scenario, "delete", &["e"]);
 
-    // Delete speaks the character that took the deleted one's place.
-    press(scenario, "home", "d");
-    press(scenario, "delete", "e");
-
-    // Backspace at the line's start deletes the line break before it, and
-    // names it as NVDA does: Windows 11 Notepad breaks lines with a
-    // carriage return, and classic Notepad's edit control with a carriage
-    // return and line feed, which is spoken as the line feed.
-    let line_break = if text_area.starts_with("Text editor document") {
-        "carriage return"
-    } else {
-        "line feed"
-    };
-    press(scenario, "backspace", line_break);
+    // Backspace at the line's start deletes the line break before it.
+    press(scenario, "backspace", &["carriage return"]);
     scenario
-        .save_document(NAME, STEP_TIMEOUT)
+        .save_document(NAME, crate::scenario::WINDOW_TIMEOUT)
         .expect("saves the document");
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    if let Err(error) = scenario.save_document(NAME, STEP_TIMEOUT) {
-        println!("the edited document could not be saved: {error}");
-    }
-    if let ScenarioState::TargetPid(pid) = state {
-        scenario
-            .kill_target(pid)
-            .expect("kills notepad through the agent");
-    }
 }

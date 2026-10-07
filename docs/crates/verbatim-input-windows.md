@@ -7,6 +7,13 @@ names, and the gesture tables carry no Windows dependency.
 
 Public API: `InputHook::start(config, map, events, speech, reports)`,
 which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
+`events` is the gesture router's channel of `Routed` values, in the order
+the keys came: `Gesture`, a gesture that fired; `Handled(n)`, sent when
+the last key event of an end-to-end harness's numbered key stroke
+(`verbatim_input::harness`, read from `dwExtraInfo`) has been decided, so
+everything the stroke caused was sent before it; and `Barrier(token)`,
+which the hook never sends but the router's other producers do, for a
+control-plane idle request answered only after everything sent before it.
 `speech` is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect) + Send`) that
 carries out each key press's effect on speech; `reports` is a
 `KeyReportFn` that receives, after the speech effect, what a key passed to

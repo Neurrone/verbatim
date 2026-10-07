@@ -330,10 +330,10 @@ automates, minus the automation.
 "Runner-direct" means the agent and the tests it drives share one machine —
 your dev box, or a plain GitHub-hosted Windows runner — as opposed to
 `cargo xtask vm test`, which drives a Hyper-V guest. Every live test in
-`crates/verbatim-e2e` checks the `VERBATIM_E2E_ENDPOINT` environment
-variable first and prints a one-line skip notice instead of running when it
-is unset, so `cargo test` and `cargo xtask ci` stay green with no agent
-anywhere.
+`crates/verbatim-e2e` is `#[ignore]`d, so `cargo test` and `cargo xtask ci`
+list them as ignored, never as passed, and stay green with no agent
+anywhere. A run with `--ignored` runs them, and each fails, rather than
+passing, when the `VERBATIM_E2E_ENDPOINT` environment variable is unset.
 
 To actually run the suite locally:
 
@@ -351,7 +351,7 @@ a second terminal:
 
 ```
 $env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'
-cargo test -p verbatim-e2e -- --test-threads=1
+cargo test -p verbatim-e2e -- --ignored --skip demo_ --test-threads=1
 ```
 
 `--test-threads=1` is not optional: every live test in this crate launches
@@ -360,11 +360,20 @@ a real `verbatim.exe` on the real desktop and injects real keystrokes, and
 time within the test process via a shared lock, but Windows itself has no
 notion of "only one verbatim.exe" — two scenarios running concurrently
 would each think they own an instance the other just replaced out from
-under it (`single_instance::acquire_replacing`'s own algorithm). This is
-exactly what `.github/workflows/ci.yml`'s `e2e` job does, on a plain
-`windows-latest` runner, with the same environment variable, and with
-`VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
+under it (`single_instance::acquire_replacing`'s own algorithm).
+`.github/workflows/ci.yml`'s `e2e` job runs, on a plain `windows-latest`
+runner with the same environment variable,
+`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip notepad_ --test-threads=1`,
+with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
 below).
+
+Every scenario starts from the same desktop, recorded or not: the harness
+closes what an earlier run left (processes the agent launched, by their
+own handles; harness windows; Notepad's harness tabs, as tabs), minimizes
+every window as the taskbar's Show Desktop does, and brings the desktop
+forward, all without injecting input. It then asserts Verbatim's startup
+speech and the desktop's announcement, which it reads independently
+through the agent. The run takes over the desktop while it lasts.
 
 On a development VM reached over Remote Desktop, a run needs the session
 unlocked with a real foreground window, and disconnecting the RDP client
@@ -435,9 +444,14 @@ More environment variables matter for less common cases:
   test` sets it to the guest's vendored copy,
   `C:\VerbatimLab\tools\ffmpeg.exe`.
 - `VERBATIM_E2E_RUST_LOG` is passed to the Verbatim a scenario launches
-  as `RUST_LOG`, and its outposts inherit it, so a run's logs carry what
-  is not logged by default. For a terminal's reads during a flood, set it
-  to `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
+  as `RUST_LOG`, and its outposts inherit it. Unset, every scenario's
+  Verbatim logs with `info,verbatim_outpost=debug`
+  (`DEFAULT_RUST_LOG`), so a failed run's artifacts hold the outposts'
+  debug lines: what each read and how long it took, what it released, and
+  what it reported. The focus listener runs from the outpost binary, so
+  the filter covers it, but it has no log lines of its own yet. Set but
+  empty, Verbatim logs as its own configuration says. For a terminal's
+  reads during a flood, set it to `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
   each tail read then logs `terminal tail timing` (whether it started at
   the anchor or afresh, the path, its time in microseconds, its calls,
   where the fingerprint was found, and whether it settled), each text
@@ -446,18 +460,21 @@ More environment variables matter for less common cases:
   host's outpost log then grows past the agent's 8 MB file limit, so
   read it from `target\e2e-stage\logs\<Verbatim's pid>` rather than from
   the artifacts.
-- `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` skips the local-only scenarios; unset,
-  empty, or `0` runs them, and any other value fails each test saying so.
-  CI's `e2e` job sets it; see the local-only scenarios below.
+- `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` says the run has no Windows 11 Notepad:
+  a local-only scenario run with it set fails, since such a run deselects
+  them with `--skip notepad_`; unset, empty, or `0` runs them, and any
+  other value fails each test saying so. CI's `e2e` job sets it; see the
+  local-only scenarios below.
 
-Every speech assertion waits for the matched utterance to end (its
-`SpeechEnded` frame) before the scenario injects its next input, and fails
-unless the utterance completed, so each utterance is heard in full in
-every run, audible or not. The wait matters because every injected key,
-like every real one, cancels speech: input sent while an utterance plays
-cuts it off. After each scenario's body, the registry also
-waits until speech is quiet before teardown. There is no separate paced
-mode.
+Speech is asserted exactly (`docs/testing.md`): every utterance, in
+order, with its exact text, ending as expected, nothing in between, and
+each heard in full before the scenario injects its next input, since every
+injected key, like every real one, cancels speech. Injecting input while
+an utterance no assertion has matched is waiting fails the run as a
+harness error. Every scenario ends by asserting that nothing more was
+said: the harness numbers every key it injects, and Verbatim answers once
+it has handled the last one and is idle, so anything it queued must
+already have been matched. There is no separate paced mode.
 
 The suite is a scenario registry (`crates/verbatim-e2e/src/registry.rs`,
 milestone M3 Track B): every scenario is a named, grouped setup/body/teardown
@@ -473,18 +490,20 @@ and the next announcement is still heard in full, from the host Verbatim
 starts in its place), `switch_to_onecore` (switching to Windows OneCore
 voices through the Select Synthesizer dialog and back to eSpeak NG,
 which needs OneCore voices installed, as Windows 11 and GitHub's
-runners have), `notepad_and_verbatim_menu` (switching foreground between Notepad
-and Verbatim's own menu keeps both outposts alive and re-announces
-correctly, and Verbatim still answers after Notepad closes),
+runners have), `second_application_and_verbatim_menu` (switching the
+foreground between the harness's Windows Forms text box and Verbatim's own
+menu keeps the text box's outpost, the same process, and re-announces it),
+`outpost_crash_recovery` (an application's outpost ended as a crash would
+end it is replaced, saying nothing more, and the text is read through the
+new one), `explorer_folder_window` (a File Explorer window on a harness
+folder), `settings_system_page` (the Settings app's System page),
 `lock_key_announcements` (Scroll Lock pressed twice is announced on,
 then off, or the reverse),
 `rapid_tabbing_in_settings` (a burst of Tab and Shift+Tab presses in
 Verbatim's settings dialog must leave focus and the navigator on the
 control that really has focus), `object_navigation_in_settings` (the M3
 object-navigation and review commands against Verbatim's own settings
-dialog), `start_menu_search` (pressing the Windows key opens the
-Start/Search surface and Verbatim announces its search box), and
-`system_information_tree` (an MSAA-only legacy application, msinfo32,
+dialog), and `system_information_tree` (an MSAA-only legacy application, msinfo32,
 reaches Verbatim, and logical object navigation works through its real
 Win32 tree view — the regression scenario for the flat MSAA tree-view
 exposure).
@@ -495,18 +514,20 @@ and in Windows 11 Notepad (`notepad_spelling_errors`, local-only), and
 the terminal scenarios: `windows_terminal_commands`,
 `conhost_commands`, and `terminal_spoken_password` (commands, typed echo,
 and a password prompt whose typing is spoken only with "speak passwords"
-on), `terminal_flood` (ten thousand lines of output, the skipped-lines
-policy, Verbatim+5, responsiveness, and the wall-time ratio, saved as
-`wall-time-ratio.txt` in its artifacts directory), `terminal_editing` (a
+on), `terminal_flood` (three thousand lines of output heard as their first
+30 lines, one exact "skipped 2941 lines", and the last 30; Verbatim+5; and
+the wall-time ratio, saved as `wall-time-ratio.txt` in its artifacts
+directory for trends, never asserted), `terminal_editing` (a
 command corrected with Backspace, punctuation echoed by name, and the
 review cursor's current word down a column), and `terminal_review_grid`
 (the review cursor down a column of a text table).
 Each terminal scenario opens a window of its own titled
 `verbatim-e2e-<name>-<token>` and closes it by that title, so your own
 terminals are left alone, and runs its shell in a folder of the same name
-in `target/e2e-stage`, deleted once the window has closed; it uses Windows Terminal when `wt.exe` can be
-started and the console host otherwise (`conhost_commands` always uses the
-console host), and prints which. The agent starts `wt.exe` by searching
+in `target/e2e-stage`, deleted once the window has closed. Each names its
+terminal, Windows Terminal or the console host, and fails when it cannot
+open it, with no fallback; it asserts the program that owns the window.
+The agent starts `wt.exe` by searching
 `PATH`, so Windows Terminal's execution alias folder,
 `%LOCALAPPDATA%\Microsoft\WindowsApps`, must be on the agent's `PATH`, as
 it is on Windows 11 by default. GitHub's Windows Server runner image ships
@@ -518,31 +539,25 @@ alias folder on `PATH` for the later steps. They type through the agent's `TypeT
 which maps each character with the foreground window's keyboard layout, so
 any layout that can type the commands works. `crates/verbatim-e2e/src/
 scenarios/` documents exactly what each asserts, at the top of its module.
-A real Explorer folder-window scenario is deliberately not among them — see
-the "Explorer" note in `docs/roadmap.md`'s M3 section for why it is verified
-by hand for now, and the same section's toggle-controls and Start-menu notes
-for the other by-hand cases (the Settings app's toggles, and navigating the
-Start menu's search *results*, both deferred for the same reason). A
-scenario's name is also its
-`#[test]` function name, so `cargo test -p verbatim-e2e <name> -- --exact
---test-threads=1` runs exactly that one scenario runner-direct, the same
+A scenario's name is also its
+`#[test]` function name, so `cargo test -p verbatim-e2e --test <name> --
+--ignored --exact <name> --test-threads=1` runs exactly that one scenario
+runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
 VM (see "cargo xtask vm verbs" below).
 
-Some scenarios are local-only: they need something only a Windows 11
-desktop has, and are marked `local_only` in the registry. Today that is one,
-`notepad_spelling_errors`, which reads Windows 11 Notepad's own spell
-checker; GitHub's Windows Server runner has classic Notepad, a Win32 edit
-control with no spell checker. The other Notepad scenarios hold for
-classic Notepad's edit control as well as Windows 11 Notepad's UIA
-document, and run everywhere. A local-only scenario is part of the suite:
-every local run and every `cargo xtask vm test` run includes it. A run
-with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` skips it, its test printing a
-notice and passing, and CI's `e2e` job sets that variable. The skip comes
-from that setting alone, never from detecting the machine, so a local run
+Some scenarios are local-only: they test Windows 11 Notepad, which
+GitHub's Windows Server runner lacks (it has classic Notepad, a Win32 edit
+control), and are marked `local_only` in the registry. Their names, and
+only theirs, start with `notepad_`. Editing behaviour is also covered in
+the harness's Windows Forms text box, which runs everywhere. A local-only
+scenario is part of the suite: every local run and every
+`cargo xtask vm test` run includes it. CI's `e2e` job deselects them with
+`--skip notepad_` and sets `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that
+ran there anyway would fail rather than report a pass. The skip comes from
+that setting alone, never from detecting the machine, so a local run
 cannot silently lose a scenario. Mark a new scenario local-only only when
-it cannot hold on the runner's Windows Server, and name what it needs in
-the comment above its registry entry.
+it tests Windows 11 Notepad, and give it the `notepad_` prefix.
 
 The registry also holds demonstrations, its `demo` group
 (`demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,
@@ -550,8 +565,8 @@ The registry also holds demonstrations, its `demo` group
 written to be recorded as videos for `videos/demos`, showing a feature at
 a viewer's pace, so that each announcement is heard in full before the
 next action, typing included. They are never part of the suite. Their
-`#[test]` wrappers are `#[ignore]`d, so `cargo test -p verbatim-e2e`, here
-and in CI's `e2e` job, skips them; `registry::select` leaves them out when
+`#[test]` wrappers are `#[ignore]`d like every live test, and the suite's
+runs leave them out with `--skip demo_`; `registry::select` leaves them out when
 no `--scenario` or `--group` is given; and `cargo xtask vm test` refuses
 them by name or group. They follow the suite's rules otherwise: the same
 fixed settings and speech rate, no fixed waits, and assertions on what
@@ -564,7 +579,8 @@ the recording's demo quality, and copies the video to `videos/demos` for
 a demonstration or `videos/tests` for a test scenario (`videos/readme.md`
 describes every video). Like any local run, it takes over the desktop.
 
-Every scenario run, pass or fail, writes a one-line-per-fact summary (name,
+Every scenario run, pass or fail, keeps its artifacts, and losing any of
+them fails the run. It writes a one-line-per-fact summary (name,
 pass or fail, latency counts) to `target/e2e-artifacts/<scenario name>/
 summary.txt` under the workspace root (`VERBATIM_E2E_ARTIFACTS_DIR`
 overrides the root), whether run runner-direct or through `cargo xtask vm
@@ -586,7 +602,12 @@ request and read back through the agent) — the timeline, stderr, and outpost
 logs by `Scenario::collect_run_artifacts` and the flight recorder by
 `Scenario::collect_flight_recorder` (taken before the clean quit, so a passing
 run captures it too), both from inside the scenario's own process, where the
-live control and agent connections they need still exist. When the run was
+live control and agent connections they need still exist. It also holds
+`latency.csv` (each utterance's step, text, and event-to-queue and
+event-to-audio times), `focus.txt` (Core's focus, its ancestors, and the
+navigator, from the control plane's `DumpFocus`), `verbatim-audio.wav`
+(everything Verbatim played), and any crash dump written during the run
+(see "Crash dumps" below). When the run was
 recorded, the directory also holds its video, `<scenario name>.mp4` (see
 "Hearing and recording a run" below). The scenario's
 directory holds only its latest run; each run is also copied to
@@ -599,10 +620,10 @@ only a failing one. None of this is a retry mechanism: a failed scenario is
 reported failed exactly once, with these artifacts left for root-causing,
 never re-run automatically by anything in this crate or by `xtask`.
 
-Reading a speech-assertion failure: `SpeechCollector::expect_in_order`
-panics with a message naming which matcher, by position, it was waiting for
-(for example "waiting for utterance 3 of 5") along with the literal
-substring it expected, followed by the run's timeline so far — every
+Reading a speech-assertion failure: the assertion prints the expected and
+actual sequences, escaped (`{:?}`), the index of the first utterance that
+differs and the first character in it that differs, the utterances
+matched so far, and then the run's timeline so far — every
 gesture and key the scenario injected and every utterance Verbatim spoke,
 interleaved in time order, one entry per line, each prefixed with the
 milliseconds elapsed since the first entry. Because the commands the test
@@ -719,13 +740,13 @@ agent's machine into one MP4 with AAC audio, and copies it through the
 agent's `ReadFileChunk` request to the scenario's artifacts directory.
 The recording covers the scenario's launch, setup, body, and teardown,
 since setup and teardown are where a target application appears or
-closes. A recording that cannot start (no ffmpeg) or cannot finish is
-printed as a warning and never fails the scenario.
+closes. A recording that cannot start (no ffmpeg) or cannot finish fails
+the scenario. Verbatim writes its audio file in every run, recording or
+not, so recording changes nothing about the run it records.
 
-A local runner-direct run therefore needs ffmpeg on `PATH` to produce
-videos (for example `winget install ffmpeg`, then a new terminal), or
-`VERBATIM_E2E_FFMPEG` naming it; without it every scenario prints "not
-recording a video" and runs anyway. The CI `e2e` job installs ffmpeg and
+A local runner-direct run therefore needs ffmpeg on `PATH` to record
+(for example `winget install ffmpeg`, then a new terminal), or
+`VERBATIM_E2E_FFMPEG` naming it, or `VERBATIM_E2E_RECORD=0`. The CI `e2e` job installs ffmpeg and
 uploads the videos with the rest of each scenario's artifacts. For the VM,
 `cargo xtask vm deploy` copies ffmpeg into `C:\VerbatimLab\tools` over
 PowerShell Direct from the LFS-vendored `vm/vendor/ffmpeg` copy,
@@ -834,63 +855,65 @@ returns a window and that `DwmGetWindowAttribute` with
 `DWMWA_CLOAKED` (14) reads 0 for it; if not, click into a real window on
 the session's console first.
 
-**Windows' foreground lock keeps launched applications behind.** For 200
-seconds after the last input (`ForegroundLockTimeout`), injected keystrokes
-from earlier scenarios included, a newly launched application is refused
-the foreground: Windows raises its foreground event but keeps the previous
-window in front, and raises no second event if the application is given
-the foreground later. Verbatim, like NVDA, then rightly says nothing about
-it. `Scenario::launch_target` therefore asks the agent
-(`BringToForeground`) to put the application in front, as NVDA's system
-tests make sure a launched Notepad really is the foreground window. The
-agent prints which way it got there. A cloaked Start search window left
-holding the foreground after the Start menu scenarios refuses every API
-call, so the agent's last resort is one injected Alt+Tab.
+**Windows' foreground lock keeps launched applications behind.** A newly
+launched application is refused the foreground unless the process that
+allows it may set the foreground itself: Windows raises its foreground
+event but keeps the previous window in front, and raises no second event
+if the application is given the foreground later. Verbatim, like NVDA,
+then rightly says nothing about it. The agent allows each launch the
+foreground (`AllowSetForegroundWindow`), which Windows permits while the
+agent injected the last input; every scenario's keys go through the agent,
+so within a run it does. After you type or click on the machine yourself,
+it does not until the agent has injected input again, and a scenario that
+launches a window first then fails saying Windows did not let the agent
+allow it. Run a scenario that sends keys first, such as
+`lock_key_announcements`. Never tap keys by hand, or have a script send
+keys, to fix it, and note that the harness itself never injects a key to
+take the foreground: a window that refuses the foreground fails the test.
 
-**Stray processes survive a failed run.** `Scenario`'s `Drop` impl always
-tries a clean `Quit` through the control plane, then unconditionally kills
-`verbatim.exe` (and anything launched via `launch_target`, such as
-Notepad) through the agent — this runs even if the test panicked partway
-through. Notepad is opened on a harness document whose title holds
+**Windows 11 Notepad restores tabs from its previous session.** Notepad
+keeps the tabs of a window that was closed, rather than whose tabs were
+closed, and opens them again next time, adding a harness document as one
+more tab. The harness therefore closes its documents as tabs, never by
+closing Notepad's window, and closes every harness tab (named
+`verbatim-e2e-`) it finds, including ones an earlier run left. A restored
+tab whose file has been deleted shows "Cannot find the file" when Notepad
+starts, and that dialog blocks closing tabs until it is dismissed. Any
+other restored tab, one of your own, keeps Notepad running after the
+harness tab closes, and the Notepad scenarios then fail saying so: close
+those tabs (or set Notepad to start a new session) before running them.
+
+**Crash dumps.** Any of Verbatim's own processes that exits unexpectedly
+during a scenario fails it, read from the exits the agent records for
+Verbatim's job. To keep a dump of the crash too, run
+`vm\scripts\Enable-VerbatimCrashDumps.ps1` once from an elevated
+PowerShell: it sets Windows Error Reporting's LocalDumps keys for
+`verbatim.exe`, `verbatim-outpost.exe`, and `verbatim-synth-host.exe`,
+writing minidumps into `C:\ProgramData\Verbatim\CrashDumps`, and the
+suite copies every dump written during a scenario into its artifacts.
+Until it has been run, an unexpected exit still fails the run, without a
+dump. The script is never run by the harness; Dickson runs it himself.
+
+**Stray processes survive a failed run.** Cleanup closes what a scenario
+opened, by process id or window, and fails the run when something will
+not close; `Scenario`'s `Drop` impl does the same after a panic, and ends
+Verbatim by its process id when it will not quit. Nothing is ever ended
+by its image name, so a Notepad or terminal you have open yourself is left
+alone. Notepad is opened on a harness document whose title holds
 `verbatim-e2e-`, as NVDA's system tests open it on a uniquely named file,
-and is closed by that title, never killed by program name, so a Notepad
-you have open yourself is left alone. Windows 11 Notepad keeps every tab
-of a window that closes for its next session, so the harness closes its
-document's tab with Control+W, saving it first when it has unsaved
-changes, and then closes the window only when no Notepad window was open
-before; the tabs Notepad restored from your last session are left as they
-were. With a Notepad window already open, Notepad opens the harness
-document as a new tab of that window, which first comes to the foreground
-showing the tab it had and announces that tab's text area, then switches
-tabs and announces the new one, cutting the first off; once the window's
-title names the harness document and that speech has ended, the harness
-presses Verbatim+Tab, report focus, so the scenario hears its own tab's
-text area and the line at its caret reported once, in full, where with no
-Notepad window open it hears the window and the text area announced. It then deletes the document, and the folders the harness made for
-Explorer and terminal windows, each named with `verbatim-e2e-`; nothing
-without that marker in its name is ever deleted. It cannot run at all, though, if the test process itself is
-killed outright (Ctrl+C, a CI job cancellation, or the whole `cargo test`
-process being terminated). Runner-direct stray processes are usually
-self-healing on the *next* run regardless:
-`single_instance::acquire_replacing` means a fresh `verbatim.exe` replaces
-whatever old instance it finds. A stray guest-side process is not
-self-healing the same way and is simplest to clear by restoring a
-checkpoint (`cargo xtask vm restore`), which reverts the whole VM's process
-state along with everything else — though a target application such as
-Notepad no longer strictly needs that: `launch_target`-launched processes
-are killed by pid and then swept by image name (Windows 11 Notepad hands
-launches off to a differently pid'd process, confirmed live even for a
-single, solo launch, so a pid-only kill can silently miss the real window),
-and `Scenario::launch` sweeps those same image names (a program it stages,
-such as `mockapp.exe`, only by its path in the stage directory, so the
-`mockapp` instances of a concurrent `cargo test` survive), closes any
-harness document left open, and deletes the harness documents and folders
-left in `target/e2e-stage`, before doing anything else, so a scenario
-starts clean even after a prior run's cleanup was skipped entirely. Every
-scenario then checks that a real, uncloaked window holds the foreground
-before its setup, bringing the desktop forward if the Start menu's search
-window was left holding it, and fails with the foreground window's title
-and the visible windows when it cannot, as NVDA's system tests do.
+and only when no Notepad window is open, so the window and its process are
+the scenario's own; a Notepad scenario with a Notepad window already open
+fails saying so. The harness closes its tab with Control+W, saving it
+first when it has unsaved changes, waits for Notepad to exit, and deletes
+the document, and the folders the harness made for Explorer and terminal
+windows, each named with `verbatim-e2e-`; nothing without that marker in
+its name is ever deleted. None of this runs if the test process itself is
+killed outright (Ctrl+C, a CI job cancellation). The next launch then
+sweeps: every process the agent launched that is still running is ended
+by its own handle (`EndLaunched`), harness windows and Notepad harness
+tabs are closed, and harness files and folders in `target/e2e-stage` are
+deleted, before the desktop is minimized. A stray guest-side process is
+also cleared by restoring a checkpoint (`cargo xtask vm restore`).
 
 **A gesture sent immediately after launch can silently do nothing.** The
 control server starts (and so a tunnel connection succeeds) before
@@ -899,6 +922,8 @@ before the focus listener and the outpost reading Verbatim's own windows
 are ready; a `SendGesture` that arrives then is dropped by the router, or
 its menu is never seen, even though the control plane still answers `Ok`.
 Verbatim's status reports when all of these are ready (`ready` in
-`StatusInfo`); `Scenario::launch` waits for it, and a hand-rolled script
-should poll `Status` for it the same way rather than pausing for a fixed
-time.
+`StatusInfo`). `Scenario::launch` waits for it without asking again and
+again: it creates a named event through the agent and passes its name in
+`VERBATIM_READY_EVENT`, and Verbatim sets the event once it is ready. A
+hand-rolled script can do the same, or check `Status` before it starts,
+rather than pausing for a fixed time.

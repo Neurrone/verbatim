@@ -17,124 +17,56 @@
 //! value. Right Arrow then moves the second to 31, heard as 31, and Escape
 //! closes the dialog without applying it.
 //!
-//! Every step waits for the speech it causes, or for the dialog to close,
-//! with a deadline that only bounds failure; nothing waits a fixed time.
-
-use std::io;
-use std::time::Duration;
+//! Every step asserts exactly what it says; each time the dialog closes,
+//! the scenario waits for it to leave the foreground and asserts the
+//! desktop, where the focus returns.
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// How long each step's speech is given to arrive.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
-/// What Verbatim+5 says as it turns output reporting on.
-const OUTPUT_ON: &str = "report new output on";
+/// "Report new output", checked.
+const REPORT_CHECKED: &str = "Report new output check box checked Alt+n";
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "must match ScenarioDef::setup's fn-pointer signature"
-)]
-pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    Ok(ScenarioState::None)
+/// Presses `keys` and asserts exactly `heard`.
+fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
+    scenario.send_keys(&[keys]).expect("sends the key");
+    scenario.speech().expect(heard);
 }
 
 /// Opens the settings dialog on the Terminal category and Tabs to "Report
-/// new output", returning its announcement.
-fn open_at_report_output(scenario: &mut Scenario) -> String {
-    super::open_speech_settings(scenario, STEP_TIMEOUT);
-    scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario.speech().expect_in_order(&["Theme"], STEP_TIMEOUT);
-    scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario
-        .speech()
-        .expect_in_order(&["Terminal"], STEP_TIMEOUT);
-    scenario.send_keys(&["tab"]).expect("sends tab");
-    scenario
-        .speech()
-        .expect_in_order_capturing(&["Report new output", "check box", "checked"], STEP_TIMEOUT)
-}
-
-/// Asserts that an announcement of "Report new output" says it is checked.
-fn assert_checked(heard: &str) {
-    assert!(
-        !heard.contains("not checked"),
-        "\"Report new output\" should be checked: {heard:?}"
-    );
-}
-
-/// Closes the settings dialog with Escape, waits until it has gone, and
-/// hears out the announcement of the window the focus returns to, so that
-/// announcement cannot cut off what the next step expects to hear.
-fn close_dialog(scenario: &mut Scenario) {
-    scenario.send_keys(&["escape"]).expect("sends escape");
-    scenario
-        .wait_for_window_to_close("Verbatim Settings", STEP_TIMEOUT)
-        .expect("the settings dialog closes on Escape");
-    let _ = scenario.speech().expect_change_capturing("", STEP_TIMEOUT);
-    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
+/// new output", which says it is checked.
+fn open_at_report_output(scenario: &mut Scenario) {
+    super::open_speech_settings(scenario);
+    press(scenario, "downarrow", &["Theme 2 of 3"]);
+    press(scenario, "downarrow", &["Terminal 3 of 3"]);
+    press(scenario, "tab", &[REPORT_CHECKED]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // On by default, as the harness writes the settings.
-    let heard = open_at_report_output(scenario);
-    assert_checked(&heard);
-
-    // Off, and applied with Control+S; Escape then closes the dialog
-    // without undoing what was applied.
-    scenario.send_keys(&["space"]).expect("sends space");
-    scenario
-        .speech()
-        .expect_in_order(&["not checked"], STEP_TIMEOUT);
+    // On by default, as the harness writes the settings. Off, and applied
+    // with Control+S; Escape then closes the dialog without undoing what
+    // was applied.
+    open_at_report_output(scenario);
+    press(scenario, "space", &["not checked"]);
     scenario
         .send_keys(&["control+s"])
         .expect("sends control+s on the check box");
-    close_dialog(scenario);
+    super::close_settings_to_desktop(scenario);
 
     // Verbatim+5 toggles Core's setting: "on" shows it was off, so the
     // applied change reached Core. It also turns the setting back on.
     scenario
         .send_gesture("kb:verbatim+5")
         .expect("sends Verbatim+5");
-    let toggled = scenario
-        .speech()
-        .expect_in_order_capturing(&["report new output"], STEP_TIMEOUT);
-    assert_eq!(
-        toggled, OUTPUT_ON,
-        "Verbatim+5 should have turned on what the Terminal page turned off"
-    );
+    scenario.speech().expect(&["report new output on"]);
 
-    // The page opens on the value Verbatim+5 set.
-    let heard = open_at_report_output(scenario);
-    assert_checked(&heard);
-
-    // Each line limit reads its setting, as does a change to it.
-    for label in ["Lines spoken in full", "Last lines to speak"] {
-        scenario.send_keys(&["tab"]).expect("sends tab");
-        let heard = scenario
-            .speech()
-            .expect_in_order_capturing(&[label, "slider"], STEP_TIMEOUT);
-        assert!(
-            heard.split_whitespace().any(|word| word == "30"),
-            "{label:?} should read the setting, 30: {heard:?}"
-        );
-    }
-    scenario
-        .send_keys(&["rightarrow"])
-        .expect("sends rightarrow");
-    let heard = scenario
-        .speech()
-        .expect_in_order_capturing(&["31"], STEP_TIMEOUT);
-    assert_eq!(heard, "31", "the moved slider should read 31");
-    close_dialog(scenario);
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(_scenario: &mut Scenario, _state: ScenarioState) {
-    // The walk turns "Report new output" back on itself, and the harness
-    // writes fixed settings before every launch.
+    // The page opens on the value Verbatim+5 set. Each line limit reads
+    // its setting, as does a change to it.
+    open_at_report_output(scenario);
+    press(scenario, "tab", &["Lines spoken in full: slider 30 Alt+l"]);
+    press(scenario, "tab", &["Last lines to speak: slider 30 Alt+p"]);
+    press(scenario, "rightarrow", &["31"]);
+    super::close_settings_to_desktop(scenario);
 }

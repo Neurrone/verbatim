@@ -4,10 +4,15 @@
 //! `#[test]` wrappers under `crates/verbatim-e2e/tests/` call
 //! [`crate::registry::run_named`] with the matching name, rather than
 //! calling into these modules directly.
+//!
+//! Every assertion is exact ([`crate::speech`]): every utterance, in order,
+//! with nothing else in between, and each scenario's body is followed by
+//! the registry's assertion that nothing more was said.
 
-use std::time::Duration;
+use std::io;
 
-use crate::scenario::Scenario;
+use crate::registry::ScenarioState;
+use crate::scenario::{Scenario, harness_marker};
 
 pub(crate) mod demo_notepad_editing;
 pub(crate) mod demo_review_cursor;
@@ -18,7 +23,6 @@ pub(crate) mod edit_control_say_all;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod menu_and_settings_dialog;
-pub(crate) mod notepad_and_verbatim_menu;
 pub(crate) mod notepad_editing;
 pub(crate) mod notepad_review_cursor;
 pub(crate) mod notepad_review_words;
@@ -27,11 +31,12 @@ pub(crate) mod notepad_spelling_errors;
 pub(crate) mod notepad_typed_words;
 pub(crate) mod notepad_word_selection;
 pub(crate) mod object_navigation_in_settings;
+pub(crate) mod outpost_crash_recovery;
 pub(crate) mod rapid_tabbing_in_settings;
+pub(crate) mod second_application_and_verbatim_menu;
 pub(crate) mod settings_dialog_keys;
 pub(crate) mod settings_system_page;
 pub(crate) mod spelling_errors;
-pub(crate) mod start_menu_search;
 pub(crate) mod switch_to_onecore;
 pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
@@ -41,11 +46,45 @@ pub(crate) mod terminal_editing;
 pub(crate) mod terminal_flood;
 pub(crate) mod terminal_review_grid;
 pub(crate) mod terminal_settings_page;
+pub(crate) mod text_box;
 pub(crate) mod theme_panel;
+
+/// What the scenario says about the desktop, which has the focus after the
+/// harness minimized every window and once a dialog of Verbatim's closes:
+/// the window, the desktop's list, and its focused item, which the harness
+/// reads independently of Verbatim ([`Scenario::desktop_speech`]) once the
+/// desktop is in the foreground. When a dialog of Verbatim's closes,
+/// Verbatim's own window titled "Verbatim" can be in front for a moment
+/// first.
+pub(crate) fn expect_desktop(scenario: &mut Scenario) {
+    scenario
+        .wait_for_window_in_front(
+            crate::scenario::DESKTOP_TITLE,
+            crate::scenario::WINDOW_TIMEOUT,
+        )
+        .expect("the desktop takes the foreground");
+    let desktop = scenario
+        .desktop_speech()
+        .expect("reads the desktop's focus");
+    let desktop: Vec<&str> = desktop.iter().map(String::as_str).collect();
+    scenario.speech().expect(&desktop);
+}
+
+/// No state: a setup for a scenario that needs nothing beyond Verbatim.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "must match ScenarioDef::setup's signature"
+)]
+pub(crate) fn no_setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    Ok(ScenarioState::None)
+}
+
+/// Nothing to restore: cleanup closes what the scenario opened.
+pub(crate) fn no_teardown(_scenario: &mut Scenario, _state: ScenarioState) {}
 
 /// How Verbatim speaks `character` on its own, as typed-character echo
 /// says it: a letter or digit as itself, and the punctuation the
-/// demonstrations type by its name in the character table
+/// scenarios type by its name in the character table
 /// (`crates/verbatim-i18n/i18n/en/verbatim.ftl`).
 pub(crate) fn character_name(character: char) -> String {
     match character {
@@ -58,136 +97,135 @@ pub(crate) fn character_name(character: char) -> String {
     }
 }
 
-/// Types `character` and waits until each of `heard` has been heard in
-/// full, in order: the typed-character echo, and before it the finished
-/// word when typed-word echo is on.
-pub(crate) fn type_and_hear(
-    scenario: &mut Scenario,
-    character: char,
-    heard: &[&str],
-    timeout: Duration,
-) {
-    scenario
-        .type_text(&character.to_string())
-        .expect("types the character");
-    for text in heard {
-        scenario.speech().expect_exactly(&[*text], timeout);
-    }
+/// The window title Windows 11 Notepad shows for the harness document
+/// `name`.
+pub(crate) fn notepad_title(name: &str) -> String {
+    format!("{}.txt - Notepad", harness_marker(name))
 }
 
-/// Types `text` one character at a time, each echoed by name and heard in
-/// full before the next is typed, so a viewer hears every one.
-pub(crate) fn type_slowly(scenario: &mut Scenario, text: &str, timeout: Duration) {
-    for character in text.chars() {
-        let name = character_name(character);
-        type_and_hear(scenario, character, &[&name], timeout);
-    }
-}
-
-/// Waits for Notepad's window, then its text area, then the text the text
-/// area's announcement ends with, and returns that text once heard in full.
-///
-/// The text area is announced as [`expect_notepad_text_area`] describes,
-/// leaving the text's value out, and is followed by the caret's line, or
-/// the selection, as its own utterance (`docs/nvda/speech.md`, "What an
-/// object with text says"): the next utterance after the text area, which
-/// is what is returned. Waiting for it to be heard means the caller's next
-/// key cannot cut it off.
-pub(crate) fn expect_notepad_text(scenario: &mut Scenario, timeout: Duration) -> String {
-    let text_area = expect_notepad_text_area(scenario, timeout);
+/// Asserts what Windows 11 Notepad says as it opens the harness document
+/// `name` with its caret on `line`: the window as Notepad first names it,
+/// then as it names it once the document is loaded, the text area, and
+/// the line at the caret.
+pub(crate) fn expect_notepad_opened(scenario: &mut Scenario, name: &str, line: &str) {
+    let title = notepad_title(name);
     scenario
         .speech()
-        .expect_change_capturing(&text_area, timeout)
+        .expect(&["Notepad", &title, "Text editor document", line]);
 }
 
-/// Waits for Notepad's text area to be announced after
-/// [`Scenario::open_document`], and returns the announcement.
-///
-/// The text area is Windows 11 Notepad's UIA document, "Text editor
-/// document", or classic Notepad's Win32 edit control, "Text Editor edit
-/// multi line", as GitHub's Windows Server runners have it, its
-/// `ES_MULTILINE` style spoken as NVDA speaks it (`docs/parity.md`); both
-/// hold. When Notepad was
-/// not open before, its window comes to the foreground and is announced,
-/// "Notepad" in its title, and then its text area takes the focus and is
-/// announced by its name and role, with classic Notepad's "multi line". When a Notepad window was already
-/// open, the harness reports the focus instead
-/// ([`Scenario::take_focus_reported`]): only the text area is reported, as a
-/// query, which speaks its states as well, "focused" among them
-/// (`docs/nvda/focus-and-navigator.md`, "Reporting the focus").
-pub(crate) fn expect_notepad_text_area(scenario: &mut Scenario, timeout: Duration) -> String {
-    if scenario.take_focus_reported() {
-        let text_area = scenario
-            .speech()
-            .expect_in_order_capturing(&["Text "], timeout);
-        assert!(
-            REPORTED_TEXT_AREAS.contains(&text_area.as_str()),
-            "reporting the focus spoke Notepad's text area as {text_area:?}"
-        );
-        return text_area;
-    }
-    let text_area = scenario
+/// Asserts what Windows 11 Notepad says as its window comes back to the
+/// foreground with its caret on `line`.
+pub(crate) fn expect_notepad_returned(scenario: &mut Scenario, name: &str, line: &str) {
+    let title = notepad_title(name);
+    scenario
         .speech()
-        .expect_in_order_capturing(&["Notepad", "Text "], timeout);
-    assert!(
-        ["Text editor document", "Text Editor edit multi line"].contains(&text_area.as_str()),
-        "Notepad's text area was announced as {text_area:?}, not by its name and role"
-    );
-    text_area
+        .expect(&[&title, "Text editor document", line]);
 }
 
-/// Notepad's text area as reporting the focus speaks it, for each Notepad
-/// [`expect_notepad_text_area`] names. Windows 11 Notepad's was pinned
-/// live on 2026-10-07, where NVDA+Tab in NVDA says the same, "Text editor
-/// document focused", with the line at the caret ("Text editor document
-/// focused alpha beta", in one utterance, where Verbatim speaks the line
-/// as its own). Classic Notepad's, on GitHub's runners, follows from the
-/// same rules: an edit control's "multi line" after its states.
-const REPORTED_TEXT_AREAS: [&str; 2] = [
-    "Text editor document focused",
-    "Text Editor edit focused multi line",
-];
-
-/// Opens the Verbatim menu with Verbatim+V and waits for the popup to be
-/// announced before returning, so the caller's very next arrow key lands
-/// inside a menu that actually exists.
-///
-/// The wait is the synchronization a listening user performs naturally.
-/// Root-caused live on a cold guest: the first menu popup of a session can
-/// take over two seconds to appear (first-menu resource loading in the
-/// GUI process — the foreground grab itself completed in under twenty
-/// milliseconds), and an arrow key sent blind in that window lands
-/// nowhere, so no menu item is ever focused or announced. The popup's own
-/// announcement is the open signal: it announces as its client object —
-/// the platform names menu popups "Context", spoken with the menu role —
-/// emitted by the `MenuPopupStart` `WinEvent` the moment the menu opens
-/// (NVDA's menu-start behavior), with the foreground-announce path
-/// producing the identical node as its fallback. Before it, the menu's
-/// owner window, Verbatim's frame, is named "Verbatim", as NVDA names the
-/// foreground window a menu opens from (`docs/parity.md`, the Verbatim
-/// menu's owner window).
-pub(crate) fn open_verbatim_menu(scenario: &mut Scenario, timeout: Duration) {
+/// Opens the Verbatim menu with Verbatim+V and asserts its announcement:
+/// the menu's owner window, Verbatim's frame, named "Verbatim", then the
+/// popup, which the platform names "Context", with the menu role.
+pub(crate) fn open_verbatim_menu(scenario: &mut Scenario) {
     scenario
         .send_gesture("kb:verbatim+v")
         .expect("sends the Verbatim+V gesture");
-    scenario
-        .speech()
-        .expect_exactly(&["Verbatim", "Context menu"], timeout);
+    scenario.speech().expect(&["Verbatim", "Context menu"]);
 }
 
-/// Opens Verbatim's settings dialog from its menu and waits until focus has
-/// settled on the selected category item, "Speech".
-///
-/// Focus settles after an intermediate step: the dialog announces the
-/// category list with its selected item, and focus then lands on that item.
-/// Waiting for the item as the settled focus lets the focus sequence finish
-/// before the caller's next keys run.
-pub(crate) fn open_speech_settings(scenario: &mut Scenario, timeout: Duration) {
-    open_verbatim_menu(scenario, timeout);
+/// Opens Verbatim's settings dialog from its menu and asserts that focus
+/// settles on the selected category, "Speech".
+pub(crate) fn open_speech_settings(scenario: &mut Scenario) {
+    open_verbatim_menu(scenario);
     scenario.send_keys(&["downarrow"]).expect("sends downarrow");
-    scenario.speech().expect_in_order(&["Settings..."], timeout);
+    scenario.speech().expect(&["Settings... s"]);
     scenario.send_keys(&["enter"]).expect("sends enter");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories: list", "Speech"], timeout);
+    scenario.speech().expect(&[
+        "Verbatim Settings: Speech dialog",
+        "Categories: list Alt+c",
+        "Speech 1 of 3",
+    ]);
+}
+
+/// Opens `mockapp`, the scripted application staged beside Verbatim, as a
+/// window titled with [`harness_marker`] of `name` holding one focused text
+/// box whose one line is `line`, read over UI Automation, and waits for it
+/// to take the foreground. It is the same on every machine. Returns its
+/// process id.
+///
+/// # Errors
+///
+/// Returns an error if the fixture cannot be written, `mockapp` cannot be
+/// started, or its window does not take the foreground.
+pub(crate) fn open_text_box_app(
+    scenario: &mut Scenario,
+    name: &str,
+    line: &str,
+) -> io::Result<u32> {
+    let directory = scenario.run_directory().to_owned();
+    let title = harness_marker(name);
+    let fixture = scenario.harness_file(name, "json");
+    let contents = format!(
+        r#"{{
+  "id": "root",
+  "role": "window",
+  "name": "{title}",
+  "children": [
+    {{
+      "id": "text",
+      "role": "editable_text",
+      "name": "Text",
+      "states": ["focusable", "focused"],
+      "text": "{line}\n"
+    }}
+  ]
+}}
+"#
+    );
+    scenario.write_agent_file(&fixture, contents.as_bytes())?;
+    let args = [
+        "--fixture",
+        &fixture,
+        "--backend",
+        "uia",
+        "--title",
+        &title,
+        "--show",
+    ]
+    .map(str::to_owned);
+    let window =
+        scenario.launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)?;
+    Ok(window.pid)
+}
+
+/// What [`open_text_box_app`]'s window says as it comes to the foreground:
+/// the window, the text box, and its line.
+pub(crate) fn expect_text_box_app(scenario: &mut Scenario, name: &str, line: &str) {
+    let window = format!("{} window", harness_marker(name));
+    scenario.speech().expect(&[&window, "Text edit", line]);
+}
+
+/// The process of the outpost watching the application `target`, as
+/// Verbatim's status reports it.
+pub(crate) fn outpost_of(scenario: &mut Scenario, target: u32) -> u32 {
+    let status = scenario.status().expect("Verbatim answers Status");
+    let outposts: Vec<_> = status
+        .outposts
+        .iter()
+        .filter(|outpost| outpost.target_pid == verbatim_model::Pid(target))
+        .collect();
+    let [outpost] = outposts.as_slice() else {
+        panic!("expected one outpost watching {target}, found {outposts:?}");
+    };
+    outpost
+        .outpost_pid
+        .unwrap_or_else(|| panic!("the outpost watching {target} has no process: {outpost:?}"))
+        .0
+}
+
+/// Closes Verbatim's settings dialog with Escape and asserts that the
+/// desktop, where the focus returns, is announced.
+pub(crate) fn close_settings_to_desktop(scenario: &mut Scenario) {
+    scenario.send_keys(&["escape"]).expect("sends escape");
+    expect_desktop(scenario);
 }

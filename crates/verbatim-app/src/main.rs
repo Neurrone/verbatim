@@ -11,6 +11,7 @@ mod clipboard;
 mod datetime;
 mod error_sound;
 mod flight_dump;
+mod harness;
 mod latency;
 mod live;
 mod requests;
@@ -31,7 +32,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 use verbatim_audio::{AudioDevice, Mixer, SilentDevice, WavRecorder};
 use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::{ConfigStore, ConfigValue};
-use verbatim_control::protocol::{OutpostState, OutpostStatus, StatusInfo};
+use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
@@ -39,7 +40,7 @@ use verbatim_input::{
     DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
     SharedGestureMap,
 };
-use verbatim_input_windows::{InputHook, KeyReport};
+use verbatim_input_windows::{InputHook, KeyReport, Routed};
 use verbatim_model::{
     CaretKey, Earcon, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
     TextRequest, TraceId, Utterance, UtteranceSegment,
@@ -247,6 +248,16 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // readiness the control plane's status reports.
     let listener_ready = Arc::new(AtomicBool::new(false));
     let focus_known = Arc::new(AtomicBool::new(false));
+    // The GUI's handle, once the GUI thread is up; part of readiness.
+    let gui_handle: Arc<OnceLock<GuiHandle>> = Arc::new(OnceLock::new());
+    let readiness = Arc::new(harness::Readiness::new(
+        own_pid,
+        Arc::clone(&gui_handle),
+        Arc::clone(&listener_ready),
+        Arc::clone(&focus_known),
+        Arc::clone(&outposts),
+    ));
+    let idle_line = Arc::new(harness::IdleLine::default());
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
@@ -263,6 +274,8 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             listener_ready: Arc::clone(&listener_ready),
             focus_known: Arc::clone(&focus_known),
             store: Arc::clone(&store),
+            readiness: Arc::clone(&readiness),
+            idle_line: Arc::clone(&idle_line),
         };
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
@@ -272,8 +285,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
     // The gesture router: bound gestures become GUI commands, direct speech,
     // or — for review and object navigation — reducer commands sent over
     // `command_tx`. The GUI handle arrives once the GUI thread is up.
-    let gui_handle: Arc<OnceLock<GuiHandle>> = Arc::new(OnceLock::new());
-    let (gesture_tx, gesture_rx) = bounded::<EmittedGesture>(64);
+    let (gesture_tx, gesture_rx) = bounded::<Routed>(64);
     {
         let gui_handle = Arc::clone(&gui_handle);
         let manager = Arc::clone(&manager);
@@ -309,8 +321,6 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         own_pid,
         settings_host: settings_host.clone(),
         outposts: Arc::clone(&outposts),
-        listener_ready: Arc::clone(&listener_ready),
-        focus_known: Arc::clone(&focus_known),
         ledger: Arc::clone(&ledger),
         bound_gestures: Arc::clone(&bound_gestures),
         gesture_tx: gesture_tx.clone(),
@@ -319,6 +329,8 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         command_tx: command_tx.clone(),
         recorder: Arc::clone(&recorder),
         dumps_dir: dumps_dir.clone(),
+        readiness: Arc::clone(&readiness),
+        idle_line: Arc::clone(&idle_line),
     }))?;
     server_slot
         .set(server)
@@ -400,6 +412,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
             commands: command_tx.clone(),
         });
     let handle_slot = Arc::clone(&gui_handle);
+    let gui_readiness = Arc::clone(&readiness);
     run_gui(
         host_for_gui,
         theme_host,
@@ -407,6 +420,7 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         gui_event_tx,
         move |handle| {
             let _ = handle_slot.set(handle);
+            gui_readiness.notify();
         },
     )?;
 
@@ -759,6 +773,11 @@ struct ReducerContext {
     /// The configuration, where reader settings changed by a toggle key are
     /// saved.
     store: Arc<Mutex<ConfigStore>>,
+    /// What the control plane reports as readiness, and the harness's
+    /// readiness event.
+    readiness: Arc<harness::Readiness>,
+    /// The control plane's `AwaitIdle` waiters.
+    idle_line: Arc<harness::IdleLine>,
 }
 
 /// Work handed to the reducer thread by other threads: a reducer input (a
@@ -787,6 +806,14 @@ pub(crate) enum ShellCommand {
     /// The settings dialog's Terminal page applied a change: merge it into
     /// the reducer's reader settings, give it them, and save them.
     TerminalSettings(verbatim_gui::TerminalChange),
+    /// An end-to-end harness's numbered key, handled by the hook and the
+    /// router: everything it caused is ahead of this in line.
+    InputHandled(u64),
+    /// A control-plane `AwaitIdle` waiter reached its place in line, named
+    /// by its token in the [`harness::IdleLine`].
+    AwaitIdle(u64),
+    /// Answer the control plane's `DumpFocus` on the channel.
+    DumpFocus(Sender<FocusReport>),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -809,6 +836,11 @@ struct ReducerThread<'a> {
     focus_now_wanted: HashSet<Pid>,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
+    /// The highest numbered harness key handled so far.
+    handled_input: u64,
+    /// Control-plane `AwaitIdle` waiters that reached their place in line
+    /// and wait for the reducer to be idle.
+    idle_waiters: Vec<harness::IdleWaiter>,
 }
 
 /// How many messages from an outpost may be handled before the nodes held in
@@ -880,9 +912,13 @@ impl ReducerThread<'_> {
                 for input in self.requests.outpost_ended(outpost) {
                     self.apply(input);
                 }
+                if let Some(server) = self.context.server_slot.get() {
+                    server.broadcast_outpost_ended(target_pid, reason.to_string());
+                }
             }
             OutpostMessage::ListenerReady { replacement } => {
                 self.context.listener_ready.store(true, Ordering::Release);
+                self.context.readiness.notify();
                 // Facts were lost while there was no listener: read the
                 // foreground afresh and ask its application for the focus.
                 if replacement && let Some(pid) = foreground_pid() {
@@ -1035,6 +1071,7 @@ impl ReducerThread<'_> {
                         state: OutpostState::Ready,
                     },
                 );
+                self.context.readiness.notify();
             }
             OutpostToSupervisor::Fault { detail } => {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
@@ -1062,6 +1099,64 @@ impl ReducerThread<'_> {
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
             ShellCommand::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
             ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
+            ShellCommand::InputHandled(input) => {
+                self.handled_input = self.handled_input.max(input);
+                if let Some(server) = self.context.server_slot.get() {
+                    server.broadcast_input_handled(input);
+                }
+            }
+            ShellCommand::AwaitIdle(token) => {
+                if let Some(waiter) = self.context.idle_line.take(token) {
+                    self.idle_waiters.push(waiter);
+                }
+            }
+            ShellCommand::DumpFocus(reply) => {
+                let (focus, ancestors, navigator) = self.state.focus_report();
+                let _ = reply.send(FocusReport {
+                    focus: focus.cloned(),
+                    ancestors: ancestors.to_vec(),
+                    navigator: navigator.cloned(),
+                });
+            }
+        }
+    }
+
+    /// Answers the `AwaitIdle` waiters whose input has been handled, once
+    /// nothing is waiting in the reducer's queues and no request to an
+    /// outpost is outstanding: the speech queue answers each, once it has
+    /// taken in everything the reducer gave it. Called between steps, so
+    /// the reducer is never in the middle of one.
+    fn answer_idle_waiters(&mut self, outposts: usize, commands: usize) {
+        if self.idle_waiters.is_empty() {
+            return;
+        }
+        let requests = self.requests.outstanding();
+        // An outpost still starting has facts or a focus query waiting for
+        // it, as a replacement for a crashed one does.
+        let starting = self.live.starting();
+        let focus_wanted = self.focus_now_wanted.len();
+        *self
+            .context
+            .idle_line
+            .outstanding
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = format!(
+            "handled input {}, {outposts} outpost messages and {commands} commands queued, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications",
+            self.handled_input
+        );
+        if outposts > 0 || commands > 0 || requests > 0 || starting > 0 || focus_wanted > 0 {
+            return;
+        }
+        let handled = self.handled_input;
+        let (ready, waiting): (Vec<_>, Vec<_>) = self
+            .idle_waiters
+            .drain(..)
+            .partition(|waiter| waiter.after_input.is_none_or(|input| input <= handled));
+        self.idle_waiters = waiting;
+        for waiter in ready {
+            self.context.manager.after_queued(move || {
+                let _ = waiter.reply.send(());
+            });
         }
     }
 
@@ -1108,8 +1203,9 @@ impl ReducerThread<'_> {
             _ => TraceId::mint(),
         };
         let effects = reduce(&mut self.state, &input);
-        if self.state.focused().is_some() {
-            self.context.focus_known.store(true, Ordering::Release);
+        if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
+        {
+            self.context.readiness.notify();
         }
         self.context.ledger.reduced(trace_id);
         {
@@ -1123,14 +1219,20 @@ impl ReducerThread<'_> {
         for effect in effects {
             self.execute(trace_id, effect);
         }
-        self.send_views();
     }
 
     /// Sends the views derived from the reducer state, when they change: to
     /// the supervisor, the application holding attention and the outposts in
     /// which the state holds nodes; to each live outpost, the nodes held in
     /// it with the position of its last message handled here (outpost
-    /// redesign, "Held objects"). The held nodes are also sent again every
+    /// redesign, "Held objects").
+    ///
+    /// Called once a message or command has been handled whole, never
+    /// between the inputs one message produces: a focus-now answer is a
+    /// foreground change and then a focus, and held nodes sent after the
+    /// first alone, with the answer's position as acknowledged, would have
+    /// the outpost release the focus it reported in that same answer
+    /// before Core had taken it. The held nodes are also sent again every
     /// [`HELD_RESEND_INTERVAL`] messages, so an outpost whose held nodes do
     /// not change still releases what it reported meanwhile. The text anchors
     /// the state holds in each outpost go with its nodes.
@@ -1345,9 +1447,12 @@ fn reducer_loop(
         live: LiveOutposts::default(),
         focus_now_wanted: HashSet::new(),
         views: (None, BTreeSet::new()),
+        handled_input: 0,
+        idle_waiters: Vec::new(),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
+    thread.send_views();
     loop {
         crossbeam_channel::select! {
             recv(outpost_rx) -> message => {
@@ -1359,6 +1464,8 @@ fn reducer_loop(
                 thread.on_command(command);
             }
         }
+        thread.send_views();
+        thread.answer_idle_waiters(outpost_rx.len(), command_rx.len());
     }
 }
 
@@ -1370,7 +1477,7 @@ fn reducer_loop(
 /// speaks the date, Verbatim+F11 twice quickly lists the taskbar) take the
 /// press count `verbatim-input` puts on each emitted gesture.
 fn router_loop(
-    gesture_rx: &Receiver<EmittedGesture>,
+    gesture_rx: &Receiver<Routed>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
     manager: &Arc<SpeechManager>,
     command_tx: &crossbeam_channel::Sender<ShellCommand>,
@@ -1383,6 +1490,9 @@ fn router_loop(
     // Lock keys whose new state is announced once [`TOGGLE_KEY_DELAY`] has
     // passed, in the order pressed.
     let mut toggles: VecDeque<(Instant, verbatim_input::ToggleKey)> = VecDeque::new();
+    // Marks of handled input and idle waiters that came behind a lock key
+    // whose announcement is still to come: passed on once it has been.
+    let mut behind_toggles: Vec<ShellCommand> = Vec::new();
     loop {
         let received = match toggles.front() {
             Some(&(due, _)) => gesture_rx.recv_deadline(due),
@@ -1397,8 +1507,31 @@ fn router_loop(
             toggles.pop_front();
             report_toggle_key(manager, key);
         }
+        if toggles.is_empty() {
+            for command in behind_toggles.drain(..) {
+                let _ = command_tx.send(command);
+            }
+        }
         let emitted = match received {
-            Ok(emitted) => emitted,
+            Ok(Routed::Gesture(emitted)) => emitted,
+            Ok(Routed::Handled(input)) => {
+                pass_in_line(
+                    &toggles,
+                    &mut behind_toggles,
+                    command_tx,
+                    ShellCommand::InputHandled(input),
+                );
+                continue;
+            }
+            Ok(Routed::Barrier(token)) => {
+                pass_in_line(
+                    &toggles,
+                    &mut behind_toggles,
+                    command_tx,
+                    ShellCommand::AwaitIdle(token),
+                );
+                continue;
+            }
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
@@ -1438,6 +1571,22 @@ fn router_loop(
                 }
             }
         }
+    }
+}
+
+/// Passes a mark of handled input or an idle waiter on to the reducer,
+/// behind the announcements of lock keys still to come, which the router
+/// makes after a delay.
+fn pass_in_line(
+    toggles: &VecDeque<(Instant, verbatim_input::ToggleKey)>,
+    behind_toggles: &mut Vec<ShellCommand>,
+    command_tx: &crossbeam_channel::Sender<ShellCommand>,
+    command: ShellCommand,
+) {
+    if toggles.is_empty() {
+        let _ = command_tx.send(command);
+    } else {
+        behind_toggles.push(command);
     }
 }
 
@@ -1586,19 +1735,17 @@ struct ControlHandlersConfig {
     own_pid: u32,
     settings_host: verbatim_speech::SettingsHost,
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-    /// Whether the focus listener has reported ready.
-    listener_ready: Arc<AtomicBool>,
-    /// Whether Core has learned the focus.
-    focus_known: Arc<AtomicBool>,
     ledger: Arc<LatencyLedger>,
     bound_gestures: SharedGestureMap,
-    gesture_tx: crossbeam_channel::Sender<EmittedGesture>,
+    gesture_tx: crossbeam_channel::Sender<Routed>,
     /// Cancels speech for an injected gesture, as a key press does.
     speech_control: verbatim_speech::SpeechControl,
     gui_handle: Arc<OnceLock<GuiHandle>>,
     command_tx: Sender<ShellCommand>,
     recorder: SharedRecorder,
     dumps_dir: PathBuf,
+    readiness: Arc<harness::Readiness>,
+    idle_line: Arc<harness::IdleLine>,
 }
 
 /// Builds the control-plane handlers over the app's live pieces.
@@ -1607,8 +1754,6 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         own_pid,
         settings_host,
         outposts,
-        listener_ready,
-        focus_known,
         ledger,
         bound_gestures,
         gesture_tx,
@@ -1617,9 +1762,12 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         command_tx,
         recorder,
         dumps_dir,
+        readiness,
+        idle_line,
     } = config;
-    let ready_handle = gui_handle.clone();
     let cancelled_tx = command_tx.clone();
+    let focus_tx = command_tx.clone();
+    let idle_router = gesture_tx.clone();
     ServerHandlers {
         status: Box::new(move || {
             let outposts: Vec<OutpostStatus> = outposts
@@ -1628,18 +1776,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .values()
                 .cloned()
                 .collect();
-            // Ready to take input: the GUI can act on gestures, the focus
-            // listener is running, the outpost reading Verbatim's own
-            // windows (its menu and dialogs) is ready, and Core knows the
-            // focus, so the first focus report cannot arrive after, and cut
-            // off, the speech of a key pressed straight away. With no
-            // foreground window at all there is no focus to wait for.
-            let ready = ready_handle.get().is_some()
-                && listener_ready.load(Ordering::Acquire)
-                && (focus_known.load(Ordering::Acquire) || foreground_pid().is_none())
-                && outposts.iter().any(|outpost| {
-                    outpost.target_pid == Pid(own_pid) && outpost.state == OutpostState::Ready
-                });
+            let ready = readiness.is_ready();
             StatusInfo {
                 pid: Pid(own_pid),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -1667,14 +1804,14 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             speech_control.cancel();
             let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled)));
             gesture_tx
-                .send(EmittedGesture {
+                .send(Routed::Gesture(EmittedGesture {
                     trace_id: TraceId::mint(),
                     gesture,
                     // An injected gesture is always a single, first press;
                     // multi-press counting applies to real key streams in
                     // the decision machine, not control-plane injection.
                     repeat: 0,
-                })
+                }))
                 .map_err(|_| "the gesture router is gone".to_owned())
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
@@ -1685,8 +1822,24 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .map_err(|error| error.to_string())
         }),
         quit: Box::new(move || request_shutdown(&gui_handle)),
+        await_idle: Box::new(move |after_input, timeout| {
+            idle_line.wait(&idle_router, after_input, timeout)
+        }),
+        dump_focus: Box::new(move || {
+            let (reply_tx, reply_rx) = bounded(1);
+            focus_tx
+                .send(ShellCommand::DumpFocus(reply_tx))
+                .map_err(|_| "the reducer is gone".to_owned())?;
+            reply_rx
+                .recv_timeout(DUMP_FOCUS_TIMEOUT)
+                .map_err(|_| format!("the reducer did not answer within {DUMP_FOCUS_TIMEOUT:?}"))
+        }),
     }
 }
+
+/// The longest the control plane waits for the reducer's focus report: the
+/// reducer answers between steps, so only a stalled reducer takes this long.
+const DUMP_FOCUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Answers [`Request::DumpTree`](verbatim_control::protocol::Request::DumpTree):
 /// hands the request to the reducer thread, which sends `DumpTree` to the

@@ -60,6 +60,22 @@ use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, Key
 /// tag and cancel speech like typed ones.
 pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 
+/// What the hook sends the gesture router, in the order the keys came.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Routed {
+    /// A gesture fired.
+    Gesture(EmittedGesture),
+    /// An end-to-end harness's numbered key stroke has been handled by the
+    /// hook (`verbatim_input::harness`): everything it caused was sent on
+    /// before this. The router passes it on behind whatever the stroke's
+    /// gestures caused, so the reducer can say when it has handled it.
+    Handled(u64),
+    /// A control-plane request waiting for Verbatim to be idle, named by its
+    /// token: it is answered only after everything sent here before it.
+    /// Never sent by the hook itself.
+    Barrier(u64),
+}
+
 /// Carries out a key press's effect on speech; called on the hook thread,
 /// so it must not block, nor make a call that dispatches sent messages (a
 /// cross-apartment COM call, `SendMessage`), which would deliver the next
@@ -112,7 +128,7 @@ pub enum KeyReport {
 /// exactly the right scope and needs no synchronization.
 struct HookState {
     machine: DecisionMachine,
-    events: Sender<EmittedGesture>,
+    events: Sender<Routed>,
     speech: SpeechEffectFn,
     reports: KeyReportFn,
     typing: typed::Typing,
@@ -149,7 +165,7 @@ impl InputHook {
     pub fn start(
         config: DecisionConfig,
         map: SharedGestureMap,
-        events: Sender<EmittedGesture>,
+        events: Sender<Routed>,
         speech: SpeechEffectFn,
         reports: KeyReportFn,
     ) -> io::Result<Self> {
@@ -199,7 +215,7 @@ impl Drop for InputHook {
 fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
-    events: Sender<EmittedGesture>,
+    events: Sender<Routed>,
     (speech, reports): (SpeechEffectFn, KeyReportFn),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
@@ -333,7 +349,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             }
             if let Some(emitted) = decision.emitted {
                 // Never block: drop the gesture if the consumer is backed up.
-                let _ = state.events.try_send(emitted);
+                let _ = state.events.try_send(Routed::Gesture(emitted));
             }
             if let Some(observed) = decision.observed
                 && !own
@@ -364,11 +380,24 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 && !decision.shared_modifier
                 && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
             {
-                let _ = state.events.try_send(verbatim_input::EmittedGesture {
-                    trace_id: verbatim_model::TraceId::mint(),
-                    gesture: key.gesture(),
-                    repeat: 0,
-                });
+                let _ = state
+                    .events
+                    .try_send(Routed::Gesture(verbatim_input::EmittedGesture {
+                        trace_id: verbatim_model::TraceId::mint(),
+                        gesture: key.gesture(),
+                        repeat: 0,
+                    }));
+            }
+            // A harness's stroke is complete with its last key event: say
+            // so behind everything the stroke caused. Never blocking, as
+            // for a gesture; a dropped mark leaves the harness's barrier
+            // waiting, which fails its test with a named timeout.
+            if let Some(numbered) = u64::try_from(kbd.dwExtraInfo)
+                .ok()
+                .and_then(verbatim_input::harness::decode)
+                && numbered.last
+            {
+                let _ = state.events.try_send(Routed::Handled(numbered.number));
             }
             decision.decision
         });

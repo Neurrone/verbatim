@@ -3,6 +3,7 @@
 //! `crates/verbatim-e2e/src/scenarios/terminal_review_grid.rs`.
 
 #[test]
+#[ignore = "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (docs/tooling.md)"]
 fn terminal_review_grid() {
     verbatim_e2e::registry::run_named("terminal_review_grid");
 }

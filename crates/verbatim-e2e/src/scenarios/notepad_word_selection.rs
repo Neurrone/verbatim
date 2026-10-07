@@ -17,13 +17,11 @@
 //! heard in full before the next; there is no other wait.
 
 use std::io;
-use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// How long each step's speech is given to arrive.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::no_teardown as teardown;
 
 /// The harness document's name.
 const NAME: &str = "word-selection";
@@ -36,34 +34,18 @@ const SECOND: &str = "one line at a time as the caret moves.";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let document = format!("{FIRST}\r\n{SECOND}\r\n");
-    let pid = scenario.open_document_with("notepad.exe", NAME, &document)?;
-    Ok(ScenarioState::TargetPid(pid))
+    scenario.open_document_with(NAME, &document)?;
+    Ok(ScenarioState::None)
 }
 
-/// Presses `keys` and waits for exactly `heard`.
+/// Presses `keys` and asserts exactly `heard`.
 fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
     scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
-}
-
-/// Presses `keys` and waits for an utterance ending in `ending`
-/// ("selected" or "unselected"), which must read `heard` once its runs of
-/// white space are collapsed.
-fn press_selecting(scenario: &mut Scenario, keys: &str, heard: &str, ending: &str) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    let spoken = scenario
-        .speech()
-        .expect_in_order_capturing(&[&format!(" {ending}")], STEP_TIMEOUT);
-    let collapsed = spoken.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert_eq!(
-        collapsed,
-        format!("{heard} {ending}"),
-        "{keys} spoke {spoken:?}"
-    );
+    scenario.speech().expect(&[heard]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    let _ = super::expect_notepad_text(scenario, STEP_TIMEOUT);
+    super::expect_notepad_opened(scenario, NAME, FIRST);
 
     // Down to the second line and back up: Up Arrow speaks the line too.
     press(scenario, "control+home", FIRST);
@@ -71,24 +53,13 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "uparrow", FIRST);
 
     // Two words selected, the second unselected, then the rest of the line
-    // selected. Unselecting comes before Shift+End because Windows 11
-    // Notepad's Shift+End takes the line break in, which
-    // Shift+Control+Left Arrow would then unselect first.
+    // selected. A word selected takes the space after it in, which is
+    // spoken as the space before the state. Unselecting comes before
+    // Shift+End because Windows 11 Notepad's Shift+End takes the line
+    // break in, which Shift+Control+Left Arrow would then unselect first.
     press(scenario, "home", "V");
-    press_selecting(scenario, "shift+control+rightarrow", "Verbatim", "selected");
-    press_selecting(scenario, "shift+control+rightarrow", "reads", "selected");
-    press_selecting(scenario, "shift+control+leftarrow", "reads", "unselected");
-    press_selecting(scenario, "shift+end", "reads this short note", "selected");
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    if let ScenarioState::TargetPid(pid) = state {
-        scenario
-            .kill_target(pid)
-            .expect("kills notepad through the agent");
-    }
+    press(scenario, "shift+control+rightarrow", "Verbatim  selected");
+    press(scenario, "shift+control+rightarrow", "reads  selected");
+    press(scenario, "shift+control+leftarrow", "reads  unselected");
+    press(scenario, "shift+end", "reads this short note  selected");
 }

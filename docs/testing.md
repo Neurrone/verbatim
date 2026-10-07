@@ -19,22 +19,29 @@ A test never falls back to another target when its own is missing, and never cho
 ## Exact assertions
 
 - Speech is asserted as an exact sequence: every utterance in order, with its exact text, each heard in full, with nothing else in between and nothing after the last one. There is no substring matching, no "any of these", and no skipping of utterances that do not match.
-- Speech is never discarded unchecked. A scenario ends by asserting that nothing further was said.
+- Every utterance counts, an empty one and a sound played on its own included, and so does how it ended: heard in full, unless the step interrupts it, when the assertion says it was cut off. A step that interrupts speech first asserts that the utterance it interrupts has started to play.
+- Speech is never discarded unchecked. A scenario ends by asserting that nothing further was said: once Verbatim says it has handled the scenario's last input and is idle, nothing may have been queued that no assertion matched.
+- A scenario never moves on past speech it has not asserted. Injecting input while an utterance no assertion has matched is waiting is a harness error.
+- Startup speech is asserted at the start of every scenario, like any other speech.
+- A mismatch is reported with the expected and actual sequences, escaped, and the first utterance and character that differ.
 - Counts are exact numbers, not bounds. State is compared whole, not as a subset.
 - A test's expectation is fixed before it runs. It never reads Verbatim's answer to decide what to expect next; when it needs the system's state, such as a lock key's, it reads that state independently first.
 - Reducer tests assert every effect an input produces, not only the first.
 
 ## Waits are for evidence
 
-- No fixed sleeps, polling loops, retries, or "wait until quiet" in place of evidence. Every wait names the event or reply it waits for.
+- No fixed sleeps, polling loops, retries, or "wait until quiet" in place of evidence. Every wait names the event or reply it waits for. `cargo xtask ci` fails on a fixed sleep or a retry counter in test code.
+- Evidence that Verbatim has handled an input comes from Verbatim: the harness numbers every key it injects, and Verbatim reports each number once everything the key caused is queued. Evidence about an application comes from the specific event Core receives, never from a period of silence.
+- Every wait in the agent or the control plane ends before the client's read timeout, so a failure is a named timeout on a live connection, not a broken one.
 - Response times are asserted. Each step has a budget from event to queued speech and from event to audio, set from measurements; a long timeout only bounds a hang and never stands in for a budget.
 - No tolerances that let a regression pass. Where a measurement varies by machine, such as the terminal flood's slowdown, it is recorded for trends rather than asserted with a loose limit.
 
 ## Failures are never hidden
 
 - A skipped test is reported as skipped, never as passed.
-- Cleanup closes what the test opened, by process ID, and fails the test when it cannot. Nothing is killed by image name.
-- Errors are never swallowed. Failure artifacts (timeline, logs, flight recorder) are always kept, and losing one is itself a failure.
+- Cleanup closes what the test opened, by process ID or by its window, and fails the test when it cannot. When the test started the program, the process that owned the window must exit. Nothing is killed by image name.
+- Any of Verbatim's own processes that exits unexpectedly during a scenario fails it, and the crash dump, when crash dumps are configured, is kept with the scenario's artifacts.
+- Errors are never swallowed. Failure artifacts (timeline, logs, flight recorder, Core's focus and navigator) are always kept, and losing one is itself a failure. A recording that cannot start or finish is a failure too.
 - No test is `#[ignore]`d without a recorded decision, and an ignored test's behaviour is covered elsewhere.
 - Everything a demonstration shows is covered by a test.
 

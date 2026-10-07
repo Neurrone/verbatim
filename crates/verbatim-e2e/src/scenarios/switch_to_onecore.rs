@@ -1,89 +1,82 @@
-//! Switching synthesizer still works (decisions D17 and D18): from eSpeak NG,
-//! the default, to Windows `OneCore` voices through the Speech page's
+//! Switching synthesizer still works (decisions D17 and D18): from eSpeak
+//! NG, the default, to Windows `OneCore` voices through the Speech page's
 //! Select Synthesizer dialog, and back. Each synthesizer runs in its own
 //! host process, so the switch ends one host and starts another; every
-//! announcement after it must still be heard in full, now from `OneCore`.
-//! The settings dialog is then cancelled, so the configuration is left as
-//! it was.
+//! announcement after it must still be heard in full.
 //!
-//! `OneCore` voices are installed on Windows 11 and on GitHub's Windows
-//! runners; the voice asserted is any of Microsoft's, since which one is
-//! the default depends on the machine.
-
-use std::io;
-use std::time::Duration;
+//! After the switch the Speech page's voice is Microsoft David, the voice
+//! `OneCore` starts with, and Verbatim's status names `OneCore` as the
+//! active synthesizer, which the text alone could not show, since either
+//! synthesizer speaks the same words. Switching back leaves eSpeak NG
+//! active with its English (Great Britain) voice; the dialog is then
+//! closed, and the fixed settings are written afresh before the next run.
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-/// Generous per-step budget: starting a synthesizer host for the first time
-/// on a busy machine takes a moment.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "must match ScenarioDef::setup's fn-pointer signature"
-)]
-pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    // Nothing external: the scenario drives Verbatim's own settings dialog.
-    Ok(ScenarioState::None)
+/// Presses `keys` and asserts exactly `heard`.
+fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
+    scenario.send_keys(&[keys]).expect("sends the key");
+    scenario.speech().expect(heard);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::open_speech_settings(scenario, STEP_TIMEOUT);
-
-    choose_synthesizer(scenario, "downarrow", "Windows OneCore voices");
-    // The rebuilt page lists OneCore's voices, and the announcement is
-    // heard from OneCore.
-    scenario.send_keys(&["tab"]).expect("sends tab");
-    scenario
-        .speech()
-        .expect_in_order(&["Voice", "combo box", "Microsoft"], STEP_TIMEOUT);
-
-    // And back to eSpeak NG.
-    scenario.send_keys(&["shift+tab"]).expect("sends shift+tab");
-    scenario
-        .speech()
-        .expect_in_order(&["Change", "button"], STEP_TIMEOUT);
-    choose_synthesizer_from_change(scenario, "uparrow", "eSpeak NG");
-    scenario.send_keys(&["tab"]).expect("sends tab");
-    scenario.speech().expect_in_order(
-        &["Voice", "combo box", "English (Great Britain)"],
-        STEP_TIMEOUT,
+/// Asserts the synthesizer Verbatim's status names as active.
+fn expect_active(scenario: &mut Scenario, synthesizer: &str) {
+    let status = scenario.status().expect("Verbatim answers Status");
+    assert_eq!(
+        status.active_synth.as_deref(),
+        Some(synthesizer),
+        "the active synthesizer"
     );
 }
 
-/// From the selected category, tabs to the Change button and chooses the
-/// synthesizer `key` moves to, announced as `name`.
-fn choose_synthesizer(scenario: &mut Scenario, key: &str, name: &str) {
-    scenario.send_keys(&["tab"]).expect("sends tab");
-    scenario
-        .speech()
-        .expect_in_order(&["Change", "button"], STEP_TIMEOUT);
-    choose_synthesizer_from_change(scenario, key, name);
-}
+pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    super::open_speech_settings(scenario);
+    expect_active(scenario, "espeak");
+    press(scenario, "tab", &["Change... button Alt+h"]);
+    press(
+        scenario,
+        "space",
+        &[
+            "Select Synthesizer dialog",
+            "Synthesizer: combo box eSpeak NG collapsed Alt+s",
+        ],
+    );
+    press(scenario, "downarrow", &["Windows OneCore voices"]);
+    press(
+        scenario,
+        "enter",
+        &["Verbatim Settings: Speech dialog", "Change... button Alt+h"],
+    );
+    press(
+        scenario,
+        "tab",
+        &["Voice combo box Microsoft David collapsed Alt+v"],
+    );
+    expect_active(scenario, "onecore");
 
-/// With the Change button focused, opens Select Synthesizer, moves the
-/// selection with `key` to `name`, and confirms with Enter (OK is the
-/// default button), returning to the rebuilt Speech page.
-fn choose_synthesizer_from_change(scenario: &mut Scenario, key: &str, name: &str) {
-    scenario.send_keys(&["space"]).expect("presses Change");
-    scenario
-        .speech()
-        .expect_in_order(&["Synthesizer", "combo box"], STEP_TIMEOUT);
-    scenario.send_keys(&[key]).expect("moves the selection");
-    scenario.speech().expect_in_order(&[name], STEP_TIMEOUT);
-    scenario.send_keys(&["enter"]).expect("confirms with OK");
-    scenario
-        .speech()
-        .expect_in_order(&["Change", "button"], STEP_TIMEOUT);
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, _state: ScenarioState) {
-    // Cancel the settings dialog: nothing chosen here is saved.
-    let _ = scenario.send_keys(&["escape"]);
+    press(scenario, "shift+tab", &["Change... button Alt+h"]);
+    press(
+        scenario,
+        "space",
+        &[
+            "Select Synthesizer dialog",
+            "Synthesizer: combo box Windows OneCore voices collapsed Alt+s",
+        ],
+    );
+    press(scenario, "uparrow", &["eSpeak NG"]);
+    press(
+        scenario,
+        "enter",
+        &["Verbatim Settings: Speech dialog", "Change... button Alt+h"],
+    );
+    press(
+        scenario,
+        "tab",
+        &["Voice combo box English (Great Britain) collapsed Alt+v"],
+    );
+    expect_active(scenario, "espeak");
+    super::close_settings_to_desktop(scenario);
 }

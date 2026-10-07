@@ -8,6 +8,12 @@
 //! [`verbatim_control::client::Client`] via the tunnel handoff the agent
 //! protocol defines, so from that point on the connection speaks the
 //! control protocol instead.
+//!
+//! Every request that waits on the agent's side (for a window, a process,
+//! a file, or an event) is read with a timeout longer than the wait it
+//! asks for, so a wait that runs out is answered as such on a live
+//! connection, and only an agent that stops answering altogether ends the
+//! request with a read timeout.
 
 use std::io::{self, BufReader};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -16,33 +22,42 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
-    AGENT_PROTOCOL_VERSION, ForegroundInfo, Frame, KillOutcome, ProcessState, ReplyPayload,
-    Request, RequestEnvelope, SessionInfo,
+    AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, Frame, KillOutcome,
+    ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo,
+    WindowCondition,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
 
 /// Read timeout applied to the socket once it becomes a control-plane
-/// tunnel, so a Verbatim that stops answering fails the caller's next call
-/// instead of hanging the test suite forever. Deliberately short so callers
-/// that poll on top of it (readiness checks, [`crate::speech::SpeechCollector`]'s
-/// wait loop) wake up often enough to recheck their own, longer deadlines.
+/// tunnel, so a Verbatim that stops answering fails the caller's next read
+/// instead of hanging the test suite forever. A read that times out is not
+/// a failure by itself: the speech collector reads with it and checks its
+/// own deadline for what it waits for.
 pub const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Bounds every reply and write on the agent's own protocol, so an agent
-/// that stops answering fails the caller's request instead of hanging the
-/// suite. Every agent request is answered promptly (launching, killing, or
-/// polling a process, reading a small file), so this is a hang guard, not a
-/// latency expectation. A timed-out request leaves any partly received
-/// reply in the [`MessageReader`], and the next request skips it by id.
+/// Bounds every reply and write on the agent's own protocol for a request
+/// that does not wait, so an agent that stops answering fails the caller's
+/// request instead of hanging the suite.
 const AGENT_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Per-attempt cap on establishing the TCP connection itself. Without one,
-/// an unanswered connect to a guest that is mid-restore or renewing its
-/// address waits out the OS default (tens of seconds), which once consumed
-/// a launch-poll deadline in a single attempt; bounding each attempt is
-/// what makes the callers' retry loops actually retry.
+/// How much longer than the wait it asked for a waiting request's reply
+/// may take: the agent answers when its wait ends, so this only covers
+/// the round trip.
+const WAIT_REPLY_MARGIN: Duration = Duration::from_secs(10);
+
+/// Cap on establishing the TCP connection itself.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A process the agent launched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Launched {
+    /// Its OS process id.
+    pub pid: u32,
+    /// Whether Windows let the agent allow it to take the foreground with
+    /// its first window, as a program a user starts may.
+    pub foreground_allowed: bool,
+}
 
 /// A connection to the M2 agent, past its `Hello` handshake.
 pub struct AgentClient {
@@ -102,13 +117,29 @@ impl AgentClient {
         }
     }
 
+    /// Sends a request that waits on the agent's side for up to `wait`, and
+    /// reads its reply with a timeout [`WAIT_REPLY_MARGIN`] longer.
+    fn request_waiting(&mut self, request: Request, wait: Duration) -> io::Result<Frame> {
+        self.set_read_timeout(wait + WAIT_REPLY_MARGIN)?;
+        let frame = self.request(request);
+        self.set_read_timeout(AGENT_REPLY_TIMEOUT)?;
+        frame
+    }
+
+    /// Sets the read timeout of the socket replies are read from: the
+    /// reader's own duplicate of the connection's handle, whose timeout is
+    /// its own.
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        self.reader
+            .get_ref()
+            .get_ref()
+            .set_read_timeout(Some(timeout))
+    }
+
     /// Spawns `command` on the agent's guest, inheriting its interactive
     /// session. `env` is added to, not replacing, the agent's own
     /// environment. `stderr_to`, when set, asks the agent to capture the
-    /// child's stdout and stderr into that path (truncated first) instead
-    /// of leaving them uncaptured — see
-    /// `verbatim_agent::protocol::Request::LaunchProcess`. Returns the
-    /// spawned process's OS pid.
+    /// child's stdout and stderr into that path (truncated first).
     ///
     /// # Errors
     ///
@@ -121,23 +152,61 @@ impl AgentClient {
         working_dir: Option<&str>,
         env: &[(String, String)],
         stderr_to: Option<&str>,
-    ) -> io::Result<u32> {
-        match self.request(Request::LaunchProcess {
+    ) -> io::Result<Launched> {
+        self.launch(Request::LaunchProcess {
             command: command.to_owned(),
             args: args.to_vec(),
             working_dir: working_dir.map(str::to_owned),
             env: env.to_vec(),
             stderr_to: stderr_to.map(str::to_owned),
-        })? {
+            console_title: None,
+        })
+    }
+
+    /// Launches the console program `command` with `args`, as
+    /// [`AgentClient::launch_process`] does, its console window titled
+    /// `title` from its first frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the agent could not spawn
+    /// the process.
+    pub fn launch_console(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+    ) -> io::Result<Launched> {
+        self.launch(Request::LaunchProcess {
+            command: command.to_owned(),
+            args: args.to_vec(),
+            working_dir: None,
+            env: Vec::new(),
+            stderr_to: None,
+            console_title: Some(title.to_owned()),
+        })
+    }
+
+    /// Sends a launch request and reads its reply.
+    fn launch(&mut self, request: Request) -> io::Result<Launched> {
+        match self.request(request)? {
             Frame::Reply {
-                payload: ReplyPayload::Launched { pid },
+                payload:
+                    ReplyPayload::Launched {
+                        pid,
+                        foreground_allowed,
+                    },
                 ..
-            } => Ok(pid),
+            } => Ok(Launched {
+                pid,
+                foreground_allowed,
+            }),
             other => Err(unexpected("LaunchProcess", &other)),
         }
     }
 
-    /// Terminates `pid` on the guest.
+    /// Terminates `pid` on the guest, with everything in its job when the
+    /// agent launched it.
     ///
     /// # Errors
     ///
@@ -152,52 +221,272 @@ impl AgentClient {
         }
     }
 
-    /// Terminates every process on the guest whose image (executable file)
-    /// name matches `name`, case-insensitively — see
-    /// `verbatim_agent::protocol::Request::KillProcessesByName`. Returns
-    /// how many were actually terminated; zero is a normal, successful
-    /// outcome, not an error.
+    /// Ends every process the agent launched that is still running, by its
+    /// own handle, and returns how many were.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn kill_processes_by_name(&mut self, name: &str) -> io::Result<u32> {
-        match self.request(Request::KillProcessesByName {
-            name: name.to_owned(),
-        })? {
+    pub fn end_launched(&mut self) -> io::Result<u32> {
+        match self.request(Request::EndLaunched)? {
             Frame::Reply {
-                payload: ReplyPayload::KilledByName { terminated },
+                payload: ReplyPayload::EndedLaunched { ended },
                 ..
-            } => Ok(terminated),
-            other => Err(unexpected("KillProcessesByName", &other)),
+            } => Ok(ended),
+            other => Err(unexpected("EndLaunched", &other)),
         }
     }
 
-    /// Brings a visible top-level window of a process named `image_name`,
-    /// and when `title_contains` is set one whose title contains it, to the
-    /// foreground on the guest, waiting up to `timeout` for one to appear
-    /// (`verbatim_agent::protocol::Request::BringToForeground`). Returns
-    /// whether such a window is the foreground window afterwards.
+    /// The processes whose parent is `pid`.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn bring_to_foreground(
-        &mut self,
-        image_name: &str,
-        title_contains: Option<&str>,
-        timeout: std::time::Duration,
-    ) -> io::Result<bool> {
-        match self.request(Request::BringToForeground {
-            image_name: image_name.to_owned(),
-            title_contains: title_contains.map(str::to_owned),
-            timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-        })? {
+    pub fn child_processes(&mut self, pid: u32) -> io::Result<Vec<ProcessInfo>> {
+        match self.request(Request::ChildProcesses { pid })? {
+            Frame::Reply {
+                payload: ReplyPayload::Processes { processes },
+                ..
+            } => Ok(processes),
+            other => Err(unexpected("ChildProcesses", &other)),
+        }
+    }
+
+    /// The processes that have exited in the job of `pid`, which the agent
+    /// launched, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn job_exits(&mut self, pid: u32) -> io::Result<Vec<ProcessExit>> {
+        match self.request(Request::JobExits { pid })? {
+            Frame::Reply {
+                payload: ReplyPayload::Exits { exits },
+                ..
+            } => Ok(exits),
+            other => Err(unexpected("JobExits", &other)),
+        }
+    }
+
+    /// Brings `window` to the foreground without injecting input, and
+    /// returns whether it is the foreground window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn set_foreground(&mut self, window: u64) -> io::Result<bool> {
+        match self.request(Request::SetForeground { window })? {
             Frame::Reply {
                 payload: ReplyPayload::Foreground { taken },
                 ..
             } => Ok(taken),
-            other => Err(unexpected("BringToForeground", &other)),
+            other => Err(unexpected("SetForeground", &other)),
+        }
+    }
+
+    /// Waits up to `timeout`, on window events, for `condition`, and
+    /// returns whether it held and the desktop then.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_for_window(
+        &mut self,
+        condition: WindowCondition,
+        timeout: Duration,
+    ) -> io::Result<(bool, ForegroundInfo)> {
+        match self.request_waiting(
+            Request::WaitForWindow {
+                condition,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::WindowState { met, desktop },
+                ..
+            } => Ok((met, desktop)),
+            other => Err(unexpected("WaitForWindow", &other)),
+        }
+    }
+
+    /// Minimizes every window, as Show Desktop does, and waits up to
+    /// `timeout` for every window that can be minimized to be.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn minimize_all(&mut self, timeout: Duration) -> io::Result<(bool, ForegroundInfo)> {
+        match self.request_waiting(
+            Request::MinimizeAll {
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::WindowState { met, desktop },
+                ..
+            } => Ok((met, desktop)),
+            other => Err(unexpected("MinimizeAll", &other)),
+        }
+    }
+
+    /// Waits up to `timeout` for `pid` to exit, and reports whether it is
+    /// still running.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_for_exit(&mut self, pid: u32, timeout: Duration) -> io::Result<ProcessState> {
+        match self.request_waiting(
+            Request::WaitForExit {
+                pid,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::ProcessStatus(state),
+                ..
+            } => Ok(state),
+            other => Err(unexpected("WaitForExit", &other)),
+        }
+    }
+
+    /// Waits up to `timeout`, on changes in its folder, for `path` to exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_for_file(&mut self, path: &str, timeout: Duration) -> io::Result<bool> {
+        match self.request_waiting(
+            Request::WaitForFile {
+                path: path.to_owned(),
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::FileExists { exists },
+                ..
+            } => Ok(exists),
+            other => Err(unexpected("WaitForFile", &other)),
+        }
+    }
+
+    /// Creates the named event `name`, not yet set, for a process launched
+    /// later to set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn create_event(&mut self, name: &str) -> io::Result<()> {
+        match self.request(Request::CreateEvent {
+            name: name.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::EventCreated,
+                ..
+            } => Ok(()),
+            other => Err(unexpected("CreateEvent", &other)),
+        }
+    }
+
+    /// Waits up to `timeout` for the event `name` to be set, or `pid` to
+    /// exit first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_for_event(
+        &mut self,
+        name: &str,
+        pid: u32,
+        timeout: Duration,
+    ) -> io::Result<EventOutcome> {
+        match self.request_waiting(
+            Request::WaitForEvent {
+                name: name.to_owned(),
+                pid,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::EventWait(outcome),
+                ..
+            } => Ok(outcome),
+            other => Err(unexpected("WaitForEvent", &other)),
+        }
+    }
+
+    /// The focused element as UI Automation reports it to the agent, read
+    /// independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn focused_element(&mut self) -> io::Result<FocusedElement> {
+        match self.request(Request::FocusedElement)? {
+            Frame::Reply {
+                payload: ReplyPayload::Focused(element),
+                ..
+            } => Ok(element),
+            other => Err(unexpected("FocusedElement", &other)),
+        }
+    }
+
+    /// Focuses the foreground window's element whose UI Automation
+    /// identifier is `automation_id`, injecting no input, and returns how
+    /// many children it has.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn focus_by_automation_id(&mut self, automation_id: &str) -> io::Result<u32> {
+        match self.request(Request::FocusByAutomationId {
+            automation_id: automation_id.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::Children { count },
+                ..
+            } => Ok(count),
+            other => Err(unexpected("FocusByAutomationId", &other)),
+        }
+    }
+
+    /// The words of the focused text that its application marks as
+    /// misspelt, as the agent reads them through UI Automation,
+    /// independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn misspelt_words(&mut self) -> io::Result<Vec<String>> {
+        match self.request(Request::MisspeltWords)? {
+            Frame::Reply {
+                payload: ReplyPayload::Words { words },
+                ..
+            } => Ok(words),
+            other => Err(unexpected("MisspeltWords", &other)),
+        }
+    }
+
+    /// Whether the lock key `key` (such as `scrolllock`) is on, as the
+    /// agent reads it, independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn key_toggled(&mut self, key: &str) -> io::Result<bool> {
+        match self.request(Request::KeyToggled {
+            key: key.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::KeyToggled { on },
+                ..
+            } => Ok(on),
+            other => Err(unexpected("KeyToggled", &other)),
         }
     }
 
@@ -217,21 +506,20 @@ impl AgentClient {
     }
 
     /// Asks every visible top-level window whose title contains
-    /// `title_contains` to close, waiting up to `timeout` for them to go.
-    /// Returns how many were still open.
+    /// `title_contains` to close, waiting up to `timeout`, on window events,
+    /// for them to go. Returns how many were still open.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
-    pub fn close_windows(
-        &mut self,
-        title_contains: &str,
-        timeout: std::time::Duration,
-    ) -> io::Result<u32> {
-        match self.request(Request::CloseWindows {
-            title_contains: title_contains.to_owned(),
-            timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-        })? {
+    pub fn close_windows(&mut self, title_contains: &str, timeout: Duration) -> io::Result<u32> {
+        match self.request_waiting(
+            Request::CloseWindows {
+                title_contains: title_contains.to_owned(),
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
             Frame::Reply {
                 payload: ReplyPayload::WindowsClosed { remaining },
                 ..
@@ -276,40 +564,42 @@ impl AgentClient {
     }
 
     /// Injects real OS key strokes on the guest, each a plus-joined
-    /// combination such as `shift+tab`.
+    /// combination such as `shift+tab`, each numbered for the harness's
+    /// barrier. Returns the last stroke's number.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails, including when a key name is
     /// unknown, in which case nothing was sent.
-    pub fn send_keys(&mut self, keys: &[String]) -> io::Result<()> {
+    pub fn send_keys(&mut self, keys: &[String]) -> io::Result<u64> {
         match self.request(Request::SendKeys {
             keys: keys.to_vec(),
         })? {
             Frame::Reply {
-                payload: ReplyPayload::KeysSent,
+                payload: ReplyPayload::KeysSent { input },
                 ..
-            } => Ok(()),
+            } => Ok(input),
             other => Err(unexpected("SendKeys", &other)),
         }
     }
 
     /// Types `text` on the guest as real key presses, each character mapped
     /// to its key and shift state in the foreground window's keyboard
-    /// layout (`verbatim_agent::protocol::Request::TypeText`).
+    /// layout and numbered for the harness's barrier. Returns the last
+    /// character's number.
     ///
     /// # Errors
     ///
     /// Returns an error if the request fails, including when a character
     /// cannot be typed in that layout, in which case nothing was typed.
-    pub fn type_text(&mut self, text: &str) -> io::Result<()> {
+    pub fn type_text(&mut self, text: &str) -> io::Result<u64> {
         match self.request(Request::TypeText {
             text: text.to_owned(),
         })? {
             Frame::Reply {
-                payload: ReplyPayload::TextTyped,
+                payload: ReplyPayload::TextTyped { input },
                 ..
-            } => Ok(()),
+            } => Ok(input),
             other => Err(unexpected("TypeText", &other)),
         }
     }
@@ -377,14 +667,8 @@ impl AgentClient {
         let mut partial = to.as_os_str().to_owned();
         partial.push(".part");
         let partial = std::path::PathBuf::from(partial);
-        let copied = self.copy_into(path, &partial);
-        match copied {
-            Ok(()) => std::fs::rename(&partial, to),
-            Err(error) => {
-                let _ = std::fs::remove_file(&partial);
-                Err(error)
-            }
-        }
+        self.copy_into(path, &partial)?;
+        std::fs::rename(&partial, to)
     }
 
     fn copy_into(&mut self, path: &str, to: &std::path::Path) -> io::Result<()> {
@@ -467,18 +751,12 @@ impl AgentClient {
     /// Asks the agent to stop speaking its own protocol on this connection
     /// and relay Verbatim's control-plane pipe instead, then completes the
     /// control protocol's own `Hello` on the same socket and returns a
-    /// ready [`ControlClient`].
-    ///
-    /// Sets [`CONTROL_READ_TIMEOUT`] on the socket before the handoff, so a
-    /// Verbatim that stops answering fails the caller's next call instead of
-    /// hanging it silently.
+    /// ready [`ControlClient`], reading with [`CONTROL_READ_TIMEOUT`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the agent has no control-plane pipe to tunnel to
-    /// yet — the common case while Verbatim is still starting, which
-    /// callers poll for (see [`crate::scenario::Scenario::launch`]) — or if
-    /// the control protocol's own handshake fails.
+    /// Returns an error if the agent cannot open Verbatim's control pipe,
+    /// or if the control protocol's own handshake fails.
     pub fn open_control_tunnel(mut self) -> io::Result<ControlClient> {
         match self.request(Request::OpenControlTunnel)? {
             Frame::Reply {
@@ -494,13 +772,16 @@ impl AgentClient {
         }
         // No more agent-protocol reads happen on this connection: drop the
         // reader before handing the plain stream to the control client, so
-        // nothing it wrote is left stranded in this reader's own buffer
-        // (the same handoff discipline verbatim-agent's own tunnel test
-        // documents).
+        // nothing it wrote is left stranded in this reader's own buffer.
         drop(self.reader);
         self.stream.set_read_timeout(Some(CONTROL_READ_TIMEOUT))?;
         ControlClient::from_tcp_stream(self.stream)
     }
+}
+
+/// `duration` in whole milliseconds, for the protocol.
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn unexpected(request_name: &str, frame: &Frame) -> io::Error {

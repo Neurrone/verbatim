@@ -17,13 +17,11 @@
 //! next; there is no other wait.
 
 use std::io;
-use std::time::Duration;
 
 use crate::registry::ScenarioState;
-use crate::scenario::Scenario;
+use crate::scenario::{Scenario, WINDOW_TIMEOUT};
 
-/// How long each step's speech is given to arrive.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::no_teardown as teardown;
 
 /// The harness document's name.
 const NAME: &str = "review";
@@ -32,30 +30,25 @@ const NAME: &str = "review";
 const DOCUMENT: &str = "Name    Qty\r\nApple   3\r\nFig\r\nBanana  12\r\n";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let pid = scenario.open_document_with("notepad.exe", NAME, DOCUMENT)?;
-    Ok(ScenarioState::TargetPid(pid))
+    scenario.open_document_with(NAME, DOCUMENT)?;
+    Ok(ScenarioState::None)
 }
 
-/// Sends the review gesture `gesture` and waits for exactly `heard`.
+/// Sends the review gesture `gesture` and asserts exactly `heard`.
 fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.send_gesture(gesture).expect("sends the gesture");
-    scenario.speech().expect_exactly(&[heard], STEP_TIMEOUT);
+    scenario.speech().expect(&[heard]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // Notepad's text area, and the line at its caret, wherever Notepad put
-    // the caret on opening.
-    let text_area = super::expect_notepad_text_area(scenario, STEP_TIMEOUT);
-    let _ = scenario
-        .speech()
-        .expect_change_capturing(&text_area, STEP_TIMEOUT);
+    // Notepad's text area, and the line at its caret, at the top of the
+    // new document.
+    super::expect_notepad_opened(scenario, NAME, "Name    Qty");
     // The caret to the top; the review cursor follows it there.
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
-    scenario
-        .speech()
-        .expect_exactly(&["Name    Qty"], STEP_TIMEOUT);
+    scenario.speech().expect(&["Name    Qty"]);
 
     // The current line, then the next word, the quantity column.
     review(scenario, "kb:numpad8", "Name    Qty");
@@ -85,14 +78,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     review(scenario, "kb:numpad7", "Fig");
     review(scenario, "kb:numpad1", "i");
     review(scenario, "kb:shift+numpad1", "F");
-    if text_area.starts_with("Text editor document") {
-        review(scenario, "kb:shift+numpad3", "carriage return");
-        review(scenario, "kb:numpad3", "Right carriage return");
-    } else {
-        review(scenario, "kb:shift+numpad3", "line feed");
-        review(scenario, "kb:numpad3", "Right line feed");
-        review(scenario, "kb:numpad1", "carriage return");
-    }
+    review(scenario, "kb:shift+numpad3", "carriage return");
+    review(scenario, "kb:numpad3", "Right carriage return");
     review(scenario, "kb:numpad1", "g");
 
     // The top, and a range copied from the start marker to the review
@@ -106,41 +93,26 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario
         .send_keys(&["insert+f10", "insert+f10"])
         .expect("sends Verbatim+F10 twice");
-    scenario
-        .speech()
-        .expect_exactly(&["Copied to clipboard: Name"], STEP_TIMEOUT);
+    scenario.speech().expect(&["Copied to clipboard: Name"]);
 
-    // Pasted at the end of the text, the copy is a line of its own. A paste
+    // The first press of Verbatim+F10 selected the range in Notepad, as
+    // NVDA's does, and the second copied it; moving the caret to the end
+    // unselects it. Pasted there, the copy is a line of its own. A paste
     // says nothing, so the document's title marking unsaved changes is the
     // evidence it is done. Home then speaks the line's first character, and
     // the review cursor, following the caret, reads the line.
     scenario
         .send_keys(&["control+end"])
         .expect("sends control+end");
-    scenario.speech().expect_exactly(&["blank"], STEP_TIMEOUT);
+    scenario.speech().expect(&["blank", "Name unselected"]);
     scenario.send_keys(&["control+v"]).expect("sends control+v");
     scenario
-        .expect_unsaved(NAME, STEP_TIMEOUT)
+        .expect_unsaved(NAME, WINDOW_TIMEOUT)
         .expect("the paste reaches the document");
     scenario.send_keys(&["home"]).expect("sends home");
-    scenario.speech().expect_exactly(&["N"], STEP_TIMEOUT);
+    scenario.speech().expect(&["N"]);
     review(scenario, "kb:numpad8", "Name");
     scenario
-        .save_document(NAME, STEP_TIMEOUT)
+        .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    if let Err(error) = scenario.save_document(NAME, STEP_TIMEOUT) {
-        println!("the edited document could not be saved: {error}");
-    }
-    if let ScenarioState::TargetPid(pid) = state {
-        scenario
-            .kill_target(pid)
-            .expect("kills notepad through the agent");
-    }
 }

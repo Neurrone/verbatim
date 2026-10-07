@@ -1,25 +1,26 @@
-//! Say-all in Notepad (milestone M4 item 6): Verbatim+Down Arrow, the
-//! desktop layout's say all from the caret (NVDA+A on laptops), reads the
-//! text piece by piece, moving the caret as each piece starts to play; a
-//! key interrupts it and leaves the caret where speech stopped.
+//! Say-all in Windows 11 Notepad (milestone M4 item 6): Verbatim+Down
+//! Arrow, the desktop layout's say all from the caret (NVDA+A on laptops),
+//! reads the text piece by piece, moving the caret as each piece starts to
+//! play; a key interrupts it and leaves the caret where speech stopped.
+//! Local-only: GitHub's Windows Server runner has classic Notepad.
 //!
 //! Notepad's text is UIA, which has no sentence unit, so say-all reads by
-//! line, one line per piece. The second line is long, so it is still
-//! playing when the scenario presses Control, which cuts speech off as any
-//! key does. Home then speaks the first character of the caret's line,
-//! the second line's, numpad 8 reads that line, since the review cursor
-//! follows the caret, and the third line is never heard. The key is
-//! pressed once the second line is heard starting, which is the evidence
-//! that its index mark was reached; there is no other wait.
+//! line, as Notepad lays the lines out: the long second line wraps, and is
+//! read as its two lines. Say-all hands speech two pieces ahead of the one
+//! playing (`docs/performance.md`, "Say-all"), so once the second line's
+//! first part has started, its second part and the third line are queued.
+//! Control then cuts all three off, as any key does, and say-all stops:
+//! the third line is never heard. Home speaks the first
+//! character of the caret's line, the second line's, and numpad 8 reads
+//! the line there, since the review cursor follows the caret.
 
 use std::io;
-use std::time::Duration;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
+use crate::speech::Ending;
 
-/// How long each step's speech is given to arrive.
-const STEP_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) use super::no_teardown as teardown;
 
 /// The harness document's name.
 const NAME: &str = "say-all";
@@ -30,59 +31,46 @@ const FIRST: &str = "Reading starts on this line.";
 /// The second line, long enough to be playing when the key is pressed.
 const SECOND: &str = "Mostly this second line is long enough to be playing when a key interrupts it, since it goes on for quite a while with nothing much to say.";
 
-/// The third line, never reached.
+/// The second line's first part, as Notepad wraps it.
+const SECOND_FIRST_PART: &str = "Mostly this second line is long enough to be playing when a key interrupts it, since it goes on for quite a while ";
+
+/// The second line's second part.
+const SECOND_SECOND_PART: &str = "with nothing much to say.";
+
+/// The third line, queued and never heard.
 const THIRD: &str = "Nobody hears this third line.";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let document = format!("{FIRST}\r\n{SECOND}\r\n{THIRD}\r\n");
-    let pid = scenario.open_document_with("notepad.exe", NAME, &document)?;
-    Ok(ScenarioState::TargetPid(pid))
+    scenario.open_document_with(NAME, &document)?;
+    Ok(ScenarioState::None)
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    // Notepad's text area, and the line at its caret, wherever Notepad put
-    // the caret on opening.
-    let _ = super::expect_notepad_text(scenario, STEP_TIMEOUT);
+    super::expect_notepad_opened(scenario, NAME, FIRST);
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");
-    scenario.speech().expect_exactly(&[FIRST], STEP_TIMEOUT);
+    scenario.speech().expect(&[FIRST]);
 
     scenario
         .send_gesture("kb:verbatim+downarrow")
         .expect("sends say all");
-    scenario.speech().expect_exactly(&[FIRST], STEP_TIMEOUT);
-    // A long line can be spoken in more than one piece; its start is
-    // enough.
-    scenario
+    scenario.speech().expect(&[FIRST]);
+    let playing = scenario.speech().expect_started(SECOND_FIRST_PART);
+    let queued = scenario
         .speech()
-        .expect_playing("Mostly this second line", STEP_TIMEOUT);
+        .expect_queued(&[SECOND_SECOND_PART, THIRD]);
     scenario.send_keys(&["control"]).expect("sends control");
-
-    // The caret is on the line speech stopped in.
-    scenario.send_keys(&["home"]).expect("sends home");
-    scenario.speech().expect_exactly(&["M"], STEP_TIMEOUT);
-    // The review cursor follows the caret there: numpad 8 reads that line.
-    scenario.send_gesture("kb:numpad8").expect("sends numpad 8");
-    scenario
-        .speech()
-        .expect_in_order(&["Mostly this second line"], STEP_TIMEOUT);
-    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
-    assert!(
-        !scenario.speech().has_played(THIRD),
-        "say-all went on after the key; transcript:\n{}",
-        scenario.speech().transcript()
-    );
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
-    if let ScenarioState::TargetPid(pid) = state {
-        scenario
-            .kill_target(pid)
-            .expect("kills notepad through the agent");
+    scenario.speech().expect_ended(&playing, Ending::Cancelled);
+    for heard in &queued {
+        scenario.speech().expect_ended(heard, Ending::Cancelled);
     }
+
+    // The caret is on the line speech stopped in, and the review cursor
+    // follows it there.
+    scenario.send_keys(&["home"]).expect("sends home");
+    scenario.speech().expect(&["M"]);
+    scenario.send_gesture("kb:numpad8").expect("sends numpad 8");
+    scenario.speech().expect(&[SECOND_FIRST_PART]);
 }

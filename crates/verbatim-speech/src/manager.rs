@@ -153,6 +153,8 @@ pub(crate) enum QueueEvent {
     DropExpired(FocusNow),
     /// The mixer ended an utterance it had been handed.
     Ended(UtteranceId),
+    /// Run this once every event sent before it has been handled.
+    AfterQueued(Box<dyn FnOnce() + Send>),
     Shutdown,
 }
 
@@ -381,6 +383,14 @@ impl SpeechManager {
         let id = mint_utterance();
         self.speak_as(id, utterance);
         id
+    }
+
+    /// Runs `done` on the speech queue's thread once it has taken in every
+    /// utterance given to it before this call, each announced as queued to
+    /// the speech events: the end-to-end harness's barrier, which then knows
+    /// that everything said so far has been announced. Non-blocking.
+    pub fn after_queued(&self, done: impl FnOnce() + Send + 'static) {
+        let _ = self.queue_tx.send(QueueEvent::AfterQueued(Box::new(done)));
     }
 
     /// Enqueues `utterance` under an id already minted.
@@ -772,6 +782,7 @@ impl QueueThread {
                 }
                 QueueEvent::DropExpired(now) => self.drop_expired(now),
                 QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
+                QueueEvent::AfterQueued(done) => done(),
                 QueueEvent::Shutdown => {
                     self.cancel_everything();
                     let _ = self.synth_tx.send(SynthCommand::Shutdown);

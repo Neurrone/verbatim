@@ -20,194 +20,113 @@
 //! category changes announces the dialog again, though its title names the
 //! category: it is the same window, so the same node, as it is to NVDA,
 //! which says nothing about the title either.
-
-use std::io;
-use std::time::Duration;
+//!
+//! The walk is fixed: the Speech page's controls in their Tab order, so
+//! every Tab is asserted by the control it reaches. Every time the dialog
+//! closes, the scenario waits for it to leave the foreground and asserts
+//! the desktop, where the focus returns.
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
-pub(crate) const STEP_TIMEOUT: Duration = Duration::from_secs(15);
-/// Controls between the rate slider and the dialog's buttons are tabbed
-/// through one at a time, up to this many.
-const MAX_TABS_TO_BUTTON: u32 = 12;
+pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "must match ScenarioDef::setup's fn-pointer signature"
-)]
-pub(crate) fn setup(_scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    Ok(ScenarioState::None)
+/// The Speech page's controls from the Change button to the rate slider,
+/// in Tab order, as each announces itself.
+const TO_RATE: [&str; 3] = [
+    "Change... button Alt+h",
+    "Voice combo box English (Great Britain) collapsed Alt+v",
+    "Variant combo box Max collapsed Alt+a",
+];
+
+/// The controls after the rate slider, in Tab order.
+const AFTER_RATE: [&str; 6] = [
+    "Pitch slider 50 Alt+p",
+    "Inflection slider 80 Alt+i",
+    "Volume slider 100 Alt+o",
+    "OK button",
+    "Cancel button",
+    "Apply button Alt+a",
+];
+
+/// Presses `keys` and asserts exactly `heard`.
+fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
+    scenario.send_keys(&[keys]).expect("sends the key");
+    scenario.speech().expect(heard);
 }
 
-/// The last number in an announcement, such as a slider's value.
-fn trailing_number(text: &str) -> Option<i64> {
-    text.split(|c: char| !c.is_ascii_digit())
-        .rfind(|run| !run.is_empty())
-        .and_then(|run| run.parse().ok())
-}
-
-/// Closes the settings dialog with Escape, and waits until it has gone, so
-/// the next gesture cannot reach the GUI before the dialog has seen Escape.
-pub(crate) fn close_dialog(scenario: &mut Scenario) {
-    scenario.send_keys(&["escape"]).expect("sends escape");
-    scenario
-        .wait_for_window_to_close("Verbatim Settings", STEP_TIMEOUT)
-        .expect("the settings dialog closes on Escape");
-}
-
-/// Opens the Speech settings and Tabs to the rate slider, returning its
-/// value.
-pub(crate) fn open_at_rate(scenario: &mut Scenario) -> i64 {
-    super::open_speech_settings(scenario, STEP_TIMEOUT);
-    let mut heard = String::new();
-    for _ in 0..MAX_TABS_TO_BUTTON {
-        scenario.send_keys(&["tab"]).expect("sends tab");
-        heard = scenario
-            .speech()
-            .expect_change_capturing(&heard, STEP_TIMEOUT);
-        if heard.contains("Rate") && heard.contains("slider") {
-            return trailing_number(&heard)
-                .unwrap_or_else(|| panic!("the rate slider announced no value: {heard:?}"));
-        }
+/// Opens the Speech settings and Tabs to the rate slider, which must say
+/// `rate`.
+pub(crate) fn open_at_rate(scenario: &mut Scenario, rate: u32) {
+    super::open_speech_settings(scenario);
+    for control in TO_RATE {
+        press(scenario, "tab", &[control]);
     }
-    panic!("never reached the rate slider; last heard {heard:?}");
+    press(scenario, "tab", &[&format!("Rate slider {rate} Alt+r")]);
 }
 
-/// Tabs from the current control to the button named `button`.
-pub(crate) fn tab_to_button(scenario: &mut Scenario, button: &str, mut heard: String) {
-    for _ in 0..MAX_TABS_TO_BUTTON {
-        scenario.send_keys(&["tab"]).expect("sends tab");
-        heard = scenario
-            .speech()
-            .expect_change_capturing(&heard, STEP_TIMEOUT);
-        if heard.contains(button) && heard.contains("button") {
-            return;
-        }
+/// Tabs from the rate slider through `count` controls after it.
+fn tab_past_rate(scenario: &mut Scenario, count: usize) {
+    for control in &AFTER_RATE[..count] {
+        press(scenario, "tab", &[control]);
     }
-    panic!("never reached the {button} button; last heard {heard:?}");
+}
+
+/// Presses `key`, which closes the dialog, and asserts the desktop, where
+/// the focus returns.
+pub(crate) fn close_with(scenario: &mut Scenario, key: &str) {
+    scenario.send_keys(&[key]).expect("sends the key");
+    super::expect_desktop(scenario);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Enter on Cancel reverts the changed rate and closes the dialog. On
-    // this slider the up arrow lowers the value (see menu_and_settings_dialog).
-    let rate = open_at_rate(scenario);
-    scenario.send_keys(&["uparrow"]).expect("sends uparrow");
-    let lowered = (rate - 1).to_string();
-    scenario.speech().expect_in_order(&[&lowered], STEP_TIMEOUT);
-    tab_to_button(scenario, "Cancel", lowered.clone());
-    scenario
-        .send_keys(&["enter"])
-        .expect("sends enter on Cancel");
-    let reopened = open_at_rate(scenario);
-    assert_eq!(
-        reopened, rate,
-        "Enter on Cancel should have reverted the rate to {rate}"
-    );
+    // this slider the up arrow lowers the value.
+    open_at_rate(scenario, 80);
+    press(scenario, "uparrow", &["79"]);
+    tab_past_rate(scenario, 5);
+    close_with(scenario, "enter");
 
     // Enter on Apply applies the change and leaves the dialog open: the
-    // next Tab moves on from Apply inside the dialog. Escape then closes it
-    // without undoing what was applied.
-    scenario.send_keys(&["uparrow"]).expect("sends uparrow");
-    scenario.speech().expect_in_order(&[&lowered], STEP_TIMEOUT);
-    tab_to_button(scenario, "Apply", lowered.clone());
+    // next Shift+Tab moves back from Apply inside the dialog. Escape then
+    // closes it without undoing what was applied.
+    open_at_rate(scenario, 80);
+    press(scenario, "uparrow", &["79"]);
+    tab_past_rate(scenario, 6);
     scenario
         .send_keys(&["enter"])
         .expect("sends enter on Apply");
-    scenario.send_keys(&["shift+tab"]).expect("sends shift+tab");
-    scenario
-        .speech()
-        .expect_in_order(&["Cancel", "button"], STEP_TIMEOUT);
-    close_dialog(scenario);
-    let applied = open_at_rate(scenario);
-    assert_eq!(
-        applied,
-        rate - 1,
-        "Enter on Apply should have kept the rate at {}",
-        rate - 1
-    );
+    press(scenario, "shift+tab", &["Cancel button"]);
+    close_with(scenario, "escape");
 
     // Control+S on the rate slider, inside the Speech page, applies: the
     // Cancel that Escape then sends reverts to the applied rate, not past
     // it.
-    scenario.send_keys(&["uparrow"]).expect("sends uparrow");
-    let lowered_again = (rate - 2).to_string();
-    scenario
-        .speech()
-        .expect_in_order(&[&lowered_again], STEP_TIMEOUT);
+    open_at_rate(scenario, 79);
+    press(scenario, "uparrow", &["78"]);
     scenario
         .send_keys(&["control+s"])
         .expect("sends control+s on the slider");
-    close_dialog(scenario);
-    let saved = open_at_rate(scenario);
-    assert_eq!(
-        saved,
-        rate - 2,
-        "Control+S on the rate slider should have kept the rate at {}",
-        rate - 2
-    );
+    close_with(scenario, "escape");
 
     // Control+Tab on the slider moves to the next category, Theme, and puts
     // focus on the category list; Control+Tab there cycles on through
-    // Terminal and wraps round to Speech.
-    let announced_before = dialog_announcements(scenario);
-    scenario
-        .send_keys(&["control+tab"])
-        .expect("sends control+tab on the slider");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories: list", "Theme"], STEP_TIMEOUT);
-    scenario
-        .send_keys(&["control+tab"])
-        .expect("sends control+tab on the category list");
-    scenario
-        .speech()
-        .expect_in_order(&["Terminal"], STEP_TIMEOUT);
-    scenario
-        .send_keys(&["control+tab"])
-        .expect("sends control+tab on the last category");
-    scenario.speech().expect_in_order(&["Speech"], STEP_TIMEOUT);
-
-    // Control+Shift+Tab from the Change button, the first control of the
-    // Speech page, moves to the previous category, wrapping to the last,
+    // Terminal and wraps round to Speech. Control+Shift+Tab from the Change
+    // button moves to the previous category, wrapping to the last,
     // Terminal.
-    scenario.send_keys(&["tab"]).expect("sends tab");
-    scenario
-        .speech()
-        .expect_in_order(&["Change", "button"], STEP_TIMEOUT);
-    scenario
-        .send_keys(&["control+shift+tab"])
-        .expect("sends control+shift+tab on the Change button");
-    scenario
-        .speech()
-        .expect_in_order(&["Categories: list", "Terminal"], STEP_TIMEOUT);
-    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
-    assert_eq!(
-        dialog_announcements(scenario),
-        announced_before,
-        "changing category should not announce the dialog again; heard:
-{}",
-        scenario.speech().transcript()
+    open_at_rate(scenario, 78);
+    press(
+        scenario,
+        "control+tab",
+        &["Categories: list Alt+c", "Theme 2 of 3"],
     );
-    scenario.send_keys(&["escape"]).expect("sends escape");
-}
-
-/// How many utterances so far have named the settings dialog, whose title
-/// starts "Verbatim Settings".
-fn dialog_announcements(scenario: &mut Scenario) -> usize {
-    scenario
-        .speech()
-        .transcript()
-        .lines()
-        .filter(|line| line.contains("Verbatim Settings"))
-        .count()
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "must match ScenarioDef::teardown's fn-pointer signature"
-)]
-pub(crate) fn teardown(_scenario: &mut Scenario, _state: ScenarioState) {
-    // The harness writes fixed settings before every launch, so the
-    // applied rate does not outlive the scenario.
+    press(scenario, "control+tab", &["Terminal 3 of 3"]);
+    press(scenario, "control+tab", &["Speech 1 of 3"]);
+    press(scenario, "tab", &["Change... button Alt+h"]);
+    press(
+        scenario,
+        "control+shift+tab",
+        &["Categories: list Alt+c", "Terminal 3 of 3"],
+    );
+    close_with(scenario, "escape");
 }
