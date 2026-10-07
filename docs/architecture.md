@@ -1,6 +1,7 @@
 # Verbatim Architecture
 
-Verbatim is a screen reader for Windows 11 (x64 and ARM64, both first-class),
+Verbatim is a screen reader for Windows 11, version 24H2 or later (x64 and
+ARM64, both first-class), with no fallbacks for older Windows,
 written in Rust. It is informed by NVDA (vendored under `nvda/` for reference)
 but is not constrained by NVDA's architecture.
 

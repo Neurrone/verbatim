@@ -1973,11 +1973,57 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       - `SelectionPattern2` (first, last, and current selected item and
         the count without fetching the whole selection).
       - The active text position changed event, and `FindText` (item 11).
+      Dickson decided to use them (2026-10-07). All predate Windows 11
+      (TextPattern2 and the annotation, link, and style attributes:
+      Windows 8; TextRange3: Windows 10 1703; SelectionPattern2: 1709;
+      IUIAutomation6 and the active text position event: 1809; remote
+      operations: build 20348), so Verbatim assumes they exist and has
+      no fallback for older Windows. Fallbacks remain only where an
+      application decides: a provider that does not implement a newer
+      pattern, and a window with no server-side provider, where remote
+      operations cannot run.
+      NVDA uses them all except `TextPattern2.GetCaretRange` (it infers
+      the caret from the selection; Verbatim already uses
+      `GetCaretRange` where supported), so they are proven. Edge cases
+      NVDA handles that Verbatim must too: a missing `SelectionPattern2`
+      or `IUIAutomationTextRange3` falls back to the older pattern; an
+      attribute read that fails is "not supported", and a mixed value is
+      handled apart; a selection container that raises (Qt) or is null
+      (Outlook's attachment list) is "none" without cutting focus speech
+      short. NVDA also registers some property events only for the focus
+      and its ancestors ("selective" registration, automatic by default)
+      and rate-limits events itself ("enhanced event processing", on by
+      default, with a feature flag). Verbatim already has the rate
+      limiting: the listener queues each event without calling into the
+      application, with NVDA's limiter rule (one waiting fact per element
+      and kind), and each outpost limits its batches per application
+      thread. Selective registration is adopted with no setting
+      (Dickson, 2026-10-07). NVDA's automatic choice uses it from
+      Windows 11 22H2, and Verbatim's minimum is now 24H2, the oldest
+      version Microsoft still supports (Dickson, 2026-10-07: versions out
+      of support are not supported, which removes fallbacks and branches
+      for them), so it is unconditional.
       Each is weighed by measurement and adopted where it helps; the
       text attribute survey (item 2) covers the full list of UIA text
       attributes, including annotations, link, culture, font weight,
       colors, decoration styles, sub- and superscript, hidden and
       read-only text, style names, and paragraph spacing.
+
+  14. Text range conformance (Dickson, 2026-10-07): audit Verbatim's
+      text-range code against Microsoft's guidance ("Understanding
+      Performance Issues When Using the Text and TextRange Control
+      Patterns", "Using IUIAutomationTextRange", the text units and
+      embedded objects topics), fixing or adopting with tests:
+      `GetText` with a length limit where a range is unbounded (the
+      terminal's line-bounded reads keep -1, which Dickson judged fine);
+      how an unsupported unit is detected, since providers silently use
+      the next larger unit; ranges after the text changes; the mixed and
+      not-supported attribute tokens on both paths; `FindAttribute` to
+      find formatting or spelling errors in one call; embedded objects
+      (`GetChildren`, `RangeFromChild`, virtualized items); hidden text
+      (`IsHidden`); `GetVisibleRanges`; annotation objects and
+      `RangeFromAnnotation`; and `ShowContextMenu` for autocorrect and
+      IME candidates.
 
 The order from here: the say-all change (item 10), then the terminal
 measurements (items 2 and 4), then the MSAA call counts (item 12, which
