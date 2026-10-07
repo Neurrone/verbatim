@@ -35,6 +35,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
 
 use crate::outpost::window::{top_level_of, window_thread};
+pub use verbatim_ia2::class::normalize_class_name;
 
 /// How long a probe that found no UIA provider is trusted before the window
 /// is probed again: NVDA's `isUIAWindow` cache period.
@@ -243,42 +244,6 @@ impl WindowClasses {
     }
 }
 
-/// A window class name with the parts NVDA disregards removed, mapped to the
-/// well-known class it is compatible with: a Windows Forms class name is cut
-/// down to the control class it wraps, an `ATL:` prefix is dropped, and the
-/// result, or failing that the name itself, is looked up in NVDA's class
-/// map, so a Delphi `TEdit` or a Windows Forms edit is arbitrated as an
-/// `Edit`.
-#[must_use]
-pub fn normalize_class_name(raw: &str) -> String {
-    if let Some(mapped) = mapped_class(raw) {
-        return mapped.to_owned();
-    }
-    let unwrapped = windows_forms_class(raw).or_else(|| raw.strip_prefix("ATL:"));
-    match unwrapped {
-        Some(inner) => mapped_class(inner).unwrap_or(inner).to_owned(),
-        None => raw.to_owned(),
-    }
-}
-
-/// The control class inside a Windows Forms class name: `EDIT` in
-/// `WindowsForms10.EDIT.app.0.141b42a_r9_ad1`. NVDA's pattern is
-/// `WindowsForms`, digits, a dot, then the class up to the last `.app.`.
-fn windows_forms_class(raw: &str) -> Option<&str> {
-    let rest = raw.strip_prefix("WindowsForms")?;
-    let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
-    let rest = rest.strip_prefix('.')?;
-    let end = rest.rfind(".app.")?;
-    Some(&rest[..end])
-}
-
-fn mapped_class(class: &str) -> Option<&'static str> {
-    CLASS_MAP
-        .iter()
-        .find(|(from, _)| *from == class)
-        .map(|(_, to)| *to)
-}
-
 /// A check NVDA makes on a window that has a UIA provider before using it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostProbeCheck {
@@ -351,56 +316,6 @@ const SHELL_ROOT_CLASSES: &[&str] = &[
     // NVDA explorer.py isGoodUIAWindow: the redesigned systray overflow
     // (Windows 11 22H2 and later).
     "TopLevelWindowForOverflowXamlIsland",
-];
-
-/// NVDA's `windowClassMap` (`nvda/source/NVDAObjects/window/__init__.py`):
-/// class names mapped to the well-known class they are compatible with.
-const CLASS_MAP: &[(&str, &str)] = &[
-    ("EDIT", "Edit"),
-    ("TTntEdit.UnicodeClass", "Edit"),
-    ("TMaskEdit", "Edit"),
-    ("TTntMemo.UnicodeClass", "Edit"),
-    ("TRichEdit", "RichEdit20"),
-    ("TRichViewEdit", "Edit"),
-    ("TInEdit.UnicodeClass", "Edit"),
-    ("TInEdit", "Edit"),
-    ("TEdit", "Edit"),
-    ("TFilenameEdit", "Edit"),
-    ("TSpinEdit", "Edit"),
-    ("ThunderRT6TextBox", "Edit"),
-    ("TMemo", "Edit"),
-    ("RICHEDIT", "RichEdit"),
-    ("TPasswordEdit", "Edit"),
-    ("THppEdit.UnicodeClass", "Edit"),
-    ("TUnicodeTextEdit.UnicodeClass", "Edit"),
-    ("TTextEdit", "Edit"),
-    ("TPropInspEdit", "Edit"),
-    ("TFilterbarEdit.UnicodeClass", "Edit"),
-    ("EditControl", "Edit"),
-    ("TNavigableTntMemo.UnicodeClass", "Edit"),
-    ("TNavigableTntEdit.UnicodeClass", "Edit"),
-    ("TAltEdit.UnicodeClass", "Edit"),
-    ("TAltEdit", "Edit"),
-    ("TDefEdit", "Edit"),
-    ("TRichEditViewer", "RichEdit"),
-    ("WFMAINRE", "RichEdit20"),
-    ("RichEdit20A", "RichEdit20"),
-    ("RichEdit20W", "RichEdit20"),
-    ("TChatRichEdit", "RichEdit20"),
-    ("TAccessibleEdit", "Edit"),
-    ("TskRichEdit.UnicodeClass", "RichEdit20"),
-    ("RichEdit20WPT", "RichEdit20"),
-    ("RICHEDIT60W", "RICHEDIT50W"),
-    ("TChatRichEdit.UnicodeClass", "RichEdit20"),
-    ("TMyRichEdit", "RichEdit20"),
-    ("TExRichEdit", "RichEdit20"),
-    ("RichTextWndClass", "RichEdit20"),
-    ("TSRichEdit", "RichEdit20"),
-    ("TRxRichEdit", "RichEdit20"),
-    ("ScintillaWindowImpl", "Scintilla"),
-    ("RICHEDIT60W_WLXPRIVATE", "RICHEDIT50W"),
-    ("TNumEdit", "Edit"),
-    ("TAccessibleRichEdit", "RichEdit20"),
 ];
 
 /// Classes whose UIA implementations interfere with MSAA and are forced to
@@ -617,27 +532,6 @@ mod tests {
         assert_eq!(
             arb.verdict(1, &WindowClasses::new("Start", "Shell_TrayWnd")),
             None
-        );
-    }
-
-    #[test]
-    fn class_names_are_normalized_as_nvda_normalizes_them() {
-        assert_eq!(normalize_class_name("TEdit"), "Edit");
-        assert_eq!(normalize_class_name("RichEdit20W"), "RichEdit20");
-        assert_eq!(
-            normalize_class_name("WindowsForms10.EDIT.app.0.141b42a_r9_ad1"),
-            "Edit"
-        );
-        assert_eq!(
-            normalize_class_name("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1"),
-            "SysListView32"
-        );
-        assert_eq!(normalize_class_name("ATL:SysListView32"), "SysListView32");
-        assert_eq!(normalize_class_name("ATL:RichEdit20W"), "RichEdit20");
-        assert_eq!(normalize_class_name("Notepad"), "Notepad");
-        assert_eq!(
-            normalize_class_name("WindowsForms10.Window"),
-            "WindowsForms10.Window"
         );
     }
 

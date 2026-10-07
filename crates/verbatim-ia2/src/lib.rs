@@ -20,6 +20,8 @@
 //!   objects, with the object kept behind each, sharing a mint counter with
 //!   UIA.
 //! - [`map`] — role and state mapping into the model.
+//! - [`class`] — window class names normalized as NVDA normalizes them,
+//!   which every class-based rule compares.
 //! - [`calls`] — the per-thread count of the cross-process calls
 //!   [`acquire`] makes, which the outpost's worker takes around each entry
 //!   it handles.
@@ -40,10 +42,12 @@
 mod accessible;
 pub mod acquire;
 pub mod calls;
+pub mod class;
 mod com;
 pub mod dialog;
 pub mod edit;
 mod hook;
+mod list_view;
 pub mod map;
 mod registry;
 mod window;

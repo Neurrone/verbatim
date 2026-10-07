@@ -239,6 +239,10 @@ mod tests {
             cultures: Vec::new(),
             styles: Box::default(),
             backward_moves_positive: false,
+            native: None,
+            window_class: None,
+            columns: Vec::new(),
+            state_images: false,
             children,
         }
     }

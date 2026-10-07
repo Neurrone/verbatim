@@ -262,6 +262,9 @@ pub fn find_window(title: &str) -> HWND {
 /// A real outpost in the test process, watching mockapp.
 pub mod outpost;
 
+/// The real tree view of `tests/fixtures/tree_view.json`.
+pub mod tree_view;
+
 /// mockapp's provider-side hit counters (`src/hits.rs`), compiled into the
 /// tests too, so both sides share one method list and one pair of message
 /// numbers.

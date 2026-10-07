@@ -508,8 +508,14 @@ const SECOND_ITEM: i32 = 5;
 /// The node an MSAA event names, read through it as an outpost would.
 fn read_object((hwnd, id_object, id_child): (isize, i32, i32)) -> verbatim_model::NodeSnapshot {
     let registry = verbatim_ia2::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    verbatim_ia2::acquire::snapshot_from_event(hwnd, id_object, id_child, &registry)
-        .expect("the event's object")
+    verbatim_ia2::acquire::snapshot_from_event(
+        hwnd,
+        id_object,
+        id_child,
+        &registry,
+        verbatim_ia2::acquire::Purpose::Announce,
+    )
+    .expect("the event's object")
 }
 
 /// The event `kind` on the node at `index`.

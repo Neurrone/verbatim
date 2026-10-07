@@ -116,7 +116,8 @@ The inventory, because parity work will meet every one:
 - `ProgressBar` — progress reporting: speak percentages, beep with
   pitch encoding progress, or both, per the output mode config;
   covers *background* progress bars when that option is on (the
-  event acceptance exception in [Event handling](events.md)).
+  event acceptance exception in [Event handling](events.md)). The
+  details are in "How a progress bar reports its value" below.
 - `Dialog` — dialog text harvesting: on focus entry, collects and
   speaks the dialog's static text children (the reason NVDA reads a
   message box's message, which is not the focused button's name).
@@ -143,9 +144,45 @@ The inventory, because parity work will meet every one:
   in report view, and friends).
 - `ToolTip` and `Notification` — tooltip and toast/balloon
   reporting, gated by the object presentation settings
-  ([Event handling](events.md)).
+  ([Event handling](events.md)). A standard tooltip window
+  (`tooltips_class32`) raises a show event as it appears, which NVDA
+  accepts from any application, for a client or custom object. Its
+  object is a `ToolTip` when its role is tool tip, spoken only when
+  "report tooltips" is on, which it is not by default, and a
+  `Notification` when its role is help balloon, spoken, as a focus is,
+  when "report help balloons" is on, which it is by default. A
+  notification's alert event is spoken the same way.
 - `FocusableUnfocusableContainer` — the workaround mixin for
   containers that take focus but shouldn't present it.
+
+### How a progress bar reports its value
+
+Every progress bar NVDA reads through MSAA, UIA, or the Java Access
+Bridge has the `ProgressBar` behavior, which decides what its value
+changes say. The focus gate does not apply: a progress bar's value
+change is reported whether or not it has the focus.
+
+- Nothing is reported, and the change goes to the ordinary value change
+  handling (speech for the focus only), when progress bar output is off,
+  or the progress bar is invisible or off screen, or its value is not a
+  number. The value is read as a number after any percent sign and null
+  characters at either end are removed, and held between 0 and 100.
+- A progress bar in a background window says nothing unless "report
+  background progress bars" is on, which it is not by default; such an
+  event is let through acceptance only for that option.
+- Otherwise the percentage is reported, and the ordinary value handling
+  is skipped, so a focused progress bar does not also speak its value.
+  With the default output mode, beep, a 40 millisecond tone sounds whose
+  pitch rises with the percentage (from 110 Hz, doubling every 25
+  percent), but only when the percentage differs by at least the beep
+  interval, 1 percent by default, from the last one beeped. With the
+  speak mode, "N percent" is spoken when it differs by at least the
+  speech interval, 10 percent by default. With both, each happens on its
+  own interval.
+- What was last reported is remembered per progress bar by the centre of
+  its location on the screen, not by the object, so a progress bar that
+  is replaced by another in the same place carries on from where the
+  last one was.
 
 ### A dialog's own text
 

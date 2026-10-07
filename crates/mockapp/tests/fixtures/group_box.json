@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "pane",
+  "name": "Mockapp Group Box Fixture",
+  "states": ["focused"],
+  "children": [
+    {
+      "id": "synthesizer",
+      "role": "group",
+      "name": "Synthesizer",
+      "native": "group_box",
+      "children": [
+        { "id": "change", "role": "button", "name": "Change" }
+      ]
+    },
+    { "id": "apply", "role": "button", "name": "Apply", "native": "button" }
+  ]
+}

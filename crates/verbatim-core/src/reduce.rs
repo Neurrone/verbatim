@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    ActionName, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
+    ActionName, Earcon, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
     Notification, NotificationProcessing, OutpostId, Phrase, Pid, PropertyChange, Query, QueryId,
     QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
     Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
@@ -389,6 +389,7 @@ fn reduce_event(
         NormalizedEvent::SelectionChanged { node } => {
             reduce_selection_changed(state, trace_id, node)
         }
+        NormalizedEvent::ProgressChanged { node } => reduce_progress_changed(state, trace_id, node),
         NormalizedEvent::ControlledSelection { controller, node } => {
             reduce_controlled_selection(state, trace_id, *controller, node)
         }
@@ -423,7 +424,14 @@ fn reduce_event(
                 reduce_value_changed(state, trace_id, *node_id, value.clone())
             }
             PropertyChange::States(new_states) => {
-                reduce_states_changed(state, trace_id, *node_id, *new_states, *child_count)
+                if state.focus_matches(*node_id) {
+                    reduce_states_changed(state, trace_id, *node_id, *new_states, *child_count)
+                } else {
+                    reduce_ancestor_states_changed(state, trace_id, *node_id, *new_states)
+                }
+            }
+            PropertyChange::Description(description) => {
+                reduce_description_changed(state, trace_id, *node_id, description.as_ref())
             }
             // `PropertyChange` is `#[non_exhaustive]`.
             _ => Vec::new(),
@@ -1497,6 +1505,15 @@ fn reduce_selection_changed(
         let states = node.states;
         return reduce_states_changed(state, trace_id, node.id, states, None);
     }
+    // So is selecting one of the focus's ancestors, as NVDA's base state
+    // change handler speaks it.
+    if focus
+        .ancestors
+        .iter()
+        .any(|ancestor| ancestor.id == node.id)
+    {
+        return reduce_ancestor_states_changed(state, trace_id, node.id, node.states);
+    }
     if focus.snapshot.id.outpost() != node.id.outpost()
         || !is_selection_container(focus.snapshot.role)
         || focus.last_selection == Some(node.id)
@@ -1576,6 +1593,76 @@ fn reduce_value_changed(
     })]
 }
 
+/// The percentage a progress bar's value reads as, as NVDA reads it: a
+/// number once any percent signs and null characters at either end are
+/// removed, held between 0 and 100. `None` for anything else.
+fn progress_percentage(value: Option<&str>) -> Option<f64> {
+    let number = value?
+        .trim_matches(|c| c == '%' || c == '\0')
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())?;
+    Some(number.clamp(0.0, 100.0))
+}
+
+/// A progress bar's value changed, whether or not it is the focus
+/// (`docs/nvda/object-model.md`, "How a progress bar reports its value"):
+/// its percentage is indicated at once (`Earcon::Progress`, a tone by
+/// default) when it differs by at least one percent from the last one
+/// indicated for a progress bar at the same place on the screen, and its
+/// value is not spoken as a value change, focus or not. An off-screen
+/// progress bar, or one whose value is not a number, is an ordinary value
+/// change instead. Background progress bars never get here: their events
+/// are not attended.
+fn reduce_progress_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node: &NodeSnapshot,
+) -> Vec<Effect> {
+    let percentage = progress_percentage(node.value.as_deref())
+        .filter(|_| !node.states.contains(State::Offscreen));
+    let Some(percentage) = percentage else {
+        return reduce_value_changed(state, trace_id, node.id, node.value.clone());
+    };
+    if state.focus_matches(node.id)
+        && let Some(focus) = state.focus.as_mut()
+    {
+        focus.snapshot.value.clone_from(&node.value);
+    }
+    let place = node.details.rect.map_or((0, 0), |rect| {
+        (rect.left + rect.width / 2, rect.top + rect.height / 2)
+    });
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a percentage held between 0 and 100"
+    )]
+    let hundredths = (percentage * 100.0).round() as u32;
+    let last = state
+        .progress_reported
+        .iter()
+        .position(|(at, _)| *at == place);
+    if let Some(index) = last {
+        let (_, reported) = state.progress_reported.remove(index);
+        if reported.abs_diff(hundredths) < 100 {
+            state.progress_reported.push((place, reported));
+            return Vec::new();
+        }
+    }
+    state.progress_reported.push((place, hundredths));
+    if state.progress_reported.len() > crate::state::PROGRESS_BARS_KEPT {
+        state.progress_reported.remove(0);
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a percentage held between 0 and 100"
+    )]
+    let whole = percentage as u8;
+    vec![Effect::PlayEarcon(Earcon::Progress(whole))]
+}
+
 /// Handles a complete state-set replacement on the focused node (MSAA
 /// `EVENT_OBJECT_STATECHANGE` and equivalent UIA property changes carry the
 /// whole new set, not a delta). Diffs against the stored snapshot and
@@ -1625,19 +1712,7 @@ fn reduce_states_changed(
             .iter()
             .filter(|state| !old_states.contains(*state)),
     );
-    let lost = StateSet::from_iter(
-        old_states
-            .iter()
-            .filter(|state| !new_states.contains(*state)),
-    );
-    let positive = intersect(spoken_states(role, new_states, StateReason::Change), gained);
-    let mut negative = intersect(negated_states(role, new_states, StateReason::Change), lost);
-    // Losing half checked without becoming checked is a change to "not
-    // checked".
-    if lost.contains(State::Mixed) && !new_states.contains(State::Checked) {
-        negative.insert(State::Checked);
-    }
-    let segments = ordered_state_segments(positive, negative);
+    let segments = state_change_segments(role, old_states, new_states);
     let items = child_count
         .filter(|_| gained.contains(State::Expanded))
         .map(|count| {
@@ -1662,6 +1737,118 @@ fn reduce_states_changed(
         })
     })
     .collect()
+}
+
+/// What a change of a node's states from `old_states` to `new_states` speaks:
+/// the gained states and the lost states spoken by their absence, by the
+/// rules and in the order of "Which states are spoken, and in what order" in
+/// `docs/nvda/speech.md`.
+fn state_change_segments(
+    role: Role,
+    old_states: StateSet,
+    new_states: StateSet,
+) -> Vec<UtteranceSegment> {
+    let gained = StateSet::from_iter(
+        new_states
+            .iter()
+            .filter(|state| !old_states.contains(*state)),
+    );
+    let lost = StateSet::from_iter(
+        old_states
+            .iter()
+            .filter(|state| !new_states.contains(*state)),
+    );
+    let positive = intersect(spoken_states(role, new_states, StateReason::Change), gained);
+    let mut negative = intersect(negated_states(role, new_states, StateReason::Change), lost);
+    // Losing half checked without becoming checked is a change to "not
+    // checked".
+    if lost.contains(State::Mixed) && !new_states.contains(State::Checked) {
+        negative.insert(State::Checked);
+    }
+    ordered_state_segments(positive, negative)
+}
+
+/// A state change on an ancestor of the focus, spoken as NVDA's base state
+/// change handler speaks one on the focus's ancestors ("The focus gate" in
+/// `docs/nvda/events.md`): pressing a focused button can change the state of
+/// a container above it, such as the sort state of a column header. The
+/// change is diffed against the ancestor's states as the focus was reported
+/// with them, which then become the new ones; queued, as on the focus.
+/// Ignored for a node that is neither the focus nor one of its ancestors.
+fn reduce_ancestor_states_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    new_states: StateSet,
+) -> Vec<Effect> {
+    let Some(focus) = state.focus.as_mut().filter(|focus| focus.alive) else {
+        return Vec::new();
+    };
+    let Some(index) = focus
+        .ancestors
+        .iter()
+        .position(|ancestor| ancestor.id == node_id)
+    else {
+        return Vec::new();
+    };
+    let ancestor = &focus.ancestors[index];
+    let (role, old_states, source) = (ancestor.role, ancestor.states, source_of(ancestor));
+    if old_states == new_states {
+        return Vec::new();
+    }
+    let mut ancestors = focus.ancestors.to_vec();
+    ancestors[index].states = new_states;
+    focus.ancestors = Arc::from(ancestors);
+    let segments = state_change_segments(role, old_states, new_states);
+    if segments.is_empty() {
+        return Vec::new();
+    }
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments,
+        source: Some(source),
+        say_all: false,
+        validity: None,
+    })]
+}
+
+/// A description change on the focus, spoken as NVDA's base handler speaks
+/// it ("The focus gate" in `docs/nvda/events.md`): the new description
+/// alone, queued, when it differs from the one last known and has text, and
+/// is not the focus's name over again. Ignored for any other node.
+fn reduce_description_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    description: Option<&String>,
+) -> Vec<Effect> {
+    if !state.focus_matches(node_id) {
+        return Vec::new();
+    }
+    let Some(focus) = state.focus.as_mut() else {
+        return Vec::new();
+    };
+    if focus.snapshot.details.description.as_ref() == description {
+        return Vec::new();
+    }
+    focus.snapshot.details.description = description.cloned();
+    let Some(text) = description
+        .filter(|text| !text.trim().is_empty())
+        .filter(|text| focus.snapshot.name.as_ref() != Some(*text))
+    else {
+        return Vec::new();
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments: vec![UtteranceSegment::new(SegmentContent::Description(
+            text.clone(),
+        ))],
+        source: Some(source_of(&focus.snapshot)),
+        say_all: false,
+        validity: None,
+    })]
 }
 
 /// Completes an object-navigation fetch.
@@ -1835,6 +2022,7 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         | Role::ListItem
         | Role::EditableText
         | Role::ProgressBar
+        | Role::BusyIndicator
         | Role::TitleBar
         | Role::Unknown
         | Role::Pane
@@ -1900,7 +2088,12 @@ fn is_silent_on_focus(role: Role) -> bool {
 fn speaks_value(role: Role) -> bool {
     !matches!(
         role,
-        Role::CheckBox | Role::RadioButton | Role::Link | Role::MenuItem | Role::Application
+        Role::CheckBox
+            | Role::RadioButton
+            | Role::Link
+            | Role::MenuItem
+            | Role::Application
+            | Role::BusyIndicator
     )
 }
 
@@ -2018,7 +2211,7 @@ impl From<Reason> for StateReason {
 }
 
 /// The order states are spoken in, positive or negated alike.
-const STATE_ORDER: [State; 16] = [
+const STATE_ORDER: [State; 18] = [
     State::Disabled,
     State::Focused,
     State::Selected,
@@ -2030,6 +2223,8 @@ const STATE_ORDER: [State; 16] = [
     State::Multiline,
     State::Expanded,
     State::Collapsed,
+    State::Visited,
+    State::Linked,
     State::HasPopup,
     State::Protected,
     State::Required,
@@ -2053,10 +2248,18 @@ fn spoken_states(role: Role, states: StateSet, reason: StateReason) -> StateSet 
     if role == Role::ComboBox {
         spoken.remove(State::HasPopup);
     }
+    // Only a link says it was visited.
+    if role != Role::Link {
+        spoken.remove(State::Visited);
+    }
     if reason == StateReason::Query {
         return spoken;
     }
     spoken.remove(State::Focused);
+    // Linked is said only when it changes.
+    if reason != StateReason::Change {
+        spoken.remove(State::Linked);
+    }
     spoken.remove(State::Offscreen);
     // Selection is the expected state of a focused item.
     if reason != StateReason::Change

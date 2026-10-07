@@ -29,9 +29,10 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
-    EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
-    EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
+    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
+    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
+    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
+    EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
     EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
     EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_ALERT,
     OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
@@ -53,6 +54,8 @@ pub enum WinEventKind {
     StateChange,
     /// `EVENT_OBJECT_NAMECHANGE`.
     NameChange,
+    /// `EVENT_OBJECT_DESCRIPTIONCHANGE`.
+    DescriptionChange,
     /// `EVENT_OBJECT_SELECTION`: an item became the selection. The other
     /// three selection events are reported as [`WinEventKind::StateChange`],
     /// as NVDA handles them.
@@ -82,6 +85,11 @@ pub enum WinEventKind {
     /// `EVENT_OBJECT_TEXTSELECTIONCHANGED`: a text control's selection, or
     /// its caret, changed.
     TextSelectionChange,
+    /// `EVENT_OBJECT_SHOW` from a tooltip window (`tooltips_class32`), the
+    /// only show events NVDA accepts from standard controls, for the help
+    /// balloons it reports. Every other show event is dropped at the hook,
+    /// as it would flood.
+    Show,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -90,12 +98,16 @@ pub enum WinEventKind {
 /// table. `StateChange` maps four raw ids to the one kind, so a caller that
 /// wants state changes also gets the selection add, remove, and within
 /// hooks.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 17] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 19] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
     (EVENT_OBJECT_STATECHANGE, WinEventKind::StateChange),
     (EVENT_OBJECT_NAMECHANGE, WinEventKind::NameChange),
+    (
+        EVENT_OBJECT_DESCRIPTIONCHANGE,
+        WinEventKind::DescriptionChange,
+    ),
     (EVENT_OBJECT_SELECTION, WinEventKind::Selection),
     // Only a plain selection announces a newly selected item; NVDA handles
     // an item added to or removed from a selection, or a selection within a
@@ -109,6 +121,7 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 17] = [
     (EVENT_SYSTEM_SWITCHEND, WinEventKind::SwitchEnd),
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
     (EVENT_SYSTEM_ALERT, WinEventKind::Alert),
+    (EVENT_OBJECT_SHOW, WinEventKind::Show),
     (EVENT_OBJECT_LOCATIONCHANGE, WinEventKind::Caret),
     (
         EVENT_OBJECT_TEXTSELECTIONCHANGED,
@@ -117,7 +130,8 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 17] = [
 ];
 
 /// The per-application outpost's subscription set (decision D13): the
-/// process-scoped property, value, state, and selection events, the caret
+/// process-scoped name, description, value, state, and selection events,
+/// the caret
 /// and text selection (milestone M4), and object destruction (for windows
 /// going away). Focus, menu-popup, and the end of a menu are not here — the
 /// focus listener owns them globally.
@@ -125,6 +139,7 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ValueChange,
     WinEventKind::StateChange,
     WinEventKind::NameChange,
+    WinEventKind::DescriptionChange,
     WinEventKind::Selection,
     WinEventKind::Destroy,
     WinEventKind::Caret,
@@ -143,6 +158,7 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::MenuEnd,
     WinEventKind::SwitchEnd,
     WinEventKind::Alert,
+    WinEventKind::Show,
 ];
 
 /// Called on the installing thread for each in-scope event, with the event
@@ -239,6 +255,9 @@ impl Drop for WinEventHook {
     }
 }
 
+/// The window class of a standard tooltip, help balloons included.
+pub const TOOLTIP_CLASS: &str = "tooltips_class32";
+
 /// Maps a raw event id to a [`WinEventKind`], `None` for events we do not want.
 fn kind_of(event: u32) -> Option<WinEventKind> {
     SUBSCRIPTIONS
@@ -270,6 +289,13 @@ fn is_wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> b
         WinEventKind::Foreground => !matches!(class().as_str(), "Progman" | "Shell_TrayWnd"),
         WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
             class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
+        }
+        // NVDA accepts a show event only from a few window classes, of
+        // which the tooltip is the standard control's, and only for a
+        // client or custom object; a window object stands for the client.
+        WinEventKind::Show => {
+            (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0 || id_object > 0)
+                && class() == TOOLTIP_CLASS
         }
         _ => true,
     }
@@ -346,6 +372,18 @@ mod tests {
             WinEventKind::Caret,
             any,
             OBJID_WINDOW.0,
+            CHILDID_SELF
+        ));
+    }
+
+    #[test]
+    fn a_show_is_wanted_only_from_a_tooltip_window() {
+        // A window that is no tooltip: the null handle, whose class reads
+        // as empty.
+        assert!(!is_wanted(
+            WinEventKind::Show,
+            HWND::default(),
+            OBJID_CLIENT.0,
             CHILDID_SELF
         ));
     }

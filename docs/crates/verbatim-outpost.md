@@ -233,7 +233,9 @@ Public API:
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
-  menu-popup, menu and switcher end, and alert), and desktop-wide UIA
+  menu-popup, menu and switcher end, alert, and a tooltip window shown,
+  forwarded as `DeliveredFact::Show`, whose help balloon the worker
+  reports as an alert), and desktop-wide UIA
   subscriptions for the events NVDA registers globally on Windows 11: an
   element selected, a menu opened, and notifications, registered together
   as one event handler group on the desktop's root element, and only then
@@ -475,8 +477,21 @@ Implementation notes:
   window drops the fact and the watchdog's moved-on check applies to it.
   Only a fact with neither is reported without window facts, arbitrated
   against this application's own focus window. An MSAA focus fact is
-  read with NVDA's child-0-on-a-list redirect (`snapshot_from_focus_event`) and accepted
-  only when the object or an ancestor has the focused state.
+  acquired with NVDA's child-0-on-a-list redirect (`focus_candidate`) and
+  checked as NVDA checks it before anything else is read: it is dropped as
+  a duplicate when it names the address of the focus last reported, a
+  whole object rather than a child by id, with no foreground change
+  reported since (the focus may have been in another application then),
+  counting as reported so no older focus of the batch is tried; and it is
+  accepted only when the object or an ancestor has the focused state, read
+  live. Only then is it read and its ancestors walked.
+- MSAA name, value, and state changes are spoken only for the focus, so
+  the event's object is told from the focus by its identity
+  (`EventObject::which_of`) before any property is read, and an object
+  that is not the focus is not read. A state change that newly expands
+  the focus, by the states the outpost last read for it, carries a
+  `SysTreeView32` item's child count. A selection event is read in full,
+  as before.
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
   `read::msaa_enrichment`): the walk stops at the first ancestor in the
   previous focus's chain (the tracking state's `chain`) and splices the

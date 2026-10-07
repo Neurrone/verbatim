@@ -199,6 +199,7 @@ fn window_snapshot(
             OBJID_CLIENT.0,
             CHILDID_SELF,
             &context.msaa_registry,
+            verbatim_ia2::acquire::Purpose::Announce,
         )?;
         return Some((Backend::Msaa, node));
     }
@@ -216,6 +217,7 @@ fn window_snapshot(
             OBJID_CLIENT.0,
             CHILDID_SELF,
             &context.msaa_registry,
+            verbatim_ia2::acquire::Purpose::Announce,
         )?;
         Some((Backend::Msaa, node))
     }
@@ -349,6 +351,7 @@ fn uia_chain_onward(
             OBJID_CLIENT.0,
             CHILDID_SELF,
             &context.msaa_registry,
+            verbatim_ia2::acquire::Purpose::Context,
         ) else {
             return Some(uia_chain);
         };
@@ -982,6 +985,7 @@ fn corrected_backend(
             object.0,
             CHILDID_SELF,
             &context.msaa_registry,
+            verbatim_ia2::acquire::Purpose::Announce,
         )
         .unwrap_or(neighbor);
     }

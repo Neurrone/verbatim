@@ -81,6 +81,10 @@ pub enum PropertyChange {
     /// decide what to announce (a check box toggling, a control becoming
     /// unavailable).
     States(StateSet),
+    /// The description changed (MSAA `EVENT_OBJECT_DESCRIPTIONCHANGE`),
+    /// carrying the new description; `None` also when the active theme does
+    /// not read descriptions.
+    Description(Option<String>),
 }
 
 /// An accessibility event, normalized by an outpost from either backend.
@@ -155,6 +159,16 @@ pub enum NormalizedEvent {
     /// focus rests on a selection container, once per newly selected item.
     SelectionChanged {
         /// Snapshot of the selected node.
+        node: NodeSnapshot,
+    },
+    /// A progress bar's value changed, whether or not it has the focus
+    /// (`docs/nvda/object-model.md`, "How a progress bar reports its
+    /// value"); reported in place of [`NormalizedEvent::ValueChanged`] for
+    /// a visible progress bar.
+    ProgressChanged {
+        /// Snapshot of the progress bar, with its new value, its states,
+        /// and its location, by whose centre the last report is
+        /// remembered.
         node: NodeSnapshot,
     },
     /// A node was selected inside an element the focus controls (its UIA
@@ -267,7 +281,9 @@ impl NormalizedEvent {
                     selected.assign_outpost(outpost);
                 }
             }
-            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+            NormalizedEvent::SelectionChanged { node }
+            | NormalizedEvent::ProgressChanged { node }
+            | NormalizedEvent::Alert { node } => {
                 node.assign_outpost(outpost);
             }
             NormalizedEvent::ControlledSelection { controller, node } => {

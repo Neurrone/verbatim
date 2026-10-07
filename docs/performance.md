@@ -327,31 +327,34 @@ window, `WindowFromAccessibleObject`).
 - Minimum: 18 MSAA calls. Acquiring the focused object from the event's
   address (1) and reading it (7), then one ancestor hop (10) that reads the
   first ancestor and recognizes it as the previous focus's container.
-- Today: 30 MSAA calls. The focus costs 9 (its role is read twice, once
-  for NVDA's check whether a focus event names a list, and once with the
-  rest of its properties), and the walk goes to the root: two ancestors at
+- Before the MSAA work package (2026-10-07): 30 MSAA calls, the focus's
+  role read twice, once for NVDA's check whether a focus event names a
+  list and once with the rest of its properties.
+- Today: 29 MSAA calls. The focus costs 8 (its role and state, read
+  first for NVDA's checks, are kept for the read), and the walk goes to
+  the root: two ancestors at
   10 each and an `accParent` that finds none. The walk does not stop at the
   group, because mockapp answers every `accParent` with a new COM object
   and an object reached through `accParent` is recognized only by its COM
-  identity. mockapp answered 38 provider calls, 14 of them `accParent`,
+  identity. mockapp answered 37 provider calls, 14 of them `accParent`,
   most from `WindowFromAccessibleObject`'s own walk.
 - Target: 18. Recognizing an ancestor by its address and identity string,
-  as the registry already does for objects acquired at an address, and
-  reading the focus's role once.
+  as the registry already does for objects acquired at an address.
 
 ### A focus change, MSAA, cold
 
 - Minimum: 1 window message and 29 MSAA calls: the probe, the focus (8),
   each of the two ancestors (10 each), and the `accParent` that ends the
   walk at the root.
-- Today: 30 MSAA calls and 1 window message: the steady-state count
+- Today: 29 MSAA calls and 1 window message (30 before the MSAA work
+  package, the role read twice): the steady-state count
   (nothing is recognized either way) plus the probe of mockapp's window.
   `WindowFromAccessibleObject` answers no window for mockapp's ancestors,
   whose root object has no parent; until 2026-10-07 their addresses carried
   window 0 and the walk probed it as a second window, which it no longer
   does, since no window is now read as none and the walk keeps the window
-  it is in. mockapp answered 39 provider calls.
-- Target: 29 MSAA calls and 1 window message.
+  it is in. mockapp answered 38 provider calls.
+- Target: 29 MSAA calls and 1 window message, met.
 
 ### A focus change into a list, MSAA
 
@@ -359,17 +362,108 @@ window, `WindowFromAccessibleObject`).
   check whether a list's own focus event should move to its focused item),
   the first ancestor, recognized (10), and the selected item: `accSelection`,
   its `IAccessible`, its window, and its seven properties (10).
-- Today: 31 MSAA calls: the role read twice, and the walk asks the window
-  for its parent because the window is not recognized. mockapp answered 33
-  provider calls.
+- Today: 30 MSAA calls (31 before the MSAA work package, the role read
+  twice): the walk asks the window for its parent because the window is
+  not recognized. mockapp answered 32 provider calls.
 - Target: 29.
 
 ### Arrowing through a list, MSAA
 
 - Minimum: 18 MSAA calls, as for any steady-state focus change.
-- Today: 30 MSAA calls, the same as a steady-state focus change and for
-  the same reasons; mockapp answered 38 provider calls.
+- Today: 29 MSAA calls (30 before the MSAA work package), the same as a
+  steady-state focus change and for the same reasons; mockapp answered 37
+  provider calls.
 - Target: 18.
+
+### A focus on a tree view item, MSAA
+
+A focus on a nested item of a real comctl32 tree view registered under a
+Windows Forms class name (mockapp's `tests/fixtures/tree_view.json`, the
+`msaa_tree_view_costs_exactly` ratchet), after a focus on another root
+item of the same tree: the item, its logical parent found through the
+control's messages, and the tree view, where the walk meets the previous
+focus's container. mockapp's scripted root is not read. Only the client's
+calls are pinned: the provider is comctl32's, and the hits mockapp counts
+for its root come from other clients answering the control's creation
+events, at times of their own.
+
+- Before the MSAA work package (2026-10-07), once the Windows Forms class
+  was recognized at all: 28 MSAA calls and 14 window messages. The window
+  messages are the item's position (mapping its child id to its item, then
+  counting its siblings both ways, 4), its parent (3), and the parent's
+  own position (5) and parent (2).
+- With the check state read from each item's state image, as NVDA reads
+  it: 28 MSAA calls and 16 window messages, one `TVM_GETITEMSTATE` for the
+  item and one for its parent.
+- Today: 35 MSAA calls and 12 window messages. The parent is read as an
+  ancestor, which is not spoken in full, so its siblings are no longer
+  counted (4 window messages fewer). The focused-state check comes first,
+  as in NVDA, reading the states live: the item has the focused state only
+  while the control has the keyboard focus, which the test does not give
+  it, so the check reads the tree view's, its window's, and mockapp's root
+  state, finding it on the root (7 MSAA calls more). A real tree view's
+  focused item has the state itself, and the check then costs nothing.
+
+### A focus on a report view item, MSAA
+
+A focus on an item of a real list view in the report view (mockapp's
+`tests/fixtures/list_view.json`, the `msaa_list_view_costs_exactly`
+ratchet), after a focus on another item, named by its four columns as NVDA
+names it.
+
+- Before the MSAA work package (2026-10-07) the item kept MSAA's name, and
+  no column was read.
+- Today: 29 MSAA calls and 14 window messages: the view, the header and
+  its item count, the column order, each column's rectangle (4), the text
+  of each column shown (3), the header of each but the first (2), and the
+  item count for the position. The structures the messages take are
+  written into and read from the list view's process with the kernel's
+  memory calls, which are not counted.
+
+### A tree view item expanded or collapsed, MSAA
+
+The focused tree view item's own state change, raised by the control.
+
+- Before the MSAA work package (2026-10-07): every state change that left
+  any tree item expanded, the focus or not, counted the item's children.
+- Today: 13 MSAA calls and 7 window messages for the change that expands
+  the focus: its child count (mapping its child id, then its first child
+  and each next sibling, 5) and its check state and item (2); 2 window
+  messages for a collapse, which counts nothing. A change on an object
+  that is not the focus is not read at all (below).
+
+### An event on an object that is not the focus, MSAA
+
+A value change on an object that is not the focus, followed by the
+focus's own: NVDA speaks a name, value, description, or state change only
+for the focus, so the outpost tells the object from the focus by its
+identity, the address it was reported at or the same COM object, before
+reading any of its properties.
+
+- Before the MSAA work package (2026-10-07): every such event read the
+  object in full, 7 MSAA calls and its acquisition.
+- Today: its acquisition and its role only, the role read to know
+  whether it is a progress bar, whose value changes are reported off the
+  focus too (mockapp answers `get_accChild`, `accParent`, and
+  `get_accRole` once each for it), and the focus's change 11 MSAA calls.
+  A progress bar off the focus is then read in full, as NVDA reads one.
+  `WM_GETOBJECT` is not pinned here, as the window's backend probe it
+  answers is renewed at a time that depends on how long the test took.
+
+### A repeated or unfocused focus event, MSAA
+
+- A focus event naming the address of the focus the outpost last
+  reported, a whole object rather than a child by id, with no foreground
+  change since: NVDA drops it as a duplicate. Before the MSAA work
+  package (2026-10-07) it was read in full with its ancestors and the
+  reducer found it the focus already, 29 MSAA calls; today only its role
+  is read, for NVDA's list redirect, and mockapp answers 3 provider calls
+  besides the probe.
+- A focus event on an object that neither has the focused state nor is
+  inside one that has: NVDA reads the states first. Before, it was read
+  in full with its ancestors, then dropped; today its role and state and
+  each ancestor's state are read, and mockapp answers 11 provider calls
+  besides the probe, for an object two levels below its root.
 
 ### Entering a dialog, MSAA
 
@@ -384,8 +478,9 @@ own text"). mockapp's `tests/fixtures/dialog.json` is that message box.
   name, value, and description (3). The buttons give no text, so nothing
   else of them is read, and the question's neighbor is a button, which is
   never labelled, so its name is not read either.
-- Today: 44 MSAA calls and 1 window message, the cold focus's 30 and the
-  text's 14. mockapp answered 56 provider calls. A focus moving within the
+- Today: 43 MSAA calls and 1 window message, the cold focus's 29 and the
+  text's 14 (44 before the MSAA work package). mockapp answered 55
+  provider calls. A focus moving within the
   dialog does not read it again, since the dialog is then in the previous
   focus's chain; mockapp cannot show that, as every `accParent` it answers
   is a new COM object, so the dialog it reaches from the next button is a

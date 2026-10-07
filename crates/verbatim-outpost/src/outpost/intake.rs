@@ -496,17 +496,19 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
                     hwnd,
                     id_object,
                     id_child,
+                }
+                | DeliveredFact::Show {
+                    hwnd,
+                    id_object,
+                    id_child,
                 } => {
-                    return (
-                        Some(Key::Msaa(
-                            WinEventKind::Alert as u8,
-                            *hwnd,
-                            *id_object,
-                            *id_child,
-                        )),
-                        Category::Other,
-                        *hwnd,
-                    );
+                    let kind = if matches!(fact, DeliveredFact::Show { .. }) {
+                        WinEventKind::Show
+                    } else {
+                        WinEventKind::Alert
+                    };
+                    let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child);
+                    return (Some(key), Category::Other, *hwnd);
                 }
                 DeliveredFact::UiaMenuOpened { hwnd, snapshot } => {
                     (Key::UiaMenuOpened(snapshot.runtime_id.clone()), *hwnd)
