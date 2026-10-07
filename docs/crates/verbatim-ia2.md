@@ -194,7 +194,9 @@ Public API:
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, following NVDA's MSAA
   role and state tables (so `STATE_SYSTEM_DEFAULT` is dropped and
-  `STATE_SYSTEM_PROTECTED` kept), pinned by unit tests against raw state
+  `STATE_SYSTEM_PROTECTED` kept, traversed is visited, and linked is
+  linked), and `adjust_role_and_states`, NVDA's adjustment once mapped
+  (a half-checked progress bar is a busy indicator), pinned by unit tests against raw state
   words captured from live controls. Reading a snapshot also treats a
   whitespace-only name or value as absent, drops the name of the edit
   field inside a labelled combo box, and gives a list view or tree view

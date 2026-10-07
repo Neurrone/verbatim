@@ -36,7 +36,7 @@ use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role
 use crate::accessible::{Accessible, Related};
 use crate::class::normalized_class_of;
 use crate::com::{CHILDID_SELF, non_empty, visible_text};
-use crate::map::{role_from_msaa, states_from_msaa};
+use crate::map::{adjust_role_and_states, role_from_msaa, states_from_msaa};
 use crate::registry::{Found, Held, MsaaKey, NodeIdRegistry};
 use crate::window;
 
@@ -1319,11 +1319,12 @@ fn read_snapshot_with(
         .role
         .or_read(|| acc.role())
         .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
-    let mut states = reading
+    let states = reading
         .state
         .or_read(|| acc.state())
         .map(|s| states_from_msaa(s.cast_unsigned()))
         .unwrap_or_default();
+    let (role, mut states) = adjust_role_and_states(role, states);
     // An edit control's client object says whether it edits more than one
     // line, as NVDA's edit control class does, from the window's style.
     if role == Role::EditableText

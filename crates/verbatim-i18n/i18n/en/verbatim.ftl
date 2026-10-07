@@ -170,6 +170,25 @@ role-alert = alert
 role-hotkey-field = hot key field
 role-thumb = thumb control
 role-terminal = terminal
+role-ip-address = IP address
+role-animation = animation
+role-clock = clock
+role-drop-list = drop list
+role-dial = dial
+role-grip = grip
+role-indicator = indicator
+role-border = border
+role-whitespace = white space
+role-math = math
+role-chart = chart
+role-diagram = diagram
+role-column = column
+role-character = character
+role-sound = sound
+role-tree-view-button = tree view button
+role-drop-down-button-grid = drop down button grid
+role-help-balloon = help balloon
+role-busy-indicator = busy indicator
 role-unknown = unknown
 
 ## Reader messages: fixed announcements that describe the reader's own
@@ -349,6 +368,8 @@ state-busy = busy
 state-protected = protected
 state-required = required
 state-invalid-entry = invalid entry
+state-visited = visited
+state-linked = linked
 
 ## Spoken object details.
 

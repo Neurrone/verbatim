@@ -2022,6 +2022,7 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         | Role::ListItem
         | Role::EditableText
         | Role::ProgressBar
+        | Role::BusyIndicator
         | Role::TitleBar
         | Role::Unknown
         | Role::Pane
@@ -2087,7 +2088,12 @@ fn is_silent_on_focus(role: Role) -> bool {
 fn speaks_value(role: Role) -> bool {
     !matches!(
         role,
-        Role::CheckBox | Role::RadioButton | Role::Link | Role::MenuItem | Role::Application
+        Role::CheckBox
+            | Role::RadioButton
+            | Role::Link
+            | Role::MenuItem
+            | Role::Application
+            | Role::BusyIndicator
     )
 }
 
@@ -2205,7 +2211,7 @@ impl From<Reason> for StateReason {
 }
 
 /// The order states are spoken in, positive or negated alike.
-const STATE_ORDER: [State; 16] = [
+const STATE_ORDER: [State; 18] = [
     State::Disabled,
     State::Focused,
     State::Selected,
@@ -2217,6 +2223,8 @@ const STATE_ORDER: [State; 16] = [
     State::Multiline,
     State::Expanded,
     State::Collapsed,
+    State::Visited,
+    State::Linked,
     State::HasPopup,
     State::Protected,
     State::Required,
@@ -2240,10 +2248,18 @@ fn spoken_states(role: Role, states: StateSet, reason: StateReason) -> StateSet 
     if role == Role::ComboBox {
         spoken.remove(State::HasPopup);
     }
+    // Only a link says it was visited.
+    if role != Role::Link {
+        spoken.remove(State::Visited);
+    }
     if reason == StateReason::Query {
         return spoken;
     }
     spoken.remove(State::Focused);
+    // Linked is said only when it changes.
+    if reason != StateReason::Change {
+        spoken.remove(State::Linked);
+    }
     spoken.remove(State::Offscreen);
     // Selection is the expected state of a focused item.
     if reason != StateReason::Change

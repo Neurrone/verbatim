@@ -693,6 +693,72 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
     assert_eq!(heard(&effects), vec![], "another node's change is silent");
 }
 
+/// Visited is said only of a link, and linked only when it changes, as
+/// NVDA says them; a busy indicator does not say its value.
+#[test]
+fn visited_is_said_of_a_link_and_linked_only_as_a_change() {
+    let link = node(
+        61,
+        Role::Link,
+        Some("Home"),
+        None,
+        states(&[State::Visited, State::Linked]),
+    );
+    assert_eq!(
+        focus_segments(link),
+        vec![
+            UtteranceSegment::label("Home"),
+            role(Role::Link),
+            state(State::Visited)
+        ]
+    );
+    let button = node(
+        62,
+        Role::Button,
+        Some("Home"),
+        None,
+        states(&[State::Visited, State::Focused]),
+    );
+    assert_eq!(
+        focus_segments(button),
+        vec![UtteranceSegment::label("Home"), role(Role::Button)]
+    );
+    let busy = node(
+        63,
+        Role::BusyIndicator,
+        Some("Loading"),
+        Some("50"),
+        StateSet::new(),
+    );
+    assert_eq!(
+        focus_segments(busy),
+        vec![
+            UtteranceSegment::label("Loading"),
+            role(Role::BusyIndicator)
+        ]
+    );
+
+    let source = Pid(1);
+    let item = node(
+        64,
+        Role::ListItem,
+        Some("Part"),
+        None,
+        states(&[State::Focused]),
+    );
+    let (reader, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (_, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(64),
+            states(&[State::Focused, State::Linked]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![queued(vec![state(State::Linked)])]);
+}
+
 /// A progress bar indicates its percentage by NVDA's rules (`docs/nvda/
 /// object-model.md`, "How a progress bar reports its value"): focused or
 /// not, as an indication rather than a spoken value, once it moves by a

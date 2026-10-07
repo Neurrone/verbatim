@@ -203,6 +203,16 @@ verified.
     grid, document, title bar, tool tip, and separator; a UIA document
     is a "document", not an "edit" (Notepad's text area is "Text editor
     document"). Progress bars and title bars are never focus context.
+    The MSAA roles NVDA maps that had no counterpart in Verbatim's
+    vocabulary were unknown, so spoken as nothing: IP address, animation,
+    clock, drop list, dial, grip, indicator, border, white space, math
+    (an equation), chart, diagram, column, character, sound, tree view
+    button, drop down button grid, and help balloon. **Matched since
+    2026-10-07**, each with NVDA's English name, and so are the visited
+    state (MSAA traversed), said only of a link, and the linked state,
+    said only when it changes; a half-checked progress bar is a "busy
+    indicator" with no half-checked state and no value spoken, as NVDA
+    adjusts it (map unit tests and reducer tests).
 
   **Different**, still, from the same audit:
   - On focus NVDA reads an edit field's selection or the line at the
