@@ -9,7 +9,7 @@
 //!
 //! 1. The caret moves to the top, and the review cursor, following it,
 //!    reads the header row (numpad 8), then across it by word: "Fruit"
-//!    (numpad 5), "Color" and "Price" (numpad 6).
+//!    (numpad 5), "Shade" and "Price" (numpad 6).
 //! 2. Down the Price column: numpad 9 reads each next row and numpad 2 the
 //!    character in the kept column, "1" on the Apple row, "e" on the
 //!    shorter Fig row (its last character), and "0" and "3" on the rows
@@ -47,7 +47,7 @@ const NAME: &str = "demo-review";
 /// The table's rows, each with the character the review cursor reads in
 /// the Price column, column 16, or on the last character of a shorter row.
 const ROWS: [(&str, &str); 5] = [
-    ("Fruit   Color   Price", "P"),
+    ("Fruit   Shade   Price", "P"),
     ("Apple   red     1.20", "1"),
     ("Fig     purple", "e"),
     ("Banana  yellow  0.50", "0"),
@@ -93,7 +93,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Across the header row by word.
     review(scenario, "kb:numpad8", ROWS[0].0);
     review_text(scenario, "kb:numpad5", "Fruit");
-    review_text(scenario, "kb:numpad6", "Color");
+    review_text(scenario, "kb:numpad6", "Shade");
     review_text(scenario, "kb:numpad6", "Price");
 
     // Down the Price column, past the shorter row and back into the

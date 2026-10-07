@@ -83,12 +83,12 @@ Editing a short paragraph in Windows 11 Notepad.
 ### review-cursor.mp4, from demo_review_cursor
 
 The review cursor over a plain-text table in Notepad. The table has
-three columns, Fruit, Color, and Price, and five rows; the Fig row has no
+three columns, Fruit, Shade, and Price, and five rows; the Fig row has no
 price, so it is shorter than the Price column.
 
 1. Control+Home moves the caret to the top, and the review cursor follows
    it. Numpad 8 reads the header row; numpad 5 reads the current word,
-   "Fruit", and numpad 6 the next words, "Color" and "Price".
+   "Fruit", and numpad 6 the next words, "Shade" and "Price".
 2. Down the Price column: numpad 9 reads each next row, and numpad 2 the
    character in the column the review cursor keeps. On the Apple row it
    is "1", the start of the price. The Fig row is too short, so the
