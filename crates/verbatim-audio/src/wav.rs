@@ -55,27 +55,7 @@ impl WavRecorder {
     ///
     /// Returns the error creating either file.
     pub fn create(path: &Path) -> io::Result<Self> {
-        let mut file = File::create(path)?;
-        // The header's place; it is filled in once there is audio.
-        file.write_all(&[0; 44])?;
-        // The two clocks are read together, so the start time written for
-        // other programs is the one the file keeps step with.
-        let started = Instant::now();
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let mut start = path.as_os_str().to_owned();
-        start.push(".start");
-        std::fs::write(PathBuf::from(start), now_ms.to_string())?;
-        let mut writer = Writer {
-            path: path.to_path_buf(),
-            file,
-            started,
-            format: None,
-            frames: 0,
-            failed: false,
-        };
+        let mut writer = Writer::create(path)?;
         let (blocks, received) = mpsc::channel::<(Vec<f32>, DeviceFormat, Instant)>();
         thread::Builder::new()
             .name("verbatim-wav-recorder".to_owned())
@@ -89,6 +69,31 @@ impl WavRecorder {
 }
 
 impl Writer {
+    /// Creates `path` and `<path>.start`, and starts the recording's clock.
+    fn create(path: &Path) -> io::Result<Self> {
+        let mut file = File::create(path)?;
+        // The header's place; it is filled in once there is audio.
+        file.write_all(&[0; 44])?;
+        // The two clocks are read together, so the start time written for
+        // other programs is the one the file keeps step with.
+        let started = Instant::now();
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let mut start = path.as_os_str().to_owned();
+        start.push(".start");
+        std::fs::write(PathBuf::from(start), now_ms.to_string())?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            started,
+            format: None,
+            frames: 0,
+            failed: false,
+        })
+    }
+
     fn write(
         &mut self,
         samples: &[f32],
@@ -198,19 +203,17 @@ mod tests {
             channels: 1,
             buffer_frames: 10,
         };
-        let mut recorder = WavRecorder::create(&path).unwrap();
-        recorder.played(&[0.5; 100], format);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        recorder.played(&[0.5; 100], format);
-        // Dropping the recorder ends the writer once it has written both.
-        drop(recorder);
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
-        while std::fs::metadata(&path).map_or(0, |m| m.len()) < 44 + 2 * 200
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // The writer, as the recorder's thread runs it, given the times the
+        // blocks finished playing: one at the start, one 300 ms in.
+        let mut writer = Writer::create(&path).unwrap();
+        let started = writer.started;
+        writer.played(&[0.5; 100], format, started);
+        writer.played(
+            &[0.5; 100],
+            format,
+            started + std::time::Duration::from_millis(300),
+        );
+        drop(writer);
 
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[0..4], b"RIFF");
@@ -223,11 +226,8 @@ mod tests {
         );
         let frames = data / 2;
         // The second block, received 300 ms in, is placed to end there:
-        // 100 frames, about 100 frames of silence, then 100 frames.
-        assert!(
-            (290..=330).contains(&frames),
-            "silence fills the pause: {frames} frames"
-        );
+        // 100 frames, 100 frames of silence, then 100 frames.
+        assert_eq!(frames, 300, "silence fills the pause");
         let sample =
             |frame: usize| i16::from_le_bytes([bytes[44 + frame * 2], bytes[45 + frame * 2]]);
         assert!(sample(50) > 0, "the first block is audio");

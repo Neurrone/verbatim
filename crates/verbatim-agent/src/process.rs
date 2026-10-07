@@ -668,9 +668,10 @@ mod tests {
             None,
         )
         .expect("spawns cmd");
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Waits for the exit, however long the machine takes to start the
+        // child, as above.
         let mut state = ProcessState::Running;
-        for _ in 0..100 {
+        for _ in 0..1500 {
             state = status(pid).expect("queries status");
             if state != ProcessState::Running {
                 break;
@@ -814,11 +815,8 @@ mod tests {
         )
         .expect("spawns the renamed powershell.exe");
 
-        // Give the OS a moment to register the process in the snapshot
-        // kill_by_name walks, before this test's own kill_by_name call
-        // races the snapshot against a process that only just started.
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
+        // `launch` returns once `CreateProcessW` has, by which time the
+        // process is in every later snapshot.
         let terminated = kill_by_name(&unique_name).expect("kills by name");
         assert_eq!(
             terminated, 1,

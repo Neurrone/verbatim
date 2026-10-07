@@ -599,17 +599,19 @@ mod tests {
         // the first utterance's queuing to the first audio.
         let ledger = ledger();
         let trace = TraceId::mint();
-        ledger.utterance_queued(UtteranceId(1), trace, "Notepad", std::time::Instant::now());
+        let now = std::time::Instant::now;
+        ledger.utterance_queued(UtteranceId(1), trace, "Notepad", now());
         let first_queued = ledger.recent(1)[0].speech_queued_at_ms;
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        ledger.utterance_queued(
-            UtteranceId(2),
-            trace,
-            "Text editor",
-            std::time::Instant::now(),
-        );
+        // The ledger reads the clock itself; once it has moved on, a queue
+        // time taken from the second utterance would differ from the first.
+        let first_ms = first_queued.expect("the first utterance's queue time");
+        let deadline = now() + std::time::Duration::from_secs(1);
+        while now_ms() <= first_ms {
+            assert!(now() < deadline, "the clock moves on");
+            std::thread::yield_now();
+        }
+        ledger.audio_started(UtteranceId(1), trace, now());
+        ledger.utterance_queued(UtteranceId(2), trace, "Text editor", now());
 
         let record = &ledger.recent(1)[0];
         assert_eq!(record.speech_queued_at_ms, first_queued);

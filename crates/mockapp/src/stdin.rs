@@ -48,7 +48,9 @@ pub(crate) enum Command {
     Notify(String),
     /// `stall <ms>`: blocks the window thread for that many milliseconds, so
     /// every cross-process call into the window waits, as with an
-    /// application that is starting up or busy.
+    /// application that is starting up or busy. The window thread prints
+    /// `stall started` on stdout as it begins, and `stall ended <us>`, with
+    /// the time in microseconds since the Unix epoch, as it ends.
     Stall(u64),
     /// `quit`.
     Quit,

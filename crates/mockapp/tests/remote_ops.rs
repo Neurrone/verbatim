@@ -377,28 +377,26 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     const TIMEOUT: Duration = Duration::from_millis(1000);
     let mut fixture = Fixture::start("mockapp-rops-stall");
     let deep = fixture.focus("deep", "Deep button");
-    let stall = |fixture: &mut Fixture| {
-        fixture.app.send(&format!("stall {}", STALL.as_millis()));
-        // Let mockapp's window thread take the stall.
-        std::thread::sleep(Duration::from_millis(200));
-    };
 
-    stall(&mut fixture);
-    let started = Instant::now();
+    // Each run starts once mockapp has acknowledged that its window thread
+    // is stalled, and is judged by when it returned against when mockapp
+    // says the stall ended.
+    fixture.app.stall(STALL);
     let answer = fixture
         .uia
         .within(TIMEOUT, |uia| {
             focus_ancestry_remote(uia, &query(&deep, &[]))
         })
         .expect("within");
+    let returned = common::now_us();
     assert!(
         matches!(answer, Ok(FocusAncestry::Focused(_))),
         "the connection timeout did not end the run"
     );
+    let ended = fixture.app.stall_ended(STALL);
     assert!(
-        started.elapsed() >= STALL.saturating_sub(TIMEOUT),
-        "the run waited for the stalled provider ({:?})",
-        started.elapsed()
+        returned >= ended,
+        "the run waited for the stalled provider: it returned at {returned} us, before the stall ended at {ended} us"
     );
 
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
@@ -407,15 +405,16 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     let timeout = u32::try_from(TIMEOUT.as_millis()).expect("milliseconds");
     // SAFETY: as above.
     unsafe { client.SetTransactionTimeout(timeout) }.expect("set transaction timeout");
-    std::thread::sleep(STALL);
     for (label, ancestry) in BOTH {
-        stall(&mut fixture);
-        let started = Instant::now();
+        fixture.app.stall(STALL);
         let answer = ancestry(&fixture.uia, &query(&deep, &[]));
-        let elapsed = started.elapsed();
+        let returned = common::now_us();
+        // Waited for, too, so the next run starts against a window thread
+        // that is answering again.
+        let ended = fixture.app.stall_ended(STALL);
         assert!(
-            elapsed < STALL.saturating_sub(TIMEOUT),
-            "{label}: the transaction timeout ended the call ({elapsed:?})"
+            returned < ended,
+            "{label}: the transaction timeout ended the call: it returned at {returned} us, after the stall ended at {ended} us"
         );
         assert_eq!(
             answer.as_ref().err().and_then(Error::hresult),
@@ -428,7 +427,6 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
                 "{answer:?}"
             );
         }
-        std::thread::sleep(STALL);
     }
     // SAFETY: as above.
     unsafe { client.SetTransactionTimeout(usual) }.expect("restore transaction timeout");
@@ -439,8 +437,8 @@ fn a_provider_that_has_exited_fails_at_once() {
     let mut fixture = Fixture::start("mockapp-rops-exited");
     let deep = fixture.focus("deep", "Deep button");
     let Fixture { app, uia, .. } = fixture;
+    // Returns once the process has exited.
     drop(app);
-    std::thread::sleep(Duration::from_millis(500));
     let started = Instant::now();
     let answer = focus_ancestry_remote(&uia, &query(&deep, &[]));
     assert!(started.elapsed() < Duration::from_secs(1));

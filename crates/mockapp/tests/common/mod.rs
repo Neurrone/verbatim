@@ -69,6 +69,9 @@ pub fn fixture_path(name: &str) -> PathBuf {
 pub struct MockApp {
     child: Child,
     stdin: ChildStdin,
+    /// mockapp's stdout, line by line: `ready`, then the acknowledgements
+    /// of commands that print one.
+    lines: mpsc::Receiver<String>,
     /// The window title this instance was started with, for `find_window`.
     pub title: String,
 }
@@ -93,6 +96,47 @@ impl MockApp {
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
+
+    /// Stalls mockapp's window thread for `duration` and returns once the
+    /// thread has acknowledged that the stall began, so every cross-process
+    /// call made from here on waits on it.
+    pub fn stall(&mut self, duration: Duration) {
+        self.send(&format!("stall {}", duration.as_millis()));
+        let line = self.next_line("the stall to begin", WAIT_TIMEOUT);
+        assert_eq!(line, "stall started", "mockapp's acknowledgement");
+    }
+
+    /// Waits for the stall begun by [`stall`](Self::stall) to end, and
+    /// returns when it ended, in microseconds since the Unix epoch (the
+    /// clock of [`now_us`]). `stall` is the stall's length, which the wait
+    /// allows on top of [`WAIT_TIMEOUT`].
+    pub fn stall_ended(&mut self, stall: Duration) -> u64 {
+        let line = self.next_line("the stall to end", stall + WAIT_TIMEOUT);
+        line.strip_prefix("stall ended ")
+            .and_then(|micros| micros.parse().ok())
+            .unwrap_or_else(|| panic!("mockapp acknowledged {line:?}, not the stall's end"))
+    }
+
+    /// The next line mockapp prints, waiting at most `timeout`.
+    fn next_line(&self, what: &str, timeout: Duration) -> String {
+        self.lines
+            .recv_timeout(timeout)
+            .unwrap_or_else(|_| panic!("mockapp did not acknowledge {what} within {timeout:?}"))
+    }
+}
+
+/// Microseconds since the Unix epoch, the clock mockapp's `stall ended`
+/// acknowledgement and the outpost's event timings use, so a time read here
+/// orders against theirs.
+#[must_use]
+pub fn now_us() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 /// Spawns `mockapp --fixture <fixture> --backend <backend> --title <title>`,
@@ -117,18 +161,21 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
     let stdin = child.stdin.take().expect("mockapp stdin was piped");
     let stdout = child.stdout.take().expect("mockapp stdout was piped");
 
-    // A background thread reads stdout lines so the wait below can honor a
-    // timeout instead of blocking forever on a hung child.
+    // A background thread reads stdout lines, for as long as mockapp runs,
+    // so every wait for one can honor a timeout instead of blocking forever
+    // on a hung child.
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let mut lines = BufReader::new(stdout).lines();
-        if let Some(Ok(line)) = lines.next() {
-            let _ = tx.send(line);
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { return };
+            if tx.send(line.trim().to_owned()).is_err() {
+                return;
+            }
         }
     });
 
     match rx.recv_timeout(WAIT_TIMEOUT) {
-        Ok(line) if line.trim() == "ready" => {}
+        Ok(line) if line == "ready" => {}
         Ok(other) => panic!("mockapp's first stdout line was {other:?}, not \"ready\""),
         Err(_) => {
             let _ = child.kill();
@@ -141,6 +188,7 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
     MockApp {
         child,
         stdin,
+        lines: rx,
         title: title.to_owned(),
     }
 }

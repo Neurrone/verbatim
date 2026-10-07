@@ -572,9 +572,9 @@ mod tests {
             panic!("expected a Launched reply, got {launch_reply:?}");
         };
 
-        // Give the OS a moment to register the process in the snapshot
+        // The launch is answered once `CreateProcessW` has returned, by
+        // which time the process is in every later snapshot
         // KillProcessesByName walks.
-        thread::sleep(std::time::Duration::from_millis(200));
 
         let kill_reply = client.request(Request::KillProcessesByName {
             name: unique_name.clone(),
