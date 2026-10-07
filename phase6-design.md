@@ -1973,6 +1973,15 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       - `SelectionPattern2` (first, last, and current selected item and
         the count without fetching the whole selection).
       - The active text position changed event, and `FindText` (item 11).
+      Dickson decided to use them (2026-10-07). All predate Windows 11
+      (TextPattern2 and the annotation, link, and style attributes:
+      Windows 8; TextRange3: Windows 10 1703; SelectionPattern2: 1709;
+      IUIAutomation6 and the active text position event: 1809; remote
+      operations: build 20348), so Verbatim assumes they exist and has
+      no fallback for older Windows. Fallbacks remain only where an
+      application decides: a provider that does not implement a newer
+      pattern, and a window with no server-side provider, where remote
+      operations cannot run.
       Each is weighed by measurement and adopted where it helps; the
       text attribute survey (item 2) covers the full list of UIA text
       attributes, including annotations, link, culture, font weight,
