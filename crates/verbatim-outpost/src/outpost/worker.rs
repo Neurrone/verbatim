@@ -3,8 +3,10 @@
 //! One worker thread takes entries from the intake queue in order and
 //! finishes each before starting the next. It is the only thread that calls
 //! into the application, so events and replies leave the outpost in the order
-//! their entries joined the queue. This is NVDA's model, one thread doing all
-//! the work, with one such thread per application.
+//! the intake plans their entries: the order they joined the queue, but for
+//! the events of other objects that a focus change overtakes
+//! (`intake::overtaken`). This is NVDA's model, one thread doing all the
+//! work, with one such thread per application.
 //!
 //! Being the only thread that calls into the application, the worker is also
 //! where those calls are counted: the backend crates count each call on the
