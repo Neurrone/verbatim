@@ -1057,6 +1057,27 @@ longer collapses the range after it moves, since UIA keeps a collapsed
 range collapsed when it moves; the ledger's operations above do not reach
 those reads, so their counts are unchanged.
 
+### What the audit found conforming, or left for a decision
+
+- `GetText` is given a length everywhere but a terminal's reads, which
+  are bounded by lines (judged fine by Dickson).
+- A failed attribute read is "not supported" on both paths, and "mixed"
+  is now told apart from it (above).
+- A terminal's search uses `FindText` both ways ("A terminal's upward
+  search" above), with its text trimmed of the padding and
+  line breaks Windows Terminal cannot match.
+- Not detected: a provider without a unit silently uses the next larger
+  one (`ITextRangeProvider::Move`), so a word move in such a provider
+  moves by lines. No call tells it apart; only the terminals' paragraph
+  and page, known to be the whole buffer, are refused. Some providers
+  also return a positive count for a backward move, which NVDA corrects
+  and Verbatim does not. Both are left for a decision.
+- Not used yet, each a feature of its own rather than a fault in what
+  Verbatim reads: `FindAttribute` (finding the next spelling error in one
+  call), `GetChildren` and `RangeFromChild` for embedded objects,
+  `GetVisibleRanges`, annotation objects and `RangeFromAnnotation`, the
+  `IsHidden` attribute, and `ShowContextMenu`.
+
 ## The instruction limit
 
 UIA stops a remote operation that executes too many instructions, with
