@@ -14,6 +14,7 @@ use std::thread;
 use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
+use crate::foreground::ForegroundNudge;
 use crate::protocol::{AGENT_PROTOCOL_VERSION, Frame, ReplyPayload, Request, RequestEnvelope};
 use crate::{desktop, files, foreground, process, session, tunnel, typing};
 
@@ -21,14 +22,17 @@ use crate::{desktop, files, foreground, process, session, tunnel, typing};
 /// per connection. Each connection is pointed at `pipe_name` for
 /// [`Request::OpenControlTunnel`].
 ///
+/// A launch may tap Control to let the launched program take the
+/// foreground when `nudge` allows it ([`ForegroundNudge`]).
+///
 /// Blocks the calling thread; callers that need to keep doing other work
 /// (tests, in particular) run this on a background thread.
-pub fn serve(listener: &TcpListener, pipe_name: &str) {
+pub fn serve(listener: &TcpListener, pipe_name: &str, nudge: ForegroundNudge) {
     for incoming in listener.incoming() {
         match incoming {
             Ok(stream) => {
                 let pipe_name = pipe_name.to_owned();
-                thread::spawn(move || handle_connection(&stream, &pipe_name));
+                thread::spawn(move || handle_connection(&stream, &pipe_name, nudge));
             }
             Err(error) => {
                 warn!(%error, "accept failed; agent TCP listener stopping");
@@ -59,7 +63,7 @@ fn reject_malformed(writer: &mut TcpStream, error: &io::Error) {
 /// malformed message arrives (answered by [`reject_malformed`]), the first
 /// request is not [`Request::Hello`], or [`Request::OpenControlTunnel`]
 /// hands the connection off to [`tunnel::run`].
-fn handle_connection(stream: &TcpStream, pipe_name: &str) {
+fn handle_connection(stream: &TcpStream, pipe_name: &str, nudge: ForegroundNudge) {
     let mut writer = match stream.try_clone() {
         Ok(writer) => writer,
         Err(error) => {
@@ -155,7 +159,7 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str) {
             }
         }
 
-        let frame = dispatch(envelope.id, envelope.request);
+        let frame = dispatch(envelope.id, envelope.request, nudge);
         if write_message(&mut writer, &frame).is_err() {
             return;
         }
@@ -164,7 +168,7 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str) {
 
 /// Dispatches one already-validated (post-`Hello`, non-tunnel) request to
 /// a [`Frame`] reply or error.
-fn dispatch(id: u64, request: Request) -> Frame {
+fn dispatch(id: u64, request: Request, nudge: ForegroundNudge) -> Frame {
     match request {
         Request::Hello { .. } => Frame::Reply {
             to: id,
@@ -184,6 +188,7 @@ fn dispatch(id: u64, request: Request) -> Frame {
             working_dir.as_deref(),
             &env,
             stderr_to.as_deref(),
+            nudge,
         ) {
             Ok(pid) => Frame::Reply {
                 to: id,
@@ -383,7 +388,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("binds an ephemeral port");
         let addr = listener.local_addr().expect("has a local address");
         let pipe_name = pipe_name.to_owned();
-        thread::spawn(move || serve(&listener, &pipe_name));
+        thread::spawn(move || serve(&listener, &pipe_name, ForegroundNudge::Never));
         addr
     }
 
@@ -572,9 +577,9 @@ mod tests {
             panic!("expected a Launched reply, got {launch_reply:?}");
         };
 
-        // Give the OS a moment to register the process in the snapshot
+        // The launch is answered once `CreateProcessW` has returned, by
+        // which time the process is in every later snapshot
         // KillProcessesByName walks.
-        thread::sleep(std::time::Duration::from_millis(200));
 
         let kill_reply = client.request(Request::KillProcessesByName {
             name: unique_name.clone(),

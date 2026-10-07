@@ -139,7 +139,8 @@ fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
         saved_settings: Box::new(|_| Vec::new()),
         mixer: Arc::new(mixer),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
-        theme: presenter,
+        theme: ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default()),
+        presenter,
     })
     .expect("pipeline starts");
     Harness {
@@ -235,8 +236,8 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
 
 #[test]
 fn an_event_without_a_sound_to_play_is_spoken_instead() {
-    // The manager's own theme starts as the default theme with no sounds
-    // loaded, so browse mode, a sound in the default theme, is spoken.
+    // The harness's theme is the default theme with no sound files found,
+    // so browse mode, a sound in the default theme, is spoken.
     let harness = harness(None);
     harness.manager.play_earcon(Earcon::BrowseMode);
     assert!(wait_for(|| !harness

@@ -342,7 +342,12 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
             return;
         }
         if let Command::Stall(ms) = command {
+            // Acknowledged on stdout as it begins and as it ends, so a test
+            // waits for the stall itself rather than guessing when this
+            // thread takes it; the end carries the time it ended.
+            acknowledge("stall started");
             std::thread::sleep(std::time::Duration::from_millis(ms));
+            acknowledge(&format!("stall ended {}", unix_micros()));
         } else {
             match context.backend {
                 Backend::Uia => uia::apply_command(&context.tree, hwnd, command),
@@ -353,6 +358,23 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
         // the command has taken effect.
         hits::hit(hits::Method::CommandApplied);
     }
+}
+
+/// Writes one acknowledgement line to stdout, where `ready` went, and
+/// flushes it at once.
+fn acknowledge(line: &str) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{line}");
+    let _ = stdout.flush();
+}
+
+/// Microseconds since the Unix epoch: the clock a test compares with its
+/// own, and with the outpost's event timings, across processes.
+fn unix_micros() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
 }
 
 fn to_wide(text: &str) -> Vec<u16> {

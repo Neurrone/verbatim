@@ -433,15 +433,42 @@ mod tests {
     fn a_stop_ends_a_read_already_waiting() {
         let (_server, pipe) = pipe_pair(r"\\.\pipe\verbatim-agent-tunnel-test-b");
         let pipe = Arc::new(pipe);
-        let stopper = {
+        // The read is issued as `OverlappedPipe::read` issues it, and the
+        // stop comes once it is pending: the idle server end sends nothing,
+        // so it can only end by the stop.
+        let (issued_tx, issued) = mpsc::channel();
+        let (outcome_tx, outcome) = mpsc::channel();
+        {
             let pipe = Arc::clone(&pipe);
             thread::spawn(move || {
-                thread::sleep(Duration::from_millis(100));
-                pipe.stop();
-            })
-        };
-        let outcome = read_on_a_thread(&pipe).expect("the read must end once stopped");
-        stopper.join().expect("the stopper does not panic");
+                let mut buf = [0u8; 16];
+                let mut overlapped = OVERLAPPED {
+                    hEvent: pipe.read_event,
+                    ..OVERLAPPED::default()
+                };
+                // SAFETY: as in `OverlappedPipe::read`: `buf` and
+                // `overlapped` outlive `complete`, which waits for the read.
+                let result = unsafe {
+                    ReadFile(pipe.handle, Some(&mut buf), None, Some(&raw mut overlapped))
+                };
+                assert_eq!(
+                    result.as_ref().map_err(windows::core::Error::code),
+                    Err(HRESULT::from_win32(ERROR_IO_PENDING.0)),
+                    "the read is pending"
+                );
+                issued_tx.send(()).expect("the test waits");
+                let _ = outcome_tx.send(
+                    pipe.complete(result, &overlapped)
+                        .map(|read| read as usize)
+                        .map_err(|end| end.to_string()),
+                );
+            });
+        }
+        issued.recv_timeout(STUCK).expect("the read is issued");
+        pipe.stop();
+        let outcome = outcome
+            .recv_timeout(STUCK)
+            .expect("the read must end once stopped");
         assert_eq!(outcome, Err("stopped by the other direction".to_owned()));
     }
 

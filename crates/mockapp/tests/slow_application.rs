@@ -64,9 +64,8 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
         }
     });
 
-    app.send("stall 2500");
-    // Let mockapp's window thread take the stall before the fact arrives.
-    std::thread::sleep(Duration::from_millis(200));
+    // The window thread is stalled before the fact arrives.
+    app.stall(STALL);
     let delivered = Instant::now();
     outpost.handle_command(&SupervisorToOutpost::DeliverFact {
         trace_id: TraceId::mint(),
@@ -87,13 +86,19 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
             .expect("the outpost reports the focus before the wait times out");
         if let OutpostToSupervisor::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
+            timing,
             ..
         } = message
         {
             assert_eq!(node.name.as_deref(), Some("Original Name"));
+            // The outpost's worker took the fact, and began reading, before
+            // the stall ended, so the read waited on the stalled window
+            // thread and the test exercised a slow read.
+            let ended = app.stall_ended(STALL);
             assert!(
-                delivered.elapsed() >= STALL.saturating_sub(Duration::from_millis(300)),
-                "the read waited on the stalled window thread, so the test exercised a slow read"
+                timing.dequeued_at_us < ended,
+                "the read began at {} us, after the stall ended at {ended} us",
+                timing.dequeued_at_us
             );
             break;
         }

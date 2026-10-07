@@ -95,15 +95,16 @@ pub enum Request {
         pid: u32,
     },
     /// Terminates every currently running process whose image (executable
-    /// file) name matches `name` (case-insensitive, comparing only the file
-    /// name — for example `"notepad.exe"`, never a full path). Exists
-    /// because Windows 11 Notepad hands off to an already-running instance
-    /// rather than spawning a new one, so the pid a `LaunchProcess` reply
-    /// names can outlive the window it actually opened — a name sweep
+    /// file) matches `name`, case-insensitively: a bare file name, for
+    /// example `"notepad.exe"`, matches that file name wherever it runs
+    /// from, and a full path matches only processes running that very file.
+    /// Exists because Windows 11 Notepad hands off to an already-running
+    /// instance rather than spawning a new one, so the pid a `LaunchProcess`
+    /// reply names can outlive the window it actually opened — a name sweep
     /// catches whatever pid ended up owning it. Zero matches is a normal,
     /// successful outcome, not an error.
     KillProcessesByName {
-        /// The image file name to match.
+        /// The image file name, or full path, to match.
         name: String,
     },
     /// Waits up to `timeout_ms` for a visible top-level window of a process

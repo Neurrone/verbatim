@@ -67,8 +67,11 @@ raising no event, as a terminal's buffer changes before a client reads it;
 the terminal tests write lines, discard the oldest, and clear the screen
 with it; UIA only), `stall <ms>`
 (blocks the window thread for that long, so every cross-process call into
-the window waits, as with an application that is starting up or busy),
-and `quit`.
+the window waits, as with an application that is starting up or busy;
+the window thread prints `stall started` on stdout as it begins and
+`stall ended <us>`, the time in microseconds since the Unix epoch, as it
+ends, so a test waits for the stall itself rather than for a guessed
+time), and `quit`.
 
 Public API is otherwise internal (`mockapp` is a binary, not a library);
 its crate-internal modules are the reviewable surface:
@@ -254,8 +257,10 @@ report on both stacks this way too (`docs/performance.md`).
 `verbatim_outpost::Outpost` in the test process against an `msaa`-backend
 mockapp: it captures the address of mockapp's own scripted focus event,
 stalls mockapp's window thread with `stall`, delivers the focus as a
-listener fact, and asserts the outpost still reports it after the read
-has waited longer than the outpost's old 1.5 second deadline. The
+listener fact once mockapp has acknowledged that the stall began, and
+asserts the outpost still reports it, having started the read before
+the stall ended, so the read waited longer than the outpost's old 1.5
+second deadline. The
 scripted focus event is raised with `NotifyWinEvent`, so this test too
 needs no real keyboard focus.
 

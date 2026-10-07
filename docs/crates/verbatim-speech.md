@@ -53,10 +53,12 @@ Public API:
   synthesizer's persisted setting values, the `Arc<Mixer>` speech plays
   through (the manager adds its own source to it, and a second for
   events' sounds), an optional observer,
-  and an optional presenter (`theme`). `control()` returns a
-  `SpeechControl`. `themes()` returns the manager's `ThemeHandle`, which
-  the default presenter reads; the shell sets the configured theme on it
-  at startup and the settings dialog switches it.
+  the `ActiveTheme` to start with (`theme`: the configured theme, its
+  sounds loaded, so the manager never holds a stand-in), and an optional
+  presenter (`presenter`). `control()` returns a `SpeechControl`.
+  `themes()` returns the manager's `ThemeHandle`, holding that theme,
+  which the default presenter and `play_earcon` read and the settings
+  dialog switches.
   `play_earcon(earcon)` reports an event at once (`Effect::PlayEarcon`)
   as the active theme says: its sound plays now on the events' own mixer
   source, mixed over speech and never cancelled by it (a progress tone
@@ -109,7 +111,7 @@ Public API:
   `SpeechSequence` handed to the synthesizer, with `flatten(utterance,
   id)`, on the queue thread when the utterance is accepted.
   `ThemePresenter` is the default (selected when
-  `SpeechManagerConfig::theme` is `None`) and resolves each span through
+  `SpeechManagerConfig::presenter` is `None`) and resolves each span through
   the active theme of a `ThemeHandle`. Content is always spoken: labels,
   values, and text as their text, messages and phrases with values
   through `verbatim-i18n`, a character spoken on its own
@@ -154,8 +156,8 @@ Public API:
   `LoadedTheme::sound_path`), generates its tones, and reports and logs
   each sound that is missing or cannot be decoded (`problems`);
   `with_options` changes the settings that go with it, keeping its
-  sounds; `fetches` gives what the reducer should fetch. The default is
-  the built-in default theme with no sound files. `ThemeHandle::get`,
+  sounds; `fetches` gives what the reducer should fetch. There is no
+  default: a handle always holds a theme made by `new`. `ThemeHandle::get`,
   `set`, and `set_options` read and switch it; a switch applies to the
   next utterance presented.
 

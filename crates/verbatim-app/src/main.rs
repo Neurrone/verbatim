@@ -215,18 +215,19 @@ fn run(config: ConfigStore) -> Result<(), Box<dyn std::error::Error>> {
         ledger: Arc::clone(&ledger),
         commands: command_tx.clone(),
     });
-    let manager = build_speech_manager(&store, speech_events)?;
+    // The theme the configuration names, with its sounds, presents speech
+    // from the first word and decides what the reducer fetches; the theme
+    // panel switches it.
+    let theme = {
+        let store = store.lock().unwrap_or_else(PoisonError::into_inner);
+        let (loaded, options) = themes::configured(&store);
+        themes::prepare(&loaded, &store.sounds_dir(), options)
+    };
+    themes::send_fetches(&command_tx, &theme);
+    let manager = build_speech_manager(&store, speech_events, theme)?;
     // Errors logged from here on play the error sound, through the reducer
     // thread.
     error_sound::report_to(command_tx.clone());
-
-    // The theme the configuration names presents speech and decides what
-    // the reducer fetches; the theme panel switches it.
-    {
-        let store = store.lock().unwrap_or_else(PoisonError::into_inner);
-        let (loaded, options) = themes::configured(&store);
-        themes::activate(&manager, &command_tx, &loaded, &store.sounds_dir(), options);
-    }
 
     // Settings host: the GUI's live handle; commit persists to the base
     // profile through the config store.
@@ -506,7 +507,8 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 
 /// Builds the speech pipeline: eSpeak NG (or the configured synthesizer),
 /// each in a synthesizer host, through the mixer and WASAPI by default,
-/// observed by the latency ledger. `VERBATIM_TEST_AUDIO=null` is a
+/// observed by the latency ledger, and presenting speech with `theme`.
+/// `VERBATIM_TEST_AUDIO=null` is a
 /// test-only escape hatch (documented in docs/crates/verbatim-audio.md) that
 /// adds the capture synth and plays through [`SilentDevice`] instead, which
 /// takes real time but makes no sound.
@@ -518,6 +520,7 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 fn build_speech_manager(
     store: &Arc<Mutex<ConfigStore>>,
     events: Arc<dyn verbatim_speech::SpeechEvents>,
+    theme: verbatim_speech::ActiveTheme,
 ) -> Result<Arc<SpeechManager>, verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
     let mut registry = SynthRegistry::new();
@@ -568,7 +571,8 @@ fn build_speech_manager(
         saved_settings: saved_settings_fn(Arc::clone(store)),
         mixer: Arc::new(mixer),
         events: Some(events),
-        theme: None,
+        theme,
+        presenter: None,
     })?))
 }
 

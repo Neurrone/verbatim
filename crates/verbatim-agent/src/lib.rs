@@ -31,3 +31,5 @@ pub mod server;
 pub mod session;
 mod tunnel;
 mod typing;
+
+pub use foreground::ForegroundNudge;

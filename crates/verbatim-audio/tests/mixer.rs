@@ -36,6 +36,9 @@ struct DeviceState {
     written: Vec<f32>,
     stops: u32,
     woken: bool,
+    /// How many times the mixer has begun to wait for the device: once at
+    /// the end of every pass, when it has done all it could.
+    waits: u64,
 }
 
 /// A device that plays only when the test says so.
@@ -61,6 +64,29 @@ impl ManualDevice {
 
     fn written(&self) -> Vec<f32> {
         self.state.0.lock().unwrap().written.clone()
+    }
+
+    /// Returns once the mixer has made a whole pass that began after this
+    /// call, so everything the test did before it is reflected in what the
+    /// mixer has written and reported (it reports during the pass, before
+    /// it waits). The mixer is woken first; if it was in the middle of a
+    /// pass, that pass ends in a wait which the wake-up cuts short, and the
+    /// pass after it is a whole one. Fails at [`WAIT`].
+    fn settle(&self) {
+        let (state, condvar) = &*self.state;
+        let mut state = state.lock().unwrap();
+        let target = state.waits + 2;
+        let deadline = std::time::Instant::now() + WAIT;
+        while state.waits < target {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "the mixer made no whole pass within {WAIT:?}"
+            );
+            state.woken = true;
+            condvar.notify_all();
+            state = condvar.wait_timeout(state, remaining).unwrap().0;
+        }
     }
 }
 
@@ -97,7 +123,10 @@ impl AudioDevice for ManualDevice {
 
     fn wait(&mut self, timeout: Duration) {
         let (state, condvar) = &*self.state;
-        let state = state.lock().unwrap();
+        let mut state = state.lock().unwrap();
+        state.waits += 1;
+        // For `settle`, which waits on the same condition variable.
+        condvar.notify_all();
         let (mut state, _) = condvar
             .wait_timeout_while(state, timeout, |state| !state.woken)
             .unwrap();
@@ -165,9 +194,12 @@ impl Harness {
             .expect("a playback event arrives")
     }
 
+    /// Asserts that the mixer, having done everything the test asked of it
+    /// so far, reported nothing more.
     fn nothing_more(&self) {
+        self.device.settle();
         assert_eq!(
-            self.events.recv_timeout(Duration::from_millis(200)).ok(),
+            self.events.try_recv().ok(),
             None,
             "no further playback event"
         );
@@ -175,15 +207,14 @@ impl Harness {
 
     /// Plays `frames` one at a time, each only once the mixer has written
     /// it (a device cannot play what it has not been given), and stops early
-    /// if nothing more is written within a second.
+    /// once the mixer has done all it could and written nothing more.
     fn play(&self, frames: u32) {
         for _ in 0..frames {
-            let deadline = std::time::Instant::now() + Duration::from_secs(1);
-            while self.device.state.0.lock().unwrap().queued == 0 {
-                if std::time::Instant::now() > deadline {
+            if self.device.state.0.lock().unwrap().queued == 0 {
+                self.device.settle();
+                if self.device.state.0.lock().unwrap().queued == 0 {
                     return;
                 }
-                std::thread::sleep(Duration::from_millis(1));
             }
             self.device.play(1);
         }
@@ -329,10 +360,19 @@ fn a_write_waits_while_the_source_is_too_far_ahead_of_playback() {
         let _ = source.write(utterance(1), PCM, &samples(60, 1_000));
         done_tx.send(()).unwrap();
     });
-    assert!(
-        done_rx.recv_timeout(Duration::from_millis(300)).is_err(),
-        "the write is held back"
-    );
+    // The writer adds what fits in one step, under the mixer's lock, and
+    // waits for room before letting go of it; so once the mixer has given
+    // the device anything, the writer is waiting, and with nothing played
+    // it has no room.
+    let deadline = std::time::Instant::now() + WAIT;
+    while harness.device.written().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the mixer writes the first frames"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(done_rx.try_recv().is_err(), "the write is held back");
     harness.play(10);
     done_rx
         .recv_timeout(WAIT)
@@ -446,7 +486,7 @@ fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
     while tapped.lock().unwrap().len() < 5 && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(1));
     }
-    std::thread::sleep(Duration::from_millis(200));
+    harness.device.settle();
     assert_eq!(tapped.lock().unwrap().len(), 5);
 }
 
@@ -481,7 +521,7 @@ fn a_device_reopened_between_polls_is_not_given_again_what_it_played() {
         );
         std::thread::sleep(Duration::from_millis(1));
     }
-    std::thread::sleep(Duration::from_millis(200));
+    harness.device.settle();
     assert_eq!(
         harness.device.written().len(),
         16,

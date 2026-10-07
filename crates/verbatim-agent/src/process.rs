@@ -45,6 +45,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{PCWSTR, PWSTR};
 
+use crate::foreground::ForegroundNudge;
 use crate::protocol::{KillOutcome, ProcessState};
 
 /// Spawns `command` with `args`, and environment (extended, not replaced,
@@ -67,6 +68,10 @@ use crate::protocol::{KillOutcome, ProcessState};
 /// argument parsing follow; `command` is found as `CreateProcessW` finds a
 /// program, adding `.exe` when it has no extension and searching `PATH`.
 ///
+/// The process may take the foreground with its first window; `nudge` says
+/// whether a Control tap may be injected to allow that past the foreground
+/// lock (`foreground::allow_foreground`).
+///
 /// # Errors
 ///
 /// Returns an error if the process cannot be spawned (bad path, permission
@@ -78,6 +83,7 @@ pub fn launch(
     working_dir: Option<&str>,
     env: &[(String, String)],
     stderr_to: Option<&str>,
+    nudge: ForegroundNudge,
 ) -> io::Result<u32> {
     let capture = stderr_to
         .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
@@ -124,7 +130,7 @@ pub fn launch(
     // SAFETY: as above.
     let thread = unsafe { OwnedHandle::from_raw_handle(info.hThread.0) };
     let pid = info.dwProcessId;
-    crate::foreground::allow_foreground(pid);
+    crate::foreground::allow_foreground(pid, nudge);
     if let Err(error) = assign_to_job(&job, &child).and_then(|()| resume(&thread)) {
         // SAFETY: `child` is open, with the full access CreateProcessW
         // grants.
@@ -357,7 +363,8 @@ pub fn kill(pid: u32) -> io::Result<KillOutcome> {
 }
 
 /// [`kill`], except that a pid this agent did not launch is terminated only
-/// when it still runs an executable of the file name `image`, if given.
+/// when it still runs the executable `image` names, if given
+/// ([`image_matches`]).
 fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     {
         let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
@@ -383,16 +390,16 @@ fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
 }
 
 /// Terminates `pid`, which this agent did not launch, opening it afresh;
-/// when `image` is given, only if the opened process still runs an
-/// executable of that file name, so a pid reused since it was looked up
-/// is left alone.
+/// when `image` is given, only if the opened process still runs the
+/// executable it names, so a pid reused since it was looked up is left
+/// alone.
 fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     let Some(handle) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION)
     else {
         return Ok(KillOutcome::AlreadyExited);
     };
     if let Some(image) = image
-        && !image_file_name(handle).is_some_and(|name| name.eq_ignore_ascii_case(image))
+        && !image_path(handle).is_some_and(|path| image_matches(&path, image))
     {
         close(handle);
         return Ok(KillOutcome::AlreadyExited);
@@ -414,10 +421,14 @@ fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
 }
 
 /// Terminates every currently running process whose image (executable file)
-/// name matches `name` (case-insensitive, comparing only the file name —
-/// `"notepad.exe"`, never a full path), and returns how many were actually
-/// terminated. Zero is a normal, successful outcome, not an error: it
-/// simply means no matching process was running.
+/// matches `name`, and returns how many were actually terminated. A bare
+/// file name (`"notepad.exe"`) matches that file name wherever it runs
+/// from; a full path (`r"C:\stage\mockapp.exe"`) matches only processes
+/// running that very file, so a program the harness deploys is swept
+/// without ending the same program run from elsewhere, such as the
+/// `mockapp` a concurrent `cargo test` drives. Both compare
+/// case-insensitively ([`image_matches`]). Zero is a normal, successful
+/// outcome, not an error: it simply means no matching process was running.
 ///
 /// Exists for the handoff case Windows 11 Notepad exhibits: launching it
 /// when an instance already exists hands the window off to that existing
@@ -439,7 +450,10 @@ fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
 /// propagate.
 pub fn kill_by_name(name: &str) -> io::Result<u32> {
     let mut terminated = 0u32;
-    for pid in matching_pids(name)? {
+    // The snapshot holds file names only; a path is checked once each
+    // match is opened.
+    let file_name = name.rsplit(['\\', '/']).next().unwrap_or(name);
+    for pid in matching_pids(file_name)? {
         // Checked again once opened: the pid may have been reused since
         // the snapshot.
         match kill_as(pid, Some(name)) {
@@ -494,9 +508,23 @@ fn exe_file_name(buffer: &[u16]) -> String {
     String::from_utf16_lossy(&buffer[..len])
 }
 
-/// The file name of the executable an open process handle's process runs,
+/// Whether a process running the executable at `path` (a full path, as
+/// Windows reports it) matches `image`: by its full path when `image` is
+/// one, by its file name otherwise; case-insensitively either way, and
+/// with either slash as the separator.
+fn image_matches(path: &str, image: &str) -> bool {
+    let normalize = |text: &str| text.replace('/', "\\").to_lowercase();
+    let (path, image) = (normalize(path), normalize(image));
+    if image.contains('\\') {
+        path == image
+    } else {
+        path.rsplit('\\').next() == Some(image.as_str())
+    }
+}
+
+/// The full path of the executable an open process handle's process runs,
 /// `None` when it cannot be read.
-fn image_file_name(handle: HANDLE) -> Option<String> {
+fn image_path(handle: HANDLE) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
     // SAFETY: `handle` is open with query access; the buffer outlives the
@@ -510,8 +538,9 @@ fn image_file_name(handle: HANDLE) -> Option<String> {
         )
     }
     .ok()?;
-    let path = String::from_utf16_lossy(buffer.get(..usize::try_from(length).ok()?)?);
-    Some(path.rsplit('\\').next().unwrap_or(&path).to_owned())
+    Some(String::from_utf16_lossy(
+        buffer.get(..usize::try_from(length).ok()?)?,
+    ))
 }
 
 /// Whether an already-open process handle's process has exited, used to
@@ -578,6 +607,7 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns powershell");
         assert!(pid > 0, "pid is a valid nonzero process id");
@@ -630,6 +660,7 @@ mod tests {
             None,
             &[],
             Some(&path_str),
+            ForegroundNudge::Never,
         )
         .expect("spawns cmd with a stderr capture path");
 
@@ -659,6 +690,16 @@ mod tests {
     }
 
     #[test]
+    fn a_path_matches_only_that_file_and_a_name_matches_it_anywhere() {
+        let running = r"C:\Stage\mockapp.exe";
+        assert!(image_matches(running, "MOCKAPP.EXE"));
+        assert!(image_matches(running, r"c:\stage\mockapp.exe"));
+        assert!(image_matches(running, "C:/Stage/mockapp.exe"));
+        assert!(!image_matches(running, r"C:\target\debug\mockapp.exe"));
+        assert!(!image_matches(running, "notepad.exe"));
+    }
+
+    #[test]
     fn reports_the_exit_code_of_a_launched_child_after_it_exited() {
         let pid = launch(
             "cmd",
@@ -666,11 +707,13 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns cmd");
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Waits for the exit, however long the machine takes to start the
+        // child, as above.
         let mut state = ProcessState::Running;
-        for _ in 0..100 {
+        for _ in 0..1500 {
             state = status(pid).expect("queries status");
             if state != ProcessState::Running {
                 break;
@@ -688,6 +731,7 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns cmd");
         let mut grandchild = None;
@@ -811,14 +855,12 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns the renamed powershell.exe");
 
-        // Give the OS a moment to register the process in the snapshot
-        // kill_by_name walks, before this test's own kill_by_name call
-        // races the snapshot against a process that only just started.
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
+        // `launch` returns once `CreateProcessW` has, by which time the
+        // process is in every later snapshot.
         let terminated = kill_by_name(&unique_name).expect("kills by name");
         assert_eq!(
             terminated, 1,

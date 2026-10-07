@@ -151,7 +151,9 @@ Public API:
   constant this pre-launch sweep once read from is gone: it now reads
   `registry::swept_target_image_names()`, derived from every registered
   scenario's own declared target images instead of a name maintained by
-  hand.
+  hand. A program the harness stages beside Verbatim (`mockapp.exe`) is
+  swept by its full path in the stage directory, so the sweep never ends the
+  `mockapp` instances a concurrent `cargo test` runs from `target`.
 - `SpeechCollector` — the speech assertions, reading the dedicated
   speech connection and never sending a request on it after subscribing,
   so no frame is discarded. Every utterance Verbatim queues arrives as a

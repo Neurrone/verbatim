@@ -51,8 +51,7 @@ fn a_busy_uia_window_still_has_a_server_side_provider() {
     // Block the window thread past the point where UIA's own check gives up
     // (about five seconds here, three for Notepad starting up) and reports
     // no provider: the probe must wait for the window's real answer.
-    app.send("stall 6000");
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    app.stall(std::time::Duration::from_secs(6));
     assert!(
         has_server_side_provider(hwnd),
         "a window too busy to answer at once is asked again once it answers"
@@ -78,8 +77,7 @@ fn a_busy_uia_window_is_read_once_it_answers() {
 
     // Past UIA's default two-second connection timeout, after which the read
     // failed (or, for a focused element, came back as UIA's stand-in).
-    app.send("stall 4000");
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    app.stall(std::time::Duration::from_secs(4));
     assert_eq!(
         name(&uia).ok().flatten().as_deref(),
         Some("Mockapp Events Fixture"),
@@ -126,8 +124,7 @@ fn a_window_that_never_answers_gets_no_verdict_within_the_budget() {
     // Silent for longer than the probe may take: no answer, rather than a
     // "no" that would be kept, and well inside the outpost's ten-second
     // deadline for handling the event.
-    app.send("stall 12000");
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    app.stall(std::time::Duration::from_secs(12));
     let started = std::time::Instant::now();
     assert_eq!(verbatim_uia::probe_server_side_provider(hwnd), None);
     assert!(

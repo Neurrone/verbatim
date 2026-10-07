@@ -11,9 +11,12 @@ use std::time::{Duration, Instant};
 use verbatim_audio::Mixer;
 use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_model::{
-    SpeechPriority, TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
+    SpeechPriority, Theme, ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId,
+    UtteranceSegment,
 };
-use verbatim_speech::{SpeechEvents, SpeechManager, SpeechManagerConfig, SynthId, SynthRegistry};
+use verbatim_speech::{
+    ActiveTheme, SpeechEvents, SpeechManager, SpeechManagerConfig, SynthId, SynthRegistry,
+};
 use verbatim_synth_onecore::{ONECORE_ID, register};
 
 /// Forwards each ending to the test.
@@ -50,7 +53,8 @@ fn speaks_test_through_wasapi() {
             Mixer::start(Box::new(WasapiDevice::new().expect("wake event"))).expect("audio starts"),
         ),
         events: Some(Arc::new(Endings(Mutex::new(sender)))),
-        theme: None,
+        theme: ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default()),
+        presenter: None,
     })
     .expect("OneCore pipeline starts");
 

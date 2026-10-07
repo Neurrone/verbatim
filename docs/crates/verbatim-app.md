@@ -81,11 +81,15 @@ Milestone M4's themes and earcons are wired here too (`phase6-design.md`,
   (`ActiveConfig::theme_id` and `theme_options`, through
   `verbatim_config::themes::find_theme`; one that cannot be loaded is
   logged and the built-in default theme used instead) and makes a theme
-  active: its sounds are decoded from its own directory or the shared
-  `sounds` folder beside `verbatim.exe` (`LoadedTheme::sound_path`), every
-  problem found is logged, the speech manager's theme handle is set, and
-  the reducer is sent `Input::Fetches` with what the theme wants fetched.
-  It runs at startup and whenever the settings dialog's Theme panel
+  ready (`prepare`): its sounds are decoded from its own directory or the
+  shared `sounds` folder beside `verbatim.exe` (`LoadedTheme::sound_path`),
+  and every problem found is logged. At startup this happens before the
+  speech manager is built, which is given the theme at construction, so
+  speech is presented with the configured theme and its sounds from the
+  first word; the reducer is sent `Input::Fetches` with what the theme
+  wants fetched (`send_fetches`). `activate` does both for a theme
+  chosen later, setting it on the speech manager's theme handle. It runs
+  whenever the settings dialog's Theme panel
   changes the theme or its options: `AppThemeHost` is the GUI's
   `ThemeHost`, over the configuration store (the themes and sounds
   folders, the configured theme, and saving the choice in the base
