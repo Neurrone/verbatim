@@ -23,6 +23,7 @@ A test never falls back to another target when its own is missing, and never cho
 - Speech is never discarded unchecked. A scenario ends by asserting that nothing further was said: once Verbatim says it has handled the scenario's last input and is idle, nothing may have been queued that no assertion matched.
 - A scenario never moves on past speech it has not asserted. Injecting input while an utterance no assertion has matched is waiting is a harness error.
 - Startup speech is asserted at the start of every scenario, like any other speech.
+- One exception, decided by the owner: `rapid_tabbing_in_settings`, whose intent is the end state after a burst of focus changes. Which controls the burst passes through get announced depends on timing, as in NVDA, so that speech is asserted only to have been cut off, never heard in full; its text is not asserted. The final announcement, everything after it, and the navigator are asserted exactly.
 - A mismatch is reported with the expected and actual sequences, escaped, and the first utterance and character that differ.
 - Counts are exact numbers, not bounds. State is compared whole, not as a subset.
 - A test's expectation is fixed before it runs. It never reads Verbatim's answer to decide what to expect next; when it needs the system's state, such as a lock key's, it reads that state independently first.
