@@ -69,6 +69,28 @@ pub fn trim_padding(line: &str) -> &str {
     line.trim_end_matches(char::is_whitespace)
 }
 
+/// Whether `c` is a bidirectional formatting character: the left-to-right
+/// and right-to-left marks, the embeddings and overrides with the pop that
+/// ends them, and the isolates with theirs. They order text on screen and
+/// have nothing to say.
+#[must_use]
+pub fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// Removes every bidirectional formatting character ([`is_bidi_control`])
+/// from `text`, as an application's names and values are read: File
+/// Explorer's dates and the clock put left-to-right marks between their
+/// numbers.
+pub fn strip_bidi_controls(text: &mut String) {
+    if text.contains(is_bidi_control) {
+        text.retain(|c| !is_bidi_control(c));
+    }
+}
+
 /// Whether `c` ends a line: a carriage return, a line feed, the vertical
 /// tab, the form feed, the next-line control, or Unicode's line or
 /// paragraph separator. A carriage return on its own is a line break, as
@@ -500,6 +522,16 @@ mod tests {
         assert_eq!(cell_width("ab"), 2);
         assert_eq!(cell_width("中文"), 4);
         assert_eq!(cell_width("e\u{301}"), 1);
+    }
+
+    #[test]
+    fn bidirectional_formatting_characters_are_stripped() {
+        let mut date = "\u{200E}08/\u{200E}10/\u{200E}2026".to_owned();
+        strip_bidi_controls(&mut date);
+        assert_eq!(date, "08/10/2026");
+        let mut text = "\u{202B}a\u{202C}\u{2067}b\u{2069}\u{200F}".to_owned();
+        strip_bidi_controls(&mut text);
+        assert_eq!(text, "ab");
     }
 
     #[test]

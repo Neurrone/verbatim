@@ -1,0 +1,17 @@
+{
+  "id": "root",
+  "role": "pane",
+  "name": "Mockapp Bidi Marks Fixture",
+  "states": ["focused"],
+  "children": [
+    {
+      "id": "dates",
+      "role": "list",
+      "native": "list_view",
+      "columns": [["Date modified", 120]],
+      "children": [
+        { "id": "date", "role": "list_item", "name": "‎08/‎10/‎2026" }
+      ]
+    }
+  ]
+}

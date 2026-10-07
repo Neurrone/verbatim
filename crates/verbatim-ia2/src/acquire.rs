@@ -1457,7 +1457,7 @@ fn read_snapshot_with(
     // A list view item has no description either, as NVDA's has none, and
     // one that shows columns is named by them ("content; Header:
     // content"), as NVDA names it.
-    let (name, description) = if list_view_item {
+    let (mut name, mut description) = if list_view_item {
         let columns = crate::list_view::column_name(key.0, acc.child(), description.as_deref())
             .ok()
             .flatten();
@@ -1465,6 +1465,16 @@ fn read_snapshot_with(
     } else {
         (name, description)
     };
+    // A list view's dates, as File Explorer's, carry left-to-right marks
+    // between their numbers, which NVDA strips; so are they here, and every
+    // other bidirectional formatting character with them.
+    let mut value = value;
+    for text in [&mut name, &mut value, &mut description]
+        .into_iter()
+        .flatten()
+    {
+        verbatim_text::strip_bidi_controls(text);
+    }
     // A window object — MSAA's second face of every windowed control,
     // role ROLE_SYSTEM_WINDOW alongside the client object's real role —
     // gets its identity keyed under OBJID_WINDOW, never OBJID_CLIENT.

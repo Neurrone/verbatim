@@ -220,7 +220,9 @@ Public API:
   header's item count, `LVM_GETCOLUMNORDERARRAY`, `LVM_GETSUBITEMRECT`,
   `LVM_GETITEMTEXTW`, and `LVM_GETCOLUMNW`, their structures written into
   the list view's process through `edit`'s target process, with pointer
-  fields sized for it).
+  fields sized for it). Every name, value, and description read loses its
+  bidirectional formatting characters (`verbatim_text::strip_bidi_controls`),
+  as NVDA strips the direction marks from list view items and the clock.
 - `calls` — the count of the cross-process calls `acquire` makes, kept per
   thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
   Every `IAccessible` method, `IAccIdentity`'s identity string, the

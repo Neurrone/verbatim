@@ -361,6 +361,11 @@ Public API:
   process's life. Role and state mapping in
   `map`, plus `map`'s total `notification_kind_from_uia` and
   `notification_processing_from_uia` tables for the notification payload.
+  Every snapshot's name, value, and description lose their bidirectional
+  formatting characters as they are read
+  (`snapshot_parts_from_cached_element`, through
+  `verbatim_text::strip_bidi_controls`), as NVDA strips the direction marks
+  from File Explorer's dates and the clock.
 
 Implementation note on default values: UIA returns default values for
 properties on elements that do not support them, rather than an error, and

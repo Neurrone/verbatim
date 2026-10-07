@@ -1728,6 +1728,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-model",
+ "verbatim-text",
  "windows",
  "workspace-hack",
 ]
@@ -1899,6 +1900,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-model",
+ "verbatim-text",
  "windows",
  "windows-core",
  "workspace-hack",

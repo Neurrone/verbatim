@@ -1700,6 +1700,14 @@ mod tests {
             character_name("\u{215C}", None).as_deref(),
             Some("three eighths")
         );
+        assert_eq!(
+            character_name("\u{200E}", None).as_deref(),
+            Some("left to right mark")
+        );
+        assert_eq!(
+            character_name("\u{2068}", None).as_deref(),
+            Some("first strong isolate")
+        );
         assert_eq!(character_name("a", None), None);
         assert_eq!(character_name("ab", None), None);
         // A language with no table of its own falls back to English.

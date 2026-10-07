@@ -39,6 +39,11 @@ Windows API, and `cargo xtask ci` checks that it does not.
   characters and none for combining marks.
 - `trim_padding`: a terminal line without its trailing padding, whatever
   whitespace characters it is made of.
+- `is_bidi_control` and `strip_bidi_controls`: the bidirectional
+  formatting characters (the left-to-right and right-to-left marks, the
+  embeddings and overrides, the isolates, and the pops that end them),
+  which the outposts remove from every name, value, and description they
+  read.
 
 ## Units
 

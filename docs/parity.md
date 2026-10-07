@@ -1602,6 +1602,16 @@ verified.
   had been a run of characters other than white space, so Thai or Chinese
   in such a control was one word). The paragraph-style setting is
   **not yet**.
+- Direction marks in names and values. NVDA removes the left-to-right
+  and right-to-left marks from list view items, File Explorer's values,
+  and the clock ("Direction marks in names and values" in
+  [NVDAObjects](nvda/object-model.md)). Verbatim: **different, deliberately,
+  since 2026-10-08**: the outposts remove them, and the embeddings,
+  overrides, and isolates with them, from every name, value, and
+  description they read, through UIA and MSAA alike, so a date reads the
+  same in any application. In text read by character, each is named in
+  the character table: NVDA's two names, and the Unicode names for the
+  others.
 - Line breaks. NVDA speaks carriage returns and line feeds inside text as
   spaces ("Line breaks in spoken text" in [Speech](nvda/speech.md)).
   Verbatim: **matched since 2026-10-06**, for every kind of line break, at
