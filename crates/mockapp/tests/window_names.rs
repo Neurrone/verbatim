@@ -11,35 +11,35 @@
 //! The outpost runs in this process (`common::outpost`). mockapp's
 //! `client-name` changes the client area's accessible name alone, as
 //! Windows 11 Notepad does for a moment when its window is activated, and
-//! `set-title` changes the window's text; both raise a name change on the
-//! client area.
+//! `set-title` changes the window's text, for which Windows raises the name
+//! change.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_model::{NormalizedEvent, PropertyChange};
+use verbatim_model::{NodeId, NormalizedEvent, PropertyChange};
 use verbatim_outpost::protocol::OutpostToSupervisor;
 
 use common::outpost::OutpostUnderTest;
 
-/// The name the outpost's next message, a name change, reports.
-fn next_name(outpost: &OutpostUnderTest) -> Option<String> {
+/// The node and the name the outpost's next message, a name change,
+/// reports.
+fn next_name(outpost: &OutpostUnderTest) -> (NodeId, Option<String>) {
     match outpost.next() {
         OutpostToSupervisor::Event {
             event:
                 NormalizedEvent::PropertyChanged {
+                    node_id,
                     change: PropertyChange::Name(name),
                     child_count: None,
-                    ..
                 },
             ..
-        } => name,
+        } => (node_id, name),
         other => panic!("the outpost said {other:?}, not a name change"),
     }
 }
 
-#[test]
 fn a_top_level_windows_client_area_is_named_by_the_window_text() {
     common::init_com();
     let title = common::unique_title("mockapp-window-names");
@@ -51,12 +51,24 @@ fn a_top_level_windows_client_area_is_named_by_the_window_text() {
     // name reported is still the window's text, the title, and Core, which
     // already has that name, says nothing.
     common::apply(&mut app, hwnd, "client-name Notepad");
-    assert_eq!(next_name(&outpost), Some(title.clone()));
+    let (client, name) = next_name(&outpost);
+    assert_eq!(name, Some(title.clone()));
     outpost.settled();
 
-    // The window renamed: its new text is its new name, which Core speaks.
+    // The window renamed: the window's new text is its new name, which
+    // Core speaks.
     common::apply(&mut app, hwnd, "set-title Renamed window");
-    assert_eq!(next_name(&outpost), Some("Renamed window".to_owned()));
+    assert_eq!(
+        next_name(&outpost),
+        (client, Some("Renamed window".to_owned()))
+    );
     outpost.settled();
     app.quit();
+}
+
+fn main() {
+    harness::run(&[(
+        "a_top_level_windows_client_area_is_named_by_the_window_text",
+        a_top_level_windows_client_area_is_named_by_the_window_text,
+    )]);
 }

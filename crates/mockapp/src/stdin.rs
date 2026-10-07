@@ -78,9 +78,8 @@ pub(crate) enum Command {
     /// does when its window is activated. MSAA-only.
     ClientName(String),
     /// `set-title <text>`: sets the window's text, its title, leaving the
-    /// root node's accessible name as it is, and raises
-    /// `EVENT_OBJECT_NAMECHANGE` on the client area, as a window renamed
-    /// with its title does. MSAA-only.
+    /// root node's accessible name as it is; Windows raises the name change
+    /// a window's new text raises. MSAA-only.
     SetTitle(String),
     /// `quit`.
     Quit,

@@ -80,8 +80,8 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::SetTitle(text) => {
             let title = windows::core::HSTRING::from(text);
             // SAFETY: `hwnd` is the mockapp window's own live handle.
+            // Windows raises the name change itself.
             unsafe { SetWindowTextW(hwnd, &title) }.map_err(|error| error.to_string())?;
-            notify_client(hwnd, EVENT_OBJECT_NAMECHANGE);
         }
         Command::Select(id) => {
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
