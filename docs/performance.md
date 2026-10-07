@@ -513,7 +513,7 @@ Reading mockapp's three lines (two lines and the empty one after the last
 line break) from the caret, and moving the caret as each is reached.
 
 - Minimum: 1 UIA call for every batch of lines read ahead
-  (`TextOp::ReadAhead`, sixteen units), and 1 for each caret move.
+  (`TextOp::ReadAhead`, twenty units), and 1 for each caret move.
 - Today: 1 UIA call for all three lines remotely, its end found in the
   same program; 29 classically. Before, say-all asked for one line per
   request, each a round trip remotely or not: 9 calls for the first line,
@@ -522,19 +522,15 @@ line break) from the caret, and moving the caret as each is reached.
   classically (4 both ways before).
 - Target: 1 per batch and 1 per caret move, met.
 
-When the next batch is read: say-all keeps its pieces in a buffer and
-hands them to speech two ahead of playback, and reads the next batch when
-what is left, handed out and buffered, would last less than three seconds
-at the pace of speech it measures from its marks
-(`docs/crates/verbatim-core.md`, "Say-all"). The mark is set by time, not
-by piece count, because pieces vary from a word to a paragraph and speech
-from slow to several hundred words a minute. Three seconds is chosen from
-the reads it must cover: sixteen lines of fifty characters read ahead in
-0.9 ms at the median remotely and 22 to 32 ms classically, with the worst
-of 600 classic reads 190 ms on a machine loaded by other builds (below), so
-the next batch arrives at least fifteen times sooner than speech would run
-dry, with Core's and the pipe's own latency inside that margin; a longer
-mark would only keep more text buffered.
+When the next batch is read (decided with Dickson on 2026-10-07): say-all
+reads 20 lines or sentences at a time, keeps their pieces in a buffer,
+hands them to speech two ahead of playback, and reads the next 20 once
+fewer than 10 pieces are left to speak, handed out and buffered together
+(`docs/crates/verbatim-core.md`, "Say-all"). It replaced a low-water mark
+in time (three seconds at a pace of speech measured from the marks): a
+count needs no estimate, and ten pieces, even of a few words each, last
+far longer than a batch's read, which the measurements against Windows 11
+Notepad below confirm.
 
 ### The caret's location, UIA
 

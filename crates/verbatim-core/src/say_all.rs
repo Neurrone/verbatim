@@ -13,12 +13,10 @@
 //! operations. The batch's pieces wait in a buffer and are handed to speech
 //! one at a time, [`HANDED`] ahead of playback, each with its own index
 //! mark; when playback reaches a mark, the caret or review cursor moves to
-//! its piece and the next piece is handed on. The next batch is read when
-//! what is left to speak, handed out and buffered, would last less than
-//! [`LOW_WATER_MS`] at the pace of speech, which say-all measures from the
-//! times its marks are reached. Any key stops it, dropping the buffer and
-//! leaving the cursor where reading stopped, and the display is kept on
-//! while it reads.
+//! its piece and the next piece is handed on. The next batch is read once
+//! fewer than [`LOW_WATER`] pieces are left to speak, handed out and
+//! buffered together. Any key stops it, dropping the buffer and leaving the
+//! cursor where reading stopped, and the display is kept on while it reads.
 
 use verbatim_model::{
     Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
@@ -33,32 +31,17 @@ use crate::text;
 
 /// How many units each read asks for: a line or a sentence each, a batch
 /// lasts tens of seconds of speech, so a round trip is rare.
-pub(crate) const READ_AHEAD: u8 = 16;
+pub(crate) const READ_AHEAD: u8 = 20;
 
 /// How many pieces are handed to speech ahead of playback: the one playing
 /// and the one after it, so speech never waits for Core between pieces.
 pub(crate) const HANDED: usize = 2;
 
-/// The next batch is read once what is left to speak would last less than
-/// this many milliseconds (`docs/performance.md`, "Say-all"): far longer
-/// than a batch's read takes, even classically against a busy provider,
-/// so speech never runs dry, and short enough that the buffer stays small.
-pub(crate) const LOW_WATER_MS: u64 = 3_000;
-
-/// The pace of speech assumed before any is measured, in characters per
-/// minute: about 30 characters a second, a fast reading pace, so the first
-/// batch's successor is asked for early rather than late.
-pub(crate) const DEFAULT_PACE: u32 = 1_800;
-
-/// The slowest and fastest paces a measurement is taken to be, in
-/// characters per minute: a pause (a long silence between pieces) or two
-/// marks reported together do not swing the estimate beyond them.
-const MIN_PACE: u32 = 300;
-const MAX_PACE: u32 = 12_000;
-
-/// A gap between two marks shorter than this, in milliseconds, is not
-/// measured.
-const MIN_PACE_SAMPLE_MS: u64 = 200;
+/// The next batch is read once fewer than this many pieces are left to
+/// speak, handed to speech and buffered together (`docs/performance.md`,
+/// "Say-all"): even short pieces last far longer than a batch's read
+/// takes, classically against a busy provider, so speech never runs dry.
+pub(crate) const LOW_WATER: usize = 10;
 
 /// Starts reading `node` from `at`, moving the caret as it goes when
 /// `moves_caret`, the review cursor otherwise. Stops a say-all already
@@ -105,7 +88,6 @@ pub(crate) fn start(
         queued: std::collections::VecDeque::new(),
         buffer: std::collections::VecDeque::new(),
         trace: None,
-        last_reached: None,
         finished: false,
         display_held,
     });
@@ -239,43 +221,18 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
             validity: None,
             say_all: true,
         }));
-        let characters = u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
+        let position = TextPosition {
+            anchor: chunk.start,
+            offset: start,
+        };
         if let Some(say_all) = state.say_all.as_mut() {
-            say_all.queued.push_back((
-                mark,
-                TextPosition {
-                    anchor: chunk.start,
-                    offset: start,
-                },
-                characters,
-            ));
+            say_all.queued.push_back((mark, position));
         }
     }
 }
 
-/// The milliseconds of speech say-all has read and not yet heard: the
-/// characters handed to speech and buffered, at the pace last measured, or
-/// [`DEFAULT_PACE`] before any.
-fn time_left_ms(state: &SrState) -> u64 {
-    let Some(say_all) = &state.say_all else {
-        return 0;
-    };
-    let handed: u64 = say_all
-        .queued
-        .iter()
-        .map(|&(_, _, characters)| u64::from(characters))
-        .sum();
-    let buffered: u64 = say_all
-        .buffer
-        .iter()
-        .map(|piece| piece.text().chars().count() as u64)
-        .sum();
-    let pace = u64::from(state.say_all_pace.unwrap_or(DEFAULT_PACE).max(1));
-    (handed + buffered) * 60_000 / pace
-}
-
 /// Ends say-all once everything is read and heard, or reads the next batch
-/// when what is left to speak would last less than [`LOW_WATER_MS`].
+/// when fewer than [`LOW_WATER`] pieces are left to speak.
 fn read_on_or_end(state: &mut SrState) -> Vec<Effect> {
     let Some(say_all) = &state.say_all else {
         return Vec::new();
@@ -283,7 +240,7 @@ fn read_on_or_end(state: &mut SrState) -> Vec<Effect> {
     if say_all.finished {
         return end_if_done(state);
     }
-    if say_all.pending.is_none() && time_left_ms(state) < LOW_WATER_MS {
+    if say_all.pending.is_none() && say_all.queued.len() + say_all.buffer.len() < LOW_WATER {
         return read_next(state);
     }
     Vec::new()
@@ -316,46 +273,27 @@ fn pieces(
     ranges
 }
 
-/// Handles playback reaching an index mark at `at_ms` (milliseconds since
-/// the Unix epoch, 0 when unknown): moves the caret or review cursor to the
-/// piece it starts, measures the pace of speech since the mark before,
-/// hands speech the next piece, reads on when little is left, and ends
-/// say-all after the last piece.
-pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark, at_ms: u64) -> Vec<Effect> {
+/// Handles playback reaching an index mark: moves the caret or review
+/// cursor to the piece it starts, hands speech the next piece, reads on
+/// when little is left, and ends say-all after the last piece.
+pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
     };
-    if !say_all.queued.iter().any(|(queued, _, _)| *queued == mark) {
+    if !say_all.queued.iter().any(|(queued, _)| *queued == mark) {
         return Vec::new();
     }
     let mut reached = None;
-    let mut passed = 0u32;
-    while let Some(&(queued, position, characters)) = say_all.queued.front()
+    while let Some(&(queued, position)) = say_all.queued.front()
         && queued <= mark
     {
         say_all.queued.pop_front();
-        if let Some((_, before)) = reached {
-            passed = passed.saturating_add(before);
-        }
-        reached = Some((position, characters));
+        reached = Some(position);
     }
-    let measured = match (say_all.last_reached, at_ms) {
-        (Some((then, characters)), now) if now > then => {
-            Some((characters.saturating_add(passed), now - then))
-        }
-        _ => None,
-    };
-    say_all.last_reached = match (reached, at_ms) {
-        (Some((_, characters)), now) if now != 0 => Some((now, characters)),
-        _ => None,
-    };
     let node = say_all.node;
     let moves_caret = say_all.moves_caret;
-    if let Some((characters, elapsed)) = measured {
-        measure_pace(state, characters, elapsed);
-    }
     let mut effects = Vec::new();
-    if let Some((position, _)) = reached {
+    if let Some(position) = reached {
         if moves_caret {
             let query_id = state.allocate_query_id();
             effects.push(Effect::Text(TextRequest {
@@ -374,26 +312,6 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark, at_ms: u64) ->
     effects.extend(hand_out(state));
     effects.extend(read_on_or_end(state));
     effects
-}
-
-/// Folds one measurement into the pace of speech: `characters` heard in
-/// `elapsed_ms`. Gaps shorter than [`MIN_PACE_SAMPLE_MS`] are too coarse
-/// for the clock and are left out; each sample counts a quarter, so one
-/// slow pause does not swing the estimate.
-fn measure_pace(state: &mut SrState, characters: u32, elapsed_ms: u64) {
-    if characters == 0 || elapsed_ms < MIN_PACE_SAMPLE_MS {
-        return;
-    }
-    let sample = u64::from(characters) * 60_000 / elapsed_ms;
-    let sample = u32::try_from(sample)
-        .unwrap_or(u32::MAX)
-        .clamp(MIN_PACE, MAX_PACE);
-    state.say_all_pace = Some(match state.say_all_pace {
-        Some(pace) => {
-            u32::try_from((u64::from(pace) * 3 + u64::from(sample)) / 4).unwrap_or(sample)
-        }
-        None => sample,
-    });
 }
 
 /// Ends say-all once the document's end has been read and every piece has
