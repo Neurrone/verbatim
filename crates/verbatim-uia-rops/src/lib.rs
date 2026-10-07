@@ -14,7 +14,9 @@
 //! - Execution: an [`Operation`] imports elements and text ranges, runs,
 //!   and maps a failure to an [`Error`] carrying the failing instruction's
 //!   index and source location; an [`Outcome`] converts requested registers
-//!   to Rust values, elements arriving with the cache the program filled.
+//!   to Rust values, elements arriving with the cache the program filled;
+//!   [`counting`] counts the instructions programs execute, to measure them
+//!   against the platform's limit on one run.
 //! - Algorithms with a classic implementation behind the same signature:
 //!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
@@ -68,9 +70,9 @@ pub use opcode::{
     Comparison, NavigationDirection, Opcode, PointProperty, RectProperty, Status, pattern_method,
     pattern_related_object_method,
 };
-pub use operation::{Operation, Outcome, Read, Value};
+pub use operation::{Operation, Outcome, Read, Value, counting};
 pub use terminal::{
-    Fingerprint, Found, SEARCH_LINES, Tail, TailQuery, TailStart, TerminalTailFn, terminal_tail,
+    Fingerprint, Found, SEARCH_MATCHES, Tail, TailQuery, TailStart, TerminalTailFn, terminal_tail,
     terminal_tail_classic, terminal_tail_remote,
 };
 pub use text::{

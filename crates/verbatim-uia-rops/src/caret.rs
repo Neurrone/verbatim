@@ -13,14 +13,18 @@
 //! from the start of its document. Formatting is read by UIA's format unit,
 //! as NVDA reads it (`docs/nvda/document-formatting.md`): each stretch of
 //! the text whose attributes are the same, with the attributes asked for.
-//! A character is one stretch, never walked.
+//! A stretch with an attribute UIA answers as "mixed", from a provider whose
+//! format unit does not end where that attribute changes, is read again by
+//! its words, and a mixed word by its characters, as NVDA reads one. A
+//! character is one stretch, never walked.
 
+use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
     IUIAutomationTextRange, TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line,
-    UIA_AnnotationTypesAttributeId, UIA_FontNameAttributeId, UIA_FontSizeAttributeId,
-    UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId,
-    UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
+    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_FontNameAttributeId,
+    UIA_FontSizeAttributeId, UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId,
+    UIA_IsItalicAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
 };
 
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range};
@@ -369,16 +373,44 @@ struct RunRegisters {
     values: Vec<(Attribute, Reg<kind::Array>, Option<Reg<kind::Array>>)>,
 }
 
-/// Emits the attributes of `run`, appending each to its array.
-fn emit_attributes(
+/// The units a span's formatting is walked by, coarsest first: UIA's format
+/// unit, and for a stretch one of whose attributes reads as UIA's "mixed"
+/// (a provider whose format unit does not split where that attribute
+/// changes), its words, then their characters, as NVDA walks a mixed
+/// stretch. A character's attributes are taken as they come, a mixed one
+/// as none.
+const WALK_UNITS: [TextUnit; 3] = [TextUnit_Format, TextUnit_Word, TextUnit_Character];
+
+/// Emits the reads of `run`'s attributes, in the order of `ids`, and
+/// whether any of them answered UIA's "mixed".
+fn emit_attribute_reads(
     b: &mut Builder,
     run: Reg<kind::TextRange>,
     ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
-    registers: &RunRegisters,
-) {
-    for ((attribute, id), (_, values, grammar)) in ids.iter().zip(&registers.values) {
+) -> (Vec<Reg<kind::Any>>, Reg<kind::Bool>) {
+    let mixed = b.new_bool(false);
+    let mut values = Vec::with_capacity(ids.len());
+    for (_, id) in ids {
         let id = b.int(id.0);
         let value = b.text_range_get_attribute_value(run, id);
+        let this = b.is(TypeTest::MixedAttribute, value);
+        b.or_assign(mixed, this);
+        values.push(value);
+    }
+    (values, mixed)
+}
+
+/// Emits the appending of the attribute values [`emit_attribute_reads`]
+/// read, each to its array.
+fn emit_attributes(
+    b: &mut Builder,
+    read: &[Reg<kind::Any>],
+    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    registers: &RunRegisters,
+) {
+    for (((attribute, _), (_, values, grammar)), &value) in
+        ids.iter().zip(&registers.values).zip(read)
+    {
         if *attribute == Attribute::Annotations {
             let spelling = b.new_bool(false);
             let grammar_error = b.new_bool(false);
@@ -442,7 +474,9 @@ fn emit_attributes(
 }
 
 /// Emits the formatting read of `span`: one stretch for a character, and
-/// otherwise a walk by the format unit, each stretch cut at the span's end.
+/// otherwise a walk by the format unit, each stretch cut at the span's end,
+/// and a stretch with a mixed attribute walked again by finer units
+/// ([`WALK_UNITS`]), up to [`MAX_RUNS`] stretches in all.
 fn emit_runs(
     b: &mut Builder,
     c: &Constants,
@@ -467,19 +501,48 @@ fn emit_runs(
         // A character is one stretch, covering it whatever its length.
         let length = b.uint(0);
         b.array_append(lengths, length);
-        emit_attributes(b, span, ids, &registers);
+        let (read, _) = emit_attribute_reads(b, span, ids);
+        emit_attributes(b, &read, ids, &registers);
         return registers;
     }
-    let format = b.int(TextUnit_Format.0);
-    let limit = b.int(i32::try_from(MAX_RUNS).unwrap_or(i32::MAX));
+    let count = Count {
+        runs: b.new_int(0),
+        limit: b.int(i32::try_from(MAX_RUNS).unwrap_or(i32::MAX)),
+    };
+    emit_walk(b, c, span, 0, ids, &registers, count);
+    registers
+}
+
+/// How many stretches a walk has appended, and the most it may.
+#[derive(Clone, Copy)]
+struct Count {
+    runs: Reg<kind::Int>,
+    limit: Reg<kind::Int>,
+}
+
+/// Emits the walk of `span` by `WALK_UNITS[level]`: from its start, a copy
+/// whose end moves one unit on, cut at the span's end, its attributes read,
+/// and then either walked again by the next unit, when one of them is mixed
+/// and there is a next unit, or appended with its text's length; until the
+/// span's end, or until the stretches appended reach the limit, which ends
+/// every walk.
+fn emit_walk(
+    b: &mut Builder,
+    c: &Constants,
+    span: Reg<kind::TextRange>,
+    level: usize,
+    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    registers: &RunRegisters,
+    count: Count,
+) {
+    let unit = b.int(WALK_UNITS[level].0);
     let walker = c.collapsed(b, span);
-    let count = b.new_int(0);
     let going = b.new_bool(true);
     b.while_(
         |_| going,
         |b| {
             let run = b.text_range_clone(walker);
-            let moved = b.text_range_move_endpoint_by_unit(run, c.end, format, c.one);
+            let moved = b.text_range_move_endpoint_by_unit(run, c.end, unit, c.one);
             let order = b.text_range_compare_endpoints(run, c.end, span, c.end);
             let past = b.compare(order, c.zero, Comparison::GreaterThan);
             let stuck = b.equal(moved, c.zero);
@@ -487,23 +550,39 @@ fn emit_runs(
             b.if_(cut, |b| {
                 b.text_range_move_endpoint_by_range(run, c.end, span, c.end);
             });
-            let text = b.text_range_get_text(run, c.max_text);
-            let length = b.string_size(text);
-            b.array_append(lengths, length);
-            emit_attributes(b, run, ids, &registers);
-            b.text_range_move_endpoint_by_range(walker, c.start, run, c.end);
-            b.add_assign(count, c.one);
-            let order = b.text_range_compare_endpoints(walker, c.start, span, c.end);
-            let done = b.compare(order, c.zero, Comparison::GreaterThanOrEqual);
-            let full = b.compare(count, limit, Comparison::GreaterThanOrEqual);
+            let (read, mixed) = emit_attribute_reads(b, run, ids);
+            let append = |b: &mut Builder| {
+                let text = b.text_range_get_text(run, c.max_text);
+                let length = b.string_size(text);
+                b.array_append(registers.lengths, length);
+                emit_attributes(b, &read, ids, registers);
+                b.add_assign(count.runs, c.one);
+            };
+            if level + 1 < WALK_UNITS.len() {
+                b.if_else(
+                    mixed,
+                    |b| emit_walk(b, c, run, level + 1, ids, registers, count),
+                    append,
+                );
+            } else {
+                append(b);
+            }
+            // The stretch reached the span's end when it was cut there or
+            // ended on it, which the comparison above already says.
+            let reached = b.compare(order, c.zero, Comparison::GreaterThanOrEqual);
+            let done = b.or(reached, stuck);
+            let full = b.compare(count.runs, count.limit, Comparison::GreaterThanOrEqual);
             let stop = b.or(done, full);
-            b.if_(stop, |b| {
-                let no = b.bool(false);
-                b.set(going, no);
-            });
+            b.if_else(
+                stop,
+                |b| {
+                    let no = b.bool(false);
+                    b.set(going, no);
+                },
+                |b| b.text_range_move_endpoint_by_range(walker, c.start, run, c.end),
+            );
         },
     );
-    registers
 }
 
 impl RunRegisters {
@@ -916,42 +995,47 @@ fn unit_at(
     })
 }
 
-/// The attributes of `run`, all of them in one call (`GetAttributeValues`),
-/// or, where the range cannot answer that, one call each (one for both
-/// errors); an attribute whose read fails is not supported.
-fn attributes_of(
+/// The values of `run`'s attributes, in the order of `ids`: all of them in
+/// one call (`GetAttributeValues`), or, where the range cannot answer that,
+/// one call each; an attribute whose read fails is not supported.
+fn attribute_values(
     run: &IUIAutomationTextRange,
     ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
-) -> Result<RunAttributes, Error> {
-    let mut attributes = RunAttributes::default();
+) -> Result<Vec<VARIANT>, Error> {
     if ids.is_empty() {
-        return Ok(attributes);
+        return Ok(Vec::new());
     }
-    let values = run.attributes(&ids.iter().map(|(_, id)| *id).collect::<Vec<_>>())?;
+    Ok(run.attributes(&ids.iter().map(|(_, id)| *id).collect::<Vec<_>>())?)
+}
+
+/// The attributes `values` give, read in the order of `ids`: a sentinel,
+/// "mixed" or "not supported", or a value of another type, as none.
+fn attributes_of(ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)], values: &[VARIANT]) -> RunAttributes {
+    let mut attributes = RunAttributes::default();
     for ((attribute, _), value) in ids.iter().zip(values) {
         match attribute {
             Attribute::Annotations => {
-                let types = verbatim_uia::variant_i32_array(&value).unwrap_or_default();
+                let types = verbatim_uia::variant_i32_array(value).unwrap_or_default();
                 attributes.spelling_error = types.contains(&ANNOTATION_SPELLING_ERROR);
                 attributes.grammar_error = types.contains(&ANNOTATION_GRAMMAR_ERROR);
             }
             Attribute::FontName => {
                 attributes.font_name = (value.vt() == windows::Win32::System::Variant::VT_BSTR)
-                    .then(|| verbatim_uia::variant_string(&value))
+                    .then(|| verbatim_uia::variant_string(value))
                     .flatten();
             }
-            Attribute::FontSize => attributes.font_size = verbatim_uia::variant_f64(&value),
-            Attribute::FontWeight => attributes.font_weight = plain_i32(&value),
-            Attribute::Italic => attributes.italic = verbatim_uia::variant_optional_bool(&value),
-            Attribute::Underline => attributes.underline = plain_i32(&value),
-            Attribute::Color => attributes.color = plain_i32(&value),
+            Attribute::FontSize => attributes.font_size = verbatim_uia::variant_f64(value),
+            Attribute::FontWeight => attributes.font_weight = plain_i32(value),
+            Attribute::Italic => attributes.italic = verbatim_uia::variant_optional_bool(value),
+            Attribute::Underline => attributes.underline = plain_i32(value),
+            Attribute::Color => attributes.color = plain_i32(value),
         }
     }
-    Ok(attributes)
+    attributes
 }
 
 /// A variant's 32-bit integer, `None` for any other type.
-fn plain_i32(value: &windows::Win32::System::Variant::VARIANT) -> Option<i32> {
+fn plain_i32(value: &VARIANT) -> Option<i32> {
     (value.vt() == windows::Win32::System::Variant::VT_I4)
         .then(|| verbatim_uia::variant_i32(value))
         .flatten()
@@ -967,30 +1051,51 @@ fn classic_runs(
     if character {
         return Ok(vec![Run {
             length: 0,
-            attributes: attributes_of(span, ids)?,
+            attributes: attributes_of(ids, &attribute_values(span, ids)?),
         }]);
     }
-    let walker = collapsed(span)?;
     let mut runs = Vec::new();
+    classic_walk(span, 0, ids, max_text, &mut runs)?;
+    Ok(runs)
+}
+
+/// The walk of `span` by `WALK_UNITS[level]` the classic way, as
+/// [`emit_walk`] emits it, appending to `runs`.
+fn classic_walk(
+    span: &IUIAutomationTextRange,
+    level: usize,
+    ids: &[(Attribute, UIA_TEXTATTRIBUTE_ID)],
+    max_text: i32,
+    runs: &mut Vec<Run>,
+) -> Result<(), Error> {
+    let walker = collapsed(span)?;
     loop {
         let run = walker.clone_range()?;
-        let moved = run.move_endpoint_by_unit(Endpoint::End, TextUnit_Format, 1)?;
-        if run.compare_endpoints(Endpoint::End, span, Endpoint::End)? > 0 || moved == 0 {
+        let moved = run.move_endpoint_by_unit(Endpoint::End, WALK_UNITS[level], 1)?;
+        let order = run.compare_endpoints(Endpoint::End, span, Endpoint::End)?;
+        if order > 0 || moved == 0 {
             run.move_endpoint_to(Endpoint::End, span, Endpoint::End)?;
         }
-        runs.push(Run {
-            length: run.text(max_text)?.len(),
-            attributes: attributes_of(&run, ids)?,
-        });
-        walker.move_endpoint_to(Endpoint::Start, &run, Endpoint::End)?;
-        let done = walker.compare_endpoints(Endpoint::Start, span, Endpoint::End)? >= 0;
-        if done || runs.len() >= MAX_RUNS as usize {
-            return Ok(runs);
+        let values = attribute_values(&run, ids)?;
+        if level + 1 < WALK_UNITS.len() && values.iter().any(verbatim_uia::is_mixed) {
+            classic_walk(&run, level + 1, ids, max_text, runs)?;
+        } else {
+            runs.push(Run {
+                length: run.text(max_text)?.len(),
+                attributes: attributes_of(ids, &values),
+            });
         }
+        // The stretch reached the span's end when it was cut there or ended
+        // on it, which the comparison already says.
+        let done = order >= 0 || moved == 0;
+        if done || runs.len() >= MAX_RUNS as usize {
+            return Ok(());
+        }
+        walker.move_endpoint_to(Endpoint::Start, &run, Endpoint::End)?;
     }
 }
 
-/// The caret read the classic way, the fallback and the reference: the
+// The caret read the classic way, the fallback and the reference: the
 /// same steps as the remote program, each a cross-process call, counted on
 /// the thread's `verbatim_uia::calls`.
 ///

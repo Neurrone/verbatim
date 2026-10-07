@@ -24,6 +24,7 @@ use crate::instruction::{Instruction, OperandId};
 use crate::opcode::{Opcode, Status};
 
 /// An element or text range a program starts from.
+#[derive(Clone)]
 pub(crate) enum Import {
     Element(IUIAutomationElement),
     TextRange(IUIAutomationTextRange),
@@ -38,6 +39,8 @@ pub struct Operation {
     imports: Vec<(OperandId, Import)>,
     results: Vec<OperandId>,
     opcodes: BTreeSet<Opcode>,
+    /// The first operand id the program does not use.
+    next_id: u32,
 }
 
 impl Operation {
@@ -45,6 +48,7 @@ impl Operation {
         emitted: Vec<Emitted>,
         imports: Vec<(OperandId, Import)>,
         results: Vec<OperandId>,
+        next_id: u32,
     ) -> Self {
         // The version, then every instruction.
         let mut bytecode = 0u32.to_le_bytes().to_vec();
@@ -59,7 +63,82 @@ impl Operation {
             imports,
             results,
             opcodes,
+            next_id,
         }
+    }
+
+    /// The same program counting what it executes: before each of its
+    /// instructions, an `Add` of one to a counter register of its own, every
+    /// jump's offset adjusted so it lands on the `Add` before its target,
+    /// and the counter added to the results. Its registers, results, and
+    /// effects are the program's; the counter ends as the number of the
+    /// program's own instructions the run executed. The counting program
+    /// executes twice as many and two more, so it reaches the platform's
+    /// instruction limit at half the program's size.
+    fn counting(&self) -> (Self, Reg<kind::Int>) {
+        let counter = OperandId(self.next_id);
+        let one = OperandId(self.next_id + 1);
+        let at = Location::caller();
+        let mut emitted = vec![
+            Emitted {
+                instruction: Instruction::NewInt {
+                    result: counter,
+                    value: 0,
+                },
+                location: at,
+            },
+            Emitted {
+                instruction: Instruction::NewInt {
+                    result: one,
+                    value: 1,
+                },
+                location: at,
+            },
+        ];
+        for item in &self.emitted {
+            emitted.push(Emitted {
+                instruction: Instruction::Add {
+                    target: counter,
+                    value: one,
+                },
+                location: item.location,
+            });
+            // An offset counts instructions from the jump to its target;
+            // each now has an `Add` before it.
+            let doubled = |offset: i32| 2 * offset - 1;
+            let mut instruction = item.instruction.clone();
+            match &mut instruction {
+                Instruction::ForkIfFalse { offset, .. }
+                | Instruction::ForkIfTrue { offset, .. }
+                | Instruction::Fork { offset }
+                | Instruction::NewTryBlock {
+                    catch_offset: offset,
+                } => *offset = doubled(*offset),
+                Instruction::NewLoopBlock {
+                    break_offset,
+                    continue_offset,
+                } => {
+                    *break_offset = doubled(*break_offset);
+                    *continue_offset = doubled(*continue_offset);
+                }
+                _ => {}
+            }
+            emitted.push(Emitted {
+                instruction,
+                location: item.location,
+            });
+        }
+        let imports = self
+            .imports
+            .iter()
+            .map(|(id, import)| (*id, import.clone()))
+            .collect();
+        let mut results = self.results.clone();
+        results.push(counter);
+        (
+            Self::new(emitted, imports, results, self.next_id + 2),
+            Reg::new(counter),
+        )
     }
 
     #[cfg(test)]
@@ -112,7 +191,27 @@ impl Operation {
     /// [`Error::Unsupported`] when the provider lacks an instruction,
     /// [`Error::Execute`] when the call fails, and [`Error::Failed`] when
     /// the program stops with a failure status.
+    ///
+    /// While [`counting`] is on for this thread, the program runs as its
+    /// counting form instead, which has the same results and effects, and
+    /// how many of its instructions the run executed is recorded.
     pub fn execute(&self) -> Result<Outcome, Error> {
+        if !counting::active() {
+            return self.run();
+        }
+        let (program, counter) = self.counting();
+        let result = program.run();
+        let executed = match &result {
+            Ok(outcome) => outcome.get(counter).ok(),
+            Err(Error::Failed(failure)) => failure.partial.get(counter).ok(),
+            Err(_) => None,
+        };
+        counting::record(executed.and_then(|count| u32::try_from(count).ok()));
+        result
+    }
+
+    /// Runs the program as [`execute`](Self::execute) describes.
+    fn run(&self) -> Result<Outcome, Error> {
         let remote = CoreAutomationRemoteOperation::new().map_err(Error::Unavailable)?;
         for (id, import) in &self.imports {
             let operand = operand_id(*id);
@@ -171,6 +270,48 @@ impl Operation {
             location,
             partial: outcome,
         })))
+    }
+}
+
+/// Counting the instructions remote programs execute, to measure them
+/// against the platform's limit on one run (`docs/performance.md`, "The
+/// instruction limit"). While counting is on for a thread, every program
+/// that thread runs is run in its counting form, which has the same
+/// results and effects, and how many of the program's own instructions it
+/// executed is recorded. The counting form executes twice as many and two
+/// more, so a program over half the limit fails with the limit's status
+/// while counted; it is a measurement, never on in Verbatim itself.
+pub mod counting {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static COUNTS: RefCell<Option<Vec<Option<u32>>>> = const { RefCell::new(None) };
+    }
+
+    /// Turns counting on for this thread, forgetting earlier counts.
+    pub fn start() {
+        COUNTS.with(|counts| *counts.borrow_mut() = Some(Vec::new()));
+    }
+
+    /// Turns counting off for this thread and returns, in order, how many
+    /// instructions each program run since [`start`] executed: `None` for
+    /// a run that gave no count (one that failed before it ran, or whose
+    /// counter could not be read).
+    #[must_use]
+    pub fn stop() -> Vec<Option<u32>> {
+        COUNTS.with(|counts| counts.borrow_mut().take().unwrap_or_default())
+    }
+
+    pub(super) fn active() -> bool {
+        COUNTS.with(|counts| counts.borrow().is_some())
+    }
+
+    pub(super) fn record(executed: Option<u32>) {
+        COUNTS.with(|counts| {
+            if let Some(counts) = counts.borrow_mut().as_mut() {
+                counts.push(executed);
+            }
+        });
     }
 }
 
@@ -431,5 +572,82 @@ impl Read for kind::Any {
     type Value = Value;
     fn read(raw: Option<IInspectable>) -> windows::core::Result<Value> {
         Value::from_inspectable(raw)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::builder::Builder;
+    use crate::instruction::{Instruction, OperandId};
+    use crate::opcode::Comparison;
+
+    /// The offsets of a jump instruction, none for another.
+    fn offsets(instruction: &Instruction) -> Vec<i32> {
+        match instruction {
+            Instruction::ForkIfFalse { offset, .. }
+            | Instruction::ForkIfTrue { offset, .. }
+            | Instruction::Fork { offset }
+            | Instruction::NewTryBlock {
+                catch_offset: offset,
+            } => vec![*offset],
+            Instruction::NewLoopBlock {
+                break_offset,
+                continue_offset,
+            } => vec![*break_offset, *continue_offset],
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_counting_form_counts_before_every_instruction_and_keeps_its_jumps() {
+        let mut b = Builder::new();
+        let count = b.new_int(0);
+        let limit = b.int(3);
+        b.while_(
+            |b| b.compare(count, limit, Comparison::LessThan),
+            |b| {
+                let flag = b.new_bool(false);
+                b.if_(flag, Builder::break_loop);
+                let one = b.int(1);
+                b.add_assign(count, one);
+            },
+        );
+        b.try_catch(|b| b.halt(), |_, _| {});
+        let program = b.finish();
+        let (counting, counter) = program.counting();
+        let original: Vec<&Instruction> = program
+            .emitted()
+            .iter()
+            .map(|emitted| &emitted.instruction)
+            .collect();
+        let instrumented: Vec<&Instruction> = counting
+            .emitted()
+            .iter()
+            .map(|emitted| &emitted.instruction)
+            .collect();
+        // The counter and its step first, then an add before each
+        // instruction.
+        assert_eq!(instrumented.len(), 2 + 2 * original.len());
+        let add = Instruction::Add {
+            target: counter.id(),
+            value: OperandId(counter.id().0 + 1),
+        };
+        let mut jumps = 0;
+        for (index, instruction) in original.iter().enumerate() {
+            assert_eq!(instrumented[2 + 2 * index], &add);
+            let at = 3 + 2 * index;
+            let (old, new) = (offsets(instruction), offsets(instrumented[at]));
+            assert_eq!(old.len(), new.len());
+            // Every jump lands on the add before its old target.
+            for (old, new) in old.into_iter().zip(new) {
+                let target = index.checked_add_signed(old as isize).expect("a target");
+                let landed = at.checked_add_signed(new as isize).expect("a landing");
+                assert_eq!(landed, 2 + 2 * target, "the jump at {index}");
+                jumps += 1;
+            }
+        }
+        // The loop block's two, its condition's fork, the break's fork, the
+        // try block's catch, and the fork past the catch.
+        assert_eq!(jumps, 6);
     }
 }

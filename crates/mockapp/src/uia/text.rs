@@ -15,13 +15,17 @@
 //! unit, so a client sees the text's ends. The caret is the selection's
 //! start, as the edit controls report it, and the focused node's caret
 //! moves with the keys [`caret_key`] lists. The language is English
-//! (`en-US`); the annotation types are the spelling error type for a range
-//! touching one of the fixture's spelling errors and unsupported
-//! otherwise, as Windows 11 Notepad reports them; the font is 11 point
-//! Consolas in black, neither italic nor underlined, its weight 700 in the
+//! (`en-US`) outside the fixture's `cultures` stretches and theirs within
+//! them, mixed over a range that holds more than one; the annotation types
+//! are the spelling error type for a range touching one of the fixture's
+//! spelling errors and unsupported otherwise, as Windows 11 Notepad reports them; the font is 11 point
+//! Consolas in black, italic within the fixture's `italic` stretches (which
+//! the format unit does not end at, so a stretch of it holding italic and
+//! upright text reads as mixed), never underlined, its weight 700 in the
 //! fixture's bold stretches, 400 elsewhere, and mixed across both; every
 //! other text attribute is unsupported. A fixture can make the `IsItalic`
-//! read fail (`italic_fails`), as a provider that fails an attribute read.
+//! read fail (`italic_fails`), as a provider that fails an attribute read,
+//! and its `FindText` fail (`find_text_fails`), as Windows Terminal's has.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -211,6 +215,23 @@ fn within(stretches: &[(usize, usize)], start: usize, end: usize) -> bool {
     (start..end).all(|at| touches(stretches, at, at))
 }
 
+/// The locale id of the text from `start` to `end`: the id of the stretch
+/// of `cultures` holding each character, English outside them, when every
+/// character has the same; `None`, mixed, when they differ. An empty range
+/// has the id at its position.
+fn culture(cultures: &[(usize, usize, i32)], start: usize, end: usize) -> Option<i32> {
+    let at = |offset: usize| {
+        cultures
+            .iter()
+            .find(|&&(from, to, _)| from <= offset && offset < to)
+            .map_or(EN_US, |&(_, _, lcid)| lcid)
+    };
+    let first = at(start);
+    (start..end)
+        .all(|offset| at(offset) == first)
+        .then_some(first)
+}
+
 /// A variant holding `value`, an integer.
 fn int_variant(value: i32) -> VARIANT {
     VARIANT {
@@ -393,6 +414,9 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         ignorecase: windows_core::BOOL,
     ) -> WinResult<ITextRangeProvider> {
         hits::hit(Method::RangeFindText);
+        if formats_of(&self.tree, self.index).find_text_fails {
+            return Err(Error::from(E_FAIL));
+        }
         let all = text_of(&self.tree, self.index);
         let end = self.end.get().min(all.len());
         let start = self.start.get().min(end);
@@ -443,7 +467,12 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         // UIA names them.
         #[allow(non_upper_case_globals)]
         Ok(match attributeid {
-            UIA_CultureAttributeId => int_variant(EN_US),
+            UIA_CultureAttributeId => match culture(&formats.cultures, start, end) {
+                Some(lcid) => int_variant(lcid),
+                // SAFETY: UIA's own sentinel object, owned by the returned
+                // variant.
+                None => sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?),
+            },
             UIA_AnnotationTypesAttributeId => {
                 if touches(&formats.spelling_errors, start, end) {
                     let spelling = ANNOTATION_SPELLING_ERROR;
@@ -484,7 +513,17 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             UIA_IsItalicAttributeId if formats.italic_fails => {
                 return Err(Error::from(E_FAIL));
             }
-            UIA_IsItalicAttributeId => VARIANT::from(false),
+            UIA_IsItalicAttributeId => {
+                if within(&formats.italic, start, end) {
+                    VARIANT::from(true)
+                } else if touches(&formats.italic, start, end) {
+                    // SAFETY: UIA's own sentinel object, owned by the
+                    // returned variant.
+                    sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?)
+                } else {
+                    VARIANT::from(false)
+                }
+            }
             UIA_UnderlineStyleAttributeId | UIA_ForegroundColorAttributeId => int_variant(0),
             _ => not_supported()?,
         })

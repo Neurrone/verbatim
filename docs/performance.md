@@ -488,16 +488,25 @@ space, the misspelt "beta", the line feed).
 
 - Minimum: 1 UIA call remotely. Classically, a caret report's 8 and the
   walk by UIA's format unit: a collapsed copy of the line (2), and for each
-  stretch a copy, `MoveEndpointByUnit`, two comparisons (with the line's
-  end, and of where the next starts), its text, its attributes (one call
-  for all of them, `GetAttributeValues`), and moving the walk on, 7 each,
-  and a `MoveEndpointByRange` to cut a stretch that runs past the line's
-  end, here the last: 39 for four, however many attributes the theme
-  reads.
-- Today: 1 remotely, 39 classically (8 before formatting was read), with
+  stretch a copy, `MoveEndpointByUnit`, a comparison with the line's end,
+  its text, and its attributes (one call for all of them,
+  `GetAttributeValues`), 5 each, moving the walk on after each but the
+  last (3), and a `MoveEndpointByRange` to cut a stretch that runs past
+  the line's end, here the last: 34 for four, however many attributes the
+  theme reads.
+- Today: 1 remotely, 34 classically (8 before formatting was read), with
   the default theme and with every formatting indication on (63 before
-  the attributes were read in one call; "Several text attributes in one
-  call" below).
+  the attributes were read in one call, "Several text attributes in one
+  call" below; 39 before the text range audit of 2026-10-07, which
+  dropped a second comparison per stretch, of where the next one starts
+  with the line's end: the first comparison already says whether the
+  stretch reached the end, and the walk is no longer moved on after the
+  last stretch). The remote program's provider calls fell the same way,
+  from 9 comparisons to 5 and from 8 endpoint moves to 7. Against
+  mockapp, debug build, 200 reports, three runs: classically 3.67 to 3.84
+  ms at the median before and 3.16 to 3.46 after, with the default theme
+  or every indication on; remotely 0.40 ms (0.50 with every indication)
+  either way.
 - Target: 1.
 
 ### A caret key that selects, UIA
@@ -523,10 +532,11 @@ outpost reported: a `Read` moving by a line from the start of the line
 holding the position, then reading that line and its language.
 
 - Minimum: 1 UIA call, one program (`verbatim_uia_rops::text_units`).
-- Today: 1 remotely; classically 9, as before remote operations (a copy
-  of the position, expanded to its line, collapsed, moved, collapsed; a
-  copy expanded to the line reached and its text; its `Culture`
-  attribute). The first review command and report current object on an
+- Today: 1 remotely; classically 8 (a copy of the position, expanded to
+  its line, collapsed, moved; a copy expanded to the line reached and its
+  text; its `Culture` attribute). 9 before the text range audit of
+  2026-10-07, which dropped a second collapse after the move: UIA keeps a
+  collapsed range collapsed when it moves. The first review command and report current object on an
   edit field read the line at the caret the same way, in one program
   (classically 9: the caret's two reads, the line's three, the caret's
   offset in it three, and its language).
@@ -554,7 +564,8 @@ line break) from the caret, and moving the caret as each is reached.
 - Minimum: 1 UIA call for every batch of lines read ahead
   (`TextOp::ReadAhead`, twenty units), and 1 for each caret move.
 - Today: 1 UIA call for all three lines remotely, its end found in the
-  same program; 29 classically. Before, say-all asked for one line per
+  same program; 24 classically (29 before the text range audit, below).
+  Before, say-all asked for one line per
   request, each a round trip remotely or not: 9 calls for the first line,
   10 for each later one, and 10 more for a last request that found the
   end, 39 calls in four requests. Each caret move is 1 call remotely and 4
@@ -596,6 +607,37 @@ behind the application's other events in the outpost's queue. With either
 path, a batch arrives with ten pieces, several seconds of speech, still
 to speak, and the gaps are the same with remote operations on and off:
 the pieces already with speech hide the read entirely.
+
+A batch of twenty lines, classically, after the text range audit of
+2026-10-07 (`phase6-design.md`, item 14 of the work scheduled that day),
+pinned against mockapp's text replaced by forty-five short lines
+(`uia_say_all_batches_cost_exactly`):
+
+- Before: 165 calls for the first batch and 166 for each later one, the
+  same counts as against Windows 11 Notepad above. Each line after the
+  first cost 8: a copy of the line before, collapsed, moved by a line,
+  collapsed again, another copy, expanded, its text, and its `Culture`
+  attribute; and the move that finds whether a line follows the twentieth
+  cost 4.
+- After: 109 for the first batch and 108 for each later one. Each line
+  after the first costs 5: a copy of the line before, collapsed, moved,
+  expanded in place, and its text, since UIA keeps a collapsed range
+  collapsed when it moves (`ITextRangeProvider::Move`) and expanding
+  normalizes a range from its start alone (`ExpandToEnclosingUnit`), so
+  neither the second collapse nor the second copy did anything. The
+  language is read once for the batch, over a range from its first line's
+  start to its last line's end (3 calls), and line by line only when that
+  one read answers UIA's "mixed": 33 calls classically for mockapp's
+  `languages.json`, four lines in English, French, and German, where the
+  three-line batch above costs 24.
+- Remotely still 1 call each; the program makes the same reads inside the
+  provider, so its provider calls fell from 42 copies, 42 or 43 endpoint
+  moves, and 20 `Culture` reads per batch to 24, 23, and 1.
+- Wall clock, debug build against mockapp in its own process, 200 runs of
+  each batch through the outpost's text module, three runs: classically
+  21.6 to 24.0 ms at the median (29 to 42 at the 95th percentile) before
+  and 10.0 to 10.6 (11.7 to 13.0) after; remotely 1.7 to 2.1 ms before and
+  1.0 to 1.6 after.
 
 ### The caret's location, UIA
 
@@ -699,15 +741,19 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   document range read first); so is a terminal's first read when it gains
   the focus, the baseline (1 call, 2 before). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
-  call per provider method: 34 for the baseline of a six-line text, 30 for
-  a grown prompt, 43 for an output line and a new prompt, 43 for more
-  lines than a read takes, 64 for a read that finds nothing new and reads
-  afresh, and 67 for a cleared screen, whose classic read also finds the
-  last line by its text (`FindText`). Every one of these is pinned, both
-  ways. The provider's
+  call per provider method: 31 for the baseline of a six-line text, 27 for
+  a grown prompt, 39 for an output line and a new prompt, 39 for more
+  lines than a read takes, 58 for a read that finds nothing new and reads
+  afresh, and 61 for a cleared screen (34, 30, 43, 43, 64, and 67 before
+  the text range audit of 2026-10-07, which reads a line's text from a
+  copy expanded to its line without collapsing the copy first, since
+  expanding normalizes a range from its start alone), whose classic read also finds the
+  last line by its text (`FindText`), as the remote program now does too
+  (it walked up line by line before 2026-10-07). Every one of these is
+  pinned, both ways. The provider's
   own work is the same either way, and pinned too: 13 clones, 6 line
-  expansions, 6 reads, 5 moves, and 13 other range calls for the output
-  line. The lines spoken are read in one call, however many there are, so
+  expansions, 6 reads, 5 moves, and 9 other range calls for the output
+  line (13 before the audit). The lines spoken are read in one call, however many there are, so
   the cost does not grow with them. Of these calls, the line above where
   the read started, read again at the end, and the last line and the one
   before it, compared with the end of that one read, tell whether the
@@ -782,11 +828,14 @@ starved. Twelve busy threads at normal priority make the same flood take
 ### A terminal's upward search
 
 When a full scrollback has moved the text beneath the anchor, the tail
-read searches up to `SEARCH_LINES` (256) lines above it for the
-fingerprint (`docs/crates/verbatim-uia-rops.md`, "Layer 3: a terminal's
-tail"). Measured on 2026-10-07 against Windows Terminal and the console
-host, each with a full scrollback of 9,001 lines, the fingerprint 0, 10,
-100, and 256 lines up:
+read searches the text above it for the fingerprint by its text
+(`FindText`), both ways and with no bound in lines (decided with Dickson
+on 2026-10-07 for a predictable cost; `docs/crates/verbatim-uia-rops.md`,
+"Layer 3: a terminal's tail"). Until then it searched up to 256 lines
+(`SEARCH_LINES`), line by line remotely and by `FindText` over those
+lines classically. Measured on 2026-10-07 against Windows Terminal and
+the console host, each with a full scrollback of 9,001 lines, the
+fingerprint 0, 10, 100, and 256 lines up:
 
 - The remote program, searching line by line: Windows Terminal 0.5, 0.7,
   1.4, and 2.5 milliseconds; the console host 0.4, 0.5, 1.1, and 1.9. One
@@ -803,11 +852,21 @@ host, each with a full scrollback of 9,001 lines, the fingerprint 0, 10,
   but about 3 on a range the program made, which is why the program does
   not use it.
 
-So the bound costs the remote program about 0.01 milliseconds per line
-searched, 2.5 at 256 lines, and costs the classic search nothing beyond
-the first match: a larger bound, the whole scrollback included, would
-cost the classic search no more, and the remote program about 0.01
-milliseconds for each line it adds that the search reaches. In a console
+So the bound cost the remote program about 0.01 milliseconds per line
+searched, 2.5 at 256 lines, and cost the classic search nothing beyond
+the first match: a larger bound, the whole scrollback included, costs the
+classic search no more. The remote program now searches as the classic
+search does, at about 3 milliseconds for its `FindText` on a range it
+made, about 4 in all, wherever the fingerprint is, where its walk took
+0.5 at the anchor and 2.5 at 256 lines and could not look further.
+
+Against mockapp (`a_fingerprint_far_up_is_found_and_costs_exactly` in
+`crates/mockapp/tests/terminal.rs`), a fingerprint 300 lines up, which
+the bound of 256 missed, is found in 1 call remotely and 58 classically,
+with one `FindText` either way, and the provider calls of both are
+pinned.
+
+In a console
 host whose scrollback is not yet full the text does not move beneath the
 anchor, so no search runs there; but its lines are slow to walk (about
 1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), and
@@ -898,7 +957,8 @@ attribute.
 
 - The caret report after a focus, mockapp's first line (four stretches),
   with every formatting indication on (seven attributes per stretch):
-  classically 63 UIA calls before and 39 after, 5.26 ms at the median
+  classically 63 UIA calls before and 39 after (34 since the text range
+  audit, "The caret report after a focus, UIA" above), 5.26 ms at the median
   before (6.11 at the 95th percentile) and 3.69 ms after (4.29), 200
   runs each; remotely 1 call, 0.36 ms before and 0.39 after. With the
   default theme, which reads only the annotation types, one attribute per
@@ -952,3 +1012,126 @@ remote operations on or off.
 - Handling a change: no call and no provider call, 0.002 ms at the
   median. A change reached a registration 0.13 ms at the median after
   mockapp was told to raise it (100 runs).
+
+## The text range audit
+
+What auditing Verbatim's text range code against Microsoft's guidance
+changed (`phase6-design.md`, item 14 of the work scheduled on 2026-10-07):
+"Using IUIAutomationTextRange", "Understanding Performance Issues When
+Using the Text and TextRange Control Patterns", and the reference pages of
+`ITextRangeProvider` and `IUIAutomationTextRange`. Each change is pinned by
+`crates/mockapp/tests/call_counts.rs` on both paths; say-all's batches and
+the caret report after a focus are given above, with the counts before.
+
+### A stretch whose attribute is mixed
+
+`GetAttributeValue` answers UIA's "mixed" sentinel when an attribute
+varies across the range. Verbatim read it, on both paths, as no value: a
+provider whose format unit does not end where italics change (Windows
+Terminal's and the console host's, `docs/text-attributes.md`) had its
+italics lost. A stretch with a mixed attribute is now read again by its
+words, and a mixed word by its characters, as NVDA reads one, up to the
+64 stretches a span may have. Ordinary text costs nothing more, since the
+mixed test is made on values already read.
+
+- mockapp's `italic.json`, "plain italic text" as one format stretch with
+  "italic" in italics, every formatting indication on (the caret report
+  after a focus): 82 calls classically, where a stretch read as one cost
+  34 for mockapp's four-stretch line; 1 remotely, its program walking the
+  twelve stretches (the line's, four words, seven characters) inside the
+  provider with 84 attribute reads. Before, the line was read as one
+  stretch whose italics were none.
+
+### Expanding without collapsing first
+
+`ExpandToEnclosingUnit` normalizes a range from its start alone: a range
+that starts inside a unit becomes that unit, however far its end reaches.
+A copy collapsed before it was expanded made one call more for nothing.
+The terminal's reads of a line's text (`line_text`, both ways) now expand
+a plain copy: a terminal read costs 3 to 6 calls fewer classically ("A
+terminal output line" above) and as many endpoint moves fewer inside the
+provider remotely. The text source's own reads of a unit, a move, and a
+location from a held position (`UiaText`'s `unit_at`, `move_by`, and
+`location`), and the classic location read, do the same, and a move no
+longer collapses the range after it moves, since UIA keeps a collapsed
+range collapsed when it moves; the ledger's operations above do not reach
+those reads, so their counts are unchanged.
+
+### What the audit found conforming, or left for a decision
+
+- `GetText` is given a length everywhere but a terminal's reads, which
+  are bounded by lines (judged fine by Dickson).
+- A failed attribute read is "not supported" on both paths, and "mixed"
+  is now told apart from it (above).
+- A terminal's search uses `FindText` both ways ("A terminal's upward
+  search" above), with its text trimmed of the padding and
+  line breaks Windows Terminal cannot match.
+- Not detected: a provider without a unit silently uses the next larger
+  one (`ITextRangeProvider::Move`), so a word move in such a provider
+  moves by lines. No call tells it apart; only the terminals' paragraph
+  and page, known to be the whole buffer, are refused. Some providers
+  also return a positive count for a backward move, which NVDA corrects
+  and Verbatim does not. Both are left for a decision.
+- Not used yet, each a feature of its own rather than a fault in what
+  Verbatim reads: `FindAttribute` (finding the next spelling error in one
+  call), `GetChildren` and `RangeFromChild` for embedded objects,
+  `GetVisibleRanges`, annotation objects and `RangeFromAnnotation`, the
+  `IsHidden` attribute, and `ShowContextMenu`.
+
+## The instruction limit
+
+UIA stops a remote operation that executes too many instructions, with
+the status `InstructionLimitExceeded` (2). The limit is not published;
+NVDA's local emulator of remote operations assumes 10,000
+(`phase6-design.md`, item 11 of the work scheduled on 2026-10-07). Measured
+on 2026-10-07 on this machine (Windows 11, build 26200, x64) against
+mockapp (`crates/mockapp/tests/instruction_limit.rs`), it is exactly
+10,000: a loop of 2,498 passes, which executes 10,000 instructions, runs,
+and one more instruction stops it. The test finds it by halving the
+number of passes and then adding single instructions, and pins it.
+
+Each program's count is taken by running it as Verbatim runs it with
+`verbatim_uia_rops::counting` on, which runs the program's counting form
+(an `Add` to a counter before each instruction, every jump adjusted) and
+records how many of the program's own instructions the run executed. The
+counting form executes twice as many, so it can count only programs under
+half the limit. Pinned exactly, worst case against mockapp first, the
+share of the limit in brackets:
+
+- The focus ancestry: 2,180 (22 percent) for a list sixty groups deep,
+  every ancestor up to the window returned under the outpost's depth limit
+  of 64, against 64 known ancestors none of which it meets, with the
+  list's selected item and a held element's focus read; 1,686 for the same
+  stopped at a depth limit of 30, walking on to the window without
+  returning the rest; 1,038 for the list whose group is known, its window
+  still sixty-one levels up. A deeper tree adds a level of the window walk
+  for each level beyond the depth limit, a dozen or so instructions (the
+  navigation step's walk, much the same, takes 12): about two hundred more
+  levels before half the limit. mockapp's fixtures cannot nest
+  deeper than about sixty levels (its JSON parser's recursion limit).
+- The navigation step: 875 (9 percent) from an item sixty-two levels
+  below its window, 144 from right under it, about 12 for each level
+  walked.
+- The caret read: 4,884 (49 percent) for a line of 64 stretches reached by
+  walking one mixed format stretch by words and a mixed word by
+  characters, every attribute read, with a word, the evidence, and a
+  selection's change; 85 for the report after a focus on a line of plain
+  text with the default theme's one attribute. Where every format stretch
+  is mixed (mockapp's `mixed.json`: stretches of two characters, one of
+  them italic), each is walked by words and its word by characters, and
+  each stretch adds 239 instructions: 2,049 for 17 stretches and 3,961 for
+  33, so the 64 stretches a span may have come to about 7,700 (77 percent),
+  which runs under the limit but cannot be counted. This is the one
+  program that can come within a factor of two of the limit. A run that
+  exceeded it would be answered classically for that call
+  (`Path::Fallback`), at a cost of hundreds of calls; programs are not
+  made resumable (Dickson, 2026-10-07), and none is needed while the 64
+  stretches bound the walk.
+- Say-all's batch of twenty lines: 626 (6 percent) a line on from a held
+  position with its lines in three languages, each line's then read; 647
+  for a first batch from the caret in one language. The count does not
+  grow with the lines' length.
+- A terminal's tail: 1,126 (11 percent) when its fingerprint is nowhere
+  and the search checks its 64 matches (`SEARCH_MATCHES`), about 16 each;
+  99 for an anchor in place under new output. The count does not grow
+  with the scrollback or the lines read.

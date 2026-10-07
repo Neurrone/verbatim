@@ -1068,8 +1068,10 @@ verified.
   Verbatim: **matched since 2026-10-07** on the classic path, the same
   bulk read with the same fallback and the same reading of a failed
   attribute; the remote program reads each attribute inside the
-  provider, and a failed one comes back not supported there too. A mixed
-  value is no value on both paths, as before.
+  provider, and a failed one comes back not supported there too. A
+  stretch with a mixed value is read again by words and then characters,
+  as NVDA reads it, on both paths since 2026-10-07 (it was no value
+  before).
 - MSAA winevent flood control (per-thread caps, focus coalescing,
   latest-menu-only). NVDA: `OrderedWinEventLimiter`
   ([MSAA and winevent handling](nvda/msaa.md)). Verbatim: **matched**,

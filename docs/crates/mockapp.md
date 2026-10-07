@@ -137,14 +137,22 @@ its crate-internal modules are the reviewable surface:
   window move the focused node's caret by these units (`caret_key`): Right
   Arrow by a character, Control+Right Arrow to the next word's start, and
   Down and Up Arrow to the same column of the next or previous line, or its
-  end when that line is shorter, raising no event; the language (`Culture`) is `en-US`; the
+  end when that line is shorter, raising no event; the language (`Culture`) is `en-US`
+  outside the node's `cultures` stretches (each a start and an end offset and
+  a Windows locale id) and theirs within one, mixed over a range holding
+  more than one; the
   annotation types are the spelling error type (60001) for a range
   touching one of the spelling errors and unsupported otherwise, as
   Windows 11 Notepad reports them; the font is 11 point Consolas in black,
-  neither italic nor underlined, weighing 700 within a bold stretch, 400
-  outside, and mixed across both; every other attribute is unsupported,
+  never underlined, italic within the node's `italic` stretches (which the
+  format unit does not end at, so one of its stretches holding italic and
+  upright text reads as mixed, as in Windows Terminal), weighing 700
+  within a bold stretch, 400 outside, and mixed across both; every other attribute is unsupported,
   and a node with `italic_fails` set fails its `IsItalic` read with
-  `E_FAIL`, as a provider that fails an attribute read. A range handed back by a client
+  `E_FAIL`, as a provider that fails an attribute read, and one with
+  `find_text_fails` set fails `FindText` the same way, as Windows
+  Terminal's has (`tests/fixtures/terminal_find_fails.json`). A range
+  handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation. `FindText` matches the text
   within the range exactly (or ignoring ASCII case), the last match when
@@ -233,7 +241,8 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
-`events.rs`, `focus_reports.rs`, `remote_ops.rs`, `text.rs`, `uia_tree.rs`)
+`events.rs`, `focus_reports.rs`, `instruction_limit.rs`, `remote_ops.rs`,
+`terminal.rs`, `text.rs`, `uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
@@ -336,6 +345,21 @@ subscription. A container's selected child is pinned over
 through a tab control's `Selection` pattern, classically and in the
 focus's remote program; and so are a text focus's registration, its caret
 and text changes and active text position changes as one group, and the
-handling of an active text position change, which makes no call. On a
+handling of an active text position change, which makes no call. Say-all's
+batches of twenty lines are pinned over `text.json`'s text replaced by
+forty-five lines, and a batch whose lines differ in language over
+`tests/fixtures/languages.json` (lines in English, French, and German, by
+its `cultures`), which `text.rs` also reads both ways; and a line's
+formatting whose one stretch is mixed for italics, over
+`tests/fixtures/italic.json`, read again by words and characters.
+`instruction_limit.rs` finds UIA's limit on the instructions one remote
+operation may execute and pins it, and pins how many each of Verbatim's
+programs executes, counted with `verbatim_uia_rops::counting`, at its
+worst against mockapp and at a typical size: over
+`tests/fixtures/deep.json` (a list sixty groups deep) for the focus
+ancestry and navigation, `tests/fixtures/mixed.json` (format stretches of
+two characters, each with one italic) and `italic.json` for the caret
+read, and `languages.json` and `terminal.json` for say-all and a
+terminal's tail. On a
 mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

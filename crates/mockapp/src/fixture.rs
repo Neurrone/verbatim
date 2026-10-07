@@ -93,7 +93,13 @@ struct RawNode {
     #[serde(default)]
     bold: Vec<(usize, usize)>,
     #[serde(default)]
+    italic: Vec<(usize, usize)>,
+    #[serde(default)]
     italic_fails: bool,
+    #[serde(default)]
+    find_text_fails: bool,
+    #[serde(default)]
+    cultures: Vec<(usize, usize, i32)>,
     #[serde(default)]
     children: Vec<RawNode>,
 }
@@ -123,9 +129,20 @@ pub(crate) struct FixtureNode {
     pub(crate) spelling_errors: Vec<(usize, usize)>,
     /// Stretches of the text in bold, served as UIA's font weight.
     pub(crate) bold: Vec<(usize, usize)>,
+    /// Stretches of the text in italics, served as UIA's `IsItalic`; the
+    /// format unit does not end at them, as Windows Terminal's and the
+    /// console host's do not, so a stretch of it reads as mixed.
+    pub(crate) italic: Vec<(usize, usize)>,
     /// Whether reading the text's `IsItalic` attribute fails, as a provider
     /// that fails an attribute read does.
     pub(crate) italic_fails: bool,
+    /// Whether `FindText` on the text fails, as Windows Terminal's has
+    /// thrown.
+    pub(crate) find_text_fails: bool,
+    /// Stretches of the text in a language other than English, each a
+    /// start and an end UTF-16 offset and a Windows locale id, served as
+    /// UIA's `Culture` attribute.
+    pub(crate) cultures: Vec<(usize, usize, i32)>,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -201,7 +218,10 @@ fn convert(
         text: raw.text,
         spelling_errors: raw.spelling_errors,
         bold: raw.bold,
+        italic: raw.italic,
         italic_fails: raw.italic_fails,
+        find_text_fails: raw.find_text_fails,
+        cultures: raw.cultures,
         children,
     })
 }

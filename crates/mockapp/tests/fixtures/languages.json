@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Languages Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Notes",
+      "states": ["focusable"],
+      "text": "hello\nbonjour\nhallo\n",
+      "cultures": [[6, 14, 1036], [14, 20, 1031]]
+    }
+  ]
+}
