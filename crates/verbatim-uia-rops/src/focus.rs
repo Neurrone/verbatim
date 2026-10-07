@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_HasKeyboardFocusPropertyId,
+    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT, UIA_HasKeyboardFocusPropertyId,
     UIA_IsDataValidForFormPropertyId, UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId,
     UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
     UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
@@ -16,6 +16,7 @@ use verbatim_uia::map::cached_native_window_handle;
 use verbatim_uia::{ElementExt, Uia, WalkerExt};
 
 use crate::builder::{Builder, Reg, kind};
+use crate::caret::gone_or_timed_out;
 use crate::error::Error;
 use crate::instruction::TypeTest;
 use crate::opcode::{Comparison, NavigationDirection};
@@ -128,14 +129,20 @@ impl Path {
 /// for a fallback, why, so the caller can stop trying the remote program
 /// for a window whose import failed.
 ///
+/// A run that fails because the provider did not answer within UIA's
+/// transaction timeout, or because its element is gone, is not a program
+/// failure: the classic walk would fail the same way, after waiting on a
+/// stalled application a second time, so the run's error is returned.
+///
 /// NVDA makes each call site choose instead, asking `remote.isSupported()`
 /// before building a program; here the choice and the fallback live in one
 /// place, and the caller decides only whether to try.
 ///
 /// # Errors
 ///
-/// The classic walk's [`Error`], when it ran and failed; a failed remote
-/// program is never returned, only reported in [`Path::Fallback`].
+/// The classic walk's [`Error`], when it ran and failed; the remote
+/// program's, when it timed out or its element is gone. Any other failed
+/// remote program is never returned, only reported in [`Path::Fallback`].
 pub fn focus_ancestry(
     uia: &Uia,
     query: &FocusQuery<'_>,
@@ -169,7 +176,16 @@ pub fn focus_ancestry(
             return Ok((answer, Path::Remote));
         }
     }
+    if gone_or_timed_out(&error) {
+        return Err(error);
+    }
     focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Fallback(error)))
+}
+
+/// Whether a classic call failed because the provider did not answer
+/// within UIA's transaction timeout.
+fn timed_out(error: &windows::core::Error) -> bool {
+    error.code().0.cast_unsigned() == UIA_E_TIMEOUT
 }
 
 /// Whether a run failed because an element it imported is gone.
@@ -485,11 +501,21 @@ impl RemoteCache {
 /// # Errors
 ///
 /// [`Error::Uia`] when the focus read, the cache request, or the tree
-/// walker fails; a hop that finds no parent ends the walk.
+/// walker fails, or when the previous element's focus read or a hop finds
+/// the provider did not answer within UIA's transaction timeout; a hop
+/// that finds no parent, or fails otherwise, ends the walk.
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
     if !query.element.has_keyboard_focus()? {
         return Ok(FocusAncestry::NotFocused);
     }
+    // A failed read is an element that is gone, but a provider that did
+    // not answer in time has said nothing about it.
+    let previous_focused = match query.previous.map(ElementExt::has_keyboard_focus) {
+        None => None,
+        Some(Ok(focused)) => Some(focused),
+        Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
+        Some(Err(_)) => Some(false),
+    };
     let cache = uia.cache_request(query.properties)?;
     let selected_child = if wants_selected_child(query.element) {
         uia.selected_element(query.element, &cache)
@@ -506,10 +532,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         out_of_time: false,
         selected_child,
         window: own_window(query.element),
-        // A failed read is an element that is gone.
-        previous_focused: query
-            .previous
-            .map(|previous| previous.has_keyboard_focus().unwrap_or(false)),
+        previous_focused,
     };
     let out_of_time = || {
         query
@@ -523,10 +546,17 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             ancestry.out_of_time = true;
             break;
         }
-        // A failed hop is the root.
-        let Ok(parent) = walker.parent(&current, &cache) else {
-            complete = true;
-            break;
+        let parent = match walker.parent(&current, &cache) {
+            Ok(parent) => parent,
+            // A provider that did not answer in time has not said there is
+            // no parent: the walk failed, and what it read is not the
+            // ancestry.
+            Err(error) if timed_out(&error) => return Err(Error::Uia(error)),
+            // Any other failed hop is the root.
+            Err(_) => {
+                complete = true;
+                break;
+            }
         };
         let runtime_id = verbatim_uia::runtime_id(&parent);
         if runtime_id == root {

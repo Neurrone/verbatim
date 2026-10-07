@@ -482,8 +482,12 @@ Implementation notes:
   previous focus's chain (the tracking state's `chain`) and splices the
   rest of that chain in, as NVDA does; the remainder is read within
   `ENRICHMENT_BUDGET`, two seconds (UIA calls inside it wait no longer
-  than that), after which the ancestors are reported unknown. Object
-  navigation's ancestor query reads the whole chain.
+  than that), after which the ancestors are reported unknown. A walk
+  that fails, the remote program by UIA's transaction timeout or the
+  classic walk by a hop that timed out, also reports them unknown, never
+  as an empty chain (`crates/mockapp/tests/remote_ops.rs`,
+  `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`).
+  Object navigation's ancestor query reads the whole chain.
 - A dialog's own text (`read::describe_dialogs`). Before a focus is
   published, every dialog among its ancestors, and the focus itself, that
   is not in the previous focus's chain and has no description of its own

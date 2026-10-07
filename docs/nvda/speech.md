@@ -326,11 +326,16 @@ letter (`sayCapForCapitals`) and a short beep (`beepForCapitals`).
 or review position, and object say-all. Implementation shape: a
 generator (registered with `queueHandler`; [Main loop and watchdog](main-loop-and-watchdog.md))
 walks the text one `UNIT_READINGCHUNK` at a time, speaking each chunk
-with a `CallbackCommand` at its end; the callback advances the caret
-(or review position) to the spoken chunk and requests the next chunk
-only when playback nears the end of what is queued — so the caret
-tracks the audio, lookahead stays bounded, and stopping (any key)
-both cancels speech and leaves the caret where reading stopped.
+with a `CallbackCommand` at its start (`_TextReader.nextLine`); when
+playback reaches the callback, it moves the caret (or review position) to
+the start of that chunk (`lineReached`, then `updateCaret`, which collapses
+the chunk's range to its start before selecting it) and asks for the next
+chunk, so the caret tracks the audio, lookahead stays bounded, and
+stopping (any key) both cancels speech and leaves the caret at the start
+of the chunk whose callback playback reached last. The first chunk runs
+from the caret to the end of its unit (the range's end is moved by a
+chunk, not expanded), so reading starts at the caret, not at the start of
+its line.
 Structure changes mid-read (the document mutating) surface as the
 TextInfo failing to move, ending the run gracefully.
 
@@ -344,6 +349,50 @@ with ICU (UAX 29) over the containing paragraph
 fall back to the line where a unit is not implemented; UIA TextInfos
 always read by line, because `UIAHandler.NVDAUnitsToUIAUnits` maps the
 reading chunk to `TextUnit_Line` (UIA has no sentence unit).
+
+### Say-all speaks without pauses
+
+Every chunk say-all reads, whatever the unit, passes through
+`SpeechWithoutPauses` (`speech/speechWithoutPauses.py`) before it reaches
+the synthesizer, so what one call to the synthesizer speaks is not the
+chunk but a run of text ending at a sentence end. This is how NVDA reads
+UIA text, which it reads by line, sentence by sentence: in Windows 11
+Notepad a line holding the end of one sentence and the start of the next
+is spoken in two calls, the first ending at the full stop.
+
+- A sentence end is a full stop, exclamation mark, or question mark that
+  directly follows a character that is neither whitespace nor one of those
+  three marks, optionally followed by one closing character (a straight or
+  curly double or single quotation mark, or a closing parenthesis), and
+  then followed by whitespace or the end of the text.
+- In each chunk's text, the last sentence end is found. Everything up to
+  it, with the whitespace after it, is spoken now, after anything held
+  back from earlier chunks; what follows it is held back. A chunk with no
+  sentence end is held back whole.
+- What is held back is spoken at the start of the next call, so a
+  sentence that runs from one line to the next is spoken in one call: the
+  rest of the first line, then the second line up to its last sentence
+  end. The second line's callback sits in that call where the second
+  line's text starts, so the caret moves to the second line when its text
+  starts playing, not when the call starts. A line's callback is held back
+  with its text, so it always plays just before that line's words.
+- Only the last sentence end in a chunk splits it. A line with two
+  complete sentences and the start of a third is spoken as the two
+  sentences together, then the third with whatever follows it.
+- Because the rule is only these characters, there is no list of
+  abbreviations: "Dr. Smith" splits after "Dr. ", as does "e.g. this".
+  A full stop inside a number ("3.14") is followed by a digit, not
+  whitespace, so it does not split, nor does an ellipsis ("wait..."),
+  whose last full stop follows another. One closing quotation mark or
+  parenthesis between the mark and the whitespace still splits; two
+  closing characters, a quotation mark and then a parenthesis, do not.
+  Full-width terminators such as the ideographic full stop are not
+  sentence ends here.
+- Ten chunks in a row with no sentence end are not held back further:
+  after the tenth (`_TextReader.MAX_BUFFERED_LINES`), everything held back
+  is spoken in one call. Blank chunks count among the ten, and say nothing.
+- When the text ends, whatever is held back is spoken
+  (`_TextReader.finish` flushes it with an end of utterance).
 
 While a say-all runs, NVDA keeps the system awake: `_Reader.start`
 (`speech/sayAll.py`) calls `systemUtils.preventSystemIdle(persistent=True)`,
