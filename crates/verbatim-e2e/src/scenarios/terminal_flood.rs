@@ -129,7 +129,31 @@ pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
 
 /// Step 2: Verbatim+5 during the second flood cuts its first group off and
 /// stops the rest.
+/// Starts watching, on a thread of its own, for Core receiving the caret
+/// on the prompt after the flood whose command is typed next: the flood's
+/// script finishing is no evidence that the terminal has shown all of its
+/// output, and output it shows after reporting is turned back on is new
+/// output, rightly spoken. The subscription is read as events arrive, since
+/// one left unread through a flood falls behind and is disconnected.
+fn watch_for_prompt(scenario: &mut Scenario) -> std::thread::JoinHandle<()> {
+    let mut events = scenario
+        .subscribe_events()
+        .expect("subscribes to Verbatim's events");
+    std::thread::spawn(move || {
+        terminal::wait_for_caret_on(&mut events, PROMPT, FLOOD_STEP)
+            .expect("the terminal shows the prompt after the flood");
+    })
+}
+
+/// Waits for [`watch_for_prompt`]'s evidence.
+fn wait_for_prompt(watch: std::thread::JoinHandle<()>) {
+    if let Err(panic) = watch.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
+    let watch = watch_for_prompt(scenario);
     terminal::type_with_echo(scenario, r".\flood.ps1 2", terminal::Echo::Shown);
     let first = scenario.speech().expect_started(&line(1));
     let queued = scenario.speech().expect_queued(&[&line(2), &line(3)]);
@@ -142,13 +166,16 @@ fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
     }
     scenario.speech().expect(&[OUTPUT_OFF]);
     let _ = elapsed(scenario, directory, 2);
+    wait_for_prompt(watch);
     scenario.expect_nothing_more();
 }
 
 /// Step 3: the third flood, silent, then output reporting back on.
 fn silent_flood(scenario: &mut Scenario, directory: &str) -> Duration {
+    let watch = watch_for_prompt(scenario);
     terminal::type_with_echo(scenario, r".\flood.ps1 3", terminal::Echo::Shown);
     let unreported = elapsed(scenario, directory, 3);
+    wait_for_prompt(watch);
     scenario.expect_nothing_more();
     scenario
         .send_gesture("kb:verbatim+5")

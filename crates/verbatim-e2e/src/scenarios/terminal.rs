@@ -226,7 +226,11 @@ fn open(
 ///
 /// Returns an error if no such report arrives within `timeout`, or the
 /// connection fails.
-fn wait_for_caret_on(events: &mut ControlClient, line: &str, timeout: Duration) -> io::Result<()> {
+pub(crate) fn wait_for_caret_on(
+    events: &mut ControlClient,
+    line: &str,
+    timeout: Duration,
+) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
         match events.next_frame() {
