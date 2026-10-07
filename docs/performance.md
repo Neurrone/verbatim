@@ -324,34 +324,37 @@ description, keyboard shortcut, and location), and reaching a parent is 3
 more (`accParent`, the `QueryInterface` for its `IAccessible`, and its
 window, `WindowFromAccessibleObject`).
 
-- Minimum: 18 MSAA calls. Acquiring the focused object from the event's
-  address (1) and reading it (7), then one ancestor hop (10) that reads the
-  first ancestor and recognizes it as the previous focus's container.
-- Today: 30 MSAA calls. The focus costs 9 (its role is read twice, once
+- Minimum: 19 MSAA calls. Acquiring the focused object from the event's
+  address (1), asking its `accFocus` whether a focused child of it should
+  be reported instead (1, `docs/parity.md`, "A control's own focus with a
+  focused child"), and reading it (7), then one ancestor hop (10) that
+  reads the first ancestor and recognizes it as the previous focus's
+  container.
+- Today: 31 MSAA calls. The focus costs 10 (its role is read twice, once
   for NVDA's check whether a focus event names a list, and once with the
-  rest of its properties), and the walk goes to the root: two ancestors at
-  10 each and an `accParent` that finds none. The walk does not stop at the
+  rest of its properties, and its `accFocus` once), and the walk goes to
+  the root: two ancestors at 10 each and an `accParent` that finds none. The walk does not stop at the
   group, because mockapp answers every `accParent` with a new COM object
   and an object reached through `accParent` is recognized only by its COM
-  identity. mockapp answered 38 provider calls, 14 of them `accParent`,
+  identity. mockapp answered 39 provider calls, 14 of them `accParent`,
   most from `WindowFromAccessibleObject`'s own walk.
-- Target: 18. Recognizing an ancestor by its address and identity string,
+- Target: 19. Recognizing an ancestor by its address and identity string,
   as the registry already does for objects acquired at an address, and
   reading the focus's role once.
 
 ### A focus change, MSAA, cold
 
-- Minimum: 1 window message and 29 MSAA calls: the probe, the focus (8),
+- Minimum: 1 window message and 30 MSAA calls: the probe, the focus (9),
   each of the two ancestors (10 each), and the `accParent` that ends the
   walk at the root.
-- Today: 30 MSAA calls and 1 window message: the steady-state count
+- Today: 31 MSAA calls and 1 window message: the steady-state count
   (nothing is recognized either way) plus the probe of mockapp's window.
   `WindowFromAccessibleObject` answers no window for mockapp's ancestors,
   whose root object has no parent; until 2026-10-07 their addresses carried
   window 0 and the walk probed it as a second window, which it no longer
   does, since no window is now read as none and the walk keeps the window
-  it is in. mockapp answered 39 provider calls.
-- Target: 29 MSAA calls and 1 window message.
+  it is in. mockapp answered 40 provider calls.
+- Target: 30 MSAA calls and 1 window message.
 
 ### A focus change into a list, MSAA
 
@@ -366,10 +369,10 @@ window, `WindowFromAccessibleObject`).
 
 ### Arrowing through a list, MSAA
 
-- Minimum: 18 MSAA calls, as for any steady-state focus change.
-- Today: 30 MSAA calls, the same as a steady-state focus change and for
-  the same reasons; mockapp answered 38 provider calls.
-- Target: 18.
+- Minimum: 19 MSAA calls, as for any steady-state focus change.
+- Today: 31 MSAA calls, the same as a steady-state focus change and for
+  the same reasons; mockapp answered 39 provider calls.
+- Target: 19.
 
 ### Entering a dialog, MSAA
 
@@ -378,14 +381,14 @@ text and two buttons, from outside it, so the dialog's own text is gathered
 and reported as its description (`docs/nvda/object-model.md`, "A dialog's
 own text"). mockapp's `tests/fixtures/dialog.json` is that message box.
 
-- Minimum: a cold focus's 29 MSAA calls and 1 window message, and 14 for
+- Minimum: a cold focus's 30 MSAA calls and 1 window message, and 14 for
   the text: the dialog's child count and children (2), each of the three
   children's `IAccessible` and role (6) and states (3), and the question's
   name, value, and description (3). The buttons give no text, so nothing
   else of them is read, and the question's neighbor is a button, which is
   never labelled, so its name is not read either.
-- Today: 44 MSAA calls and 1 window message, the cold focus's 30 and the
-  text's 14. mockapp answered 56 provider calls. A focus moving within the
+- Today: 45 MSAA calls and 1 window message, the cold focus's 31 and the
+  text's 14. mockapp answered 57 provider calls. A focus moving within the
   dialog does not read it again, since the dialog is then in the previous
   focus's chain; mockapp cannot show that, as every `accParent` it answers
   is a new COM object, so the dialog it reaches from the next button is a

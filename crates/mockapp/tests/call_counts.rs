@@ -180,7 +180,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        calls(0, 30, 1),
+        calls(0, 31, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 14),
@@ -191,6 +191,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 4),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -202,7 +203,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, steady state",
         &cost,
-        calls(0, 30, 0),
+        calls(0, 31, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -213,6 +214,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 4),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -258,7 +260,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the next list item",
         &cost,
-        calls(0, 30, 0),
+        calls(0, 31, 0),
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 14),
@@ -269,6 +271,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accRole", 4),
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
@@ -314,7 +317,7 @@ fn msaa_dialog_text_costs_exactly() {
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        calls(0, 44, 1),
+        calls(0, 45, 1),
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 17),
@@ -326,6 +329,7 @@ fn msaa_dialog_text_costs_exactly() {
             ("get_accRole", 7),
             ("get_accState", 6),
             ("get_accKeyboardShortcut", 3),
+            ("accFocus", 1),
             ("accLocation", 3),
         ],
     );
