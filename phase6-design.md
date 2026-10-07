@@ -2009,6 +2009,21 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       colors, decoration styles, sub- and superscript, hidden and
       read-only text, style names, and paragraph spacing.
 
+  14. Text range conformance (Dickson, 2026-10-07): audit Verbatim's
+      text-range code against Microsoft's guidance ("Understanding
+      Performance Issues When Using the Text and TextRange Control
+      Patterns", "Using IUIAutomationTextRange", the text units and
+      embedded objects topics), fixing or adopting with tests:
+      `GetText` always with a length limit (the terminal reads pass -1);
+      how an unsupported unit is detected, since providers silently use
+      the next larger unit; ranges after the text changes; the mixed and
+      not-supported attribute tokens on both paths; `FindAttribute` to
+      find formatting or spelling errors in one call; embedded objects
+      (`GetChildren`, `RangeFromChild`, virtualized items); hidden text
+      (`IsHidden`); `GetVisibleRanges`; annotation objects and
+      `RangeFromAnnotation`; and `ShowContextMenu` for autocorrect and
+      IME candidates.
+
 The order from here: the say-all change (item 10), then the terminal
 measurements (items 2 and 4), then the MSAA call counts (item 12, which
 item 5 is part of), with the instruction-limit measurements (item 11)
