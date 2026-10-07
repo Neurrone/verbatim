@@ -2119,3 +2119,25 @@ A read-only audit compared Verbatim's MSAA handling with NVDA's. The tree view f
 
 MSAA calls Verbatim makes more often than NVDA, for the call-count reduction: accRole twice per child-0 focus; a rejected focus read in full before the focused-state check; a repeated focus read in full; full snapshots for events on objects that are not the focus; tree item sibling counts on every read, ancestors included; expanded child counts on every state change; selected-child reads NVDA does not make.
 - Selection lists drawn in a terminal (Dickson, 2026-10-08): tested with PowerShell scripts run in the terminal, not with a real application. One script draws a five-item list and moves its ">" marker by rewriting only the two characters; another redraws the whole list region on each move, as Ink-based programs such as Claude Code do. Each is a separate scenario in both terminals. NVDA's reading of each script is captured first to establish the expected speech, and Verbatim is then made to match it.
+
+## Terminal reading by diffing the screen (Dickson, 2026-10-08)
+
+The anchored append read with an in-place screen comparison as fallback is replaced. Every read fetches the visible screen and diffs it by line against the last screen seen, with padding stripped and wrapped rows joined into logical lines; what was inserted is spoken, never what was only deleted (NVDA's rule), and a changed line speaks from the start of the word that changed. The anchor remains only to count lines that scrolled into the history between reads, for floods, "skipped N lines" and on-demand reading. This replaces the full-screen fallback and covers selection lists, output above a fixed footer, scrolling up in full-screen programs, messages printed above a prompt, resizing, deletion-only changes and several changes in one region. Every end-to-end script's NVDA reading is captured first to set the expected speech.
+
+### The tests
+
+Unit tests:
+- The screen diff, a pure function: a table of exact cases (insertion at the end, in the middle and above a footer; deletion only; scrolling up and down; rows rewrapped by a resize; repeated identical lines; several changes on one line; the changed-word rule; padding of spaces and other white space; wide CJK characters, combining marks and tabs), plus property tests over random edits.
+- The on-demand reading state machine: every state and event pair.
+- Core: the flood policy, blank lines counted, the 10 MB bound, long lines, typing reconciliation (held typing matched against what a line gained), symbol-only lines, the spinner rule, terminal output arriving after a key's cancel, and "skipped more than N lines".
+- The outpost: counting lines that scrolled into a full history, its overflow, and splitting a large read across messages under the 32 MB limit.
+
+mockapp tests, a scripted terminal through the real UIA code with remote operations on and off: the two paths agree, exact call counts, FindText behaviour, alternate-screen detection, the message limit, and each on-demand transition through a real outpost.
+
+End-to-end scenarios, each a PowerShell script run in the terminal, written as separate code for Windows Terminal and for the console host, with exact speech:
+- Output: commands and multi-line output with blank lines; short output ("y", "OK"); a line far wider than the terminal; a long line that keeps growing; symbol-only lines skipped.
+- Typing: character and word echo; a typed space at the end of a line; editing mid-line after `cls`; typing past the right margin; tab completion; a password prompt with no echo and one echoing asterisks; a clock in a footer ticking during a password (no leak); Control+C and Escape clearing held typing; inline prediction ghost text; a keyboard layout switched inside the console.
+- Redraws: a progress bar rewritten in place; a spinner; a selection list moved by two characters; a selection list redrawn whole; output above a fixed footer; a message printed above the prompt while typing; several changes in a status block; deletion-only changes; a resize.
+- Full screen: a 40-row alternate screen opened, a row near the top and one near the bottom changed, scrolled down and up by a line, and closed; a cleared screen.
+- Floods: within the history, asserted exactly; overflowing the history ("skipped more than N lines"); Control during a flood; leaving and returning during one; pausing and resuming with Shift; output reporting toggled; a flood of identical lines; a raised flood setting.
+- The review cursor over the screen grid.
