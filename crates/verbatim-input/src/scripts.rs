@@ -430,19 +430,142 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn desktop_table_has_the_documented_count() {
-        // Every layout's 33 (M3's 7 object-navigation, 13 review-cursor, and
-        // 2 for time and the tray list; M4's 10; report focus), and the
-        // desktop's own 5.
-        assert_eq!(bindings_for(KeyboardLayout::Desktop).len(), 38);
+    /// Every layout's 33 bindings, NVDA's gestures for these commands: M3's
+    /// 7 object-navigation, 13 review-cursor, and 2 for time and the tray
+    /// list; M4's 10; and report focus.
+    const EVERY_LAYOUT: [(&str, ScriptAction); 33] = [
+        ("kb:verbatim+numpad5", ScriptAction::ReportCurrentObject),
+        ("kb:verbatim+numpad8", ScriptAction::MoveToParent),
+        ("kb:verbatim+numpad6", ScriptAction::MoveToNextSibling),
+        ("kb:verbatim+numpad4", ScriptAction::MoveToPreviousSibling),
+        ("kb:verbatim+numpad2", ScriptAction::MoveToFirstChild),
+        (
+            "kb:verbatim+numpadminus",
+            ScriptAction::MoveReviewCursorToFocus,
+        ),
+        (
+            "kb:verbatim+numpadenter",
+            ScriptAction::ActivateCurrentObject,
+        ),
+        ("kb:shift+numpad7", ScriptAction::ReviewTop),
+        ("kb:numpad7", ScriptAction::ReviewPreviousLine),
+        ("kb:numpad8", ScriptAction::ReviewCurrentLine),
+        ("kb:numpad9", ScriptAction::ReviewNextLine),
+        ("kb:numpad4", ScriptAction::ReviewPreviousWord),
+        ("kb:numpad5", ScriptAction::ReviewCurrentWord),
+        ("kb:numpad6", ScriptAction::ReviewNextWord),
+        ("kb:shift+numpad1", ScriptAction::ReviewStartOfLine),
+        ("kb:numpad1", ScriptAction::ReviewPreviousCharacter),
+        ("kb:numpad2", ScriptAction::ReviewCurrentCharacter),
+        ("kb:numpad3", ScriptAction::ReviewNextCharacter),
+        ("kb:shift+numpad3", ScriptAction::ReviewEndOfLine),
+        ("kb:shift+numpad9", ScriptAction::ReviewBottom),
+        ("kb:verbatim+f12", ScriptAction::SpeakTime),
+        ("kb:verbatim+f11", ScriptAction::ShowTrayList),
+        ("kb:verbatim+alt+home", ScriptAction::ReviewSelectionStart),
+        ("kb:verbatim+alt+end", ScriptAction::ReviewSelectionEnd),
+        ("kb:numpadplus", ScriptAction::SayAllFromReview),
+        ("kb:verbatim+f9", ScriptAction::SetStartMarker),
+        ("kb:verbatim+shift+f9", ScriptAction::MoveToStartMarker),
+        ("kb:verbatim+f10", ScriptAction::SelectThenCopy),
+        ("kb:verbatim+6", ScriptAction::ToggleFollowCaret),
+        ("kb:verbatim+2", ScriptAction::ToggleTypedCharacters),
+        ("kb:verbatim+3", ScriptAction::ToggleTypedWords),
+        ("kb:verbatim+5", ScriptAction::ToggleReportNewOutput),
+        ("kb:verbatim+tab", ScriptAction::ReportFocus),
+    ];
+
+    /// `own` then [`EVERY_LAYOUT`], parsed.
+    fn expected_table(own: &[(&str, ScriptAction)]) -> Vec<(GestureId, ScriptAction)> {
+        own.iter()
+            .chain(&EVERY_LAYOUT)
+            .map(|&(gesture, action)| (GestureId::parse(gesture).unwrap(), action))
+            .collect()
     }
 
     #[test]
-    fn laptop_table_has_the_documented_count() {
-        // Its own 26 (M3's 7 object-navigation and 13 review-cursor, M4's 6)
-        // and the 33 of every layout.
-        assert_eq!(bindings_for(KeyboardLayout::Laptop).len(), 59);
+    fn desktop_table_binds_exactly_the_documented_gestures() {
+        // The desktop's own 5, then the 33 of every layout.
+        assert_eq!(
+            bindings_for(KeyboardLayout::Desktop),
+            expected_table(&[
+                ("kb:verbatim+pageup", ScriptAction::ReviewPreviousPage),
+                ("kb:verbatim+pagedown", ScriptAction::ReviewNextPage),
+                ("kb:verbatim+downarrow", ScriptAction::SayAllFromCaret),
+                (
+                    "kb:verbatim+numpaddelete",
+                    ScriptAction::ReportCaretLocation
+                ),
+                (
+                    "kb:verbatim+shift+numpaddelete",
+                    ScriptAction::ReportReviewLocation
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn laptop_table_binds_exactly_the_documented_gestures() {
+        // Its own 26 (M3's 7 object-navigation and 13 review-cursor, M4's
+        // 6), then the 33 of every layout.
+        assert_eq!(
+            bindings_for(KeyboardLayout::Laptop),
+            expected_table(&[
+                ("kb:verbatim+shift+o", ScriptAction::ReportCurrentObject),
+                ("kb:verbatim+shift+uparrow", ScriptAction::MoveToParent),
+                (
+                    "kb:verbatim+shift+rightarrow",
+                    ScriptAction::MoveToNextSibling
+                ),
+                (
+                    "kb:verbatim+shift+leftarrow",
+                    ScriptAction::MoveToPreviousSibling
+                ),
+                (
+                    "kb:verbatim+shift+downarrow",
+                    ScriptAction::MoveToFirstChild
+                ),
+                (
+                    "kb:verbatim+backspace",
+                    ScriptAction::MoveReviewCursorToFocus
+                ),
+                ("kb:verbatim+enter", ScriptAction::ActivateCurrentObject),
+                ("kb:verbatim+control+home", ScriptAction::ReviewTop),
+                ("kb:verbatim+uparrow", ScriptAction::ReviewPreviousLine),
+                ("kb:verbatim+shift+period", ScriptAction::ReviewCurrentLine),
+                ("kb:verbatim+downarrow", ScriptAction::ReviewNextLine),
+                (
+                    "kb:verbatim+control+leftarrow",
+                    ScriptAction::ReviewPreviousWord
+                ),
+                (
+                    "kb:verbatim+control+period",
+                    ScriptAction::ReviewCurrentWord
+                ),
+                (
+                    "kb:verbatim+control+rightarrow",
+                    ScriptAction::ReviewNextWord
+                ),
+                ("kb:verbatim+home", ScriptAction::ReviewStartOfLine),
+                (
+                    "kb:verbatim+leftarrow",
+                    ScriptAction::ReviewPreviousCharacter
+                ),
+                ("kb:verbatim+period", ScriptAction::ReviewCurrentCharacter),
+                ("kb:verbatim+rightarrow", ScriptAction::ReviewNextCharacter),
+                ("kb:verbatim+end", ScriptAction::ReviewEndOfLine),
+                ("kb:verbatim+control+end", ScriptAction::ReviewBottom),
+                ("kb:verbatim+shift+pageup", ScriptAction::ReviewPreviousPage),
+                ("kb:verbatim+shift+pagedown", ScriptAction::ReviewNextPage),
+                ("kb:verbatim+a", ScriptAction::SayAllFromCaret),
+                ("kb:verbatim+shift+a", ScriptAction::SayAllFromReview),
+                ("kb:verbatim+delete", ScriptAction::ReportCaretLocation),
+                (
+                    "kb:verbatim+shift+delete",
+                    ScriptAction::ReportReviewLocation
+                ),
+            ])
+        );
     }
 
     #[test]
