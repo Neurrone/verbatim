@@ -1901,7 +1901,12 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
      written down, then the useful ones reported through the formatting
      stage, links among them. The same survey for Windows 11 Notepad:
      every attribute and annotation it exposes that Verbatim does not yet
-     read.
+     read. Dickson chooses which attributes are queried, from the survey:
+     what is fetched stays driven by the theme's indications (an
+     indication set to off is never fetched), and the survey measures the
+     cost of each attribute and of querying all of them, in calls and in
+     time, within the caret's one remote operation and in the classic
+     fallback, so the choice is made knowing the price.
   3. A typed space at the end of a terminal's line is spoken when typed,
      using the outpost's knowledge of which trailing white space is real.
   4. The terminal flood: why reporting slowed the console host 5.68 times
