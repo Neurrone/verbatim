@@ -105,9 +105,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             guard.nodes[index].selection = (start.min(length), end.min(length));
             guard.nodes[index].text = Some(text);
         }
-        Command::ClientName(_) | Command::SetTitle(_) => {
-            return Err("client-name and set-title are not supported on the uia backend".into());
-        }
         Command::TakeRuntimeId(id, from) => tree
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

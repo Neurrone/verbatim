@@ -72,15 +72,6 @@ pub(crate) enum Command {
     /// `id` takes its runtime id, as File Explorer gives a new item the
     /// runtime id of one it destroyed. Raises no event. UIA-only.
     TakeRuntimeId(String, String),
-    /// `client-name <text>`: names the window's client area, the root
-    /// node, `text`, leaving the window's text as it is, and raises
-    /// `EVENT_OBJECT_NAMECHANGE` on the client area, as Windows 11 Notepad
-    /// does when its window is activated. MSAA-only.
-    ClientName(String),
-    /// `set-title <text>`: sets the window's text, its title, leaving the
-    /// root node's accessible name as it is; Windows raises the name change
-    /// a window's new text raises. MSAA-only.
-    SetTitle(String),
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -140,8 +131,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
         }
-        "client-name" => Some(Command::ClientName(rest.to_owned())),
-        "set-title" => Some(Command::SetTitle(rest.to_owned())),
         "set-value" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetValue(id.to_owned(), text.trim().to_owned()))

@@ -64,9 +64,5 @@ harness = false
 name = "uia_tree"
 harness = false
 
-[[test]]
-name = "window_names"
-harness = false
-
 [lints]
 workspace = true

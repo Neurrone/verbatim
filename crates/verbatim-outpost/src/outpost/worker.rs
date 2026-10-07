@@ -1136,14 +1136,9 @@ impl Worker<'_> {
                 node_id: node.id,
                 value: node.value,
             },
-            // A top-level window's client area is named by its window text
-            // (`read::top_level_name`), so a name change that leaves the
-            // text as it was says nothing.
             WinEventKind::NameChange => NormalizedEvent::PropertyChanged {
                 node_id: node.id,
-                change: PropertyChange::Name(read::top_level_name(
-                    hwnd, id_object, id_child, node.name,
-                )),
+                change: PropertyChange::Name(node.name),
                 child_count: None,
             },
             // An expanded Win32 tree view item's children are counted with

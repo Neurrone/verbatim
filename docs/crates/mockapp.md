@@ -50,13 +50,7 @@ on the machine, a running screen reader included, calls into mockapp in
 response; for the tests that count an operation's calls exactly, which
 hand the focus to the outpost themselves), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
-property-change or name/value-change notification), `client-name <text>`
-(names the window's client area, the root node, `text`, leaving the
-window's text alone, as Windows 11 Notepad does for a moment when its
-window is activated, and raises `EVENT_OBJECT_NAMECHANGE` on the client
-area) and `set-title <text>` (sets the window's text, leaving the root's
-accessible name alone, and Windows raises the name change), both
-unsupported on the UIA backend, `select <id>` (marks
+property-change or name/value-change notification), `select <id>` (marks
 the node selected, moving the state off any previous selection, and raises
 `SelectionItem_ElementSelected` for UIA or `EVENT_OBJECT_SELECTION` for
 MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
