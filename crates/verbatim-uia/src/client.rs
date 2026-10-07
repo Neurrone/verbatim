@@ -535,25 +535,24 @@ impl Uia {
     ///
     /// # Errors
     ///
-    /// Never fails today: pattern and selection failures all map to
-    /// `Ok(None)` because "no reportable selection" is the correct reading
-    /// of each. The `Result` stays in the signature so a genuinely
-    /// distinguishable failure can surface later without breaking callers.
+    /// As [`Uia::selected_element`]: a provider that did not answer within
+    /// UIA's transaction timeout, or an element that is gone, is an error,
+    /// never a container with nothing selected.
     pub fn selected_child(
         &self,
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
         registry: &NodeIdRegistry,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
-        let selected = self.selected_element(element, cache);
+        let selected = self.selected_element(element, cache)?;
         Ok(selected.map(|selected| snapshot_from_cached_element(&selected, registry)))
     }
 
     /// The element behind [`Uia::selected_child`]: the first element of the
     /// container's current selection, rebuilt with `cache`, or `None` for
-    /// every benign outcome (no `Selection` pattern, nothing selected, or a
-    /// failed call). `verbatim-uia-rops` calls it for the classic focus
-    /// ancestry.
+    /// every benign outcome: no `Selection` pattern, nothing selected, or a
+    /// call that failed in any other way than the errors below.
+    /// `verbatim-uia-rops` calls it for the classic focus ancestry.
     ///
     /// One `BuildUpdatedCache` on the container asks for both of its
     /// selection patterns at once: `SelectionPattern2`'s `FirstSelectedItem`
@@ -564,27 +563,51 @@ impl Uia {
     /// "not supported" and the cached `Selection` pattern reads the
     /// selection, a second call, with the rebuild a third, the count the
     /// `Selection` pattern alone always took.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error when the cache request cannot be made, and a
+    /// call's error when the provider did not answer within UIA's
+    /// transaction timeout ([`timed_out`](crate::timed_out)) or the
+    /// container or its selected item is gone
+    /// ([`element_is_gone`](crate::element_is_gone)): neither says nothing
+    /// is selected.
     pub fn selected_element(
         &self,
         element: &IUIAutomationElement,
         cache: &IUIAutomationCacheRequest,
-    ) -> Option<IUIAutomationElement> {
-        let request =
-            crate::cache::cache_request(&self.client, &[UIA_Selection2FirstSelectedItemPropertyId])
-                .ok()?;
+    ) -> windows::core::Result<Option<IUIAutomationElement>> {
+        let request = crate::cache::cache_request(
+            &self.client,
+            &[UIA_Selection2FirstSelectedItemPropertyId],
+        )?;
         // SAFETY: `request` was just created; a pattern id is a plain value.
-        unsafe { request.AddPattern(UIA_SelectionPatternId) }.ok()?;
-        let container = element.build_updated_cache(&request).ok()?;
-        let first = match container
-            .cached_value_ignoring_default(UIA_Selection2FirstSelectedItemPropertyId)?
-        {
-            value if crate::is_not_supported(&value) => first_of_selection(&container)?,
-            value => crate::variant_element(&value)?,
+        unsafe { request.AddPattern(UIA_SelectionPatternId) }?;
+        let Some(container) = unanswered_is_error(element.build_updated_cache(&request))? else {
+            return Ok(None);
+        };
+        let Some(value) =
+            container.cached_value_ignoring_default(UIA_Selection2FirstSelectedItemPropertyId)
+        else {
+            return Ok(None);
+        };
+        let first = if crate::is_not_supported(&value) {
+            let Some(pattern) =
+                container.cached_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
+            else {
+                return Ok(None);
+            };
+            unanswered_is_error(current_selection(&pattern))?
+                .and_then(|selection| selection.into_iter().next())
+        } else {
+            crate::variant_element(&value)
+        };
+        let Some(first) = first else {
+            return Ok(None);
         };
         // Rebuilding with `cache` prefetches the full snapshot property set in
         // one round trip.
-        first.build_updated_cache(cache).ok()
+        unanswered_is_error(first.build_updated_cache(cache))
     }
 
     /// Navigates one step from `element` in `direction`, via the raw-view
@@ -684,10 +707,15 @@ impl Uia {
 /// pattern object cached on `container`, for a provider without
 /// `SelectionPattern2`: one round trip, the selection. A container without
 /// the pattern has no cached pattern, and no selection.
-fn first_of_selection(container: &IUIAutomationElement) -> Option<IUIAutomationElement> {
-    let pattern =
-        container.cached_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)?;
-    current_selection(&pattern).ok()?.into_iter().next()
+/// A call's result, with its failure read as no answer (`Ok(None)`) unless
+/// the provider did not answer within UIA's transaction timeout or the
+/// element is gone, which stay errors.
+fn unanswered_is_error<T>(result: windows::core::Result<T>) -> windows::core::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if crate::timed_out(&error) || crate::element_is_gone(&error) => Err(error),
+        Err(_) => Ok(None),
+    }
 }
 
 /// What one ancestor did to a walk ([`take_ancestor`]).

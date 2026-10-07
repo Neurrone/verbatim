@@ -297,7 +297,11 @@ mockapp and one that has exited; the crate's guide records the findings.
 It also pins that a walk that hits UIA's transaction timeout, made slow
 with `slow` or stalled with `stall`, is a failure both ways and never
 answered by the classic walk after the program's timeout, and that a
-real outpost then reports the focus with its containers unknown.
+real outpost then reports the focus with its containers unknown; and
+that reading a list's or tab control's selected item
+(`Uia::selected_element`) fails with UIA's timeout when mockapp is slow
+or stalled, and as gone once mockapp has exited, never answering that
+nothing is selected.
 `text.rs` drives `verbatim-outpost`'s text module over `text.json`'s text
 on both stacks, as the outpost's worker does once it has a node's text
 (the worker finds a UIA focus by reading the keyboard focus, which a test

@@ -17,8 +17,8 @@ use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VT_ARRAY, VT_BOOL, VT_I4, VT_R8, VariantToStringAlloc,
 };
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UiaGetReservedMixedAttributeValue,
-    UiaGetReservedNotSupportedValue,
+    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT,
+    UiaGetReservedMixedAttributeValue, UiaGetReservedNotSupportedValue,
 };
 use windows::core::{HRESULT, IUnknown, Interface};
 
@@ -49,6 +49,14 @@ pub fn element_is_gone(error: &windows::core::Error) -> bool {
         RPC_S_CALL_FAILED_DNE,
     ]
     .contains(&error.code())
+}
+
+/// Whether a failed call ended because the provider did not answer within
+/// UIA's transaction timeout (`UIA_E_TIMEOUT`): a busy or stalled
+/// application, which has said nothing about what was asked.
+#[must_use]
+pub fn timed_out(error: &windows::core::Error) -> bool {
+    error.code() == HRESULT(UIA_E_TIMEOUT.cast_signed())
 }
 
 /// Runs the body of the UIA event handler `handler`, catching a panic, which

@@ -236,8 +236,9 @@ without a gone `previous` element has been tried), is not answered by the
 classic walk, which would fail the same way after waiting on a stalled
 application a second time: its error is returned, as are the classic
 walk's own failures. The classic walk fails when its read of `previous`
-or a hop times out, rather than taking a hop that did not answer as the
-root, so a walk that hit the timeout is never reported as a short but
+or a hop times out, or its read of the selected child times out or finds
+an element gone, rather than taking a hop that did not answer as the
+root or a selection that did not answer as nothing selected, so a walk that hit the timeout is never reported as a short but
 complete ancestry; any other failed hop still ends the walk as the root,
 as NVDA's parent read answers no parent. Pinned against mockapp with
 `slow` and `stall` (`crates/mockapp/tests/remote_ops.rs`,

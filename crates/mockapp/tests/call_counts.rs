@@ -1105,7 +1105,10 @@ fn uia_selected_children_cost_exactly() {
         common::apply(&mut app, hwnd, &format!("set-focus {id}"));
         let container = under_test.element(name);
         let (child, cost) = under_test.measure(hwnd, |under_test| {
-            under_test.uia.selected_element(container, &cache)
+            under_test
+                .uia
+                .selected_element(container, &cache)
+                .expect("the selection is read")
         });
         assert_eq!(selected_name(child).as_deref(), Some(selected));
         ratchet.check(

@@ -590,6 +590,80 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
     }
 }
 
+/// Reading a list's or a tab control's selected item, the read the classic
+/// focus walk makes for a selection container (`Uia::selected_element`),
+/// fails when the application does not answer within UIA's transaction
+/// timeout, never answering that nothing is selected: with every provider
+/// call slow (`slow`), and with the window thread stalled (`stall`) for
+/// longer than the timeout, returning before the stall ended. It fails as
+/// well once the list is gone, with its provider's process. An element with
+/// no `Selection` pattern still answers that nothing is selected.
+fn a_selection_read_that_times_out_or_finds_the_list_gone_fails() {
+    const TIMEOUT: Duration = Duration::from_millis(1000);
+    const SLOW_CALL: Duration = Duration::from_millis(50);
+    const STALL: Duration = Duration::from_millis(1500);
+    let mut fixture = Fixture::start_alone("mockapp-rops-selection-timeout");
+    let cache = fixture
+        .uia
+        .cache_request(CACHED_PROPERTIES)
+        .expect("cache request");
+    let read = |element: &IUIAutomationElement| fixture.uia.selected_element(element, &cache);
+    let containers = [fixture.find("Fruits"), fixture.find("Pages")];
+    let button = fixture.find("Deep button");
+    assert_eq!(
+        names(&[read(&containers[0]).expect("read").expect("selected")]),
+        ["Banana"]
+    );
+    assert!(
+        read(&button).expect("read").is_none(),
+        "no Selection pattern"
+    );
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = TransactionTimeout::set(&client, TIMEOUT);
+
+    fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
+    for container in &containers {
+        let answer = read(container);
+        assert_eq!(
+            answer.as_ref().err().map(windows::core::Error::code),
+            Some(hresult(UIA_E_TIMEOUT)),
+            "slow: {answer:?}"
+        );
+    }
+    fixture.app.send("slow 0");
+
+    for container in &containers {
+        fixture.app.stall(STALL);
+        let answer = read(container);
+        let returned = common::now_us();
+        let ended = fixture.app.stall_ended(STALL);
+        assert_eq!(
+            answer.as_ref().err().map(windows::core::Error::code),
+            Some(hresult(UIA_E_TIMEOUT)),
+            "stalled: {answer:?}"
+        );
+        assert!(
+            returned < ended,
+            "the transaction timeout ended the read: it returned at {returned} us, after the stall ended at {ended} us"
+        );
+    }
+    drop(restored);
+
+    let Fixture {
+        app, uia, _timeout, ..
+    } = fixture;
+    // Returns once the process has exited.
+    drop(app);
+    for container in &containers {
+        let answer = uia.selected_element(container, &cache);
+        assert_eq!(
+            answer.as_ref().err().map(windows::core::Error::code),
+            Some(hresult(UIA_E_ELEMENTNOTAVAILABLE)),
+            "gone: {answer:?}"
+        );
+    }
+}
+
 /// UIA's transaction timeout, set for a while and restored when dropped,
 /// whether the test passed or not.
 struct TransactionTimeout {
@@ -683,6 +757,10 @@ fn main() {
         (
             "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",
             a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown,
+        ),
+        (
+            "a_selection_read_that_times_out_or_finds_the_list_gone_fails",
+            a_selection_read_that_times_out_or_finds_the_list_gone_fails,
         ),
     ]);
 }
