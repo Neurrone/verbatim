@@ -745,8 +745,10 @@ finds it.
   turns the read into a `TerminalOutput`: the anchor's line compared
   character by character with what it held (grown: the text added;
   rewritten: from the start of the word where it first differs; shorter:
-  nothing), and the lines after it, all of them up to the read limit, or
-  the last ones with the rest counted (`Skipped::Count`). A rewrite under
+  nothing), and the lines after it, all of them up to the read limit, or,
+  when more follow, the first ones (`TerminalOutput::head`, so a flood's
+  start is heard) and the last ones, each up to the read limit, with those
+  between counted (`Skipped::Count`). A rewrite under
   a blank line is not trusted, since a blank line matches too easily. The
   anchor's line found above the anchor (`Found::Moved`) is compared the
   same way, since the last line read is often the one output was still

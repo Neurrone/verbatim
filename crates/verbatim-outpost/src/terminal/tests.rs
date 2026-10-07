@@ -90,8 +90,21 @@ impl Sim {
         } else {
             rows
         };
-        let reading = count.min(usize::try_from(wanted).unwrap_or(usize::MAX));
+        let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
+        let reading = count.min(wanted);
         let lines = self.rows[rows - reading..]
+            .iter()
+            .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
+            .collect();
+        // From an anchor, as the program does, the first of the lines after
+        // it too, as many more as follow the last lines, up to the number
+        // wanted.
+        let heading = if count_from {
+            (count - reading).min(wanted)
+        } else {
+            0
+        };
+        let head = self.rows[from + 1..from + 1 + heading]
             .iter()
             .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
             .collect();
@@ -120,6 +133,8 @@ impl Sim {
             count: u32::try_from(count).unwrap_or(u32::MAX),
             rows: u32::try_from(reading).unwrap_or(u32::MAX),
             lines,
+            head_rows: u32::try_from(heading).unwrap_or(u32::MAX),
+            head,
             last_line,
             before_last,
             settled,
@@ -335,6 +350,8 @@ fn screens_compared_after_more_output_find_the_last_line_grown() {
             .iter()
             .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
             .collect(),
+        head_rows: 0,
+        head: Vec::new(),
         last_line: rows[3].clone(),
         before_last: rows[2].clone(),
         settled: true,
@@ -371,6 +388,8 @@ fn a_shorter_screen_is_found_where_it_ends_in_the_new_one() {
             .iter()
             .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
             .collect(),
+        head_rows: 0,
+        head: Vec::new(),
         last_line: rows[5].clone(),
         before_last: rows[4].clone(),
         settled: true,
@@ -403,6 +422,8 @@ fn a_blank_last_line_alone_does_not_tie_two_screens() {
             .iter()
             .map(|row| row.trim_end_matches(['\r', '\n']).to_owned())
             .collect(),
+        head_rows: 0,
+        head: Vec::new(),
         last_line: rows[2].clone(),
         before_last: rows[1].clone(),
         settled: true,
@@ -415,13 +436,17 @@ fn a_blank_last_line_alone_does_not_tie_two_screens() {
 }
 
 #[test]
-fn more_output_than_the_read_limit_counts_the_rest_as_skipped() {
+fn more_output_than_the_read_limit_reads_its_first_and_last_lines_and_counts_the_rest() {
     let mut reader = Reader::new(Sim::new(100, &["ready>"]));
     let flood: Vec<String> = (1..=12).map(|n| format!("line {n}")).collect();
     let flood: Vec<&str> = flood.iter().map(String::as_str).collect();
     reader.sim.push(&flood);
     let output = reader.read();
-    assert_eq!(output.skipped, Some(Skipped::Count(7)));
+    assert_eq!(
+        output.head,
+        lines(&["line 1", "line 2", "line 3", "line 4", "line 5"])
+    );
+    assert_eq!(output.skipped, Some(Skipped::Count(2)));
     assert_eq!(
         output.lines,
         lines(&["line 8", "line 9", "line 10", "line 11", "line 12"])

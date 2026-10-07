@@ -273,7 +273,9 @@ the contract the Windows side implements.
   as it now is, whether it was `appended` to, so `text` is exactly the
   characters added, and, for a line that grew, how many `uncertain` bytes
   of white space at the start of `text` the line may already have had,
-  its padding or its own trailing spaces); `skipped`, lines that went by unread (`Skipped::Count`
+  its padding or its own trailing spaces); `head`, when lines went by
+  unread, the first new lines before them, so a flood's start is spoken in
+  full, empty otherwise (`serde(default)`); `skipped`, lines that went by unread (`Skipped::Count`
   or `Skipped::Uncounted` when the scrollback overflowed past the anchor
   and the count is lost; `plus` adds two); and `lines`, the newest lines
   without padding, an empty string for a blank line, each at most

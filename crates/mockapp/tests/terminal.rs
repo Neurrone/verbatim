@@ -279,24 +279,27 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         output,
         TerminalOutput {
             changed: None,
+            head: Vec::new(),
             skipped: None,
             lines: texts(&["notes.txt", "ready>"]),
         }
     );
 
-    // More than a read takes: the rest is counted as skipped.
+    // More than a read takes: the first lines and the last are read, and
+    // the rest between them counted as skipped.
     common::apply(
         &mut app,
         hwnd,
-        r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready> dir\n1\n2\n3\n4\nready>",
+        r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready> dir\n1\n2\n3\n4\n5\n6\nready>",
     );
     let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(
         output.changed.map(|change| change.text),
         Some(" dir".to_owned())
     );
-    assert_eq!(output.skipped, Some(Skipped::Count(2)));
-    assert_eq!(output.lines, texts(&["3", "4", "ready>"]));
+    assert_eq!(output.head, texts(&["1", "2", "3"]));
+    assert_eq!(output.skipped, Some(Skipped::Count(1)));
+    assert_eq!(output.lines, texts(&["5", "6", "ready>"]));
 
     // A redraw with the same text: nothing.
     let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);

@@ -1,6 +1,6 @@
 //! Scripted-input tests for terminal output in the reducer (milestone M4
-//! item 9): the flood policy over the backlog of output not yet spoken
-//! ("30 and 30"), output arriving in several batches, lines rewritten in
+//! item 9): the flood policy over the backlog of output not yet spoken (a
+//! burst's first 30 lines in full, then the last 30 of what waits), output arriving in several batches, lines rewritten in
 //! place, typing the terminal shows, "Report new output" (Verbatim+5), and
 //! speech being cut off. Playback is simulated by reaching each utterance's
 //! index mark in turn.
@@ -74,6 +74,7 @@ fn output_from(
         node_id: id(node),
         output: TerminalOutput {
             changed,
+            head: Vec::new(),
             skipped,
             lines,
         },
@@ -180,15 +181,80 @@ fn output_under_the_limit_is_spoken_whole_across_batches() {
 }
 
 #[test]
-fn a_flood_skips_all_but_the_last_lines_and_says_how_many() {
+fn a_flood_speaks_its_first_lines_in_full_then_skips_to_the_last() {
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(&mut state, &output(lines(1..=100)));
     let heard = playback.play_all(&mut state);
-    // All but the last 30 were skipped, before any was spoken.
-    let mut expected = vec!["skipped 70".to_owned()];
+    // The first 30 are spoken whole; once the 30th plays, the 70 waiting
+    // are more than 30, and all but the last 30 are skipped.
+    let mut expected = lines(1..=30);
+    expected.push("skipped 40".to_owned());
     expected.extend(lines(71..=100));
     assert_eq!(heard, expected);
+}
+
+#[test]
+fn a_flood_read_with_its_start_apart_is_spoken_from_its_start() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    // The outpost read the flood's first and last lines, and counted the
+    // lines between.
+    playback.feed(
+        &mut state,
+        &event(NormalizedEvent::TerminalOutput {
+            node_id: id(TERMINAL),
+            output: TerminalOutput {
+                changed: None,
+                head: lines(1..=30),
+                skipped: Some(Skipped::Count(2940)),
+                lines: lines(2971..=3000),
+            },
+        }),
+    );
+    let mut expected = lines(1..=30);
+    expected.push("skipped 2940".to_owned());
+    expected.extend(lines(2971..=3000));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn output_arriving_while_the_last_lines_play_is_skipped_again() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=100)));
+    // The first group and the skipped count play, and the next group's
+    // first line starts.
+    for _ in 0..32 {
+        assert!(playback.play_one(&mut state));
+    }
+    // The output goes on: once the next group (the last 30 of the first
+    // batch) has played, what waits is skipped again down to its last 30.
+    playback.feed(&mut state, &output(lines(101..=200)));
+    let mut expected = lines(1..=30);
+    expected.push("skipped 40".to_owned());
+    expected.extend(lines(71..=100));
+    expected.push("skipped 70".to_owned());
+    expected.extend(lines(171..=200));
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, expected);
+}
+
+#[test]
+fn a_backlog_from_many_batches_is_counted_exactly() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=10)));
+    // Ten batches of a hundred lines arrive before anything is heard.
+    for batch in 0..10 {
+        let first = 11 + batch * 100;
+        playback.feed(&mut state, &output(lines(first..=first + 99)));
+    }
+    let mut expected = lines(1..=30);
+    expected.push("skipped 950".to_owned());
+    expected.extend(lines(981..=1010));
+    assert_eq!(playback.play_all(&mut state), expected);
 }
 
 #[test]
@@ -204,10 +270,12 @@ fn newer_output_never_cancels_older_and_skipped_counts_add_up() {
         &output_from(TERMINAL, None, Some(Skipped::Count(50)), lines(71..=100)),
     );
     let heard = playback.play_all(&mut state);
-    // Lines 2 and 3 were already handed to speech; lines 4 to 20 and the
-    // 50 unread (21 to 70) make 67 skipped, so every line is accounted for.
-    let mut expected = lines(1..=3);
-    expected.push("skipped 67".to_owned());
+    // The first group is the first 30 lines that arrived, the 20 of the
+    // first batch and 10 of the second, with the count of the 50 unread
+    // (21 to 70) where they went by; the 20 left are no more than 30, and
+    // all are spoken.
+    let mut expected = lines(1..=20);
+    expected.push("skipped 50".to_owned());
     expected.extend(lines(71..=100));
     assert_eq!(heard, expected);
 }

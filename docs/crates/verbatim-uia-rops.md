@@ -283,6 +283,11 @@ trims:
   oldest first, so a line the terminal wrapped across rows is one line;
   `last_line` and `before_last`: the last line and the one before it, each
   read as a line, the next fingerprint.
+- `head_rows` and `head`: from an anchor, when more lines follow it than
+  the last ones read, how many of the first of them were read too, up to
+  the number asked for, and their text, read in one call from the start of
+  the line after the anchor's, so a flood's start is heard; zero and empty
+  otherwise.
 - `last`: the last line's range, the next anchor.
 - `settled`: whether the text held still while it was read, and
   `scrolled`: whether, if not, the line above where it started changed,
@@ -307,8 +312,9 @@ moves do at the end of the text and mockapp's do not, so both read the
 same. Finding the last line from the walk itself keeps the count and the
 last line in agreement however the text grows meanwhile. The last lines
 are read with one `GetText` from the start of the first of them to the
-end of the last. Nothing in it reads more than the lines asked for, so a
-read's cost does not grow with the scrollback or with the lines read.
+end of the last, and the first lines after the anchor, when more follow,
+with one more. Nothing in it reads more than twice the lines asked for, so a
+read's cost does not grow with the scrollback or with the lines written.
 
 A read is settled when the line above where it started reads at the end
 as it did when the start was found (with no anchor, the text's first line,

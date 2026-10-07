@@ -83,6 +83,11 @@ pub struct TailText {
     /// The text of those lines, oldest first; a line the terminal wrapped
     /// is one line here.
     pub lines: Vec<String>,
+    /// How many of the first lines after the anchor's were read too, when
+    /// more followed it than the last lines read.
+    pub head_rows: u32,
+    /// The text of those first lines, oldest first.
+    pub head: Vec<String>,
     /// The last line, read as a line: the next fingerprint's line.
     pub last_line: String,
     /// The line before it: the next fingerprint's line before.
@@ -105,6 +110,8 @@ impl From<&Tail> for TailText {
             count: tail.count,
             rows: tail.rows,
             lines: tail.lines.clone(),
+            head_rows: tail.head_rows,
+            head: tail.head.clone(),
             last_line: tail.last_line.clone(),
             before_last: tail.before_last.clone(),
             settled: tail.settled,
@@ -209,7 +216,11 @@ pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
         Found::NotFound | Found::Afresh => return Next::Afresh,
     };
     let lines: Vec<String> = tail.lines.iter().map(|line| trimmed(line)).collect();
-    let unread = tail.count.saturating_sub(tail.rows);
+    let head: Vec<String> = tail.head.iter().map(|line| trimmed(line)).collect();
+    let unread = tail
+        .count
+        .saturating_sub(tail.rows)
+        .saturating_sub(tail.head_rows);
     let skipped = (unread > 0).then_some(Skipped::Count(unread));
     let previous_now = if matches!(tail.found, Found::Moved(_)) {
         memory.previous.as_str()
@@ -229,12 +240,14 @@ pub fn after_anchor(memory: &Memory, tail: &TailText, wanted: usize) -> Next {
         if let Some(last) = screen.last_mut() {
             *last = trimmed(line_now);
         }
+        screen.extend(head.iter().cloned());
         screen
     };
     screen.extend(lines.iter().cloned());
     keep_last(&mut screen, wanted);
     let output = TerminalOutput {
         changed,
+        head,
         skipped,
         lines,
     };
