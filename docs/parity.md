@@ -240,9 +240,17 @@ verified.
     third time still spells and copies the name and value, where NVDA
     spells and copies the name and the same text.
   - A multi-column list view item (a report view, such as msinfo32's
-    right pane) is named by NVDA from its column texts, with no value
-    or description; Verbatim keeps MSAA's name and description, since
-    reading column texts needs a cross-process read not yet written.
+    right pane) is named by NVDA from its column texts, "content; Header:
+    content", with no value or description; Verbatim kept MSAA's name and
+    description. **Matched since 2026-10-07**: an item of a
+    `SysListView32` in the report view or tiles is named by its columns
+    in the order shown, each but the first after its header, leaving out
+    a column of zero width or no text, through the control's messages with
+    their structures in the list view's process, and no list view item has
+    a value or description (`native_controls` mockapp test, a real list
+    view; the end-to-end scenario is still to be written). **Not yet:** an
+    owner-drawn list view's display text, which needs a display model
+    (M14).
   - UIA read-only state from a text pattern's document range, which
     NVDA falls back to when `ValueIsReadOnly` is unsupported.
   - Events NVDA handles that Verbatim does not subscribe to: UIA

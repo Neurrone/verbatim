@@ -302,6 +302,72 @@ fn a_group_box_is_the_context_of_the_controls_inside_it() {
     app.quit();
 }
 
+/// An item of a list view in the report view is named by its columns, in
+/// the order shown, each after its header but the first, a column of zero
+/// width or with no text left out, as NVDA names it; it has no value or
+/// description of its own.
+fn a_report_view_item_is_named_by_its_columns() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    common::init_com();
+    let title = common::unique_title("mockapp-list-view");
+    let app = common::spawn("list_view.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let list = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            w!("SysListView32"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the list view");
+    let outpost = OutpostUnderTest::new(app.pid());
+    let item = |child: i32| {
+        outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+            hwnd: list.0 as isize,
+            id_object: OBJID_CLIENT.0,
+            id_child: child,
+        })
+    };
+
+    let readme = item(1);
+    assert_eq!(
+        (
+            readme.node.name.as_deref(),
+            readme.node.value.as_deref(),
+            readme.node.details.description.as_deref()
+        ),
+        (
+            Some("readme.txt; Size: 1 KB; Type: Text Document"),
+            None,
+            None
+        )
+    );
+    assert_eq!(
+        spoken(&readme),
+        [
+            vec![SegmentContent::Role(Role::List)],
+            vec![
+                SegmentContent::Label("readme.txt; Size: 1 KB; Type: Text Document".to_owned()),
+                SegmentContent::NegatedState(State::Selected),
+                SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(2)
+                },
+            ],
+        ]
+    );
+    let notes = item(2);
+    assert_eq!(
+        notes.node.name.as_deref(),
+        Some("notes.md; Type: Markdown"),
+        "an empty column is left out"
+    );
+    app.quit();
+}
+
 /// The roles of `nodes`, in order.
 fn roles(nodes: &[NodeSnapshot]) -> Vec<Role> {
     nodes.iter().map(|node| node.role).collect()
@@ -316,6 +382,10 @@ fn main() {
         (
             "tree_view_items_are_checked_by_their_state_images",
             tree_view_items_are_checked_by_their_state_images,
+        ),
+        (
+            "a_report_view_item_is_named_by_its_columns",
+            a_report_view_item_is_named_by_its_columns,
         ),
         (
             "a_group_box_is_the_context_of_the_controls_inside_it",

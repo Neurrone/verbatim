@@ -207,7 +207,15 @@ Public API:
   whitespace-only name or value as absent, drops the name of the edit
   field inside a labelled combo box, and gives a list view or tree view
   item its position, from `LVM_GETITEMCOUNT` or by counting its siblings
-  with `TVM_GETNEXTITEM`, as NVDA does.
+  with `TVM_GETNEXTITEM`, as NVDA does. A list view item has no value or
+  description, and one of a list view showing columns (the report view or
+  tiles) is named by its columns' texts, "content; Header: content", in
+  the order shown, leaving out columns of zero width or no text
+  (`list_view`, ported from NVDA's `sysListView32.py`: `LVM_GETVIEW`, the
+  header's item count, `LVM_GETCOLUMNORDERARRAY`, `LVM_GETSUBITEMRECT`,
+  `LVM_GETITEMTEXTW`, and `LVM_GETCOLUMNW`, their structures written into
+  the list view's process through `edit`'s target process, with pointer
+  fields sized for it).
 - `calls` — the count of the cross-process calls `acquire` makes, kept per
   thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
   Every `IAccessible` method, `IAccIdentity`'s identity string, the

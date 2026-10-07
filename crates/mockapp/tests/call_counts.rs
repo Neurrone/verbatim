@@ -520,6 +520,53 @@ fn msaa_tree_view_costs_exactly() {
     app.quit();
 }
 
+/// A focus on an item of a real list view in the report view
+/// (`tests/fixtures/list_view.json`), after a focus on another item: the
+/// item, named by its columns through the control's messages, as NVDA
+/// names it, and the list view, met there as the previous focus's
+/// container. The provider is comctl32's, so only the client's calls are
+/// pinned, as for the tree view.
+fn msaa_list_view_costs_exactly() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-list-view");
+    let app = common::spawn("list_view.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let list = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            w!("SysListView32"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the list view");
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut ratchet = Ratchet::default();
+    let focus = |child: i32| {
+        outpost.focus(DeliveredFact::MsaaFocus {
+            hwnd: list.0 as isize,
+            id_object: OBJID_CLIENT.0,
+            id_child: child,
+        })
+    };
+    let _ = focus(2);
+    let reported = focus(1);
+    assert_eq!(
+        reported.node.name.as_deref(),
+        Some("readme.txt; Size: 1 KB; Type: Text Document")
+    );
+    ratchet.check_calls(
+        "MSAA focus on a report view item",
+        reported.calls,
+        calls(0, 29, 14),
+    );
+    ratchet.finish();
+    app.quit();
+}
+
 /// A UIA message box's text, gathered as the outpost's worker gathers it
 /// for a dialog the focus newly entered (`describe_dialogs` in
 /// `verbatim-outpost`'s `read.rs`): one call reads the dialog's children
@@ -2687,6 +2734,7 @@ fn main() {
             msaa_dialog_text_costs_exactly,
         ),
         ("msaa_tree_view_costs_exactly", msaa_tree_view_costs_exactly),
+        ("msaa_list_view_costs_exactly", msaa_list_view_costs_exactly),
         (
             "uia_dialog_text_costs_exactly",
             uia_dialog_text_costs_exactly,

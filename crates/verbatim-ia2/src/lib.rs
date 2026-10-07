@@ -47,6 +47,7 @@ mod com;
 pub mod dialog;
 pub mod edit;
 mod hook;
+mod list_view;
 pub mod map;
 mod registry;
 mod window;

@@ -115,6 +115,8 @@ struct RawNode {
     #[serde(default)]
     window_class: Option<String>,
     #[serde(default)]
+    columns: Vec<(String, i32)>,
+    #[serde(default)]
     state_images: bool,
     #[serde(default)]
     children: Vec<RawNode>,
@@ -201,13 +203,16 @@ pub(crate) struct FixtureNode {
     pub(crate) backward_moves_positive: bool,
     /// The real control the node becomes for the MSAA backend instead of a
     /// scripted node: `tree_view` for a comctl32 tree view
-    /// ([`crate::tree_view`]), `group_box` for a group box with its child
+    /// ([`crate::tree_view`]), `list_view` for a comctl32 list view in the
+    /// report view ([`crate::list_view`]), `group_box` for a group box with its child
     /// buttons inside it, or `button` for a push button outside it
     /// ([`crate::buttons`]).
     pub(crate) native: Option<String>,
     /// The window class a real control is registered under, a superclass
     /// of the comctl32 one, as Windows Forms names its controls.
     pub(crate) window_class: Option<String>,
+    /// A real list view's columns, each its header and width in pixels.
+    pub(crate) columns: Vec<(String, i32)>,
     /// Whether a real tree view gives its items state images, as
     /// applications that draw their own check boxes do.
     pub(crate) state_images: bool,
@@ -313,6 +318,7 @@ fn convert(
         backward_moves_positive: raw.backward_moves_positive,
         native: raw.native,
         window_class: raw.window_class,
+        columns: raw.columns,
         state_images: raw.state_images,
         children,
     })

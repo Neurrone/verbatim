@@ -127,6 +127,9 @@ pub(crate) fn run(
                 Some("tree_view") => {
                     crate::tree_view::create(hwnd, node)?;
                 }
+                Some("list_view") => {
+                    crate::list_view::create(hwnd, node)?;
+                }
                 Some("group_box") => crate::buttons::create_group_box(hwnd, node)?,
                 Some("button") => crate::buttons::create_button(hwnd, node)?,
                 _ => {}

@@ -484,14 +484,14 @@ fn ansi_to_utf16(bytes: &[u8]) -> Vec<u16> {
 
 /// The process that owns an edit control, opened to allocate, read, and
 /// write its memory.
-struct TargetProcess {
+pub(crate) struct TargetProcess {
     handle: HANDLE,
     /// The size of a pointer in that process: 4 for a 32-bit process.
-    pointer_size: usize,
+    pub(crate) pointer_size: usize,
 }
 
 impl TargetProcess {
-    fn open(hwnd: isize) -> EditResult<Self> {
+    pub(crate) fn open(hwnd: isize) -> EditResult<Self> {
         let mut pid = 0u32;
         // SAFETY: a local read into a local; any handle is tolerated.
         unsafe { GetWindowThreadProcessId(window(hwnd), Some(&raw mut pid)) };
@@ -522,7 +522,7 @@ impl TargetProcess {
     }
 
     /// Allocates `size` bytes in the process, freed when the buffer drops.
-    fn allocate(&self, size: usize) -> EditResult<RemoteBuffer<'_>> {
+    pub(crate) fn allocate(&self, size: usize) -> EditResult<RemoteBuffer<'_>> {
         // SAFETY: allocating in the process the handle opened with
         // `PROCESS_VM_OPERATION`; a null result is checked.
         let address = unsafe {
@@ -562,7 +562,7 @@ fn is_32_bit(machine: IMAGE_FILE_MACHINE) -> bool {
 }
 
 /// Memory allocated in another process.
-struct RemoteBuffer<'a> {
+pub(crate) struct RemoteBuffer<'a> {
     process: &'a TargetProcess,
     address: *mut c_void,
     size: usize,
@@ -570,12 +570,12 @@ struct RemoteBuffer<'a> {
 
 impl RemoteBuffer<'_> {
     /// The buffer's address in the target, as a message parameter.
-    fn address(&self) -> isize {
+    pub(crate) fn address(&self) -> isize {
         self.address as isize
     }
 
     /// Writes `bytes` at the buffer's start.
-    fn write(&self, bytes: &[u8]) -> EditResult<()> {
+    pub(crate) fn write(&self, bytes: &[u8]) -> EditResult<()> {
         let length = bytes.len().min(self.size);
         // SAFETY: writing at most the buffer's size from a local slice into
         // memory allocated in the target for it.
@@ -592,7 +592,7 @@ impl RemoteBuffer<'_> {
     }
 
     /// Reads `length` bytes from the buffer's start.
-    fn read(&self, length: usize) -> EditResult<Vec<u8>> {
+    pub(crate) fn read(&self, length: usize) -> EditResult<Vec<u8>> {
         let length = length.min(self.size);
         let mut bytes = vec![0u8; length];
         // SAFETY: reading at most the buffer's size from memory allocated in

@@ -202,6 +202,12 @@ its crate-internal modules are the reviewable surface:
   window, found by class, and selected with `EM_SETSEL` on the window
   thread.
 - `tree_view` — the MSAA backend's real tree view, described above.
+- `list_view` — the MSAA backend's real list view: a `native`
+  `list_view` node is a comctl32 list view in the report view, made in a
+  Common Controls 6 activation context (`common_controls`), with the
+  node's `columns`, each a header and a width (0 hides it), and its
+  `list_item` children as items, each named by its first column, its value
+  split at `|` the texts of the others (`tests/fixtures/list_view.json`).
 - `buttons` — the MSAA backend's real buttons: a `native` `group_box`
   node is a standard group box (`Button` with `BS_GROUPBOX`) with its
   children as push buttons inside its rectangle, and a `native` `button`

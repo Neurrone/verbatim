@@ -404,6 +404,22 @@ events, at times of their own.
   state, finding it on the root (7 MSAA calls more). A real tree view's
   focused item has the state itself, and the check then costs nothing.
 
+### A focus on a report view item, MSAA
+
+A focus on an item of a real list view in the report view (mockapp's
+`tests/fixtures/list_view.json`, the `msaa_list_view_costs_exactly`
+ratchet), after a focus on another item, named by its four columns as NVDA
+names it.
+
+- Before the MSAA work package (2026-10-07) the item kept MSAA's name, and
+  no column was read.
+- Today: 29 MSAA calls and 14 window messages: the view, the header and
+  its item count, the column order, each column's rectangle (4), the text
+  of each column shown (3), the header of each but the first (2), and the
+  item count for the position. The structures the messages take are
+  written into and read from the list view's process with the kernel's
+  memory calls, which are not counted.
+
 ### A tree view item expanded or collapsed, MSAA
 
 The focused tree view item's own state change, raised by the control.

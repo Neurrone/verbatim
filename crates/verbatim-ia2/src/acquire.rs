@@ -1432,6 +1432,9 @@ fn read_snapshot_with(
     } else {
         (None, None)
     };
+    let list_view_item = role == Role::ListItem
+        && acc.child() != CHILDID_SELF
+        && normalized_class_of(key.0) == "SysListView32";
     let (value, level) = match role {
         Role::TreeItem if is_systreeview32(key.0) => {
             let level = raw_value
@@ -1447,7 +1450,20 @@ fn read_snapshot_with(
             raw_value.filter(|value| value.trim().parse::<i64>().is_err()),
             None,
         ),
+        // A list view item has no value, as NVDA's list view item has none.
+        Role::ListItem if list_view_item => (None, None),
         _ => (raw_value, None),
+    };
+    // A list view item has no description either, as NVDA's has none, and
+    // one that shows columns is named by them ("content; Header:
+    // content"), as NVDA names it.
+    let (name, description) = if list_view_item {
+        let columns = crate::list_view::column_name(key.0, acc.child(), description.as_deref())
+            .ok()
+            .flatten();
+        (columns.or(name), None)
+    } else {
+        (name, description)
     };
     // A window object — MSAA's second face of every windowed control,
     // role ROLE_SYSTEM_WINDOW alongside the client object's real role —
