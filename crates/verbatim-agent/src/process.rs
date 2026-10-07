@@ -709,11 +709,7 @@ mod tests {
         // with the space before it, and a line break.
         let captured =
             std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
-        assert_eq!(
-            captured,
-            "agent stderr capture test 
-"
-        );
+        assert_eq!(captured, "agent stderr capture test \r\n");
         std::fs::remove_file(&path).expect("removes the capture file");
     }
 
