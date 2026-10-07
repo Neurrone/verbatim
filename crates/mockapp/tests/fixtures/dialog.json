@@ -1,0 +1,21 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Dialog Fixture",
+  "children": [
+    {
+      "id": "dialog",
+      "role": "dialog",
+      "name": "Remove Theme",
+      "children": [
+        {
+          "id": "question",
+          "role": "static_text",
+          "name": "Remove the theme Mine? This cannot be undone."
+        },
+        { "id": "yes", "role": "button", "name": "Yes", "states": ["focusable"] },
+        { "id": "no", "role": "button", "name": "No", "states": ["focusable"] }
+      ]
+    }
+  ]
+}

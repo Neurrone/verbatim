@@ -111,7 +111,10 @@ Implementation notes, `reduce`:
   order: newly entered container context first (see below), then the
   node's name, role, value, states, then description, keyboard
   shortcut, position in set, and level — each detail simply absent when
-  the backend reported nothing. Which states are spoken, which are
+  the backend reported nothing. A tree or list item's level goes first
+  instead when it differs from `SrState`'s `last_tree_level`, the last level
+  put first, which it then becomes, for every announcement of a node, not
+  only a focus ("Where the level goes" in `docs/nvda/speech.md`). Which states are spoken, which are
   spoken by their absence ("not checked"), and their order follow "Which
   states are spoken, and in what order" in `docs/nvda/speech.md`
   (`spoken_states`, `negated_states`, and `STATE_ORDER`, with a

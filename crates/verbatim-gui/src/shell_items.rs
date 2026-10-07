@@ -55,8 +55,13 @@ pub enum ShellItemKind {
 pub struct ShellItem {
     /// The item's accessible name, shown in the list dialog.
     pub name: String,
-    /// The item's screen rectangle; click actions target its center.
+    /// The item's screen rectangle when it was enumerated; a click finds
+    /// the item again first ([`refind`]) and targets the center of its
+    /// rectangle then.
     pub rect: Rect,
+    /// The item's UIA runtime id, which identifies its element for as long
+    /// as the element exists; empty when the shell gave none.
+    pub runtime_id: Vec<i32>,
 }
 
 /// How long the guard thread waits for the enumeration worker before
@@ -281,7 +286,9 @@ fn collect_recursive(
                 height: rect.bottom.checked_sub(rect.top)?,
             })
         });
-        if let Some(item) = item_from_parts(name, offscreen, rect) {
+        if let Some(mut item) = item_from_parts(name, offscreen, rect) {
+            // Local: UIA keeps the runtime id with the element.
+            item.runtime_id = verbatim_uia::runtime_id(element);
             items.push(item);
         }
         // Tray and taskbar buttons carry no nested items worth walking.
@@ -315,7 +322,32 @@ fn item_from_parts(name: Option<String>, offscreen: bool, rect: Option<Rect>) ->
     }
     let name = name.filter(|name| !name.trim().is_empty())?;
     let rect = rect.filter(|rect| rect.width > 0 && rect.height > 0)?;
-    Some(ShellItem { name, rect })
+    Some(ShellItem {
+        name,
+        rect,
+        runtime_id: Vec::new(),
+    })
+}
+
+/// The item in a fresh enumeration, `fresh`, that is `chosen`, an item the
+/// user picked from an earlier one, wherever it is now: the item with the
+/// same runtime id, or else the only item with the same name. `None` when
+/// it is gone, or when its name alone cannot tell it from another item's,
+/// so a click never lands on an icon that merely took its place.
+#[must_use]
+pub fn refind<'a>(chosen: &ShellItem, fresh: &'a [ShellItem]) -> Option<&'a ShellItem> {
+    if !chosen.runtime_id.is_empty()
+        && let Some(item) = fresh
+            .iter()
+            .find(|item| item.runtime_id == chosen.runtime_id)
+    {
+        return Some(item);
+    }
+    let mut named = fresh.iter().filter(|item| item.name == chosen.name);
+    match (named.next(), named.next()) {
+        (Some(item), None) => Some(item),
+        _ => None,
+    }
 }
 
 /// The screen point click actions target: the center of `rect`.
@@ -349,7 +381,47 @@ mod tests {
             Some(ShellItem {
                 name: "Volume".into(),
                 rect: rect(24, 24),
+                runtime_id: Vec::new(),
             })
+        );
+    }
+
+    fn item(name: &str, left: i32, runtime_id: &[i32]) -> ShellItem {
+        ShellItem {
+            name: name.into(),
+            rect: Rect {
+                left,
+                top: 0,
+                width: 24,
+                height: 24,
+            },
+            runtime_id: runtime_id.to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_moved_item_is_found_by_its_runtime_id() {
+        let chosen = item("Volume", 0, &[42, 1]);
+        let fresh = [item("Network", 0, &[42, 2]), item("Volume", 24, &[42, 1])];
+        assert_eq!(refind(&chosen, &fresh), Some(&fresh[1]));
+    }
+
+    #[test]
+    fn an_item_with_a_new_runtime_id_is_found_by_its_unique_name() {
+        let chosen = item("Volume", 0, &[42, 1]);
+        let fresh = [item("Network", 0, &[42, 2]), item("Volume", 24, &[42, 7])];
+        assert_eq!(refind(&chosen, &fresh), Some(&fresh[1]));
+    }
+
+    #[test]
+    fn a_gone_or_ambiguous_item_is_not_found() {
+        let chosen = item("Volume", 0, &[42, 1]);
+        assert_eq!(refind(&chosen, &[item("Network", 0, &[42, 1, 9])]), None);
+        let twins = [item("Volume", 0, &[42, 3]), item("Volume", 24, &[42, 4])];
+        assert_eq!(
+            refind(&chosen, &twins),
+            None,
+            "two items of that name, neither of them the one chosen"
         );
     }
 

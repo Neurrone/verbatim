@@ -14,7 +14,10 @@ Public API:
   `controlled_descendant` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation), plus the M3
   node-relative operations `ancestor_chain`, `navigate`, and `activate`
-  described below, and the local helpers `cache_request(properties)`,
+  described below, `children_with(element, properties)` (an element's
+  raw-view children with `properties` cached, in one `BuildUpdatedCache`
+  whose scope takes in the children, for a dialog's own text), and the
+  local helpers `cache_request(properties)`,
   `raw_view_walker`, `control_view_walker`, `root_element`, and
   `property_condition`. Every one of
   them is safe to call. The coclass is `CUIAutomation8`, not the

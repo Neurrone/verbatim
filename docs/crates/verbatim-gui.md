@@ -11,8 +11,10 @@ Public API:
 
 - `GuiCommand` (`ShowMenu`, `OpenSettings`,
   `OpenShellItemList(ShellItemKind)`, `Shutdown`) and `GuiEvent`
-  (`QuitRequested`) — the two seams to the application. The GUI never exits
-  the process; Exit raises `QuitRequested` and the app decides.
+  (`QuitRequested`, and `ShellItemGone` with the name of a tray icon or
+  taskbar button the list dialog found gone, which the app speaks) — the
+  two seams to the application. The GUI never exits the process; Exit
+  raises `QuitRequested` and the app decides.
 - `GuiHandle::send(command)` — cloneable, callable from any thread;
   sends the command down the GUI's own channel and wakes the event loop,
   which drains the channel on the GUI thread.
@@ -29,8 +31,10 @@ Public API:
   thread; the GUI sends it down its channel to the GUI thread.
   `ShellItemKind` picks the surface (the notification area plus the
   overflow flyout window while visible, or the taskbar with the
-  notification area's subtree excluded); `ShellItem` is a name plus screen
-  rectangle, and `center_of` is the click target. Enumeration goes through
+  notification area's subtree excluded); `ShellItem` is a name, a screen
+  rectangle, and a UIA runtime id, `center_of` is the click target, and
+  `refind` finds a chosen item in a fresh enumeration by its runtime id,
+  or else by a name no other item has. Enumeration goes through
   the existing `verbatim-uia` client — `element_from_handle` on shell
   windows resolved by class, a control-view walk with the base cache
   request extended by the bounding rectangle — and collects named,
@@ -263,9 +267,15 @@ in flight, and otherwise starts one; when the results arrive on the GUI
 thread, presentation performs the same prePopup dance as settings and
 builds the dialog through `list_dialog` — a label over the item names with
 Left Click, Left Double Click, Right Click, and Cancel, where each click
-action moves the pointer to the center of the selected item's rectangle
-(`SetCursorPos`), injects the matching mouse events (`SendInput`; left
-down and up, twice for the double click, right down and up), and then
-closes the dialog. Each dialog closes through one path in C++, which
+action closes the dialog and enumerates the same surface again on a worker
+thread, finds the selected item there (`refind`), and on the guard thread
+moves the pointer to the center of its rectangle as it is now
+(`SetCursorPos`) and injects the matching mouse events (`SendInput`; left
+down and up, twice for the double click, right down and up). Icons move
+when another is added or removed, so the rectangle recorded when the list
+was made can lie under a different icon by then. An item that cannot be
+found, or an enumeration that fails, clicks nothing and raises
+`GuiEvent::ShellItemGone`, which the app speaks ("Volume is no longer
+there"). Each dialog closes through one path in C++, which
 destroys it and tells `GuiCore`, and the deferred postPopup frame hide
 only happens once nothing still needs the frame as its visible owner.

@@ -99,6 +99,8 @@ taskbar-list-label = &Buttons
 tray-list-left-click = &Left Click
 tray-list-left-double-click = Left &Double Click
 tray-list-right-click = &Right Click
+# Spoken when the chosen item is not there any more as the click is made.
+tray-list-gone = { $name } is no longer there
 
 ## Synthesizer display names.
 

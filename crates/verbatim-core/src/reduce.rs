@@ -657,7 +657,8 @@ fn reduce_focus_changed(
     }
 
     editing::await_focus_text(state, report.node);
-    effects.extend(focus_speech(trace_id, report, foreground_window, entered));
+    let speech = focus_speech(state, trace_id, report, (foreground_window, entered));
+    effects.extend(speech);
     effects
 }
 
@@ -738,18 +739,19 @@ fn foreground_changed(
 /// text leaves its value out, since its text follows
 /// (`editing::await_focus_text`).
 fn focus_speech(
+    state: &mut SrState,
     trace_id: TraceId,
     report: &FocusReport<'_>,
-    foreground_window: Option<&NodeSnapshot>,
-    entered: Vec<&NodeSnapshot>,
+    (foreground_window, entered): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>),
 ) -> Vec<Effect> {
+    let last_level = &mut state.last_tree_level;
     let reads_text = editing::may_have_text(report.node.role);
     let mut effects = Vec::new();
     if let Some(top) = foreground_window {
         effects.push(Effect::Speak(Utterance {
             trace_id,
             priority: SpeechPriority::Queued,
-            segments: node_segments(top, Reason::Focus),
+            segments: node_segments(top, Reason::Focus, last_level),
             source: Some(source_of(top)),
             say_all: false,
             validity: Some(FocusValidity {
@@ -781,14 +783,14 @@ fn focus_speech(
     let mut segments = if reads_text && report.node.value.is_some() {
         let mut node = report.node.clone();
         node.value = None;
-        node_segments(&node, Reason::Focus)
+        node_segments(&node, Reason::Focus, last_level)
     } else {
-        node_segments(report.node, Reason::Focus)
+        node_segments(report.node, Reason::Focus, last_level)
     };
     // A selection container introduces its selected item right after
     // itself — the roadmap's "announce a focused list's selected item".
     if let Some(selected) = report.selected_child {
-        segments.extend(node_segments(selected, Reason::Focus));
+        segments.extend(node_segments(selected, Reason::Focus, last_level));
     }
     effects.push(Effect::Speak(Utterance {
         trace_id,
@@ -930,11 +932,13 @@ fn reduce_name_changed(
 /// current speech, as NVDA's notification behavior speaks it. A toast never
 /// moves focus or the navigator.
 fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
+    // A toast is never a tree or list item, so the level spoken before it
+    // plays no part.
     vec![Effect::Speak(announce_node(
         trace_id,
         SpeechPriority::Queued,
         node,
-        Reason::Focus,
+        (Reason::Focus, &mut None),
     ))]
 }
 
@@ -1147,12 +1151,13 @@ fn announce_navigator(
     object: &NodeSnapshot,
     reason: Reason,
 ) -> Vec<Effect> {
+    let levels = (reason, &mut state.last_tree_level);
     let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
         let mut announced = object.clone();
         announced.value = None;
-        announce_node(trace_id, SpeechPriority::Queued, &announced, reason)
+        announce_node(trace_id, SpeechPriority::Queued, &announced, levels)
     } else {
-        announce_node(trace_id, SpeechPriority::Queued, object, reason)
+        announce_node(trace_id, SpeechPriority::Queued, object, levels)
     };
     let mut effects = vec![Effect::Speak(utterance)];
     effects.extend(editing::navigator_text(
@@ -1445,7 +1450,7 @@ fn reduce_selection_changed(
     vec![Effect::Speak(Utterance {
         trace_id,
         priority: SpeechPriority::Queued,
-        segments: node_segments(node, Reason::Focus),
+        segments: node_segments(node, Reason::Focus, &mut state.last_tree_level),
         source: Some(source_of(node)),
         say_all: false,
         validity: None,
@@ -1474,7 +1479,7 @@ fn reduce_controlled_selection(
         trace_id,
         SpeechPriority::Interrupt,
         node,
-        Reason::Focus,
+        (Reason::Focus, &mut state.last_tree_level),
     ))]
 }
 
@@ -1783,7 +1788,8 @@ fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     if entered.role != Role::List {
         entered.details.keyboard_shortcut = None;
     }
-    node_segments(&entered, Reason::Focus)
+    // An entered container speaks no level, so none is remembered.
+    node_segments(&entered, Reason::Focus, &mut None)
 }
 
 /// Why a node is being spoken, which decides whether its role is
@@ -1844,7 +1850,15 @@ fn speaks_role(node: &NodeSnapshot, reason: Reason) -> bool {
 /// each as its semantic span kind, never anonymous text (decision D12).
 /// Detail spans simply do not appear when the backend reported nothing; the
 /// role does not appear when `reason` leaves it silent ([`speaks_role`]).
-fn node_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSegment> {
+///
+/// A tree or list item's level goes first instead when it differs from
+/// `last_level`, the last level put first, which it then becomes ("Where
+/// the level goes" in `docs/nvda/speech.md`).
+fn node_segments(
+    node: &NodeSnapshot,
+    reason: Reason,
+    last_level: &mut Option<u32>,
+) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
     if let Some(name) = &node.name {
         segments.push(UtteranceSegment::label(name.clone()));
@@ -1879,7 +1893,13 @@ fn node_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSegment> {
         }));
     }
     if let Some(level) = node.details.level {
-        segments.push(UtteranceSegment::new(SegmentContent::Level(level)));
+        let segment = UtteranceSegment::new(SegmentContent::Level(level));
+        if matches!(node.role, Role::TreeItem | Role::ListItem) && *last_level != Some(level) {
+            *last_level = Some(level);
+            segments.insert(0, segment);
+        } else {
+            segments.push(segment);
+        }
     }
     segments
 }
@@ -1890,12 +1910,12 @@ fn announce_node(
     trace_id: TraceId,
     priority: SpeechPriority,
     node: &NodeSnapshot,
-    reason: Reason,
+    (reason, last_level): (Reason, &mut Option<u32>),
 ) -> Utterance {
     Utterance {
         trace_id,
         priority,
-        segments: node_segments(node, reason),
+        segments: node_segments(node, reason, last_level),
         source: Some(source_of(node)),
         say_all: false,
         validity: None,

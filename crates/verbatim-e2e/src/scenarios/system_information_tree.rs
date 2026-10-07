@@ -16,8 +16,11 @@
 //! Substring matches, tolerant of state wording, like the other scenarios.
 //! A tree item is spoken as NVDA speaks it on focus and object navigation,
 //! by name without its "tree view item" role, so each step is anchored on
-//! the item's name and level. The tree-control step additionally captures
-//! the full utterance and asserts it is not an item announcement.
+//! the item's name and level. As in NVDA, the level comes before the name
+//! when it differs from the last level spoken that way, and after the rest
+//! when it does not ("Where the level goes" in `docs/nvda/speech.md`). The
+//! tree-control step additionally captures the full utterance and asserts
+//! it is not an item announcement.
 
 use std::io;
 use std::time::Duration;
@@ -43,17 +46,18 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // `expect_in_order` advances through all three substrings whether they
     // land on one line or several.
     scenario.speech().expect_in_order(
-        &["System Information", "System Summary", "level 0"],
+        &["System Information", "level 0", "System Summary"],
         STEP_TIMEOUT,
     );
 
-    // First child of the root: "Hardware Resources", one level deeper.
+    // First child of the root: "Hardware Resources", one level deeper, so
+    // the level comes first.
     scenario
         .send_gesture("kb:verbatim+numpad2")
         .expect("sends move-to-first-child");
     scenario
         .speech()
-        .expect_in_order(&["Hardware Resources", "level 1"], STEP_TIMEOUT);
+        .expect_in_order(&["level 1", "Hardware Resources"], STEP_TIMEOUT);
 
     // Next sibling: "Components" — a real sibling; the flat exposure used
     // to answer the next visible item, descending into children instead.
@@ -74,13 +78,13 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
     // Parent: the logical parent item "System Summary", not the tree
     // control (the flat exposure used to answer the control for every
-    // item).
+    // item), and a level up, so the level comes first again.
     scenario
         .send_gesture("kb:verbatim+numpad8")
         .expect("sends move-to-parent");
     scenario
         .speech()
-        .expect_in_order(&["System Summary", "level 0"], STEP_TIMEOUT);
+        .expect_in_order(&["level 0", "System Summary"], STEP_TIMEOUT);
 
     // Parent from the root item: the tree control itself, spoken by its
     // bare role since msinfo32's tree control is unnamed — and never as an

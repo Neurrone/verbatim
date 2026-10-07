@@ -70,11 +70,15 @@ pub enum GuiCommand {
 }
 
 /// An event the GUI raises for the app to handle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GuiEvent {
     /// The user chose Exit. The GUI does not exit the process; the app decides
     /// how to shut down and then sends [`GuiCommand::Shutdown`] back.
     QuitRequested,
+    /// The tray icon or taskbar button with this name, chosen in the list
+    /// dialog, was not there to click when the click was made, so nothing
+    /// was clicked; the app says so.
+    ShellItemGone(String),
 }
 
 /// A message for the GUI thread: a command from the app, or the outcome of
@@ -377,7 +381,11 @@ impl GuiCore {
         let (true, Some(items)) = (present, items) else {
             return;
         };
-        let (model, buttons) = tray_list::shell_list_dialog(kind, items).split();
+        let events = self.events.clone();
+        let gone: tray_list::OnGone = Arc::new(move |name| {
+            let _ = events.send(GuiEvent::ShellItemGone(name));
+        });
+        let (model, buttons) = tray_list::shell_list_dialog(kind, items, &gone).split();
         *self.list_buttons.borrow_mut() = Some(buttons);
         // Same discipline as settings: take the foreground before the
         // dialog exists, so the process already owns it when the dialog

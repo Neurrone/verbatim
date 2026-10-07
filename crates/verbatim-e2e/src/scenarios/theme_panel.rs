@@ -15,7 +15,7 @@
 //! the Preview button, which is now announced with the sound in place of
 //! its role ("sound: role-button" in the speech stream); press it and hear
 //! the sample. Reset the indication, which is spoken again, remove the new
-//! theme, and Cancel.
+//! theme, hearing the confirmation's question, and Cancel.
 //!
 //! Every step waits for the speech it causes, with a deadline; nothing
 //! waits a fixed time. The new theme is made in the themes folder beside
@@ -144,10 +144,18 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, &["enter"], &["button: speech"]);
 
     // The new theme is removed, which selects the default theme again. The
-    // confirmation is announced by its title and focused button; Verbatim
-    // does not yet read a dialog's text on entering it (`docs/parity.md`).
+    // confirmation is announced by its title, its question, as NVDA reads a
+    // dialog's own text on entering it, and its focused button.
     tab_to(scenario, &["Remove", "button"]);
-    press(scenario, &["enter"], &["Remove Theme", "No"]);
+    press(
+        scenario,
+        &["enter"],
+        &[
+            "Remove Theme",
+            "Remove the theme Default copy? This cannot be undone.",
+            "No",
+        ],
+    );
     press(scenario, &["y"], &["Default"]);
 
     scenario.send_keys(&["escape"]).expect("sends escape");

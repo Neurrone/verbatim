@@ -182,6 +182,16 @@ Public API:
   arrived, waiting for one, and the clocks (an `Instant` for the wait
   and Unix milliseconds for when a caret was read), so the unit tests run
   on fake clocks. Details under "Text" below.
+- `dialog_text` — a dialog's own text, such as a message box's question,
+  gathered from its children by NVDA's rules (`docs/nvda/object-model.md`,
+  "A dialog's own text"), public so mockapp's tests gather it as the
+  worker does. `dialog_text(&dialog)` runs the rules over a
+  `DialogObject`, the trait each backend implements: MSAA through
+  `verbatim_ia2::dialog::DialogObject`, UIA through `UiaObject`, whose
+  children come with their properties cached, one call per container.
+  `is_dialog(role)` says which nodes have such text: a dialog, an alert,
+  or a property page. A gathering looks at no more than `MAX_OBJECTS`
+  objects; a dialog with more says nothing rather than part of its text.
 - `run_listener` — the focus-listener runtime (decisions D13 and D14;
   outpost redesign, "The focus listener"): sets up the writer, installs
   the desktop-global `FocusRegistration`, the global
@@ -424,6 +434,19 @@ Implementation notes:
   `ENRICHMENT_BUDGET`, two seconds (UIA calls inside it wait no longer
   than that), after which the ancestors are reported unknown. Object
   navigation's ancestor query reads the whole chain.
+- A dialog's own text (`read::describe_dialogs`). Before a focus is
+  published, every dialog among its ancestors, and the focus itself, that
+  is not in the previous focus's chain and has no description of its own
+  is given its text as its description, while descriptions are read at all
+  (the theme's description indication), so Core speaks it where NVDA does,
+  after the dialog's name, role, and states and before the focused
+  control. A dialog the focus stays inside is therefore read once: the
+  splice carries its text along. A foreground report of a dialog gathers
+  its text too and keeps it (`Tracking`'s `dialog`), and the focus that
+  follows into it takes that rather than reading the dialog again; a
+  focus-now answer gathers for its window and its focus's chain alike,
+  reading a dialog that is both only once. A UIA dialog is read through the
+  element the registry holds, each call waiting at most a second.
 - A UIA focus's ancestry, by default, is one remote operation
   (`verbatim_uia_rops::focus_ancestry`, called by
   `read::uia_remote_enrichment` right after the focused element is read):

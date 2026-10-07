@@ -290,6 +290,7 @@ knowing for review:
   lists the taskbar instead: `verbatim-input` counts quick presses on each
   emitted gesture, and the router passes that count to
   `speak_time_or_date` and to `shell_list_kind`, which maps it to the
-  listed surface. When the loop exits — Exit item,
+  listed surface. The GUI event thread speaks `GuiEvent::ShellItemGone`
+  as queued text, when the list dialog finds its chosen item gone. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and lets job objects reclaim the outposts.

@@ -224,6 +224,8 @@ fn main() {
                         handle.send(GuiCommand::Shutdown);
                     }
                 }
+                // The preview opens no shell item list.
+                GuiEvent::ShellItemGone(_) => {}
             }
         }
     });

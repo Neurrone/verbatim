@@ -99,11 +99,15 @@ verified.
     Verbatim spoke it twice; NVDA's `UIItem` class reports no value.
     **Matched since 2026-10-02.**
   - NVDA speaks a tree item's level first ("level 1, System, 2 of
-    12"); Verbatim speaks it last. An NVDA transcript in msinfo32 on
+    12"); Verbatim spoke it last. An NVDA transcript in msinfo32 on
     2026-10-07 showed NVDA puts the level first only when it differs from
     the last one spoken ("level 1 Hardware Resources collapsed 1 of 3",
-    then "Components collapsed 2 of 3 level 1"); Verbatim still always
-    speaks it last (a follow-up). The same transcript showed a standard
+    then "Components collapsed 2 of 3 level 1"). **Matched since
+    2026-10-07** ("Where the level goes" in [Speech](nvda/speech.md)): a
+    tree or list item's level goes first when it differs from the last
+    level put first, and last otherwise, for a focus, object navigation, a
+    selection, and reporting the current object alike (the
+    `system_information_tree` scenario). The same transcript showed a standard
     tree view's root item is "level 0", the raw `accValue`, in NVDA;
     Verbatim had added one, and matches since 2026-10-07 (the
     `system_information_tree` scenario).
@@ -227,8 +231,21 @@ verified.
     elements added to or removed from a selection. NVDA also speaks
     state changes on the focus's ancestors, where Verbatim speaks them
     only on the focus.
-  - Dialog text, which NVDA reads on entering a dialog (see the
-    role-shaped behavior layer below).
+  - Dialog text, which NVDA reads on entering a dialog: a message box's
+    question, read after the dialog's title and role and before its
+    focused button. **Matched since 2026-10-07** ("A dialog's own text" in
+    [Object model](nvda/object-model.md)): the outpost gathers the text by
+    NVDA's rules for a dialog, alert, or property page the focus newly
+    enters, or one reported as the foreground window, and reports it as
+    the dialog's description, as NVDA's dialog class does, so it is spoken
+    where the description is and only while descriptions are (the
+    `theme_panel` scenario's Remove confirmation). **Different:** NVDA
+    reads a child window's client area through whichever API it uses for
+    that window, where Verbatim reads a dialog's children in the dialog's
+    own API; an owner-drawn static text with no name, which NVDA reads
+    from the screen, gives nothing; the Windows Installer's dialog class,
+    and web dialogs, are not recognized; and a dialog with more than 512
+    objects says nothing.
 
 - Focus-ancestry context: announce newly entered presentable
   containers before the control. NVDA: `focusEntered` +
@@ -1221,7 +1238,8 @@ verified.
   harvesting, suggestion sounds, fake table rows, tooltips/toasts).
   NVDA: the behavior mixins ([Object model](nvda/object-model.md)).
   Verbatim: **partial** — selection and notification handling exist
-  in the reducer; the rest lands per feature. Architectural question
+  in the reducer, and dialog text in the outpost (see "Focus and
+  announcements"); the rest lands per feature. Architectural question
   for the review: where is Verbatim's home for this layer?
 - ARIA vocabulary, annotations/details, compound documents. NVDA:
   [ARIA, annotations, and compound documents](nvda/aria-and-annotations.md).
@@ -1282,6 +1300,16 @@ verified.
   or Apply, as NVDA's do, where the Speech and Theme pages apply live
   (`terminal_settings_page` verifies that an applied change reaches
   Core).
+- The system tray and taskbar list (Verbatim+F11, the systrayList
+  add-on's dialog). NVDA's add-on clicks the center of the rectangle it
+  recorded for the chosen icon when it made the list, so an icon that
+  moved since, as tray icons do when another is added or removed, leaves
+  a different icon, or none, under the click. Verbatim: **different**,
+  deliberately, since 2026-10-07: a click enumerates the tray or taskbar
+  again, finds the chosen item by its UIA runtime id, or else by a name
+  no other item has, and clicks it where it is now; an item that cannot
+  be found is not clicked, and Verbatim says "is no longer there" after
+  its name (`verbatim-gui`'s `tray_list` and `shell_items`).
 - Logging and the log viewer. NVDA: [Logging](nvda/logging.md).
   Verbatim: **not yet (M9)** — tracing exists (flight recorder,
   latency ledger); user-facing logging is unbuilt.

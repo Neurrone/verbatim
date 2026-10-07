@@ -1287,10 +1287,13 @@ fn details_speak_in_nvda_property_order() {
 
     let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), item));
 
+    // The first level spoken goes first ("Where the level goes" in
+    // `docs/nvda/speech.md`); everything else keeps NVDA's order.
     let utterances = speak_effects(&effects);
     assert_eq!(
         utterances[0].segments,
         vec![
+            UtteranceSegment::new(SegmentContent::Level(1)),
             UtteranceSegment::label("Report.txt"),
             UtteranceSegment::new(SegmentContent::Description("Text document".to_owned())),
             UtteranceSegment::new(SegmentContent::Shortcut("Alt+R".to_owned())),
@@ -1298,7 +1301,42 @@ fn details_speak_in_nvda_property_order() {
                 position: 2,
                 set_size: Some(5),
             }),
-            UtteranceSegment::new(SegmentContent::Level(1)),
+        ]
+    );
+}
+
+/// A tree item at `level`, named `name`, as an MSAA tree view reports it.
+fn tree_item(id: u64, name: &str, level: u32) -> NodeSnapshot {
+    let mut item = node(id, Role::TreeItem, Some(name), None, StateSet::new());
+    item.details.level = Some(level);
+    item
+}
+
+#[test]
+fn a_tree_items_level_goes_first_only_when_it_changes() {
+    let level = |level| UtteranceSegment::new(SegmentContent::Level(level));
+    let mut state = SrState::new();
+    let mut heard = Vec::new();
+    for (id, name, depth) in [
+        (500, "Hardware Resources", 1),
+        (501, "Components", 1),
+        (502, "System Summary", 0),
+        (503, "Software Environment", 1),
+    ] {
+        let (next, effects) = reduce(
+            &state,
+            &focus_event(TraceId::mint(), Pid(1), tree_item(id, name, depth)),
+        );
+        state = next;
+        heard.push(speak_effects(&effects)[0].segments.clone());
+    }
+    assert_eq!(
+        heard,
+        vec![
+            vec![level(1), UtteranceSegment::label("Hardware Resources")],
+            vec![UtteranceSegment::label("Components"), level(1)],
+            vec![level(0), UtteranceSegment::label("System Summary")],
+            vec![level(1), UtteranceSegment::label("Software Environment")],
         ]
     );
 }

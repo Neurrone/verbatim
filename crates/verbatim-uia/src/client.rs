@@ -14,9 +14,9 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
-    IUIAutomationTreeWalker, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
-    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
-    UIA_TogglePatternId,
+    IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
+    UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId,
+    UIA_SelectionPatternId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -214,6 +214,41 @@ impl Uia {
         let result = read(self);
         set_connection_timeout(&client, CONNECTION_TIMEOUT_MS)?;
         Ok(result)
+    }
+
+    /// `element`'s children in the raw view, in order, each with
+    /// `properties` cached, in one call: the element's cache is rebuilt
+    /// with its children in scope, and the children are read from it.
+    /// Cross-process; the outpost's worker only.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the cache request cannot be built or the
+    /// element does not answer.
+    pub fn children_with(
+        &self,
+        element: &IUIAutomationElement,
+        properties: &[UIA_PROPERTY_ID],
+    ) -> windows::core::Result<Vec<IUIAutomationElement>> {
+        let request = crate::cache::cache_request(&self.client, properties)?;
+        // SAFETY: `request` is a live cache request; the scope is a plain
+        // value.
+        unsafe { request.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0)) }?;
+        // SAFETY: `self.client` is a live IUIAutomation; the call takes no
+        // arguments.
+        let raw_view = unsafe { self.client.RawViewCondition() }?;
+        // SAFETY: `request` is a live cache request and `raw_view` a live
+        // condition from the same client.
+        unsafe { request.SetTreeFilter(&raw_view) }?;
+        let fresh = element.build_updated_cache(&request)?;
+        // SAFETY: `fresh` is a live element whose cache was just built; an
+        // element with no children answers a null array, which `windows`
+        // reports as an error carrying no failure code.
+        match unsafe { fresh.GetCachedChildren() } {
+            Ok(array) => Ok(crate::element::elements_of(&array)),
+            Err(error) if error.code().is_ok() => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
     }
 
     /// Fetches the element for a top-level window handle with properties
