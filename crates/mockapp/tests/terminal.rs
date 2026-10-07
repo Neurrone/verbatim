@@ -28,13 +28,15 @@ use verbatim_uia_rops::{
     terminal_tail_remote,
 };
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, IUIAutomationTextRange};
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
+};
 
 /// How many of the newest lines a read takes.
 const WANTED: u32 = 3;
 
 /// mockapp's terminal's text pattern.
-fn terminal_pattern(uia: &Uia, hwnd: HWND) -> IUIAutomationTextPattern {
+fn terminal_text(uia: &Uia, hwnd: HWND) -> (IUIAutomationElement, IUIAutomationTextPattern) {
     let cache = uia.base_cache_request().expect("a cache request");
     let root = uia
         .element_from_handle(hwnd.0 as isize, &cache)
@@ -54,9 +56,10 @@ fn terminal_pattern(uia: &Uia, hwnd: HWND) -> IUIAutomationTextPattern {
         .element_of(terminal)
         .and_then(|agile| agile.resolve().ok())
         .expect("its element");
-    verbatim_uia::text::text_pattern(&element)
+    let pattern = verbatim_uia::text::text_pattern(&element)
         .expect("a text pattern")
-        .0
+        .0;
+    (element, pattern)
 }
 
 /// Runs `query` both ways and checks they agree; returns the remote
@@ -96,7 +99,7 @@ fn remote_and_classic_terminal_tails_agree() {
     let mut app = common::spawn("terminal.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
-    let pattern = terminal_pattern(&uia, hwnd);
+    let (_, pattern) = terminal_text(&uia, hwnd);
     let document =
         verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the document range");
 
@@ -160,7 +163,7 @@ fn uia_calls(uia: u32) -> CallCounts {
 fn measured_read(
     uia: &Uia,
     hwnd: HWND,
-    pattern: &IUIAutomationTextPattern,
+    text: (&IUIAutomationElement, &IUIAutomationTextPattern),
     terminal: &mut Terminal,
     remote: bool,
     baseline: bool,
@@ -168,7 +171,7 @@ fn measured_read(
     common::reset_hits(hwnd);
     let _ = verbatim_uia::calls::take();
     let (output, _) =
-        read(uia, pattern, terminal, WANTED, remote, baseline).expect("the terminal reads");
+        read(uia, text, terminal, WANTED, remote, baseline).expect("the terminal reads");
     let calls = verbatim_uia::calls::take();
     (output, calls, common::read_hits(hwnd))
 }
@@ -185,12 +188,13 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
     let mut app = common::spawn("terminal.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
-    let pattern = terminal_pattern(&uia, hwnd);
+    let (element, pattern) = terminal_text(&uia, hwnd);
+    let text = (&element, &pattern);
     let mut terminal = Terminal::default();
 
     // The baseline, when the terminal gains the focus: nothing is new.
     let (output, baseline_calls, baseline_hits) =
-        measured_read(&uia, hwnd, &pattern, &mut terminal, remote, true);
+        measured_read(&uia, hwnd, text, &mut terminal, remote, true);
     assert!(output.is_empty(), "{output:?}");
 
     // The prompt grows as the user types.
@@ -200,7 +204,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls",
     );
     let (output, typed_calls, typed_hits) =
-        measured_read(&uia, hwnd, &pattern, &mut terminal, remote, false);
+        measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(
         output.changed,
         Some(LineChange {
@@ -218,7 +222,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready>",
     );
     let (output, line_calls, line_hits) =
-        measured_read(&uia, hwnd, &pattern, &mut terminal, remote, false);
+        measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(
         output,
         TerminalOutput {
@@ -234,7 +238,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         hwnd,
         r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready> dir\n1\n2\n3\n4\nready>",
     );
-    let (output, _, _) = measured_read(&uia, hwnd, &pattern, &mut terminal, remote, false);
+    let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(
         output.changed.map(|change| change.text),
         Some(" dir".to_owned())
@@ -243,12 +247,12 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
     assert_eq!(output.lines, texts(&["3", "4", "ready>"]));
 
     // A redraw with the same text: nothing.
-    let (output, _, _) = measured_read(&uia, hwnd, &pattern, &mut terminal, remote, false);
+    let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert!(output.is_empty(), "{output:?}");
 
     // The screen cleared and written to: compared line by line.
     common::apply(&mut app, hwnd, r"set-text term hello\nready>");
-    let (output, _, _) = measured_read(&uia, hwnd, &pattern, &mut terminal, remote, false);
+    let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(output.lines, texts(&["hello", "ready>"]));
     app.send("quit");
 
@@ -258,13 +262,14 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         ("output line", line_calls, line_hits),
     ];
     println!("terminal read costs (remote {remote}): {costs:?}");
-    // The client's calls: remotely, the document range and one program
-    // for the baseline, and one program for each later read; classically,
-    // one call per provider method. The provider does the same work either
-    // way.
+    // The client's calls: remotely, one program for each read, the
+    // baseline's getting the document range itself, which costs the
+    // provider the import of the element and its text pattern;
+    // classically, one call per provider method. The provider does the
+    // same work otherwise.
     let expected: [(&str, CallCounts, Hits); 3] = if remote {
         [
-            ("baseline", uia_calls(2), BASELINE_HITS),
+            ("baseline", uia_calls(1), REMOTE_BASELINE_HITS),
             ("typed", uia_calls(1), TYPED_HITS),
             ("output line", uia_calls(1), LINE_HITS),
         ]
@@ -294,6 +299,23 @@ type Hits = &'static [(&'static str, u32)];
 /// line read before and after (the guard against text that moved during
 /// the read).
 const BASELINE_HITS: &[(&str, u32)] = &[
+    ("DocumentRange", 1),
+    ("Clone", 9),
+    ("CompareEndpoints", 2),
+    ("ExpandToEnclosingUnit", 5),
+    ("GetText", 5),
+    ("Move", 4),
+    ("MoveEndpointByRange", 8),
+];
+
+/// The provider hits of the baseline read remotely: the classic read's,
+/// and the import of the element and its text pattern.
+const REMOTE_BASELINE_HITS: &[(&str, u32)] = &[
+    ("ProviderOptions", 2),
+    ("GetPatternProvider", 1),
+    ("GetPropertyValue", 1),
+    ("HostRawElementProvider", 1),
+    ("Navigate", 1),
     ("DocumentRange", 1),
     ("Clone", 9),
     ("CompareEndpoints", 2),

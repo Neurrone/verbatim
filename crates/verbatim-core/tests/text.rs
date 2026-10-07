@@ -9,8 +9,8 @@ use verbatim_model::{
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PreviousSelection,
     QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
     SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
-    UtteranceSegment,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextUnit, TraceId,
+    TypingEcho, UtteranceSegment,
 };
 use verbatim_model::{FormatRun, TextAttributes, TextFormat};
 
@@ -1092,6 +1092,21 @@ fn say_all_pieces(effects: &[Effect]) -> Vec<(SpeechMark, String)> {
         .collect()
 }
 
+/// Say-all's read ahead from `at`, after `movement`, by `unit`.
+fn read_ahead(at: TextPoint, movement: Option<TextMovement>, unit: TextUnit) -> TextOp {
+    TextOp::ReadAhead(TextReadAhead {
+        at,
+        movement,
+        unit,
+        count: 16,
+    })
+}
+
+/// A mark reached at `at_ms` milliseconds since the Unix epoch.
+fn reached(mark: SpeechMark, at_ms: u64) -> Input {
+    Input::MarkReached { mark, at_ms }
+}
+
 #[test]
 fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
     let mut state = editing("first\n", 0);
@@ -1100,11 +1115,7 @@ fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
     let first = request(&effects);
     assert_eq!(
         first.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Sentence,
-        })
+        read_ahead(TextPoint::Caret, None, TextUnit::Sentence)
     );
     // UIA has no sentences: reading goes by line.
     let effects = reduce(
@@ -1117,40 +1128,37 @@ fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
     let by_line = request(&effects);
     assert_eq!(
         by_line.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        })
+        read_ahead(TextPoint::Caret, None, TextUnit::Line)
     );
     let effects = reduce(
         &mut state,
         &completed(
             by_line.query_id,
-            TextReply::Read {
+            TextReply::Chunks {
                 moved: 0,
-                chunk: line("first\n", 100, 0),
+                chunks: vec![line("first\n", 100, 0)],
             },
         ),
     );
     let pieces = say_all_pieces(&effects);
     assert_eq!(pieces.len(), 1);
     assert_eq!(pieces[0].1, "first");
-    // Little is queued, so the next line is read at once.
+    // Little is left to speak, so the next batch is read at once, a line on
+    // from the last line read.
     let next = request(&effects);
     assert_eq!(
         next.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition::at(TextAnchor(100))),
-            movement: Some(TextMovement {
+        read_ahead(
+            TextPoint::At(TextPosition::at(TextAnchor(100))),
+            Some(TextMovement {
                 unit: TextUnit::Line,
                 count: 1
             }),
-            unit: TextUnit::Line,
-        })
+            TextUnit::Line,
+        )
     );
     // Playback reaches the first line: the caret moves there.
-    let effects = reduce(&mut state, &Input::MarkReached { mark: pieces[0].0 });
+    let effects = reduce(&mut state, &reached(pieces[0].0, 0));
     assert_eq!(
         request(&effects).op,
         TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(100))))
@@ -1160,13 +1168,112 @@ fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
         &mut state,
         &completed(
             next.query_id,
-            TextReply::Read {
+            TextReply::Chunks {
                 moved: 0,
-                chunk: line("first\n", 100, 0),
+                chunks: vec![line("first\n", 100, 0)],
             },
         ),
     );
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
+}
+
+#[test]
+fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
+    let mut state = editing("x\n", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::UnsupportedUnit(TextUnit::Sentence),
+        ),
+    );
+    let last = TextChunk {
+        last: true,
+        ..line("three", 102, 0)
+    };
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::Chunks {
+                moved: 0,
+                chunks: vec![line("one\n", 100, 0), line("two\n", 101, 0), last],
+            },
+        ),
+    );
+    // Two pieces with speech, the third waiting; the text's end was read,
+    // so nothing more is asked for.
+    let pieces = say_all_pieces(&effects);
+    let texts: Vec<&str> = pieces.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["one", "two"]);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Text(_)))
+    );
+    // Reaching the first hands on the third, with its own mark.
+    let effects = reduce(&mut state, &reached(pieces[0].0, 0));
+    let third = say_all_pieces(&effects);
+    assert_eq!(third.len(), 1);
+    assert_eq!(third[0].1, "three");
+    let _ = reduce(&mut state, &reached(pieces[1].0, 0));
+    // The last piece reached: say-all ends.
+    let effects = reduce(&mut state, &reached(third[0].0, 0));
+    assert!(effects.contains(&Effect::KeepDisplayOn(false)));
+}
+
+#[test]
+fn say_all_reads_the_next_batch_when_little_is_left_to_speak() {
+    let mut state = editing("x\n", 0);
+    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::UnsupportedUnit(TextUnit::Sentence),
+        ),
+    );
+    // Six lines of 59 characters to speak: twelve seconds at the assumed
+    // pace of 30 a second, above the low-water mark.
+    let text = format!(
+        "{}
+",
+        "a".repeat(59)
+    );
+    let chunks: Vec<TextChunk> = (0..6).map(|index| line(&text, 100 + index, 0)).collect();
+    let effects = reduce(
+        &mut state,
+        &completed(request_of(&effects), TextReply::Chunks { moved: 0, chunks }),
+    );
+    let reads = |effects: &[Effect]| {
+        effects
+            .iter()
+            .filter(|effect| {
+                matches!(effect, Effect::Text(request) if matches!(request.op, TextOp::ReadAhead(_)))
+            })
+            .count()
+    };
+    assert_eq!(reads(&effects), 0);
+    let mut marks: Vec<SpeechMark> = say_all_pieces(&effects)
+        .into_iter()
+        .map(|(mark, _)| mark)
+        .collect();
+    let mut reach = |state: &mut SrState, index: usize, at_ms: u64| {
+        let effects = reduce(state, &reached(marks[index], at_ms));
+        marks.extend(say_all_pieces(&effects).into_iter().map(|(mark, _)| mark));
+        reads(&effects)
+    };
+    assert_eq!(reach(&mut state, 0, 1_000_000), 0);
+    // The first line took ten seconds: speech is slow, so the four lines
+    // left last long.
+    assert_eq!(reach(&mut state, 1, 1_010_000), 0);
+    // Speech speeds up to 118 characters a second. The pace measured
+    // rises a quarter of the way each time, so after one fast line the
+    // three lines left still last over the mark, and after two the two
+    // left (118 characters, about four seconds at the assumed pace) do not.
+    assert_eq!(reach(&mut state, 2, 1_010_500), 0);
+    assert_eq!(reach(&mut state, 3, 1_011_000), 1);
 }
 
 #[test]
@@ -1181,55 +1288,45 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
         &mut state,
         &completed(
             request_of(&effects),
-            TextReply::Read {
+            TextReply::Chunks {
                 moved: 0,
-                chunk: paragraph,
+                chunks: vec![paragraph],
             },
         ),
     );
+    // Two sentences with speech, the third waiting; so little is left that
+    // the next paragraph is read at once, a paragraph on.
     let pieces = say_all_pieces(&effects);
     let texts: Vec<&str> = pieces.iter().map(|(_, text)| text.as_str()).collect();
-    assert_eq!(texts, ["One. ", "Two? ", "Three!"]);
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Text(_))),
-        "three sentences are queued, so nothing more is read yet"
-    );
-    // Reaching the second sentence leaves one queued: the next paragraph is
-    // read, a paragraph on.
-    let effects = reduce(&mut state, &Input::MarkReached { mark: pieces[1].0 });
-    let reads: Vec<TextOp> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Text(request) => Some(request.op.clone()),
-            _ => None,
-        })
-        .collect();
+    assert_eq!(texts, ["One. ", "Two? "]);
     assert_eq!(
-        reads,
-        vec![
-            TextOp::MoveCaret(TextPoint::At(TextPosition {
-                anchor: TextAnchor(400),
-                offset: 5
-            })),
-            TextOp::Read(TextRead {
-                at: TextPoint::At(TextPosition::at(TextAnchor(400))),
-                movement: Some(TextMovement {
-                    unit: TextUnit::Paragraph,
-                    count: 1
-                }),
-                unit: TextUnit::Sentence,
+        request(&effects).op,
+        read_ahead(
+            TextPoint::At(TextPosition::at(TextAnchor(400))),
+            Some(TextMovement {
+                unit: TextUnit::Paragraph,
+                count: 1
             }),
-        ]
+            TextUnit::Sentence,
+        )
     );
-    // A key stops it; a late answer is dropped.
+    // Reaching the second sentence moves the caret there and hands on the
+    // third.
+    let effects = reduce(&mut state, &reached(pieces[1].0, 0));
+    assert!(effects.contains(&Effect::Text(TextRequest {
+        query_id: request(&effects).query_id,
+        node_id: request(&effects).node_id,
+        op: TextOp::MoveCaret(TextPoint::At(TextPosition {
+            anchor: TextAnchor(400),
+            offset: 5
+        })),
+    })));
+    let third = say_all_pieces(&effects);
+    assert_eq!(third[0].1, "Three!");
+    // A key stops it, dropping what was waiting; a late mark is ignored.
     let effects = reduce(&mut state, &Input::SpeechCancelled);
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
-    let late = reads_query(&reduce(
-        &mut state,
-        &Input::MarkReached { mark: pieces[2].0 },
-    ));
+    let late = reads_query(&reduce(&mut state, &reached(third[0].0, 0)));
     assert!(late.is_none());
 }
 
@@ -1247,27 +1344,27 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
     let first = request(&effects);
     assert_eq!(
         first.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition::at(TextAnchor(100))),
-            movement: None,
-            unit: TextUnit::Sentence,
-        })
+        read_ahead(
+            TextPoint::At(TextPosition::at(TextAnchor(100))),
+            None,
+            TextUnit::Sentence,
+        )
     );
     let effects = reduce(
         &mut state,
         &completed(
             first.query_id,
-            TextReply::Read {
+            TextReply::Chunks {
                 moved: 0,
-                chunk: TextChunk {
+                chunks: vec![TextChunk {
                     unit: TextUnit::Paragraph,
                     ..line("A b. C d.\n", 500, 0)
-                },
+                }],
             },
         ),
     );
     let pieces = say_all_pieces(&effects);
-    let _ = reduce(&mut state, &Input::MarkReached { mark: pieces[1].0 });
+    let _ = reduce(&mut state, &reached(pieces[1].0, 0));
     let _ = reduce(&mut state, &Input::SpeechCancelled);
     // The next review command reads the line where reading stopped.
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));

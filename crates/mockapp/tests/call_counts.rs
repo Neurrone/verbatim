@@ -43,7 +43,10 @@ use verbatim_model::{
     CallCounts, CallKind, Fetches, NodeId, NodeSnapshot, NormalizedEvent, QueryKind, Role, TraceId,
     TreeNode,
 };
-use verbatim_model::{CaretWait, CaretWatch, TextOp, TextPosition, TextReply, TextUnit, Theme};
+use verbatim_model::{
+    CaretWait, CaretWatch, PreviousSelection, TextMovement, TextOp, TextPoint, TextPosition,
+    TextRead, TextReadAhead, TextReply, TextUnit, Theme,
+};
 use verbatim_outpost::Outpost;
 use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
 use verbatim_outpost::protocol::{
@@ -57,7 +60,10 @@ use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state}
 use verbatim_uia::{
     AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia,
 };
-use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
+use verbatim_uia_rops::{
+    FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
+    navigation_step,
+};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
 
@@ -723,15 +729,19 @@ fn uia_focus(
 }
 
 /// The calls the outpost's worker makes for one object-navigation step
-/// from a UIA node it holds, in the same order: `resolve_uia_element` in
-/// `verbatim-outpost`'s `read.rs` refreshes the kept element's cache, which
-/// also proves it still answers, and `navigate` finds the node's nearest
-/// window, for correcting the neighbor's backend, then takes the step. The
-/// correction makes no call for a neighbor with no window of its own.
+/// from a UIA node it holds, in the same order. With remote operations,
+/// `uia_remote_step` in `verbatim-outpost`'s `read.rs` takes the step from
+/// the kept element and finds its nearest window in one program
+/// (`verbatim_uia_rops::navigation_step`). Classically, `resolve_uia_element`
+/// refreshes the kept element's cache, which also proves it still answers,
+/// and `navigate` finds the node's nearest window, for correcting the
+/// neighbor's backend, then takes the step. The correction makes no call
+/// for a neighbor with no window of its own.
 fn uia_navigate(
     under_test: &UiaUnderTest,
     element: &IUIAutomationElement,
     kind: QueryKind,
+    remote: bool,
 ) -> NodeSnapshot {
     let UiaUnderTest {
         uia,
@@ -739,6 +749,26 @@ fn uia_navigate(
         registry,
         ..
     } = under_test;
+    if remote {
+        let direction = match kind {
+            QueryKind::Parent => NavigationDirection::Parent,
+            _ => NavigationDirection::NextSibling,
+        };
+        let properties = verbatim_uia::cached_properties(Theme::builtin_default().fetches());
+        let (step, path) = navigation_step(
+            uia,
+            &StepQuery {
+                element,
+                direction,
+                properties: &properties,
+            },
+            true,
+        )
+        .expect("the step");
+        assert!(matches!(path, Path::Remote), "{path:?}");
+        assert!(step.window.is_some());
+        return snapshot_from_cached_element(&step.neighbor.expect("a neighbor"), registry);
+    }
     let fresh = element
         .build_updated_cache(cache)
         .expect("the element answers");
@@ -1004,6 +1034,10 @@ fn uia_focus_changes_cost_exactly_classic() {
     );
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "both ways' pinned provider hits, listed in full"
+)]
 fn uia_navigation_steps_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-navigation");
     let app = common::spawn("counts.json", "uia", &title);
@@ -1016,11 +1050,65 @@ fn uia_navigation_steps_cost_exactly() {
             under_test,
             under_test.element("First"),
             QueryKind::NextSibling,
+            true,
+        )
+    });
+    assert_eq!(second.name.as_deref(), Some("Second"));
+    // One program: the step and the nearest window, the neighbor's cache
+    // filled inside the provider; the kept element is not refreshed first.
+    ratchet.check(
+        "UIA next sibling, remotely",
+        &cost,
+        calls(1, 0, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("ProviderOptions", 26),
+            ("GetPatternProvider", 11),
+            ("GetPropertyValue", 28),
+            ("HostRawElementProvider", 9),
+            ("Navigate", 9),
+            ("GetRuntimeId", 3),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 3),
+        ],
+    );
+    let (group, cost) = under_test.measure(hwnd, |under_test| {
+        uia_navigate(
+            under_test,
+            under_test.element("Second"),
+            QueryKind::Parent,
+            true,
+        )
+    });
+    assert_eq!(group.name.as_deref(), Some("Settings"));
+    ratchet.check(
+        "UIA parent, remotely",
+        &cost,
+        calls(1, 0, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("ProviderOptions", 27),
+            ("GetPatternProvider", 11),
+            ("GetPropertyValue", 28),
+            ("HostRawElementProvider", 9),
+            ("Navigate", 9),
+            ("GetRuntimeId", 3),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 3),
+        ],
+    );
+
+    let (second, cost) = under_test.measure(hwnd, |under_test| {
+        uia_navigate(
+            under_test,
+            under_test.element("First"),
+            QueryKind::NextSibling,
+            false,
         )
     });
     assert_eq!(second.name.as_deref(), Some("Second"));
     ratchet.check(
-        "UIA next sibling",
+        "UIA next sibling, classically",
         &cost,
         calls(3, 0, 0),
         &[
@@ -1037,11 +1125,16 @@ fn uia_navigation_steps_cost_exactly() {
     );
 
     let (group, cost) = under_test.measure(hwnd, |under_test| {
-        uia_navigate(under_test, under_test.element("Second"), QueryKind::Parent)
+        uia_navigate(
+            under_test,
+            under_test.element("Second"),
+            QueryKind::Parent,
+            false,
+        )
     });
     assert_eq!(group.name.as_deref(), Some("Settings"));
     ratchet.check(
-        "UIA parent",
+        "UIA parent, classically",
         &cost,
         calls(3, 0, 0),
         &[
@@ -1291,6 +1384,418 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     app.send("quit");
 }
 
+/// One text request answered as the outpost's worker answers it
+/// (`text_reads::answer`), with its calls and hits.
+fn measure_text(
+    hwnd: HWND,
+    source: &mut UiaText,
+    anchors: &mut verbatim_outpost::text::NodeText<'_, verbatim_outpost::text::uia::UiaPos>,
+    op: &TextOp,
+) -> (TextReply, Cost) {
+    let _ = verbatim_uia::calls::take();
+    common::reset_hits(hwnd);
+    let reply = perform(source, anchors, op, &mut AlreadyMoved);
+    (
+        reply,
+        Cost {
+            calls: verbatim_uia::calls::take(),
+            hits: common::read_hits(hwnd),
+        },
+    )
+}
+
+/// The text protocol's other requests through UIA, remotely or
+/// classically: the review cursor's next line, a word from a position
+/// inside the line (found by the text before it), say-all's read ahead of
+/// every line, the selected text read for a copy, the caret moved as
+/// say-all moves it, the caret's location, and a caret key's answer that
+/// reports a selection's change.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each request measured in turn, as one session makes them"
+)]
+fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
+    let way = if remote { "remotely" } else { "classically" };
+    let title = common::unique_title("mockapp-counts-uia-text");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = uia_notes(hwnd).remote(remote);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let (report, _) = caret_report(&mut source, &mut anchors, &mut || 0, false).expect("the caret");
+    let caret = TextPosition {
+        anchor: report.line.start,
+        offset: report.line.offset,
+    };
+
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::Read(TextRead {
+            at: TextPoint::At(caret),
+            movement: Some(TextMovement {
+                unit: TextUnit::Line,
+                count: 1,
+            }),
+            unit: TextUnit::Line,
+        }),
+    );
+    let TextReply::Read { chunk: line, .. } = reply else {
+        panic!("a read, not {reply:?}");
+    };
+    assert_eq!(line.text, "gamma\n");
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("Clone", 3),
+                ("ExpandToEnclosingUnit", 2),
+                ("GetAttributeValue", 1),
+                ("GetText", 1),
+                ("Move", 1),
+                ("MoveEndpointByRange", 3),
+            ],
+        )
+    } else {
+        (
+            calls(9, 0, 0),
+            &[
+                ("Clone", 2),
+                ("ExpandToEnclosingUnit", 2),
+                ("GetAttributeValue", 1),
+                ("GetText", 1),
+                ("Move", 1),
+                ("MoveEndpointByRange", 2),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA review next line, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::Read(TextRead {
+            at: TextPoint::At(TextPosition {
+                anchor: report.line.start,
+                offset: 6,
+            }),
+            movement: None,
+            unit: TextUnit::Word,
+        }),
+    );
+    let TextReply::Read { chunk: word, .. } = reply else {
+        panic!("a read, not {reply:?}");
+    };
+    assert_eq!(word.text, "beta");
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("Clone", 4),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetAttributeValue", 1),
+                ("GetText", 3),
+                ("MoveEndpointByUnit", 1),
+                ("MoveEndpointByRange", 3),
+            ],
+        )
+    } else {
+        (
+            calls(12, 0, 0),
+            &[
+                ("Clone", 3),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetAttributeValue", 1),
+                ("GetText", 3),
+                ("MoveEndpointByUnit", 1),
+                ("MoveEndpointByRange", 3),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA review word inside the line, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::ReadAhead(TextReadAhead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Line,
+            count: 16,
+        }),
+    );
+    let TextReply::Chunks { chunks, .. } = reply else {
+        panic!("chunks, not {reply:?}");
+    };
+    assert_eq!(chunks.len(), 3);
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 1),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 8),
+                ("CompareEndpoints", 1),
+                ("ExpandToEnclosingUnit", 3),
+                ("GetAttributeValue", 3),
+                ("GetText", 4),
+                ("Move", 3),
+                ("MoveEndpointByRange", 8),
+            ],
+        )
+    } else {
+        (
+            calls(29, 0, 0),
+            &[
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 7),
+                ("CompareEndpoints", 1),
+                ("ExpandToEnclosingUnit", 3),
+                ("GetAttributeValue", 3),
+                ("GetText", 4),
+                ("Move", 3),
+                ("MoveEndpointByRange", 7),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA say-all read ahead, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::MoveCaret(TextPoint::At(TextPosition::at(chunks[1].start))),
+    );
+    assert_eq!(reply, TextReply::Done);
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("Clone", 2),
+                ("CompareEndpoints", 1),
+                ("MoveEndpointByRange", 2),
+                ("ITextRangeProvider::Select", 1),
+            ],
+        )
+    } else {
+        (
+            calls(4, 0, 0),
+            &[
+                ("Clone", 1),
+                ("CompareEndpoints", 1),
+                ("MoveEndpointByRange", 1),
+                ("ITextRangeProvider::Select", 1),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA say-all caret move, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::Location(TextPoint::Caret),
+    );
+    assert_eq!(reply, TextReply::Location { x: 100, y: 216 });
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("ProviderOptions", 3),
+                ("GetPatternProvider", 1),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 2),
+                ("Navigate", 1),
+                ("FragmentRoot", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 2),
+                ("CompareEndpoints", 1),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetBoundingRectangles", 1),
+                ("MoveEndpointByRange", 1),
+            ],
+        )
+    } else {
+        (
+            calls(5, 0, 0),
+            &[
+                ("ProviderOptions", 1),
+                ("HostRawElementProvider", 1),
+                ("FragmentRoot", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("Clone", 1),
+                ("CompareEndpoints", 1),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetBoundingRectangles", 1),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA caret location, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+
+    common::apply(&mut app, hwnd, "caret doc 0 5");
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::ReadRange {
+            start: TextPoint::SelectionStart,
+            end: TextPoint::SelectionEnd,
+        },
+    );
+    assert_eq!(
+        reply,
+        TextReply::Range {
+            text: "alpha".to_owned(),
+            truncated: false
+        }
+    );
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 2),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("GetCaretRange", 1),
+                ("Clone", 3),
+                ("CompareEndpoints", 2),
+                ("GetText", 1),
+                ("MoveEndpointByRange", 3),
+            ],
+        )
+    } else {
+        (
+            calls(7, 0, 0),
+            &[
+                ("ITextProvider::GetSelection", 1),
+                ("GetCaretRange", 1),
+                ("Clone", 1),
+                ("CompareEndpoints", 2),
+                ("GetText", 1),
+                ("MoveEndpointByRange", 1),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA selected text, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let (collapsed, _) =
+        caret_report(&mut source, &mut anchors, &mut || 0, false).expect("the caret");
+    let at = TextPosition {
+        anchor: collapsed.line.start,
+        offset: collapsed.line.offset,
+    };
+    common::apply(&mut app, hwnd, "caret doc 0 5");
+    let (reply, cost) = measure_text(
+        hwnd,
+        &mut source,
+        &mut anchors,
+        &TextOp::AwaitCaret(CaretWatch {
+            pressed_at_ms: 0,
+            since: Some(at),
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: Some(PreviousSelection { start: at, end: at }),
+            wait: CaretWait::Standard,
+        }),
+    );
+    let TextReply::Caret(reply) = reply else {
+        panic!("a caret reply, not {reply:?}");
+    };
+    assert_eq!(reply.selection_changes.len(), 1);
+    let expected: (CallCounts, &[(&str, u32)]) = if remote {
+        (
+            calls(1, 0, 0),
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 2),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("GetCaretRange", 1),
+                ("Clone", 5),
+                ("CompareEndpoints", 8),
+                ("ExpandToEnclosingUnit", 2),
+                ("GetAttributeValue", 1),
+                ("GetText", 3),
+                ("MoveEndpointByRange", 4),
+            ],
+        )
+    } else {
+        (
+            calls(23, 0, 0),
+            &[
+                ("ITextProvider::GetSelection", 1),
+                ("GetCaretRange", 1),
+                ("Clone", 4),
+                ("CompareEndpoints", 8),
+                ("ExpandToEnclosingUnit", 2),
+                ("GetAttributeValue", 1),
+                ("GetText", 3),
+                ("MoveEndpointByRange", 3),
+            ],
+        )
+    };
+    ratchet.check(
+        &format!("UIA caret key selecting, {way}"),
+        &cost,
+        expected.0,
+        expected.1,
+    );
+    app.send("quit");
+}
+
+fn uia_text_requests_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    for remote in [true, false] {
+        check_uia_text_costs(&mut ratchet, remote);
+    }
+    ratchet.finish();
+}
+
 fn caret_moves_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -1416,6 +1921,10 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 fn main() {
     harness::run(&[
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
+        (
+            "uia_text_requests_cost_exactly",
+            uia_text_requests_cost_exactly,
+        ),
         (
             "msaa_focus_changes_cost_exactly",
             msaa_focus_changes_cost_exactly,

@@ -336,7 +336,8 @@ impl TextRangeExt for IUIAutomationTextRange {
 }
 
 /// The BCP 47 name of a Windows locale id, `None` for none.
-fn locale_name(lcid: u32) -> Option<String> {
+#[must_use]
+pub fn locale_name(lcid: u32) -> Option<String> {
     if lcid == 0 {
         return None;
     }

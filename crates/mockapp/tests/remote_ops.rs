@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
 use verbatim_uia_rops::{
-    Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED, Status,
-    focus_ancestry_classic, focus_ancestry_remote,
+    Ancestry, Error, FocusAncestry, FocusAncestryFn, FocusQuery, LEFT_OUT_WHEN_UNSUPPORTED,
+    NavigationDirection, Status, StepQuery, focus_ancestry_classic, focus_ancestry_remote,
+    navigation_step_classic, navigation_step_remote,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -291,6 +292,64 @@ fn an_element_that_lost_the_focus_returns_early() {
     fixture.app.send("quit");
 }
 
+/// An object-navigation step reads the same neighbor, with the same cached
+/// properties and snapshot, and the same nearest window, both ways: parent,
+/// siblings, first child, and an edge with no neighbor.
+fn a_navigation_step_reads_the_same_both_ways() {
+    let mut fixture = Fixture::start("mockapp-rops-navigation");
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    for (from, direction, expected) in [
+        (
+            "Deep button",
+            NavigationDirection::Parent,
+            Some("Inner group"),
+        ),
+        (
+            "Deep button",
+            NavigationDirection::NextSibling,
+            Some("Notes"),
+        ),
+        (
+            "Notes",
+            NavigationDirection::PreviousSibling,
+            Some("Deep button"),
+        ),
+        (
+            "Inner group",
+            NavigationDirection::FirstChild,
+            Some("Deep button"),
+        ),
+        ("Remember", NavigationDirection::NextSibling, None),
+    ] {
+        let element = fixture.find(from);
+        let query = StepQuery {
+            element: &element,
+            direction,
+            properties: CACHED_PROPERTIES,
+        };
+        let remote = navigation_step_remote(&fixture.uia, &query).expect("the remote program runs");
+        let classic = navigation_step_classic(&fixture.uia, &query).expect("the classic step runs");
+        let label = format!("{direction:?} from {from}");
+        assert_eq!(remote.window, classic.window, "{label}");
+        assert!(remote.window.is_some(), "{label}: the window found");
+        let view = |step: &verbatim_uia_rops::Step| {
+            step.neighbor
+                .as_ref()
+                .map(|neighbor| cached_view(neighbor, &registry))
+        };
+        assert_eq!(view(&remote), view(&classic), "{label}");
+        assert_eq!(
+            remote
+                .neighbor
+                .as_ref()
+                .map(|neighbor| names(std::slice::from_ref(neighbor)).remove(0)),
+            expected.map(str::to_owned),
+            "{label}"
+        );
+    }
+    fixture.app.send("quit");
+}
+
 /// A UIA error constant as the HRESULT it is.
 fn hresult(code: u32) -> windows::core::HRESULT {
     windows::core::HRESULT(i32::from_ne_bytes(code.to_ne_bytes()))
@@ -401,6 +460,10 @@ fn a_provider_that_has_exited_fails_at_once() {
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        (
+            "a_navigation_step_reads_the_same_both_ways",
+            a_navigation_step_reads_the_same_both_ways,
+        ),
         (
             "a_deep_chain_reads_the_same_both_ways",
             a_deep_chain_reads_the_same_both_ways,

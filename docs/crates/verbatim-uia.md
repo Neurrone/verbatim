@@ -169,7 +169,9 @@ Public API:
   `move_endpoint_by_unit`, `text` (UTF-16, up to a limit), `select`,
   `bounding_rectangles`, and `culture` (the `Culture` attribute as a BCP 47
   tag through `LCIDToLocaleName`, `None` when the range mixes languages or
-  the provider does not say), and `attribute` (any text attribute's raw
+  the provider does not say; `locale_name` makes the tag from a locale
+  id, which `verbatim-uia-rops` uses for the `Culture` its programs
+  read), and `attribute` (any text attribute's raw
   `VARIANT`, UIA's "not supported" or "mixed" sentinel included, for
   milestone M4's formatting). The `variant_*` readers (`variant_string`,
   `variant_i32`, `variant_i32_array` for a range's annotation types, a

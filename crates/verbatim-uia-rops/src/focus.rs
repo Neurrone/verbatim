@@ -320,7 +320,7 @@ pub const LEFT_OUT_WHEN_UNSUPPORTED: &[UIA_PROPERTY_ID] = &[UIA_IsDataValidForFo
 /// [`LEFT_OUT_WHEN_UNSUPPORTED`] properties an element supports, since
 /// `PopulateCache` replaces an element's cache rather than adding to it
 /// (verified).
-struct RemoteCache {
+pub(crate) struct RemoteCache {
     /// The checked properties, as the program's constants.
     checked: Vec<Reg<kind::Int>>,
     /// The request for each combination, indexed by a bit mask of the
@@ -329,7 +329,7 @@ struct RemoteCache {
 }
 
 impl RemoteCache {
-    fn new(b: &mut Builder, properties: &[UIA_PROPERTY_ID]) -> Self {
+    pub(crate) fn new(b: &mut Builder, properties: &[UIA_PROPERTY_ID]) -> Self {
         let checked: Vec<UIA_PROPERTY_ID> = LEFT_OUT_WHEN_UNSUPPORTED
             .iter()
             .copied()
@@ -352,7 +352,7 @@ impl RemoteCache {
     }
 
     /// Emits the instructions that fill `element`'s cache.
-    fn populate(&self, b: &mut Builder, element: Reg<kind::Element>) {
+    pub(crate) fn populate(&self, b: &mut Builder, element: Reg<kind::Element>) {
         if self.checked.is_empty() {
             b.populate_cache(element, self.requests[0]);
             return;

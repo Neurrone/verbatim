@@ -479,6 +479,16 @@ Implementation notes:
   legacy MSAA checked state, read live for it alone
   (`verbatim_uia::map::with_legacy_checked_state`), as are the focus-now
   answer and a navigation step's neighbor.
+- A UIA object-navigation step (`read::uia_remote_step`) is one remote
+  operation (`verbatim_uia_rops::navigation_step`): from the element the
+  registry keeps, without refreshing its cache first, the program finds
+  the element's nearest window and takes the step, filling the neighbor's
+  cache inside the provider. A step from a top-level window is taken the
+  classic way, since a program's walk ends there while a tree walker goes
+  on to the desktop and other applications' windows; so is any step with
+  remote operations off or in a window marked as read classically. An
+  element whose provider reports it gone is searched for by runtime id
+  and stepped from classically, as before.
 - Focus candidates: the intake keeps the three newest focus facts from
   each backend (`Planned::Focus`), and the worker handles them newest
   first, each under its own deadline, until one is reported, as NVDA's
@@ -616,7 +626,10 @@ Implementation notes:
     a line can wrap anew with no key at all. A caret event alone only wakes
     the wait, unless nothing knew the caret: it can be the application's
     late report of something earlier. The selection's changes are worked
-    out by comparing endpoints, as the contract says.
+    out by comparing endpoints, as the contract says; through UIA the
+    caret read works them out and reads their text in the same round trip
+    when the selection moved (`CaretRead::changes`), and the edit controls
+    work them out call by call.
   - Reads move first when asked: from the start of the unit containing the
     point, by whole units, never past the text's ends, saying how far they
     went; a document movement goes to the start or the end. A unit the
@@ -624,7 +637,22 @@ Implementation notes:
     control's sentence read is its paragraph, which is its line, for Core
     to split. `ReadRange` reads up to 1 MB for a copy, `Select` and
     `MoveCaret` select through the backend, and `Location` gives the
-    screen position of the character at a point.
+    screen position of the character at a point. `ReadAhead`, say-all's
+    read, reads up to its count of units in one request, each the unit
+    after the one before, stopping once 32 K UTF-16 code units are read,
+    and marks the last chunk as the text's last when no unit follows it.
+  - Through UIA, every request but the caret wait is also one round trip
+    where the window's provider runs remote operations, with the same
+    choice, fallback, logging, and marking as the caret read: a point
+    named as the protocol names it (`PointFrom`: the caret, a selection's
+    end, an end of the text, a kept position, or a position some text after
+    a kept one, which is found inside the provider by matching that text)
+    is found, moved from, and read in one program
+    (`TextSource::read_units`, `range`, and `point_location`, which
+    `UiaText` implements with `verbatim_uia_rops::text_units`,
+    `text_range`, and `text_location`). A point found by matching text is
+    remembered as one the outpost reported, so naming it again costs
+    nothing. The edit controls keep their message-by-message reads.
 - Caret and text events (the worker). A focus that may have text (through
   UIA an edit field, a document, or a terminal; through MSAA an edit
   control's client area) gets a caret report, queued just after the focus
@@ -731,7 +759,8 @@ finds it.
   the text (a full-screen program switched screens), or the anchored read
   found nothing new after the anchor (a full-screen program redrawing a
   line above it), the terminal is read afresh from the end of its
-  document, and `after_fresh` compares the lines read with the screen
+  document (one program, which gets the document range from the element
+  itself, `TailStart::Text`), and `after_fresh` compares the lines read with the screen
   last seen: when the old screen's end reappears at the new one's start
   (its last line as it was or grown since), what that line gained and the
   lines after it; otherwise the lines that differ in place, preceded

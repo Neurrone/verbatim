@@ -13,9 +13,13 @@ ported file; where it follows Microsoft's MIT-licensed
 The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
-execution, and algorithms. The algorithms are the focus ancestry,
-for milestone M4's terminals `terminal_tail`, and for caret reports
-`caret_read` (layer 3 below).
+execution, and algorithms. The algorithms are the focus ancestry, for
+milestone M4's terminals `terminal_tail`, for caret reports `caret_read`,
+for the text protocol's other requests `text_units`, `text_range`, and
+`text_location`, and for object navigation `navigation_step` (layer 3
+below). Every UIA path in the outpost that makes a sequence of calls to
+the application runs through one of them; "Where remote operations are
+not used" lists the rest and why.
 
 ## Layer 1: instructions and the builder
 
@@ -249,7 +253,10 @@ M4 item 9; `phase6-design.md`, "How the outpost finds new lines"). A
 `TailQuery` starts either from an anchor (`TailStart::Anchor`: a range
 whose start is the start of the last line read, with a `Fingerprint`, the
 text that line and the line before it held) or afresh
-(`TailStart::Document`, the text pattern's document range), and says how
+(`TailStart::Document`, the text pattern's document range, or
+`TailStart::Text`, the element and its text pattern, from which the
+program reads the document range itself, so a fresh read is one round
+trip where the other is two), and says how
 many of the last lines to read and how far up to search (`SEARCH_LINES`,
 256). The answer, a `Tail`, gives the text as the provider gave it,
 padding and line breaks included, so comparisons are exact and the caller
@@ -387,10 +394,103 @@ copies it. Both read the whole answer on every call, so a caret key's
 wait for evidence costs one round trip per read remotely
 (`docs/performance.md`, "A caret move, UIA").
 
+With a previous selection, the answer also carries the selection's
+changes (`changes`, `SelectionTextChange`s), worked out by the text
+protocol's rule and read only when the selection moved: two selections
+that neither overlap nor touch are the old text unselected and the new
+selected; otherwise the text between the new and the old start, then
+between the old and the new end, each selected or unselected by the
+direction it moved, empty stretches left out, each read up to the query's
+`max_change_text`. The program compares the ends and reads the stretches
+inside the provider, so a selecting key's answer is one round trip with
+the text of what changed (8 before, `docs/performance.md`, "A caret key
+that selects, UIA").
+
+## Layer 3: the text protocol's other reads
+
+Three named operations answer the rest of the text protocol, each with a
+remote program, a classic implementation behind the same signature
+(`TextUnitsFn`, `TextRangeFn`, `TextLocationFn`) that makes the calls the
+outpost made before, and an entry point that chooses as `caret_read`
+does, gone and timed-out providers included. Each starts from a
+`TextFrom`, a point as the protocol names it:
+
+- `Caret`, `SelectionStart`, `SelectionEnd`: read as the caret read reads
+  them, in the same program (the caret read's selection and caret
+  instructions), once however many points use them.
+- `Start` and `End`: the document range collapsed to one end; the program
+  gets the text pattern from the element with the pattern getter
+  instruction and reads the range itself.
+- `At(Position)`: a range and the end of it the caller holds, imported.
+- `After { from, prefix, counts }`: a point some text after a held one,
+  the text between them being `prefix`. Each of `counts` (UTF-16 code
+  units, code points, grapheme clusters: a provider's character may be any
+  of them) is tried in turn, moving a copy's end by that many characters
+  and comparing the text passed with `prefix`, a string comparison inside
+  the provider, until one matches; the last tried is kept when none does.
+  This is how a position Core found inside a chunk is resolved without a
+  round trip per try.
+
+Every point is returned (`FoundPoint`) so the caller can remember it.
+
+- `text_units` (`UnitsQuery`, `UnitsAnswer`): from the point, an optional
+  `Movement` (`By(unit, count)` from the start of the unit containing the
+  point, collapsed before and after as the review cursor moves; or
+  `Document(count)`, to an end, saying it moved when the point was not
+  there), then the unit containing the point reached: its range, its text
+  up to `max_text`, the point's offset in it (zero when the movement was
+  by that unit, landing on its start), and its language (`Culture`, a
+  locale id turned into a BCP 47 tag with
+  `verbatim_uia::text::locale_name`; a mixed or unsupported value is
+  null). With a `count` above one it reads on, a unit at a time from the
+  last one's start, until it has `count`, the text read reaches
+  `max_total`, or a move by one does not move (`ended`: the last unit read
+  is the text's last). That is say-all's batch: sixteen lines ahead in
+  one round trip.
+- `text_range` (`RangeQuery`, `RangeAnswer`): two points (or one, for
+  moving the caret), ordered by comparing them, and the text between them
+  read up to a limit or selected. A selection the provider refuses is
+  caught inside the program (`try_catch`), answered as not selected, as
+  the classic `Select` failure is.
+- `text_location` (`LocationQuery`, `LocationAnswer`): the character at
+  the point and its bounding rectangles, the first rectangle's left and
+  top. The program returns them as an array of doubles (verified against
+  mockapp, which now reports one rectangle per character on a fixed grid).
+
+Against mockapp (`crates/mockapp/tests/text.rs`), the two implementations
+of each agree: a line at the caret, the next line, the end of the text,
+every line ahead with the end found, a word from a point found by its
+text, a range read in either order, a selection made and read back, and
+locations.
+
+## Layer 3: an object-navigation step
+
+`navigation_step(uia, query, remote)`, with `navigation_step_remote` and
+`navigation_step_classic` behind it (`NavigationStepFn`), takes one
+raw-view step (parent, next or previous sibling, first child) from an
+element and finds the element's nearest window, as the outpost's
+navigation needs to correct the neighbor's backend. The program reads the
+element's own window handle from its cache, else walks raw-view parents
+reading `NativeWindowHandle` until one is set, then navigates and fills
+the neighbor's cache inside the provider, choosing a cache request per
+`LEFT_OUT_WHEN_UNSUPPORTED` combination as the focus ancestry does. The
+classic implementation is `nearest_window_handle` and a tree walker step
+built with the cache, one call each; a step that fails because the
+element is gone is an error, any other failure no neighbor.
+
+A program's walk ends at the process's top-level window, whose parent it
+reports as null where a tree walker reports the desktop, so the outpost
+takes a step from a top-level window classically. Against mockapp's
+ancestry fixture (`crates/mockapp/tests/remote_ops.rs`), both give the
+same neighbor with the same cached properties and snapshot, and the same
+window, for every direction and at an edge.
+
 ## Fallback rules
 
 How the outpost chooses, per UIA focus (`uia_remote_enrichment` in its
-`read.rs`):
+`read.rs`), and the same way for every other named operation (the caret
+read and the text reads through `UiaText`, a terminal's tail, a
+navigation step):
 
 - A window without a native UIA provider (arbitration's
   `UiaHasServerSideProvider` verdict) is read through MSAA, so its focus
@@ -416,7 +516,100 @@ A provider whose process has gone and one that times out
 (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`, both as an
 `ExecutionFailure`) are not program failures: the classic
 implementation would fail the same way, so they are answered as the
-outpost answers a gone or unresponsive element.
+outpost answers a gone or unresponsive element. The entry points of the
+caret read, the text reads, and the navigation step return them without
+running the classic calls, which would wait a second time on a stalled
+application; a navigation step from an element reported gone is then
+searched for by runtime id, as the classic step always was.
+
+### Where NVDA declines remote operations, and whether it applies here
+
+Verbatim tries a remote operation wherever one is available and falls
+back per call. NVDA instead makes each call site choose. Every place in
+NVDA (as vendored, 2026-10) where a remote operation exists or could be
+used but the classic path is taken under some condition, with the reason
+from its code and history, and whether the reason applies to Verbatim:
+
+- The global gate (`UIAHandler/remote.py`, `isSupported`): remote
+  operations only on Windows 11 or later, a major-version check added
+  with the first Word extensions (NVDA #13283; a revert, #13350, was for
+  build problems, not runtime ones). Does not apply: Verbatim runs only on
+  Windows 11, and a Windows without the API fails creating the operation
+  (`Error::Unavailable`), which falls back per call.
+- Browse mode's heading search in Word (`UIAHandler/browseMode.py`):
+  remote on Windows 11, the classic paragraph walk otherwise; no runtime
+  fallback. A long document exceeds the instruction limit, so NVDA reruns
+  the operation up to 20 times, resuming from values kept between runs.
+  The limit applies in principle: every Verbatim program is bounded by its
+  query (64 format runs, 16 units ahead and 32 K code units of text, 256
+  lines searched, the ancestor depth limit), and a run that exceeds the
+  limit anyway is answered classically for that call (`Path::Fallback`).
+  No guard proposed; if a provider is ever seen to exceed it, the
+  design's unimplemented retry with a smaller bound is the fix.
+- Word's custom attributes through its extended text range pattern
+  (`NVDAObjects/UIA/wordDocument.py`): the text column number is never
+  fetched because it crashes Word 16.0.1493 and later (#13511, #13503);
+  the expand and collapse state only from Word 16.0.18226, since earlier
+  versions crash on that attribute (#18279); a page number of -1 is
+  ignored as not yet available (#19424); and the extension is checked for
+  inside the operation because Windows Mail's Word control lacks it
+  (#16689). Does not apply: Verbatim calls no provider extensions
+  (`CallExtension`); its programs make only the calls a classic read
+  makes. A guard would be needed only if Word's extensions were adopted,
+  keyed to Word's product version and the extension's support check, as
+  NVDA keys them, never to a window title.
+- Word's sentence movement through extensions (`MoveBySentence` and
+  relatives): classic object-model movement on older Office or Windows
+  (#19367), and a collapsed range at the document's end left alone
+  because Word's extensions wrap to the start (#20498). Does not apply:
+  Verbatim uses no extensions, and UIA has no sentence unit.
+- `IsOpcodeSupported`: wrapped by NVDA but never called. Verbatim checks
+  every opcode of a program after import and falls back when one is
+  missing, which is stricter.
+- Timeouts: NVDA sets none for remote operations. Verbatim relies on
+  UIA's process-wide transaction timeout and the outpost's watchdog, as
+  for classic calls (above).
+- A shutdown hang in Microsoft's old remote operations library (#16072).
+  Does not apply: Verbatim calls Windows' API directly, and outposts end
+  with their job.
+
+No crash, hang, or wrong answer in NVDA's history is tied to remote
+operations against Windows Terminal, the console host, Chromium, Excel,
+or the standard text controls; NVDA does not run programs against them.
+So trying remote operations wherever they are available, with the
+per-call fallback, is a safe default, and no guard is proposed.
+
+## Where remote operations are not used
+
+Every UIA path in the outpost that makes more than one call in sequence
+runs as a named operation above, except these:
+
+- Reading the focused element (`GetFocusedElementBuildCache`): one call,
+  and the element is what a program would start from.
+- A node's text patterns, fetched once per node the first time its text
+  is read (`TextPattern2`, else `TextPattern`, one or two calls): the
+  classic reads need the pattern objects, and the programs get the
+  pattern from the element themselves. Making the fetch lazy, so a
+  remote read never makes it, is a possible follow-up.
+- A selection event in a list the focus controls
+  (`Uia::controlled_descendant`): the `ControllerFor` relation and a
+  `FindFirst` for the element under each controlled root, two calls for
+  the usual one root. There is no `FindFirst` instruction, and a program
+  walking the list to find the element would cost the provider more than
+  the search does.
+- Activation (`Uia::activate`): each pattern is fetched live and its
+  method called, two calls for an `Invoke`. The pattern methods
+  (`Invoke`, `Toggle`, `Select`) have no instructions.
+- The menu item's legacy checked state: one call, read for that element
+  alone.
+- A dialog's own text through UIA: already one call
+  (`BuildUpdatedCache` over the children).
+- The ancestors query (`Query::Ancestors`), a full classic walk: nothing
+  sends it today.
+- The tree dump (`Query::DumpTree`), a diagnostic.
+- The arbitration probe and the checks of a console's and a Windows Forms
+  window's provider: window messages and one-time checks made before the
+  window's backend is known.
 
 ## A stalled or exited provider
 
@@ -463,6 +656,9 @@ program is itself marshaled to that thread), averaged over 200 calls:
   classically.
 - One live property read, for scale: 0.31 ms.
 
+The text reads and the navigation step, each against its classic calls,
+are timed in `docs/performance.md`, "Wall-clock gain".
+
 ## Tests
 
 Unit tests cover each instruction's bytes and the builder's control flow
@@ -472,10 +668,16 @@ asserts the same ancestors with the same cached properties and snapshots
 for a deep chain, controls with a value and a checked state, a list and
 a tab control with selected children (including one selected after
 start), a stop at a known ancestor, and the depth limit, with the same
-nearest window; that an element that lost the focus returns early; and
-the stalled and exited provider findings above.
+nearest window; that an element that lost the focus returns early; that
+a navigation step reads the same both ways; and the stalled and exited
+provider findings above.
 `crates/mockapp/tests/call_counts.rs` pins the calls and provider hits of
-a UIA focus through `focus_ancestry` as the outpost makes it, and of caret
-moves, caret reports, and a caret wait through `caret_read`, remotely and
-classically; `crates/mockapp/tests/text.rs` checks that the two caret
-reads agree, formatting included.
+a UIA focus through `focus_ancestry` as the outpost makes it, of
+navigation steps, of caret moves, caret reports, and a caret wait through
+`caret_read`, and of the review cursor's line and word reads, say-all's
+read ahead and caret move, the caret's location, the selected text, and a
+selecting key's answer, remotely and classically;
+`crates/mockapp/tests/text.rs` checks that the two caret reads agree,
+formatting and selection changes included, and that the two
+implementations of each text read agree; `crates/mockapp/tests/terminal.rs`
+pins a terminal's reads.

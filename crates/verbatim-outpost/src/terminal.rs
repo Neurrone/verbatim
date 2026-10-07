@@ -37,12 +37,13 @@
 //! unread, and it says so without a count and starts again from its own
 //! last line.
 
-use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, IUIAutomationTextRange};
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
+};
 use windows::core::AgileReference;
 
 use verbatim_model::{LineChange, MAX_TERMINAL_LINE_BYTES, Skipped, TerminalOutput};
 use verbatim_uia::Uia;
-use verbatim_uia::text::TextPatternExt;
 use verbatim_uia_rops::{
     Error as RopsError, Fingerprint, Found, Path, SEARCH_LINES, Tail, TailQuery, TailStart,
     terminal_tail,
@@ -463,6 +464,7 @@ fn text_error(error: &RopsError) -> TextError {
 /// the classic implementation otherwise or when the program fails.
 struct UiaTail<'a> {
     uia: &'a Uia,
+    element: &'a IUIAutomationElement,
     pattern: &'a IUIAutomationTextPattern,
     anchor: Option<IUIAutomationTextRange>,
     remote: bool,
@@ -528,15 +530,11 @@ impl TailSource for UiaTail<'_> {
     }
 
     fn fresh(&mut self, wanted: u32) -> Result<TailText, TextError> {
-        let document = self.pattern.document_range().map_err(|error| {
-            if verbatim_uia::element_is_gone(&error) {
-                TextError::Gone
-            } else {
-                TextError::Failed(error.to_string())
-            }
-        })?;
         let query = TailQuery {
-            start: TailStart::Document(&document),
+            start: TailStart::Text {
+                element: self.element,
+                pattern: self.pattern,
+            },
             lines_wanted: wanted,
             search_lines: SEARCH_LINES,
         };
@@ -557,7 +555,7 @@ impl TailSource for UiaTail<'_> {
 /// when it could not be read.
 pub fn read(
     uia: &Uia,
-    pattern: &IUIAutomationTextPattern,
+    (element, pattern): (&IUIAutomationElement, &IUIAutomationTextPattern),
     terminal: &mut Terminal,
     wanted: u32,
     remote: bool,
@@ -565,6 +563,7 @@ pub fn read(
 ) -> Result<(TerminalOutput, Vec<Path>), TextError> {
     let mut source = UiaTail {
         uia,
+        element,
         pattern,
         anchor: terminal
             .anchor

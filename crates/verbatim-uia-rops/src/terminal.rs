@@ -21,11 +21,12 @@
 //! against it.
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationTextRange, TextUnit_Character, TextUnit_Document, TextUnit_Line,
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Character,
+    TextUnit_Document, TextUnit_Line,
 };
 
 use verbatim_uia::Uia;
-use verbatim_uia::text::{Endpoint, TextRangeExt};
+use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::error::Error;
@@ -96,6 +97,15 @@ pub enum TailStart<'a> {
     /// Afresh, with no anchor: the end of the text of this range's
     /// document (the text pattern's document range).
     Document(&'a IUIAutomationTextRange),
+    /// Afresh, with no anchor, from the element with the text: the program
+    /// gets the document range itself, so a fresh read is one round trip;
+    /// the classic implementation asks `pattern` for it, one call more.
+    Text {
+        /// The element with the text, which the program starts from.
+        element: &'a IUIAutomationElement,
+        /// Its text pattern, which the classic implementation reads.
+        pattern: &'a IUIAutomationTextPattern,
+    },
 }
 
 /// What [`terminal_tail`] and its two implementations are asked.
@@ -497,12 +507,25 @@ fn is_settled(
 /// # Errors
 ///
 /// Any [`Error`] from running the program.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one program, read top to bottom as it runs"
+)]
 pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, Error> {
     let mut b = Builder::new();
     let c = Constants::new(&mut b);
     match query.start {
-        TailStart::Document(range) => {
-            let document = b.import_text_range(range);
+        TailStart::Document(_) | TailStart::Text { .. } => {
+            let document = match query.start {
+                TailStart::Text { element, .. } => {
+                    let element = b.import_element(element);
+                    let pattern = b.get_text_pattern(element, false);
+                    b.text_pattern_get_document_range(pattern)
+                }
+                TailStart::Document(range) | TailStart::Anchor { range, .. } => {
+                    b.import_text_range(range)
+                }
+            };
             let tail = emit_tail(&mut b, &c, document, None, query.lines_wanted);
             let outcome = b.finish().execute()?;
             Ok(Tail::new(
@@ -794,8 +817,12 @@ fn classic_tail(
 /// terminal switched screens does.
 pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, Error> {
     match query.start {
-        TailStart::Document(range) => {
-            let (end, last) = classic_tail(range, None, query.lines_wanted)?;
+        TailStart::Document(_) | TailStart::Text { .. } => {
+            let document = match query.start {
+                TailStart::Text { pattern, .. } => pattern.document_range()?,
+                TailStart::Document(range) | TailStart::Anchor { range, .. } => range.clone(),
+            };
+            let (end, last) = classic_tail(&document, None, query.lines_wanted)?;
             Ok(Tail::new(
                 Found::Afresh,
                 (String::new(), String::new(), String::new()),

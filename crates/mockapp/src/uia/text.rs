@@ -37,7 +37,7 @@ use std::mem::ManuallyDrop;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::SAFEARRAY;
 use windows::Win32::System::Variant::{
-    VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4, VT_UNKNOWN,
+    VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4, VT_R8, VT_UNKNOWN,
 };
 use windows::Win32::UI::Accessibility::{
     IRawElementProviderSimple, ITextProvider, ITextProvider_Impl, ITextProvider2,
@@ -451,7 +451,35 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn GetBoundingRectangles(&self) -> WinResult<*mut SAFEARRAY> {
         hits::hit(Method::RangeGetBoundingRectangles);
-        Ok(std::ptr::null_mut())
+        // One rectangle at the range's start, in a fixed grid: each
+        // character 8 pixels wide, each line 16 high, from (100, 200).
+        let text = text_of(&self.tree, self.index);
+        let start = self.start.get().min(text.len());
+        let before = &text[..start];
+        let line_feed = u16::from(b'\n');
+        let line = before.iter().filter(|&&code| code == line_feed).count();
+        let column = before
+            .iter()
+            .rev()
+            .take_while(|&&code| code != line_feed)
+            .count();
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a fixture's small line and column numbers"
+        )]
+        let rectangle = [
+            100.0 + 8.0 * column as f64,
+            200.0 + 16.0 * line as f64,
+            8.0,
+            16.0,
+        ];
+        let pointers: Vec<*const std::ffi::c_void> = rectangle
+            .iter()
+            .map(|value| std::ptr::from_ref(value).cast())
+            .collect();
+        // SAFETY: pointers to doubles that outlive the call, for a `VT_R8`
+        // vector, whose elements the call copies.
+        Ok(unsafe { super::props::filled_vector(VT_R8, &pointers) })
     }
     fn GetEnclosingElement(&self) -> WinResult<IRawElementProviderSimple> {
         super::props::provider_for(self.tree.clone(), self.hwnd, self.index).cast()

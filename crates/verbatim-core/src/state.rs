@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
     ReviewCommand, Selection, SpeechMark, TextAttributes, TextChunk, TextPosition, TextUnit,
-    WindowFacts, WindowHandle,
+    TraceId, WindowFacts, WindowHandle,
 };
 
 /// The focused node and what the reducer knows about where it sits.
@@ -284,6 +284,27 @@ impl StartMarker {
     }
 }
 
+/// A piece say-all read and has not yet handed to speech: the chunk it is
+/// in, shared with the chunk's other pieces, and its byte range of the
+/// chunk's text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BufferedPiece {
+    #[serde(
+        serialize_with = "serialize_chunk",
+        deserialize_with = "deserialize_chunk"
+    )]
+    pub(crate) chunk: SharedChunk,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+}
+
+impl BufferedPiece {
+    /// The piece's text.
+    pub(crate) fn text(&self) -> &str {
+        &self.chunk.text[self.start as usize..self.end as usize]
+    }
+}
+
 /// A say-all in progress (`docs/nvda/speech.md`, "Say-all").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SayAll {
@@ -301,9 +322,23 @@ pub(crate) struct SayAll {
     /// The start of the last chunk read and its unit, which the next read
     /// moves on from.
     pub(crate) last_chunk: Option<(TextPosition, TextUnit)>,
-    /// Spoken pieces whose marks playback has not reached yet, oldest
-    /// first, with where each starts. At most a few chunks' worth.
-    pub(crate) queued: std::collections::VecDeque<(SpeechMark, TextPosition)>,
+    /// Pieces handed to speech whose marks playback has not reached yet,
+    /// oldest first, with where each starts and its length in characters
+    /// (Unicode scalar values). At most `say_all::HANDED`.
+    pub(crate) queued: std::collections::VecDeque<(SpeechMark, TextPosition, u32)>,
+    /// Pieces read and not yet handed to speech, in order: the chunk and
+    /// the byte range of its text. At most one read-ahead batch's worth
+    /// (`verbatim_model::MAX_READ_AHEAD_TEXT`).
+    #[serde(default)]
+    pub(crate) buffer: std::collections::VecDeque<BufferedPiece>,
+    /// The trace of the latest read, which pieces handed out later carry.
+    #[serde(default)]
+    pub(crate) trace: Option<TraceId>,
+    /// When playback last reached one of say-all's marks, in milliseconds
+    /// since the Unix epoch, and the length in characters of the piece it
+    /// started, to measure the pace of speech by the next.
+    #[serde(default)]
+    pub(crate) last_reached: Option<(u64, u32)>,
     /// The document's end has been read.
     pub(crate) finished: bool,
     /// Whether the display was asked to stay on.
@@ -380,6 +415,10 @@ pub struct SrState {
     /// The say-all in progress.
     #[serde(default)]
     pub(crate) say_all: Option<SayAll>,
+    /// The pace say-all's speech was last measured at, in characters per
+    /// minute, kept from one say-all to the next.
+    #[serde(default)]
+    pub(crate) say_all_pace: Option<u32>,
     /// The word typed so far, for typed word echo; at most
     /// `editing::MAX_TYPED_WORD` bytes.
     #[serde(default)]
@@ -559,8 +598,11 @@ impl SrState {
             if let Some((position, _)) = say_all.last_chunk {
                 insert(say_all.node, position);
             }
-            for (_, position) in &say_all.queued {
+            for (_, position, _) in &say_all.queued {
                 insert(say_all.node, *position);
+            }
+            for piece in &say_all.buffer {
+                insert(say_all.node, TextPosition::at(piece.chunk.start));
             }
         }
         held
