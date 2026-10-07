@@ -408,8 +408,18 @@ mod tests {
                 ffi::CategoryKind::Terminal
             ]
         );
-        for category in &dialog.categories {
-            assert!(category.title.contains(&category.name));
-        }
+        let names: Vec<(&str, &str)> = dialog
+            .categories
+            .iter()
+            .map(|category| (category.name.as_str(), category.title.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Speech", "Verbatim Settings: Speech"),
+                ("Theme", "Verbatim Settings: Theme"),
+                ("Terminal", "Verbatim Settings: Terminal"),
+            ]
+        );
     }
 }

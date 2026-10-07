@@ -137,16 +137,86 @@ fn input_desktop_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenSessionId};
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseWindowStation, CreateWindowStationW, SetProcessWindowStation,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
+    use windows::core::PCWSTR;
 
-    /// This test runs inside the developer's own interactive desktop
-    /// session, so it doubles as a sanity check that the happy path
-    /// resolves to plausible values, not just that the calls do not panic.
+    /// The session id of this process's access token, read independently
+    /// of [`current`].
+    fn token_session_id() -> u32 {
+        let mut token = HANDLE::default();
+        // SAFETY: no preconditions; a pseudo-handle that needs no closing.
+        let process = unsafe { GetCurrentProcess() };
+        // SAFETY: this process's handle and a valid out-pointer.
+        unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) }
+            .expect("opens this process's token");
+        let mut id = 0u32;
+        let mut length = 0u32;
+        // SAFETY: `id` is a u32 out-buffer, the size `TokenSessionId` writes.
+        let read = unsafe {
+            GetTokenInformation(
+                token,
+                TokenSessionId,
+                Some((&raw mut id).cast()),
+                u32::try_from(size_of::<u32>()).expect("fits"),
+                &raw mut length,
+            )
+        };
+        // SAFETY: the token was opened above and is not used again.
+        unsafe { CloseHandle(token) }.expect("closes the token");
+        read.expect("reads the token's session id");
+        id
+    }
+
+    /// A window station this test creates is never the interactive one, so
+    /// in it the process reports exactly what a service in session 0 does,
+    /// whatever session the tests run in: its session, a window station
+    /// that is not interactive, and no input desktop. (Reading an
+    /// interactive session's own window station and desktop depends on
+    /// where the tests run; the end-to-end suite's `session_info` test
+    /// covers it, through the agent, in the interactive session it needs.)
+    ///
+    /// The window station is the process's, so this crate's unit tests
+    /// hold no other test that reads it.
     #[test]
-    fn current_session_reports_this_process_session() {
-        let info = current().expect("queries session info for this process");
-        // `cargo test` runs as a normal user process; expect an
-        // interactive window station and a resolvable desktop name.
-        assert!(info.interactive_window_station);
-        assert!(info.input_desktop_name.is_some());
+    fn a_process_in_a_non_interactive_window_station_reports_no_input_desktop() {
+        // SAFETY: no preconditions; the process's own handle, not closed.
+        let original = unsafe { GetProcessWindowStation() }.expect("the process's window station");
+        // Unnamed, as a sandbox makes one: an ordinary user may not name a
+        // window station, and the system names it for the logon session.
+        // SAFETY: no name and no security attributes.
+        let station = unsafe {
+            CreateWindowStationW(
+                PCWSTR::null(),
+                0,
+                u32::try_from(WINSTA_ALL_ACCESS).expect("an access mask"),
+                None,
+            )
+        }
+        .expect("creates a window station");
+        // SAFETY: a window station handle this process holds.
+        unsafe { SetProcessWindowStation(station) }.expect("moves to the new window station");
+
+        let session = current();
+
+        // SAFETY: the process's original window station, still open; the
+        // created one is no longer the process's and is not used again.
+        unsafe { SetProcessWindowStation(original) }.expect("moves back");
+        // SAFETY: as above.
+        unsafe { CloseWindowStation(station) }.expect("closes the created window station");
+
+        assert_eq!(
+            session.expect("reads the session"),
+            Session {
+                id: token_session_id(),
+                interactive_window_station: false,
+                input_desktop_name: None,
+            }
+        );
     }
 }

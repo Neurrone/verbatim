@@ -663,10 +663,13 @@ mod tests {
         waiting.extend((2..=12).map(|child| msaa(WinEventKind::ValueChange, 7, child)));
         let focused = Object::Msaa(7, -4, 1);
         let planned = plan(waiting, Some(&focused), never_hung);
-        let kept = observed(&planned);
-        assert_eq!(kept[0], 1, "the focused object's event survives the limit");
-        assert_eq!(kept[1], 0, "the query survives");
-        assert!(!kept.contains(&2), "the oldest other event is dropped");
+        // The focused object's event and the query survive the limit and
+        // do not count toward it: the newest ten other events are kept, and
+        // only the oldest, observed at 2, is dropped.
+        assert_eq!(
+            observed(&planned),
+            vec![1, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        );
     }
 
     #[test]

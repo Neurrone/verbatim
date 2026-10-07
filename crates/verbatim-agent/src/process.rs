@@ -674,19 +674,15 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert!(
-            matches!(final_state, ProcessState::Exited { .. }),
-            "expected the child to have exited, got {final_state:?}"
-        );
+        assert_eq!(final_state, ProcessState::Exited { exit_code: Some(0) });
 
+        // Exactly what cmd's echo wrote: the text up to the redirection,
+        // with the space before it, and a line break.
         let captured =
             std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
-        assert!(
-            captured.contains("agent stderr capture test"),
-            "expected the captured file to contain the child's stderr, got: {captured}"
-        );
+        assert_eq!(captured, "agent stderr capture test \r\n");
 
-        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&path).expect("removes the capture file");
     }
 
     #[test]

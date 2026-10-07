@@ -1,29 +1,205 @@
-//! The eSpeak NG driver against the real synthesizer and its data. One test
-//! function, since eSpeak NG allows one driver per process.
+//! The eSpeak NG driver against the real synthesizer and its data.
+//!
+//! eSpeak NG keeps its state in globals, which run on from one utterance
+//! to the next and survive a driver being dropped and another made, so an
+//! utterance spoken twice in one process need not give the same samples.
+//! A new process does: the driver seeds eSpeak NG's noise, so its first
+//! utterance depends on nothing but the text and the settings. Tests that
+//! compare speech exactly therefore have each utterance spoken by a
+//! process of its own: this test binary, run again with
+//! `--speak <case>`, which speaks one [`Case`] with a new driver and
+//! writes what it heard to its standard output. The other tests run here,
+//! one after another, since a process has one driver at a time.
+//!
+//! The binary has its own small runner (`harness = false` in
+//! `Cargo.toml`), which prints libtest's lines, runs the tests whose names
+//! contain the first argument that is not an option, and exits with
+//! libtest's code when one fails.
 
+use std::io::{Read, Write};
 use std::ops::ControlFlow;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::process::{Command, Stdio};
 
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
 use verbatim_speech::{
-    IndexMark, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver, SynthSink,
+    IndexMark, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver, SynthError,
+    SynthSink,
 };
 use verbatim_synth_espeak::EspeakSynth;
 
-/// Counts the audio pushed, and stops after `stop_after` pushes.
-struct Count {
-    pushes: usize,
-    samples: usize,
+/// The sentence the tests speak.
+const SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
+
+/// The samples in one of the driver's 60 millisecond chunks at 22,050 Hz:
+/// eSpeak NG sizes its buffer as 60 times 22,050 thousandths of a sample,
+/// rounded up to the next whole thousand, which is 1,324 samples.
+const CHUNK_SAMPLES: usize = 1_324;
+
+/// The option that makes this binary speak one case and exit.
+const SPEAK: &str = "--speak";
+
+/// One utterance a process of its own speaks with a new driver.
+#[derive(Clone, Copy, Debug)]
+enum Case {
+    /// The sentence with the default settings.
+    Sentence,
+    /// The sentence, stopped by the sink at the first push.
+    SentenceStoppedAtTheFirstPush,
+    /// The sentence at a rate of 100.
+    SentenceAtRate100,
+    /// The sentence after the rate was set to 100 and back to 50.
+    SentenceAfterTheRateWasSetBack,
+    /// The letter B with the default settings.
+    B,
+    /// The letter B in a sequence with a pitch item that changes nothing,
+    /// which is spoken as SSML.
+    BAsSsml,
+    /// The letter B raised by 30, as a capital is, then the pitch reset.
+    RaisedB,
+    /// The SSML a raised B is spoken as, given as plain text: what the
+    /// markup would sound like read aloud.
+    RaisedBMarkupAsText,
+}
+
+impl Case {
+    const ALL: [Self; 8] = [
+        Self::Sentence,
+        Self::SentenceStoppedAtTheFirstPush,
+        Self::SentenceAtRate100,
+        Self::SentenceAfterTheRateWasSetBack,
+        Self::B,
+        Self::BAsSsml,
+        Self::RaisedB,
+        Self::RaisedBMarkupAsText,
+    ];
+
+    fn name(self) -> String {
+        format!("{self:?}")
+    }
+
+    /// Speaks the case with `synth`, a new driver.
+    fn speak(self, synth: &mut EspeakSynth) -> Record {
+        let text = |text: &str| vec![SpeechItem::Text(text.to_owned())];
+        let raised_b = || {
+            vec![
+                SpeechItem::Pitch(30),
+                SpeechItem::Text("B".to_owned()),
+                SpeechItem::Pitch(0),
+            ]
+        };
+        match self {
+            Self::Sentence => speak(synth, text(SENTENCE)),
+            Self::SentenceStoppedAtTheFirstPush => {
+                let mut record = Record::stopping_after(1);
+                synth
+                    .speak(&sequence(text(SENTENCE)), &mut record)
+                    .expect("a stopped utterance is not a failure");
+                record
+            }
+            Self::SentenceAtRate100 => {
+                set(synth, "rate", 100);
+                speak(synth, text(SENTENCE))
+            }
+            Self::SentenceAfterTheRateWasSetBack => {
+                set(synth, "rate", 100);
+                set(synth, "rate", 50);
+                speak(synth, text(SENTENCE))
+            }
+            Self::B => speak(synth, text("B")),
+            Self::BAsSsml => speak(
+                synth,
+                vec![SpeechItem::Pitch(0), SpeechItem::Text("B".to_owned())],
+            ),
+            Self::RaisedB => speak(synth, raised_b()),
+            Self::RaisedBMarkupAsText => speak(synth, text("<prosody pitch=\"160%\">B</prosody>")),
+        }
+    }
+}
+
+/// Keeps every push of audio, and stops after `stop_after` pushes.
+struct Record {
+    pushes: Vec<Vec<i16>>,
     format: Option<PcmFormat>,
     stop_after: usize,
 }
 
-impl SynthSink for Count {
+impl Record {
+    fn stopping_after(stop_after: usize) -> Self {
+        Self {
+            pushes: Vec::new(),
+            format: None,
+            stop_after,
+        }
+    }
+
+    fn samples(&self) -> Vec<i16> {
+        self.pushes.concat()
+    }
+
+    /// Writes the format and the pushes: the sample rate, the channels, and
+    /// the number of pushes, then each push's length and samples, all as
+    /// little-endian 32-bit counts and 16-bit samples.
+    fn write(&self, out: &mut impl Write) {
+        let format = self.format.expect("speech was produced");
+        let count = |n: usize| u32::try_from(n).expect("fits").to_le_bytes();
+        let mut bytes = Vec::new();
+        bytes.extend(format.sample_rate.to_le_bytes());
+        bytes.extend(u32::from(format.channels).to_le_bytes());
+        bytes.extend(count(self.pushes.len()));
+        for push in &self.pushes {
+            bytes.extend(count(push.len()));
+            bytes.extend(push.iter().flat_map(|sample| sample.to_le_bytes()));
+        }
+        out.write_all(&bytes).expect("writes the speech");
+    }
+
+    /// Reads what [`Record::write`] wrote.
+    fn read(bytes: &[u8]) -> Self {
+        let mut rest = bytes;
+        let mut take = |n: usize| -> Vec<u8> {
+            let mut taken = vec![0; n];
+            rest.read_exact(&mut taken).expect("as much as was written");
+            taken
+        };
+        let word = |take: &mut dyn FnMut(usize) -> Vec<u8>| {
+            u32::from_le_bytes(take(4).try_into().expect("four bytes"))
+        };
+        let sample_rate = word(&mut take);
+        let channels = u16::try_from(word(&mut take)).expect("a channel count");
+        let pushes = (0..word(&mut take))
+            .map(|_| {
+                let length = usize::try_from(word(&mut take)).expect("fits");
+                take(length * 2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| i16::from_le_bytes(*pair))
+                    .collect()
+            })
+            .collect();
+        assert!(rest.is_empty(), "nothing follows the last push");
+        Self {
+            pushes,
+            format: Some(PcmFormat {
+                sample_rate,
+                channels,
+            }),
+            stop_after: usize::MAX,
+        }
+    }
+}
+
+impl SynthSink for Record {
     fn push_pcm(&mut self, format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
-        self.pushes += 1;
-        self.samples += samples.len();
+        self.pushes.push(samples.to_vec());
+        assert!(
+            self.format.is_none_or(|known| known == format),
+            "one format for a whole utterance"
+        );
         self.format = Some(format);
-        if self.pushes >= self.stop_after {
+        if self.pushes.len() >= self.stop_after {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -37,39 +213,88 @@ impl SynthSink for Count {
     }
 }
 
-fn sequence(text: &str) -> SpeechSequence {
+fn sequence(items: Vec<SpeechItem>) -> SpeechSequence {
     SpeechSequence {
         utterance: UtteranceId(1),
         trace_id: TraceId::mint(),
         language: None,
-        items: vec![SpeechItem::Text(text.to_owned())],
+        items,
     }
 }
 
-#[test]
-fn speaks_english_stops_when_asked_and_takes_its_settings() {
-    let mut synth = EspeakSynth::new().expect("eSpeak NG starts with its built data");
+/// Sets `id` to the number `value`.
+fn set(synth: &mut EspeakSynth, id: &str, value: i32) {
+    synth
+        .set_setting(&SettingId::new(id), SettingValue::Number(value))
+        .expect("sets the setting");
+}
+
+/// Everything `items` is spoken as.
+fn speak(synth: &mut EspeakSynth, items: Vec<SpeechItem>) -> Record {
+    let mut record = Record::stopping_after(usize::MAX);
+    synth.speak(&sequence(items), &mut record).expect("speaks");
+    record
+}
+
+fn new_driver() -> EspeakSynth {
+    EspeakSynth::new().expect("eSpeak NG starts with its built data")
+}
+
+/// `case` as a process of its own speaks it.
+fn spoken(case: Case) -> Record {
+    let mut child = Command::new(std::env::current_exe().expect("this test binary"))
+        .args([SPEAK, &case.name()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("starts a process to speak");
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()
+        .expect("its output")
+        .read_to_end(&mut bytes)
+        .expect("reads its speech");
+    let status = child.wait().expect("waits for it");
+    assert!(status.success(), "{case:?} was spoken: {status}");
+    Record::read(&bytes)
+}
+
+fn a_process_has_one_driver_which_places_no_marks_and_changes_pitch() {
+    let synth = new_driver();
+    assert_eq!(
+        EspeakSynth::new().err(),
+        Some(SynthError::Unavailable(
+            "this process already has an eSpeak NG driver".to_owned()
+        )),
+        "eSpeak NG keeps global state, so a process has one driver"
+    );
     assert!(
         !synth.places_marks(),
         "marks are placed by splitting the sequence"
     );
-    assert!(
-        EspeakSynth::new().is_err(),
-        "eSpeak NG keeps global state, so a process has one driver"
-    );
+    assert!(synth.changes_pitch());
+}
 
-    let mut whole = Count {
-        pushes: 0,
-        samples: 0,
-        format: None,
-        stop_after: usize::MAX,
-    };
-    synth
-        .speak(
-            &sequence("The quick brown fox jumps over the lazy dog."),
-            &mut whole,
-        )
-        .expect("speaks");
+fn an_unknown_voice_is_refused_and_the_voice_kept() {
+    let mut synth = new_driver();
+    assert_eq!(
+        synth.set_setting(
+            &SettingId::new("voice"),
+            SettingValue::Choice("no such voice".to_owned())
+        ),
+        Err(SynthError::Setting(
+            "unknown voice no such voice".to_owned()
+        ))
+    );
+    assert_eq!(
+        synth.setting(&SettingId::new("voice")),
+        Some(SettingValue::Choice("gmw/en".to_owned()))
+    );
+}
+
+fn speech_comes_at_22050_hz_mono_in_60_millisecond_chunks() {
+    let whole = spoken(Case::Sentence);
     assert_eq!(
         whole.format,
         Some(PcmFormat {
@@ -77,92 +302,132 @@ fn speaks_english_stops_when_asked_and_takes_its_settings() {
             channels: 1
         })
     );
-    // About two and a half seconds of speech.
+    let (last, full) = whole.pushes.split_last().expect("speech was produced");
+    let lengths: Vec<usize> = whole.pushes.iter().map(Vec::len).collect();
     assert!(
-        whole.samples > 22_050,
-        "speech was produced: {} samples",
-        whole.samples
+        full.iter().all(|push| push.len() == CHUNK_SAMPLES),
+        "every chunk but the last is full: {lengths:?}"
     );
-    assert!(whole.pushes > 2, "in several chunks");
+    assert!((1..=CHUNK_SAMPLES).contains(&last.len()), "{lengths:?}");
+    // About one and three quarter seconds of speech.
+    assert!(full.len() > 20, "{lengths:?}");
+}
 
-    let mut cut = Count {
-        pushes: 0,
-        samples: 0,
-        format: None,
-        stop_after: 1,
-    };
-    synth
-        .speak(
-            &sequence("The quick brown fox jumps over the lazy dog."),
-            &mut cut,
-        )
-        .expect("a cancelled utterance is not a failure");
+fn the_same_utterance_with_the_same_settings_gives_the_same_speech() {
+    assert_eq!(spoken(Case::Sentence).pushes, spoken(Case::Sentence).pushes);
+}
+
+fn synthesis_stops_at_the_push_that_asks_it_to() {
+    let whole = spoken(Case::Sentence);
     assert_eq!(
-        cut.pushes, 1,
-        "synthesis stops at the push that asked it to"
+        spoken(Case::SentenceStoppedAtTheFirstPush).pushes,
+        whole.pushes[..1],
+        "synthesis stops after the first chunk, the push that asked it to"
     );
+}
 
-    synth
-        .set_setting(&SettingId::new("rate"), SettingValue::Number(100))
-        .expect("sets the rate");
-    let mut fast = Count {
-        pushes: 0,
-        samples: 0,
-        format: None,
-        stop_after: usize::MAX,
-    };
-    synth
-        .speak(
-            &sequence("The quick brown fox jumps over the lazy dog."),
-            &mut fast,
-        )
-        .expect("speaks");
+fn the_rate_setting_changes_the_speech_until_it_is_set_back() {
+    let usual = spoken(Case::Sentence).samples();
+    let fast = spoken(Case::SentenceAtRate100).samples();
     assert!(
-        fast.samples < whole.samples,
-        "a faster rate gives shorter speech"
+        fast.len() < usual.len(),
+        "a faster rate gives shorter speech: {} samples against {}",
+        fast.len(),
+        usual.len()
     );
-    assert!(
-        synth
-            .set_setting(
-                &SettingId::new("voice"),
-                SettingValue::Choice("no such voice".to_owned())
-            )
-            .is_err()
+    assert_eq!(
+        spoken(Case::SentenceAfterTheRateWasSetBack).samples(),
+        usual
     );
-
-    speaks_a_raised_capital_within_one_synthesis(&mut synth);
 }
 
 /// A capital spoken at a raised pitch within one synthesis: the markup is
-/// obeyed, not read aloud, so it takes about as long as the letter.
-fn speaks_a_raised_capital_within_one_synthesis(synth: &mut EspeakSynth) {
-    assert!(synth.changes_pitch());
-    let count = |synth: &mut EspeakSynth, items: Vec<SpeechItem>| {
-        let mut count = Count {
-            pushes: 0,
-            samples: 0,
-            format: None,
-            stop_after: usize::MAX,
-        };
-        let sequence = SpeechSequence {
-            items,
-            ..sequence("")
-        };
-        synth.speak(&sequence, &mut count).expect("speaks");
-        count.samples
-    };
-    let plain = count(synth, vec![SpeechItem::Text("B".to_owned())]);
-    let raised = count(
-        synth,
-        vec![
-            SpeechItem::Pitch(30),
-            SpeechItem::Text("B".to_owned()),
-            SpeechItem::Pitch(0),
-        ],
-    );
-    assert!(plain > 0);
+/// obeyed, neither ignored nor read aloud. Spoken as SSML, a B with no
+/// change of pitch is the B spoken as plain text, sample for sample, so
+/// the SSML itself changes nothing; the raised B differs from it, and is
+/// shorter than its markup read aloud.
+fn a_raised_capital_is_spoken_at_a_raised_pitch_within_one_synthesis() {
+    let plain = spoken(Case::B).samples();
+    assert_eq!(spoken(Case::BAsSsml).samples(), plain);
+    let raised = spoken(Case::RaisedB).samples();
+    assert_ne!(raised, plain, "the pitch markup changes the speech");
+    let read_aloud = spoken(Case::RaisedBMarkupAsText).samples();
     assert!(
-        raised < plain * 3 / 2 && raised > plain / 2,
-        "the pitch markup is not spoken: {raised} samples against {plain}"
+        raised.len() < read_aloud.len(),
+        "the markup is not read aloud: {} samples against {}",
+        raised.len(),
+        read_aloud.len()
     );
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [option, name] = args.as_slice()
+        && option == SPEAK
+    {
+        let case = Case::ALL
+            .into_iter()
+            .find(|case| case.name() == *name)
+            .expect("a known case");
+        let record = case.speak(&mut new_driver());
+        record.write(&mut std::io::stdout().lock());
+        return;
+    }
+    let filter = args.iter().find(|arg| !arg.starts_with('-'));
+    let tests: [(&str, fn()); 7] = [
+        (
+            "a_process_has_one_driver_which_places_no_marks_and_changes_pitch",
+            a_process_has_one_driver_which_places_no_marks_and_changes_pitch,
+        ),
+        (
+            "an_unknown_voice_is_refused_and_the_voice_kept",
+            an_unknown_voice_is_refused_and_the_voice_kept,
+        ),
+        (
+            "speech_comes_at_22050_hz_mono_in_60_millisecond_chunks",
+            speech_comes_at_22050_hz_mono_in_60_millisecond_chunks,
+        ),
+        (
+            "the_same_utterance_with_the_same_settings_gives_the_same_speech",
+            the_same_utterance_with_the_same_settings_gives_the_same_speech,
+        ),
+        (
+            "synthesis_stops_at_the_push_that_asks_it_to",
+            synthesis_stops_at_the_push_that_asks_it_to,
+        ),
+        (
+            "the_rate_setting_changes_the_speech_until_it_is_set_back",
+            the_rate_setting_changes_the_speech_until_it_is_set_back,
+        ),
+        (
+            "a_raised_capital_is_spoken_at_a_raised_pitch_within_one_synthesis",
+            a_raised_capital_is_spoken_at_a_raised_pitch_within_one_synthesis,
+        ),
+    ];
+    let selected: Vec<_> = tests
+        .iter()
+        .filter(|(name, _)| filter.is_none_or(|filter| name.contains(filter.as_str())))
+        .collect();
+    println!("\nrunning {} tests", selected.len());
+    let mut failed = Vec::new();
+    for &&(name, test) in &selected {
+        let passed = catch_unwind(AssertUnwindSafe(test)).is_ok();
+        println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
+        if !passed {
+            failed.push(name);
+        }
+    }
+    println!(
+        "\ntest result: {}. {} passed; {} failed; 0 ignored; 0 measured; {} filtered out\n",
+        if failed.is_empty() { "ok" } else { "FAILED" },
+        selected.len() - failed.len(),
+        failed.len(),
+        tests.len() - selected.len()
+    );
+    if !failed.is_empty() {
+        for name in failed {
+            println!("failed: {name}");
+        }
+        std::process::exit(101);
+    }
 }

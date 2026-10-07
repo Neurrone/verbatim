@@ -16,8 +16,5 @@ windows.workspace = true
 windows-future.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
-[dev-dependencies]
-verbatim-audio-wasapi.workspace = true
-
 [lints]
 workspace = true

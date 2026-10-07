@@ -457,7 +457,11 @@ mod tests {
             calls: Some(CallCounts::default()),
             ..read
         };
-        assert!(stage_line(&none).starts_with("outpost read: 7.0 ms, 0 calls; "));
+        assert_eq!(
+            stage_line(&none),
+            "outpost read: 7.0 ms, 0 calls; \
+             ratio to floor unknown: the floor needs calibration"
+        );
         let wait = LatencyStage {
             kind: LatencyStageKind::CaretWait,
             duration_us: 100_000,
