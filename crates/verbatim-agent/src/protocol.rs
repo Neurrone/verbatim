@@ -24,9 +24,10 @@ use serde::{Deserialize, Serialize};
 /// `BringToForeground`'s title filter; version 4 added
 /// [`Request::ReadFileChunk`]; version 5 added [`Request::SendKeys`];
 /// version 6 added [`Request::TypeText`]; version 7 added
-/// [`Request::DeleteFile`]. A test run against an older agent is refused at
-/// `Hello` instead of losing its connection mid-run.
-pub const AGENT_PROTOCOL_VERSION: u32 = 7;
+/// [`Request::DeleteFile`]; version 8 added [`Request::ListFolders`] and
+/// [`Request::DeleteFolder`]. A test run against an older agent is refused
+/// at `Hello` instead of losing its connection mid-run.
+pub const AGENT_PROTOCOL_VERSION: u32 = 8;
 
 /// The default TCP port the agent listens on.
 ///
@@ -155,6 +156,14 @@ pub enum Request {
         /// Path to the file, agent-local.
         path: String,
     },
+    /// Deletes a folder a test laid out with [`Request::WriteFile`], with
+    /// everything in it, such as a harness folder once the window that used
+    /// it has closed. A folder that does not exist is not an error.
+    /// Answered by [`ReplyPayload::FolderDeleted`].
+    DeleteFolder {
+        /// Path to the folder, agent-local.
+        path: String,
+    },
     /// Asks whether a process is still running.
     ProcessStatus {
         /// The OS process id.
@@ -186,6 +195,13 @@ pub enum Request {
     /// can fetch logs whose names it cannot know in advance. Answered by
     /// [`ReplyPayload::FileNames`].
     ListFiles {
+        /// Path to the directory, agent-local.
+        path: String,
+    },
+    /// Lists the names of the folders directly inside a directory, so a
+    /// test can find the folders an earlier run left behind. Answered by
+    /// [`ReplyPayload::FileNames`], holding the folders' names.
+    ListFolders {
         /// Path to the directory, agent-local.
         path: String,
     },
@@ -293,8 +309,12 @@ pub enum ReplyPayload {
     FileWritten,
     /// Answer to [`Request::DeleteFile`].
     FileDeleted,
+    /// Answer to [`Request::DeleteFolder`].
+    FolderDeleted,
     /// Answer to [`Request::ListFiles`]: the names of the files directly
-    /// inside the directory, sorted; subdirectories are left out.
+    /// inside the directory, sorted; subdirectories are left out. Answer to
+    /// [`Request::ListFolders`] too, holding the subdirectories' names
+    /// instead, sorted.
     FileNames {
         /// The file names, without the directory.
         names: Vec<String>,

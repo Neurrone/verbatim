@@ -201,6 +201,9 @@ pub struct Scenario {
     /// [`Scenario::open_document`], cleaned up on drop unless already
     /// removed by [`Scenario::kill_target`].
     launched: Vec<Launched>,
+    /// Harness folders named by [`Scenario::harness_folder`], deleted on
+    /// drop once every launched application has ended.
+    folders: Vec<String>,
     /// The path this launch's Verbatim has its stdout and stderr captured
     /// into (see [`verbatim_stderr_log_path`]), readable back through
     /// [`process_agent`](Self::process_agent)'s `read_file` — what
@@ -384,6 +387,7 @@ impl Scenario {
             speech,
             timeline,
             launched: Vec::new(),
+            folders: Vec::new(),
             stderr_log_path: stderr_path,
             recording,
         })
@@ -488,6 +492,25 @@ impl Scenario {
             .and_then(Path::to_str)
             .map(str::to_owned)
             .ok_or_else(|| io::Error::other("no directory for the run's harness files"))
+    }
+
+    /// The path, on the agent's machine, of the harness folder `name` of
+    /// this run: named with [`harness_marker`], in
+    /// [`Scenario::run_directory`]. The folder is made by the first file
+    /// written into it ([`Scenario::write_agent_file`]), and deleted with
+    /// everything in it when the scenario is dropped, after the
+    /// applications it launched have ended; one an aborted run left behind
+    /// is deleted by the next launch's sweep.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::run_directory`].
+    pub fn harness_folder(&mut self, name: &str) -> io::Result<String> {
+        let folder = format!(r"{}\{}", self.run_directory()?, harness_marker(name));
+        if !self.folders.contains(&folder) {
+            self.folders.push(folder.clone());
+        }
+        Ok(folder)
     }
 
     /// Writes a file on the agent's machine, creating or replacing it and
@@ -762,10 +785,11 @@ impl Scenario {
 
     /// Opens a harness folder in File Explorer: writes `files` (paths
     /// relative to the folder, empty contents) into a folder named
-    /// [`DOCUMENT_MARKER`] plus `name` next to Verbatim's executable, opens
-    /// it, and brings the window titled with that name to the foreground.
-    /// The window is closed by its title at cleanup, never by image name,
-    /// since `explorer.exe` is also the shell. Returns the folder's name,
+    /// [`DOCUMENT_MARKER`] plus `name` next to Verbatim's executable
+    /// ([`Scenario::harness_folder`]), opens it, and brings the window
+    /// titled with that name to the foreground. The window is closed by its
+    /// title at cleanup, never by image name, since `explorer.exe` is also
+    /// the shell, and the folder is then deleted. Returns the folder's name,
     /// which is the window's title.
     ///
     /// # Errors
@@ -774,11 +798,7 @@ impl Scenario {
     /// foreground.
     pub fn open_folder(&mut self, name: &str, files: &[&str]) -> io::Result<String> {
         let marker = harness_marker(name);
-        let directory = Path::new(&self.stderr_log_path)
-            .parent()
-            .and_then(Path::to_str)
-            .ok_or_else(|| io::Error::other("no directory for the harness folder"))?;
-        let folder = format!("{directory}\\{marker}");
+        let folder = self.harness_folder(name)?;
         for file in files {
             self.process_agent
                 .write_file(&format!("{folder}\\{file}"), b"")?;
@@ -1263,6 +1283,15 @@ impl Drop for Scenario {
                 );
             }
         }
+        for folder in std::mem::take(&mut self.folders) {
+            if let Err(error) = delete_harness_folder(
+                &mut self.process_agent,
+                &folder,
+                Instant::now() + CLOSE_TIMEOUT,
+            ) {
+                tracing::warn!(folder, %error, "failed to delete a harness folder");
+            }
+        }
         // Best-effort clean quit first (a no-op if the connection is
         // already gone), then guarantee Verbatim is actually gone via the
         // agent regardless of whether Quit landed — the guard's whole
@@ -1288,9 +1317,9 @@ impl Drop for Scenario {
 /// from as clean a state as possible even after a prior run aborted without
 /// running its own Drop cleanup (a killed test process, a Ctrl+C, a panic
 /// that unwound past Scenario somehow). A harness tab left in Notepad is
-/// closed as a tab ([`close_notepad_tabs`]), and the harness documents left
-/// in `directory`, Verbatim's launch directory, are deleted. Best-effort: a
-/// failure is logged, not fatal to the launch.
+/// closed as a tab ([`close_notepad_tabs`]), and the harness documents and
+/// folders left in `directory`, Verbatim's launch directory, are deleted.
+/// Best-effort: a failure is logged, not fatal to the launch.
 fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
     for name in crate::registry::swept_target_image_names() {
         if let Err(error) = agent.kill_processes_by_name(name) {
@@ -1318,6 +1347,48 @@ fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
         }
         Err(error) => tracing::warn!(%error, "failed to list leftover harness documents"),
     }
+    match agent.list_folders(directory) {
+        Ok(names) => {
+            for name in names
+                .iter()
+                .filter(|name| name.starts_with(DOCUMENT_MARKER))
+            {
+                let folder = format!(r"{directory}\{name}");
+                if let Err(error) = delete_harness_folder(agent, &folder, Instant::now()) {
+                    tracing::warn!(name, %error, "failed to delete a leftover harness folder");
+                }
+            }
+        }
+        Err(error) => tracing::warn!(%error, "failed to list leftover harness folders"),
+    }
+}
+
+/// Deletes the harness folder at `path` with everything in it, refusing
+/// any folder whose name does not start with [`DOCUMENT_MARKER`]. A program
+/// whose window has just closed can still have the folder open while it
+/// exits, such as the shell a terminal ran in it, so a failed delete is
+/// tried again until the folder is gone or `deadline` passes.
+fn delete_harness_folder(agent: &mut AgentClient, path: &str, deadline: Instant) -> io::Result<()> {
+    if !is_harness_name(path) {
+        return Err(io::Error::other(format!(
+            "{path} is not a harness folder, so it is not deleted"
+        )));
+    }
+    loop {
+        match agent.delete_folder(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if Instant::now() >= deadline => return Err(error),
+            Err(_) => thread::sleep(SAVE_POLL),
+        }
+    }
+}
+
+/// Whether the last component of `path`, a path on the agent's machine,
+/// is named with [`DOCUMENT_MARKER`].
+fn is_harness_name(path: &str) -> bool {
+    path.rsplit(['\\', '/'])
+        .next()
+        .is_some_and(|name| name.starts_with(DOCUMENT_MARKER))
 }
 
 /// Whether `image` is Windows 11 Notepad's.
@@ -1879,6 +1950,13 @@ mod tests {
                 .join("debug")
                 .join("verbatim.exe")
         );
+    }
+
+    #[test]
+    fn only_a_folder_named_with_the_marker_is_a_harness_folder() {
+        assert!(is_harness_name(r"C:\stage\verbatim-e2e-folder-abc"));
+        assert!(!is_harness_name(r"C:\stage\logs"));
+        assert!(!is_harness_name(r"C:\verbatim-e2e-folder-abc\logs"));
     }
 
     #[test]

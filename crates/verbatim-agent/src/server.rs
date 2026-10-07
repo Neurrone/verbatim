@@ -251,19 +251,27 @@ fn dispatch(id: u64, request: Request) -> Frame {
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
         | Request::WriteFile { .. }
-        | Request::DeleteFile { .. }) => desktop_request(id, request),
-        Request::ListFiles { path } => match files::list(&path) {
-            Ok(names) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::FileNames { names },
-            },
-            Err(error) => error_frame(id, &error),
-        },
+        | Request::DeleteFile { .. }
+        | Request::DeleteFolder { .. }) => desktop_request(id, request),
+        Request::ListFiles { path } => list_reply(id, files::list(&path)),
+        Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
         Request::SendKeys { keys } => send_keys(id, &keys),
         Request::TypeText { text } => type_text(id, &text),
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
+    }
+}
+
+/// Answers [`Request::ListFiles`] or [`Request::ListFolders`] with the names
+/// listed, or the error listing them.
+fn list_reply(id: u64, names: io::Result<Vec<String>>) -> Frame {
+    match names {
+        Ok(names) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::FileNames { names },
+        },
+        Err(error) => error_frame(id, &error),
     }
 }
 
@@ -295,8 +303,8 @@ fn type_text(id: u64, text: &str) -> Frame {
 }
 
 /// Answers the requests that read or change the desktop and its files for a
-/// test: the foreground report, closing windows, and writing and deleting a
-/// file.
+/// test: the foreground report, closing windows, writing and deleting a
+/// file, and deleting a folder.
 fn desktop_request(id: u64, request: Request) -> Frame {
     match request {
         Request::ForegroundInfo => Frame::Reply {
@@ -328,6 +336,13 @@ fn desktop_request(id: u64, request: Request) -> Frame {
             Ok(()) => Frame::Reply {
                 to: id,
                 payload: ReplyPayload::FileDeleted,
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::DeleteFolder { path } => match files::delete_folder(&path) {
+            Ok(()) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::FolderDeleted,
             },
             Err(error) => error_frame(id, &error),
         },

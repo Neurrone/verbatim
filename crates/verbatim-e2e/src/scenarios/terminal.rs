@@ -127,7 +127,7 @@ fn open_with(
     scripts: &[(&str, &str)],
 ) -> io::Result<ScenarioState> {
     let title = harness_marker(name);
-    let directory = format!(r"{}\{title}", scenario.run_directory()?);
+    let directory = scenario.harness_folder(name)?;
     for (file, contents) in scripts {
         scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
     }

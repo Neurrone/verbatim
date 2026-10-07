@@ -1,6 +1,7 @@
 //! [`crate::protocol::Request::ReadFile`] and
 //! [`crate::protocol::Request::ListFiles`]: pulling small files (logs, crash
-//! dumps) off the guest for a host-side test to inspect.
+//! dumps) off the guest for a host-side test to inspect. Also the requests
+//! that lay out a test's own files and folders and remove them again.
 
 use std::io;
 
@@ -79,6 +80,37 @@ pub fn delete(path: &str) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
+}
+
+/// Deletes the folder at `path` and everything in it; a folder that is
+/// already gone is not an error.
+///
+/// # Errors
+///
+/// Returns an error if the folder exists and cannot be deleted, for
+/// example because a process still has it open.
+pub fn delete_folder(path: &str) -> io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+/// The names of the folders directly inside `path`, sorted.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be read.
+pub fn list_folders(path: &str) -> io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// The names of the files directly inside `path`, sorted.
@@ -165,6 +197,28 @@ mod tests {
 
         let names = list(dir.to_str().expect("utf8 path")).expect("lists");
         assert_eq!(names, ["a.log", "b.log"]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn lists_and_deletes_a_folder_with_its_contents() {
+        let dir = std::env::temp_dir().join(format!(
+            "verbatim-agent-folder-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let nested = dir.join("nested");
+        std::fs::create_dir_all(nested.join("deeper")).expect("creates the directories");
+        std::fs::write(dir.join("a.log"), b"a").expect("writes");
+        std::fs::write(nested.join("b.log"), b"b").expect("writes");
+        let dir_path = dir.to_str().expect("utf8 path");
+
+        assert_eq!(list_folders(dir_path).expect("lists"), ["nested"]);
+        let nested_path = nested.to_str().expect("utf8 path");
+        delete_folder(nested_path).expect("deletes the folder");
+        assert!(!nested.exists(), "the folder and its contents are gone");
+        delete_folder(nested_path).expect("a folder already gone is not an error");
 
         std::fs::remove_dir_all(&dir).ok();
     }

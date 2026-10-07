@@ -80,7 +80,12 @@ Public API:
   own, such as a terminal's: `harness_marker(name)` is a title unique to
   the run (the same marker harness documents are named with);
   `run_directory` is the agent-side folder harness files go in, next to
-  Verbatim's executable; `write_agent_file` writes a file there, and
+  Verbatim's executable; `harness_folder(name)` is the path of a folder
+  there named with the marker, deleted with its contents when the scenario
+  is dropped, after the applications it launched have ended (a folder a
+  closing program still holds is tried again until a deadline), and by the
+  next launch's sweep when an aborted run left it; `write_agent_file`
+  writes a file, creating any folder it names, and
   `wait_for_agent_file` waits for a file to appear and returns it, the
   evidence a script reached the point that writes it; `subscribe_events`
   opens one more control-plane connection subscribed to the normalized
@@ -95,8 +100,8 @@ Public API:
   on an empty file whose name holds `DOCUMENT_MARKER`, brings the window
   with that title forward, and closes it by title at cleanup, so the
   user's own Notepad windows are never touched; `open_folder` does the
-  same for a File Explorer window on a folder of empty files it writes,
-  never sweeping `explorer.exe`, which is also the shell, and returns the
+  same for a File Explorer window on a harness folder of empty files it
+  writes, never sweeping `explorer.exe`, which is also the shell, and returns the
   window's title for the body (`ScenarioState::Title`);
   `open_document_with` does the same on a file holding given contents,
   for a scenario that reads or edits text; `save_document` saves such a
