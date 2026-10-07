@@ -78,9 +78,13 @@ Public API:
   Verbatim that panics at launch leaves its message somewhere a host-side
   test or `cargo xtask vm logs` can actually read, instead of vanishing
   with the process.
-- `server::serve(listener, pipe_name)` — the TCP accept loop, one thread
+- `server::serve(listener, pipe_name, nudge)` — the TCP accept loop, one thread
   per connection; blocking, so callers needing to do other work run it on
-  a background thread.
+  a background thread. `nudge`, a `ForegroundNudge`, says whether a
+  launch may tap Control to let its program take the foreground: the
+  binary passes `Allowed`, and this crate's tests pass `Never`, so running
+  them never presses a key into a Verbatim that an end-to-end run is
+  driving on the same desktop (such a tap cancels its speech).
 - `session::current()` — session id, whether the process's window station
   is interactive, and the input desktop's name when it can be opened, read
   by `verbatim_process::session` (Verbatim makes the same check at its own
@@ -101,7 +105,8 @@ by the C runtime's rules, and an environment override is set over the
 agent's own environment. Before the child runs, it is allowed to take the
 foreground (`AllowSetForegroundWindow`, after the Control tap that lets
 the agent set the foreground itself when the foreground lock is in
-force), as a program a user starts may: a console window opened under
+force, unless the server was told never to inject it), as a program a
+user starts may: a console window opened under
 the lock raised its focus events while refused the foreground, and when
 the harness then brought it forward no new event said so, so Verbatim,
 which dropped the refused window's events as NVDA does, never announced

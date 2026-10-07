@@ -45,6 +45,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{PCWSTR, PWSTR};
 
+use crate::foreground::ForegroundNudge;
 use crate::protocol::{KillOutcome, ProcessState};
 
 /// Spawns `command` with `args`, and environment (extended, not replaced,
@@ -67,6 +68,10 @@ use crate::protocol::{KillOutcome, ProcessState};
 /// argument parsing follow; `command` is found as `CreateProcessW` finds a
 /// program, adding `.exe` when it has no extension and searching `PATH`.
 ///
+/// The process may take the foreground with its first window; `nudge` says
+/// whether a Control tap may be injected to allow that past the foreground
+/// lock (`foreground::allow_foreground`).
+///
 /// # Errors
 ///
 /// Returns an error if the process cannot be spawned (bad path, permission
@@ -78,6 +83,7 @@ pub fn launch(
     working_dir: Option<&str>,
     env: &[(String, String)],
     stderr_to: Option<&str>,
+    nudge: ForegroundNudge,
 ) -> io::Result<u32> {
     let capture = stderr_to
         .map(|path| std::fs::File::create(path).and_then(|file| inheritable(&file)))
@@ -124,7 +130,7 @@ pub fn launch(
     // SAFETY: as above.
     let thread = unsafe { OwnedHandle::from_raw_handle(info.hThread.0) };
     let pid = info.dwProcessId;
-    crate::foreground::allow_foreground(pid);
+    crate::foreground::allow_foreground(pid, nudge);
     if let Err(error) = assign_to_job(&job, &child).and_then(|()| resume(&thread)) {
         // SAFETY: `child` is open, with the full access CreateProcessW
         // grants.
@@ -601,6 +607,7 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns powershell");
         assert!(pid > 0, "pid is a valid nonzero process id");
@@ -653,6 +660,7 @@ mod tests {
             None,
             &[],
             Some(&path_str),
+            ForegroundNudge::Never,
         )
         .expect("spawns cmd with a stderr capture path");
 
@@ -699,6 +707,7 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns cmd");
         // Waits for the exit, however long the machine takes to start the
@@ -722,6 +731,7 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns cmd");
         let mut grandchild = None;
@@ -845,6 +855,7 @@ mod tests {
             None,
             &[],
             None,
+            ForegroundNudge::Never,
         )
         .expect("spawns the renamed powershell.exe");
 

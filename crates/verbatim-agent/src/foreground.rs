@@ -239,6 +239,20 @@ fn send_keys(keys: &[(VIRTUAL_KEY, bool)]) {
     }
 }
 
+/// Whether a launch may tap Control, real input, to let the launched
+/// program take the foreground past the foreground lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForegroundNudge {
+    /// It may: the agent serving a harness, whose launches must come to
+    /// the front as a user's would.
+    Allowed,
+    /// It never does: this crate's own tests, whose launches must not
+    /// press a key into a desktop that another program, such as a Verbatim
+    /// under an end-to-end run, is using. The launched program comes to
+    /// the front only when Windows lets it without input.
+    Never,
+}
+
 /// Injects a bare Control down-then-up tap, which satisfies the foreground
 /// lock's input heuristic before `SetForegroundWindow` (see
 /// `verbatim-gui`'s `foreground` module for why Control and not Alt).
@@ -254,11 +268,11 @@ fn nudge_foreground_lock() {
 /// the window forward no new event says so, so a screen reader that, like
 /// NVDA, dropped the refused window's events never hears of it. The right
 /// is granted at once when the agent may set the foreground itself, and
-/// otherwise after the nudge that lets it.
-pub(crate) fn allow_foreground(pid: u32) {
+/// otherwise after the nudge that lets it, when `nudge` allows one.
+pub(crate) fn allow_foreground(pid: u32, nudge: ForegroundNudge) {
     // SAFETY: plain calls taking a process id; failure is reported by the
     // return value alone.
-    if unsafe { AllowSetForegroundWindow(pid) }.is_ok() {
+    if unsafe { AllowSetForegroundWindow(pid) }.is_ok() || nudge == ForegroundNudge::Never {
         return;
     }
     nudge_foreground_lock();
