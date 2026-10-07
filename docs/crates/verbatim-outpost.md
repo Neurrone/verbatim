@@ -208,7 +208,10 @@ Public API:
   of one node's text in its own positions and UTF-16: `uia::UiaText`, over
   a text pattern, where a position (`UiaPos`) is one end of a text range,
   and `edit::EditText`, over an edit control's messages, where it is an
-  offset; `UiaText::new` takes the element too, which a remote operation
+  offset (a plain edit control's word is the line segmented by
+  `verbatim-text`'s word rules, each word with the white space after it,
+  a no-break space read as a space, and a carriage return or line feed a
+  word of its own, as NVDA finds it); `UiaText::new` takes the element too, which a remote operation
   starts from, and `remote` and `fetches` say whether caret reads try a
   remote operation and which formatting they read; `support` gives what
   the control is already known to support of the text attributes

@@ -291,9 +291,10 @@ fn words_and_characters<S: TextSource>(
 /// the spaces after it, so the line feed after it is a word of its own.
 const UIA_SECOND_WORD: &str = "beta";
 
-/// The word "beta" through the edit control, whose last word on a line
-/// takes the line break (`plain_word` in the outpost's `text/edit.rs`).
-const EDIT_SECOND_WORD: &str = "beta\r\n";
+/// The word "beta" through the edit control, whose line break is a word
+/// of its own, as NVDA's plain edit word (`plain_word` in the outpost's
+/// `text/edit.rs`).
+const EDIT_SECOND_WORD: &str = "beta";
 
 /// A caret key's answer: the caret moved to 6, the word there,
 /// `second_word`, and then a selection of the first word reported as

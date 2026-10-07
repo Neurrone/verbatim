@@ -1595,7 +1595,13 @@ verified.
   rules with dictionaries, jieba for Chinese, a run of spaces and tabs as
   one segment), used by the review cursor over text and by spelling; where
   the application moves the caret by word, the provider's word is spoken.
-  The paragraph-style setting is **not yet**.
+  A plain Win32 edit control's word, which the outpost finds itself, is
+  **matched since 2026-10-08**: the line segmented by the same rules, each
+  word with the white space after it, null characters and no-break spaces
+  read as spaces, and a carriage return or line feed a word of its own (it
+  had been a run of characters other than white space, so Thai or Chinese
+  in such a control was one word). The paragraph-style setting is
+  **not yet**.
 - Line breaks. NVDA speaks carriage returns and line feeds inside text as
   spaces ("Line breaks in spoken text" in [Speech](nvda/speech.md)).
   Verbatim: **matched since 2026-10-06**, for every kind of line break, at

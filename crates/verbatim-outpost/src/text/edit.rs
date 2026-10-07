@@ -6,9 +6,10 @@
 //! line, soft-wrapped lines included, from its start to the next line's
 //! start, so a hard line break belongs to the line it ends; a paragraph is
 //! a line, as in NVDA. Words are rich edit's own (`EM_FINDWORDBREAK`, from
-//! rich edit 2.0, as NVDA finds them) or, for the plain edit control, its
-//! default word breaking: a run of characters other than spaces, tabs, and
-//! line breaks, with the spaces after it. Sentences are left to Core, which
+//! rich edit 2.0, as NVDA finds them) or, for the plain edit control, the
+//! line segmented by Unicode's word rules with the white space after each
+//! word, and a line break character a word of its own, as NVDA segments a
+//! plain edit control's line ([`plain_word`]). Sentences are left to Core, which
 //! splits the paragraph. There are no pages.
 
 use std::cmp::Ordering;
@@ -146,43 +147,56 @@ fn to_u32(units: usize) -> u32 {
     u32::try_from(units).unwrap_or(u32::MAX)
 }
 
-/// Whether a code unit breaks words in a plain edit control.
-fn is_delimiter(unit: u16) -> bool {
-    matches!(unit, 0x20 | 0x09 | 0x0D | 0x0A)
+/// Whether a code unit is part of a line break.
+fn is_break(unit: u16) -> bool {
+    matches!(unit, 0x0D | 0x0A)
 }
 
-/// The word containing UTF-16 offset `at` of a line, by the plain edit
-/// control's default rule: characters other than delimiters, with the
-/// delimiters after them; a run of delimiters at the line's start is a
-/// word of its own.
+/// The word containing UTF-16 offset `at` of a line, as NVDA finds a plain
+/// edit control's word (`docs/nvda/text-infos.md`): a carriage return or
+/// line feed at `at` is a word of its own; otherwise the line's text
+/// without its break, a null character or no-break space read as a space,
+/// is segmented by `verbatim-text`'s word rules (with dictionaries for
+/// scripts written without spaces), and each word takes the white space
+/// after it. White space at the line's start is a word of its own. At or
+/// past the line's text, the word is its last.
 fn plain_word(text: &[u16], at: usize) -> (usize, usize) {
     let at = at.min(text.len());
-    let mut start = at;
-    // Within delimiters, back over them, then over the word they follow.
-    if at == text.len() || is_delimiter(text[at]) {
-        while start > 0 && is_delimiter(text[start - 1]) {
-            start -= 1;
+    if text.get(at).copied().is_some_and(is_break) {
+        return (at, at + 1);
+    }
+    let content = text.len()
+        - text
+            .iter()
+            .rev()
+            .take_while(|&&unit| is_break(unit))
+            .count();
+    let units: Vec<u16> = text[..content]
+        .iter()
+        .map(|&unit| if matches!(unit, 0 | 0xA0) { 0x20 } else { unit })
+        .collect();
+    // An unpaired surrogate becomes the replacement character, one code
+    // unit as it was, so offsets stay the control's.
+    let string = String::from_utf16_lossy(&units);
+    let rules = verbatim_text::WordRules::for_text(&string, None);
+    let mut words: Vec<(usize, usize)> = Vec::new();
+    let mut units_before = 0;
+    for range in verbatim_text::Segmenter::new().words(&string, rules) {
+        let segment = &string[range];
+        let length: usize = segment.chars().map(char::len_utf16).sum();
+        let span = (units_before, units_before + length);
+        units_before = span.1;
+        match words.last_mut() {
+            Some(word) if segment.chars().all(char::is_whitespace) => word.1 = span.1,
+            _ => words.push(span),
         }
     }
-    while start > 0 && !is_delimiter(text[start - 1]) {
-        start -= 1;
-    }
-    if start < text.len() && is_delimiter(text[start]) {
-        // Leading delimiters: the word is the delimiter run.
-        let mut end = start;
-        while end < text.len() && is_delimiter(text[end]) {
-            end += 1;
-        }
-        return (start, end);
-    }
-    let mut end = start;
-    while end < text.len() && !is_delimiter(text[end]) {
-        end += 1;
-    }
-    while end < text.len() && is_delimiter(text[end]) {
-        end += 1;
-    }
-    (start, end.max(at.min(text.len())))
+    words
+        .iter()
+        .copied()
+        .find(|&(start, end)| start <= at && at < end)
+        .or_else(|| words.last().copied())
+        .unwrap_or((at, at))
 }
 
 /// The grapheme cluster containing UTF-16 offset `at` of `text`, as UTF-16
@@ -355,12 +369,21 @@ mod tests {
         assert_eq!(plain_word(&line, 2), (2, 6));
         assert_eq!(plain_word(&line, 4), (2, 6));
         assert_eq!(plain_word(&line, 5), (2, 6), "the space after the word");
-        assert_eq!(
-            plain_word(&line, 6),
-            (6, 11),
-            "the last word takes the break"
-        );
-        assert_eq!(plain_word(&line, 11), (6, 11), "the end");
+        assert_eq!(plain_word(&line, 6), (6, 9), "the break is not the word's");
+        assert_eq!(plain_word(&line, 9), (9, 10), "the carriage return");
+        assert_eq!(plain_word(&line, 10), (10, 11), "the line feed");
+        assert_eq!(plain_word(&line, 11), (6, 9), "the end");
+    }
+
+    #[test]
+    fn a_plain_edit_word_follows_the_word_rules() {
+        // Thai, written without spaces: "สวัสดี", "ชาว", "โลก".
+        assert_eq!(plain_word(&units("สวัสดีชาวโลก"), 6), (6, 9));
+        // Punctuation is a word of its own, with the space after it.
+        assert_eq!(plain_word(&units("tset. has"), 4), (4, 6));
+        // A no-break space separates words as a space does.
+        assert_eq!(plain_word(&units("a\u{A0}b"), 0), (0, 2));
+        assert_eq!(plain_word(&units("a\u{A0}b"), 2), (2, 3));
     }
 
     #[test]
