@@ -172,7 +172,8 @@ pub trait TextRangeExt {
     fn expand(&self, unit: TextUnit) -> windows::core::Result<()>;
 
     /// Moves the range by `count` units, collapsing it to a unit's start;
-    /// returns how many it moved.
+    /// returns how many it moved, negative for a backward move whatever
+    /// sign the provider gave ([`signed_move`]).
     ///
     /// # Errors
     ///
@@ -191,7 +192,9 @@ pub trait TextRangeExt {
         other_endpoint: Endpoint,
     ) -> windows::core::Result<()>;
 
-    /// Moves `endpoint` by `count` units; returns how many it moved.
+    /// Moves `endpoint` by `count` units; returns how many it moved,
+    /// negative for a backward move whatever sign the provider gave
+    /// ([`signed_move`]).
     ///
     /// # Errors
     ///
@@ -312,7 +315,8 @@ impl TextRangeExt for IUIAutomationTextRange {
     fn move_by(&self, unit: TextUnit, count_by: i32) -> windows::core::Result<i32> {
         count(CallKind::Uia);
         // SAFETY: as in `expand`.
-        unsafe { self.Move(unit, count_by) }
+        let moved = unsafe { self.Move(unit, count_by) }?;
+        Ok(signed_move(count_by, moved))
     }
 
     fn move_endpoint_to(
@@ -334,7 +338,8 @@ impl TextRangeExt for IUIAutomationTextRange {
     ) -> windows::core::Result<i32> {
         count(CallKind::Uia);
         // SAFETY: as in `expand`.
-        unsafe { self.MoveEndpointByUnit(endpoint.uia(), unit, count_by) }
+        let moved = unsafe { self.MoveEndpointByUnit(endpoint.uia(), unit, count_by) }?;
+        Ok(signed_move(count_by, moved))
     }
 
     fn text(&self, max: i32) -> windows::core::Result<Vec<u16>> {
@@ -436,6 +441,19 @@ impl TextRangeExt for IUIAutomationTextRange {
         Ok(variant_i32(&value)
             .and_then(|lcid| locale_name(u32::try_from(lcid).unwrap_or(0)))
             .map_or(Language::Unknown, Language::Tag))
+    }
+}
+
+/// How far a move asked to go `count_by` units went, signed as the move
+/// was asked: some providers answer a backward move with a positive count,
+/// which NVDA corrects (`docs/parity.md`, "Text range moves"), and so does
+/// this.
+#[must_use]
+pub fn signed_move(count_by: i32, moved: i32) -> i32 {
+    if count_by < 0 && moved > 0 {
+        -moved
+    } else {
+        moved
     }
 }
 

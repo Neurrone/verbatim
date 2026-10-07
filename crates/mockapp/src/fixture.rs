@@ -100,8 +100,45 @@ struct RawNode {
     find_text_fails: bool,
     #[serde(default)]
     cultures: Vec<(usize, usize, i32)>,
+    /// Boxed, so a node nested sixty deep still parses on the main
+    /// thread's stack.
+    #[serde(default)]
+    styles: Box<Styles>,
+    #[serde(default)]
+    backward_moves_positive: bool,
     #[serde(default)]
     children: Vec<RawNode>,
+}
+
+/// A text's other formatting, each a list of stretches, as UTF-16 offsets
+/// from a start up to an end, with the value UIA's attribute has there.
+/// An attribute whose list is absent is not supported: UIA's "not
+/// supported" answers it everywhere, as Windows Terminal answers the
+/// attributes it lacks. One whose list is present is supported, with its
+/// default value outside the stretches listed. The format unit ends
+/// wherever one of these stretches starts or ends.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Styles {
+    /// The font size in points, 11 elsewhere; supported always.
+    #[serde(default)]
+    pub(crate) font_sizes: Vec<(usize, usize, f64)>,
+    /// The underline style, a `TextDecorationLineStyle`, 0 elsewhere;
+    /// supported always.
+    #[serde(default)]
+    pub(crate) underlines: Vec<(usize, usize, i32)>,
+    /// The strikethrough style, 0 elsewhere.
+    #[serde(default)]
+    pub(crate) strikethroughs: Option<Vec<(usize, usize, i32)>>,
+    /// The background color, a `COLORREF`, white (0xFFFFFF) elsewhere.
+    #[serde(default)]
+    pub(crate) backgrounds: Option<Vec<(usize, usize, i32)>>,
+    /// The bullet style, 0 elsewhere.
+    #[serde(default)]
+    pub(crate) bullets: Option<Vec<(usize, usize, i32)>>,
+    /// Links, each served as its own range; null elsewhere.
+    #[serde(default)]
+    pub(crate) links: Option<Vec<(usize, usize)>>,
 }
 
 /// One parsed, validated fixture node, still shaped as a tree (not yet an
@@ -143,6 +180,11 @@ pub(crate) struct FixtureNode {
     /// start and an end UTF-16 offset and a Windows locale id, served as
     /// UIA's `Culture` attribute.
     pub(crate) cultures: Vec<(usize, usize, i32)>,
+    /// The text's other formatting ([`Styles`]), boxed as in the JSON.
+    pub(crate) styles: Box<Styles>,
+    /// Whether a backward `Move` or `MoveEndpointByUnit` answers with a
+    /// positive count, as some providers do.
+    pub(crate) backward_moves_positive: bool,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -222,6 +264,8 @@ fn convert(
         italic_fails: raw.italic_fails,
         find_text_fails: raw.find_text_fails,
         cultures: raw.cultures,
+        styles: raw.styles,
+        backward_moves_positive: raw.backward_moves_positive,
         children,
     })
 }

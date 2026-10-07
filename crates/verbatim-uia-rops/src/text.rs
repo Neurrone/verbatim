@@ -524,6 +524,19 @@ fn language(value: Option<&Value>) -> Option<String> {
     }
 }
 
+/// Emits the correction of `moved`, the count a backward move returned, to
+/// a negative count: some providers answer a backward move with a positive
+/// one, which NVDA corrects (`docs/parity.md`, "Text range moves"), and the
+/// classic reads correct too (`verbatim_uia::text::signed_move`).
+pub(crate) fn emit_backward_count(b: &mut Builder, moved: Reg<kind::Int>) {
+    let zero = b.int(0);
+    let positive = b.compare(moved, zero, Comparison::GreaterThan);
+    b.if_(positive, |b| {
+        let negative = b.subtract(zero, moved);
+        b.set(moved, negative);
+    });
+}
+
 /// Units read in one cross-process round trip.
 ///
 /// # Errors
@@ -567,9 +580,13 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
             let range = b.text_range_clone(from);
             b.text_range_expand_to_enclosing_unit(range, by_unit);
             b.text_range_move_endpoint_by_range(range, c.end, range, c.start);
+            let backward = count < 0;
             let count = b.int(count);
             // A collapsed range stays collapsed when it moves.
             let went = b.text_range_move(range, by_unit, count);
+            if backward {
+                emit_backward_count(&mut b, went);
+            }
             b.set(moved, went);
             (range, by == query.unit)
         }

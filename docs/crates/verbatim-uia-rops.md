@@ -404,10 +404,14 @@ and `TextPattern2` (the classic reads use them), where the caret was
 known to be (`since`, a `RangeEnd`: a range and which of its ends), the
 selection's ends as they were known, a unit to read at the caret besides
 the line (a word, a paragraph, a page), whose formatting to read
-(`FormatSpan`: the character at the caret, that unit, or the line), and
-which attributes (`Attributes`: the annotation types for spelling and
-grammar errors, the font's name and size, its weight, italic, and
-underline style, and the foreground color). The `CaretAnswer`:
+(`FormatSpan`: the character at the caret, that unit, or the line),
+which attributes to read (`attributes`, an `Attributes` set of
+`TextAttribute`s: the annotation types for spelling and grammar errors,
+the font's name, size, and weight, italic, the underline and
+strikethrough styles, the foreground and background colors, the bullet
+style, and the link attribute), and which of them are being learned
+(`learning`: those whose support the caller does not know yet). The
+`CaretAnswer`:
 
 - `caret`, a range whose start is the caret, and whether it is known to
   be collapsed; `selection`, the selected range when text is selected.
@@ -424,9 +428,15 @@ underline style, and the foreground color). The `CaretAnswer`:
   a length in UTF-16 code units and its `RunAttributes`: whether it is a
   spelling or a grammar error (annotation types 60001 and 60002, a single
   integer or an array of them), and the font name, size, weight, italic,
-  underline style, and color, each `None` when not read, not supported,
-  mixed, or of another type. A character's one stretch covers it whole,
-  and its length is not read.
+  underline style, strikethrough style, color, background color, bullet
+  style, and whether it is a link (any value of the link attribute, the
+  range it leads to; false for none), each `None` when not read, not
+  supported, mixed, or of another type. A character's one stretch covers
+  it whole, and its length is not read.
+- `unsupported`: of the `learning` attributes, those the span answered
+  "not supported" for, the rest being supported; `None` when nothing was
+  learned, as from a character's read or an empty line's, which say too
+  little about the provider.
 
 The program imports the element and gets its text pattern with the
 pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode
@@ -448,9 +458,19 @@ and a mixed word by characters, as NVDA walks a mixed stretch by finer
 units, so a provider whose format unit does not end where an attribute
 changes (Windows Terminal's and the console host's do not, for italics,
 `docs/text-attributes.md`) still has each part read with its own value;
-the 64 stretches bound the whole walk. A value of the wrong type, UIA's
-"not supported" sentinel among them, or "mixed" for a single character,
-is set to null before it is appended, so only plain values come back. Verified on Windows 11 26200
+the 64 stretches bound the whole walk. Each value is appended as the
+provider gave it, UIA's sentinels included, and the caller reads it by
+its type, so a value of the wrong type, "not supported", or "mixed" for a
+single character, comes back as none; the program spends no instructions
+on testing types, which is what let it read eleven attributes in fewer
+instructions than it read seven (`docs/performance.md`, "The instruction
+limit"). Before the walk, the span is asked for its annotation types,
+and its stretches are asked for them only when the span has some (Windows
+11 Notepad answers "not supported" for text without annotations); a span
+with none and nothing else to read is one stretch, never walked. Each
+`learning` attribute is asked of the span too, its "not supported"
+answer returned as `unsupported`; the annotation types are never
+learned. Verified on Windows 11 26200
 against Windows 11 Notepad (`RichEditD2DPT`), whose provider runs
 programs and reports a misspelt word's annotation types as an array
 holding 60001, and splits its format units at the error's ends; the
@@ -467,6 +487,12 @@ read fails is not supported on both paths: UIA answers
 `GetAttributeValues` with "not supported" in its place, and the program
 gets the same, checked against a mockapp provider whose `IsItalic` read
 fails (`a_failing_attribute_is_not_supported` in mockapp's `text.rs`).
+Classically the span's annotation types and the attributes being learned
+are asked in one `GetAttributeValues` call. Both paths are checked
+against mockapp's `formatting.json`, which supports every attribute, and
+its `text.json`, which supports none of strikethrough, background,
+bullets, and links (`every_attribute_is_read_both_ways` and
+`unsupported_attributes_are_found_both_ways`).
 Both read the whole answer on every call, so a caret key's
 wait for evidence costs one round trip per read remotely
 (`docs/performance.md`, "A caret move, UIA").
@@ -514,8 +540,10 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
   `Movement` (`By(unit, count)` from the start of the unit containing the
   point, collapsed before it moves as the review cursor moves, and left
   as the move leaves it, since UIA keeps a collapsed range collapsed when
-  it moves; or `Document(count)`, to an end, saying it moved when the
-  point was not there), then the unit containing the point reached: its
+  it moves, its count negative for a backward move even from a provider
+  that answers one with a positive count, as NVDA corrects it; or
+  `Document(count)`, to an end, saying it moved when the point was not
+  there), then the unit containing the point reached: its
   range, its text up to `max_text`, the point's offset in it (zero when
   the movement was by that unit, landing on its start), and its language
   (`Culture`, a locale id turned into a BCP 47 tag with

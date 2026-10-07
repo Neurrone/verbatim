@@ -205,7 +205,10 @@ Public API:
   and `edit::EditText`, over an edit control's messages, where it is an
   offset; `UiaText::new` takes the element too, which a remote operation
   starts from, and `remote` and `fetches` say whether caret reads try a
-  remote operation and which formatting they read. `caret_report` reads
+  remote operation and which formatting they read; `support` gives what
+  the control is already known to support of the text attributes
+  (`TextSupport`), and `known_support` what it is known to support after
+  the reads, for the caller to keep. `caret_report` reads
   the caret's line and the selection, for `CaretMoved`, with the line's
   formatting when asked (the report after a focus), and remembers when
   its read finished. `Anchors` keeps one backend's anchors, by node, numbered
@@ -596,9 +599,22 @@ Implementation notes:
   setting. The cache requests of the UIA event subscriptions are fixed when
   they are registered and still ask for everything; the presentation stage
   drops what is off either way. Text formatting (milestone M4 item 7) is
-  read only for the indications that are on: the annotation types for
-  spelling and grammar errors, the font's name and size, its weight,
-  italic, and underline style, and the color, each with its own detail.
+  read only for the indications that are on, and among them only what the
+  control supports: the annotation types for spelling and grammar errors,
+  the font's name, its size, its weight, italic, and underline style (the
+  font attributes; the underline style also for the kind of underline),
+  the strikethrough style, the color, the background color, the bullet
+  style, and the link attribute, each with its own detail. `IsHidden` is
+  never read. What a control supports is learned from its answers and
+  kept with its text patterns, by node, until the node is released
+  (`text_support` in the worker's context): an attribute a line answers
+  "not supported" for while its support is unknown is not asked again,
+  and one answered otherwise is supported and no longer checked. The
+  annotation types are never learned, since a provider (Windows 11
+  Notepad) answers "not supported" for text without annotations; the
+  caret read asks a line for them first instead
+  (`docs/crates/verbatim-uia-rops.md`, "The caret read"). Nothing is
+  chosen by application.
 - Text (milestone M4, `text` and the worker's `text_reads`). A `Query::Text`
   is answered `QueryResult::Text` with whatever the protocol answers,
   `NoText` and `Gone` among them, so Core hands every answer to the reducer
@@ -646,10 +662,13 @@ Implementation notes:
     character, which nothing speaks. It travels in the chunk as
     `FormatRun`s (byte ranges of its text), in the model's words: bold
     from a font weight of 700 or more, underlined from any underline style
-    but none, the size as "11.0 pt", and the color by the nearest of
-    NVDA's named hues, saturations, and brightnesses ("dark red",
-    `text/color.rs`, ported from NVDA's `colors.py`). A character's
-    formatting covers the character.
+    but none (and the style itself, a `LineStyle`, when the kind of
+    underline is fetched), the strikethrough style as a `LineStyle`, the
+    size as "11.0 pt", the color and the background color by the nearest
+    of NVDA's named hues, saturations, and brightnesses ("dark red",
+    `text/color.rs`, ported from NVDA's `colors.py`), the bullet style as
+    a `BulletStyle`, and a link from any value of the link attribute. A
+    character's formatting covers the character.
   - A caret key's wait (`AwaitCaret`) follows NVDA's caret scripts: it
     reads the caret, then waits for evidence, polling every 10 ms between
     caret events, for up to 100 or 300 ms, and answers with the caret's

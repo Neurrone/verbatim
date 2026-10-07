@@ -206,8 +206,93 @@ pub struct TextAttributes {
     pub bold: Option<bool>,
     /// Whether the text is italic.
     pub italic: Option<bool>,
-    /// Whether the text is underlined.
+    /// Whether the text is underlined, read for the font attributes.
     pub underline: Option<bool>,
+    /// The kind of underline, read for its own indication; when it is
+    /// read, underlining is reported by its kind.
+    pub underline_style: Option<LineStyle>,
+    /// The kind of line through the text, [`LineStyle::None`] for none.
+    pub strikethrough: Option<LineStyle>,
+    /// The background's color as spoken, "light grey".
+    pub background_color: Option<String>,
+    /// The bullet of the list item the text is in, [`BulletStyle::None`]
+    /// outside a list.
+    pub bullet: Option<BulletStyle>,
+    /// The text is a link.
+    pub link: bool,
+}
+
+/// A kind of line drawn under or through text: UIA's text decoration line
+/// styles, named as Microsoft Word names its underlines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineStyle {
+    /// No line.
+    None,
+    /// One line.
+    Single,
+    /// One line under the words but not the spaces between them.
+    WordsOnly,
+    /// Two lines.
+    Double,
+    /// Dots.
+    Dotted,
+    /// Dashes.
+    Dashed,
+    /// Dots and dashes.
+    DotDash,
+    /// Two dots, then a dash.
+    DotDotDash,
+    /// A wave.
+    Wavy,
+    /// One thick line.
+    Thick,
+    /// Two waves.
+    DoubleWavy,
+    /// A thick wave.
+    ThickWavy,
+    /// Long dashes.
+    LongDash,
+    /// Thick dashes.
+    ThickDashed,
+    /// Thick dots and dashes.
+    ThickDotDash,
+    /// Thick dots, two then a dash.
+    ThickDotDotDash,
+    /// Thick dots.
+    ThickDotted,
+    /// Thick long dashes.
+    ThickLongDash,
+    /// A line of a kind the application does not name.
+    Other,
+}
+
+impl LineStyle {
+    /// Whether there is a line.
+    #[must_use]
+    pub const fn is_drawn(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// The bullet of a list item: UIA's bullet styles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BulletStyle {
+    /// Not a bulleted list item.
+    None,
+    /// A hollow round bullet.
+    HollowRound,
+    /// A filled round bullet.
+    FilledRound,
+    /// A hollow square bullet.
+    HollowSquare,
+    /// A filled square bullet.
+    FilledSquare,
+    /// A dash.
+    Dash,
+    /// A bullet of a kind the application does not name.
+    Other,
 }
 
 /// One stretch of a chunk's text with the same formatting: a byte range of

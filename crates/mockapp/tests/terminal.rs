@@ -376,6 +376,32 @@ fn a_failing_find_text_falls_back_to_the_walk() {
     app.quit();
 }
 
+/// A terminal whose backward moves answer with a positive count
+/// (`terminal_backward_moves.json`), as some providers' do: the tail's
+/// rows, counted by moving up from its last line, are the same as from a
+/// provider that counts them backward, both ways.
+fn a_backward_move_counted_forward_still_counts_the_rows() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-backward-moves");
+    let app = common::spawn("terminal_backward_moves.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (_, pattern) = terminal_text(&uia, hwnd);
+    let document =
+        verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the document range");
+    let fresh = TailQuery {
+        start: TailStart::Document(&document),
+        lines_wanted: WANTED,
+    };
+    let (tail, _) = both(&uia, &fresh);
+    assert_eq!(tail.found, Found::Afresh);
+    assert_eq!(tail.count, 6);
+    assert_eq!(tail.rows, 3);
+    assert_eq!(tail.lines, texts(&["four", "five", "ready>"]));
+    assert_eq!(tail.before_last, "five\n");
+    app.quit();
+}
+
 /// Calls by kind, in the order `CallCounts` lists them.
 fn uia_calls(uia: u32) -> CallCounts {
     CallCounts {
@@ -708,6 +734,10 @@ fn terminal_reads_cost_exactly_classic() {
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run(&[
+        (
+            "a_backward_move_counted_forward_still_counts_the_rows",
+            a_backward_move_counted_forward_still_counts_the_rows,
+        ),
         (
             "remote_and_classic_terminal_tails_agree",
             remote_and_classic_terminal_tails_agree,

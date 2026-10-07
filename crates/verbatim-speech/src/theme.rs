@@ -410,10 +410,13 @@ impl Output {
             return;
         };
         let decision = active.decide(indication, self.sounds);
-        // An error's sound marks where it starts, not where it ends.
+        // An error's or a link's sound marks where it starts, not where it
+        // ends.
         let ending = matches!(
             content,
-            SegmentContent::Format(TextFormat::NotSpellingError | TextFormat::NotGrammarError)
+            SegmentContent::Format(
+                TextFormat::NotSpellingError | TextFormat::NotGrammarError | TextFormat::NotLink
+            )
         );
         if let Some((_, sound)) = decision.sound
             && !ending
@@ -482,6 +485,7 @@ fn carries_content(indication: Indication) -> bool {
             | Indication::FontName
             | Indication::FontSize
             | Indication::Color
+            | Indication::BackgroundColor
             | Indication::SkippedLines
             | Indication::Progress
     )
@@ -580,7 +584,8 @@ fn words_of(content: &SegmentContent, language: Option<&str>) -> Option<String> 
 mod tests {
     use verbatim_audio::PcmFormat;
     use verbatim_model::{
-        Message, Role, SpeechPriority, State, Tone, TraceId, UtteranceSegment, VoiceStyle,
+        BulletStyle, LineStyle, Message, Role, SpeechPriority, State, Tone, TraceId,
+        UtteranceSegment, VoiceStyle,
     };
 
     use super::*;
@@ -810,6 +815,71 @@ mod tests {
         assert_eq!(
             sequence.text(),
             "the sound: spelling-error spelling error wrold out of spelling error turns"
+        );
+    }
+
+    /// A link in colored text whose background changes, struck through,
+    /// with a double underline, in a list item.
+    fn formatted() -> Utterance {
+        let format = |format| UtteranceSegment::new(SegmentContent::Format(format));
+        utterance_of(vec![
+            format(TextFormat::Color("dark red".to_owned())),
+            format(TextFormat::OnBackgroundColor("light grey".to_owned())),
+            format(TextFormat::Strikethrough(LineStyle::Single)),
+            format(TextFormat::UnderlineStyle(LineStyle::Double)),
+            format(TextFormat::Link),
+            format(TextFormat::Bullet(BulletStyle::FilledRound)),
+            UtteranceSegment::text("home"),
+            format(TextFormat::NotLink),
+            format(TextFormat::BackgroundColor("white".to_owned())),
+            UtteranceSegment::text("page"),
+        ])
+    }
+
+    #[test]
+    fn the_default_theme_speaks_links_and_leaves_the_new_formatting_off() {
+        let presenter = presenter_of(Theme::builtin_default(), ThemeOptions::default());
+        let sequence = presenter.flatten(&formatted(), UtteranceId(1));
+        assert_eq!(shape(&sequence), ["link home out of link page"]);
+    }
+
+    #[test]
+    fn every_new_formatting_indication_is_spoken_when_on() {
+        let mut theme = Theme::new("formatting", "Formatting");
+        for indication in [
+            Indication::Color,
+            Indication::BackgroundColor,
+            Indication::Strikethrough,
+            Indication::UnderlineStyle,
+            Indication::BulletStyle,
+        ] {
+            theme
+                .indications
+                .insert(indication, setting(Presentation::Speech, None));
+        }
+        let presenter = presenter_of(theme, ThemeOptions::default());
+        let sequence = presenter.flatten(&formatted(), UtteranceId(1));
+        assert_eq!(
+            shape(&sequence),
+            [
+                "dark red on light grey strikethrough double underline link bullet home \
+                 out of link white background page"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_link_sounds_where_it_starts_and_not_where_it_ends() {
+        let mut theme = Theme::new("sounded", "Sounded");
+        theme.indications.insert(
+            Indication::Link,
+            setting(Presentation::SpeechAndSound, Some("textError.wav")),
+        );
+        let presenter = presenter_of(theme, ThemeOptions::default());
+        let sequence = presenter.flatten(&formatted(), UtteranceId(1));
+        assert_eq!(
+            shape(&sequence),
+            ["sound: link", "link home out of link page"]
         );
     }
 

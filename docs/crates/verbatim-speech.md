@@ -129,7 +129,8 @@ Public API:
   as "2 of 5" and nothing without a set size, levels as "level 3",
   formatting as "spelling error" and "out of spelling error"); a sound
   item where the span stands for sound; the sound item and then the words
-  for both. An error's sound marks where it starts, not where it ends. A
+  for both. An error's or a link's sound marks where it starts, not where
+  it ends. A
   span with nothing to say (a state never announced) plays nothing
   either. An indication set to sound alone whose sound is unavailable is
   spoken instead, and so is one whose sound plays when

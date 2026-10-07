@@ -30,9 +30,9 @@ use verbatim_audio::Sound;
 use verbatim_config::themes::{self, LoadedTheme};
 use verbatim_i18n::messages::{self, ThemeLabels};
 use verbatim_model::{
-    Earcon, Indication, IndicationCategory, IndicationSetting, Message, Phrase, Presentation,
-    SegmentContent, SoundSource, SpeechPriority, TextFormat, Theme, ThemeOptions, Tone, TraceId,
-    Utterance, UtteranceSegment,
+    BulletStyle, Earcon, Indication, IndicationCategory, IndicationSetting, LineStyle, Message,
+    Phrase, Presentation, SegmentContent, SoundSource, SpeechPriority, TextFormat, Theme,
+    ThemeOptions, Tone, TraceId, Utterance, UtteranceSegment,
 };
 
 use crate::bridge::ffi;
@@ -871,10 +871,43 @@ fn preview_of(indication: Indication) -> Preview {
             span(SegmentContent::Format(TextFormat::Color(color))),
             UtteranceSegment::text(sample),
         ],
+        Indication::BackgroundColor => vec![
+            span(SegmentContent::Format(TextFormat::BackgroundColor(color))),
+            UtteranceSegment::text(sample),
+        ],
         Indication::FontAttributes => vec![
             span(SegmentContent::Format(TextFormat::Bold)),
             UtteranceSegment::text(sample),
             span(SegmentContent::Format(TextFormat::NotBold)),
+        ],
+        Indication::Strikethrough => vec![
+            span(SegmentContent::Format(TextFormat::Strikethrough(
+                LineStyle::Single,
+            ))),
+            UtteranceSegment::text(sample),
+            span(SegmentContent::Format(TextFormat::Strikethrough(
+                LineStyle::None,
+            ))),
+        ],
+        Indication::UnderlineStyle => vec![
+            span(SegmentContent::Format(TextFormat::UnderlineStyle(
+                LineStyle::Double,
+            ))),
+            UtteranceSegment::text(sample),
+            span(SegmentContent::Format(TextFormat::UnderlineStyle(
+                LineStyle::None,
+            ))),
+        ],
+        Indication::BulletStyle => vec![
+            span(SegmentContent::Format(TextFormat::Bullet(
+                BulletStyle::FilledRound,
+            ))),
+            UtteranceSegment::text(sample),
+        ],
+        Indication::Link => vec![
+            span(SegmentContent::Format(TextFormat::Link)),
+            UtteranceSegment::text(sample),
+            span(SegmentContent::Format(TextFormat::NotLink)),
         ],
         Indication::Capital => vec![span(SegmentContent::SpelledCapital("A".to_owned()))],
         Indication::Blank => vec![span(SegmentContent::Message(Message::Blank))],

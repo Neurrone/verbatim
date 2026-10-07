@@ -18,14 +18,20 @@
 //! (`en-US`) outside the fixture's `cultures` stretches and theirs within
 //! them, mixed over a range that holds more than one; the annotation types
 //! are the spelling error type for a range touching one of the fixture's
-//! spelling errors and unsupported otherwise, as Windows 11 Notepad reports them; the font is 11 point
-//! Consolas in black, italic within the fixture's `italic` stretches (which
-//! the format unit does not end at, so a stretch of it holding italic and
-//! upright text reads as mixed), never underlined, its weight 700 in the
-//! fixture's bold stretches, 400 elsewhere, and mixed across both; every
-//! other text attribute is unsupported. A fixture can make the `IsItalic`
-//! read fail (`italic_fails`), as a provider that fails an attribute read,
-//! and its `FindText` fail (`find_text_fails`), as Windows Terminal's has.
+//! spelling errors and unsupported otherwise, as Windows 11 Notepad reports
+//! them; the font is Consolas in black, 11 point outside the fixture's
+//! `font_sizes` stretches, italic within the fixture's `italic` stretches
+//! (which the format unit does not end at, so a stretch of it holding
+//! italic and upright text reads as mixed), underlined as its `underlines`
+//! stretches say and not otherwise, its weight 700 in the fixture's bold
+//! stretches, 400 elsewhere, and mixed across both. Strikethrough, the
+//! background color, bullets, and links are supported only by a fixture
+//! that lists their stretches (`crate::fixture::Styles`), and are
+//! otherwise unsupported, as every other text attribute is. A fixture can
+//! make the `IsItalic` read fail (`italic_fails`), as a provider that fails
+//! an attribute read, its `FindText` fail (`find_text_fails`), as Windows
+//! Terminal's has, and its backward moves answer with a positive count
+//! (`backward_moves_positive`), as some providers do.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -49,10 +55,12 @@ use windows::Win32::UI::Accessibility::{
     ITextProvider2_Impl, ITextRangeProvider, ITextRangeProvider_Impl, SupportedTextSelection,
     SupportedTextSelection_Single, TextPatternRangeEndpoint, TextPatternRangeEndpoint_Start,
     TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line, TextUnit_Paragraph,
-    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_CultureAttributeId, UIA_FontNameAttributeId,
+    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId,
+    UIA_BulletStyleAttributeId, UIA_CultureAttributeId, UIA_FontNameAttributeId,
     UIA_FontSizeAttributeId, UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId,
-    UIA_IsItalicAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
-    UiaGetReservedMixedAttributeValue, UiaGetReservedNotSupportedValue, UiaPoint,
+    UIA_IsItalicAttributeId, UIA_LinkAttributeId, UIA_StrikethroughStyleAttributeId,
+    UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId, UiaGetReservedMixedAttributeValue,
+    UiaGetReservedNotSupportedValue, UiaPoint,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_DOWN, VK_RIGHT, VK_UP};
 use windows::core::{BSTR, Interface, Result as WinResult};
@@ -178,8 +186,34 @@ fn spans_of(tree: &SharedTree, index: usize, unit: TextUnit) -> Vec<(usize, usiz
         return units(&text, unit);
     }
     let formats = formats_of(tree, index);
+    let styles = &formats.styles;
     let mut boundaries = vec![0, text.len()];
-    for &(start, end) in formats.spelling_errors.iter().chain(&formats.bold) {
+    let stretches = formats
+        .spelling_errors
+        .iter()
+        .chain(&formats.bold)
+        .copied()
+        .chain(
+            styles
+                .font_sizes
+                .iter()
+                .map(|&(start, end, _)| (start, end)),
+        )
+        .chain(
+            styles
+                .underlines
+                .iter()
+                .map(|&(start, end, _)| (start, end)),
+        )
+        .chain(
+            [&styles.strikethroughs, &styles.backgrounds, &styles.bullets]
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|&(start, end, _)| (start, end)),
+        )
+        .chain(styles.links.iter().flatten().copied());
+    for (start, end) in stretches {
         boundaries.push(start.min(text.len()));
         boundaries.push(end.min(text.len()));
     }
@@ -215,6 +249,28 @@ fn within(stretches: &[(usize, usize)], start: usize, end: usize) -> bool {
     (start..end).all(|at| touches(stretches, at, at))
 }
 
+/// The value of a styled attribute over the text from `start` to `end`:
+/// the value of the stretch of `stretches` holding each character,
+/// `default` outside them, when every character has the same; `None`,
+/// mixed, when they differ. An empty range has the value at its position.
+fn uniform<T: Copy + PartialEq>(
+    stretches: &[(usize, usize, T)],
+    default: T,
+    start: usize,
+    end: usize,
+) -> Option<T> {
+    let at = |offset: usize| {
+        stretches
+            .iter()
+            .find(|&&(from, to, _)| from <= offset && offset < to)
+            .map_or(default, |&(_, _, value)| value)
+    };
+    let first = at(start);
+    (start..end)
+        .all(|offset| at(offset) == first)
+        .then_some(first)
+}
+
 /// The locale id of the text from `start` to `end`: the id of the stretch
 /// of `cultures` holding each character, English outside them, when every
 /// character has the same; `None`, mixed, when they differ. An empty range
@@ -247,7 +303,8 @@ fn int_variant(value: i32) -> VARIANT {
     }
 }
 
-/// A variant holding one of UIA's sentinel objects.
+/// A variant holding an object: one of UIA's sentinel objects, or a link's
+/// target range.
 fn sentinel_variant(sentinel: IUnknown) -> VARIANT {
     VARIANT {
         Anonymous: VARIANT_0 {
@@ -338,6 +395,85 @@ impl TextRange {
                 self.start.set(at);
             }
         }
+    }
+}
+
+/// The value of one of the attributes a fixture's styles give
+/// (`crate::fixture::Styles`) over the text from `start` to `end`: the
+/// font size, the underline, strikethrough, and bullet styles, the
+/// background color, and the link; `None` for any other attribute.
+fn styled(
+    tree: &SharedTree,
+    hwnd: HWND,
+    index: usize,
+    attribute: UIA_TEXTATTRIBUTE_ID,
+    (start, end): (usize, usize),
+) -> Option<WinResult<VARIANT>> {
+    let styles = formats_of(tree, index).styles;
+    // SAFETY: UIA's own sentinel objects, owned by the returned variant.
+    let not_supported = || unsafe { UiaGetReservedNotSupportedValue() }.map(sentinel_variant);
+    // SAFETY: as above.
+    let mixed = || unsafe { UiaGetReservedMixedAttributeValue() }.map(sentinel_variant);
+    let integer = |stretches: Option<&Vec<(usize, usize, i32)>>, default| match stretches {
+        None => not_supported(),
+        Some(stretches) => match uniform(stretches, default, start, end) {
+            Some(value) => Ok(int_variant(value)),
+            None => mixed(),
+        },
+    };
+    // The attribute ids are the `windows` crate's constants, named as UIA
+    // names them.
+    #[allow(non_upper_case_globals)]
+    Some(match attribute {
+        UIA_FontSizeAttributeId => match uniform(&styles.font_sizes, 11.0_f64, start, end) {
+            Some(size) => Ok(VARIANT::from(size)),
+            None => mixed(),
+        },
+        UIA_UnderlineStyleAttributeId => integer(Some(&styles.underlines), 0),
+        UIA_StrikethroughStyleAttributeId => integer(styles.strikethroughs.as_ref(), 0),
+        UIA_BackgroundColorAttributeId => integer(styles.backgrounds.as_ref(), 0x00FF_FFFF),
+        UIA_BulletStyleAttributeId => integer(styles.bullets.as_ref(), 0),
+        UIA_LinkAttributeId => match &styles.links {
+            None => not_supported(),
+            Some(links) => {
+                // Each character's link, by its number.
+                let numbered: Vec<(usize, usize, Option<usize>)> = links
+                    .iter()
+                    .enumerate()
+                    .map(|(number, &(from, to))| (from, to, Some(number)))
+                    .collect();
+                match uniform(&numbered, None, start, end) {
+                    // A link's value is the range it leads to: here, the
+                    // link itself.
+                    Some(Some(number)) => {
+                        let (from, to) = links[number];
+                        let target: ITextRangeProvider = TextRange {
+                            tree: tree.clone(),
+                            hwnd,
+                            index,
+                            start: Cell::new(from),
+                            end: Cell::new(to),
+                        }
+                        .into();
+                        Ok(sentinel_variant(target.into()))
+                    }
+                    Some(None) => Ok(VARIANT::default()),
+                    None => mixed(),
+                }
+            }
+        },
+        _ => return None,
+    })
+}
+
+/// The count a move answers for having moved `moved` units: as it is, or,
+/// for a fixture whose backward moves answer with a positive count, as
+/// some providers do, without its sign.
+fn signed(tree: &SharedTree, index: usize, moved: i32) -> i32 {
+    if formats_of(tree, index).backward_moves_positive {
+        moved.abs()
+    } else {
+        moved
     }
 }
 
@@ -463,6 +599,9 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             // variant.
             unsafe { UiaGetReservedNotSupportedValue() }.map(sentinel_variant)
         };
+        if let Some(value) = styled(&self.tree, self.hwnd, self.index, attributeid, (start, end)) {
+            return value;
+        }
         // The attribute ids are the `windows` crate's constants, named as
         // UIA names them.
         #[allow(non_upper_case_globals)]
@@ -498,7 +637,6 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                 }
             }
             UIA_FontNameAttributeId => VARIANT::from(BSTR::from("Consolas")),
-            UIA_FontSizeAttributeId => VARIANT::from(11.0_f64),
             UIA_FontWeightAttributeId => {
                 if within(&formats.bold, start, end) {
                     int_variant(700)
@@ -524,7 +662,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                     VARIANT::from(false)
                 }
             }
-            UIA_UnderlineStyleAttributeId | UIA_ForegroundColorAttributeId => int_variant(0),
+            UIA_ForegroundColorAttributeId => int_variant(0),
             _ => not_supported()?,
         })
     }
@@ -602,7 +740,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         let (start, end) = spans[at];
         self.start.set(start);
         self.end.set(if collapsed { start } else { end });
-        Ok(moved)
+        Ok(signed(&self.tree, self.index, moved))
     }
     fn MoveEndpointByUnit(
         &self,
@@ -635,7 +773,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             moved -= 1;
         }
         self.set_endpoint(endpoint, at);
-        Ok(moved)
+        Ok(signed(&self.tree, self.index, moved))
     }
     fn MoveEndpointByRange(
         &self,

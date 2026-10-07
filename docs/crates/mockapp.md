@@ -143,15 +143,30 @@ its crate-internal modules are the reviewable surface:
   more than one; the
   annotation types are the spelling error type (60001) for a range
   touching one of the spelling errors and unsupported otherwise, as
-  Windows 11 Notepad reports them; the font is 11 point Consolas in black,
-  never underlined, italic within the node's `italic` stretches (which the
+  Windows 11 Notepad reports them; the font is Consolas in black, 11
+  point outside the node's `styles.font_sizes` stretches, underlined only
+  within its `styles.underlines` stretches (each with a UIA underline
+  style), italic within the node's `italic` stretches (which the
   format unit does not end at, so one of its stretches holding italic and
   upright text reads as mixed, as in Windows Terminal), weighing 700
-  within a bold stretch, 400 outside, and mixed across both; every other attribute is unsupported,
+  within a bold stretch, 400 outside, and mixed across both.
+  Strikethrough, the background color, bullets, and links are supported
+  only by a node whose `styles` lists their stretches (`strikethroughs`,
+  `backgrounds`, `bullets`, `links`; `tests/fixtures/formatting.json`),
+  with a default outside them (none, white, none, and no link), a link's
+  value being its own range; a node without them answers "not supported"
+  for each, as Windows Terminal answers the attributes it lacks
+  (`text.json`). The format unit ends wherever one of the `styles`
+  stretches starts or ends. Every other attribute is unsupported,
   and a node with `italic_fails` set fails its `IsItalic` read with
   `E_FAIL`, as a provider that fails an attribute read, and one with
   `find_text_fails` set fails `FindText` the same way, as Windows
-  Terminal's has (`tests/fixtures/terminal_find_fails.json`). A range
+  Terminal's has (`tests/fixtures/terminal_find_fails.json`), and one with
+  `backward_moves_positive` set answers a backward `Move` or
+  `MoveEndpointByUnit` with a positive count, as some providers do
+  (`tests/fixtures/backward_moves.json`, and a terminal's text in
+  `terminal_backward_moves.json`, whose tail `terminal.rs` reads both
+  ways). A range
   handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation. `FindText` matches the text
@@ -351,7 +366,14 @@ forty-five lines, and a batch whose lines differ in language over
 `tests/fixtures/languages.json` (lines in English, French, and German, by
 its `cultures`), which `text.rs` also reads both ways; and a line's
 formatting whose one stretch is mixed for italics, over
-`tests/fixtures/italic.json`, read again by words and characters.
+`tests/fixtures/italic.json`, read again by words and characters. The
+caret report after a focus is pinned twice for the same text, with the
+default theme and with every indication on, so the counts show the
+attributes `text.json` does not support (links; and strikethrough, the
+background color, and bullets) asked of the line once and then no more.
+`text.rs` reads every attribute both ways over `formatting.json`, finds
+the unsupported ones over `text.json`, and moves backward over
+`backward_moves.json`.
 `instruction_limit.rs` finds UIA's limit on the instructions one remote
 operation may execute and pins it, and pins how many each of Verbatim's
 programs executes, counted with `verbatim_uia_rops::counting`, at its

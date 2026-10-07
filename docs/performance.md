@@ -442,9 +442,10 @@ spelling and grammar errors. Measured against mockapp's text provider
   knew), the line (a copy of the caret, `ExpandToEnclosingUnit`,
   `GetText`), the caret's offset in it (a copy of the line,
   `MoveEndpointByRange` to the caret, `GetText`), and the character's
-  annotation types (a copy of the caret, `ExpandToEnclosingUnit`,
-  `GetAttributeValue`). The character is cut from the line's text, at no
-  cost.
+  annotation types and link (a copy of the caret, `ExpandToEnclosingUnit`,
+  and one `GetAttributeValues` call, which the provider answers with two
+  `GetAttributeValue` reads since the default theme reports links, one
+  before). The character is cut from the line's text, at no cost.
 - Today: 1 remotely, 9 calls before remote operations (2026-10-06, with no
   formatting). The program makes inside the provider the classic reads'
   provider calls and one copy more (a `Clone` and a `MoveEndpointByRange`
@@ -493,20 +494,30 @@ space, the misspelt "beta", the line feed).
   `GetAttributeValues`), 5 each, moving the walk on after each but the
   last (3), and a `MoveEndpointByRange` to cut a stretch that runs past
   the line's end, here the last: 34 for four, however many attributes the
-  theme reads.
-- Today: 1 remotely, 34 classically (8 before formatting was read), with
-  the default theme and with every formatting indication on (63 before
-  the attributes were read in one call, "Several text attributes in one
-  call" below; 39 before the text range audit of 2026-10-07, which
-  dropped a second comparison per stretch, of where the next one starts
-  with the line's end: the first comparison already says whether the
-  stretch reached the end, and the walk is no longer moved on after the
-  last stretch). The remote program's provider calls fell the same way,
-  from 9 comparisons to 5 and from 8 endpoint moves to 7. Against
-  mockapp, debug build, 200 reports, three runs: classically 3.67 to 3.84
-  ms at the median before and 3.16 to 3.46 after, with the default theme
-  or every indication on; remotely 0.40 ms (0.50 with every indication)
-  either way.
+  theme reads; and one call asking the line for its annotation types
+  and the attributes whose support is not yet known ("Generic text
+  attributes" below): 35.
+- Today: 1 remotely, 35 classically (8 before formatting was read; 34
+  before the line was asked first), with the default theme and with every
+  formatting indication on (63 before the attributes were read in one
+  call, "Several text attributes in one call" below; 39 before the text
+  range audit of 2026-10-07, which dropped a second comparison per
+  stretch, of where the next one starts with the line's end: the first
+  comparison already says whether the stretch reached the end, and the
+  walk is no longer moved on after the last stretch). The remote
+  program's provider calls fell the same way, from 9 comparisons to 5
+  and from 8 endpoint moves to 7. Against mockapp, debug build, 200
+  reports, three runs: classically 3.67 to 3.84 ms at the median before
+  and 3.16 to 3.46 after, with the default theme or every indication on;
+  remotely 0.40 ms (0.50 with every indication) either way. The provider
+  reads, pinned, with the default theme, which reads the annotation
+  types and links: the line's annotation types and its link, then two
+  per stretch, 10, the first time; once mockapp's text is known not to
+  support links, the line's annotation types and one per stretch, 5. With
+  every indication on, eleven attributes: 11 asked of the line and 44 of
+  the stretches the first time, then 1 and 28 once the four mockapp does
+  not support (strikethrough, background color, bullet style, link) are
+  known.
 - Target: 1.
 
 ### A caret key that selects, UIA
@@ -965,6 +976,71 @@ attribute.
   default theme, which reads only the annotation types, one attribute per
   stretch, the count is the same as before, 39 classically.
 
+### Generic text attributes
+
+The caret's read reads the attributes the theme's indications ask for,
+among those the control supports, learned from the control
+(`docs/text-attributes.md`, "What Verbatim fetches now"): while an
+attribute's support is not known, the line is asked for it once, in the
+same program or classic call, and its "not supported" answer stops it
+being asked again for that control. The line is also asked for its
+annotation types first, and its stretches only when it has some; a line
+with neither annotations nor anything else to read is not walked.
+Before, every attribute an indication asked for was read for every
+stretch of every read. The counts are pinned in
+`crates/mockapp/tests/call_counts.rs` ("The caret report after a focus,
+UIA" above, and the mixed stretch's) and the learning in
+`crates/mockapp/tests/text.rs`.
+
+- mockapp's `text.json`, whose line has four stretches and a spelling
+  error, with the default theme: classically 34 calls before and 35
+  after; the provider's attribute reads 4 before, 10 on the first read
+  after (links being learned), and 5 on every later read.
+- The same line with every indication on: 34 calls classically before,
+  35 after; the provider's attribute reads 28 for seven attributes
+  before, 55 for eleven on the first read after, and 29 once the four
+  attributes mockapp does not support are known.
+- A line of 14 stretches without spelling errors, as a terminal's line
+  is, with the default theme: 93 calls classically before, 9 after (the
+  caret's read, and one call asking the line for its annotation types,
+  which it has none of; no walk). Remotely the program no longer walks
+  the stretches either.
+
+Wall-clock, measured on 2026-10-07 on this machine (x64), release build,
+against mockapp, 200 caret reports after a focus each, after 20 to warm
+up (so the learning is done), the build before and after run alternately
+twice more after a first pair, with another engineer's builds loading
+the machine; medians in milliseconds, before against after, and the
+range across runs:
+
+- `text.json`'s line, default theme: remotely 0.31 to 0.59 against 0.35
+  to 0.55; classically 3.1 to 4.9 against 3.4 to 4.6. The same within
+  the load's noise: one call more classically, and inside the provider
+  one read of the line more against one per stretch fewer.
+- The same, every indication on: remotely 0.41 to 0.67 against 0.43 to
+  0.70; classically 3.3 to 4.2 against 3.4 to 4.0.
+- The 14-stretch line without errors, default theme: remotely 0.37 to
+  0.51 against 0.30 to 0.37; classically 8.7 to 11.5 against 0.82 to
+  1.3, a tenth.
+- The same, every indication on: remotely 0.55 to 0.65 against 0.47 to
+  0.61; classically 8.7 to 9.5 against 9.2 to 10.6 (93 calls against
+  94).
+
+Against the survey's numbers (`docs/text-attributes.md`, "What reading
+them costs"), with the default theme: in Windows Terminal and the console
+host, which support neither annotations nor links, the caret's read now
+costs about what it costs with no attributes (Windows Terminal 0.43
+milliseconds remotely on a line of one stretch, against 0.54 to 0.71 with
+one group read stretch by stretch; classically 9 calls in place of 17 to
+23, and in place of about 88 for a line of 13 stretches, at 0.1 to 0.2
+milliseconds a call in Windows Terminal and 0.04 to 0.1 in the console
+host). In Notepad a line without spelling errors costs 9 calls
+classically in place of 46 to 76 for 5 stretches, and a line with one
+costs one read more than before. With every indication on, Windows
+Terminal is no longer asked for FontSize, BulletStyle, or Link once
+learned, each about 0.05 milliseconds per stretch inside a remote
+operation, about 2 milliseconds for a line of 13 stretches.
+
 ### A container's selected item
 
 A focused list's or tab control's selected item is read through
@@ -1070,9 +1146,11 @@ those reads, so their counts are unchanged.
 - Not detected: a provider without a unit silently uses the next larger
   one (`ITextRangeProvider::Move`), so a word move in such a provider
   moves by lines. No call tells it apart; only the terminals' paragraph
-  and page, known to be the whole buffer, are refused. Some providers
-  also return a positive count for a backward move, which NVDA corrects
-  and Verbatim does not. Both are left for a decision.
+  and page, known to be the whole buffer, are refused; left for a
+  decision. Some providers also return a positive count for a backward
+  move, which NVDA corrects; Verbatim corrects it too since 2026-10-07,
+  on both paths (`docs/parity.md`, "Text range moves"), at no call and,
+  in a remote program, two instructions where the count's sign is used.
 - Not used yet, each a feature of its own rather than a fault in what
   Verbatim reads: `FindAttribute` (finding the next spelling error in one
   call), `GetChildren` and `RangeFromChild` for embedded objects,
@@ -1113,16 +1191,23 @@ share of the limit in brackets:
 - The navigation step: 875 (9 percent) from an item sixty-two levels
   below its window, 144 from right under it, about 12 for each level
   walked.
-- The caret read: 4,884 (49 percent) for a line of 64 stretches reached by
+- The caret read: 4,425 (44 percent) for a line of 64 stretches reached by
   walking one mixed format stretch by words and a mixed word by
-  characters, every attribute read, with a word, the evidence, and a
-  selection's change; 85 for the report after a focus on a line of plain
-  text with the default theme's one attribute. Where every format stretch
-  is mixed (mockapp's `mixed.json`: stretches of two characters, one of
-  them italic), each is walked by words and its word by characters, and
-  each stretch adds 239 instructions: 2,049 for 17 stretches and 3,961 for
-  33, so the 64 stretches a span may have come to about 7,700 (77 percent),
-  which runs under the limit but cannot be counted. This is the one
+  characters, every attribute read (eleven since 2026-10-07, ten of them
+  being learned), with a word, the evidence, and a selection's change;
+  84 for the report after a focus on a line of plain text with the
+  default theme's two attributes, the annotation types and the link,
+  whose support is known. It was 4,884 and 85 with seven attributes and
+  one: the program now returns each value as the provider gave it, and
+  the caller reads it by its type, where the program tested each value's
+  type and the annotation types' array itself, which more than paid for
+  the four attributes added and the line's own reads. Where every format
+  stretch is mixed (mockapp's `mixed.json`: stretches of two characters,
+  one of them italic), each is walked by words and its word by
+  characters, and each stretch adds 249 instructions (239 with seven
+  attributes): 2,148 for 17 stretches and 4,140 for 33, so the 64
+  stretches a span may have come to about 8,000 (80 percent), which runs
+  under the limit but cannot be counted. This is the one
   program that can come within a factor of two of the limit. A run that
   exceeded it would be answered classically for that call
   (`Path::Fallback`), at a cost of hundreds of calls; programs are not
@@ -1132,9 +1217,9 @@ share of the limit in brackets:
   position with its lines in three languages, each line's then read; 647
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
-- A terminal's tail: 1,135 (11 percent) when its fingerprint is nowhere
+- A terminal's tail: 1,137 (11 percent) when its fingerprint is nowhere
   and the search checks its 64 matches (`SEARCH_MATCHES`), about 16 each;
-  108 for an anchor in place under new output, 9 of them deciding whether
+  110 for an anchor in place under new output, 9 of them deciding whether
   to read the first of the new lines too, when more follow than the last
   lines read (the start of a flood). The count does not grow with the
   scrollback or the lines read.

@@ -127,8 +127,11 @@ Public API:
   lines", when the count is not known; and `Items` with a count, "52
   items", for a tree view item just expanded), and `Format` (a `TextFormat`: a
   spelling or grammar error starting or ending, bold, italic, or underline
-  starting or ending, or a font name, size, or color as the application
-  words it, spoken as formatting changes). The pure reducer never touches localization; spans
+  starting or ending, a font name, size, color, or background color as
+  the application words it, the background after a color as "on light
+  grey", strikethrough or an underline of a kind starting, changing, or
+  ending (a `LineStyle`), a list item's bullet (a `BulletStyle`), or a
+  link starting or ending, spoken as formatting changes). The pure reducer never touches localization; spans
   become words at the speech pipeline's presentation stage. An utterance optionally carries an
   `UtteranceSource` — the described node's role and screen rectangle — so
   M11 presentation themes can key earcons off the role and pan audio by
@@ -230,9 +233,14 @@ the contract the Windows side implements.
   range of the text on character boundaries and its `TextAttributes`), in
   order and not overlapping; empty when none was read. `TextAttributes`
   holds whether the text is a spelling or a grammar error, its font name,
-  size, and color as spoken ("Calibri", "11.0 pt", "dark red"), and
-  whether it is bold, italic, or underlined, each `None` when the provider
-  does not expose it or its indication is off. The outpost sends
+  size, color, and background color as spoken ("Calibri", "11.0 pt",
+  "dark red"), whether it is bold, italic, or underlined, the kind of its
+  underline and of its strikethrough (`LineStyle`, UIA's text decoration
+  line styles: none, single, double, wavy, and the rest), its list item's
+  bullet (`BulletStyle`: none, round or square, hollow or filled, a dash,
+  or another), and whether it is a link, each `None` (false for the
+  errors and the link) when the provider does not expose it or its
+  indication is off. The outpost sends
   formatting with a caret report after a focus (the line) and with a caret
   key's answer (the character, word, or line spoken), at most 64
   stretches per chunk, and with nothing else yet.
@@ -421,14 +429,18 @@ with a theme is `verbatim-speech`'s.
 - `Indication` — one entry of the catalogue of everything Verbatim can
   report, with a stable id (`id`, `from_id`) that theme files use, and a
   `category` (`IndicationCategory`: roles, states, properties, text
-  formatting, structure, events). `Indication::catalogue()` lists all 90
+  formatting, structure, events). `Indication::catalogue()` lists all 95
   in display order: the 52 roles (`role-link`), the 13 states that are
   spoken (`state-checked`) and the 3 whose absence is
   (`state-not-checked`), the properties (`description`, `shortcut`,
   `position`, `level`), text formatting (`spelling-error`,
-  `grammar-error`, `font-name`, `font-size`, `color`, `font-attributes`
-  (bold, italic, and underline, NVDA's font attributes), and `capital`, a
-  capital letter spoken on its own), structure (`blank`,
+  `grammar-error`, `font-name`, `font-size`, `color`,
+  `background-color`, `font-attributes` (bold, italic, and underline,
+  NVDA's font attributes), `strikethrough`, `underline-style` (the kind of
+  underline, which, when on, reports underlining with its kind in place
+  of the font attributes' "underlined"), `bullet-style`, `link` (a link
+  within text), and `capital`, a capital letter spoken on its own),
+  structure (`blank`,
   `skipped-lines`), and events (`app-not-responding`, `start`, `exit`,
   `error`, `browse-mode`, `focus-mode`, `suggestions-opened`,
   `suggestions-closed`, `progress`). A role's or state's id is its variant
@@ -460,8 +472,11 @@ with a theme is `verbatim-speech`'s.
   files in the top-level `sounds` directory), the spelling error sound
   with its words, Verbatim's own cues as tones (an application not
   responding, skipped terminal lines, progress bars rising three octaves
-  from 220 Hz, `progress_frequency`), font name, size, color, and attributes off as in
-  NVDA, and a capital raised in pitch.
+  from 220 Hz, `progress_frequency`), font name, size, color, background
+  color, font attributes, and strikethrough off as in NVDA, links in text
+  spoken as NVDA reports them by default, the kind of underline and bullet
+  style (which NVDA does not report through UIA) off, and a capital raised
+  in pitch.
 - `ThemeProblem` — what loading a theme found wrong: an unknown
   indication id, sound alone with no sound, a sound missing or unreadable,
   a sound file name that is not a plain name, an unknown voice style, a
@@ -470,9 +485,9 @@ with a theme is `verbatim-speech`'s.
   it: sound volume (0 to 100, relative to speech), sounds during say-all,
   and speaking indications that play a sound (for learning a theme).
 - `Fetches` — the details the reducer fetches: description, shortcut,
-  position, level, spelling and grammar errors, font, color, and font
-  attributes, each
-  unless its indication is off. The shell gives them to the reducer as
+  position, level, spelling and grammar errors, font name, font size,
+  color, background color, font attributes, strikethrough, the kind of
+  underline, bullet style, and links, each unless its indication is off. The shell gives them to the reducer as
   `Input::Fetches`.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases

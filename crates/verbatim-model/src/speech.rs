@@ -9,6 +9,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::text::{BulletStyle, LineStyle};
 use crate::tree::{Rect, Role, State};
 use crate::{NodeId, TraceId};
 
@@ -158,6 +159,24 @@ pub enum TextFormat {
     Underline,
     /// Underlined text ends here.
     NotUnderline,
+    /// The text from here has this background color, as the application
+    /// words it: "light grey background".
+    BackgroundColor(String),
+    /// The text from here has this background color, following a change of
+    /// its color in the same place: "on light grey", completing "dark red".
+    OnBackgroundColor(String),
+    /// The text from here is underlined this way, or, with
+    /// [`LineStyle::None`], no longer underlined.
+    UnderlineStyle(LineStyle),
+    /// The text from here is struck through this way, or, with
+    /// [`LineStyle::None`], no longer struck through.
+    Strikethrough(LineStyle),
+    /// The line is a list item with this bullet.
+    Bullet(BulletStyle),
+    /// A link starts here.
+    Link,
+    /// A link ends here.
+    NotLink,
 }
 
 /// An index mark the reducer places in an utterance
