@@ -1,4 +1,6 @@
-//! The review cursor over Notepad's text (milestone M4 item 5): reading
+//! The review cursor over an editor's text (milestone M4 item 5), as
+//! `text_box_review_cursor` in the Windows Forms text box and as
+//! `notepad_review_cursor` in Windows 11 Notepad ([`super::editor`]): reading
 //! the current line, word, and character without moving the caret, moving
 //! by line, word, and character, the line's ends (the end being its line
 //! break, named as NVDA names it) and the text's top and
@@ -18,8 +20,9 @@
 
 use std::io;
 
+use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::{Scenario, WINDOW_TIMEOUT};
+use crate::scenario::Scenario;
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -29,9 +32,8 @@ const NAME: &str = "review";
 /// The document: a table whose quantity column starts at column 8.
 const DOCUMENT: &str = "Name    Qty\r\nApple   3\r\nFig\r\nBanana  12\r\n";
 
-pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    scenario.open_document_with(NAME, DOCUMENT)?;
-    Ok(ScenarioState::None)
+fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
+    editor.open(scenario, NAME, DOCUMENT)
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -40,10 +42,30 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.speech().expect(&[heard]);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+/// Opens the scenario's document in the Windows Forms text box.
+pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    setup(scenario, Editor::TextBox)
+}
+
+/// Opens the scenario's document in Windows 11 Notepad.
+pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    setup(scenario, Editor::Notepad)
+}
+
+/// The scenario in the Windows Forms text box.
+pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    body(scenario, Editor::TextBox);
+}
+
+/// The scenario in Windows 11 Notepad.
+pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    body(scenario, Editor::Notepad);
+}
+
+fn body(scenario: &mut Scenario, editor: Editor) {
     // Notepad's text area, and the line at its caret, at the top of the
     // new document.
-    super::expect_notepad_opened(scenario, NAME, "Name    Qty");
+    editor.expect_opened(scenario, NAME, "Name    Qty");
     // The caret to the top; the review cursor follows it there.
     scenario
         .send_keys(&["control+home"])
@@ -78,9 +100,13 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     review(scenario, "kb:numpad7", "Fig");
     review(scenario, "kb:numpad1", "i");
     review(scenario, "kb:shift+numpad1", "F");
-    review(scenario, "kb:shift+numpad3", "carriage return");
-    review(scenario, "kb:numpad3", "Right carriage return");
-    review(scenario, "kb:numpad1", "g");
+    review(scenario, "kb:shift+numpad3", editor.line_break());
+    review(
+        scenario,
+        "kb:numpad3",
+        &format!("Right {}", editor.line_break()),
+    );
+    review(scenario, "kb:numpad1", editor.before_line_break("g"));
 
     // The top, and a range copied from the start marker to the review
     // cursor, the word "Name".
@@ -98,21 +124,16 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The first press of Verbatim+F10 selected the range in Notepad, as
     // NVDA's does, and the second copied it; moving the caret to the end
     // unselects it. Pasted there, the copy is a line of its own. A paste
-    // says nothing, so the document's title marking unsaved changes is the
-    // evidence it is done. Home then speaks the line's first character, and
+    // says nothing ([`Editor::paste`] waits for its evidence). Home then
+    // speaks the line's first character, and
     // the review cursor, following the caret, reads the line.
     scenario
         .send_keys(&["control+end"])
         .expect("sends control+end");
     scenario.speech().expect(&["blank", "Name unselected"]);
-    scenario.send_keys(&["control+v"]).expect("sends control+v");
-    scenario
-        .expect_unsaved(NAME, WINDOW_TIMEOUT)
-        .expect("the paste reaches the document");
+    editor.paste(scenario, NAME);
     scenario.send_keys(&["home"]).expect("sends home");
     scenario.speech().expect(&["N"]);
     review(scenario, "kb:numpad8", "Name");
-    scenario
-        .save_document(NAME, WINDOW_TIMEOUT)
-        .expect("saves the document");
+    editor.save(scenario, NAME);
 }

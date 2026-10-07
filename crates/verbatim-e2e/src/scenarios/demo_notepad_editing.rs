@@ -6,4 +6,4 @@
 //! and deleted with Backspace and Delete, each saying what it deleted; and
 //! End and Backspace name the line break they meet.
 
-pub(crate) use super::notepad_editing::{body, setup, teardown};
+pub(crate) use super::editing::{notepad_body as body, notepad_setup as setup, teardown};

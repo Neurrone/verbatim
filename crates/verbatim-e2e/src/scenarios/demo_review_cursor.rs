@@ -6,4 +6,4 @@
 //! table, names the line break at a line's end, and a range marked with
 //! the start marker is copied, pasted, and read back.
 
-pub(crate) use super::notepad_review_cursor::{body, setup, teardown};
+pub(crate) use super::review_cursor::{notepad_body as body, notepad_setup as setup, teardown};

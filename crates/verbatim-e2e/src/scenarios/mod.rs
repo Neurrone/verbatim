@@ -19,20 +19,18 @@ pub(crate) mod demo_review_cursor;
 pub(crate) mod demo_say_all;
 pub(crate) mod demo_settings_dialog_keys;
 pub(crate) mod demo_terminal_session;
-pub(crate) mod edit_control_say_all;
+pub(crate) mod editing;
+pub(crate) mod editor;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;
 pub(crate) mod menu_and_settings_dialog;
-pub(crate) mod notepad_editing;
-pub(crate) mod notepad_review_cursor;
-pub(crate) mod notepad_review_words;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
-pub(crate) mod notepad_typed_words;
-pub(crate) mod notepad_word_selection;
 pub(crate) mod object_navigation_in_settings;
 pub(crate) mod outpost_crash_recovery;
 pub(crate) mod rapid_tabbing_in_settings;
+pub(crate) mod review_cursor;
+pub(crate) mod review_words;
 pub(crate) mod second_application_and_verbatim_menu;
 pub(crate) mod settings_dialog_keys;
 pub(crate) mod settings_system_page;
@@ -47,7 +45,10 @@ pub(crate) mod terminal_flood;
 pub(crate) mod terminal_review_grid;
 pub(crate) mod terminal_settings_page;
 pub(crate) mod text_box;
+pub(crate) mod text_box_say_all;
 pub(crate) mod theme_panel;
+pub(crate) mod typed_words;
+pub(crate) mod word_selection;
 
 /// What the scenario says about the desktop, which has the focus after the
 /// harness minimized every window and once a dialog of Verbatim's closes:

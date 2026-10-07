@@ -1,13 +1,14 @@
 //! The review cursor's current word, its column kept going up, and its
-//! repeated presses, in Notepad (milestone M4 item 5): the test of what the
+//! repeated presses (milestone M4 item 5), as `text_box_review_words` and
+//! `notepad_review_words` ([`super::editor`]): the test of what the
 //! `demo_review_cursor` demonstration shows beyond `notepad_review_cursor`,
 //! on the same table. Numpad 5 reads the current word; going back up the
 //! table with numpad 7 keeps the column, as going down does (Verbatim's
 //! deliberate difference from NVDA, `docs/parity.md`, "Review cursor
 //! columns"); numpad 5 pressed twice spells the word; numpad 2 pressed
 //! twice describes the character ("Alfa") and three times gives its code
-//! ("65"). It holds for Windows 11 Notepad (UIA) and classic Notepad's edit
-//! control alike.
+//! ("65"). It holds for Windows 11 Notepad (UIA) and an edit control
+//! alike.
 //!
 //! Single presses are sent as gestures. Presses that count are real key
 //! presses sent together, since a gesture sent through the control plane
@@ -20,6 +21,7 @@
 
 use std::io;
 
+use super::editor::Editor;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::{Expected, cut_off, heard};
@@ -38,10 +40,9 @@ const ROWS: [(&str, &str); 4] = [
     ("Banana  yellow  0.50", "0"),
 ];
 
-pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
     let document: String = ROWS.iter().flat_map(|(row, _)| [*row, "\r\n"]).collect();
-    scenario.open_document_with(NAME, &document)?;
-    Ok(ScenarioState::None)
+    editor.open(scenario, NAME, &document)
 }
 
 /// Sends the review gesture `gesture` and asserts exactly `heard`.
@@ -69,8 +70,28 @@ fn press_hearing(scenario: &mut Scenario, keys: &[&str], said: &[&str]) {
     scenario.speech().expect_sequence(&expected);
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::expect_notepad_opened(scenario, NAME, ROWS[0].0);
+/// Opens the scenario's document in the Windows Forms text box.
+pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    setup(scenario, Editor::TextBox)
+}
+
+/// Opens the scenario's document in Windows 11 Notepad.
+pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    setup(scenario, Editor::Notepad)
+}
+
+/// The scenario in the Windows Forms text box.
+pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    body(scenario, Editor::TextBox);
+}
+
+/// The scenario in Windows 11 Notepad.
+pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    body(scenario, Editor::Notepad);
+}
+
+fn body(scenario: &mut Scenario, editor: Editor) {
+    editor.expect_opened(scenario, NAME, ROWS[0].0);
     scenario
         .send_keys(&["control+home"])
         .expect("sends control+home");

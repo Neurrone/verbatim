@@ -1,24 +1,26 @@
-//! Typed character and word echo in Notepad (milestone M4 item 4): the test
+//! Typed character and word echo (milestone M4 item 4), as
+//! `text_box_typed_words` and `notepad_typed_words` ([`super::editor`]): the test
 //! of what the `demo_notepad_editing` demonstration shows beyond
 //! `notepad_editing`. Typed punctuation and spaces are echoed by name
 //! ("comma", "dot", "space"); Verbatim+3 turns typed-word echo on, saying
 //! "speak typed words only in edit controls"; and then each finished word
 //! is spoken after its last character's echo and before the echo of the
 //! space or full stop that ends it. It holds for Windows 11 Notepad (UIA)
-//! and classic Notepad's edit control alike, since the echo comes from the
-//! keyboard hook's own translation of each key.
+//! and an edit control alike, since the echo comes from the keyboard hook's
+//! own translation of each key.
 //!
 //! Text is typed through the agent's `TypeText` a character at a time, as
 //! a listening user types, and what each character says is heard in full
 //! before the next is typed: typed while an echo plays, a character would
-//! cut it off, as typing does. There is no other wait. Verbatim+3 is sent as a gesture. The document is
-//! saved at the end, and by the teardown when the body failed part-way, so
-//! Windows 11 Notepad never restores an edited copy of it.
+//! cut it off, as typing does. There is no other wait. Verbatim+3 is sent
+//! as a gesture. Notepad's document is saved at the end, so Windows 11
+//! Notepad never restores an edited copy of it.
 
 use std::io;
 
+use super::editor::Editor;
 use crate::registry::ScenarioState;
-use crate::scenario::{Scenario, WINDOW_TIMEOUT};
+use crate::scenario::Scenario;
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -71,13 +73,32 @@ fn type_each(scenario: &mut Scenario, typed: &[(char, &[&str])]) {
     }
 }
 
-pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    scenario.open_document_with(NAME, DOCUMENT)?;
-    Ok(ScenarioState::None)
+fn setup(scenario: &mut Scenario, editor: Editor) -> io::Result<ScenarioState> {
+    editor.open(scenario, NAME, DOCUMENT)
 }
 
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::expect_notepad_opened(scenario, NAME, "Typing at the end:");
+/// Opens the scenario's document in the Windows Forms text box.
+pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    setup(scenario, Editor::TextBox)
+}
+
+/// Opens the scenario's document in Windows 11 Notepad.
+pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    setup(scenario, Editor::Notepad)
+}
+
+/// The scenario in the Windows Forms text box.
+pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    body(scenario, Editor::TextBox);
+}
+
+/// The scenario in Windows 11 Notepad.
+pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    body(scenario, Editor::Notepad);
+}
+
+fn body(scenario: &mut Scenario, editor: Editor) {
+    editor.expect_opened(scenario, NAME, "Typing at the end:");
     scenario
         .send_keys(&["control+end"])
         .expect("sends control+end");
@@ -93,7 +114,5 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect(&["speak typed words only in edit controls"]);
     type_each(scenario, &WORDS);
 
-    scenario
-        .save_document(NAME, WINDOW_TIMEOUT)
-        .expect("saves the document");
+    editor.save(scenario, NAME);
 }
