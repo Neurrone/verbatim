@@ -1,7 +1,8 @@
 //! Demonstration: the review cursor over a plain-text table in Notepad
 //! (milestone M4 item 5), recorded by `cargo xtask demo` for
-//! `videos/demos`. The `notepad_review_cursor` scenario tests the same
-//! commands; this one shows them at a viewer's pace.
+//! `videos/demos`. The `notepad_review_cursor` and `notepad_review_words`
+//! scenarios test the same commands; this one shows them at a viewer's
+//! pace.
 //!
 //! The table has three columns, the third, Price, starting at column 16 on
 //! every row long enough to have one; the "Fig" row is shorter. The walk,

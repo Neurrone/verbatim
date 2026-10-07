@@ -215,9 +215,10 @@ Public API:
   Navigation group holds `object_navigation_in_settings` and
   `system_information_tree`; the Text group (milestone M4) holds
   `notepad_editing`, `notepad_review_cursor`, `notepad_say_all`,
-  `spelling_errors`, `windows_terminal_commands`, `conhost_commands`,
-  `terminal_spoken_password`, `terminal_flood`, and
-  `terminal_review_grid`; the Demo group holds the demonstrations
+  `notepad_word_selection`, `notepad_typed_words`, `notepad_review_words`,
+  `edit_control_say_all`, `spelling_errors`, `windows_terminal_commands`,
+  `conhost_commands`, `terminal_spoken_password`, `terminal_flood`,
+  `terminal_editing`, and `terminal_review_grid`; the Demo group holds the demonstrations
   recorded for `videos/demos` by `cargo xtask demo`,
   `demo_notepad_editing`, `demo_review_cursor`, `demo_say_all`,
   `demo_terminal_session`, and `demo_settings_dialog_keys`, whose
@@ -316,9 +317,14 @@ and runs every one of them exactly as before the restructuring.
 Speech page, the default voice English (Great Britain), English
 (Scotland) listed after it, and the variant Max. The others are
 described in `registry`'s own `Group` doc comment above.
-The Text group's three run in Notepad on a document of their own, start by
-taking the caret to the top (Notepad can restore a caret position from an
-earlier session), and save what they edited, in the teardown too.
+Everything a demonstration shows is also covered by a test scenario
+(decided 2026-10-07), so a demonstration never shows something the suite
+does not check; where that is impossible on GitHub's runners, it is
+recorded with the demonstration, as for `notepad_spelling_errors`.
+The Text group's Notepad scenarios run in Notepad on a document of their
+own, start by taking the caret to the top (Notepad can restore a caret
+position from an earlier session), and save what they edited, in the
+teardown too.
 `notepad_editing` moves the caret by character, word, and line, selects
 and unselects with Shift, types with character echo, and deletes with
 Backspace and Delete, and hears End and Backspace name the line break
@@ -329,8 +335,22 @@ reaches a line's ends, the end being its named line break, and the
 text's top, and copies a range with
 Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
 `notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
-the second line plays, and checks that the caret was left on that line and
-that the third was never heard.
+the second line plays, and checks that the caret was left on that line,
+that numpad 8 reads it, and that the third was never heard.
+`notepad_word_selection`, `notepad_typed_words`, and
+`notepad_review_words` test what the `demo_notepad_editing` and
+`demo_review_cursor` demonstrations show beyond those three: Up Arrow,
+selecting and unselecting by word and Shift+End, compared with their
+white space collapsed, since a selected word takes its space in and
+Windows 11 Notepad's Shift+End the line break; punctuation and spaces
+echoed by name, Verbatim+3's message, and each finished word spoken
+before the character that ends it; and the review cursor's current word,
+its column kept going up as well as down, a word spelled, and a
+character described and given as a code. `edit_control_say_all` opens the
+say-all demonstration's Windows Forms text box, a standard Win32 edit
+control shown by Windows PowerShell, and hears its focus and say-all
+reading it one sentence an utterance; the demonstration uses the same
+module for its second part.
 `spelling_errors` (milestone M4 item 7) opens `mockapp`'s scripted text,
 a line with two misspelt words, marked with UIA's spelling error
 annotation, and checks what the default theme reports as the caret moves,
@@ -396,6 +416,14 @@ characters or contains "secret"; and hear exactly "done" and "ready>".
 `terminal_spoken_password` does the same with "speak passwords" on
 (`ScenarioDef::settings`), asserting instead that the six characters are
 each spoken, exactly and in order.
+
+`terminal_editing` tests what the `demo_terminal_session` demonstration
+shows beyond the other terminal scenarios: `echo helo` corrected with
+Backspace, which speaks the "o" it deletes, before `lo` and Enter give
+"hello"; a command's punctuation echoed by name ("dot", "backslash",
+"dash"); and a table of planets read back up with numpad 7 and down its
+Moons column with numpad 9 and numpad 5, the current word in the kept
+column.
 
 `terminal_review_grid` prints a six-row table whose second column starts at
 column 10, two rows being shorter than that, hears each row and the

@@ -1,7 +1,8 @@
 //! Demonstration: say-all (milestone M4 item 6), recorded by
 //! `cargo xtask demo` for `videos/demos`. The `notepad_say_all` scenario
-//! tests the same command; this one shows it at a viewer's pace, and shows
-//! the "Say all reads by" setting's two cases.
+//! tests the same command, and `edit_control_say_all` the second part, with
+//! the same window and text; this one shows them at a viewer's pace, and
+//! shows the "Say all reads by" setting's two cases.
 //!
 //! The walk:
 //!
@@ -32,14 +33,12 @@
 use std::io;
 use std::time::Duration;
 
+use super::edit_control_say_all;
 use crate::registry::ScenarioState;
-use crate::scenario::{Scenario, harness_marker};
+use crate::scenario::Scenario;
 
 /// How long each step's speech is given to arrive.
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// How long the edit control's window is given to appear.
-const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The harness document's name.
 const NAME: &str = "demo-say-all";
@@ -60,22 +59,6 @@ const STARTS: [&str; 3] = [
     "Ships passing in the night",
 ];
 
-/// The text box's accessible name, spoken when it takes the focus.
-const BOX_NAME: &str = "Story";
-
-/// The edit control's text: two paragraphs of sentences, in reading order.
-const SENTENCES: [&[&str]; 2] = [
-    &[
-        "A letter arrived on Tuesday.",
-        "It had no stamp and no return address.",
-        "Inside was a single brass key.",
-    ],
-    &[
-        "Nobody in the house knew what it opened.",
-        "Grandmother said it was older than the house itself.",
-    ],
-];
-
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let document: String = PARAGRAPHS
         .iter()
@@ -83,33 +66,6 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
         .collect();
     let pid = scenario.open_document_with("notepad.exe", NAME, &document)?;
     Ok(ScenarioState::TargetPid(pid))
-}
-
-/// The script showing the edit control's window, titled `title`, its text
-/// read from `story`.
-fn edit_script(title: &str, story: &str) -> String {
-    let title = title.replace('\'', "''");
-    let story = story.replace('\'', "''");
-    format!(
-        "Add-Type -AssemblyName System.Windows.Forms\r\n\
-         Add-Type -AssemblyName System.Drawing\r\n\
-         [System.Windows.Forms.Application]::EnableVisualStyles()\r\n\
-         $form = New-Object System.Windows.Forms.Form\r\n\
-         $form.Text = '{title}'\r\n\
-         $form.ClientSize = New-Object System.Drawing.Size(1100, 400)\r\n\
-         $form.StartPosition = 'CenterScreen'\r\n\
-         $box = New-Object System.Windows.Forms.TextBox\r\n\
-         $box.Multiline = $true\r\n\
-         $box.ScrollBars = 'Both'\r\n\
-         $box.WordWrap = $false\r\n\
-         $box.Dock = 'Fill'\r\n\
-         $box.Font = New-Object System.Drawing.Font('Segoe UI', 16)\r\n\
-         $box.AccessibleName = '{BOX_NAME}'\r\n\
-         $box.Text = [IO.File]::ReadAllText('{story}')\r\n\
-         $box.Select(0, 0)\r\n\
-         $form.Controls.Add($box)\r\n\
-         [void]$form.ShowDialog()\r\n"
-    )
 }
 
 /// Part 1: say-all in Notepad, by line, interrupted in the third paragraph.
@@ -147,69 +103,12 @@ fn notepad_by_line(scenario: &mut Scenario) {
     scenario.speech().wait_until_quiet(STEP_TIMEOUT);
 }
 
-/// Part 2: say-all in a Win32 edit control, by sentence.
+/// Part 2: say-all in a Win32 edit control, by sentence, as the
+/// `edit_control_say_all` scenario tests it.
 fn edit_control_by_sentence(scenario: &mut Scenario) {
-    let title = harness_marker("demo-edit-control");
-    let directory = scenario
-        .harness_folder("demo-edit-control")
-        .expect("the run has a directory for harness files");
-    let story_path = format!(r"{directory}\story.txt");
-    let script_path = format!(r"{directory}\edit.ps1");
-    let story: Vec<String> = SENTENCES
-        .iter()
-        .map(|paragraph| paragraph.join(" "))
-        .collect();
-    scenario
-        .write_agent_file(&story_path, story.join("\r\n").as_bytes())
-        .expect("writes the story");
-    scenario
-        .write_agent_file(&script_path, edit_script(&title, &story_path).as_bytes())
-        .expect("writes the script");
-    let args: Vec<String> = [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        &script_path,
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
-    let pid = scenario
-        .launch_titled("powershell.exe", &args, &title, true)
-        .expect("starts Windows PowerShell");
-    scenario
-        .bring_titled_window_forward(&title, WINDOW_TIMEOUT)
+    let pid = edit_control_say_all::open_story(scenario)
         .expect("the edit control's window takes the foreground");
-
-    // The text box's focus, then the caret's line, at the start of the
-    // text.
-    let first = SENTENCES[0][0];
-    scenario
-        .speech()
-        .expect_in_order(&[BOX_NAME, first], STEP_TIMEOUT);
-
-    scenario
-        .send_gesture("kb:verbatim+downarrow")
-        .expect("sends say all");
-    let sentences: Vec<&str> = SENTENCES
-        .iter()
-        .flat_map(|paragraph| paragraph.iter().copied())
-        .collect();
-    for (index, sentence) in sentences.iter().enumerate() {
-        let heard = scenario
-            .speech()
-            .expect_in_order_capturing(&[*sentence], STEP_TIMEOUT);
-        if let Some(next) = sentences.get(index + 1) {
-            assert!(
-                !heard.contains(next),
-                "say-all read {heard:?} as one piece, not sentence by sentence"
-            );
-        }
-    }
-    scenario.speech().wait_until_quiet(STEP_TIMEOUT);
+    edit_control_say_all::read_by_sentence(scenario);
     scenario
         .kill_target(pid)
         .expect("closes the edit control's window");

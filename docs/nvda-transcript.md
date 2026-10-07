@@ -55,7 +55,11 @@ A step is a key to press, or one of these:
   opens a page of the Settings app.
 - `--front <image>[=<title>]` brings a window of that program, with a
   title containing the text if given, to the foreground through the
-  agent, as the end-to-end suite does.
+  agent, as the end-to-end suite does. With `*` for the program,
+  `--front *=<title>` brings forward whichever program's window has that
+  title, for a window whose program is not obvious, such as a console
+  window, which belongs to the console host or to the shell it runs
+  depending on how it was started.
 - `--gesture <identifier>` sends a gesture such as `kb:verbatim+v` to
   the Verbatim running on this machine through its control pipe, so
   Verbatim's own commands can be used without pressing a modifier key
@@ -96,6 +100,15 @@ The options are:
   Verbatim with test audio and eSpeak NG, as the end-to-end suite does,
   and NVDA with eSpeak NG too, so that the two are compared under the same
   settings.
+- `--json`, to print one JSON object per line, for a script comparing
+  the two transcripts, since spoken text can itself hold a line break.
+  Each step gives an object with its index (`step`) and its `label`, and
+  each entry after it an object with the same `step`, its time since the
+  step was sent (`ms`), its `kind`, and its `text`: `speech`, with the
+  priority or utterance id as its `tag`; `event`, such as NVDA's cancel;
+  `ended`, a Verbatim utterance cut off or failed, with `how` and `tag`;
+  `sound`; and `note`, the capture's own remark, such as speech that did
+  not settle, which has no `ms`.
 
 To record NVDA reading Verbatim's own GUI, run Verbatim with test audio so
 that it is silent (see the test-audio section of the tooling guide), open
