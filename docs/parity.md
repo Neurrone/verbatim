@@ -308,6 +308,24 @@ verified.
   Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md),
   M3 noise suppression). Unchanged by the outpost redesign: only Core
   sees focus across applications, so this stays in the reducer.
+  NVDA compares UIA elements by runtime id (`compareElements`), and treats
+  a UIA focus event as a duplicate only when the element compares equal to
+  the last focus and that last focus still reports `HasKeyboardFocus`
+  when read live; a read that fails lets the event through. A runtime id
+  is unique only among live elements, and File Explorer reuses them:
+  going back from a subfolder (found 2026-10-07), the parent folder's item
+  "Inner" took the runtime id of the subfolder's item delta.txt, destroyed
+  with its list, so the outpost reported Inner under delta.txt's node and
+  Core stayed silent. Since 2026-10-07 the outpost does NVDA's check
+  before it reports a UIA focus whose runtime id already names a node: it
+  reads, live, whether the element that node stands for still has the
+  keyboard focus, in the same remote operation that reads the focus's
+  ancestors (or with one call of its own when it reads classically), and
+  when it does not, or cannot be read, the runtime id gets a new node, so
+  Core announces the focus. **matched since 2026-10-07**; mockapp's
+  `focus_reports` tests and Core's
+  `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
+  check it.
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
   ([Event handling](nvda/events.md), [Speech](nvda/speech.md)), and its

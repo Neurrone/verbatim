@@ -3,7 +3,8 @@
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-value <id> <text>`, `select <id>`,
 //! `caret <id> <start> [<end>]`, `set-text <id> <text>`, `notify <text>`,
-//! `active-text-position <id> <start> <end>`, `stall <ms>`, and `quit`.
+//! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
+//! `stall <ms>`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -60,6 +61,12 @@ pub(crate) enum Command {
     /// `stall started` on stdout as it begins, and `stall ended <us>`, with
     /// the time in microseconds since the Unix epoch, as it ends.
     Stall(u64),
+    /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
+    /// (its parent no longer lists it, and every call on its elements fails
+    /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
+    /// `id` takes its runtime id, as File Explorer gives a new item the
+    /// runtime id of one it destroyed. Raises no event. UIA-only.
+    TakeRuntimeId(String, String),
     /// `quit`.
     Quit,
     /// A line that is no command, rejected on the window thread, so its
@@ -84,6 +91,15 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "stall" => rest.parse().ok().map(Command::Stall),
+        "take-runtime-id" => {
+            let mut parts = rest.split_whitespace();
+            let id = parts.next()?;
+            let from = parts.next()?;
+            parts
+                .next()
+                .is_none()
+                .then(|| Command::TakeRuntimeId(id.to_owned(), from.to_owned()))
+        }
         "active-text-position" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;
@@ -249,6 +265,17 @@ mod tests {
             _ => panic!("expected ActiveTextPosition"),
         }
         assert!(parse_command("active-text-position doc 6").is_none());
+    }
+
+    #[test]
+    fn parses_take_runtime_id() {
+        match parse_command("take-runtime-id inner delta") {
+            Some(Command::TakeRuntimeId(id, from)) => {
+                assert_eq!((id.as_str(), from.as_str()), ("inner", "delta"));
+            }
+            _ => panic!("expected TakeRuntimeId"),
+        }
+        assert!(parse_command("take-runtime-id inner").is_none());
     }
 
     #[test]

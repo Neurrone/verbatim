@@ -259,6 +259,9 @@ pub fn find_window(title: &str) -> HWND {
     .unwrap_or_else(|error| panic!("no window is titled {title:?} once mockapp is ready: {error}"))
 }
 
+/// A real outpost in the test process, watching mockapp.
+pub mod outpost;
+
 /// mockapp's provider-side hit counters (`src/hits.rs`), compiled into the
 /// tests too, so both sides share one method list and one pair of message
 /// numbers.

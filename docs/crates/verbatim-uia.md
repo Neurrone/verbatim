@@ -331,7 +331,14 @@ Public API:
   needs Windows to reuse the same window handle value meanwhile; NVDA, which
   compares elements by runtime id and keeps its navigator indefinitely, has
   the same exposure, and `take_touched` reports the nodes issued or looked up
-  since the last call. `init_mta()` joins the multithreaded apartment,
+  since the last call. A runtime id is unique only among live elements: an
+  application can give a dead element's id to a new one (File Explorer
+  did, going back from a subfolder, found 2026-10-07). `reissue` forgets
+  the node a runtime id names, its element and reverse entry included, so
+  the next lookup mints a new node and a query for the old one answers
+  gone; the outpost calls it before reporting a focus whose runtime id
+  names a node whose element no longer has the keyboard focus, or cannot
+  be read. `init_mta()` joins the multithreaded apartment,
   failing on a thread already in a single-threaded one; each call adds an
   initialization that is never undone, since the MTA is pinned for the
   process's life. Role and state mapping in

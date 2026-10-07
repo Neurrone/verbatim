@@ -88,6 +88,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             return Err("active-text-position is not supported on the msaa backend".into());
         }
         // Handled by the window thread before dispatch.
+        Command::TakeRuntimeId(..) => {
+            return Err("take-runtime-id is not supported on the msaa backend".into());
+        }
         Command::Stall(_) | Command::Quit | Command::Unrecognized(_) => {}
     }
     Ok(())

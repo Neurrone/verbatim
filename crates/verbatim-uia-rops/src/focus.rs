@@ -6,9 +6,9 @@
 use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_HasKeyboardFocusPropertyId, UIA_IsDataValidForFormPropertyId,
-    UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
-    UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
+    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_HasKeyboardFocusPropertyId,
+    UIA_IsDataValidForFormPropertyId, UIA_ListControlTypeId, UIA_NativeWindowHandlePropertyId,
+    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
     UIA_SelectionSelectionPropertyId, UIA_TabControlTypeId,
 };
 
@@ -31,6 +31,13 @@ pub struct FocusQuery<'a> {
     /// focus's ancestors): the walk stops at the first ancestor that has
     /// one.
     pub known: &'a [Vec<i32>],
+    /// The element the caller already holds under the focused element's
+    /// runtime id, when it holds one: whether it still has the keyboard
+    /// focus is read live too ([`Ancestry::previous_focused`]). An
+    /// application can give a dead element's runtime id to a new one, and
+    /// an element the caller holds that no longer has the focus, or cannot
+    /// be read, is not the focused element whatever its id says.
+    pub previous: Option<&'a IUIAutomationElement>,
     /// The most ancestors to return.
     pub depth_limit: u32,
     /// The properties cached on every returned element:
@@ -77,6 +84,10 @@ pub struct Ancestry {
     /// ancestor walk stopped when it has to. `None` when nothing up to the
     /// top has one, or the classic walk ran out of time first.
     pub window: Option<isize>,
+    /// Whether [`FocusQuery::previous`] has the keyboard focus, read live:
+    /// `false` when it does not, or when the read failed (the element is
+    /// gone); `None` when the query gave no previous element.
+    pub previous_focused: Option<bool>,
 }
 
 /// The signature both implementations share, so a caller can hold either.
@@ -110,7 +121,10 @@ impl Path {
 /// The focus ancestry, the one function call sites use: the remote program
 /// when `remote` is true, falling back to the classic walk for this call
 /// when remote operations are unavailable or the program fails, and the
-/// classic walk alone when `remote` is false. Says which path answered, and
+/// classic walk alone when `remote` is false. A run that fails because an
+/// element is gone, when the query holds a previous element, is run once
+/// more without it, and the previous element answered as not focused when
+/// that run succeeds. Says which path answered, and
 /// for a fallback, why, so the caller can stop trying the remote program
 /// for a window whose import failed.
 ///
@@ -130,12 +144,39 @@ pub fn focus_ancestry(
     if !remote {
         return focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Classic));
     }
-    match focus_ancestry_remote(uia, query) {
-        Ok(answer) => Ok((answer, Path::Remote)),
-        Err(error) => {
-            focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Fallback(error)))
+    let error = match focus_ancestry_remote(uia, query) {
+        Ok(answer) => return Ok((answer, Path::Remote)),
+        Err(error) => error,
+    };
+    // UIA fails a whole run, before its first instruction, when an element
+    // it imports is gone (verified against mockapp: `ExecutionFailure`,
+    // `UIA_E_ELEMENTNOTAVAILABLE`, no failing instruction), so the program
+    // cannot catch the held element's read itself. Run again without it: if
+    // that succeeds, the held element was the one gone, and has no focus.
+    if query.previous.is_some() && is_element_gone(&error) {
+        let without = FocusQuery {
+            previous: None,
+            ..*query
+        };
+        if let Ok(answer) = focus_ancestry_remote(uia, &without) {
+            let answer = match answer {
+                FocusAncestry::Focused(ancestry) => FocusAncestry::Focused(Ancestry {
+                    previous_focused: Some(false),
+                    ..ancestry
+                }),
+                FocusAncestry::NotFocused => FocusAncestry::NotFocused,
+            };
+            return Ok((answer, Path::Remote));
         }
     }
+    focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Fallback(error)))
+}
+
+/// Whether a run failed because an element it imported is gone.
+fn is_element_gone(error: &Error) -> bool {
+    error
+        .hresult()
+        .is_some_and(|code| code.0.cast_unsigned() == UIA_E_ELEMENTNOTAVAILABLE)
 }
 
 /// The string the remote program makes of a runtime id (its `Stringify`
@@ -168,7 +209,7 @@ fn own_window(element: &IUIAutomationElement) -> Option<isize> {
 
 /// The focus ancestry in one cross-process round trip: a program that
 /// reads the element's `HasKeyboardFocus` live and stops if it is false,
-/// then reads a list's or tab control's selected child, then walks
+/// then reads the previous element's (`FocusQuery::previous`), then reads a list's or tab control's selected child, then walks
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
@@ -194,6 +235,20 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let focused = b.add_to_results(focused.assume::<kind::Bool>());
     let not_focused = b.not(focused);
     b.if_(not_focused, Builder::halt);
+
+    // The element held under the same runtime id: its own live focus. A
+    // held element that is gone fails the whole run before it starts
+    // ([`focus_ancestry`] runs it again without it).
+    let previous_focused = b.new_bool(false);
+    let previous_focused = b.add_to_results(previous_focused);
+    if let Some(previous) = query.previous {
+        let previous = b.import_element(previous);
+        let has = b.property(previous, UIA_HasKeyboardFocusPropertyId.0);
+        let is_bool = b.is(TypeTest::Bool, has);
+        b.if_(is_bool, |b| {
+            b.set(previous_focused, has.assume::<kind::Bool>());
+        });
+    }
 
     let cache = RemoteCache::new(&mut b, query.properties);
 
@@ -339,6 +394,10 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         out_of_time: false,
         selected_child: outcome.get(selected)?,
         window: (window != 0).then_some(window as isize),
+        previous_focused: match query.previous {
+            Some(_) => Some(outcome.get(previous_focused)?),
+            None => None,
+        },
     }))
 }
 
@@ -413,8 +472,8 @@ impl RemoteCache {
 }
 
 /// The focus ancestry the classic way, the fallback and the reference:
-/// a live `HasKeyboardFocus` read, the selected child through the
-/// `Selection` pattern ([`Uia::selected_element`], as
+/// a live `HasKeyboardFocus` read, the previous element's, the selected
+/// child through the `Selection` pattern ([`Uia::selected_element`], as
 /// `Uia::selected_child` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestor_chain` makes. Stops where the remote program
@@ -447,6 +506,10 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         out_of_time: false,
         selected_child,
         window: own_window(query.element),
+        // A failed read is an element that is gone.
+        previous_focused: query
+            .previous
+            .map(|previous| previous.has_keyboard_focus().unwrap_or(false)),
     };
     let out_of_time = || {
         query

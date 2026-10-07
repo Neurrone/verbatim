@@ -105,6 +105,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             guard.nodes[index].selection = (start.min(length), end.min(length));
             guard.nodes[index].text = Some(text);
         }
+        Command::TakeRuntimeId(id, from) => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take_runtime_id(&id, &from)?,
         // Handled by the window thread before dispatch.
         Command::Stall(_) | Command::Quit | Command::Unrecognized(_) => {}
     }
@@ -310,7 +314,7 @@ mod props {
         NavigateDirection_FirstChild, NavigateDirection_LastChild, NavigateDirection_NextSibling,
         NavigateDirection_Parent, NavigateDirection_PreviousSibling, ToggleState,
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
-        UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
+        UIA_ControlTypePropertyId, UIA_ControllerForPropertyId, UIA_E_ELEMENTNOTAVAILABLE,
         UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
         UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
@@ -694,7 +698,23 @@ mod props {
             .ok_or_else(Error::empty)
     }
 
-    pub(super) fn get_runtime_id(index: usize) -> WinResult<*mut SAFEARRAY> {
+    /// Fails as UIA's element-not-available error when node `index` has
+    /// died (`take-runtime-id`), as every call on a gone element does.
+    pub(super) fn alive(tree: &SharedTree, index: usize) -> WinResult<()> {
+        let dead = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[index]
+            .dead;
+        if dead {
+            return Err(Error::from(windows::core::HRESULT(
+                UIA_E_ELEMENTNOTAVAILABLE.cast_signed(),
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn get_runtime_id(tree: &SharedTree, index: usize) -> WinResult<*mut SAFEARRAY> {
         if index == 0 {
             // The hwnd-rooted element derives its runtime id from the window
             // handle automatically; returning null is the documented UIA
@@ -702,7 +722,12 @@ mod props {
             return Ok(std::ptr::null_mut());
         }
         let marker = i32::try_from(UiaAppendRuntimeId).unwrap_or(0);
-        let unique = i32::try_from(index).unwrap_or(0);
+        let runtime_id = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[index]
+            .runtime_id;
+        let unique = i32::try_from(runtime_id).unwrap_or(0);
         let elements = [(&raw const marker).cast(), (&raw const unique).cast()];
         // SAFETY: pointers to two live `i32`s, for a `VT_I4` vector;
         // ownership of the array passes to the caller, matching
@@ -814,7 +839,7 @@ mod handler {
         }
         fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetRuntimeId);
-            props::get_runtime_id(self.index)
+            props::get_runtime_id(&self.tree, self.index)
         }
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
             hits::hit(hits::Method::BoundingRectangle);
@@ -860,14 +885,17 @@ mod handler {
     impl IRawElementProviderSimple_Impl for ChildProvider_Impl {
         fn ProviderOptions(&self) -> WinResult<ProviderOptions> {
             hits::hit(hits::Method::ProviderOptions);
+            props::alive(&self.tree, self.index)?;
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
             hits::hit(hits::Method::GetPatternProvider);
+            props::alive(&self.tree, self.index)?;
             get_pattern_provider(&self.tree, self.hwnd, self.index, pattern_id)
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
             hits::hit(hits::Method::GetPropertyValue);
+            props::alive(&self.tree, self.index)?;
             Ok(props::get_property_value(
                 &self.tree,
                 self.hwnd,
@@ -877,6 +905,7 @@ mod handler {
         }
         fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
             hits::hit(hits::Method::HostRawElementProvider);
+            props::alive(&self.tree, self.index)?;
             props::host_raw_element_provider(self.hwnd, self.index)
         }
     }
@@ -884,26 +913,32 @@ mod handler {
     impl IRawElementProviderFragment_Impl for ChildProvider_Impl {
         fn Navigate(&self, direction: NavigateDirection) -> WinResult<IRawElementProviderFragment> {
             hits::hit(hits::Method::Navigate);
+            props::alive(&self.tree, self.index)?;
             props::navigate(&self.tree, self.hwnd, self.index, direction)
         }
         fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetRuntimeId);
-            props::get_runtime_id(self.index)
+            props::alive(&self.tree, self.index)?;
+            props::get_runtime_id(&self.tree, self.index)
         }
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
             hits::hit(hits::Method::BoundingRectangle);
+            props::alive(&self.tree, self.index)?;
             Ok(bounding_rectangle())
         }
         fn GetEmbeddedFragmentRoots(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetEmbeddedFragmentRoots);
+            props::alive(&self.tree, self.index)?;
             Ok(std::ptr::null_mut())
         }
         fn SetFocus(&self) -> WinResult<()> {
             hits::hit(hits::Method::SetFocus);
+            props::alive(&self.tree, self.index)?;
             Ok(())
         }
         fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
             hits::hit(hits::Method::FragmentRoot);
+            props::alive(&self.tree, self.index)?;
             Ok(RootProvider {
                 tree: self.tree.clone(),
                 hwnd: self.hwnd,

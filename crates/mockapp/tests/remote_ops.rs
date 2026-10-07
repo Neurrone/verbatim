@@ -121,6 +121,7 @@ fn query<'a>(element: &'a IUIAutomationElement, known: &'a [Vec<i32>]) -> FocusQ
     FocusQuery {
         element,
         known,
+        previous: None,
         depth_limit: 50,
         properties: CACHED_PROPERTIES,
         deadline: None,
@@ -207,6 +208,10 @@ fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
         "the depth limit"
     );
     assert_eq!(remote.window, classic.window, "the nearest window");
+    assert_eq!(
+        remote.previous_focused, classic.previous_focused,
+        "the previous element's focus"
+    );
     assert!(
         remote.window.is_some(),
         "every fixture element has a window"

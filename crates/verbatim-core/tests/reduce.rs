@@ -4363,3 +4363,113 @@ fn a_theme_with_descriptions_off_stops_their_fetching() {
             .expect("deserializes");
     assert_eq!(restored.fetches(), fetches);
 }
+
+// ---- A runtime id reused for a new element ----
+
+/// A File Explorer item, `position` of `set_size` in its folder's list.
+fn explorer_item(
+    id: u64,
+    name: &str,
+    item_states: &[State],
+    position: u32,
+    set_size: u32,
+) -> NodeSnapshot {
+    let mut item = node(id, Role::ListItem, Some(name), None, states(item_states));
+    item.details.position_in_set = Some(position);
+    item.details.set_size = Some(set_size);
+    item
+}
+
+/// File Explorer, going back from a subfolder (found 2026-10-07), in the
+/// order its events arrived: the focus moves to the parent folder's item
+/// "Inner" in a new list, its states read before Explorer selected it, then
+/// Explorer selects it, then reports the same focus again. The outpost gives
+/// Inner a new node, since the element Explorer gave Inner's runtime id to
+/// before, delta.txt, is gone (`docs/parity.md`, "Duplicate focus
+/// suppression"), so Inner is announced, without its list, which reads the
+/// same as the one left in the same window; the selection that follows
+/// says only "selected"; the repeated focus is silent.
+#[test]
+fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
+    let app = Pid(1);
+    let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
+    let unselected = [
+        State::Focused,
+        State::Focusable,
+        State::Selectable,
+        State::Offscreen,
+    ];
+    let selected = [
+        State::Focused,
+        State::Focusable,
+        State::Selectable,
+        State::Selected,
+    ];
+    let delta = explorer_item(28, "delta.txt", &unselected[..3], 1, 1);
+    let (state, effects) = reduce(
+        &SrState::new(),
+        &focus_in(app, window(7000), delta, vec![list(24)]),
+    );
+    // The first focus in the window cuts off speech.
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 28, &[24], None)),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Items View"),
+                role(Role::List)
+            ]),
+            queued(vec![
+                UtteranceSegment::label("delta.txt"),
+                not(State::Selected),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(1),
+                }),
+            ]),
+        ]
+    );
+
+    let inner = explorer_item(30, "Inner", &unselected, 1, 4);
+    let (state, effects) = reduce(&state, &focus_in(app, window(7000), inner, vec![list(29)]));
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 30, &[29], None),
+            vec![vec![
+                UtteranceSegment::label("Inner"),
+                not(State::Selected),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(4),
+                }),
+            ]]
+        ),
+        "a new list with the same name and role is not announced again"
+    );
+
+    let inner_selected = explorer_item(30, "Inner", &selected, 1, 4);
+    let (state_after, effects) = reduce(
+        &state,
+        &event_in(
+            app,
+            Some(window(7000)),
+            NormalizedEvent::SelectionChanged {
+                node: inner_selected.clone(),
+            },
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::new(SegmentContent::State(
+            State::Selected
+        ))])]
+    );
+
+    let (_, effects) = reduce(
+        &state_after,
+        &focus_in(app, window(7000), inner_selected, vec![list(29)]),
+    );
+    assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
+}

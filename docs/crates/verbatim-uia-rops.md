@@ -148,7 +148,12 @@ properties to cache on every returned element
 reads), and a deadline, which only the classic walk checks, between hops.
 Both answer `FocusAncestry::NotFocused` when a
 live read of the element's `HasKeyboardFocus` is false (NVDA's check
-that a focus event is not stale), and otherwise an `Ancestry`:
+that a focus event is not stale), and otherwise an `Ancestry`. A query
+may also name `previous`, the element the caller holds under the focused
+element's runtime id, whose `HasKeyboardFocus` is read live too: an
+application can give a dead element's runtime id to a new one (File
+Explorer does), and NVDA treats a focus as a duplicate only while the
+element it compares equal to still has the focus. The `Ancestry`:
 
 - `ancestors`: the raw-view parents, nearest first, each with the
   properties cached. The walk ends at the top-level window of the
@@ -167,9 +172,18 @@ that a focus event is not stale), and otherwise an `Ancestry`:
   would find (NVDA's `getNearestWindowHandle`). The outpost needs it to
   arbitrate and report a focus whose event names no window, and reading
   it here saves that separate call.
+- `previous_focused`: whether the query's `previous` element has the
+  keyboard focus, false when it does not or its read failed, `None` when
+  the query named none.
 
 The remote program is one round trip. It reads `HasKeyboardFocus` and
-halts when it is false. For a list or tab control it reads the element's
+halts when it is false, then reads the previous element's. UIA fails a
+whole run before its first instruction when an imported element is gone
+(verified against mockapp: `ExecutionFailure` with
+`UIA_E_ELEMENTNOTAVAILABLE` and no failing instruction), so no catch block
+inside the program can answer for a previous element that died;
+`focus_ancestry` runs such a program once more without it and answers
+the previous element as not focused when that run succeeds. For a list or tab control it reads the element's
 `Selection2FirstSelectedItem` property ignoring its default
 (`SelectionPattern2`), fills that item's cache, and keeps it; a provider
 without `SelectionPattern2` answers "not supported", and the program then

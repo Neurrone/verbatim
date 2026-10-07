@@ -26,6 +26,18 @@
 //! same runtime id, which needs Windows to reuse the same window handle
 //! value while Core holds it. NVDA, comparing elements by runtime id and
 //! holding its navigator indefinitely, has the same exposure.
+//!
+//! A runtime id is unique only among elements alive at the same time: once
+//! an element dies, its application may give the id to a new element. File
+//! Explorer does, found 2026-10-07: going back from a subfolder, the parent
+//! folder's item that took the focus had the runtime id of the subfolder's
+//! item, destroyed with its list. Mapped to the old node, the new focus
+//! read to Core as the focus it already had, and nothing was spoken. So
+//! before a focus is reported under a node that already exists, the
+//! outpost checks that node's element: when it no longer has the keyboard
+//! focus, or cannot be read at all, the element behind the id is not the
+//! one the node stood for, and [`NodeIdRegistry::reissue`] gives the id a
+//! new node (`docs/parity.md`, "Duplicate focus suppression").
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -219,6 +231,24 @@ impl NodeIdRegistry {
         drop(inner);
         drop(evicted);
     }
+
+    /// Forgets the node `runtime_id` names, so the next
+    /// [`id_for`](Self::id_for) or [`id_for_element`](Self::id_for_element)
+    /// mints a new one: for a runtime id an application has given to a new
+    /// element after the one it named died (module doc). The old node is
+    /// forgotten whole, so a query for it answers that it is gone rather
+    /// than reaching the new element. Its element is returned, for the
+    /// caller to drop once no lock is held.
+    pub fn reissue(&self, runtime_id: &[i32]) -> Released {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let element = inner.forward.remove(runtime_id).and_then(|old| {
+            inner.reverse.remove(&old);
+            inner.elements.remove(&old)
+        });
+        Released {
+            _elements: element.into_iter().collect(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -252,6 +282,28 @@ mod tests {
         assert_eq!(registry.ids(), vec![kept]);
         assert_eq!(registry.runtime_id_of(released), None);
         assert_ne!(registry.id_for(&[2]), released);
+    }
+
+    #[test]
+    fn a_reissued_runtime_id_names_a_new_node_and_the_old_one_is_forgotten() {
+        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+        let dead = registry.id_for(&[42, 7]);
+        let other = registry.id_for(&[42, 8]);
+        drop(registry.reissue(&[42, 7]));
+        assert_eq!(registry.existing_id(&[42, 7]), None);
+        assert_eq!(registry.runtime_id_of(dead), None, "the old node is gone");
+        let new = registry.id_for(&[42, 7]);
+        assert_ne!(new, dead);
+        assert_eq!(registry.runtime_id_of(new), Some(vec![42, 7]));
+        assert_eq!(registry.id_for(&[42, 7]), new, "the new node is kept");
+        assert_eq!(
+            registry.id_for(&[42, 8]),
+            other,
+            "other nodes are untouched"
+        );
+        let mut ids = registry.ids();
+        ids.sort_by_key(|id| id.number());
+        assert_eq!(ids, vec![other, new]);
     }
 
     #[test]

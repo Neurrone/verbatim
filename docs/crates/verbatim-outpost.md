@@ -486,7 +486,17 @@ Implementation notes:
   same continuation through MSAA from there, and the same splice; the
   program also stops at a known ancestor that is not reported (the
   previous focus itself, say), and the splice is made there. An element
-  the program finds no longer focused holds the fact back as above. With
+  the program finds no longer focused holds the fact back as above.
+  When the focus's runtime id already names a node, the program also
+  reads whether the element that node stands for still has the keyboard
+  focus (`FocusQuery::previous`; with remote operations off, one call of
+  its own): an application can give a dead element's runtime id to a new
+  one, and when the held element has lost the focus, or cannot be read,
+  the registry gives the id a new node before the focus is reported
+  (`NodeIdRegistry::reissue`; `docs/parity.md`, "Duplicate focus
+  suppression"). A held element that is gone fails the whole program
+  before it runs, and `verbatim_uia_rops::focus_ancestry` runs it once
+  more without it. With
   remote operations off (`--classic-uia`), or for a window whose element
   could not be imported into a program (a client-side proxy, marked in the
   context for the window's lifetime and forgotten when it is destroyed),

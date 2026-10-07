@@ -44,6 +44,12 @@ pub(crate) struct NodeData {
     pub(crate) formats: Formats,
     pub(crate) parent: Option<usize>,
     pub(crate) children: Vec<usize>,
+    /// The number the node's UIA runtime id is made from: its own index,
+    /// until `take-runtime-id` gives it a dead node's.
+    pub(crate) runtime_id: usize,
+    /// Whether the node has died (`take-runtime-id`): it has left the tree,
+    /// and every call on its elements fails as on an element that is gone.
+    pub(crate) dead: bool,
 }
 
 /// A text's formatting: stretches that are spelling errors and that are
@@ -108,6 +114,30 @@ impl Tree {
         self.by_fixture_id.get(fixture_id).copied()
     }
 
+    /// Node `from` dies, leaving the tree, and node `id` takes its runtime
+    /// id (`take-runtime-id`). A dead node loses the focus and the
+    /// selection if it had them.
+    pub(crate) fn take_runtime_id(&mut self, id: &str, from: &str) -> Result<(), String> {
+        let unknown = |name: &str| format!("no node has the id {name}");
+        let taker = self.index_of(id).ok_or_else(|| unknown(id))?;
+        let dying = self.index_of(from).ok_or_else(|| unknown(from))?;
+        if taker == dying || dying == 0 || self.nodes[dying].dead {
+            return Err(format!("{from} cannot give its runtime id to {id}"));
+        }
+        if let Some(parent) = self.nodes[dying].parent {
+            self.nodes[parent].children.retain(|&child| child != dying);
+        }
+        self.nodes[dying].dead = true;
+        if self.focused == Some(dying) {
+            self.focused = None;
+        }
+        if self.selected == Some(dying) {
+            self.selected = None;
+        }
+        self.nodes[taker].runtime_id = self.nodes[dying].runtime_id;
+        Ok(())
+    }
+
     /// The sibling one step in `offset` direction from `index` (`1` for
     /// next, `-1` for previous), `None` at either end or for the root.
     #[must_use]
@@ -149,6 +179,8 @@ fn insert(
         },
         parent,
         children: Vec::new(),
+        runtime_id: index,
+        dead: false,
     });
     by_fixture_id.insert(node.id, index);
     if let Some(controlled) = node.controller_for {
@@ -240,5 +272,23 @@ mod tests {
         let b1 = tree.index_of("b1").unwrap();
         assert_eq!(tree.nodes[b].children, vec![b1]);
         assert_eq!(tree.nodes[b1].parent, Some(b));
+    }
+
+    #[test]
+    fn a_node_takes_a_dead_nodes_runtime_id() {
+        let mut tree = Tree::build(sample());
+        let a = tree.index_of("a").unwrap();
+        let b1 = tree.index_of("b1").unwrap();
+        tree.take_runtime_id("a", "b1").unwrap();
+        assert_eq!(tree.nodes[a].runtime_id, b1);
+        assert!(tree.nodes[b1].dead);
+        assert_eq!(
+            tree.nodes[tree.index_of("b").unwrap()].children,
+            Vec::<usize>::new()
+        );
+        assert!(
+            tree.take_runtime_id("b", "b1").is_err(),
+            "b1 is already dead"
+        );
     }
 }
