@@ -360,8 +360,15 @@ pub fn ancestor_chain_until(
         // address however it was reached: one window keeps one node, even
         // after its title changes, as NVDA, re-reading the old object live,
         // finds it equal. Any other parent gets an address made up from its
-        // window, which only finds it again as the same COM object.
-        let (parent_key, parent_at) = match parent_acc.address() {
+        // window, which only finds it again as the same COM object. A parent
+        // in no window is no window's own object, so its identity string is
+        // not asked for.
+        let address = if parent_hwnd == 0 {
+            None
+        } else {
+            parent_acc.address()
+        };
+        let (parent_key, parent_at) = match address {
             Some(address) if address.0 == parent_hwnd => (address, true),
             _ => ((parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF), false),
         };
