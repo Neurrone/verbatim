@@ -357,7 +357,8 @@ pub fn kill(pid: u32) -> io::Result<KillOutcome> {
 }
 
 /// [`kill`], except that a pid this agent did not launch is terminated only
-/// when it still runs an executable of the file name `image`, if given.
+/// when it still runs the executable `image` names, if given
+/// ([`image_matches`]).
 fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     {
         let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
@@ -383,16 +384,16 @@ fn kill_as(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
 }
 
 /// Terminates `pid`, which this agent did not launch, opening it afresh;
-/// when `image` is given, only if the opened process still runs an
-/// executable of that file name, so a pid reused since it was looked up
-/// is left alone.
+/// when `image` is given, only if the opened process still runs the
+/// executable it names, so a pid reused since it was looked up is left
+/// alone.
 fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
     let Some(handle) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION)
     else {
         return Ok(KillOutcome::AlreadyExited);
     };
     if let Some(image) = image
-        && !image_file_name(handle).is_some_and(|name| name.eq_ignore_ascii_case(image))
+        && !image_path(handle).is_some_and(|path| image_matches(&path, image))
     {
         close(handle);
         return Ok(KillOutcome::AlreadyExited);
@@ -414,10 +415,14 @@ fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
 }
 
 /// Terminates every currently running process whose image (executable file)
-/// name matches `name` (case-insensitive, comparing only the file name —
-/// `"notepad.exe"`, never a full path), and returns how many were actually
-/// terminated. Zero is a normal, successful outcome, not an error: it
-/// simply means no matching process was running.
+/// matches `name`, and returns how many were actually terminated. A bare
+/// file name (`"notepad.exe"`) matches that file name wherever it runs
+/// from; a full path (`r"C:\stage\mockapp.exe"`) matches only processes
+/// running that very file, so a program the harness deploys is swept
+/// without ending the same program run from elsewhere, such as the
+/// `mockapp` a concurrent `cargo test` drives. Both compare
+/// case-insensitively ([`image_matches`]). Zero is a normal, successful
+/// outcome, not an error: it simply means no matching process was running.
 ///
 /// Exists for the handoff case Windows 11 Notepad exhibits: launching it
 /// when an instance already exists hands the window off to that existing
@@ -439,7 +444,10 @@ fn kill_opened(pid: u32, image: Option<&str>) -> io::Result<KillOutcome> {
 /// propagate.
 pub fn kill_by_name(name: &str) -> io::Result<u32> {
     let mut terminated = 0u32;
-    for pid in matching_pids(name)? {
+    // The snapshot holds file names only; a path is checked once each
+    // match is opened.
+    let file_name = name.rsplit(['\\', '/']).next().unwrap_or(name);
+    for pid in matching_pids(file_name)? {
         // Checked again once opened: the pid may have been reused since
         // the snapshot.
         match kill_as(pid, Some(name)) {
@@ -494,9 +502,23 @@ fn exe_file_name(buffer: &[u16]) -> String {
     String::from_utf16_lossy(&buffer[..len])
 }
 
-/// The file name of the executable an open process handle's process runs,
+/// Whether a process running the executable at `path` (a full path, as
+/// Windows reports it) matches `image`: by its full path when `image` is
+/// one, by its file name otherwise; case-insensitively either way, and
+/// with either slash as the separator.
+fn image_matches(path: &str, image: &str) -> bool {
+    let normalize = |text: &str| text.replace('/', "\\").to_lowercase();
+    let (path, image) = (normalize(path), normalize(image));
+    if image.contains('\\') {
+        path == image
+    } else {
+        path.rsplit('\\').next() == Some(image.as_str())
+    }
+}
+
+/// The full path of the executable an open process handle's process runs,
 /// `None` when it cannot be read.
-fn image_file_name(handle: HANDLE) -> Option<String> {
+fn image_path(handle: HANDLE) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
     // SAFETY: `handle` is open with query access; the buffer outlives the
@@ -510,8 +532,9 @@ fn image_file_name(handle: HANDLE) -> Option<String> {
         )
     }
     .ok()?;
-    let path = String::from_utf16_lossy(buffer.get(..usize::try_from(length).ok()?)?);
-    Some(path.rsplit('\\').next().unwrap_or(&path).to_owned())
+    Some(String::from_utf16_lossy(
+        buffer.get(..usize::try_from(length).ok()?)?,
+    ))
 }
 
 /// Whether an already-open process handle's process has exited, used to
@@ -656,6 +679,16 @@ mod tests {
         );
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_path_matches_only_that_file_and_a_name_matches_it_anywhere() {
+        let running = r"C:\Stage\mockapp.exe";
+        assert!(image_matches(running, "MOCKAPP.EXE"));
+        assert!(image_matches(running, r"c:\stage\mockapp.exe"));
+        assert!(image_matches(running, "C:/Stage/mockapp.exe"));
+        assert!(!image_matches(running, r"C:\target\debug\mockapp.exe"));
+        assert!(!image_matches(running, "notepad.exe"));
     }
 
     #[test]

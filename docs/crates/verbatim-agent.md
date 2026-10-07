@@ -28,7 +28,8 @@ Public API:
   *observing*. `Request`: `Hello` (must be first, refused outright on any
   version mismatch), `LaunchProcess`, `KillProcess`,
   `KillProcessesByName` (every process with a given image name, for
-  sweeping target applications that hand off to another process),
+  sweeping target applications that hand off to another process; given a
+  full path instead, only processes running that very file),
   `BringToForeground` (wait for a visible top-level window of a given
   image name and bring it to the foreground past Windows' foreground lock:
   a Control tap and `SetForegroundWindow`, then the call attached to the

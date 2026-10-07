@@ -1401,7 +1401,16 @@ impl Drop for Scenario {
 /// logged, not fatal to the launch.
 fn sweep_leftovers(agent: &mut AgentClient, directory: &str) {
     for name in crate::registry::swept_target_image_names() {
-        if let Err(error) = agent.kill_processes_by_name(name) {
+        // A program the harness stages beside Verbatim is swept only where
+        // it was staged: the same program run from elsewhere, such as the
+        // `mockapp` a concurrent `cargo test` drives, is not the harness's
+        // to end.
+        let target = if STAGED_BINARIES.contains(&name) {
+            format!(r"{directory}\{name}")
+        } else {
+            name.to_owned()
+        };
+        if let Err(error) = agent.kill_processes_by_name(&target) {
             tracing::warn!(name, %error, "failed to pre-launch sweep a target image name");
         }
     }

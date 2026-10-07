@@ -839,7 +839,9 @@ Notepad no longer strictly needs that: `launch_target`-launched processes
 are killed by pid and then swept by image name (Windows 11 Notepad hands
 launches off to a differently pid'd process, confirmed live even for a
 single, solo launch, so a pid-only kill can silently miss the real window),
-and `Scenario::launch` sweeps those same image names, closes any
+and `Scenario::launch` sweeps those same image names (a program it stages,
+such as `mockapp.exe`, only by its path in the stage directory, so the
+`mockapp` instances of a concurrent `cargo test` survive), closes any
 harness document left open, and deletes the harness documents and folders
 left in `target/e2e-stage`, before doing anything else, so a scenario
 starts clean even after a prior run's cleanup was skipped entirely. Every
