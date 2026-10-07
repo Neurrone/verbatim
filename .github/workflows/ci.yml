@@ -121,9 +121,13 @@ jobs:
       # an agent started in a step of its own was gone (connection refused)
       # by the time the suite ran. NVDA's system tests start NVDA inside
       # their test step for the same reason.
+      # The runner's Windows Server has classic Notepad, without Windows 11
+      # Notepad's spell checker, so the scenarios the registry marks
+      # local-only are skipped here, and only here (docs/tooling.md).
       - name: Run the E2E suite against a local agent
         env:
           VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
+          VERBATIM_E2E_SKIP_LOCAL_ONLY: "1"
         shell: pwsh
         run: |
           $agent = Start-Process -FilePath "target\debug\verbatim-agent.exe" `

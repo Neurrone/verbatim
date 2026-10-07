@@ -16,9 +16,9 @@
 //! its window messages, as NVDA reads it, which carry no spelling errors
 //! (its character formatting has none to give); and a WPF text box checks
 //! its spelling but leaves the errors out of its UIA text. Windows 11
-//! Notepad's own spell checker stays demonstrable through the
-//! [`notepad_spelling_errors`](super::notepad_spelling_errors)
-//! demonstration.
+//! Notepad's own spell checker is tested by the local-only
+//! [`notepad_spelling_errors`](super::notepad_spelling_errors), which
+//! GitHub's runner skips.
 //!
 //! The errors are there from the start, so every step presses a key and
 //! waits for its speech to be heard in full before the next, as a

@@ -198,7 +198,9 @@ Public API:
   `launch_target`, unioned by `swept_target_image_names`; an application
   opened with `open_document` is closed by title instead and not listed),
   `settings` (an optional change to the fixed settings its Verbatim is
-  launched with, through `Scenario::launch_with_settings`), and
+  launched with, through `Scenario::launch_with_settings`), `local_only`
+  (whether it needs something only a Windows 11 desktop has, so that
+  GitHub's Windows Server runner skips it), and
   `setup`/`body`/`teardown`
   function pointers. `ScenarioState` is what `setup` hands the body and
   teardown: nothing, a target's pid, a window title, or a `Window` (the
@@ -206,9 +208,18 @@ Public API:
   as the terminal scenarios open. `SCENARIOS` is the fixed, ordered list of every
   registered scenario. Those in the Demo group are demonstrations, run
   only through `cargo xtask demo`: their `#[test]` wrappers are ignored,
-  and `cargo xtask vm test` leaves them out, so the suite is the same
-  everywhere. `notepad_spelling_errors`, Windows 11 Notepad's own spell
-  checker, is one, since GitHub's runners have classic Notepad. The Speech group holds
+  and `cargo xtask vm test` leaves them out. A local-only scenario is
+  part of the suite, run by every local and VM run; a run with
+  `SKIP_LOCAL_ONLY_ENV`, `VERBATIM_E2E_SKIP_LOCAL_ONLY`, set to `1`
+  skips it, and GitHub's `e2e` job sets it. `skips` decides, from a
+  scenario and that variable's value: only a local-only scenario is
+  skipped, only when the value is `1`, and a value other than `1`, `0`,
+  or empty is an error, so a mistyped setting fails the run. The skip
+  comes from that setting alone, never from detecting the machine.
+  `notepad_spelling_errors`, Windows 11 Notepad's own spell checker, is
+  the only local-only scenario, since GitHub's runner has classic Notepad;
+  the other Notepad scenarios hold for classic Notepad's edit control as
+  well, and run everywhere. The Speech group holds
   `menu_and_settings_dialog`, `rapid_tabbing_in_settings`,
   `switch_to_onecore`, and `synth_host_crash_recovery`; the Shell group
   holds `notepad_and_verbatim_menu` and `start_menu_search`; the
@@ -216,7 +227,8 @@ Public API:
   `system_information_tree`; the Text group (milestone M4) holds
   `notepad_editing`, `notepad_review_cursor`, `notepad_say_all`,
   `notepad_word_selection`, `notepad_typed_words`, `notepad_review_words`,
-  `edit_control_say_all`, `spelling_errors`, `windows_terminal_commands`,
+  `edit_control_say_all`, `spelling_errors`, `notepad_spelling_errors`,
+  `windows_terminal_commands`,
   `conhost_commands`, `terminal_spoken_password`, `terminal_flood`,
   `terminal_editing`, and `terminal_review_grid`; the Demo group holds the demonstrations
   recorded for `videos/demos` by `cargo xtask demo`,
@@ -230,7 +242,8 @@ Public API:
   unioned, deduplicated, registry order preserved; no filters means every
   scenario but the demonstrations) into a list, erroring
   on any unrecognized name; `run_named` is the thin entry point
-  every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls.
+  every `#[test]` wrapper under `crates/verbatim-e2e/tests/` calls, which
+  prints a notice and returns when `skips` skips the scenario.
   `run_named`'s internal `run` launches, runs `setup` then `body` then
   `teardown`, waiting after `body` until speech is quiet
   (`wait_until_quiet` with a 30-second limit) so the last thing asserted is
@@ -319,8 +332,8 @@ Speech page, the default voice English (Great Britain), English
 described in `registry`'s own `Group` doc comment above.
 Everything a demonstration shows is also covered by a test scenario
 (decided 2026-10-07), so a demonstration never shows something the suite
-does not check; where that is impossible on GitHub's runners, it is
-recorded with the demonstration, as for `notepad_spelling_errors`.
+does not check; where that is impossible on GitHub's runners, the test
+scenario is local-only, as `notepad_spelling_errors` is.
 The Text group's Notepad scenarios run in Notepad on a document of their
 own, start by taking the caret to the top (Notepad can restore a caret
 position from an earlier session), and save what they edited, in the
@@ -363,10 +376,10 @@ a fixture the scenario writes there, and moves its caret with the keys the
 scenario presses. It stands in for a real control because none with
 spelling errors Verbatim reads is on both Windows 11 and GitHub's Windows
 Server runners, whose Notepad is classic Notepad, with no spell checker;
-the scenario's doc comment gives the controls considered. The
-`notepad_spelling_errors` demonstration walks the same steps in Windows 11
-Notepad, whose spell checker marks a document a moment after it opens, so
-its first line is read again with Control+Home, each reading heard in
+the scenario's doc comment gives the controls considered. The local-only
+`notepad_spelling_errors` walks the same steps in Windows 11 Notepad,
+whose spell checker marks a document a moment after it opens, so its
+first line is read again with Control+Home, each reading heard in
 full, until its errors are marked, within 30 seconds.
 
 The terminal scenarios, also in the Text group, share a setup

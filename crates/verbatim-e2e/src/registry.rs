@@ -78,7 +78,10 @@
 //!   word echo, the review cursor, and say-all in Notepad, say-all in a
 //!   Win32 edit control
 //!   ([`edit_control_say_all`](crate::scenarios::edit_control_say_all)),
-//!   and the terminal scenarios
+//!   spelling errors in `mockapp`'s scripted text and in Windows 11
+//!   Notepad
+//!   ([`notepad_spelling_errors`](crate::scenarios::notepad_spelling_errors),
+//!   local-only, below), and the terminal scenarios
 //!   ([`terminal_commands`](crate::scenarios::terminal_commands)'s
 //!   `windows_terminal_commands`, `conhost_commands`, and
 //!   `terminal_spoken_password`,
@@ -92,6 +95,13 @@
 //!   wrappers are `#[ignore]`d, so a plain `cargo test -p verbatim-e2e`, as
 //!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
 //!   so a broken feature fails rather than recording a misleading video.
+//!
+//! A scenario marked [`ScenarioDef::local_only`] needs something only a
+//! Windows 11 desktop has, today Windows 11 Notepad's spell checker, which
+//! GitHub's Windows Server runner, with classic Notepad, lacks. Every local
+//! and VM run includes it; GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`],
+//! and [`run_named`] then skips it with a notice. The skip comes from that
+//! setting alone, never from detecting the machine.
 
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -115,6 +125,34 @@ use crate::scenarios::{
 
 /// The longest a scenario's speech may take to end after its body.
 const QUIET_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Environment variable that, set to `1`, skips the local-only scenarios
+/// ([`ScenarioDef::local_only`]); unset, empty, or `0` runs them. GitHub's
+/// `e2e` job sets it, since its Windows Server runner lacks what they need;
+/// nothing detects the machine.
+pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
+
+/// Whether `def` is skipped on a run whose [`SKIP_LOCAL_ONLY_ENV`] holds
+/// `setting` (`None` when it is unset): only a local-only scenario is ever
+/// skipped, and only when the setting is `1`.
+///
+/// # Errors
+///
+/// Returns an error naming the variable when `setting` is anything but
+/// unset, empty, `0`, or `1`, so a mistyped setting fails the run rather
+/// than silently running or skipping.
+pub fn skips(def: &ScenarioDef, setting: Option<&str>) -> Result<bool, String> {
+    let skip_local_only = match setting.unwrap_or("") {
+        "" | "0" => false,
+        "1" => true,
+        other => {
+            return Err(format!(
+                "{SKIP_LOCAL_ONLY_ENV} is {other:?}; set it to 1 to skip the local-only scenarios, or 0 or nothing to run them"
+            ));
+        }
+    };
+    Ok(skip_local_only && def.local_only)
+}
 
 /// A coarse selector for `cargo xtask vm test --group` — see this module's
 /// own doc comment for what each group is meant to hold.
@@ -216,6 +254,12 @@ pub struct ScenarioDef {
     /// with ([`Scenario::launch_with_settings`]), for a scenario that needs
     /// a reader setting other than its default; `None` for most.
     pub settings: Option<fn(&mut Settings)>,
+    /// Whether this scenario needs something only a Windows 11 desktop
+    /// has, such as Windows 11 Notepad's spell checker, so that it cannot
+    /// hold on GitHub's Windows Server runner. Every local run and every
+    /// VM run includes it; a run with [`SKIP_LOCAL_ONLY_ENV`] set to `1`,
+    /// as GitHub's `e2e` job sets it, skips it ([`skips`]).
+    pub local_only: bool,
     /// Declares and creates whatever state `body` needs beyond
     /// `Scenario::launch` itself.
     ///
@@ -242,6 +286,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: menu_and_settings_dialog::setup,
         body: menu_and_settings_dialog::body,
         teardown: menu_and_settings_dialog::teardown,
@@ -251,6 +296,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_and_verbatim_menu::setup,
         body: notepad_and_verbatim_menu::body,
         teardown: notepad_and_verbatim_menu::teardown,
@@ -260,6 +306,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: rapid_tabbing_in_settings::setup,
         body: rapid_tabbing_in_settings::body,
         teardown: rapid_tabbing_in_settings::teardown,
@@ -269,6 +316,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Navigation,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: object_navigation_in_settings::setup,
         body: object_navigation_in_settings::body,
         teardown: object_navigation_in_settings::teardown,
@@ -278,6 +326,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: switch_to_onecore::setup,
         body: switch_to_onecore::body,
         teardown: switch_to_onecore::teardown,
@@ -287,6 +336,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: synth_host_crash_recovery::setup,
         body: synth_host_crash_recovery::body,
         teardown: synth_host_crash_recovery::teardown,
@@ -296,6 +346,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: lock_key_announcements::setup,
         body: lock_key_announcements::body,
         teardown: lock_key_announcements::teardown,
@@ -305,6 +356,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: start_menu_search::setup,
         body: start_menu_search::body,
         teardown: start_menu_search::teardown,
@@ -314,6 +366,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: explorer_folder_window::setup,
         body: explorer_folder_window::body,
         teardown: explorer_folder_window::teardown,
@@ -323,6 +376,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: settings_dialog_keys::setup,
         body: settings_dialog_keys::body,
         teardown: settings_dialog_keys::teardown,
@@ -332,6 +386,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         target_images: &["SystemSettings.exe"],
         settings: None,
+        local_only: false,
         setup: settings_system_page::setup,
         body: settings_system_page::body,
         teardown: settings_system_page::teardown,
@@ -341,6 +396,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_editing::setup,
         body: notepad_editing::body,
         teardown: notepad_editing::teardown,
@@ -350,6 +406,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_review_cursor::setup,
         body: notepad_review_cursor::body,
         teardown: notepad_review_cursor::teardown,
@@ -359,6 +416,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_say_all::setup,
         body: notepad_say_all::body,
         teardown: notepad_say_all::teardown,
@@ -368,6 +426,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_word_selection::setup,
         body: notepad_word_selection::body,
         teardown: notepad_word_selection::teardown,
@@ -377,6 +436,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_typed_words::setup,
         body: notepad_typed_words::body,
         teardown: notepad_typed_words::teardown,
@@ -386,6 +446,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: notepad_review_words::setup,
         body: notepad_review_words::body,
         teardown: notepad_review_words::teardown,
@@ -395,6 +456,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: edit_control_say_all::setup,
         body: edit_control_say_all::body,
         teardown: edit_control_say_all::teardown,
@@ -404,15 +466,31 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &["mockapp.exe"],
         settings: None,
+        local_only: false,
         setup: spelling_errors::setup,
         body: spelling_errors::body,
         teardown: spelling_errors::teardown,
+    },
+    // Windows 11 Notepad's own spell checker, which GitHub's Windows Server
+    // runner does not have: its Notepad is classic Notepad, a Win32 edit
+    // control. `spelling_errors` hears the same speech from mockapp's
+    // scripted text everywhere.
+    ScenarioDef {
+        name: "notepad_spelling_errors",
+        group: Group::Text,
+        target_images: &[],
+        settings: None,
+        local_only: true,
+        setup: notepad_spelling_errors::setup,
+        body: notepad_spelling_errors::body,
+        teardown: notepad_spelling_errors::teardown,
     },
     ScenarioDef {
         name: "theme_panel",
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: theme_panel::setup,
         body: theme_panel::body,
         teardown: theme_panel::teardown,
@@ -422,6 +500,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Speech,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: terminal_settings_page::setup,
         body: terminal_settings_page::body,
         teardown: terminal_settings_page::teardown,
@@ -431,6 +510,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: terminal_commands::setup_windows_terminal,
         body: terminal_commands::body,
         teardown: terminal_commands::teardown,
@@ -440,6 +520,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: terminal_commands::setup_console_host,
         body: terminal_commands::body,
         teardown: terminal_commands::teardown,
@@ -449,6 +530,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: Some(terminal_commands::speak_passwords),
+        local_only: false,
         setup: terminal_commands::setup_spoken_password,
         body: terminal_commands::body_spoken_password,
         teardown: terminal_commands::teardown,
@@ -458,6 +540,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: terminal_flood::setup,
         body: terminal_flood::body,
         teardown: terminal_flood::teardown,
@@ -467,6 +550,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: terminal_editing::setup,
         body: terminal_editing::body,
         teardown: terminal_editing::teardown,
@@ -476,6 +560,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Text,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: terminal_review_grid::setup,
         body: terminal_review_grid::body,
         teardown: terminal_review_grid::teardown,
@@ -485,6 +570,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Navigation,
         target_images: &["msinfo32.exe"],
         settings: None,
+        local_only: false,
         setup: system_information_tree::setup,
         body: system_information_tree::body,
         teardown: system_information_tree::teardown,
@@ -494,6 +580,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: demo_notepad_editing::setup,
         body: demo_notepad_editing::body,
         teardown: demo_notepad_editing::teardown,
@@ -503,6 +590,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: demo_review_cursor::setup,
         body: demo_review_cursor::body,
         teardown: demo_review_cursor::teardown,
@@ -512,6 +600,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: demo_say_all::setup,
         body: demo_say_all::body,
         teardown: demo_say_all::teardown,
@@ -521,6 +610,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: demo_terminal_session::setup,
         body: demo_terminal_session::body,
         teardown: demo_terminal_session::teardown,
@@ -530,20 +620,10 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Demo,
         target_images: &[],
         settings: None,
+        local_only: false,
         setup: demo_settings_dialog_keys::setup,
         body: demo_settings_dialog_keys::body,
         teardown: demo_settings_dialog_keys::teardown,
-    }, // Windows 11 Notepad's own spell checker, which GitHub's Windows Server
-    // runners do not have; the suite's `spelling_errors` reads the same
-    // speech from mockapp's scripted text instead.
-    ScenarioDef {
-        name: "notepad_spelling_errors",
-        group: Group::Demo,
-        target_images: &[],
-        settings: None,
-        setup: notepad_spelling_errors::setup,
-        body: notepad_spelling_errors::body,
-        teardown: notepad_spelling_errors::teardown,
     },
 ];
 
@@ -616,7 +696,8 @@ pub fn select<'a>(
 /// — the thin body every `#[test]` wrapper under `crates/verbatim-e2e/tests/`
 /// calls. Prints the same one-line skip notice every live test in this crate
 /// prints, and returns without running anything, when
-/// [`crate::ENDPOINT_ENV`] is unset.
+/// [`crate::ENDPOINT_ENV`] is unset; prints a notice and returns as well
+/// when [`skips`] skips the scenario.
 ///
 /// # Panics
 ///
@@ -634,6 +715,17 @@ pub fn run_named(name: &str) {
                 .join(", ")
         );
     };
+    let setting = std::env::var(SKIP_LOCAL_ONLY_ENV).ok();
+    match skips(def, setting.as_deref()) {
+        Ok(true) => {
+            println!(
+                "{SKIP_LOCAL_ONLY_ENV} is set; skipping {name:?}, which runs only on a Windows 11 desktop"
+            );
+            return;
+        }
+        Ok(false) => {}
+        Err(error) => panic!("{error}"),
+    }
     let Some(_endpoint) = crate::endpoint() else {
         println!("VERBATIM_E2E_ENDPOINT is not set; skipping the live E2E suite");
         return;
@@ -839,6 +931,7 @@ mod tests {
                 group: Group::Speech,
                 target_images: &["alpha.exe"],
                 settings: None,
+                local_only: false,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -848,6 +941,7 @@ mod tests {
                 group: Group::Shell,
                 target_images: &["beta.exe", "alpha.exe"],
                 settings: None,
+                local_only: false,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -857,6 +951,7 @@ mod tests {
                 group: Group::Shell,
                 target_images: &[],
                 settings: None,
+                local_only: false,
                 setup: no_setup,
                 body: no_body,
                 teardown: no_teardown,
@@ -970,5 +1065,52 @@ mod tests {
         let error = select(&scenarios, &[], &["no_such_group".to_owned()])
             .expect_err("unknown group name must be rejected");
         assert!(error.contains("no_such_group"));
+    }
+
+    #[test]
+    fn the_skip_setting_skips_exactly_the_local_only_scenarios() {
+        let mut scenarios = fixture();
+        scenarios[1].local_only = true;
+        let skipped: Vec<&str> = scenarios
+            .iter()
+            .filter(|def| skips(def, Some("1")).expect("1 is a valid setting"))
+            .map(|def| def.name)
+            .collect();
+        assert_eq!(skipped, vec!["beta"]);
+    }
+
+    #[test]
+    fn every_scenario_runs_when_the_skip_setting_is_unset_empty_or_0() {
+        let mut scenarios = fixture();
+        scenarios[1].local_only = true;
+        for setting in [None, Some(""), Some("0")] {
+            for def in &scenarios {
+                assert_eq!(skips(def, setting), Ok(false), "{setting:?} {}", def.name);
+            }
+        }
+    }
+
+    #[test]
+    fn an_unrecognized_skip_setting_is_an_error() {
+        let scenarios = fixture();
+        let error = skips(&scenarios[0], Some("yes")).expect_err("yes is not a valid setting");
+        assert!(error.contains(SKIP_LOCAL_ONLY_ENV), "{error}");
+    }
+
+    #[test]
+    fn only_windows_11_notepads_spell_checker_is_local_only() {
+        let local_only: Vec<&str> = SCENARIOS
+            .iter()
+            .filter(|def| def.local_only)
+            .map(|def| def.name)
+            .collect();
+        assert_eq!(local_only, vec!["notepad_spelling_errors"]);
+        let selected = select(SCENARIOS, &[], &[]).expect("no filters never errors");
+        assert!(
+            selected
+                .iter()
+                .any(|def| def.name == "notepad_spelling_errors"),
+            "a run with no filters includes the local-only scenarios"
+        );
     }
 }
