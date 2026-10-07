@@ -359,17 +359,10 @@ impl EditControl {
         structure.write(&range)?;
         let copied = self.send(EM_GETTEXTRANGE, 0, structure.address())?;
         let copied = usize::try_from(copied).unwrap_or(0).min(units);
-        let units = if unicode {
-            let bytes = text.read(copied * 2)?;
-            bytes
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| u16::from_le_bytes(*pair))
-                .collect()
-        } else {
-            ansi_to_utf16(&text.read(copied)?)
-        };
+        // The whole buffer, which was zeroed when it was committed: a window
+        // that is not Unicode may still copy UTF-16, which only the bytes
+        // past the first `copied` show.
+        let units = decode_text_range(&text.read(text_bytes)?, copied, unicode);
         Ok(self.masked(units))
     }
 
@@ -476,6 +469,33 @@ fn param(value: u32) -> isize {
 /// A little-endian `u32` from four bytes.
 fn le_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+/// The text `EM_GETTEXTRANGE` wrote into `buffer`, a zeroed buffer of
+/// twice the range's length and a terminator, read back whole, the call
+/// having answered `copied` characters, as NVDA decodes it
+/// (`docs/nvda/editable-text-and-terminals.md`, "Rich edit text"): UTF-16
+/// from a Unicode window; from any other window, UTF-16 too when more than
+/// one character was copied and a byte past the first `copied` is not
+/// zero, since some rich edit controls answer an ANSI window in UTF-16,
+/// and otherwise ANSI text in the system code page.
+fn decode_text_range(buffer: &[u8], copied: usize, unicode_window: bool) -> Vec<u16> {
+    let wide = unicode_window
+        || (copied > 1
+            && buffer
+                .get(copied..)
+                .is_some_and(|rest| rest.iter().any(|&b| b != 0)));
+    if wide {
+        let bytes = &buffer[..(copied * 2).min(buffer.len())];
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .collect()
+    } else {
+        ansi_to_utf16(&buffer[..copied.min(buffer.len())])
+    }
 }
 
 /// ANSI text, in the system code page, as UTF-16.
@@ -667,5 +687,27 @@ mod tests {
             "abc".encode_utf16().collect::<Vec<_>>()
         );
         assert_eq!(ansi_to_utf16(&[]), Vec::<u16>::new());
+    }
+
+    #[test]
+    fn a_text_range_is_decoded_by_what_the_buffer_holds() {
+        let utf16 = |text: &str| -> Vec<u8> {
+            let mut bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            bytes.resize((text.encode_utf16().count() + 1) * 2, 0);
+            bytes
+        };
+        let units = |text: &str| text.encode_utf16().collect::<Vec<_>>();
+        // A window that is not Unicode, answered in UTF-16: "สวัสดี".
+        assert_eq!(decode_text_range(&utf16("สวัสดี"), 6, false), units("สวัสดี"));
+        // The same window answered in ANSI: the bytes past the text are zero.
+        let mut ansi = b"abc".to_vec();
+        ansi.resize(8, 0);
+        assert_eq!(decode_text_range(&ansi, 3, false), units("abc"));
+        // One character cannot be told apart, and is read as ANSI.
+        let mut one = b"a".to_vec();
+        one.resize(4, 0);
+        assert_eq!(decode_text_range(&one, 1, false), units("a"));
+        // A Unicode window is always UTF-16.
+        assert_eq!(decode_text_range(&utf16("ab"), 2, true), units("ab"));
     }
 }

@@ -137,6 +137,19 @@ backends and picks per window class (overlay selection;
   ([IA2 usage](ia2.md), [The UIA client](uia.md),
   [Office through COM](office-com.md)).
 
+### Rich edit text
+
+A rich edit control (edit API version 2 or later) gives a range of text
+through `EM_GETTEXTRANGE` into a buffer NVDA allocates in the control's
+process, twice the range's length plus a terminator, so it holds either
+character size. NVDA reads the whole buffer back. From a Unicode window
+it decodes UTF-16. From any other window it does not trust the window's
+flag: when more than one character was copied and any byte past the
+count the message answered is not zero, the buffer holds UTF-16 and is
+decoded so; otherwise it is ANSI text in the user's code page
+(`textUtils.getTextFromRawBytes`, called with no encoding). One copied
+character cannot be told apart and is read as ANSI.
+
 The behavior layer above (`EditableText`, the caret-key scripts) is
 identical across all of these; only the TextInfo differs — the
 clean seam that makes the ladder maintainable.

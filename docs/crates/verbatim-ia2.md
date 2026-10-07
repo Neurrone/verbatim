@@ -83,8 +83,11 @@ Public API:
   in the control's process (`VirtualAllocEx`, `WriteProcessMemory`,
   `ReadProcessMemory`, freed on drop), with the text range's pointer field
   sized for that process: four bytes for a 32-bit (WOW64) process, by
-  `IsWow64Process2`. An ANSI rich edit window's text is converted from the
-  system code page. Every message goes through `SendMessageTimeoutW` with
+  `IsWow64Process2`. A rich edit window that is not Unicode may still
+  answer in UTF-16, so its whole text buffer is read back and decoded as
+  NVDA decodes it (`decode_text_range`): UTF-16 when more than one
+  character was copied and a byte past the copied count is not zero, and
+  otherwise ANSI text converted from the system code page. Every message goes through `SendMessageTimeoutW` with
   `SMTO_ABORTIFHUNG` and half a second's wait, and counts as one window
   message; the memory calls are the kernel's and are not counted. A
   password field (`ES_PASSWORD`) reads as stars, as NVDA reads it.

@@ -1497,7 +1497,10 @@ verified.
   protocol") is **matched since 2026-10-06** for UIA text and the Win32
   edit and rich edit controls (the `notepad_editing` and
   `notepad_review_cursor` scenarios); an MSAA object that is neither has
-  no text. Caret keys pass
+  no text. A rich edit window that is not Unicode has its text decoded
+  by what its buffer holds, UTF-16 or ANSI, as NVDA decodes it ("Rich
+  edit text" in [Editable text and terminals](nvda/editable-text-and-terminals.md)),
+  since 2026-10-08; it had been decoded by the window's flag. Caret keys pass
   to the application and Core asks the outpost to wait for evidence (a
   caret event, the caret leaving where Core knew it, the text at the caret
   changing for Delete, or the selection changing), up to 100 milliseconds,
