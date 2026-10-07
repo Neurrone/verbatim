@@ -1998,9 +1998,10 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       application, with NVDA's limiter rule (one waiting fact per element
       and kind), and each outpost limits its batches per application
       thread. Selective registration is adopted with no setting
-      (Dickson, 2026-10-07); NVDA's automatic choice uses it from
-      Windows 11 22H2, so whether Verbatim's minimum becomes 22H2 or the
-      choice stays keyed to the Windows version is Dickson's to decide.
+      (Dickson, 2026-10-07). NVDA's automatic choice uses it from
+      Windows 11 22H2, and Verbatim's minimum is now 22H2 (Dickson,
+      2026-10-07: versions out of support are not supported, which
+      removes fallbacks and branches for them), so it is unconditional.
       Each is weighed by measurement and adopted where it helps; the
       text attribute survey (item 2) covers the full list of UIA text
       attributes, including annotations, link, culture, font weight,
