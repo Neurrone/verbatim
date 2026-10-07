@@ -1993,8 +1993,14 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
       short. NVDA also registers some property events only for the focus
       and its ancestors ("selective" registration, automatic by default)
       and rate-limits events itself ("enhanced event processing", on by
-      default, with a feature flag); Verbatim considers both, by
-      measurement.
+      default, with a feature flag). Verbatim already has the rate
+      limiting: the listener queues each event without calling into the
+      application, with NVDA's limiter rule (one waiting fact per element
+      and kind), and each outpost limits its batches per application
+      thread. Selective registration is adopted with no setting
+      (Dickson, 2026-10-07); NVDA's automatic choice uses it from
+      Windows 11 22H2, so whether Verbatim's minimum becomes 22H2 or the
+      choice stays keyed to the Windows version is Dickson's to decide.
       Each is weighed by measurement and adopted where it helps; the
       text attribute survey (item 2) covers the full list of UIA text
       attributes, including annotations, link, culture, font weight,
