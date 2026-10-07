@@ -97,6 +97,8 @@ struct RawNode {
     #[serde(default)]
     italic_fails: bool,
     #[serde(default)]
+    find_text_fails: bool,
+    #[serde(default)]
     cultures: Vec<(usize, usize, i32)>,
     #[serde(default)]
     children: Vec<RawNode>,
@@ -134,6 +136,9 @@ pub(crate) struct FixtureNode {
     /// Whether reading the text's `IsItalic` attribute fails, as a provider
     /// that fails an attribute read does.
     pub(crate) italic_fails: bool,
+    /// Whether `FindText` on the text fails, as Windows Terminal's has
+    /// thrown.
+    pub(crate) find_text_fails: bool,
     /// Stretches of the text in a language other than English, each a
     /// start and an end UTF-16 offset and a Windows locale id, served as
     /// UIA's `Culture` attribute.
@@ -215,6 +220,7 @@ fn convert(
         bold: raw.bold,
         italic: raw.italic,
         italic_fails: raw.italic_fails,
+        find_text_fails: raw.find_text_fails,
         cultures: raw.cultures,
         children,
     })

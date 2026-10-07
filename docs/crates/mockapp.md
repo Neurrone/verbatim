@@ -143,7 +143,10 @@ its crate-internal modules are the reviewable surface:
   upright text reads as mixed, as in Windows Terminal), weighing 700
   within a bold stretch, 400 outside, and mixed across both; every other attribute is unsupported,
   and a node with `italic_fails` set fails its `IsItalic` read with
-  `E_FAIL`, as a provider that fails an attribute read. A range handed back by a client
+  `E_FAIL`, as a provider that fails an attribute read, and one with
+  `find_text_fails` set fails `FindText` the same way, as Windows
+  Terminal's has (`tests/fixtures/terminal_find_fails.json`). A range
+  handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation. `FindText` matches the text
   within the range exactly (or ignoring ASCII case), the last match when

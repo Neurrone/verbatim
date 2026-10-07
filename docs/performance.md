@@ -745,8 +745,9 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   a grown prompt, 43 for an output line and a new prompt, 43 for more
   lines than a read takes, 64 for a read that finds nothing new and reads
   afresh, and 67 for a cleared screen, whose classic read also finds the
-  last line by its text (`FindText`). Every one of these is pinned, both
-  ways. The provider's
+  last line by its text (`FindText`), as the remote program now does too
+  (it walked up line by line before 2026-10-07). Every one of these is
+  pinned, both ways. The provider's
   own work is the same either way, and pinned too: 13 clones, 6 line
   expansions, 6 reads, 5 moves, and 13 other range calls for the output
   line. The lines spoken are read in one call, however many there are, so
@@ -824,11 +825,14 @@ starved. Twelve busy threads at normal priority make the same flood take
 ### A terminal's upward search
 
 When a full scrollback has moved the text beneath the anchor, the tail
-read searches up to `SEARCH_LINES` (256) lines above it for the
-fingerprint (`docs/crates/verbatim-uia-rops.md`, "Layer 3: a terminal's
-tail"). Measured on 2026-10-07 against Windows Terminal and the console
-host, each with a full scrollback of 9,001 lines, the fingerprint 0, 10,
-100, and 256 lines up:
+read searches the text above it for the fingerprint by its text
+(`FindText`), both ways and with no bound in lines (decided with Dickson
+on 2026-10-07 for a predictable cost; `docs/crates/verbatim-uia-rops.md`,
+"Layer 3: a terminal's tail"). Until then it searched up to 256 lines
+(`SEARCH_LINES`), line by line remotely and by `FindText` over those
+lines classically. Measured on 2026-10-07 against Windows Terminal and
+the console host, each with a full scrollback of 9,001 lines, the
+fingerprint 0, 10, 100, and 256 lines up:
 
 - The remote program, searching line by line: Windows Terminal 0.5, 0.7,
   1.4, and 2.5 milliseconds; the console host 0.4, 0.5, 1.1, and 1.9. One
@@ -845,11 +849,19 @@ host, each with a full scrollback of 9,001 lines, the fingerprint 0, 10,
   but about 3 on a range the program made, which is why the program does
   not use it.
 
-So the bound costs the remote program about 0.01 milliseconds per line
-searched, 2.5 at 256 lines, and costs the classic search nothing beyond
-the first match: a larger bound, the whole scrollback included, would
-cost the classic search no more, and the remote program about 0.01
-milliseconds for each line it adds that the search reaches. In a console
+So the bound cost the remote program about 0.01 milliseconds per line
+searched, 2.5 at 256 lines, and cost the classic search nothing beyond
+the first match: a larger bound, the whole scrollback included, costs the
+classic search no more. The remote program now searches as the classic
+search does, at about 3 milliseconds for its `FindText` on a range it
+made, about 4 in all, wherever the fingerprint is, where its walk took
+0.5 at the anchor and 2.5 at 256 lines and could not look further.
+
+Against mockapp (`a_fingerprint_far_up_is_found_and_costs_exactly` in
+`crates/mockapp/tests/terminal.rs`), a fingerprint 300 lines up, which
+the bound of 256 missed, is found in 1 call remotely and 63 classically,
+with one `FindText` either way, and the provider calls of both are
+pinned. In a console
 host whose scrollback is not yet full the text does not move beneath the
 anchor, so no search runs there; but its lines are slow to walk (about
 1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), and

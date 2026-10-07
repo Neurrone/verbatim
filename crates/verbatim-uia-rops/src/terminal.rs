@@ -34,10 +34,18 @@ use crate::focus::Path;
 use crate::opcode::Comparison;
 use crate::operation::{Outcome, Value};
 
-/// How many lines above the anchor are searched for its fingerprint when
-/// the text moved beneath it: more than a busy terminal usually writes
-/// between two reads.
-pub const SEARCH_LINES: u32 = 256;
+/// How many matches of the fingerprint's text are checked, nearest first,
+/// before it counts as not found. The search has no bound in lines: it
+/// covers the whole text above the anchor in one `FindText` per match, so
+/// its cost is the same however far the text scrolled (`docs/performance.md`,
+/// "A terminal's upward search"). Only a match that is part of a longer
+/// line, or a line under the wrong line, is passed over, so this bounds a
+/// read whose text repeats the fingerprint's many times above it.
+pub const SEARCH_MATCHES: u32 = 64;
+
+/// How many lines above the anchor the walk searches, line by line, for a
+/// provider whose `FindText` failed (Windows Terminal has thrown from it).
+const WALK_LINES: u32 = 256;
 
 /// More lines than any terminal holds, for moving to the end of the text.
 const FAR: i32 = 1_000_000;
@@ -50,6 +58,17 @@ pub struct Fingerprint<'a> {
     pub line: &'a str,
     /// The line before it, empty when it was the first.
     pub previous: &'a str,
+}
+
+/// What the search for a fingerprint looks for ([`Fingerprint::search`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sought<'a> {
+    /// The line before the anchor's, by this text; the anchor's line is the
+    /// one under it, whatever it holds.
+    Previous(&'a str),
+    /// The anchor's line itself, by this text, under a line that holds
+    /// exactly the fingerprint's line before.
+    Line(&'a str),
 }
 
 impl Fingerprint<'_> {
@@ -75,13 +94,19 @@ impl Fingerprint<'_> {
         !self.previous.trim().is_empty()
     }
 
-    /// The text searched for to find the line before the anchor's: that
-    /// line without its trailing white space and line break. Windows
-    /// Terminal's `FindText` matches neither a line break nor the padding
-    /// after a line's text, and failed with an exception searching for
-    /// padding; the console host matches all three.
-    fn needle(&self) -> &str {
-        self.previous.trim_end()
+    /// What `FindText` searches for: the line before the anchor's when it
+    /// is not blank, else the anchor's line, each without its trailing
+    /// white space and line break, since Windows Terminal's `FindText`
+    /// matches neither a line break nor the padding after a line's text,
+    /// and failed with an exception searching for padding (the console host
+    /// matches all three). `None` when both lines are blank, which no text
+    /// search can find, and which is then not found.
+    fn search(&self) -> Option<Sought<'_>> {
+        if self.previous_tells() {
+            return Some(Sought::Previous(self.previous.trim_end()));
+        }
+        let line = self.line.trim_end();
+        (!line.is_empty()).then_some(Sought::Line(line))
     }
 
     /// Whether `text`, a line read now under a line that matches the
@@ -90,7 +115,6 @@ impl Fingerprint<'_> {
         self.previous_tells() || self.line_forms().iter().any(|form| form == text)
     }
 }
-
 /// Where a [`TailQuery`] starts.
 #[derive(Clone, Copy)]
 pub enum TailStart<'a> {
@@ -124,8 +148,6 @@ pub struct TailQuery<'a> {
     pub start: TailStart<'a>,
     /// The most lines to read from the end of the text.
     pub lines_wanted: u32,
-    /// How many lines above the anchor to search for its fingerprint.
-    pub search_lines: u32,
 }
 
 /// Where the anchor's fingerprint was found.
@@ -139,7 +161,8 @@ pub enum Found {
     Moved(u32),
     /// Neither: the text under the anchor changed (the screen was cleared,
     /// a full-screen program switched screens, or more scrolled by than
-    /// the search covers). Counted from the anchor nonetheless.
+    /// the scrollback keeps), or both lines were blank, which no search by
+    /// text can find. Counted from the anchor nonetheless.
     NotFound,
     /// There was no anchor ([`TailStart::Document`]).
     Afresh,
@@ -403,6 +426,7 @@ fn emit_tail(
         b.set(guard_after, text);
     });
     TailRegisters {
+        walked: moved,
         last,
         count,
         rows,
@@ -416,6 +440,8 @@ fn emit_tail(
 
 /// The registers [`emit_tail`] asks for.
 struct TailRegisters {
+    /// How many lines the walk from `from` to the end of the text moved.
+    walked: Reg<kind::Int>,
     last: Reg<kind::TextRange>,
     count: Reg<kind::Int>,
     rows: Reg<kind::Int>,
@@ -506,9 +532,10 @@ fn is_settled(
 }
 
 /// The tail in one cross-process round trip: a program that reads the
-/// anchor's line and the line before it, searches upward for the
-/// fingerprint when the line before it changed, counts the lines from
-/// where it was found to the end of the text, and reads the last of them.
+/// anchor's line and the line before it, searches the text above for the
+/// fingerprint by its text when the line before it changed ([`emit_find`]),
+/// counts the lines from where it was found to the end of the text, and
+/// reads the last of them.
 ///
 /// `uia` is unused; it is in the signature so that this and
 /// [`terminal_tail_classic`] are interchangeable ([`TerminalTailFn`]).
@@ -570,8 +597,7 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
             // The line above `position`, as it was when found.
             let position_under = b.new_string("");
             b.set(position_under, previous);
-            let fingerprint_line = fingerprint.line_forms().map(|form| b.string(&form));
-            let previous_tells = fingerprint.previous_tells();
+            let by_text = b.new_bool(false);
             let fingerprint_previous = b.string(fingerprint.previous);
             let in_place = b.equal(previous, fingerprint_previous);
             b.if_else(
@@ -581,18 +607,16 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                     b.set(found_line, line);
                 },
                 |b| {
-                    emit_search(
+                    emit_find(
                         b,
                         &c,
-                        &Search {
-                            from: above,
+                        &Find {
+                            at,
+                            above,
                             has_previous,
-                            previous,
-                            line: fingerprint_line,
-                            previous_tells,
+                            fingerprint,
                             before: fingerprint_previous,
-                            limit: query.search_lines,
-                            found,
+                            by_text,
                             found_line,
                             position,
                             position_under,
@@ -607,6 +631,23 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
                 Some(position_under),
                 query.lines_wanted,
             );
+            // How far up it was found, as the walk line by line counts it
+            // ([`classic_distance`]).
+            b.if_(by_text, |b| {
+                let from_anchor = c.collapsed(b, at);
+                let to_end = b.text_range_move(from_anchor, c.line, c.far);
+                let own = b.text_range_clone(at);
+                b.text_range_expand_to_enclosing_unit(own, c.line);
+                let order = b.text_range_compare_endpoints(own, c.start, at, c.start);
+                let inside = b.not_equal(order, c.zero);
+                let shift = b.new_int(0);
+                b.set(shift, tail.walked);
+                b.subtract_assign(shift, to_end);
+                b.if_(inside, |b| b.add_assign(shift, c.one));
+                let short = b.compare(shift, c.one, Comparison::LessThan);
+                b.if_(short, |b| b.set(shift, c.one));
+                b.set(found, shift);
+            });
             let outcome = b.finish().execute()?;
             let found = match outcome.get(found)? {
                 0 => Found::AtAnchor,
@@ -629,84 +670,125 @@ pub fn terminal_tail_remote(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, E
     }
 }
 
-/// What the upward search in the program works with.
-struct Search {
+/// What the search in the program works with.
+struct Find<'a> {
+    /// A collapsed range at the anchor.
+    at: Reg<kind::TextRange>,
     /// A collapsed range at the start of the line before the anchor.
-    from: Reg<kind::TextRange>,
+    above: Reg<kind::TextRange>,
     /// Whether there is a line before the anchor.
     has_previous: Reg<kind::Bool>,
-    /// That line's text.
-    previous: Reg<kind::Str>,
-    /// The fingerprint's line.
-    line: [Reg<kind::Str>; 3],
-    /// Whether the line before is enough to find the line by
-    /// ([`Fingerprint::previous_tells`]).
-    previous_tells: bool,
-    /// The fingerprint's line before it.
+    /// The fingerprint sought.
+    fingerprint: Fingerprint<'a>,
+    /// The fingerprint's line before, as a program string.
     before: Reg<kind::Str>,
-    /// How many lines up to search.
-    limit: u32,
-    /// Set to how far up the fingerprint was found.
-    found: Reg<kind::Int>,
-    /// Set to the text of the line where it was found.
+    /// Set when the fingerprint was found.
+    by_text: Reg<kind::Bool>,
+    /// Set to the text of the anchor's line where it was found.
     found_line: Reg<kind::Str>,
-    /// Set to the line where it was found.
+    /// Set to that line.
     position: Reg<kind::TextRange>,
     /// Set to the text of the line above it.
     position_under: Reg<kind::Str>,
 }
 
-/// Emits the search upward from the line before the anchor for the line
-/// pair the fingerprint names, a line at a time, each read once.
-fn emit_search(b: &mut Builder, c: &Constants, search: &Search) {
-    b.if_(search.has_previous, |b| {
-        let row = b.text_range_clone(search.from);
-        let text = b.new_string("");
-        b.set(text, search.previous);
-        let shift = b.new_int(1);
-        let limit = b.int(i32::try_from(search.limit).unwrap_or(i32::MAX));
+/// Emits the search for the fingerprint by its text
+/// ([`Fingerprint::search`]): `FindText` backward over the whole text above
+/// the line before the anchor (above the anchor, for the anchor's own
+/// line), on a range the program made (one imported
+/// would be the caller's own, which the search would move), each match
+/// taken only when it starts its line and that line holds exactly the line
+/// sought (and, for the anchor's line sought by itself, lies under a line
+/// holding the fingerprint's line before), the nearest first, up to
+/// [`SEARCH_MATCHES`] matches. Nothing is emitted for a fingerprint of two
+/// blank lines, which is then not found.
+fn emit_find(b: &mut Builder, c: &Constants, find: &Find<'_>) {
+    let Some(sought) = find.fingerprint.search() else {
+        return;
+    };
+    let forms = find.fingerprint.line_forms().map(|form| b.string(&form));
+    b.if_(find.has_previous, |b| {
+        // The line before the anchor's is sought above the line before the
+        // anchor (it is not that line, or the fingerprint would be in
+        // place); the anchor's line, above the anchor.
+        let limit = match sought {
+            Sought::Previous(_) => find.above,
+            Sought::Line(_) => find.at,
+        };
+        let span = b.text_range_clone(limit);
+        let _ = b.text_range_move_endpoint_by_unit(span, c.start, c.document, c.back);
+        let needle = b.string(match sought {
+            Sought::Previous(text) | Sought::Line(text) => text,
+        });
+        let backward = b.bool(true);
+        let exact_case = b.bool(false);
+        let tries = b.new_int(0);
+        let most = b.int(i32::try_from(SEARCH_MATCHES).unwrap_or(i32::MAX));
         b.while_(
-            |b| b.compare(shift, limit, Comparison::LessThanOrEqual),
+            |b| b.compare(tries, most, Comparison::LessThan),
             |b| {
-                let here = b.text_range_clone(row);
-                let up = b.text_range_move(row, c.line, c.back);
-                let above = b.new_string("");
-                let moved = b.not_equal(up, c.zero);
-                b.if_(moved, |b| {
-                    let line = c.line_text(b, row);
-                    b.set(above, line);
-                });
-                let [line, with_feed, with_break] = search.line;
-                let is_line = b.equal(text, line);
-                let is_fed = b.equal(text, with_feed);
-                let is_broken = b.equal(text, with_break);
-                let is_line = b.or(is_line, is_fed);
-                let is_line = b.or(is_line, is_broken);
-                let is_line = if search.previous_tells {
-                    b.bool(true)
-                } else {
-                    is_line
-                };
-                let is_before = b.equal(above, search.before);
-                let both = b.and(is_line, is_before);
-                b.if_(both, |b| {
-                    let found = b.add(shift, c.zero);
-                    b.set(search.found, found);
-                    b.set(search.found_line, text);
-                    b.set(search.position, here);
-                    b.set(search.position_under, above);
-                    b.break_loop();
-                });
-                let top = b.not(moved);
-                b.if_(top, Builder::break_loop);
-                b.set(text, above);
-                b.add_assign(shift, c.one);
+                let hit = b.text_range_find_text(span, needle, backward, exact_case);
+                let none = b.is_null(hit);
+                b.if_(none, Builder::break_loop);
+                let row = b.text_range_clone(hit);
+                b.text_range_expand_to_enclosing_unit(row, c.line);
+                let order = b.text_range_compare_endpoints(row, c.start, hit, c.start);
+                let starts = b.equal(order, c.zero);
+                let text = b.text_range_get_text(row, c.all);
+                match sought {
+                    Sought::Previous(_) => {
+                        let same = b.equal(text, find.before);
+                        let taken = b.and(starts, same);
+                        b.if_(taken, |b| {
+                            let under = c.collapsed(b, row);
+                            let _ = b.text_range_move(under, c.line, c.one);
+                            let under_text = c.line_text(b, under);
+                            b.set(find.found_line, under_text);
+                            b.set(find.position, under);
+                            b.set(find.position_under, text);
+                            let yes = b.bool(true);
+                            b.set(find.by_text, yes);
+                            b.break_loop();
+                        });
+                    }
+                    Sought::Line(_) => {
+                        let [as_read, with_feed, with_break] = forms;
+                        let is_line = b.equal(text, as_read);
+                        let is_fed = b.equal(text, with_feed);
+                        let is_broken = b.equal(text, with_break);
+                        let is_line = b.or(is_line, is_fed);
+                        let is_line = b.or(is_line, is_broken);
+                        let candidate = b.and(starts, is_line);
+                        b.if_(candidate, |b| {
+                            let up = c.collapsed(b, row);
+                            let went = b.text_range_move(up, c.line, c.back);
+                            let over = b.new_string("");
+                            let has_over = b.not_equal(went, c.zero);
+                            b.if_(has_over, |b| {
+                                let line = c.line_text(b, up);
+                                b.set(over, line);
+                            });
+                            let under_before = b.equal(over, find.before);
+                            b.if_(under_before, |b| {
+                                b.set(find.found_line, text);
+                                b.set(find.position, row);
+                                b.set(find.position_under, over);
+                                let yes = b.bool(true);
+                                b.set(find.by_text, yes);
+                                b.break_loop();
+                            });
+                        });
+                    }
+                }
+                // Search again above this match.
+                b.text_range_move_endpoint_by_range(span, c.end, hit, c.start);
+                b.add_assign(tries, c.one);
             },
         );
     });
 }
 
-/// A string result, empty for a null one: an empty string may come back
+// A string result, empty for a null one: an empty string may come back
 /// as null.
 fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String, Error> {
     Ok(match outcome.get(reg.any())? {
@@ -817,58 +899,71 @@ fn classic_tail(
     ))
 }
 
-/// The search for the fingerprint by its text, for a fingerprint whose
-/// line before is not blank, so the anchor's line is the one under it
-/// whatever it holds: `FindText` backward for the line before (its
-/// [`Fingerprint::needle`]) over the lines the line-by-line search reads,
-/// from the start of the line `limit` lines above `above` (a collapsed
-/// range at the start of the line before the anchor) to `above`, each match
-/// taken only when it starts its line and that line holds exactly the
-/// fingerprint's line before, the nearest first. It finds what the search
-/// line by line finds, in one call per match rather than six per line:
-/// against Windows Terminal and the console host with a full scrollback,
-/// 65 calls and 6 to 10 milliseconds whether the fingerprint is 10 or 256
-/// lines up, where the search line by line took 104 calls at 10 lines and
-/// 1,580 calls and 80 to 170 milliseconds at 256 (2026-10-07).
+/// The search for the fingerprint by its text, the classic way, as
+/// [`emit_find`] emits it: `FindText` backward over the whole text above
+/// `above` (a collapsed range at the start of the line before the anchor
+/// `at`), or above the anchor for the anchor's own line, each match taken only when it starts its line and that line holds
+/// exactly the line sought, the nearest first, up to [`SEARCH_MATCHES`]
+/// matches. One call per match rather than six per line: against Windows
+/// Terminal and the console host with a full scrollback, 6 to 10
+/// milliseconds wherever the fingerprint is (2026-10-07).
 ///
 /// A call that failed (Windows Terminal has thrown from `FindText`) is
 /// [`ByText::Failed`], for the caller to search line by line instead.
-///
-/// The remote program does not use it: `FindText` on a range the program
-/// itself made (by `Clone`, or from the document range) cost UIA about 3
-/// milliseconds in both terminals, against 0.2 on an imported range, which
-/// the program cannot use, since changing an imported range changes the
-/// caller's; the program's search line by line takes 0.6 to 2.5
-/// milliseconds up to 256 lines.
 fn classic_find(
+    at: &IUIAutomationTextRange,
     above: &IUIAutomationTextRange,
     fingerprint: &Fingerprint<'_>,
-    limit: u32,
 ) -> ByText {
+    let Some(sought) = fingerprint.search() else {
+        return ByText::Absent;
+    };
     let search = || -> Result<ByText, Error> {
-        let span = above.clone_range()?;
-        let _ = span.move_endpoint_by_unit(
-            Endpoint::Start,
-            TextUnit_Line,
-            -i32::try_from(limit).unwrap_or(i32::MAX),
-        )?;
-        for _ in 0..=limit {
-            let Some(hit) = span.find_text(fingerprint.needle(), true)? else {
+        // Both are collapsed: a copy, its start moved to the text's start.
+        let span = match sought {
+            Sought::Previous(_) => above,
+            Sought::Line(_) => at,
+        }
+        .clone_range()?;
+        span.move_endpoint_by_unit(Endpoint::Start, TextUnit_Document, -1)?;
+        let needle = match sought {
+            Sought::Previous(text) | Sought::Line(text) => text,
+        };
+        for _ in 0..SEARCH_MATCHES {
+            let Some(hit) = span.find_text(needle, true)? else {
                 return Ok(ByText::Absent);
             };
-            let row = collapsed(&hit)?;
+            let row = hit.clone_range()?;
             row.expand(TextUnit_Line)?;
             let starts = row.compare_endpoints(Endpoint::Start, &hit, Endpoint::Start)? == 0;
             let text = String::from_utf16_lossy(&row.text(-1)?);
-            if starts && text == fingerprint.previous {
-                let under = collapsed(&row)?;
-                under.move_by(TextUnit_Line, 1)?;
-                let under_text = line_text(&under)?;
-                return Ok(ByText::Found {
-                    previous: text,
-                    line: under,
-                    text: under_text,
-                });
+            match sought {
+                Sought::Previous(_) if starts && text == fingerprint.previous => {
+                    let under = collapsed(&row)?;
+                    under.move_by(TextUnit_Line, 1)?;
+                    let under_text = line_text(&under)?;
+                    return Ok(ByText::Found {
+                        previous: text,
+                        line: under,
+                        text: under_text,
+                    });
+                }
+                Sought::Line(_) if starts && fingerprint.line_forms().contains(&text) => {
+                    let up = collapsed(&row)?;
+                    let over = if up.move_by(TextUnit_Line, -1)? == 0 {
+                        String::new()
+                    } else {
+                        line_text(&up)?
+                    };
+                    if over == fingerprint.previous {
+                        return Ok(ByText::Found {
+                            previous: over,
+                            line: row,
+                            text,
+                        });
+                    }
+                }
+                _ => {}
             }
             // Search again above this match.
             span.move_endpoint_to(Endpoint::End, &hit, Endpoint::Start)?;
@@ -887,7 +982,7 @@ enum ByText {
         line: IUIAutomationTextRange,
         text: String,
     },
-    /// Not within the lines searched.
+    /// Nowhere above the anchor, or not searchable by text.
     Absent,
     /// A call failed.
     Failed,
@@ -902,15 +997,48 @@ enum ByText {
 fn classic_distance(at: &IUIAutomationTextRange, walked: i32) -> Result<u32, Error> {
     let from_anchor = collapsed(at)?;
     let to_end = from_anchor.move_by(TextUnit_Line, FAR)?;
-    let own = collapsed(at)?;
+    let own = at.clone_range()?;
     own.expand(TextUnit_Line)?;
     let inside = own.compare_endpoints(Endpoint::Start, at, Endpoint::Start)? != 0;
     Ok(count_of((walked - to_end + i32::from(inside)).max(1)))
 }
 
+/// The walk up from `above` (a collapsed range at the start of the line
+/// before the anchor, whose text is `previous`) a line at a time, for a
+/// provider whose `FindText` failed: up to [`WALK_LINES`] lines, each read
+/// once, until a line under a line equal to the fingerprint's line before
+/// matches the fingerprint's line ([`Fingerprint::matches`]). The line
+/// found, its distance up, its text, and the text of the line above it.
+fn classic_walk(
+    above: &IUIAutomationTextRange,
+    previous: &str,
+    fingerprint: &Fingerprint<'_>,
+) -> Result<Option<(IUIAutomationTextRange, u32, String, String)>, Error> {
+    let row = above.clone_range()?;
+    let mut text = previous.to_owned();
+    for shift in 1..=WALK_LINES {
+        let here = row.clone_range()?;
+        let moved = row.move_by(TextUnit_Line, -1)? != 0;
+        let up = if moved {
+            line_text(&row)?
+        } else {
+            String::new()
+        };
+        if fingerprint.matches(&text) && up == fingerprint.previous {
+            return Ok(Some((here, shift, text, up)));
+        }
+        if !moved {
+            break;
+        }
+        text = up;
+    }
+    Ok(None)
+}
+
 /// The tail the classic way, the fallback and the reference: the same
 /// steps as the remote program, each a cross-process call, counted on the
-/// thread's `verbatim_uia::calls`.
+/// thread's `verbatim_uia::calls`, and, where the provider's `FindText`
+/// fails, a walk up line by line in its place.
 ///
 /// # Errors
 ///
@@ -949,43 +1077,29 @@ pub fn terminal_tail_classic(_uia: &Uia, query: &TailQuery<'_>) -> Result<Tail, 
             if previous == fingerprint.previous {
                 found = Found::AtAnchor;
                 found_line.clone_from(&line);
-            } else if let Some(answer) = (has_previous && fingerprint.previous_tells())
-                .then(|| classic_find(&above, &fingerprint, query.search_lines))
-                .filter(|answer| !matches!(answer, ByText::Failed))
-            {
-                if let ByText::Found {
-                    previous: row,
-                    line: under,
-                    text: under_text,
-                } = answer
-                {
-                    by_text = true;
-                    found_line = under_text;
-                    position = under;
-                    position_under = row;
-                }
             } else if has_previous {
-                let row = above.clone_range()?;
-                let mut text = previous.clone();
-                for shift in 1..=query.search_lines {
-                    let here = row.clone_range()?;
-                    let moved = row.move_by(TextUnit_Line, -1)? != 0;
-                    let up = if moved {
-                        line_text(&row)?
-                    } else {
-                        String::new()
-                    };
-                    if fingerprint.matches(&text) && up == fingerprint.previous {
-                        found = Found::Moved(shift);
-                        found_line = text;
-                        position = here;
-                        position_under = up;
-                        break;
+                match classic_find(&at, &above, &fingerprint) {
+                    ByText::Found {
+                        previous: row,
+                        line: under,
+                        text: under_text,
+                    } => {
+                        by_text = true;
+                        found_line = under_text;
+                        position = under;
+                        position_under = row;
                     }
-                    if !moved {
-                        break;
+                    ByText::Absent => {}
+                    ByText::Failed => {
+                        if let Some((here, shift, text, up)) =
+                            classic_walk(&above, &previous, &fingerprint)?
+                        {
+                            found = Found::Moved(shift);
+                            found_line = text;
+                            position = here;
+                            position_under = up;
+                        }
                     }
-                    text = up;
                 }
             }
             let (end, last, walked) =

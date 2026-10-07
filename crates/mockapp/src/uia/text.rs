@@ -24,7 +24,8 @@
 //! upright text reads as mixed), never underlined, its weight 700 in the
 //! fixture's bold stretches, 400 elsewhere, and mixed across both; every
 //! other text attribute is unsupported. A fixture can make the `IsItalic`
-//! read fail (`italic_fails`), as a provider that fails an attribute read.
+//! read fail (`italic_fails`), as a provider that fails an attribute read,
+//! and its `FindText` fail (`find_text_fails`), as Windows Terminal's has.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
 //! text operation's provider work exactly.
@@ -413,6 +414,9 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         ignorecase: windows_core::BOOL,
     ) -> WinResult<ITextRangeProvider> {
         hits::hit(Method::RangeFindText);
+        if formats_of(&self.tree, self.index).find_text_fails {
+            return Err(Error::from(E_FAIL));
+        }
         let all = text_of(&self.tree, self.index);
         let end = self.end.get().min(all.len());
         let start = self.start.get().min(end);

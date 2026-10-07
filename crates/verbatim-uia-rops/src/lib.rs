@@ -70,7 +70,7 @@ pub use opcode::{
 };
 pub use operation::{Operation, Outcome, Read, Value};
 pub use terminal::{
-    Fingerprint, Found, SEARCH_LINES, Tail, TailQuery, TailStart, TerminalTailFn, terminal_tail,
+    Fingerprint, Found, SEARCH_MATCHES, Tail, TailQuery, TailStart, TerminalTailFn, terminal_tail,
     terminal_tail_classic, terminal_tail_remote,
 };
 pub use text::{

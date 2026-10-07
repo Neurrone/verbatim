@@ -277,8 +277,7 @@ text that line and the line before it held) or afresh
 `TailStart::Text`, the element and its text pattern, from which the
 program reads the document range itself, so a fresh read is one round
 trip where the other is two), and says how
-many of the last lines to read and how far up to search (`SEARCH_LINES`,
-256). The answer, a `Tail`, gives the text as the provider gave it,
+many of the last lines to read. The answer, a `Tail`, gives the text as the provider gave it,
 padding and line breaks included, so comparisons are exact and the caller
 trims:
 
@@ -303,17 +302,37 @@ trims:
   the text having scrolled beneath the ranges.
 
 The program reads the anchor's line and the one before it. When the one
-before it differs from the fingerprint, it walks up a line at a time,
-reading each line once, until it finds a line under a line equal to the
-fingerprint's previous one. When that previous line is not blank, the
-line under it is the anchor's line whatever it holds now, as at the
-anchor itself: the last line read is often the one output was still being
-written to (the cursor's line, blank or half written), complete by the
-next read. Under a blank line the line must also equal the fingerprint's
-line (as read, or with the line feed or carriage return and line feed a
-last line gains once more text follows it). The strings compare inside
-the provider (an `Equal` comparison on two strings, verified against
-mockapp). The count is a `Move` by a million lines from the found line,
+before it differs from the fingerprint, it searches the whole text above
+for the fingerprint by its text, with `FindText` backward, nearest first,
+on a range the program made (a copy of a collapsed range with its start
+moved to the text's start: `FindText` on an imported range would move the
+caller's own anchor). There is no bound in lines, decided with Dickson on
+2026-10-07 for a predictable cost (`docs/performance.md`, "A terminal's
+upward search"); only matches are bounded, `SEARCH_MATCHES` (64) of them
+checked before the fingerprint counts as not found. What is sought
+(`Fingerprint::search`), without its trailing white space and line break,
+since Windows Terminal's `FindText` matches neither and threw an exception
+searching for padding:
+
+- When the fingerprint's line before is not blank, that line, above the
+  line before the anchor: a match counts when it starts its line and the
+  line holds exactly the fingerprint's line before, and the line under it
+  is the anchor's line whatever it holds now, as at the anchor itself:
+  the last line read is often the one output was still being written to
+  (the cursor's line, blank or half written), complete by the next read.
+- Otherwise the anchor's line itself, above the anchor: a match counts
+  when it starts its line, the line equals the fingerprint's line (as
+  read, or with the line feed or carriage return and line feed a last
+  line gains once more text follows it), and the line above it holds
+  exactly the fingerprint's blank line before.
+- Two blank lines are not searched for: no text search can find them, and
+  the fingerprint is not found.
+
+The distance up, `Moved(n)`, is counted as a walk line by line would count
+it: the walk to the end of the text from where the fingerprint was found
+less the same walk from the anchor, one more when the anchor is inside its
+line. The strings compare inside the provider (an `Equal` comparison on
+two strings, verified against mockapp). The count is a `Move` by a million lines from the found line,
 and the last line is found from where that walk stopped: the line there,
 or, when the walk stopped past the final line break, the one before; less
 one when the walk ended past the last line's start, as the terminals'
@@ -336,35 +355,33 @@ read one call at a time came back twice or out of order; the outpost sets
 an unsettled read aside, and the text change that disturbed it causes the
 next read.
 The classic implementation makes the same calls one at a time, through
-`verbatim-uia`'s text wrappers, so each is counted, but for one step: it
-searches for a fingerprint whose line before is not blank by its text.
-`FindText` backward for that line, without its padding and line break
-(`Fingerprint::needle`: Windows Terminal matches neither, and threw an
-exception searching for padding), over the lines the walk would read,
-each match taken only when it starts its line and the line holds exactly
-the fingerprint's line before, nearest first; the distance up is the walk
-to the end of the text from where it was found less the same walk from
-the anchor. It finds what the walk finds (mockapp's
-`a_fingerprint_found_by_text_is_the_one_found_line_by_line` checks it
-past lines that hold or start with the same text), and a failed
-`FindText` falls back to the walk. Measured against both terminals with a
-full scrollback on 2026-10-07, it costs 65 calls and 6 to 10 milliseconds
-whether the fingerprint is 10, 100, or 256 lines up, where the walk took
-104, 644, and 1,580 calls and up to 170 milliseconds. The remote program
-keeps the walk: `FindText` on a range the program made itself (a clone,
-or a document range) cost UIA about 3 milliseconds in both terminals,
-against 0.2 on an imported range, and a program cannot search an
-imported range without changing the caller's own; the walk takes 0.5 to
-2.5 milliseconds up to 256 lines. A range from before
+`verbatim-uia`'s text wrappers, so each is counted. Where the provider's
+`FindText` fails, the program fails and the classic implementation
+answers for that call; its `FindText` fails the same way, and it walks up
+from the line before the anchor a line at a time instead, reading each
+line once, up to 256 lines, until it finds a line under a line equal to
+the fingerprint's line before (the anchor's line, under a blank one, must
+also equal the fingerprint's line). Measured against both terminals with a
+full scrollback on 2026-10-07, the search by text costs 6 to 10
+milliseconds classically wherever the fingerprint is, and about 3 more
+remotely for `FindText` on a range the program made (0.2 on an imported
+one, which a program cannot search without changing the caller's own),
+where the walk line by line took 104, 644, and 1,580 calls and up to 170
+milliseconds classically at 10, 100, and 256 lines, and 0.5 to 2.5
+milliseconds remotely up to 256 lines, the bound it then had. A range
+from before
 a terminal switched to or from its alternate screen fails to compare
 with the text; the program then fails, the classic implementation fails
 the same way, and the caller reads afresh.
 
 Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`), the
 two implementations give the same answer afresh, after lines written past
-the anchor, after the oldest lines were discarded beneath it, and after
-the text was cleared, and a read that finds new output costs one round
-trip remotely (`docs/performance.md`, "A terminal output line").
+the anchor, after the oldest lines were discarded beneath it (by 300
+lines, beyond the 256 the search once covered), past matches that are
+part of a longer line or under the wrong line, for an anchor's line under
+a blank line, and after the text was cleared; a provider whose `FindText`
+fails is answered by the walk; and a read that finds new output costs one
+round trip remotely (`docs/performance.md`, "A terminal output line").
 
 ## Layer 3: the caret read
 
