@@ -312,7 +312,22 @@ run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
 own detach code sometimes hangs or crashes in a process that has connected
-to providers; the file's comment gives the evidence. `uia_tree.rs` and `msaa_tree.rs` walk
+to providers; the file's comment gives the evidence. The two that pin
+the calls mockapp's providers answer, `call_counts.rs` and `terminal.rs`,
+run each test isolated (`harness::run_isolated`): the runner starts the
+binary again for each test, with `--isolated-test` and its name, on a
+new desktop made for it, and reports its result. A provider cannot tell
+which client called it (UIA's calls reach it from UI Automation's own
+threads in mockapp, with nothing of the client's identity), and other
+clients call mockapp at times of their own: a screen reader or another
+test agent answering its window's creation, and this binary's other
+tests, whose desktop-wide registrations read every new window. A window
+and its events are seen only from its own desktop, so on its own desktop
+the test is the only client. The outpost those tests run
+(`tests/common/outpost.rs`) reads arbitration's time from the test,
+which stands still unless the test moves it on (`pass_time`), so a
+window's verdict of no UIA provider runs out, and its probe's
+`WM_GETOBJECT` is made, only where the test says. `uia_tree.rs` and `msaa_tree.rs` walk
 a rich scripted tree through each real client stack and assert normalized
 roles, names, values, states, and detail properties match the fixture —
 every node's details must read back exactly what was scripted, and

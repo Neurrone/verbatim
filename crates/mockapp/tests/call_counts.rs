@@ -34,9 +34,20 @@
 //! The text requests run the outpost's text functions on this thread with
 //! a text source built as the worker builds it.
 //!
-//! mockapp's focus moves with `set-focus`, which raises no event, so no
-//! other client on the machine (a running screen reader, say) calls into
-//! mockapp while an operation is measured.
+//! A provider cannot tell which client called it, so the hits are kept to
+//! the client under test by isolation: each test runs in a process of its
+//! own on a desktop of its own (`harness::run_isolated`), where no other
+//! client, a running screen reader, another test agent, or this binary's
+//! other tests, sees mockapp's window or any event about it. mockapp's
+//! focus moves with `set-focus`, which raises no event, so even the test's
+//! own clients' event registrations are not called into while an
+//! operation is measured.
+//!
+//! An MSAA window's verdict of no UIA provider runs out after its lifetime,
+//! and the window's next event probes it again with a `WM_GETOBJECT`. The
+//! outpost reads that time from the test (`OutpostUnderTest::pass_time`),
+//! so every probe here is made where the test says, whatever the test's own
+//! speed, and every `WM_GETOBJECT` is pinned.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -55,6 +66,7 @@ use verbatim_model::{
     TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit, Theme,
 };
 use verbatim_outpost::OutpostOptions;
+use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::text::edit::EditText;
@@ -285,6 +297,53 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
+    // The window's verdict of no UIA provider runs out once its lifetime
+    // has passed by the outpost's clock, which the test moves: the next
+    // focus probes the window again, and the arrow back to the second item
+    // then finds the verdict renewed. The two differ by the probe alone,
+    // one window message and one `WM_GETOBJECT`. Each reads one role more
+    // than the arrow above, whose previous focus was reached from the list
+    // rather than by an arrow.
+    outpost.pass_time(NEGATIVE_VERDICT_LIFETIME);
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item1", ITEM_ONE));
+    assert_eq!(reported.chain(), [Some("Options"), Some("One")]);
+    ratchet.check(
+        "MSAA arrow to the previous list item, the probe renewed",
+        &cost,
+        calls(0, 32, 1),
+        &[
+            ("WM_GETOBJECT", 2),
+            ("accParent", 14),
+            ("get_accChild", 1),
+            ("get_accName", 3),
+            ("get_accValue", 3),
+            ("get_accDescription", 3),
+            ("get_accRole", 4),
+            ("get_accState", 3),
+            ("get_accKeyboardShortcut", 3),
+            ("accLocation", 3),
+        ],
+    );
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    ratchet.check(
+        "MSAA arrow to the next list item, the probe kept",
+        &cost,
+        calls(0, 32, 0),
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 14),
+            ("get_accChild", 1),
+            ("get_accName", 3),
+            ("get_accValue", 3),
+            ("get_accDescription", 3),
+            ("get_accRole", 4),
+            ("get_accState", 3),
+            ("get_accKeyboardShortcut", 3),
+            ("accLocation", 3),
+        ],
+    );
+
     // The same focus event again: NVDA drops a focus event naming the
     // address of the focus it last queued before reading anything of it
     // but the role its class choice needs, and the outpost says nothing.
@@ -296,10 +355,15 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA focus repeated",
         &Cost {
             calls: CallCounts::default(),
-            hits: hits_without_probe(hwnd),
+            hits: common::read_hits(hwnd),
         },
         CallCounts::default(),
-        &[("accParent", 1), ("get_accChild", 1), ("get_accRole", 1)],
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accRole", 1),
+        ],
     );
 
     // A focus event on an object that neither has the focused state nor
@@ -313,10 +377,11 @@ fn msaa_focus_changes_cost_exactly() {
         "MSAA focus without the focused state",
         &Cost {
             calls: CallCounts::default(),
-            hits: hits_without_probe(hwnd),
+            hits: common::read_hits(hwnd),
         },
         CallCounts::default(),
         &[
+            ("WM_GETOBJECT", 1),
             ("accParent", 6),
             ("get_accChild", 1),
             ("get_accRole", 1),
@@ -345,16 +410,15 @@ fn msaa_focus_changes_cost_exactly() {
         other => panic!("the outpost said {other:?}, not the focus's value change"),
     };
     outpost.settled();
-    // `WM_GETOBJECT` is left out (`hits_without_probe`).
-    let hits = hits_without_probe(hwnd);
     ratchet.check(
         "MSAA value changes off and on the focus",
         &Cost {
             calls: calls_made,
-            hits,
+            hits: common::read_hits(hwnd),
         },
         calls(0, 11, 0),
         &[
+            ("WM_GETOBJECT", 2),
             ("accParent", 2),
             ("get_accChild", 2),
             ("get_accName", 1),
@@ -369,17 +433,6 @@ fn msaa_focus_changes_cost_exactly() {
 
     ratchet.finish();
     app.quit();
-}
-
-/// mockapp's hits, but for `WM_GETOBJECT`: an event's window is checked
-/// against its backend, whose probe, answered with it, is renewed only once
-/// the last one is half a second old, which depends on the time the test
-/// has taken.
-fn hits_without_probe(hwnd: HWND) -> Vec<(&'static str, u32)> {
-    common::read_hits(hwnd)
-        .into_iter()
-        .filter(|(method, _)| *method != "WM_GETOBJECT")
-        .collect()
 }
 
 /// The fact the listener delivers for an MSAA focus event on mockapp's
@@ -2707,7 +2760,7 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
         (
             "uia_mixed_stretch_costs_exactly",

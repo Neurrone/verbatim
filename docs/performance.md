@@ -20,6 +20,14 @@ answered. An exact count is a ratchet: a change that adds a call fails CI,
 and a change that removes one must lower the number in the test and here,
 in the same commit.
 
+The provider's counts are exact only if the client under test is the only
+one calling: a provider cannot tell its callers apart (UIA's calls reach it
+from UI Automation's own threads in its process), and a screen reader,
+another test agent, or another test's client answers mockapp's window at
+times of its own. So each ratchet test runs alone in a process on a
+desktop of its own (`docs/crates/mockapp.md`), where nothing else sees
+mockapp's windows or their events.
+
 ## What counts as a call
 
 A call counts when it reaches the application's process. There are three
@@ -447,8 +455,19 @@ reading any of its properties.
   focus too (mockapp answers `get_accChild`, `accParent`, and
   `get_accRole` once each for it), and the focus's change 11 MSAA calls.
   A progress bar off the focus is then read in full, as NVDA reads one.
-  `WM_GETOBJECT` is not pinned here, as the window's backend probe it
-  answers is renewed at a time that depends on how long the test took.
+  mockapp answers a `WM_GETOBJECT` for each event's acquisition, 2.
+
+The window's verdict of no UIA provider is renewed by time, every half
+second, as NVDA renews it: nothing tells a client that a window has begun
+to answer the probe, so no event can drive it. The ratchet's outpost reads
+that time from the test, which holds it still and moves it on only where
+it pins a renewal, so no count depends on how long the test took. A
+steady-state focus whose window's verdict has run out costs the probe
+again, 1 window message and 1 `WM_GETOBJECT` more than the next focus,
+which finds the verdict renewed. (Both are arrows between list items whose
+previous focus was itself reached by an arrow, 32 MSAA calls each: one
+`accRole` more than the arrow above, whose previous focus was reached from
+the list. Why is not yet known.)
 
 ### A repeated or unfocused focus event, MSAA
 
@@ -458,12 +477,13 @@ reading any of its properties.
   package (2026-10-07) it was read in full with its ancestors and the
   reducer found it the focus already, 29 MSAA calls; today only its role
   is read, for NVDA's list redirect, and mockapp answers 3 provider calls
-  besides the probe.
+  and the acquisition's `WM_GETOBJECT`.
 - A focus event on an object that neither has the focused state nor is
   inside one that has: NVDA reads the states first. Before, it was read
   in full with its ancestors, then dropped; today its role and state and
   each ancestor's state are read, and mockapp answers 11 provider calls
-  besides the probe, for an object two levels below its root.
+  and the acquisition's `WM_GETOBJECT`, for an object two levels below its
+  root.
 
 ### Entering a dialog, MSAA
 

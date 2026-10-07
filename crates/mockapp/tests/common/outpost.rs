@@ -8,10 +8,17 @@
 //! ([`Outpost::with_focused_element_reader`]): the test sets the element
 //! mockapp reports focused, and the outpost's read of it counts as the one
 //! call the system read is.
+//!
+//! Its arbitration reads the time from the test too
+//! ([`Outpost::set_arbitration_clock`]): the time stands still unless the
+//! test moves it on ([`OutpostUnderTest::pass_time`]), so a window's verdict
+//! of no UIA provider runs out, and its probe is made again, only where the
+//! test says, however long the test takes.
 
 use std::io::Write;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use verbatim_model::{
     CallCounts, CallKind, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
@@ -85,6 +92,8 @@ pub struct OutpostUnderTest {
     pub messages: Receiver<OutpostToSupervisor>,
     next_request: u64,
     pub focus: FocusSlot,
+    /// The time the outpost's arbitration reads.
+    time: Arc<Mutex<Instant>>,
 }
 
 impl OutpostUnderTest {
@@ -115,11 +124,17 @@ impl OutpostUnderTest {
         });
         let outpost =
             Outpost::with_focused_element_reader(Box::new(sink), pid, options, read_focus);
+        let time = Arc::new(Mutex::new(Instant::now()));
+        let clock = Arc::clone(&time);
+        outpost.set_arbitration_clock(Arc::new(move || {
+            *clock.lock().unwrap_or_else(PoisonError::into_inner)
+        }));
         let under_test = Self {
             outpost,
             messages,
             next_request: 1,
             focus,
+            time,
         };
         assert_eq!(
             under_test.next(),
@@ -129,6 +144,11 @@ impl OutpostUnderTest {
             }
         );
         under_test
+    }
+
+    /// Moves the time the outpost's arbitration reads on by `by`.
+    pub fn pass_time(&self, by: Duration) {
+        *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
     }
 
     /// The outpost's next message.
