@@ -334,6 +334,57 @@ fn msaa_dialog_text_costs_exactly() {
     app.quit();
 }
 
+/// A focus on an item of a real tree view, comctl32's under a Windows Forms
+/// class name (`tests/fixtures/tree_view.json`), read through comctl32's
+/// MSAA implementation and the control's `TVM_*` messages: the item, its
+/// logical parent, the tree view, and mockapp's scripted root above it,
+/// whose hits are the provider calls counted here. The comctl32 objects'
+/// own calls are the client's.
+fn msaa_tree_view_costs_exactly() {
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-tree-view");
+    let app = common::spawn("tree_view.json", "msaa", &title);
+    let host = common::find_window(&title);
+    let tree = common::tree_view::tree_view(host);
+    let outpost = OutpostUnderTest::new(app.pid());
+    let mut ratchet = Ratchet::default();
+
+    common::reset_hits(host);
+    let reported = common::tree_view::focus_item(&outpost, tree, "Disks");
+    assert_eq!(
+        reported.chain(),
+        [
+            Some("Mockapp Tree View Fixture"),
+            None,
+            Some("Hardware"),
+            Some("Disks")
+        ]
+    );
+    let cost = Cost {
+        calls: reported.calls,
+        hits: common::read_hits(host),
+    };
+    ratchet.check(
+        "MSAA focus on a tree view item",
+        &cost,
+        calls(0, 47, 15),
+        &[
+            ("WM_GETOBJECT", 4),
+            ("accParent", 4),
+            ("get_accName", 2),
+            ("get_accValue", 2),
+            ("get_accDescription", 2),
+            ("get_accRole", 2),
+            ("get_accState", 2),
+            ("get_accKeyboardShortcut", 2),
+            ("accLocation", 2),
+        ],
+    );
+
+    ratchet.finish();
+    app.quit();
+}
+
 /// A UIA message box's text, gathered as the outpost's worker gathers it
 /// for a dialog the focus newly entered (`describe_dialogs` in
 /// `verbatim-outpost`'s `read.rs`): one call reads the dialog's children
@@ -2500,6 +2551,7 @@ fn main() {
             "msaa_dialog_text_costs_exactly",
             msaa_dialog_text_costs_exactly,
         ),
+        ("msaa_tree_view_costs_exactly", msaa_tree_view_costs_exactly),
         (
             "uia_dialog_text_costs_exactly",
             uia_dialog_text_costs_exactly,

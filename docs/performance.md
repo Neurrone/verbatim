@@ -371,6 +371,21 @@ window, `WindowFromAccessibleObject`).
   the same reasons; mockapp answered 38 provider calls.
 - Target: 18.
 
+### A focus on a tree view item, MSAA
+
+A focus on a nested item of a real comctl32 tree view registered under a
+Windows Forms class name (mockapp's `tests/fixtures/tree_view.json`, the
+`msaa_tree_view_costs_exactly` ratchet), from a fresh outpost: the item,
+its logical parent found through the control's messages, the tree view,
+its window object, and mockapp's scripted root.
+
+- Before the MSAA work package (2026-10-07), once the Windows Forms class
+  was recognized at all: 47 MSAA calls and 15 window messages. The window
+  messages are the probe of mockapp's window (1), the item's position
+  (mapping its child id to its item, then counting its siblings both ways,
+  4), its parent (3), and the parent's own position (5) and parent (2).
+  mockapp answered 22 provider calls for its root.
+
 ### Entering a dialog, MSAA
 
 A focus moves into a message box, a dialog holding its question as static

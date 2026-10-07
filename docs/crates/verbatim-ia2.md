@@ -163,6 +163,15 @@ Public API:
   parent-then-sibling-then-child navigation between the controls of a
   dialog work: MSAA's own answers there are the control's scroll-bar and
   client pieces, not the sibling controls.
+- `class` — `normalize_class_name(raw)`, a window class name as NVDA
+  normalizes it before matching any class-based rule: a Windows Forms
+  name (`WindowsForms10.SysTreeView32.app.0.…`) cut down to the control
+  class it wraps, an `ATL:` prefix dropped, and the result looked up in
+  NVDA's class map; and `normalized_class_of(hwnd)`, the same for a
+  window. Every class-based rule in this crate compares the normalized
+  name, so a Windows Forms tree view gets the `SysTreeView32` handling
+  below and a Windows Forms list view the `SysListView32` position. The
+  outpost's backend arbitration uses the same function.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, following NVDA's MSAA
   role and state tables (so `STATE_SYSTEM_DEFAULT` is dropped and

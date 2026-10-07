@@ -34,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, TreeNode};
 
 use crate::accessible::{Accessible, Related};
+use crate::class::normalized_class_of;
 use crate::com::{CHILDID_SELF, non_empty, visible_text};
 use crate::map::{role_from_msaa, states_from_msaa};
 use crate::registry::{Found, Held, MsaaKey, NodeIdRegistry};
@@ -384,11 +385,13 @@ pub fn ancestor_chain_until(
 }
 
 /// Returns whether `hwnd` is a `SysTreeView32` common control (comctl32's
-/// tree view) — see this module's top doc comment for why its items need
-/// the `TVM_*`-based navigation below instead of `accNavigate`/`accParent`.
-/// Reading the class name is a local call, safe even against a hung window.
+/// tree view), by its normalized class name, so a Windows Forms tree view
+/// counts, as NVDA's class map matches it — see this module's top doc
+/// comment for why its items need the `TVM_*`-based navigation below
+/// instead of `accNavigate`/`accParent`. Reading the class name is a local
+/// call, safe even against a hung window.
 fn is_systreeview32(hwnd: isize) -> bool {
-    window::class_name(hwnd) == "SysTreeView32"
+    normalized_class_of(hwnd) == "SysTreeView32"
 }
 
 /// Maps an MSAA child id to its `HTREEITEM`, via `TVM_MAPACCIDTOHTREEITEM`,
@@ -1199,7 +1202,7 @@ fn position_of(hwnd: isize, child_id: i32, role: Role) -> (Option<u32>, Option<u
         return (None, None);
     }
     match role {
-        Role::ListItem if window::class_name(hwnd).contains("SysListView32") => {
+        Role::ListItem if normalized_class_of(hwnd) == "SysListView32" => {
             let items = window::list_view_item_count(hwnd);
             let items = u32::try_from(items).ok().filter(|&items| items > 0);
             (

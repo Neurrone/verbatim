@@ -63,6 +63,10 @@ impl std::error::Error for FixtureError {}
 /// The raw JSON shape, deserialized before role and state names are
 /// validated against the normalized vocabulary.
 #[derive(Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent fixture option"
+)]
 struct RawNode {
     id: String,
     role: String,
@@ -107,6 +111,12 @@ struct RawNode {
     #[serde(default)]
     backward_moves_positive: bool,
     #[serde(default)]
+    native: Option<String>,
+    #[serde(default)]
+    window_class: Option<String>,
+    #[serde(default)]
+    state_images: bool,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -144,6 +154,10 @@ pub(crate) struct Styles {
 /// One parsed, validated fixture node, still shaped as a tree (not yet an
 /// arena); [`crate::tree::Tree::build`] flattens it.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent fixture option"
+)]
 pub(crate) struct FixtureNode {
     pub(crate) id: String,
     pub(crate) role: Role,
@@ -185,7 +199,36 @@ pub(crate) struct FixtureNode {
     /// Whether a backward `Move` or `MoveEndpointByUnit` answers with a
     /// positive count, as some providers do.
     pub(crate) backward_moves_positive: bool,
+    /// The real control the node becomes for the MSAA backend instead of a
+    /// scripted node: `tree_view` for a comctl32 tree view
+    /// ([`crate::tree_view`]).
+    pub(crate) native: Option<String>,
+    /// The window class a real control is registered under, a superclass
+    /// of the comctl32 one, as Windows Forms names its controls.
+    pub(crate) window_class: Option<String>,
+    /// Whether a real tree view gives its items state images, as
+    /// applications that draw their own check boxes do.
+    pub(crate) state_images: bool,
     pub(crate) children: Vec<FixtureNode>,
+}
+
+impl FixtureNode {
+    /// Takes the nodes that become real controls out of the tree, depth
+    /// first: they are created as child windows rather than served as
+    /// scripted nodes.
+    pub(crate) fn take_native(&mut self) -> Vec<FixtureNode> {
+        let mut taken = Vec::new();
+        let children = std::mem::take(&mut self.children);
+        for mut child in children {
+            if child.native.is_some() {
+                taken.push(child);
+            } else {
+                taken.extend(child.take_native());
+                self.children.push(child);
+            }
+        }
+        taken
+    }
 }
 
 /// Loads and validates a fixture file.
@@ -266,6 +309,9 @@ fn convert(
         cultures: raw.cultures,
         styles: raw.styles,
         backward_moves_positive: raw.backward_moves_positive,
+        native: raw.native,
+        window_class: raw.window_class,
+        state_images: raw.state_images,
         children,
     })
 }

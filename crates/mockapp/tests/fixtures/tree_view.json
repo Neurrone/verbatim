@@ -1,0 +1,38 @@
+{
+  "id": "root",
+  "role": "pane",
+  "name": "Mockapp Tree View Fixture",
+  "states": ["focused"],
+  "children": [
+    {
+      "id": "tree",
+      "role": "tree",
+      "native": "tree_view",
+      "window_class": "WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1",
+      "state_images": true,
+      "children": [
+        {
+          "id": "hardware",
+          "role": "tree_item",
+          "name": "Hardware",
+          "states": ["expanded", "mixed"],
+          "children": [
+            { "id": "disks", "role": "tree_item", "name": "Disks", "states": ["checked", "selected"] },
+            { "id": "display", "role": "tree_item", "name": "Display" }
+          ]
+        },
+        {
+          "id": "software",
+          "role": "tree_item",
+          "name": "Software",
+          "children": [
+            { "id": "drivers", "role": "tree_item", "name": "Drivers" },
+            { "id": "services", "role": "tree_item", "name": "Services" },
+            { "id": "tasks", "role": "tree_item", "name": "Tasks" }
+          ]
+        },
+        { "id": "settings", "role": "tree_item", "name": "Settings" }
+      ]
+    }
+  ]
+}

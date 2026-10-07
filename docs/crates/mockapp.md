@@ -37,8 +37,31 @@ the UIA backend the node serves the text pattern over it, and on the MSAA
 backend, since MSAA has no text interface, mockapp creates a real
 multi-line Win32 `EDIT` control holding the first such text, its line
 feeds made carriage return and line feed pairs, read through the edit
-control's own messages), and `children` (nested nodes). The root
+control's own messages), an optional `native` (on the MSAA backend, the
+node is a real control rather than a scripted node: `tree_view` makes a
+comctl32 tree view, below, with its own optional `window_class` and
+`state_images`), and `children` (nested nodes). The root
 node conceptually corresponds to the window itself.
+
+A `native` tree view (`tree_view.rs`, `tests/fixtures/tree_view.json`) is
+a child window of the host window whose items are the node's `tree_item`
+children, nested as they are, read through comctl32's own MSAA
+implementation and its `TVM_*` messages, as Verbatim reads real
+applications' tree views. Its `window_class` registers it under another
+name first, a superclass whose `WM_GETOBJECT` answers the client object
+with comctl32's tree view proxy (`CreateStdAccessibleProxyW`), as Windows
+Forms names and wraps its tree view. With `state_images`, every item gets
+a state image, as a tree view that draws its own check boxes has:
+unchecked, or checked or partly checked by the item's `checked` or
+`mixed` state. (A tree view with comctl32's own check boxes,
+`TVS_CHECKBOXES`, reports its items to MSAA as check boxes instead.) An
+item's `expanded` state expands it, and `selected` selects it. mockapp's
+manifest (`mockapp.exe.manifest`, embedded by `build.rs`) declares Common
+Controls version 6, whose tree view maps MSAA child ids to items. A test
+reaches the items through the control's messages, which take plain
+integers (`tests/common/tree_view.rs`), and gives the scripted root the
+focused state, so a focus handed to an outpost passes NVDA's
+focused-state check without the control taking the keyboard focus.
 `fixture::role_from_fixture_str` and `state_from_fixture_str` hold the
 complete name tables.
 
@@ -170,6 +193,7 @@ its crate-internal modules are the reviewable surface:
 - `edit` — the MSAA backend's real edit control: created inside the host
   window, found by class, and selected with `EM_SETSEL` on the window
   thread.
+- `tree_view` — the MSAA backend's real tree view, described above.
 - `stdin` — command parsing and the reader thread.
 - `hits` — the provider-side hit counters: one atomic per provider method
   (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,

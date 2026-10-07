@@ -778,7 +778,20 @@ verified.
   E2E; commit d3e13b7).
 - SysTreeView32 via TVM messages, Tree/TreeItem roles. NVDA:
   control-specific overlay. Verbatim: **matched (verified)**
-  (system_information_tree E2E; commits 809214d, 1078614).
+  (system_information_tree E2E; commits 809214d, 1078614). A Windows
+  Forms tree view (`WindowsForms10.SysTreeView32.app.…`) gets the same
+  handling, since NVDA matches its class rules against the normalized
+  class name: Verbatim compared the raw name, so such a tree's items had
+  no position, flat navigation, and no expanded count. **Matched since
+  2026-10-07**: every class rule in `verbatim-ia2` compares the normalized
+  name (`native_controls` mockapp test, a real comctl32 tree view under a
+  Windows Forms class name; the end-to-end scenario is still to be
+  written). **Different:** a tree view with comctl32's own check boxes
+  (`TVS_CHECKBOXES`) reports its items to MSAA as check boxes, which NVDA
+  gives no tree view handling at all, reading them as plain check boxes
+  with MSAA's flat navigation; Verbatim still navigates and walks them
+  through the control's messages, which reads more usefully and changes
+  nothing spoken on focus.
 - Navigator death recovery: NVDA reports failure and stays; Verbatim
   re-seeds navigator from focus on `Gone` and announces it —
   **different (documented in [verbatim-core](crates/verbatim-core.md))**; NVDA-side

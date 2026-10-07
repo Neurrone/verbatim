@@ -50,6 +50,10 @@ name = "instruction_limit"
 harness = false
 
 [[test]]
+name = "native_controls"
+harness = false
+
+[[test]]
 name = "remote_ops"
 harness = false
 
