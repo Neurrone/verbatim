@@ -985,18 +985,22 @@ mod tests {
                 ..IndicationSetting::default()
             },
         );
-        let problems = theme.problems();
-        assert!(problems.contains(&ThemeProblem::SoundOnlyWithoutSound {
-            indication: Indication::Role(Role::Link)
-        }));
-        assert!(problems.contains(&ThemeProblem::UnknownVoiceStyle {
-            indication: Indication::Role(Role::Link),
-            style: "whisper".to_owned()
-        }));
-        assert!(problems.contains(&ThemeProblem::InvalidSoundName {
-            indication: Indication::Blank,
-            file: "../escape.wav".to_owned()
-        }));
+        assert_eq!(
+            theme.problems(),
+            vec![
+                ThemeProblem::SoundOnlyWithoutSound {
+                    indication: Indication::Role(Role::Link)
+                },
+                ThemeProblem::UnknownVoiceStyle {
+                    indication: Indication::Role(Role::Link),
+                    style: "whisper".to_owned()
+                },
+                ThemeProblem::InvalidSoundName {
+                    indication: Indication::Blank,
+                    file: "../escape.wav".to_owned()
+                },
+            ]
+        );
     }
 
     #[test]

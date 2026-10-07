@@ -70,8 +70,9 @@ Public API:
   keeping every record parsed before the cut. `crates/verbatim-core/tests/
   replay_fixture.rs` commits a dump captured from a scripted focus-change,
   value-change, states-change session under `tests/fixtures/` and replays
-  it on every test run, asserting the per-step effect counts match what
-  was recorded and that a second replay is identical — the template every
+  it on every test run, asserting that each step's effects are exactly
+  the ones the test states, that their counts match what the dump
+  recorded, and that a second replay is identical — the template every
   future live-dump regression follows; its `regenerate_fixture` test
   (`#[ignore]`d) is how the fixture was produced and how an intentional
   change to the scripted shapes regenerates it.

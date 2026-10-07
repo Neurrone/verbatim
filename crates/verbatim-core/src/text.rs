@@ -569,8 +569,13 @@ mod tests {
                 UtteranceSegment::new(SegmentContent::CharacterDescription("b".into())),
             ]
         );
-        // An emoji sequence is one character.
-        assert_eq!(spelled("\u{1F469}\u{200D}\u{1F4BB}", false, None).len(), 1);
+        // An emoji sequence is one character, spoken by its name.
+        assert_eq!(
+            spelled("\u{1F469}\u{200D}\u{1F4BB}", false, None),
+            vec![UtteranceSegment::new(SegmentContent::Character(
+                "\u{1F469}\u{200D}\u{1F4BB}".into()
+            ))]
+        );
     }
 
     #[test]

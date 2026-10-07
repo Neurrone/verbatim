@@ -195,17 +195,28 @@ mod tests {
 
     #[test]
     fn writes_a_valid_wav_with_silence_where_nothing_played() {
-        let dir = std::env::temp_dir().join(format!("verbatim-wav-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "verbatim-wav-silence-where-nothing-played-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&dir).unwrap();
         let path = dir.join("audio.wav");
         let format = DeviceFormat {
             sample_rate: 1_000,
             channels: 1,
             buffer_frames: 10,
         };
+        let unix_ms = || {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        };
         // The writer, as the recorder's thread runs it, given the times the
         // blocks finished playing: one at the start, one 300 ms in.
+        let before = unix_ms();
         let mut writer = Writer::create(&path).unwrap();
+        let after = unix_ms();
         let started = writer.started;
         writer.played(&[0.5; 100], format, started);
         writer.played(
@@ -215,29 +226,39 @@ mod tests {
         );
         drop(writer);
 
-        let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(&bytes[0..4], b"RIFF");
-        assert_eq!(&bytes[36..40], b"data");
-        let data = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
-        assert_eq!(
-            data,
-            bytes.len() - 44,
-            "the header matches the data written"
-        );
-        let frames = data / 2;
-        // The second block, received 300 ms in, is placed to end there:
-        // 100 frames, 100 frames of silence, then 100 frames.
-        assert_eq!(frames, 300, "silence fills the pause");
-        let sample =
-            |frame: usize| i16::from_le_bytes([bytes[44 + frame * 2], bytes[45 + frame * 2]]);
-        assert!(sample(50) > 0, "the first block is audio");
-        assert_eq!(sample(150), 0, "the pause is silence");
-        assert!(sample(frames - 1) > 0, "the second block is audio");
-        let start = std::fs::read_to_string(dir.join("audio.wav.start")).unwrap();
+        // A 44-byte header for 600 bytes of 16-bit mono audio at 1,000
+        // frames a second; then the first block, 100 frames of silence
+        // filling the pause, and the second block, which was received
+        // 300 ms in and so ends there. 0.5 is 16,383 as a 16-bit sample.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"RIFF");
+        expected.extend_from_slice(&636u32.to_le_bytes());
+        expected.extend_from_slice(b"WAVEfmt ");
+        expected.extend_from_slice(&16u32.to_le_bytes());
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&1_000u32.to_le_bytes());
+        expected.extend_from_slice(&2_000u32.to_le_bytes());
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(&16u16.to_le_bytes());
+        expected.extend_from_slice(b"data");
+        expected.extend_from_slice(&600u32.to_le_bytes());
+        for value in [16_383i16, 0, 16_383] {
+            for _ in 0..100 {
+                expected.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        // The start time is the Unix time, in milliseconds, at which the
+        // recording's clock started.
+        let start: u128 = std::fs::read_to_string(dir.join("audio.wav.start"))
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!(
-            start.parse::<u128>().is_ok(),
-            "the start time is written: {start:?}"
+            (before..=after).contains(&start),
+            "{start} was written, not a time between {before} and {after}"
         );
-        let _ = std::fs::remove_dir_all(dir);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

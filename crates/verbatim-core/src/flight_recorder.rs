@@ -208,39 +208,55 @@ mod tests {
 
     #[test]
     fn the_window_always_starts_at_its_checkpoint() {
+        // With room for six, a segment closes every three entries, and the
+        // oldest segment goes when a seventh entry arrives. So after
+        // entry `last` the window starts at the first entry of the segment
+        // before the one `last` belongs to: entries 1 to 6 are all kept,
+        // then 4 to 7, 4 to 8 and 4 to 9, then 7 to 10, and so on.
         let mut recorder = FlightRecorder::new(6, 100, 0);
         for last in 1..=50 {
             record_all(&mut recorder, last..=last);
-            let entries = kept(&recorder);
-            assert_eq!(*recorder.checkpoint(), entries[0] - 1);
-            assert!(entries.len() <= 6);
-            if last >= 6 {
-                assert!(entries.len() >= 3, "at least half the window is kept");
-            }
+            let first = (3 * ((last - 1) / 3) - 2).max(1);
+            assert_eq!(kept(&recorder), (first..=last).collect::<Vec<_>>());
+            assert_eq!(*recorder.checkpoint(), first - 1);
         }
     }
 
     #[test]
     fn memory_use_is_bounded_by_capacity() {
+        // With room for two, every entry closes its segment, so the window
+        // holds the last two entries, and after them an empty segment
+        // waits for the next.
         let mut recorder = FlightRecorder::new(2, 100, 0);
         record_all(&mut recorder, 0..1000);
-        assert!(recorder.newer.len() <= 2);
-        assert!(recorder.len() <= 2);
-        assert_eq!(kept(&recorder).last(), Some(&999));
+        assert_eq!(kept(&recorder), [998, 999]);
+        assert_eq!(recorder.len(), 2);
+        assert_eq!(*recorder.checkpoint(), 997);
+        assert_eq!(recorder.newer.len(), 2);
     }
 
     #[test]
     fn large_entries_are_bounded_by_bytes() {
+        // Entry `index` holds 3,000 + `index` bytes, so two entries pass
+        // half the 10,000-byte bound and close a segment, and a fourth
+        // entry in the window passes the bound and drops the oldest two.
+        // After an even entry the window holds the last three; after an
+        // odd one, the last two.
         let mut recorder = FlightRecorder::new(1000, 10_000, String::new());
         for index in 0..100 {
             let text = "x".repeat(3_000 + index);
             let bytes = text.len();
             recorder.record(text, bytes, String::new);
-            assert!(recorder.bytes() <= 10_000);
-            let actual: usize = recorder.entries().map(String::len).sum();
-            assert_eq!(actual, recorder.bytes());
+            let first = match index {
+                0 => 0,
+                odd if odd % 2 == 1 => odd - 1,
+                even => even - 2,
+            };
+            let expected: Vec<usize> = (first..=index).map(|kept| 3_000 + kept).collect();
+            let actual: Vec<usize> = recorder.entries().map(String::len).collect();
+            assert_eq!(actual, expected, "after entry {index}");
+            assert_eq!(recorder.bytes(), expected.iter().sum::<usize>());
         }
-        assert!(!recorder.is_empty(), "the newest entries are kept");
     }
 
     #[test]
@@ -248,7 +264,7 @@ mod tests {
         let mut recorder = FlightRecorder::new(10, 100, 0);
         recorder.record(1, 10, || 1);
         recorder.record(2, 1_000, || 2);
-        assert!(recorder.bytes() <= 100);
+        assert_eq!(recorder.bytes(), 0);
         assert_eq!(*recorder.checkpoint(), 2);
         assert!(recorder.is_empty());
     }

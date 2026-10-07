@@ -530,23 +530,8 @@ fn reduce_focus_changed(
         {
             return Vec::new();
         }
-    } else if let Some(window) = window
-        && window.in_foreground
-        && !state
-            .attention
-            .and_then(|attention| attention.window)
-            .is_some_and(|attended| {
-                attended.top_level == window.top_level || attended.root_owner == window.root_owner
-            })
-    {
-        // Focus in the system's foreground window, unrelated to the attention
-        // window: the foreground moved without a foreground fact, so
-        // attention follows, as NVDA takes the foreground from the focus's
-        // ancestry.
-        state.attention = Some(Attention {
-            source,
-            window: Some(window),
-        });
+    } else if let Some(window) = window {
+        follow_an_unreported_foreground(state, source, window, report);
     }
 
     let ancestors = if report.ancestors_unknown {
@@ -664,6 +649,40 @@ fn reduce_focus_changed(
     let speech = focus_speech(state, trace_id, report, (foreground_window, entered));
     effects.extend(speech);
     effects
+}
+
+/// Moves attention and the foreground to a focus in the system's
+/// foreground window that is unrelated to the attention window: the
+/// foreground moved without a foreground fact, so attention follows, as
+/// NVDA takes the foreground from the focus's ancestry. The foreground
+/// object moves with it (`docs/nvda/events.md`, step 3 of a focus change:
+/// the top of the focus's ancestry, its top-level window), so speech for
+/// the window left behind is no longer held valid as the foreground's.
+/// With the ancestry unread, the new foreground is not known.
+fn follow_an_unreported_foreground(
+    state: &mut SrState,
+    source: Pid,
+    window: WindowFacts,
+    report: &FocusReport<'_>,
+) {
+    let attended = state
+        .attention
+        .and_then(|attention| attention.window)
+        .is_some_and(|attended| {
+            attended.top_level == window.top_level || attended.root_owner == window.root_owner
+        });
+    if !window.in_foreground || attended {
+        return;
+    }
+    state.attention = Some(Attention {
+        source,
+        window: Some(window),
+    });
+    state.foreground = if report.ancestors_unknown {
+        None
+    } else {
+        report.ancestors.first().map(|top| top.id)
+    };
 }
 
 /// Ends what the previous focus's text was doing when the focus moves to
