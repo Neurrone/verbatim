@@ -56,6 +56,9 @@ NVDA says, to decide what Verbatim should say.
   concurrency vocabulary Verbatim uses.
 - [Tooling](tooling.md) and [the VM harness](vm.md) — driving the
   project day to day.
+- [The testing standard](testing.md) — what every test must meet: one
+  target and code path, exact assertions, waits for evidence, and no
+  hidden failures.
 - [Performance](performance.md) — the operation ledger: what counts as
   a cross-process call, cold and steady state, cancelled traces, the
   floor and the ratio, and for each operation and backend the minimum,

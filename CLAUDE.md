@@ -9,6 +9,7 @@ Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), writ
 - `docs/readme.md` — the index of all documentation, with reading paths; `docs/glossary.md` defines Verbatim's invented vocabulary.
 - `docs/crates/` — the reviewer's guide to the implemented crates, one file per crate (`docs/crates/readme.md` is the index): what each does, its public API, and how the intricate parts work. Keep the file for a crate current when its public API changes.
 - `docs/tooling.md` — how to actually drive this project: `verbatim-inspect` against a running instance, `mockapp`, the end-to-end suite, and the traps that cost us time (the interactive-session rule above all). `docs/vm.md` covers every `cargo xtask vm` verb and rebuilding the golden image.
+- `docs/testing.md` — the testing standard every test must meet: one fixed target and code path, exact assertions, waits only for evidence, and no hidden failures. Read it before writing or changing any test, and check every test change against it.
 
 `nvda/` is the NVDA screen reader vendored as a git submodule **for reference only** (IA2 IDL under `nvda/include/ia2`, app modules under `nvda/source/appModules`, design docs under `nvda/projectDocs`). Never modify anything under `nvda/`; Verbatim is informed by NVDA but not constrained by its architecture.
 
