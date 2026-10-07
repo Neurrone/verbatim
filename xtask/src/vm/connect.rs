@@ -199,10 +199,16 @@ mod tests {
 
     #[test]
     fn rdp_file_contents_names_the_guest_address_and_audio_mode() {
-        let contents = rdp_file_contents("10.0.0.5", "verbatim");
-        assert!(contents.contains("full address:s:10.0.0.5\r\n"));
-        assert!(contents.contains("username:s:verbatim\r\n"));
-        assert!(contents.contains("audiomode:i:0\r\n"));
-        assert!(contents.contains("redirectclipboard:i:1\r\n"));
+        assert_eq!(
+            rdp_file_contents("10.0.0.5", "verbatim"),
+            "full address:s:10.0.0.5\r\n\
+             username:s:verbatim\r\n\
+             audiomode:i:0\r\n\
+             authentication level:i:0\r\n\
+             desktopwidth:i:1920\r\n\
+             desktopheight:i:1080\r\n\
+             screen mode id:i:1\r\n\
+             redirectclipboard:i:1\r\n"
+        );
     }
 }

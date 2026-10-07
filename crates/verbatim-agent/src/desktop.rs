@@ -272,6 +272,17 @@ fn image_name(pid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, DESKTOP_CREATEWINDOW,
+        DESKTOP_ENUMERATE, DESKTOP_READOBJECTS, DESKTOP_WRITEOBJECTS, HDESK, SetThreadDesktop,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, WINDOW_EX_STYLE,
+        WINDOW_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+    };
+    use windows::core::{HSTRING, PCWSTR, w};
 
     #[test]
     fn closing_windows_no_window_matches_reports_none_left() {
@@ -284,12 +295,119 @@ mod tests {
         );
     }
 
+    /// The class of the test's windows.
+    const CLASS: PCWSTR = w!("VerbatimAgentDesktopTest");
+
+    /// The test windows' procedure: the default one.
+    unsafe extern "system" fn window_procedure(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        // SAFETY: the arguments Windows passed this window procedure.
+        unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    }
+
+    /// Makes a top-level window of the test's class on this thread's
+    /// desktop.
+    fn make_window(title: PCWSTR, style: WINDOW_STYLE, owner: Option<HWND>) -> HWND {
+        // SAFETY: the class is registered, the strings are static, and the
+        // owner, when there is one, is a live window of this thread.
+        unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                CLASS,
+                title,
+                style,
+                0,
+                0,
+                100,
+                100,
+                owner,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("creates a window")
+    }
+
+    /// The report lists exactly the visible, titled, unowned top-level
+    /// windows. The windows are made on a desktop of the test's own, which
+    /// holds nothing else and is never shown, so what is listed does not
+    /// depend on the machine and the user's desktop is left alone.
     #[test]
     fn the_foreground_report_lists_visible_windows() {
-        // A test process may run with no foreground window at all (a CI
-        // runner); the list of windows is all that can be relied on, and
-        // every entry it holds has a title.
-        let info = foreground_info();
-        assert!(info.windows.iter().all(|window| !window.title.is_empty()));
+        let access = DESKTOP_CREATEWINDOW.0
+            | DESKTOP_ENUMERATE.0
+            | DESKTOP_READOBJECTS.0
+            | DESKTOP_WRITEOBJECTS.0;
+        let name = format!("verbatim-agent-test-{}", std::process::id());
+        // SAFETY: a valid name and no device, mode, or security attributes.
+        let desktop = unsafe {
+            CreateDesktopW(
+                &HSTRING::from(name),
+                PCWSTR::null(),
+                None,
+                DESKTOP_CONTROL_FLAGS(0),
+                access,
+                None,
+            )
+        }
+        .expect("creates a desktop");
+        let handle = desktop.0 as usize;
+        let (info, listed) = thread::spawn(move || {
+            // SAFETY: this new thread has no windows or hooks yet, and the
+            // desktop stays open until the thread has ended.
+            unsafe { SetThreadDesktop(HDESK(handle as *mut c_void)) }
+                .expect("moves to the test's desktop");
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_procedure),
+                lpszClassName: CLASS,
+                ..WNDCLASSW::default()
+            };
+            // SAFETY: a class with a valid window procedure and a static name.
+            assert_ne!(unsafe { RegisterClassW(&raw const class) }, 0, "registers");
+            let listed = make_window(w!("Listed"), WS_OVERLAPPEDWINDOW | WS_VISIBLE, None);
+            let windows = [
+                listed,
+                make_window(PCWSTR::null(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, None),
+                make_window(w!("Hidden"), WS_OVERLAPPEDWINDOW, None),
+                make_window(w!("Owned"), WS_POPUP | WS_VISIBLE, Some(listed)),
+            ];
+            let info = foreground_info();
+            for window in windows.into_iter().rev() {
+                // SAFETY: a window this thread made.
+                unsafe { DestroyWindow(window) }.expect("destroys the window");
+            }
+            (info, listed.0 as u64)
+        })
+        .join()
+        .expect("the window thread ends");
+        // SAFETY: the desktop opened above; its only thread has ended.
+        unsafe { CloseDesktop(desktop) }.expect("closes the desktop");
+
+        let image = std::env::current_exe()
+            .expect("this test's executable")
+            .file_name()
+            .expect("a file name")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            info,
+            ForegroundInfo {
+                foreground: None,
+                windows: vec![WindowInfo {
+                    window: listed,
+                    pid: std::process::id(),
+                    title: "Listed".to_owned(),
+                    class: "VerbatimAgentDesktopTest".to_owned(),
+                    image,
+                    cloaked: false,
+                    minimized: false,
+                }],
+            }
+        );
     }
 }

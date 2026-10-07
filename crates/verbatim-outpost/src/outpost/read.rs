@@ -376,13 +376,20 @@ pub(super) enum RemoteEnrichment {
         enrichment: Enrichment,
         /// The element's own window or its nearest ancestor's.
         window: Option<isize>,
+        /// Whether the element held under the focus's runtime id still has
+        /// the keyboard focus, read live in the same round trip: `false`
+        /// when it does not or cannot be read, `None` when none was given
+        /// or the read failed as a whole.
+        held_focused: Option<bool>,
     },
 }
 
 /// A focused UIA element's ancestors, selected child, and nearest window,
 /// in one round trip run inside the application's provider
 /// ([`verbatim_uia_rops::focus_ancestry`]), with the same stops and the
-/// same continuation through MSAA as [`uia_enrichment`]. `None`, having
+/// same continuation through MSAA as [`uia_enrichment`], and whether
+/// `held`, the element the registry holds under the focus's runtime id,
+/// still has the keyboard focus. `None`, having
 /// made no call, when remote operations are off or `window`, the window
 /// the focus is in, is read the classic way: the caller reads it as
 /// before.
@@ -396,6 +403,7 @@ pub(super) fn uia_remote_enrichment(
     uia: &Uia,
     cache: &IUIAutomationCacheRequest,
     element: &IUIAutomationElement,
+    held: Option<&IUIAutomationElement>,
     previous: &[NodeSnapshot],
     window: Option<isize>,
 ) -> Option<RemoteEnrichment> {
@@ -416,6 +424,7 @@ pub(super) fn uia_remote_enrichment(
     let query = FocusQuery {
         element,
         known: &known,
+        previous: held,
         depth_limit: MAX_ANCESTOR_HOPS,
         properties: &properties,
         deadline: Some(deadline),
@@ -434,6 +443,7 @@ pub(super) fn uia_remote_enrichment(
             return Some(RemoteEnrichment::Read {
                 enrichment: (Some(Vec::new()), None),
                 window: verbatim_uia::nearest_window_handle(element),
+                held_focused: None,
             });
         }
     };
@@ -488,6 +498,7 @@ pub(super) fn uia_remote_enrichment(
     Some(RemoteEnrichment::Read {
         enrichment: (ancestors, selected),
         window: ancestry.window,
+        held_focused: ancestry.previous_focused,
     })
 }
 
@@ -674,7 +685,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     }
     if window_uses_uia(context, hwnd) {
         let (uia, cache) = client.uia_and_cache(context).ok()?;
-        let element = uia.focused_element(&cache).ok()?;
+        let element = (context.focused_element)(uia, &cache).ok()?;
         let node = with_legacy_checked_state(
             &element,
             snapshot_from_cached_element(&element, &context.uia_registry),
@@ -682,7 +693,7 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way.
         let (ancestors, selected_child) =
-            match uia_remote_enrichment(context, uia, &cache, &element, &[], Some(hwnd)) {
+            match uia_remote_enrichment(context, uia, &cache, &element, None, &[], Some(hwnd)) {
                 Some(RemoteEnrichment::Read { enrichment, .. }) => enrichment,
                 Some(RemoteEnrichment::NotFocused) | None => {
                     uia_enrichment(context, uia, &cache, &element, node.role, &[])

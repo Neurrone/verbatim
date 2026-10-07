@@ -10,6 +10,7 @@ mod common;
 mod harness;
 
 use std::fmt::Write as _;
+use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use verbatim_uia::{CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia, map};
@@ -30,24 +31,60 @@ const BOTH: [(&str, FocusAncestryFn); 2] = [
     ("classic", focus_ancestry_classic),
 ];
 
+/// UIA's transaction timeout is process-wide: the test that shortens it
+/// holds this for writing, so it runs alone, and every other test holds it
+/// for reading while it runs.
+static TRANSACTION_TIMEOUT: RwLock<()> = RwLock::new(());
+
+/// What a fixture holds of [`TRANSACTION_TIMEOUT`].
+enum Timeout {
+    Shared(#[expect(dead_code, reason = "held, not read")] RwLockReadGuard<'static, ()>),
+    Alone(#[expect(dead_code, reason = "held, not read")] RwLockWriteGuard<'static, ()>),
+}
+
 /// A running ancestry fixture and a client reading it.
 struct Fixture {
     app: common::MockApp,
     uia: Uia,
     root: IUIAutomationElement,
+    hwnd: isize,
+    _timeout: Timeout,
 }
 
 impl Fixture {
+    /// A fixture for a test that leaves the transaction timeout alone.
     fn start(prefix: &str) -> Self {
+        let timeout = TRANSACTION_TIMEOUT
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        Self::with(prefix, Timeout::Shared(timeout))
+    }
+
+    /// A fixture for the test that changes the transaction timeout, run
+    /// while no other test in this process runs.
+    fn start_alone(prefix: &str) -> Self {
+        let timeout = TRANSACTION_TIMEOUT
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        Self::with(prefix, Timeout::Alone(timeout))
+    }
+
+    fn with(prefix: &str, timeout: Timeout) -> Self {
         let title = common::unique_title(prefix);
         let app = common::spawn("ancestry.json", "uia", &title);
-        let hwnd = common::find_window(&title);
+        let hwnd = common::find_window(&title).0 as isize;
         let uia = Uia::new().expect("Uia::new");
         let cache = uia.base_cache_request().expect("base cache request");
         let root = uia
-            .element_from_handle(hwnd.0 as isize, &cache)
+            .element_from_handle(hwnd, &cache)
             .expect("element_from_handle");
-        Self { app, uia, root }
+        Self {
+            app,
+            uia,
+            root,
+            hwnd,
+            _timeout: timeout,
+        }
     }
 
     /// The element named `name`, built with the base cache request as a
@@ -65,14 +102,17 @@ impl Fixture {
             .unwrap_or_else(|| panic!("no element named {name:?}"))
     }
 
-    /// Focuses fixture node `id`, named `name`, and returns its element
-    /// once the provider reports it focused.
+    /// Focuses fixture node `id`, named `name`, and returns its element,
+    /// which the provider then reports focused: mockapp acknowledges the
+    /// command once it has taken effect.
     fn focus(&mut self, id: &str, name: &str) -> IUIAutomationElement {
         self.app.send(&format!("focus {id}"));
         let element = self.find(name);
-        common::wait_until(&format!("{name} has the keyboard focus"), || {
-            element.has_keyboard_focus().unwrap_or(false)
-        });
+        assert_eq!(
+            element.has_keyboard_focus().ok(),
+            Some(true),
+            "{name} has the keyboard focus"
+        );
         element
     }
 }
@@ -81,6 +121,7 @@ fn query<'a>(element: &'a IUIAutomationElement, known: &'a [Vec<i32>]) -> FocusQ
     FocusQuery {
         element,
         known,
+        previous: None,
         depth_limit: 50,
         properties: CACHED_PROPERTIES,
         deadline: None,
@@ -167,6 +208,10 @@ fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
         "the depth limit"
     );
     assert_eq!(remote.window, classic.window, "the nearest window");
+    assert_eq!(
+        remote.previous_focused, classic.previous_focused,
+        "the previous element's focus"
+    );
     assert!(
         remote.window.is_some(),
         "every fixture element has a window"
@@ -220,7 +265,7 @@ fn a_deep_chain_reads_the_same_both_ways() {
         let element = fixture.focus(id, name);
         both_agree(&fixture.uia, &query(&element, &[]));
     }
-    fixture.app.send("quit");
+    fixture.app.quit();
 }
 
 fn a_list_and_a_tab_control_report_their_selected_child() {
@@ -237,20 +282,13 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
     }
     // A selection made after the fixture loaded.
     fixture.app.send("select apple");
-    let fruits = fixture.find("Fruits");
-    common::wait_until("Apple is selected", || {
-        fixture
-            .uia
-            .selected_element(&fruits, &fixture.uia.base_cache_request().expect("cache"))
-            .is_some_and(|child| names(&[child]) == ["Apple"])
-    });
-    fixture.app.send("focus fruits");
+    let fruits = fixture.focus("fruits", "Fruits");
     let ancestry = both_agree(&fixture.uia, &query(&fruits, &[]));
     assert_eq!(
         names(&[ancestry.selected_child.expect("selected")]),
         ["Apple"]
     );
-    fixture.app.send("quit");
+    fixture.app.quit();
 }
 
 fn the_walk_stops_at_a_known_ancestor_or_the_depth_limit() {
@@ -275,7 +313,7 @@ fn the_walk_stops_at_a_known_ancestor_or_the_depth_limit() {
     let ancestry = both_agree(&fixture.uia, &limited);
     assert_eq!(names(&ancestry.ancestors), ["Inner group", "Tools"]);
     assert!(ancestry.depth_limited);
-    fixture.app.send("quit");
+    fixture.app.quit();
 }
 
 fn an_element_that_lost_the_focus_returns_early() {
@@ -291,14 +329,14 @@ fn an_element_that_lost_the_focus_returns_early() {
             "{label}: the stale focus is reported as not focused"
         );
     }
-    fixture.app.send("quit");
+    fixture.app.quit();
 }
 
 /// An object-navigation step reads the same neighbor, with the same cached
 /// properties and snapshot, and the same nearest window, both ways: parent,
 /// siblings, first child, and an edge with no neighbor.
 fn a_navigation_step_reads_the_same_both_ways() {
-    let mut fixture = Fixture::start("mockapp-rops-navigation");
+    let fixture = Fixture::start("mockapp-rops-navigation");
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     for (from, direction, expected) in [
         (
@@ -332,8 +370,8 @@ fn a_navigation_step_reads_the_same_both_ways() {
         let remote = navigation_step_remote(&fixture.uia, &query).expect("the remote program runs");
         let classic = navigation_step_classic(&fixture.uia, &query).expect("the classic step runs");
         let label = format!("{direction:?} from {from}");
-        assert_eq!(remote.window, classic.window, "{label}");
-        assert!(remote.window.is_some(), "{label}: the window found");
+        assert_eq!(remote.window, Some(fixture.hwnd), "{label}");
+        assert_eq!(classic.window, Some(fixture.hwnd), "{label}");
         let view = |step: &verbatim_uia_rops::Step| {
             step.neighbor
                 .as_ref()
@@ -349,7 +387,7 @@ fn a_navigation_step_reads_the_same_both_ways() {
             "{label}"
         );
     }
-    fixture.app.send("quit");
+    fixture.app.quit();
 }
 
 /// A UIA error constant as the HRESULT it is.
@@ -374,10 +412,10 @@ fn execution_failure(error: &Error) -> Option<windows::core::HRESULT> {
 /// execution failure carrying `UIA_E_TIMEOUT`.
 fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     const STALL: Duration = Duration::from_millis(4000);
-    // The transaction timeout is process-wide, so the other tests in this
-    // binary run under it meanwhile; long enough not to fail their calls.
+    // The transaction timeout is process-wide, so no other test in this
+    // binary runs meanwhile ([`TRANSACTION_TIMEOUT`]).
     const TIMEOUT: Duration = Duration::from_millis(1000);
-    let mut fixture = Fixture::start("mockapp-rops-stall");
+    let mut fixture = Fixture::start_alone("mockapp-rops-stall");
     let deep = fixture.focus("deep", "Deep button");
 
     // Each run starts once mockapp has acknowledged that its window thread
@@ -402,11 +440,7 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
     );
 
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    // SAFETY: reading and setting a timeout take plain integers.
-    let usual = unsafe { client.TransactionTimeout() }.expect("transaction timeout");
-    let timeout = u32::try_from(TIMEOUT.as_millis()).expect("milliseconds");
-    // SAFETY: as above.
-    unsafe { client.SetTransactionTimeout(timeout) }.expect("set transaction timeout");
+    let _restored = TransactionTimeout::set(&client, TIMEOUT);
     for (label, ancestry) in BOTH {
         fixture.app.stall(STALL);
         let answer = ancestry(&fixture.uia, &query(&deep, &[]));
@@ -430,15 +464,46 @@ fn a_stalled_provider_holds_execute_until_the_transaction_timeout() {
             );
         }
     }
-    // SAFETY: as above.
-    unsafe { client.SetTransactionTimeout(usual) }.expect("restore transaction timeout");
-    fixture.app.send("quit");
+    fixture.app.quit();
+}
+
+/// UIA's transaction timeout, set for a while and restored when dropped,
+/// whether the test passed or not.
+struct TransactionTimeout {
+    client: IUIAutomation2,
+    usual: u32,
+}
+
+impl TransactionTimeout {
+    fn set(client: &IUIAutomation2, timeout: Duration) -> Self {
+        // SAFETY: reading and setting a timeout take plain integers.
+        let usual = unsafe { client.TransactionTimeout() }.expect("transaction timeout");
+        let timeout = u32::try_from(timeout.as_millis()).expect("milliseconds");
+        // SAFETY: as above.
+        unsafe { client.SetTransactionTimeout(timeout) }.expect("set transaction timeout");
+        Self {
+            client: client.clone(),
+            usual,
+        }
+    }
+}
+
+impl Drop for TransactionTimeout {
+    fn drop(&mut self) {
+        // SAFETY: setting a timeout takes a plain integer.
+        let restored = unsafe { self.client.SetTransactionTimeout(self.usual) };
+        if !std::thread::panicking() {
+            restored.expect("restore the transaction timeout");
+        }
+    }
 }
 
 fn a_provider_that_has_exited_fails_at_once() {
     let mut fixture = Fixture::start("mockapp-rops-exited");
     let deep = fixture.focus("deep", "Deep button");
-    let Fixture { app, uia, .. } = fixture;
+    let Fixture {
+        app, uia, _timeout, ..
+    } = fixture;
     // Returns once the process has exited.
     drop(app);
     let started = Instant::now();
@@ -451,7 +516,7 @@ fn a_provider_that_has_exited_fails_at_once() {
     );
     let answer = focus_ancestry_classic(&uia, &query(&deep, &[]));
     assert!(
-        matches!(&answer, Err(Error::Uia(error)) if verbatim_uia::element_is_gone(error)),
+        matches!(&answer, Err(Error::Uia(error)) if error.code() == hresult(UIA_E_ELEMENTNOTAVAILABLE)),
         "{answer:?}"
     );
 }

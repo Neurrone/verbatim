@@ -1,66 +1,98 @@
 //! Cross-process event delivery (architecture section 13, layer 2).
 //!
-//! After a `set-name`, `set-value`, `select`, or `notify` stdin command,
-//! asserts that the matching real client-side registration observes the
-//! change: `verbatim_uia::Registration` for UIA property changes, selection,
-//! and notifications, `verbatim_ia2::WinEventHook` for
+//! After a `set-name`, `set-value`, `select`, `notify`, or
+//! `active-text-position` stdin command, asserts that the matching real
+//! client-side registration observes exactly the change: one event, from
+//! the element the command changed, carrying the changed data, read through
+//! `verbatim_uia::Registration` for UIA and `verbatim_ia2::WinEventHook` for
 //! MSAA. Property, value, selection, and notification changes are used
 //! rather than focus, per the architecture note that these tests must pass
 //! headless on CI runners without real keyboard focus or
 //! `SetForegroundWindow` succeeding.
+//!
+//! Each test ends with a marker: one more command whose own event is the
+//! last one expected. A provider's events reach a client in the order they
+//! were raised, so a duplicate of the event under test would come before
+//! the marker's, and the test sees every event up to it.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::fmt::Debug;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Instant;
 
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEventHook, WinEventKind};
-use verbatim_model::{NotificationKind, NotificationProcessing, State};
+use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
     ElementExt, FOCUS_PROPERTIES, Registration, Scope, Subscription, Uia,
     map::{notification_kind_from_uia, notification_processing_from_uia},
 };
+use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationTextRange, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
+    IUIAutomationElement, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
     UIA_ValueValuePropertyId,
 };
-use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
+    PeekMessageW, QS_ALLINPUT, TranslateMessage,
+};
 use windows::core::AgileReference;
 
-fn uia_set_name_raises_a_property_changed_event() {
-    let title = common::unique_title("mockapp-events-uia-name");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
+/// Receives exactly `expected`, in order, each within the shared wait, and
+/// then finds nothing more waiting.
+fn expect_events<T: Debug + PartialEq>(events: &Receiver<T>, expected: &[T]) {
+    let mut seen = Vec::with_capacity(expected.len());
+    for _ in expected {
+        match events.recv_timeout(common::WAIT_TIMEOUT) {
+            Ok(event) => seen.push(event),
+            Err(error) => panic!("only {seen:?} arrived of {expected:?}: {error}"),
+        }
+    }
+    assert_eq!(seen, expected);
+    match events.try_recv() {
+        Err(TryRecvError::Empty) => {}
+        Ok(extra) => panic!("an event after the marker: {extra:?}"),
+        Err(TryRecvError::Disconnected) => panic!("the registration ended"),
+    }
+}
 
-    let seen = Arc::new(Mutex::new(Vec::<i32>::new()));
-    let seen_cb = seen.clone();
-    let _registration = Registration::new(
+/// A property change as a registration hears it: the sender's cached name
+/// and value, and the property.
+#[derive(Debug, PartialEq)]
+struct PropertyChange {
+    name: Option<String>,
+    value: Option<String>,
+    property: i32,
+}
+
+/// A registration on mockapp's window for the focus-following properties,
+/// sending each change it hears.
+fn property_changes(hwnd: HWND) -> (Registration, Receiver<PropertyChange>) {
+    let (sender, changes) = mpsc::channel();
+    let registration = Registration::new(
         vec![Subscription::Properties {
             properties: FOCUS_PROPERTIES.to_vec(),
-            callback: Arc::new(move |_element, property_id| {
-                seen_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(property_id);
+            callback: Arc::new(move |element, property| {
+                // The test may have finished.
+                let _ = sender.send(PropertyChange {
+                    name: element.cached_string(UIA_NamePropertyId),
+                    value: element.cached_string(UIA_ValueValuePropertyId),
+                    property,
+                });
             }),
         }],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");
+    (registration, changes)
+}
 
-    app.send("set-name btn1 Renamed");
-
-    common::wait_until("UIA name-changed property event", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&UIA_NamePropertyId.0)
-    });
-
-    // Cross-check that the provider's live data actually changed, not just
-    // that some event fired: re-fetch the button and confirm its cached
-    // name is the new one.
+/// The names of the root's children, read afresh through a new client.
+fn children_names(hwnd: HWND) -> Vec<(verbatim_model::Role, Option<String>)> {
     let uia = Uia::new().expect("Uia::new");
     let cache = uia.base_cache_request().expect("base cache request");
     let root = uia
@@ -78,21 +110,54 @@ fn uia_set_name_raises_a_property_changed_event() {
         )
     }
     .expect("FindAllBuildCache");
-    let registry =
-        verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    let mut found_renamed = false;
-    for child in verbatim_uia::elements_of(&children) {
-        let snapshot = verbatim_uia::map::snapshot_from_cached_element(&child, &registry);
-        if snapshot.name.as_deref() == Some("Renamed") {
-            found_renamed = true;
-        }
-    }
-    assert!(
-        found_renamed,
-        "the button's cached name did not actually change to \"Renamed\""
+    let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+    verbatim_uia::elements_of(&children)
+        .iter()
+        .map(|child| {
+            let snapshot = verbatim_uia::map::snapshot_from_cached_element(child, &registry);
+            (snapshot.role, snapshot.name)
+        })
+        .collect()
+}
+
+fn uia_set_name_raises_a_property_changed_event() {
+    let title = common::unique_title("mockapp-events-uia-name");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let (_registration, changes) = property_changes(hwnd);
+
+    app.send("set-name btn1 Renamed");
+    app.send("set-name slider1 Marker");
+    expect_events(
+        &changes,
+        &[
+            PropertyChange {
+                name: Some("Renamed".to_owned()),
+                value: None,
+                property: UIA_NamePropertyId.0,
+            },
+            PropertyChange {
+                name: Some("Marker".to_owned()),
+                value: Some("1".to_owned()),
+                property: UIA_NamePropertyId.0,
+            },
+        ],
     );
 
-    app.send("quit");
+    // The provider's live data changed, not just its event: the button, and
+    // only the button, has the new name. The title bar comes first, from
+    // UIA's own proxy for the window's frame.
+    assert_eq!(
+        children_names(hwnd),
+        [
+            (verbatim_model::Role::TitleBar, None),
+            (verbatim_model::Role::Button, Some("Renamed".to_owned())),
+            (verbatim_model::Role::Slider, Some("Marker".to_owned())),
+            (verbatim_model::Role::List, Some("Options".to_owned()))
+        ]
+    );
+
+    app.quit();
 }
 
 /// The focus-following scope, selective registration: the focus's changes
@@ -104,8 +169,7 @@ fn uia_only_the_focus_is_followed() {
 
     let uia = Uia::new().expect("Uia::new");
     let cache = uia.base_cache_request().expect("base cache request");
-    let registry =
-        verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
     let root = uia
         .element_from_handle(hwnd.0 as isize, &cache)
         .expect("element_from_handle");
@@ -120,20 +184,13 @@ fn uia_only_the_focus_is_followed() {
         .and_then(|node| registry.element_of(node.snapshot.id))
         .expect("the button First");
 
-    let names = Arc::new(Mutex::new(Vec::<String>::new()));
-    let names_cb = names.clone();
+    let (sender, names) = mpsc::channel();
     let _registration = Registration::new(
         vec![Subscription::Properties {
             properties: FOCUS_PROPERTIES.to_vec(),
-            callback: Arc::new(move |element, _| {
+            callback: Arc::new(move |element, property| {
                 // The sender arrives with the base cache request's name.
-                let name = element
-                    .cached_string(UIA_NamePropertyId)
-                    .unwrap_or_default();
-                names_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(name);
+                let _ = sender.send((element.cached_string(UIA_NamePropertyId), property));
             }),
         }],
         Scope::Elements(vec![first]),
@@ -143,52 +200,51 @@ fn uia_only_the_focus_is_followed() {
     app.send("set-name second Sibling");
     app.send("set-name group Ancestor");
     app.send("set-name first Focus");
+    app.send("set-name first Marker");
+    expect_events(
+        &names,
+        &[
+            (Some("Focus".to_owned()), UIA_NamePropertyId.0),
+            (Some("Marker".to_owned()), UIA_NamePropertyId.0),
+        ],
+    );
 
-    common::wait_until("the focus's name change", || {
-        let names = names
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        names.iter().any(|name| name == "Focus")
-    });
-    let names = names
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    assert_eq!(*names, ["Focus"], "only the focus's change arrives");
-    drop(names);
-
-    app.send("quit");
+    app.quit();
 }
 
 fn uia_set_value_raises_a_property_changed_event() {
     let title = common::unique_title("mockapp-events-uia-value");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
-
-    let seen = Arc::new(Mutex::new(Vec::<i32>::new()));
-    let seen_cb = seen.clone();
-    let _registration = Registration::new(
-        vec![Subscription::Properties {
-            properties: FOCUS_PROPERTIES.to_vec(),
-            callback: Arc::new(move |_element, property_id| {
-                seen_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(property_id);
-            }),
-        }],
-        Scope::Windows(vec![hwnd.0 as isize]),
-    )
-    .expect("Registration::new");
+    let (_registration, changes) = property_changes(hwnd);
 
     app.send("set-value slider1 77");
+    app.send("set-name btn1 Marker");
+    expect_events(
+        &changes,
+        &[
+            PropertyChange {
+                name: Some("Level".to_owned()),
+                value: Some("77".to_owned()),
+                property: UIA_ValueValuePropertyId.0,
+            },
+            PropertyChange {
+                name: Some("Marker".to_owned()),
+                value: None,
+                property: UIA_NamePropertyId.0,
+            },
+        ],
+    );
 
-    common::wait_until("UIA value-changed property event", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&UIA_ValueValuePropertyId.0)
-    });
+    app.quit();
+}
 
-    app.send("quit");
+/// A selected element as a registration hears it, mapped exactly as an
+/// outpost maps it: its name and its whole state set.
+fn selected(element: &IUIAutomationElement) -> (Option<String>, StateSet) {
+    let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+    let snapshot = verbatim_uia::map::snapshot_from_cached_element(element, &registry);
+    (snapshot.name, snapshot.states)
 }
 
 fn uia_select_raises_a_selection_event() {
@@ -196,41 +252,40 @@ fn uia_select_raises_a_selection_event() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
-    // Capture full snapshots (mapped exactly as an outpost would map them)
-    // rather than a bare "an event fired" flag, so the assertion also
-    // proves the selected element arrived with its cached properties.
-    let seen = Arc::new(Mutex::new(Vec::<verbatim_model::NodeSnapshot>::new()));
-    let seen_cb = seen.clone();
-    let registry =
-        verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    // The marker is a notification, heard by the same group: another
+    // selection would take the state off the first item before UIA reads
+    // the first event's cached properties, which it does as it delivers it.
+    let (sender, selections) = mpsc::channel();
+    let marker = sender.clone();
     let _registration = Registration::new(
-        vec![Subscription::Event {
-            event: UIA_SelectionItem_ElementSelectedEventId,
-            callback: Arc::new(move |element| {
-                let snapshot = verbatim_uia::map::snapshot_from_cached_element(element, &registry);
-                seen_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(snapshot);
-            }),
-        }],
+        vec![
+            Subscription::Event {
+                event: UIA_SelectionItem_ElementSelectedEventId,
+                callback: Arc::new(move |element| {
+                    let _ = sender.send(Some(selected(element)));
+                }),
+            },
+            Subscription::Notifications {
+                callback: Arc::new(move |_, _, _, _, _| {
+                    let _ = marker.send(None);
+                }),
+            },
+        ],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");
 
     app.send("select item1");
+    app.send("notify Marker");
+    let first = (
+        Some("First".to_owned()),
+        [State::Focusable, State::Selectable, State::Selected]
+            .into_iter()
+            .collect::<StateSet>(),
+    );
+    expect_events(&selections, &[Some(first), None]);
 
-    common::wait_until("UIA element-selected event for item1", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .any(|snapshot| {
-                snapshot.name.as_deref() == Some("First")
-                    && snapshot.states.contains(State::Selected)
-            })
-    });
-
-    app.send("quit");
+    app.quit();
 }
 
 /// One observed notification: kind, processing, display string, activity id.
@@ -246,20 +301,16 @@ fn uia_notify_raises_a_notification_event() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
-    let seen = Arc::new(Mutex::new(Vec::<SeenNotification>::new()));
-    let seen_cb = seen.clone();
+    let (sender, notifications) = mpsc::channel::<SeenNotification>();
     let _registration = Registration::new(
         vec![Subscription::Notifications {
             callback: Arc::new(move |_element, kind, processing, display, activity| {
-                seen_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push((
-                        notification_kind_from_uia(kind),
-                        notification_processing_from_uia(processing),
-                        display,
-                        activity,
-                    ));
+                let _ = sender.send((
+                    notification_kind_from_uia(kind),
+                    notification_processing_from_uia(processing),
+                    display,
+                    activity,
+                ));
             }),
         }],
         Scope::Windows(vec![hwnd.0 as isize]),
@@ -267,28 +318,25 @@ fn uia_notify_raises_a_notification_event() {
     .expect("Registration::new");
 
     app.send("notify Window snapped to the left");
+    app.send("notify Marker");
+    let notification = |display: &str| {
+        (
+            NotificationKind::Other,
+            NotificationProcessing::All,
+            Some(display.to_owned()),
+            Some("mockapp-notify".to_owned()),
+        )
+    };
+    expect_events(
+        &notifications,
+        &[
+            notification("Window snapped to the left"),
+            notification("Marker"),
+        ],
+    );
 
-    common::wait_until("UIA notification event with the sent payload", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .any(|(kind, processing, display, activity)| {
-                *kind == NotificationKind::Other
-                    && *processing == NotificationProcessing::All
-                    && display.as_deref() == Some("Window snapped to the left")
-                    && activity.as_deref() == Some("mockapp-notify")
-            })
-    });
-
-    app.send("quit");
+    app.quit();
 }
-
-/// An active text position change as a test saw it: the raising element's
-/// name and the range.
-type SeenPosition = (
-    Option<String>,
-    Option<AgileReference<IUIAutomationTextRange>>,
-);
 
 /// The active text position changed event arrives with the element that
 /// raised it and the range now active, whose text the client reads.
@@ -299,17 +347,13 @@ fn uia_active_text_position_arrives_with_its_range() {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
-    let seen = Arc::new(Mutex::new(Vec::<SeenPosition>::new()));
-    let seen_cb = seen.clone();
+    let (sender, positions) = mpsc::channel();
     let _registration = Registration::new(
         vec![Subscription::ActiveTextPosition {
             callback: Arc::new(move |element, range| {
                 let name = element.cached_string(UIA_NamePropertyId);
                 let range = range.and_then(|range| AgileReference::new(range).ok());
-                seen_cb
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push((name, range));
+                let _ = sender.send((name, range));
             }),
         }],
         Scope::Windows(vec![hwnd.0 as isize]),
@@ -317,43 +361,47 @@ fn uia_active_text_position_arrives_with_its_range() {
     .expect("Registration::new");
 
     app.send("active-text-position doc 6 10");
+    app.send("active-text-position doc 0 5");
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let (name, range) = positions
+            .recv_timeout(common::WAIT_TIMEOUT)
+            .unwrap_or_else(|_| panic!("only {seen:?} arrived"));
+        let range = range
+            .expect("the event's range")
+            .resolve()
+            .expect("the range");
+        let text = range.text(-1).expect("the range's text");
+        seen.push((name, String::from_utf16_lossy(&text)));
+    }
+    assert_eq!(
+        seen,
+        [
+            (Some("Notes".to_owned()), "beta".to_owned()),
+            (Some("Notes".to_owned()), "alpha".to_owned())
+        ]
+    );
+    assert!(
+        matches!(positions.try_recv(), Err(TryRecvError::Empty)),
+        "an event after the marker"
+    );
 
-    common::wait_until("the active text position changed event", || {
-        !seen
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
-    });
-    let (name, range) = seen
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(0);
-    assert_eq!(name.as_deref(), Some("Notes"));
-    let range = range
-        .expect("the event's range")
-        .resolve()
-        .expect("the range");
-    let text = range.text(-1).expect("the range's text");
-    assert_eq!(String::from_utf16_lossy(&text), "beta");
-
-    app.send("quit");
+    app.quit();
 }
 
 /// One registration of several subscriptions, as the focus listener makes,
 /// is one event handler group, and each of its handlers hears its own
-/// events.
+/// events, once each.
 fn uia_one_group_delivers_each_of_its_subscriptions() {
     let title = common::unique_title("mockapp-events-uia-group");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
-    let seen = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let (sender, seen) = mpsc::channel::<&'static str>();
     let note = |what: &'static str| {
-        let seen = Arc::clone(&seen);
+        let sender = sender.clone();
         move || {
-            seen.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(what);
+            let _ = sender.send(what);
         }
     };
     let (property, selection, notification) =
@@ -379,137 +427,193 @@ fn uia_one_group_delivers_each_of_its_subscriptions() {
     app.send("set-name btn1 Renamed");
     app.send("select item1");
     app.send("notify Done");
+    // The marker.
+    app.send("set-name btn1 Marker");
+    expect_events(
+        &seen,
+        &["property", "selection", "notification", "property"],
+    );
 
-    common::wait_until("a property change, a selection, and a notification", || {
-        let seen = seen
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        ["property", "selection", "notification"]
-            .iter()
-            .all(|what| seen.contains(what))
-    });
-
-    app.send("quit");
+    app.quit();
 }
 
-/// Pumps this thread's message queue while waiting for `condition`, since
-/// out-of-context `WinEvent`s (`WinEventHook`) deliver via the installing
-/// thread's message loop — a plain sleep loop would never see them.
-fn pump_wait_until(message: &str, mut condition: impl FnMut() -> bool) {
+/// A `WinEvent` as the hook reports it: kind, window, object, and child.
+type SeenWinEvent = (WinEventKind, isize, i32, i32);
+
+/// A hook on mockapp's process for the events an outpost hooks, sending
+/// each event it hears. The events come through this thread's message
+/// queue, which [`pump_until`] pumps.
+fn hook(pid: u32) -> (WinEventHook, Receiver<SeenWinEvent>) {
+    let (sender, events) = mpsc::channel();
+    let hook = WinEventHook::install(
+        pid,
+        APP_SUBSCRIPTIONS,
+        Box::new(move |kind, hwnd, id_object, id_child, _| {
+            let _ = sender.send((kind, hwnd, id_object, id_child));
+        }),
+    )
+    .expect("WinEventHook::install");
+    (hook, events)
+}
+
+/// Pumps this thread's message queue until `count` events have arrived,
+/// waiting for each message rather than polling, since out-of-context
+/// `WinEvent`s are delivered through the installing thread's queue; then
+/// pumps what is already queued and asserts nothing more arrived.
+fn pump_until(events: &Receiver<SeenWinEvent>, count: usize) -> Vec<SeenWinEvent> {
     let deadline = Instant::now() + common::WAIT_TIMEOUT;
-    let mut msg = MSG::default();
+    let mut seen = Vec::with_capacity(count);
     loop {
-        if condition() {
-            return;
+        pump_queued();
+        seen.extend(events.try_iter());
+        if seen.len() >= count {
+            break;
         }
-        // A standard non-blocking message pump.
-        // SAFETY: `msg` is a local the call writes when it returns a message.
-        if unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
-            // SAFETY: `msg` is the message just retrieved.
-            let _ = unsafe { TranslateMessage(&raw const msg) };
-            // SAFETY: as above.
-            unsafe { windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&raw const msg) };
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out after {:?} waiting for: {message}",
-            common::WAIT_TIMEOUT
-        );
-        std::thread::sleep(Duration::from_millis(5));
+        let left = deadline.saturating_duration_since(Instant::now());
+        let left = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: no handles; wakes when a message arrives or the time is up.
+        let woke =
+            unsafe { MsgWaitForMultipleObjectsEx(None, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+        assert_ne!(woke, WAIT_TIMEOUT, "only {seen:?} arrived");
+    }
+    pump_queued();
+    seen.extend(events.try_iter());
+    seen
+}
+
+/// Dispatches every message already in this thread's queue.
+fn pump_queued() {
+    let mut msg = MSG::default();
+    // SAFETY: `msg` is a local the call writes when it returns a message.
+    while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+        // SAFETY: `msg` is the message just retrieved.
+        let _ = unsafe { TranslateMessage(&raw const msg) };
+        // SAFETY: as above.
+        unsafe { DispatchMessageW(&raw const msg) };
     }
 }
 
+/// mockapp's MSAA address for the small fixture's node at `index`: its
+/// window, the object id `index + 1`, and the object itself.
+fn address(hwnd: HWND, index: i32) -> (isize, i32, i32) {
+    (hwnd.0 as isize, index + 1, verbatim_ia2::CHILDID_SELF)
+}
+
+/// The small fixture's nodes, by their index in mockapp's tree.
+const BUTTON: i32 = 1;
+const SLIDER: i32 = 2;
+const FIRST_ITEM: i32 = 4;
+const SECOND_ITEM: i32 = 5;
+
+/// The node an MSAA event names, read through it as an outpost would.
+fn read_object((hwnd, id_object, id_child): (isize, i32, i32)) -> verbatim_model::NodeSnapshot {
+    let registry = verbatim_ia2::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+    verbatim_ia2::acquire::snapshot_from_event(hwnd, id_object, id_child, &registry)
+        .expect("the event's object")
+}
+
+/// The event `kind` on the node at `index`.
+fn win_event(kind: WinEventKind, hwnd: HWND, index: i32) -> SeenWinEvent {
+    let (hwnd, id_object, id_child) = address(hwnd, index);
+    (kind, hwnd, id_object, id_child)
+}
+
 fn msaa_set_name_raises_a_name_change_win_event() {
+    common::init_com();
     let title = common::unique_title("mockapp-events-msaa-name");
     let mut app = common::spawn("small.json", "msaa", &title);
-    let _hwnd = common::find_window(&title);
-    let pid = app.pid();
-
-    let seen = Arc::new(Mutex::new(Vec::<WinEventKind>::new()));
-    let seen_cb = seen.clone();
-    let _hook = WinEventHook::install(
-        pid,
-        APP_SUBSCRIPTIONS,
-        Box::new(move |kind, _hwnd, _id_object, _id_child, _| {
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(kind);
-        }),
-    )
-    .expect("WinEventHook::install");
+    let hwnd = common::find_window(&title);
+    let (_hook, events) = hook(app.pid());
 
     app.send("set-name btn1 Renamed");
+    app.send("set-value slider1 77");
+    assert_eq!(
+        pump_until(&events, 2),
+        [
+            win_event(WinEventKind::NameChange, hwnd, BUTTON),
+            win_event(WinEventKind::ValueChange, hwnd, SLIDER),
+        ]
+    );
+    assert_eq!(
+        read_object(address(hwnd, BUTTON)).name.as_deref(),
+        Some("Renamed")
+    );
 
-    pump_wait_until("MSAA name-change WinEvent", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&WinEventKind::NameChange)
-    });
-
-    app.send("quit");
+    app.quit();
 }
 
 fn msaa_set_value_raises_a_value_change_win_event() {
+    common::init_com();
     let title = common::unique_title("mockapp-events-msaa-value");
     let mut app = common::spawn("small.json", "msaa", &title);
-    let _hwnd = common::find_window(&title);
-    let pid = app.pid();
-
-    let seen = Arc::new(Mutex::new(Vec::<WinEventKind>::new()));
-    let seen_cb = seen.clone();
-    let _hook = WinEventHook::install(
-        pid,
-        APP_SUBSCRIPTIONS,
-        Box::new(move |kind, _hwnd, _id_object, _id_child, _| {
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(kind);
-        }),
-    )
-    .expect("WinEventHook::install");
+    let hwnd = common::find_window(&title);
+    let (_hook, events) = hook(app.pid());
 
     app.send("set-value slider1 77");
+    app.send("set-name btn1 Marker");
+    assert_eq!(
+        pump_until(&events, 2),
+        [
+            win_event(WinEventKind::ValueChange, hwnd, SLIDER),
+            win_event(WinEventKind::NameChange, hwnd, BUTTON),
+        ]
+    );
+    assert_eq!(
+        read_object(address(hwnd, SLIDER)).value.as_deref(),
+        Some("77")
+    );
 
-    pump_wait_until("MSAA value-change WinEvent", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&WinEventKind::ValueChange)
-    });
-
-    app.send("quit");
+    app.quit();
 }
 
 fn msaa_select_raises_a_selection_win_event() {
+    common::init_com();
     let title = common::unique_title("mockapp-events-msaa-select");
     let mut app = common::spawn("small.json", "msaa", &title);
-    let _hwnd = common::find_window(&title);
-    let pid = app.pid();
-
-    let seen = Arc::new(Mutex::new(Vec::<WinEventKind>::new()));
-    let seen_cb = seen.clone();
-    let _hook = WinEventHook::install(
-        pid,
-        APP_SUBSCRIPTIONS,
-        Box::new(move |kind, _hwnd, _id_object, _id_child, _| {
-            seen_cb
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(kind);
-        }),
-    )
-    .expect("WinEventHook::install");
+    let hwnd = common::find_window(&title);
+    let (_hook, events) = hook(app.pid());
 
     app.send("select item1");
+    app.send("set-name btn1 Marker");
+    assert_eq!(
+        pump_until(&events, 2),
+        [
+            win_event(WinEventKind::Selection, hwnd, FIRST_ITEM),
+            win_event(WinEventKind::NameChange, hwnd, BUTTON),
+        ]
+    );
+    let item = read_object(address(hwnd, FIRST_ITEM));
+    assert_eq!(item.name.as_deref(), Some("First"));
+    assert_eq!(
+        item.states,
+        [State::Focusable, State::Selectable, State::Selected]
+            .into_iter()
+            .collect::<StateSet>()
+    );
+    assert!(
+        !read_object(address(hwnd, SECOND_ITEM))
+            .states
+            .contains(State::Selected),
+        "only the item selected is"
+    );
 
-    pump_wait_until("MSAA selection WinEvent", || {
-        seen.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&WinEventKind::Selection)
-    });
+    app.quit();
+}
 
-    app.send("quit");
+/// A command naming a node the fixture lacks is rejected, not applied, so
+/// a typo in a test fails at once.
+fn a_command_for_an_unknown_node_is_rejected() {
+    let title = common::unique_title("mockapp-events-unknown");
+    let mut app = common::spawn("small.json", "uia", &title);
+    assert_eq!(
+        app.send_answered("set-name nosuch Renamed"),
+        "rejected: no node has the id nosuch"
+    );
+    assert_eq!(
+        app.send_answered("frobnicate btn1"),
+        "rejected: unrecognized command: frobnicate btn1"
+    );
+    app.quit();
 }
 
 /// Runs this file's tests through the UIA test runner, which explains why
@@ -555,6 +659,10 @@ fn main() {
         (
             "msaa_select_raises_a_selection_win_event",
             msaa_select_raises_a_selection_win_event,
+        ),
+        (
+            "a_command_for_an_unknown_node_is_rejected",
+            a_command_for_an_unknown_node_is_rejected,
         ),
     ]);
 }

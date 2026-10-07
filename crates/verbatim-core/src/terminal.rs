@@ -460,9 +460,6 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
     }
 }
 
-/// Verbatim+5: toggles "Report new output", says its new value, and
-/// reports the settings for the shell to save. Turning it off drops the
-/// output still waiting.
 /// Drops terminal output still waiting to be spoken, as turning "Report new
 /// output" off does, whether by its key or from the settings.
 pub(crate) fn drop_waiting(state: &mut SrState) {
@@ -473,6 +470,9 @@ pub(crate) fn drop_waiting(state: &mut SrState) {
     }
 }
 
+/// Verbatim+5: toggles "Report new output", says its new value, and
+/// reports the settings for the shell to save. Turning it off drops the
+/// output still waiting.
 pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let on = !state.settings.report_terminal_output;
     state.settings.report_terminal_output = on;

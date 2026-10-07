@@ -3,8 +3,10 @@
 //! One worker thread takes entries from the intake queue in order and
 //! finishes each before starting the next. It is the only thread that calls
 //! into the application, so events and replies leave the outpost in the order
-//! their entries joined the queue. This is NVDA's model, one thread doing all
-//! the work, with one such thread per application.
+//! the intake plans their entries: the order they joined the queue, but for
+//! the events of other objects that a focus change overtakes
+//! (`intake::overtaken`). This is NVDA's model, one thread doing all the
+//! work, with one such thread per application.
 //!
 //! Being the only thread that calls into the application, the worker is also
 //! where those calls are counted: the backend crates count each call on the
@@ -38,7 +40,9 @@ use verbatim_model::{
 use verbatim_uia::map::{
     cached_process_id, snapshot_from_cached_element, with_legacy_checked_state,
 };
-use verbatim_uia::{map::snapshot_parts_from_cached_element, nearest_window_handle};
+use verbatim_uia::{
+    ElementExt as _, map::snapshot_parts_from_cached_element, nearest_window_handle,
+};
 use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId, UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
 };
@@ -605,7 +609,8 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::ResolveFocus { .. }
-        | Item::CaretOf { .. } => (HANDLING_DEADLINE, None),
+        | Item::CaretOf { .. }
+        | Item::Settle(_) => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -627,7 +632,38 @@ fn describe(item: &Item) -> String {
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
+        Item::Settle(_) => "settle".to_owned(),
     }
+}
+
+/// A UIA focus's parts as NVDA reads them when it announces the focus: its
+/// name and role from the event, whose cache NVDA reads them from, and its
+/// value, states, and details from `element`, the focused element the
+/// outpost read live, as NVDA fetches those afresh when the focus is
+/// handled (`docs/parity.md`, "How an outpost turns events into focus
+/// reports"). The element has the keyboard focus, as the event said.
+fn with_live_reads(fact: &UiaSnapshotFact, element: &IUIAutomationElement) -> UiaSnapshotFact {
+    // `element` was read with the base cache request.
+    let live = snapshot_parts_from_cached_element(element);
+    UiaSnapshotFact {
+        runtime_id: fact.runtime_id.clone(),
+        role: fact.role,
+        name: fact.name.clone(),
+        value: live.value,
+        states: live.states.with(State::Focused),
+        details: live.details,
+    }
+}
+
+/// A focus that is not reported, for the reason logged where it was found.
+struct Dropped;
+
+/// The element the registry holds under a focus's runtime id.
+enum Held {
+    /// The element, resolved in this apartment.
+    Element(IUIAutomationElement),
+    /// The element could not be resolved.
+    Unresolved,
 }
 
 /// What reading the focused element found for a focus fact.
@@ -688,7 +724,32 @@ impl Worker<'_> {
                 held,
             } => self.resolve_focus(&runtime_id, trace, attempt, held),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
+            Item::Settle(done) => self.settle(done, trace),
         }
+    }
+
+    /// Answers [`Outpost::settle`](super::Outpost::settle) once nothing
+    /// else is waiting, the follow-ups the entries before it queued
+    /// included: otherwise it goes to the back of the queue again.
+    fn settle(&self, done: std::sync::mpsc::Sender<()>, trace: TraceId) {
+        let context = self.context;
+        if context.intake.busy() {
+            context.intake.push(Entry {
+                item: Item::Settle(done),
+                trace,
+                observed_at_ms: now_ms(),
+                timing: EventTiming::default(),
+            });
+            return;
+        }
+        for registration in [context.focus_properties.get(), context.text_events.get()]
+            .into_iter()
+            .flatten()
+        {
+            registration.settle();
+        }
+        context.outbound.flush();
+        let _ = done.send(());
     }
 
     /// Whether `node_id` is the focus this outpost last reported.
@@ -1504,17 +1565,20 @@ impl Worker<'_> {
     }
 
     /// A UIA focus fact. What the focus is comes from the event, as NVDA
-    /// builds the focus from the event's sender and its cached properties,
-    /// and only when the event says the element has the keyboard focus
-    /// (NVDA's `shouldAllowUIAFocusEvent`). The element itself is in the
-    /// listener's process and cannot cross to this one, so the outpost finds
-    /// its own copy, for the ancestors and for navigation, by reading the
+    /// builds the focus from the event's sender, and only when the event
+    /// says the element has the keyboard focus (NVDA's
+    /// `shouldAllowUIAFocusEvent`): its name and role from the event's
+    /// cache, and its value, states, and details from the focused element
+    /// read live, as NVDA reads those afresh when it handles the focus
+    /// ([`with_live_reads`]). The element itself is in the listener's
+    /// process and cannot cross to this one, so the outpost finds its own
+    /// copy, for those reads, the ancestors, and navigation, by reading the
     /// focused element, with a short wait: an application busy starting up
     /// can leave that read unanswered for more than ten seconds, or answer
     /// with UIA's stand-in for its window (Windows 11 Notepad's text area as
-    /// a nameless edit). Without it the focus is still reported, with its
-    /// ancestors unknown, and a follow-up finds the element later for the
-    /// focus-following property subscription.
+    /// a nameless edit). Without it the focus is still reported, from the
+    /// event alone, with its ancestors unknown, and a follow-up finds the
+    /// element later for the focus-following property subscription.
     ///
     /// A fact whose element has lost the keyboard focus to another
     /// application is dropped: the newer focus's own event reports it, and
@@ -1555,6 +1619,11 @@ impl Worker<'_> {
             LiveFocus::Unresolved => None,
         };
         let element_us = reading.elapsed().as_micros();
+        // The element the registry holds under this runtime id, if it holds
+        // one: an application can give a dead element's id to a new one.
+        let held = element
+            .as_ref()
+            .and_then(|_| self.held_element(&fact.runtime_id));
         let previous = self.focus_chain();
         // The window the focus is in, known without a call: the event's
         // own, else the application's keyboard focus window when the
@@ -1564,53 +1633,32 @@ impl Worker<'_> {
             .into_iter()
             .find(|&hwnd| hwnd != 0);
         let enriching = Instant::now();
-        let remote = match self.remote_enrichment(element.as_ref(), &previous, focus_in) {
-            Some(read::RemoteEnrichment::NotFocused) => {
-                // Read live in the same round trip: the focus moved on after
-                // the focused element was read, as for `LiveFocus::Elsewhere`.
-                tracing::debug!("UIA focus held: the element lost the keyboard focus");
-                self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
-                return;
-            }
-            Some(read::RemoteEnrichment::Read { enrichment, window }) => Some((enrichment, window)),
-            None => None,
+        let held_element = match &held {
+            Some(Held::Element(element)) => Some(element),
+            Some(Held::Unresolved) | None => None,
         };
-        // The event's own window; else the element's nearest, which a
-        // remote read found with its ancestors, or, when the provider could
-        // not tell it, the classic walk finds; else, for an element not
-        // resolved, this application's keyboard focus window when the
-        // listener captured the event, which hosts the element when the
-        // event is current but, in an application with several windows, may
-        // be another of its windows when the event is late; else, for
-        // deciding the backend only, this application's focus window now,
-        // which is never reported.
-        //
-        // The console host's provider answers no native window handle for
-        // its window inside a remote operation (only the client side's
-        // window proxy supplies it), and its window is not this process's
-        // by `GetWindowThreadProcessId`, which names the console's client
-        // instead, so for its text area only the classic walk finds the
-        // window.
-        let reported = if fact_hwnd != 0 {
-            Some(fact_hwnd)
-        } else {
-            remote
-                .as_ref()
-                .and_then(|(_, window)| *window)
-                .or_else(|| element.as_ref().and_then(nearest_window_handle))
-                .or((focus_window != 0).then_some(focus_window))
+        let (remote, held_focused) =
+            match self.remote_enrichment(element.as_ref(), held_element, &previous, focus_in) {
+                Some(read::RemoteEnrichment::NotFocused) => {
+                    // Read live in the same round trip: the focus moved on after
+                    // the focused element was read, as for `LiveFocus::Elsewhere`.
+                    tracing::debug!("UIA focus held: the element lost the keyboard focus");
+                    self.hold_focus((fact_hwnd, focus_window), fact, trace, observed_at_ms);
+                    return;
+                }
+                Some(read::RemoteEnrichment::Read {
+                    enrichment,
+                    window,
+                    held_focused,
+                }) => (Some((enrichment, window)), held_focused),
+                None => (None, None),
+            };
+        let remote_window = remote.as_ref().and_then(|(_, window)| *window);
+        let Ok(reported) =
+            self.uia_focus_window((fact_hwnd, focus_window), remote_window, element.as_ref())
+        else {
+            return;
         };
-        let judged = reported.or_else(|| focus_window_of(context.target_pid));
-        if judged.is_some_and(window_belongs_to_hidden_frame) {
-            return;
-        }
-        if let Some(hwnd) = judged
-            && !read::window_uses_uia(context, hwnd)
-        {
-            // MSAA owns this window; its MSAA fact reports the focus.
-            tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
-            return;
-        }
         let object = Some(Object::Uia(fact.runtime_id.clone()));
         let Some(element) = element else {
             tracing::debug!("UIA focus reported from the event: its element was not found in time");
@@ -1628,7 +1676,11 @@ impl Worker<'_> {
             self.resolve_focus_later(&fact.runtime_id, trace, 1);
             return;
         };
-        let node = Self::uia_node(context, fact, Some(&element));
+        if let Some(held) = held {
+            self.reissue_unless_focused(&fact.runtime_id, held, held_focused);
+        }
+        let parts = with_live_reads(fact, &element);
+        let node = Self::uia_node(context, &parts, Some(&element));
         let node = with_legacy_checked_state(&element, node); // Menu items only.
         let enrichment = match remote {
             Some((enrichment, _)) => enrichment,
@@ -1653,6 +1705,51 @@ impl Worker<'_> {
         );
     }
 
+    /// The window a UIA focus is reported in, or [`Dropped`] when the focus
+    /// is in Core's hidden frame or in a window MSAA owns.
+    fn uia_focus_window(
+        &self,
+        (fact_hwnd, focus_window): (isize, isize),
+        remote_window: Option<isize>,
+        element: Option<&IUIAutomationElement>,
+    ) -> Result<Option<isize>, Dropped> {
+        // The event's own window; else the element's nearest, which a
+        // remote read found with its ancestors, or, when the provider could
+        // not tell it, the classic walk finds; else, for an element not
+        // resolved, this application's keyboard focus window when the
+        // listener captured the event, which hosts the element when the
+        // event is current but, in an application with several windows, may
+        // be another of its windows when the event is late; else, for
+        // deciding the backend only, this application's focus window now,
+        // which is never reported.
+        //
+        // The console host's provider answers no native window handle for
+        // its window inside a remote operation (only the client side's
+        // window proxy supplies it), and its window is not this process's
+        // by `GetWindowThreadProcessId`, which names the console's client
+        // instead, so for its text area only the classic walk finds the
+        // window.
+        let reported = if fact_hwnd != 0 {
+            Some(fact_hwnd)
+        } else {
+            remote_window
+                .or_else(|| element.and_then(nearest_window_handle))
+                .or((focus_window != 0).then_some(focus_window))
+        };
+        let judged = reported.or_else(|| focus_window_of(self.context.target_pid));
+        if judged.is_some_and(window_belongs_to_hidden_frame) {
+            return Err(Dropped);
+        }
+        if let Some(hwnd) = judged
+            && !read::window_uses_uia(self.context, hwnd)
+        {
+            // MSAA owns this window; its MSAA fact reports the focus.
+            tracing::debug!(hwnd, "UIA focus dropped: MSAA owns the window");
+            return Err(Dropped);
+        }
+        Ok(reported)
+    }
+
     /// [`read::uia_enrichment`], the classic walk, for a focus's element.
     fn classic_enrichment(
         &mut self,
@@ -1670,17 +1767,67 @@ impl Worker<'_> {
     }
 
     /// [`read::uia_remote_enrichment`] for a focus's element, when there is
-    /// one and a client to read it with.
+    /// one and a client to read it with, with `held`, the element the
+    /// registry holds under the same runtime id.
     fn remote_enrichment(
         &mut self,
         element: Option<&IUIAutomationElement>,
+        held: Option<&IUIAutomationElement>,
         previous: &[NodeSnapshot],
         focus_in: Option<isize>,
     ) -> Option<read::RemoteEnrichment> {
         let element = element?;
         let uia = self.client.uia()?;
         let cache = self.context.uia_cache(uia).ok()?;
-        read::uia_remote_enrichment(self.context, uia, &cache, element, previous, focus_in)
+        read::uia_remote_enrichment(self.context, uia, &cache, element, held, previous, focus_in)
+    }
+
+    /// The element the registry holds under `runtime_id`, `None` when no
+    /// node with an element has that id.
+    fn held_element(&self, runtime_id: &[i32]) -> Option<Held> {
+        let registry = &self.context.uia_registry;
+        let agile = registry
+            .existing_id(runtime_id)
+            .and_then(|id| registry.element_of(id))?;
+        Some(agile.resolve().map_or(Held::Unresolved, Held::Element))
+    }
+
+    /// Gives `runtime_id` a new node unless `held`, the element its node
+    /// stands for, still has the keyboard focus: `held_focused` when the
+    /// remote enrichment read it, else read now. NVDA treats a focus event
+    /// as a duplicate only while the element it compares equal to still has
+    /// the keyboard focus, read live; a held element that has lost it, or
+    /// cannot be read (it died), is not this focus whatever its runtime id
+    /// says.
+    fn reissue_unless_focused(
+        &mut self,
+        runtime_id: &[i32],
+        held: Held,
+        held_focused: Option<bool>,
+    ) {
+        let keeps = match held {
+            Held::Element(held) => held_focused.unwrap_or_else(|| self.held_has_focus(&held)),
+            Held::Unresolved => false,
+        };
+        if !keeps {
+            tracing::debug!(
+                "UIA focus: its runtime id named an element without the focus; a new node is issued"
+            );
+            drop(self.context.uia_registry.reissue(runtime_id));
+        }
+    }
+
+    /// Whether `held` has the keyboard focus, read live within
+    /// [`FOCUS_READ_WAIT`]: the classic path's check, where no remote
+    /// operation read it. A read that fails or does not answer in time is
+    /// an element that is gone.
+    fn held_has_focus(&mut self, held: &IUIAutomationElement) -> bool {
+        self.client.uia().is_some_and(|uia| {
+            matches!(
+                uia.within(FOCUS_READ_WAIT, |_| held.has_keyboard_focus()),
+                Ok(Ok(true))
+            )
+        })
     }
 
     /// Holds back a UIA focus fact whose element does not have the keyboard
@@ -1714,7 +1861,8 @@ impl Worker<'_> {
         let Ok(cache) = self.context.uia_cache(uia) else {
             return LiveFocus::Unresolved;
         };
-        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache)) else {
+        let read = &self.context.focused_element;
+        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| read(uia, &cache)) else {
             return LiveFocus::Unresolved;
         };
         // `element` was built with the base cache request.
@@ -1798,7 +1946,7 @@ impl Worker<'_> {
         }
         let element = self.client.uia().and_then(|uia| {
             let cache = self.context.uia_cache(uia).ok()?;
-            uia.focused_element(&cache).ok()
+            (self.context.focused_element)(uia, &cache).ok()
         });
         let Some(element) = element.filter(|element| {
             // Built with the base cache request.

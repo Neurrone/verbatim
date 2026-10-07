@@ -8,21 +8,31 @@
 //! same commit as the ledger. On a mismatch the test prints every measured
 //! count, so the numbers that moved are all in one run's output.
 //!
-//! The MSAA operations run through a real outpost in this process, as
-//! `slow_application.rs` does: the test hands it a focus fact or a query,
-//! as the listener and Core would, and reads the calls from the event's or
-//! reply's timing. The UIA operations cannot: the outpost finds a UIA
-//! focus's element by reading the system's keyboard focus
-//! (`GetFocusedElement`), and a test must not take the keyboard focus from
-//! the desktop it runs on. They run on this thread instead, making the
-//! same `verbatim-uia` and `verbatim-uia-rops` calls in the same order as
-//! the outpost's worker does once it has the element in hand
-//! ([`uia_focus`] and [`uia_navigate`] say which code each follows), and
-//! read this thread's count. The outpost's one read of the focused element
-//! is counted where the outpost makes it; its provider hits are the only
-//! cost they leave out. A UIA focus is measured both ways the outpost reads
-//! it: with remote operations, as it does by default, and with the classic
-//! walk, as it does with `uia.remote_operations` off.
+//! Focus changes and object-navigation steps, on both backends, run through
+//! a real outpost in this process, as `slow_application.rs` does: the test
+//! hands it a focus fact or a query, as the listener and Core would, and
+//! reads the calls from the event's or reply's timing. The outpost reads a
+//! UIA focus's element from the system's keyboard focus, which a test must
+//! not take from the desktop it runs on, so its outpost reads it from the
+//! test instead ((`Outpost::with_focused_element_reader`)): the test finds
+//! the element mockapp reports focused, with the listener's cache request,
+//! and the outpost's read of it counts as the one call the system read is.
+//! The system read's own provider calls are the only cost left out.
+//! Everything after it is the outpost's own code. A UIA focus is measured
+//! both ways the outpost reads it: with remote operations, as it does by
+//! default, and with the classic walk, as it does with
+//! `uia.remote_operations` off.
+//!
+//! The provider hits are read once the outpost has settled
+//! (`Outpost::settle`): it has handled everything, moved its
+//! focus-following subscriptions, and written every message, so they are
+//! everything mockapp answered for the operation, the subscription's move
+//! included, and the outpost is shown to have said nothing more than the
+//! one event or reply. The calls are those the event or reply carries:
+//! everything the worker made before it published.
+//!
+//! The text requests run the outpost's text functions on this thread with
+//! a text source built as the worker builds it.
 //!
 //! mockapp's focus moves with `set-focus`, which raises no event, so no
 //! other client on the machine (a running screen reader, say) calls into
@@ -33,45 +43,38 @@ mod common;
 mod harness;
 
 use std::collections::HashMap;
-use std::io::BufReader;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
+use verbatim_model::{CallCounts, Fetches, NodeSnapshot, QueryKind, Role, TreeNode, WindowHandle};
 use verbatim_model::{
-    CallCounts, CallKind, Fetches, NodeId, NodeSnapshot, NormalizedEvent, QueryKind, Role, TraceId,
-    TreeNode,
+    CaretWait, CaretWatch, PreviousSelection, TextAttributes, TextMovement, TextOp, TextPoint,
+    TextPosition, TextRead, TextReadAhead, TextReply, TextUnit, Theme,
 };
-use verbatim_model::{
-    CaretWait, CaretWatch, PreviousSelection, TextMovement, TextOp, TextPoint, TextPosition,
-    TextRead, TextReadAhead, TextReply, TextUnit, Theme,
-};
-use verbatim_outpost::Outpost;
+use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::dialog_text::{UiaObject, dialog_text};
-use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
-    SupervisorToOutpost, read_message,
-};
+use verbatim_outpost::protocol::SupervisorToOutpost;
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, CaretSignal, TextSource, caret_report, perform};
-use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state};
+use verbatim_uia::map::snapshot_from_cached_element;
 use verbatim_uia::{
-    AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, FOCUS_PROPERTIES, NodeIdRegistry,
-    Registration, Scope, Subscription, Uia,
+    CACHED_PROPERTIES, ElementExt, FOCUS_PROPERTIES, NodeIdRegistry, Registration, Scope,
+    Subscription, Uia,
 };
-use verbatim_uia_rops::{
-    FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
-    navigation_step,
-};
+use verbatim_uia_rops::{FocusAncestry, FocusQuery, focus_ancestry};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationCacheRequest, IUIAutomationElement, UIA_MenuOpenedEventId,
+    IUIAutomationCacheRequest, IUIAutomationElement, TreeScope_Descendants,
+    UIA_HasKeyboardFocusPropertyId, UIA_MenuOpenedEventId,
     UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
     UIA_Text_TextSelectionChangedEventId,
 };
 use windows::core::AgileReference;
+
+use common::outpost::{OutpostUnderTest, Reported};
 
 /// The fixture's nodes, by their index in mockapp's tree (depth first, the
 /// root at 0): mockapp answers `WM_GETOBJECT` for index `i` at object id
@@ -136,131 +139,6 @@ impl Ratchet {
     }
 }
 
-/// A real outpost in this process, watching mockapp, with its messages.
-struct OutpostUnderTest {
-    outpost: Outpost,
-    messages: Receiver<OutpostToSupervisor>,
-    next_request: u64,
-}
-
-impl OutpostUnderTest {
-    fn new(pid: u32) -> Self {
-        let (pipe_in, pipe_out) = std::io::pipe().expect("an anonymous pipe");
-        let outpost = Outpost::new(Box::new(pipe_out), pid);
-        let (messages_tx, messages) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(pipe_in);
-            while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
-                if messages_tx.send(message).is_err() {
-                    return;
-                }
-            }
-        });
-        Self {
-            outpost,
-            messages,
-            next_request: 1,
-        }
-    }
-
-    /// The next message `wanted` picks out, skipping the rest.
-    fn wait_for<T>(&self, mut wanted: impl FnMut(OutpostToSupervisor) -> Option<T>) -> T {
-        let deadline = Instant::now() + common::WAIT_TIMEOUT;
-        loop {
-            let wait = deadline.saturating_duration_since(Instant::now());
-            let message = self
-                .messages
-                .recv_timeout(wait)
-                .expect("the outpost answers before the wait times out");
-            if let Some(found) = wanted(message) {
-                return found;
-            }
-        }
-    }
-
-    /// Hands the outpost an MSAA focus on mockapp's node `index`, as the
-    /// listener would, and returns the focus it reports and the calls it
-    /// made.
-    fn msaa_focus(&self, hwnd: HWND, index: usize) -> (NodeSnapshot, CallCounts) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::DeliverFact {
-                trace_id: TraceId::mint(),
-                observed_at_ms: 0,
-                timing: EventTiming::default(),
-                fact: DeliveredFact::MsaaFocus {
-                    hwnd: hwnd.0 as isize,
-                    id_object: i32::try_from(index + 1).expect("a small index"),
-                    id_child: 0,
-                },
-            });
-        self.wait_for(|message| match message {
-            OutpostToSupervisor::Event {
-                event: NormalizedEvent::FocusChanged { node, .. },
-                timing,
-                ..
-            } => Some((node, timing.calls)),
-            _ => None,
-        })
-    }
-
-    /// [`msaa_focus`](Self::msaa_focus), returning the focus's ancestors
-    /// too.
-    fn msaa_focus_in_context(
-        &self,
-        hwnd: HWND,
-        index: usize,
-    ) -> (NodeSnapshot, Vec<NodeSnapshot>, CallCounts) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::DeliverFact {
-                trace_id: TraceId::mint(),
-                observed_at_ms: 0,
-                timing: EventTiming::default(),
-                fact: DeliveredFact::MsaaFocus {
-                    hwnd: hwnd.0 as isize,
-                    id_object: i32::try_from(index + 1).expect("a small index"),
-                    id_child: 0,
-                },
-            });
-        self.wait_for(|message| match message {
-            OutpostToSupervisor::Event {
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node, ancestors, ..
-                    },
-                timing,
-                ..
-            } => Some((node, ancestors, timing.calls)),
-            _ => None,
-        })
-    }
-
-    /// Asks the outpost for one object-navigation step, as Core would, and
-    /// returns the neighbor and the calls it made.
-    fn navigate(&mut self, node_id: NodeId, kind: QueryKind) -> (NodeSnapshot, CallCounts) {
-        let request_id = self.next_request;
-        self.next_request += 1;
-        self.outpost.handle_command(&SupervisorToOutpost::Query {
-            trace_id: TraceId::mint(),
-            request_id,
-            query: Query::Navigate { node_id, kind },
-        });
-        self.wait_for(|message| match message {
-            OutpostToSupervisor::Reply {
-                request_id: answered,
-                outcome,
-                timing,
-                ..
-            } if answered == request_id => match outcome {
-                QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))) => {
-                    Some((neighbor, timing.calls))
-                }
-                other => panic!("navigation answered {other:?}"),
-            },
-            _ => None,
-        })
-    }
-}
-
 /// Moves mockapp's focus to `id`, hands the outpost the focus on `index`,
 /// and measures it.
 fn measure_msaa_focus(
@@ -268,28 +146,37 @@ fn measure_msaa_focus(
     hwnd: HWND,
     outpost: &OutpostUnderTest,
     (id, index): (&str, usize),
-) -> (NodeSnapshot, Cost) {
+) -> (Reported, Cost) {
     common::apply(app, hwnd, &format!("set-focus {id}"));
-    let (node, calls) = outpost.msaa_focus(hwnd, index);
-    (
-        node,
-        Cost {
-            calls,
-            hits: common::read_hits(hwnd),
-        },
-    )
+    let reported = outpost.msaa_focus(hwnd, index);
+    let cost = Cost {
+        calls: reported.calls,
+        hits: common::read_hits(hwnd),
+    };
+    (reported, cost)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "every focus change and its pinned provider hits, listed in full"
+)]
 fn msaa_focus_changes_cost_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-focus");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
+    let window = Some(WindowHandle(hwnd.0 as u64));
     let outpost = OutpostUnderTest::new(app.pid());
     let mut ratchet = Ratchet::default();
 
-    let (node, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
-    assert_eq!(node.name.as_deref(), Some("First"));
+    // The fixture's root has the window role, and an MSAA window object
+    // above a control is layout, left out of the chain (`msaa_ancestors`
+    // in the outpost's `read.rs`).
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
+    assert_eq!(reported.chain(), [Some("Settings"), Some("First")]);
+    assert_eq!(reported.node.role, Role::Button);
+    assert_eq!(reported.selected_child, None);
+    assert_eq!(reported.window, window);
     ratchet.check(
         "MSAA focus, cold",
         &cost,
@@ -308,8 +195,10 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    let (node, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("second", SECOND));
-    assert_eq!(node.name.as_deref(), Some("Second"));
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("second", SECOND));
+    assert_eq!(reported.chain(), [Some("Settings"), Some("Second")]);
+    assert_eq!(reported.selected_child, None);
+    assert_eq!(reported.window, window);
     ratchet.check(
         "MSAA focus, steady state",
         &cost,
@@ -328,8 +217,18 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    let (node, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("list", LIST));
-    assert_eq!(node.role, Role::List);
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("list", LIST));
+    assert_eq!(reported.chain(), [Some("Options")]);
+    assert_eq!(reported.node.role, Role::List);
+    assert_eq!(
+        reported
+            .selected_child
+            .and_then(|child| child.name)
+            .as_deref(),
+        Some("One"),
+        "the list's selected item"
+    );
+    assert_eq!(reported.window, window);
     ratchet.check(
         "MSAA focus into a list",
         &cost,
@@ -350,10 +249,12 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    let (node, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item1", ITEM_ONE));
-    assert_eq!(node.name.as_deref(), Some("One"));
-    let (node, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
-    assert_eq!(node.name.as_deref(), Some("Two"));
+    let (reported, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item1", ITEM_ONE));
+    assert_eq!(reported.chain(), [Some("Options"), Some("One")]);
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    assert_eq!(reported.selected_child, None);
+    assert_eq!(reported.window, window);
     ratchet.check(
         "MSAA arrow to the next list item",
         &cost,
@@ -373,7 +274,7 @@ fn msaa_focus_changes_cost_exactly() {
     );
 
     ratchet.finish();
-    app.send("quit");
+    app.quit();
 }
 
 /// The description the dialog among `ancestors` was reported with.
@@ -403,13 +304,13 @@ fn msaa_dialog_text_costs_exactly() {
     let mut ratchet = Ratchet::default();
 
     common::apply(&mut app, hwnd, "set-focus yes");
-    let (node, ancestors, made) = outpost.msaa_focus_in_context(hwnd, YES);
-    assert_eq!(node.name.as_deref(), Some("Yes"));
-    assert_eq!(dialog_description(&ancestors), Some(QUESTION));
+    let reported = outpost.msaa_focus(hwnd, YES);
     let cost = Cost {
-        calls: made,
+        calls: reported.calls,
         hits: common::read_hits(hwnd),
     };
+    assert_eq!(reported.node.name.as_deref(), Some("Yes"));
+    assert_eq!(dialog_description(&reported.ancestors), Some(QUESTION));
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
@@ -430,7 +331,7 @@ fn msaa_dialog_text_costs_exactly() {
     );
 
     ratchet.finish();
-    app.send("quit");
+    app.quit();
 }
 
 /// A UIA message box's text, gathered as the outpost's worker gathers it
@@ -439,7 +340,7 @@ fn msaa_dialog_text_costs_exactly() {
 /// with their properties cached.
 fn uia_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-dialog");
-    let mut app = common::spawn("dialog.json", "uia", &title);
+    let app = common::spawn("dialog.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
@@ -464,7 +365,7 @@ fn uia_dialog_text_costs_exactly() {
         ],
     );
     ratchet.finish();
-    app.send("quit");
+    app.quit();
 }
 
 fn msaa_navigation_steps_cost_exactly() {
@@ -475,6 +376,7 @@ fn msaa_navigation_steps_cost_exactly() {
     let mut outpost = OutpostUnderTest::new(app.pid());
     let mut ratchet = Ratchet::default();
     let (first, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
+    let first = first.node;
 
     common::reset_hits(hwnd);
     let (second, calls_made) = outpost.navigate(first.id, QueryKind::NextSibling);
@@ -524,7 +426,8 @@ fn msaa_navigation_steps_cost_exactly() {
     );
 
     // A theme reporting descriptions and shortcuts as off: the outpost no
-    // longer asks for them, and saves their calls.
+    // longer asks for them, and saves their calls. The reader thread takes
+    // the change at once, before the step is queued.
     outpost
         .outpost
         .handle_command(&SupervisorToOutpost::Fetches(Fetches {
@@ -556,7 +459,7 @@ fn msaa_navigation_steps_cost_exactly() {
     );
 
     ratchet.finish();
-    app.send("quit");
+    app.quit();
 }
 
 /// A UIA client on this thread over mockapp's tree, with every element the
@@ -604,6 +507,24 @@ impl UiaUnderTest {
         };
         (result, cost)
     }
+
+    /// The element mockapp reports as having the keyboard focus, found
+    /// under its window by that property and built with the listener's
+    /// cache request, as a focus event's element arrives: what the system's
+    /// focused element would be if mockapp had the keyboard focus.
+    fn focused(&self, hwnd: HWND) -> IUIAutomationElement {
+        let root = self
+            .uia
+            .element_from_handle(hwnd.0 as isize, &self.cache)
+            .expect("mockapp's root element");
+        let condition = self
+            .uia
+            .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
+            .expect("a condition");
+        root.find_first_build_cache(TreeScope_Descendants, &condition, &self.cache)
+            .expect("the search")
+            .expect("mockapp reports a focused element")
+    }
 }
 
 /// Every named node's live element, from the registry the walk filled.
@@ -624,164 +545,30 @@ fn collect(
     }
 }
 
-/// The calls the outpost's worker makes for a UIA focus, in the same order:
-/// `Worker::uia_focus` in `verbatim-outpost`'s `worker.rs` reads the
-/// focused element (`GetFocusedElement`, which a test cannot make, so it is
-/// counted here where the outpost makes it), then, with remote operations
-/// on, `uia_remote_enrichment` in its `read.rs` reads the ancestors, the
-/// selected child, and the nearest window in one `Execute`
-/// (`verbatim_uia_rops::focus_ancestry`) and turns them into the chain
-/// (`Uia::ancestor_chain_from`), reusing the previous chain from where it
-/// meets it; with them off, the worker finds the nearest window of an
-/// element with none of its own, and `uia_enrichment` and `uia_ancestors`
-/// walk the ancestors hop by hop, stopping at one the previous focus's
-/// chain holds, and read a list's selected child. The first time, the
-/// window's provider is probed for arbitration. Returns the new focus's
-/// chain, outermost first, ending with the focus, as the worker keeps it.
-fn uia_focus(
-    under_test: &UiaUnderTest,
-    hwnd: HWND,
-    element: &IUIAutomationElement,
-    previous: &[NodeSnapshot],
-    (first_in_window, remote): (bool, bool),
-) -> (Vec<NodeSnapshot>, Option<NodeSnapshot>) {
-    let UiaUnderTest {
-        uia,
-        cache,
-        registry,
-        ..
-    } = under_test;
-    // The outpost's read of the focused element.
-    verbatim_uia::calls::count(CallKind::Uia);
-    // A menu item without the Toggle pattern would read its legacy state
-    // here; the fixture has none, so no call is made.
-    let node = with_legacy_checked_state(element, snapshot_from_cached_element(element, registry));
-    let known = |id: NodeId| previous.iter().any(|known| known.id == id);
-    // mockapp's window is read through UIA, so the walk crosses into no
-    // other API.
-    let read_by_other_api = |_: isize| false;
-    let stops = AncestorStops {
-        read_by_other_api: &read_by_other_api,
-        known: &known,
-        deadline: None,
+/// Moves mockapp's focus to `id`, finds the element mockapp then reports
+/// focused, which must be the one named `name`, hands the outpost the
+/// focus, and measures the outpost's handling of it.
+fn measure_uia_focus(
+    (app, under_test, hwnd): (&mut common::MockApp, &UiaUnderTest, HWND),
+    outpost: &OutpostUnderTest,
+    (id, name): (&str, &str),
+) -> (Reported, Cost) {
+    app.send(&format!("set-focus {id}"));
+    let focused = under_test.focused(hwnd);
+    assert_eq!(
+        snapshot_from_cached_element(&focused, &under_test.registry)
+            .name
+            .as_deref(),
+        Some(name),
+        "the element mockapp reports focused"
+    );
+    common::reset_hits(hwnd);
+    let reported = outpost.uia_focus(&focused);
+    let cost = Cost {
+        calls: reported.calls,
+        hits: common::read_hits(hwnd),
     };
-    let (chain, crossed, walked, selected) = if remote {
-        let (known_ids, known_runtime_ids): (Vec<NodeId>, Vec<Vec<i32>>) = previous
-            .iter()
-            .filter_map(|node| Some((node.id, registry.runtime_id_of(node.id)?)))
-            .unzip();
-        let query = FocusQuery {
-            element,
-            known: &known_runtime_ids,
-            depth_limit: 64,
-            properties: CACHED_PROPERTIES,
-            deadline: None,
-        };
-        let (answer, path) = focus_ancestry(uia, &query, true).expect("the focus ancestry");
-        assert!(matches!(path, Path::Remote), "answered by {path:?}");
-        let FocusAncestry::Focused(ancestry) = answer else {
-            panic!("the element has the keyboard focus");
-        };
-        assert_eq!(ancestry.window, Some(hwnd.0 as isize), "the nearest window");
-        let (chain, crossed, mut walked) =
-            Uia::ancestor_chain_from(&ancestry.ancestors, registry, &stops);
-        if let (AncestorWalk::Complete, Some(index)) = (walked, ancestry.met_known) {
-            walked = AncestorWalk::MetKnown(known_ids[index]);
-        }
-        let selected = ancestry
-            .selected_child
-            .map(|child| snapshot_from_cached_element(&child, registry));
-        (chain, crossed, walked, selected)
-    } else {
-        assert_eq!(
-            verbatim_uia::nearest_window_handle(element),
-            Some(hwnd.0 as isize)
-        );
-        let (chain, crossed, walked) = uia
-            .ancestor_chain(element, cache, registry, 64, &stops)
-            .expect("the ancestor walk");
-        let selected = (node.role == Role::List)
-            .then(|| {
-                uia.selected_child(element, cache, registry)
-                    .expect("no error")
-            })
-            .flatten();
-        (chain, crossed, walked, selected)
-    };
-    if first_in_window {
-        assert_eq!(
-            verbatim_uia::probe_server_side_provider(hwnd.0 as isize),
-            Some(true)
-        );
-    }
-    assert_eq!(crossed, None);
-    // The walk met the previous chain: reuse what lies above, as the
-    // outpost's `splice` does.
-    let ancestors = match walked {
-        AncestorWalk::MetKnown(met) => {
-            let index = previous
-                .iter()
-                .position(|known| known.id == met)
-                .expect("the met ancestor is in the previous chain");
-            previous[..index].iter().cloned().chain(chain).collect()
-        }
-        AncestorWalk::Complete => chain,
-        AncestorWalk::OutOfTime => panic!("the walk has no deadline"),
-    };
-    (
-        ancestors.into_iter().chain(std::iter::once(node)).collect(),
-        selected,
-    )
-}
-
-/// The calls the outpost's worker makes for one object-navigation step
-/// from a UIA node it holds, in the same order. With remote operations,
-/// `uia_remote_step` in `verbatim-outpost`'s `read.rs` takes the step from
-/// the kept element and finds its nearest window in one program
-/// (`verbatim_uia_rops::navigation_step`). Classically, `resolve_uia_element`
-/// refreshes the kept element's cache, which also proves it still answers,
-/// and `navigate` finds the node's nearest window, for correcting the
-/// neighbor's backend, then takes the step. The correction makes no call
-/// for a neighbor with no window of its own.
-fn uia_navigate(
-    under_test: &UiaUnderTest,
-    element: &IUIAutomationElement,
-    kind: QueryKind,
-    remote: bool,
-) -> NodeSnapshot {
-    let UiaUnderTest {
-        uia,
-        cache,
-        registry,
-        ..
-    } = under_test;
-    if remote {
-        let direction = match kind {
-            QueryKind::Parent => NavigationDirection::Parent,
-            _ => NavigationDirection::NextSibling,
-        };
-        let properties = verbatim_uia::cached_properties(Theme::builtin_default().fetches());
-        let (step, path) = navigation_step(
-            uia,
-            &StepQuery {
-                element,
-                direction,
-                properties: &properties,
-            },
-            true,
-        )
-        .expect("the step");
-        assert!(matches!(path, Path::Remote), "{path:?}");
-        assert!(step.window.is_some());
-        return snapshot_from_cached_element(&step.neighbor.expect("a neighbor"), registry);
-    }
-    let fresh = element
-        .build_updated_cache(cache)
-        .expect("the element answers");
-    assert!(verbatim_uia::nearest_window_handle(&fresh).is_some());
-    uia.navigate(&fresh, cache, registry, kind)
-        .expect("the step")
-        .expect("a neighbor")
+    (reported, cost)
 }
 
 /// What each UIA focus change in [`uia_focus_changes`] is expected to cost.
@@ -792,34 +579,22 @@ struct FocusCosts<'a> {
     next_item: (CallCounts, &'a [(&'a str, u32)]),
 }
 
-/// Moves mockapp's focus to `id` and measures the outpost's handling of a
-/// focus on the element named `name`, the way `remote` says.
-fn measure_uia_focus(
-    (app, under_test, hwnd): (&mut common::MockApp, &UiaUnderTest, HWND),
-    (id, name): (&str, &str),
-    previous: &[NodeSnapshot],
-    (first_in_window, remote): (bool, bool),
-) -> ((Vec<NodeSnapshot>, Option<NodeSnapshot>), Cost) {
-    common::apply(app, hwnd, &format!("set-focus {id}"));
-    under_test.measure(hwnd, |under_test| {
-        uia_focus(
-            under_test,
-            hwnd,
-            under_test.element(name),
-            previous,
-            (first_in_window, remote),
-        )
-    })
-}
-
-/// The same focus changes, through the remote operation or the classic
-/// walk as `remote` says, each checked against `expected`.
+/// The same focus changes, through an outpost reading them with remote
+/// operations or the classic walk as `remote` says, each checked against
+/// `expected`. The first focus in the window probes it for arbitration.
 fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-uia-focus-{path}"));
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
+    let window = Some(WindowHandle(hwnd.0 as u64));
     let under_test = UiaUnderTest::new(hwnd);
+    let outpost = OutpostUnderTest::with_options(
+        app.pid(),
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
     let mut ratchet = Ratchet::default();
     let check = |ratchet: &mut Ratchet,
                  label: &str,
@@ -833,70 +608,70 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
         );
     };
 
-    let ((chain, _), cost) = measure_uia_focus(
-        (&mut app, &under_test, hwnd),
-        ("first", "First"),
-        &[],
-        (true, remote),
-    );
-    let names: Vec<_> = chain.iter().map(|node| node.name.as_deref()).collect();
+    let (reported, cost) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
     assert_eq!(
-        names,
+        reported.chain(),
         [
             Some("Mockapp Counts Fixture"),
             Some("Settings"),
             Some("First")
         ]
     );
+    assert_eq!(reported.node.role, Role::Button);
+    assert_eq!(reported.selected_child, None);
+    assert_eq!(reported.window, window);
     check(&mut ratchet, "cold", &cost, &expected.cold);
 
-    let ((chain, _), cost) = measure_uia_focus(
+    let (reported, cost) = measure_uia_focus(
         (&mut app, &under_test, hwnd),
+        &outpost,
         ("second", "Second"),
-        &chain,
-        (false, remote),
     );
-    let names: Vec<_> = chain.iter().map(|node| node.name.as_deref()).collect();
     assert_eq!(
-        names,
+        reported.chain(),
         [
             Some("Mockapp Counts Fixture"),
             Some("Settings"),
             Some("Second")
         ]
     );
+    assert_eq!(reported.selected_child, None);
+    assert_eq!(reported.window, window);
     check(&mut ratchet, "steady state", &cost, &expected.steady);
 
-    let ((chain, selected), cost) = measure_uia_focus(
-        (&mut app, &under_test, hwnd),
-        ("list", "Options"),
-        &chain,
-        (false, remote),
-    );
+    let (reported, cost) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("list", "Options"));
     assert_eq!(
-        selected.and_then(|node| node.name).as_deref(),
+        reported.chain(),
+        [Some("Mockapp Counts Fixture"), Some("Options")]
+    );
+    assert_eq!(reported.node.role, Role::List);
+    assert_eq!(
+        reported
+            .selected_child
+            .and_then(|child| child.name)
+            .as_deref(),
         Some("One"),
         "the list's selected item"
     );
+    assert_eq!(reported.window, window);
     check(&mut ratchet, "into a list", &cost, &expected.into_list);
 
-    let ((chain, _), _) = measure_uia_focus(
-        (&mut app, &under_test, hwnd),
-        ("item1", "One"),
-        &chain,
-        (false, remote),
-    );
-    let ((chain, _), cost) = measure_uia_focus(
-        (&mut app, &under_test, hwnd),
-        ("item2", "Two"),
-        &chain,
-        (false, remote),
-    );
-    let names: Vec<_> = chain.iter().map(|node| node.name.as_deref()).collect();
+    let (reported, _) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("item1", "One"));
     assert_eq!(
-        names,
+        reported.chain(),
+        [Some("Mockapp Counts Fixture"), Some("Options"), Some("One")]
+    );
+    let (reported, cost) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("item2", "Two"));
+    assert_eq!(
+        reported.chain(),
         [Some("Mockapp Counts Fixture"), Some("Options"), Some("Two")]
     );
+    assert_eq!(reported.selected_child, None);
+    assert_eq!(reported.window, window);
     check(
         &mut ratchet,
         "arrow to the next list item",
@@ -905,9 +680,15 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     );
 
     ratchet.finish();
-    drop(app);
+    drop(outpost);
+    app.quit();
 }
 
+/// A UIA focus's cost includes moving the outpost's focus-following
+/// property subscription to the new focus, made on the subscription's own
+/// thread once the focus is reported: one `HostRawElementProvider` and two
+/// `FragmentRoot` hits, as `uia_event_registrations_cost_exactly` pins the
+/// registration alone. It makes no call the worker counts.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
@@ -919,11 +700,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("ProviderOptions", 36),
                     ("GetPatternProvider", 22),
                     ("GetPropertyValue", 50),
-                    ("HostRawElementProvider", 13),
+                    ("HostRawElementProvider", 14),
                     ("Navigate", 11),
                     ("GetRuntimeId", 4),
                     ("BoundingRectangle", 2),
-                    ("FragmentRoot", 4),
+                    ("FragmentRoot", 6),
                 ],
             ),
             steady: (
@@ -933,11 +714,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("ProviderOptions", 22),
                     ("GetPatternProvider", 11),
                     ("GetPropertyValue", 29),
-                    ("HostRawElementProvider", 9),
+                    ("HostRawElementProvider", 10),
                     ("Navigate", 7),
                     ("GetRuntimeId", 4),
                     ("BoundingRectangle", 1),
-                    ("FragmentRoot", 4),
+                    ("FragmentRoot", 6),
                 ],
             ),
             // The list's first selected item through `SelectionPattern2`.
@@ -948,11 +729,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("ProviderOptions", 24),
                     ("GetPatternProvider", 23),
                     ("GetPropertyValue", 49),
-                    ("HostRawElementProvider", 10),
+                    ("HostRawElementProvider", 11),
                     ("Navigate", 8),
                     ("GetRuntimeId", 3),
                     ("BoundingRectangle", 2),
-                    ("FragmentRoot", 3),
+                    ("FragmentRoot", 5),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
@@ -964,11 +745,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("ProviderOptions", 22),
                     ("GetPatternProvider", 11),
                     ("GetPropertyValue", 29),
-                    ("HostRawElementProvider", 9),
+                    ("HostRawElementProvider", 10),
                     ("Navigate", 7),
                     ("GetRuntimeId", 4),
                     ("BoundingRectangle", 1),
-                    ("FragmentRoot", 4),
+                    ("FragmentRoot", 6),
                 ],
             ),
         },
@@ -986,11 +767,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("ProviderOptions", 44),
                     ("GetPatternProvider", 22),
                     ("GetPropertyValue", 51),
-                    ("HostRawElementProvider", 15),
+                    ("HostRawElementProvider", 16),
                     ("Navigate", 12),
                     ("GetRuntimeId", 3),
                     ("BoundingRectangle", 2),
-                    ("FragmentRoot", 7),
+                    ("FragmentRoot", 9),
                 ],
             ),
             steady: (
@@ -1000,11 +781,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("ProviderOptions", 27),
                     ("GetPatternProvider", 11),
                     ("GetPropertyValue", 29),
-                    ("HostRawElementProvider", 10),
+                    ("HostRawElementProvider", 11),
                     ("Navigate", 7),
                     ("GetRuntimeId", 3),
                     ("BoundingRectangle", 1),
-                    ("FragmentRoot", 6),
+                    ("FragmentRoot", 8),
                 ],
             ),
             // The list's first selected item through `SelectionPattern2`'s
@@ -1018,11 +799,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("ProviderOptions", 34),
                     ("GetPatternProvider", 24),
                     ("GetPropertyValue", 49),
-                    ("HostRawElementProvider", 14),
+                    ("HostRawElementProvider", 15),
                     ("Navigate", 7),
                     ("GetRuntimeId", 5),
                     ("BoundingRectangle", 2),
-                    ("FragmentRoot", 9),
+                    ("FragmentRoot", 11),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
@@ -1034,37 +815,63 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("ProviderOptions", 27),
                     ("GetPatternProvider", 11),
                     ("GetPropertyValue", 29),
-                    ("HostRawElementProvider", 10),
+                    ("HostRawElementProvider", 11),
                     ("Navigate", 7),
                     ("GetRuntimeId", 3),
                     ("BoundingRectangle", 1),
-                    ("FragmentRoot", 6),
+                    ("FragmentRoot", 8),
                 ],
             ),
         },
     );
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "both ways' pinned provider hits, listed in full"
-)]
-fn uia_navigation_steps_cost_exactly() {
-    let title = common::unique_title("mockapp-counts-uia-navigation");
-    let app = common::spawn("counts.json", "uia", &title);
+/// One object-navigation step's cost through an outpost reading UIA as
+/// `remote` says: the next sibling of `First`, then the parent of
+/// `Second`, from the nodes a focus on `First` and the first step reported,
+/// with the default theme's fetches, as Core sends them.
+fn uia_navigation_steps(remote: bool) -> [(NodeSnapshot, Cost); 2] {
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-counts-uia-navigation-{path}"));
+    let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
+    let mut outpost = OutpostUnderTest::with_options(
+        app.pid(),
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::Fetches(
+            Theme::builtin_default().fetches(),
+        ));
+    let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
+
+    common::reset_hits(hwnd);
+    let (second, calls_made) = outpost.navigate(first.node.id, QueryKind::NextSibling);
+    let next_sibling = Cost {
+        calls: calls_made,
+        hits: common::read_hits(hwnd),
+    };
+    common::reset_hits(hwnd);
+    let (group, calls_made) = outpost.navigate(second.id, QueryKind::Parent);
+    let parent = Cost {
+        calls: calls_made,
+        hits: common::read_hits(hwnd),
+    };
+    drop(outpost);
+    app.quit();
+    [(second, next_sibling), (group, parent)]
+}
+
+fn uia_navigation_steps_cost_exactly() {
     let mut ratchet = Ratchet::default();
 
-    let (second, cost) = under_test.measure(hwnd, |under_test| {
-        uia_navigate(
-            under_test,
-            under_test.element("First"),
-            QueryKind::NextSibling,
-            true,
-        )
-    });
+    let [(second, cost), (group, parent_cost)] = uia_navigation_steps(true);
     assert_eq!(second.name.as_deref(), Some("Second"));
+    assert_eq!(second.role, Role::Button);
     // One program: the step and the nearest window, the neighbor's cache
     // filled inside the provider; the kept element is not refreshed first.
     ratchet.check(
@@ -1083,18 +890,11 @@ fn uia_navigation_steps_cost_exactly() {
             ("FragmentRoot", 3),
         ],
     );
-    let (group, cost) = under_test.measure(hwnd, |under_test| {
-        uia_navigate(
-            under_test,
-            under_test.element("Second"),
-            QueryKind::Parent,
-            true,
-        )
-    });
     assert_eq!(group.name.as_deref(), Some("Settings"));
+    assert_eq!(group.role, Role::Group);
     ratchet.check(
         "UIA parent, remotely",
-        &cost,
+        &parent_cost,
         calls(1, 0, 0),
         &[
             ("WM_GETOBJECT", 1),
@@ -1109,15 +909,9 @@ fn uia_navigation_steps_cost_exactly() {
         ],
     );
 
-    let (second, cost) = under_test.measure(hwnd, |under_test| {
-        uia_navigate(
-            under_test,
-            under_test.element("First"),
-            QueryKind::NextSibling,
-            false,
-        )
-    });
+    let [(second, cost), (group, parent_cost)] = uia_navigation_steps(false);
     assert_eq!(second.name.as_deref(), Some("Second"));
+    assert_eq!(second.role, Role::Button);
     ratchet.check(
         "UIA next sibling, classically",
         &cost,
@@ -1134,19 +928,11 @@ fn uia_navigation_steps_cost_exactly() {
             ("FragmentRoot", 9),
         ],
     );
-
-    let (group, cost) = under_test.measure(hwnd, |under_test| {
-        uia_navigate(
-            under_test,
-            under_test.element("Second"),
-            QueryKind::Parent,
-            false,
-        )
-    });
     assert_eq!(group.name.as_deref(), Some("Settings"));
+    assert_eq!(group.role, Role::Group);
     ratchet.check(
         "UIA parent, classically",
-        &cost,
+        &parent_cost,
         calls(3, 0, 0),
         &[
             ("WM_GETOBJECT", 1),
@@ -1162,7 +948,6 @@ fn uia_navigation_steps_cost_exactly() {
     );
 
     ratchet.finish();
-    drop(app);
 }
 
 /// What registering for events costs mockapp. A registration is made on its
@@ -1335,6 +1120,7 @@ fn uia_selected_children_cost_exactly() {
                 &FocusQuery {
                     element: container,
                     known: &[],
+                    previous: None,
                     depth_limit: 64,
                     properties: CACHED_PROPERTIES,
                     deadline: None,
@@ -1359,7 +1145,7 @@ fn uia_selected_children_cost_exactly() {
     }
 
     ratchet.finish();
-    app.send("quit");
+    app.quit();
 }
 
 /// The active text position changed event: registering for it, with a text
@@ -1373,8 +1159,7 @@ fn uia_active_text_position_costs_exactly() {
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
 
-    let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let seen = Arc::clone(&ranges);
+    let (seen, ranges) = mpsc::channel();
     let notes = AgileReference::new(under_test.element("Notes")).expect("an agile reference");
     let (registration, cost) = under_test.measure(hwnd, |_| {
         Registration::new(
@@ -1388,12 +1173,9 @@ fn uia_active_text_position_costs_exactly() {
                 },
                 Subscription::ActiveTextPosition {
                     callback: Arc::new(move |_, range| {
-                        if let Some(range) = range.and_then(|range| AgileReference::new(range).ok())
-                        {
-                            seen.lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .push(range);
-                        }
+                        let range = range.and_then(|range| AgileReference::new(range).ok());
+                        // The test may have finished.
+                        let _ = seen.send(range);
                     }),
                 },
             ],
@@ -1409,16 +1191,10 @@ fn uia_active_text_position_costs_exactly() {
     );
 
     app.send("active-text-position doc 6 10");
-    common::wait_until("the active text position changed event", || {
-        !ranges
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
-    });
     let range = ranges
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(0)
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the active text position changed event")
+        .expect("the event carries its range")
         .resolve()
         .expect("the event's range");
     let mut store = Anchors::new(Arc::default());
@@ -1435,7 +1211,7 @@ fn uia_active_text_position_costs_exactly() {
 
     drop(registration);
     ratchet.finish();
-    app.send("quit");
+    app.quit();
 }
 
 /// A caret key's wait that never waits: the caret has already moved.
@@ -1539,16 +1315,58 @@ fn remote_hits(times: u32, text: &[(&'static str, u32)]) -> Vec<(&'static str, u
 
 /// The report after a focus, whose line is spoken, with the line's
 /// formatting: mockapp's first line has four stretches (bold "alpha", a
-/// space, the misspelt "beta", the line feed).
-fn measure_focus_report(hwnd: HWND, source: &mut UiaText) -> Cost {
+/// space, the misspelt "beta", the line feed), each read as `attributes`
+/// says, given whether the stretch is bold and whether it is misspelt.
+fn measure_focus_report(
+    hwnd: HWND,
+    source: &mut UiaText,
+    attributes: impl Fn(bool, bool) -> TextAttributes,
+) -> Cost {
     let mut store = Anchors::new(Arc::default());
     let _ = verbatim_uia::calls::take();
     common::reset_hits(hwnd);
     let (report, _) = caret_report(source, &mut store.node(1), &mut || 0, true).expect("the caret");
-    assert_eq!(report.line.formats.len(), 4);
-    Cost {
+    let cost = Cost {
         calls: verbatim_uia::calls::take(),
         hits: common::read_hits(hwnd),
+    };
+    let runs: Vec<(u32, u32, TextAttributes)> = report
+        .line
+        .formats
+        .iter()
+        .map(|run| (run.start, run.end, run.attributes.clone()))
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            (0, 5, attributes(true, false)),
+            (5, 6, attributes(false, false)),
+            (6, 10, attributes(false, true)),
+            (10, 11, attributes(false, false)),
+        ]
+    );
+    cost
+}
+
+/// The attributes the default theme reads: the errors alone.
+fn errors_only(_bold: bool, spelling_error: bool) -> TextAttributes {
+    TextAttributes {
+        spelling_error,
+        ..TextAttributes::default()
+    }
+}
+
+/// Every attribute mockapp reports, as the outpost reads it.
+fn every_attribute(bold: bool, spelling_error: bool) -> TextAttributes {
+    TextAttributes {
+        spelling_error,
+        grammar_error: false,
+        font_name: Some("Consolas".to_owned()),
+        font_size: Some("11.0 pt".to_owned()),
+        color: Some("black".to_owned()),
+        bold: Some(bold),
+        italic: Some(false),
+        underline: Some(false),
     }
 }
 
@@ -1569,12 +1387,12 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         measure_caret_move(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
     let (polls, waited) = measure_fruitless_wait(&mut app, hwnd, &mut source);
     assert_eq!(polls, 11, "every 10 milliseconds for 100");
-    let focus_report = measure_focus_report(hwnd, &mut source);
+    let focus_report = measure_focus_report(hwnd, &mut source, errors_only);
     // The same report with every formatting indication on: seven attributes
     // per stretch, the annotation types, font name and size, weight,
     // italic, underline style, and color.
-    let mut every_attribute = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
-    let formatted_report = measure_focus_report(hwnd, &mut every_attribute);
+    let mut formatted = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
+    let formatted_report = measure_focus_report(hwnd, &mut formatted, every_attribute);
     // The caret's read, the evidence, the line and the caret's offset
     // in it, and the character's spelling error.
     let move_hits = [
@@ -1697,7 +1515,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
                 .collect::<Vec<_>>(),
         );
     }
-    app.send("quit");
+    app.quit();
 }
 
 /// One text request answered as the outpost's worker answers it
@@ -1857,7 +1675,8 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let TextReply::Chunks { chunks, .. } = reply else {
         panic!("chunks, not {reply:?}");
     };
-    assert_eq!(chunks.len(), 3);
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(texts, ["alpha beta\n", "gamma\n", ""]);
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -2059,7 +1878,12 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let TextReply::Caret(reply) = reply else {
         panic!("a caret reply, not {reply:?}");
     };
-    assert_eq!(reply.selection_changes.len(), 1);
+    let changes: Vec<(bool, &str, u32)> = reply
+        .selection_changes
+        .iter()
+        .map(|change| (change.selected, change.text.as_str(), change.characters))
+        .collect();
+    assert_eq!(changes, [(true, "alpha", 5)]);
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -2100,7 +1924,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         expected.0,
         expected.1,
     );
-    app.send("quit");
+    app.quit();
 }
 
 fn uia_text_requests_cost_exactly() {
@@ -2137,7 +1961,7 @@ fn caret_moves_cost_exactly() {
         measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
     ratchet.check("Edit control caret move", &answer, calls(0, 0, 5), &[]);
     ratchet.check("Edit control caret report", &report, calls(0, 0, 5), &[]);
-    app.send("quit");
+    app.quit();
 
     ratchet.finish();
 }

@@ -690,14 +690,20 @@ mod tests {
             None,
         )
         .expect("spawns cmd with a stderr capture path");
-        assert!(matches!(
+        assert_eq!(
             wait_for_exit(pid, WAIT).expect("waits"),
-            ProcessState::Exited { .. }
-        ));
+            ProcessState::Exited { exit_code: Some(0) }
+        );
+        // Exactly what cmd's echo wrote: the text up to the redirection,
+        // with the space before it, and a line break.
         let captured =
             std::fs::read_to_string(&path).expect("reads the captured stderr/stdout file");
-        assert_eq!(captured.trim_end(), "agent stderr capture test");
-        std::fs::remove_file(&path).ok();
+        assert_eq!(
+            captured,
+            "agent stderr capture test 
+"
+        );
+        std::fs::remove_file(&path).expect("removes the capture file");
     }
 
     #[test]

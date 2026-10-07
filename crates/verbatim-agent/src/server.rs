@@ -560,6 +560,13 @@ mod tests {
                 .expect("connection stays open")
         }
 
+        /// Asserts that the agent closed the connection: the next read
+        /// finds its end.
+        fn assert_closed(&mut self) {
+            let next: Option<Frame> = read_message(&mut self.reader).expect("reads to the end");
+            assert_eq!(next, None, "the agent closes the connection");
+        }
+
         fn hello(&mut self) {
             let frame = self.request(Request::Hello {
                 protocol_version: AGENT_PROTOCOL_VERSION,
@@ -582,10 +589,14 @@ mod tests {
         let addr = start_agent(r"\\.\pipe\verbatim-agent-test-unused-a");
         let mut client = TestClient::connect(addr);
         let frame = client.request(Request::SessionInfo);
-        assert!(
-            matches!(frame, Frame::Error { .. }),
-            "expected an error for a non-Hello first request, got {frame:?}"
+        assert_eq!(
+            frame,
+            Frame::Error {
+                to: 1,
+                message: "first request on a connection must be Hello".to_owned(),
+            }
         );
+        client.assert_closed();
     }
 
     #[test]
@@ -622,10 +633,18 @@ mod tests {
         let frame = client.request(Request::Hello {
             protocol_version: AGENT_PROTOCOL_VERSION + 1,
         });
-        assert!(
-            matches!(frame, Frame::Error { .. }),
-            "expected a version mismatch to be refused, got {frame:?}"
+        assert_eq!(
+            frame,
+            Frame::Error {
+                to: 1,
+                message: format!(
+                    "agent speaks protocol version {AGENT_PROTOCOL_VERSION}, \
+                     client offered {}",
+                    AGENT_PROTOCOL_VERSION + 1
+                ),
+            }
         );
+        client.assert_closed();
     }
 
     #[test]
@@ -694,15 +713,16 @@ mod tests {
         let mut client = TestClient::connect(addr);
         client.hello();
         let frame = client.request(Request::SessionInfo);
-        assert!(
-            matches!(
-                frame,
-                Frame::Reply {
-                    payload: ReplyPayload::SessionInfo(_),
-                    ..
-                }
-            ),
-            "expected a SessionInfo reply, got {frame:?}"
+        // The agent runs in this process, so its session is this process's,
+        // read here for the expected reply.
+        assert_eq!(
+            frame,
+            Frame::Reply {
+                to: 2,
+                payload: ReplyPayload::SessionInfo(
+                    crate::session::current().expect("reads this process's session")
+                ),
+            }
         );
     }
 

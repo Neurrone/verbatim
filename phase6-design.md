@@ -2048,3 +2048,17 @@ An audit of the tests found shortcuts throughout; Dickson's standard is that eac
 - `switch_to_onecore` switches to Microsoft David and requires that exact voice; if GitHub's runner lacks it, that is found out there.
 - Each step gets a response-time budget, from event to queued speech and to audio, set from measurements on this machine.
 - The flood policy changes (Dickson, 2026-10-07): the first "Lines spoken in full" lines of a burst are spoken whole, never cut short by output that arrives while they are spoken. Only when that group has been spoken does Verbatim look at what arrived meanwhile: if it is more than the limit, it says "skipped N lines" for all but the newest "Last lines to speak" and speaks those; it repeats the same decision after each group until the output stops. A flood that ends while the first group is spoken is therefore heard as its first lines, one exact "skipped N lines", and its last lines, which the flood test asserts exactly; a separate test covers a flood that overflows the terminal's scrollback.
+
+## Explorer focus identity (found 2026-10-07)
+
+A failed `explorer_folder_window` run showed three faults, queued for one fix:
+
+- Explorer can give a new focus the UIA runtime id of an element that has died (going back from a subfolder, "Inner" took "delta.txt"'s id). The outpost's registry then hands Core the old node id, and Core, which treats a matching id as the same focus, stays silent. NVDA drops a focus event as a duplicate only when the old element still has keyboard focus when read live; the outpost does that check, reissuing a node id when the old element no longer has focus, inside the existing remote enrichment.
+- After going back, NVDA says "Inner 1 of 4"; Verbatim says "Inner not selected 1 of 4" and then "selected", because it builds the focus from the event's cached states, read before Explorer selected the item.
+- The first focus in a new Explorer window waited 2.6 seconds in the outpost's queue behind reads Explorer was slow to answer while building the window, against a 200 ms budget.
+
+Fixed on 2026-10-07, each with mockapp and Core tests and not yet run against Explorer itself:
+
+- The outpost reads, in the focus's remote operation, whether the element a runtime id's node stands for still has the keyboard focus, and gives the id a new node when it does not or cannot be read (`docs/parity.md`, "Duplicate focus suppression"). A held element that is gone fails a whole program before it runs, so the program is run once more without it.
+- NVDA's focus event carries only its base cache; its states, value, and details are fetched when the focus is handled. The outpost now takes those from the focused element it reads when it handles the focus, at no extra call (`docs/parity.md`, "How an outpost turns events into focus reports").
+- A focus change now goes before the events of other objects queued ahead of it, in the batch and in the batch in progress (`docs/crates/verbatim-outpost.md`, the queue). Reproduced in mockapp with every provider call answered 20 ms late: the focus waited about 610 ms behind ten selections before, and about 0.1 ms after (`docs/performance.md`, "A focus behind other objects' events").

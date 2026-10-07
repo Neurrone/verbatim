@@ -25,7 +25,8 @@ Public API:
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
-  `Contained` ends the child.
+  `Contained` ends the child. `has_exited()` says whether the process has
+  exited, once the system has finished ending it.
 - `ChildPipes` — Core's ends of the two pipes: `to_child`, where Core
   writes commands, and `from_child`, where Core reads the child's
   messages. Both are `std::fs::File`.

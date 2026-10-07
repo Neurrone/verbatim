@@ -1875,7 +1875,6 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-audio",
- "verbatim-audio-wasapi",
  "verbatim-i18n",
  "verbatim-model",
  "verbatim-speech",

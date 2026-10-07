@@ -352,18 +352,25 @@ mod tests {
         let text = "我们中出了一个叛徒";
         let rules = WordRules::for_text(text, None);
         assert_eq!(rules, WordRules::Chinese);
-        let words = texts(text, &segmenter.words(text, rules));
-        assert!(words.len() > 1, "{words:?}");
-        assert!(words.contains(&"我们"), "{words:?}");
+        // The dictionary's words, with the two characters it has no word
+        // for joined by jieba's hidden Markov model, which the segmenter
+        // turns on.
+        assert_eq!(
+            texts(text, &segmenter.words(text, rules)),
+            ["我们", "中出", "了", "一个", "叛徒"]
+        );
     }
 
     #[test]
     fn thai_words_are_found_without_spaces() {
         let segmenter = Segmenter::new();
-        // "Hello" and "world" in Thai, written without a space.
+        // "Hello" and "world" in Thai, written without a space: "hello",
+        // then "world" as "people" and "world".
         let text = "สวัสดีชาวโลก";
-        let words = segmenter.words(text, WordRules::Unicode);
-        assert!(words.len() > 1, "{:?}", texts(text, &words));
+        assert_eq!(
+            texts(text, &segmenter.words(text, WordRules::Unicode)),
+            ["สวัสดี", "ชาว", "โลก"]
+        );
     }
 
     #[test]

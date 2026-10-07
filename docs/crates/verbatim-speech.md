@@ -274,7 +274,8 @@ it, plays on over the speech that follows, and is dropped or stopped with
 the utterance; it is never reported as a mark. A piece of a sequence with
 no text, such as a sound with no words, is not given to the driver: its
 marks and sounds are placed where it stands. `tests/sounds.rs` checks
-that a sound plays between the words around it without the synthesizer
+that a sound plays between the words around it, the second word mixed
+under it and none of that word after it, without the synthesizer
 seeing it, and that an event with no sound to play is spoken.
 
 Mark fallback. When the active driver's `places_marks` is `false` and the

@@ -181,6 +181,12 @@ impl Sound {
         self.format
     }
 
+    /// The sound's samples, interleaved, in its own format.
+    #[must_use]
+    pub fn samples(&self) -> &[i16] {
+        &self.samples
+    }
+
     /// How long the sound plays.
     #[must_use]
     pub fn duration(&self) -> Duration {

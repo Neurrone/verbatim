@@ -218,47 +218,76 @@ mod tests {
         assert_eq!(combo.key, vk_from_name("delete").unwrap());
     }
 
+    /// The combination of `modifiers`, in order, and `key`, each resolved by
+    /// its name.
+    fn combo(modifiers: &[&str], key: &str) -> ParsedCombo {
+        ParsedCombo {
+            modifiers: modifiers
+                .iter()
+                .map(|name| vk_from_name(name).expect("a key name"))
+                .collect(),
+            key: vk_from_name(key).expect("a key name"),
+        }
+    }
+
     #[test]
     fn screen_reader_modifiers_are_accepted() {
-        let combo = parse_combo("insert+t").expect("parses");
-        assert_eq!(combo.modifiers, vec![vk_from_name("insert").unwrap()]);
-        assert!(parse_combo("capslock+t").is_ok());
-        assert!(parse_combo("numpadinsert+numpad5").is_ok());
+        assert_eq!(parse_combo("insert+t"), Ok(combo(&["insert"], "t")));
+        assert_eq!(parse_combo("capslock+t"), Ok(combo(&["capslock"], "t")));
+        assert_eq!(
+            parse_combo("numpadinsert+numpad5"),
+            Ok(combo(&["numpadinsert"], "numpad5"))
+        );
     }
 
     #[test]
     fn unknown_key_name_is_rejected() {
-        assert!(parse_combo("hyperspace").is_err());
-        assert!(parse_combo("shift+hyperspace").is_err());
+        assert_eq!(
+            parse_combo("hyperspace"),
+            Err("unknown key name: \"hyperspace\"".to_owned())
+        );
+        assert_eq!(
+            parse_combo("shift+hyperspace"),
+            Err("unknown key name: \"hyperspace\"".to_owned())
+        );
     }
 
     #[test]
     fn unknown_modifier_name_is_rejected() {
         // "tab" is a real key name but never a valid modifier position.
-        assert!(parse_combo("tab+enter").is_err());
+        assert_eq!(
+            parse_combo("tab+enter"),
+            Err("not a recognized modifier name: \"tab\"".to_owned())
+        );
     }
 
     #[test]
     fn empty_entry_is_rejected() {
-        assert!(parse_combo("").is_err());
-        assert!(parse_combo("shift+").is_err());
+        assert_eq!(
+            parse_combo(""),
+            Err("empty key name in combination: \"\"".to_owned())
+        );
+        assert_eq!(
+            parse_combo("shift+"),
+            Err("empty key name in combination: \"shift+\"".to_owned())
+        );
     }
 
     #[test]
     fn parse_all_rejects_whole_batch_on_one_bad_entry() {
         let keys = vec!["enter".to_owned(), "hyperspace".to_owned()];
-        assert!(parse_all(&keys).is_err());
+        assert_eq!(
+            parse_all(&keys),
+            Err("unknown key name: \"hyperspace\"".to_owned())
+        );
     }
 
     #[test]
     fn parse_all_resolves_every_entry_in_order() {
         let keys = vec!["downarrow".to_owned(), "shift+tab".to_owned()];
-        let combos = parse_all(&keys).expect("parses");
-        assert_eq!(combos.len(), 2);
         assert_eq!(
-            combos[0].modifiers,
-            [] as [verbatim_input::keys::KeyName; 0]
+            parse_all(&keys),
+            Ok(vec![combo(&[], "downarrow"), combo(&["shift"], "tab")])
         );
-        assert_eq!(combos[1].modifiers.len(), 1);
     }
 }

@@ -308,6 +308,24 @@ verified.
   Verbatim: **matched (unverified)** ([verbatim-core](crates/verbatim-core.md),
   M3 noise suppression). Unchanged by the outpost redesign: only Core
   sees focus across applications, so this stays in the reducer.
+  NVDA compares UIA elements by runtime id (`compareElements`), and treats
+  a UIA focus event as a duplicate only when the element compares equal to
+  the last focus and that last focus still reports `HasKeyboardFocus`
+  when read live; a read that fails lets the event through. A runtime id
+  is unique only among live elements, and File Explorer reuses them:
+  going back from a subfolder (found 2026-10-07), the parent folder's item
+  "Inner" took the runtime id of the subfolder's item delta.txt, destroyed
+  with its list, so the outpost reported Inner under delta.txt's node and
+  Core stayed silent. Since 2026-10-07 the outpost does NVDA's check
+  before it reports a UIA focus whose runtime id already names a node: it
+  reads, live, whether the element that node stands for still has the
+  keyboard focus, in the same remote operation that reads the focus's
+  ancestors (or with one call of its own when it reads classically), and
+  when it does not, or cannot be read, the runtime id gets a new node, so
+  Core announces the focus. **matched since 2026-10-07**; mockapp's
+  `focus_reports` tests and Core's
+  `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
+  check it.
 - Stale focus events: NVDA has no timestamp arbitration; it relies on
   queue-time freshness plus cancellable speech
   ([Event handling](nvda/events.md), [Speech](nvda/speech.md)), and its
@@ -872,10 +890,27 @@ verified.
   read to.
 - How an outpost turns events into focus reports, from the audit of
   2026-10-03 (all **matched since 2026-10-03** unless marked otherwise):
-  - A UIA focus is built from the event: its name, role, value, and
-    states come from the properties the event delivered, as NVDA builds
-    the focus object from the event's sender and serves its reads from
-    the sender's cache. The focus is accepted only when the element has
+  - A UIA focus is built from the event: NVDA builds the focus object
+    from the event's sender. The sender's cache holds only NVDA's base
+    cache properties (`baseCachePropertyIDs` in its UIA handler: name,
+    control type, class, automation id, framework, process,
+    `HasKeyboardFocus`, and a few more), so its name and role come from
+    the event. Its states, value, description, shortcut, position, level,
+    and bounds are not in that cache: the focus object's `event_gainFocus`
+    fetches them in one `buildUpdatedCache` (`_focusPrefetchUIAPropertyIDs`
+    and `_UIAStatesPropertyIDs`) when NVDA handles the focus, and they are
+    spoken from that fetch. Until 2026-10-07 Verbatim took those from the
+    event too, so going back to a File Explorer folder said "Inner not
+    selected 1 of 4" and then "selected", where NVDA says "Inner 1 of 4":
+    Explorer raised the focus event before it selected the item, and
+    selected it before the focus was handled. Since then the outpost takes
+    the name and role from the event and the rest from the focused element
+    it reads when it handles the focus, whose cache that read fills, at no
+    extra call (**matched since 2026-10-07**; mockapp's
+    `a_focus_reports_the_states_read_when_it_is_handled` and Core's
+    `a_focus_read_after_its_item_was_selected_is_announced_without_the_selection`
+    check it). A focus reported without its element, which was not found
+    in time, keeps the event's values. The focus is accepted only when the element has
     the keyboard focus read live, as NVDA reads `currentHasKeyboardFocus`
     in `shouldAllowUIAFocusEvent` (since NVDA commit `3ca80a5fa`), because
     a stale cached value let intermediate focus events through ([The UIA

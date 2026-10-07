@@ -665,13 +665,12 @@ mod tests {
 
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir()
-            .join("verbatim-config-theme-tests")
-            .join(name);
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("themes")).expect("create themes");
-        fs::create_dir_all(root.join("sounds")).expect("create sounds");
+    /// The test's own temp folder ([`crate::tests::TempRoot`]), holding
+    /// empty themes and sounds folders.
+    fn temp_root(name: &str) -> crate::tests::TempRoot {
+        let root = crate::tests::TempRoot::new(&format!("themes-{name}"));
+        fs::create_dir(root.join("themes")).expect("create themes");
+        fs::create_dir(root.join("sounds")).expect("create sounds");
         root
     }
 
@@ -799,7 +798,10 @@ mod tests {
         let (list, errors) = list_themes(&themes, &sounds);
         let ids: Vec<&str> = list.iter().map(|loaded| loaded.theme.id.as_str()).collect();
         assert_eq!(ids, ["default", "proofreading", "zebra"]);
-        assert_eq!(errors.len(), 1, "the broken theme is reported");
+        let [ThemeError::Parse(path, _)] = errors.as_slice() else {
+            panic!("only the broken theme's manifest is reported: {errors:?}");
+        };
+        assert_eq!(path, &themes.join("broken").join(MANIFEST));
         assert!(
             find_theme(&themes, &sounds, "default")
                 .expect("builtin")

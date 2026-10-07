@@ -323,10 +323,15 @@ impl TextSource for EditText {
         Vec::new()
     }
 
-    fn edges(&mut self, unit: &Unit<u32>, _kind: TextUnit) -> (bool, bool) {
+    fn edges(&mut self, unit: &Unit<u32>, kind: TextUnit) -> (bool, bool) {
+        // A text ending in a line break has an empty last line after it,
+        // as the control counts its lines, so the line or paragraph that
+        // ends with that break is not the last.
+        let followed_by_empty_line = matches!(kind, TextUnit::Line | TextUnit::Paragraph)
+            && unit.text.last() == Some(&u16::from(b'\n'));
         (
             unit.start == 0,
-            self.length.is_some_and(|length| unit.end >= length),
+            self.length.is_some_and(|length| unit.end >= length) && !followed_by_empty_line,
         )
     }
 

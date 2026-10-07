@@ -1,9 +1,19 @@
 //! The synthesizer host end to end (decision D18): `HostedSynth` driving the
 //! real `verbatim-synth-host.exe` with the `OneCore` synthesizer, which
-//! every Windows 11 machine and GitHub's Windows runners have.
+//! every Windows 11 machine and GitHub's Windows runners have, or with
+//! eSpeak NG.
+//!
+//! Which `OneCore` voice speaks depends on the machine, so no test expects
+//! particular samples. A new host's first utterance is reproducible,
+//! though: the same text with the same settings gives the same samples on
+//! one machine, which is what lets the tests compare speech exactly. (A
+//! later utterance of the same host need not: `OneCore` carries state from
+//! one utterance to the next.)
 
+use std::cell::Cell;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
@@ -12,11 +22,31 @@ use verbatim_speech::{
     SynthId, SynthSink,
 };
 use verbatim_synth_hosted::HostedSynth;
-use windows::Win32::Foundation::CloseHandle;
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
+use windows::Win32::System::Threading::{
+    OpenProcess, OpenThread, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, SuspendThread,
+    THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
+};
+
+/// The longest a cancelled utterance may take to end, from the sink asking
+/// to stop to `speak` returning: one round trip to the host, which ends its
+/// synthesis and answers. Measured at 0.06 to 0.6 ms on the development
+/// machine; the budget leaves room for a slower runner while staying well
+/// under what a listener would notice.
+const CANCEL_BUDGET: Duration = Duration::from_millis(20);
+
+/// The longest a killed host may take to exit; it only bounds a hang.
+const EXIT_TIMEOUT_MS: u32 = 10_000;
 
 fn host_exe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_verbatim-synth-host"))
+}
+
+fn onecore() -> HostedSynth {
+    HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts")
 }
 
 fn sequence(id: u64, items: Vec<SpeechItem>) -> SpeechSequence {
@@ -28,11 +58,28 @@ fn sequence(id: u64, items: Vec<SpeechItem>) -> SpeechSequence {
     }
 }
 
+fn text(text: &str) -> Vec<SpeechItem> {
+    vec![SpeechItem::Text(text.to_owned())]
+}
+
 /// What a sink received, in order.
 #[derive(Debug, PartialEq, Eq)]
 enum Received {
-    Audio(usize),
+    Audio(Vec<i16>),
     Mark(IndexMark),
+}
+
+/// Every sample received, in order.
+fn samples(received: &[Received]) -> Vec<i16> {
+    received
+        .iter()
+        .filter_map(|item| match item {
+            Received::Audio(samples) => Some(samples.as_slice()),
+            Received::Mark(_) => None,
+        })
+        .flatten()
+        .copied()
+        .collect()
 }
 
 /// Collects everything; calls `on_audio` at each push and stops when it
@@ -45,7 +92,7 @@ struct Collect<F: FnMut() -> ControlFlow<()>> {
 
 impl<F: FnMut() -> ControlFlow<()>> SynthSink for Collect<F> {
     fn push_pcm(&mut self, _format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
-        self.received.push(Received::Audio(samples.len()));
+        self.received.push(Received::Audio(samples.to_vec()));
         (self.on_audio)()
     }
 
@@ -58,99 +105,110 @@ impl<F: FnMut() -> ControlFlow<()>> SynthSink for Collect<F> {
     }
 }
 
+/// A sink that takes everything.
+fn collect_all() -> Collect<impl FnMut() -> ControlFlow<()>> {
+    Collect {
+        received: Vec::new(),
+        cancelled: false,
+        on_audio: || ControlFlow::Continue(()),
+    }
+}
+
+/// Everything `synth` relays for `items`.
+fn spoken(synth: &mut HostedSynth, id: u64, items: Vec<SpeechItem>) -> Vec<Received> {
+    let mut sink = collect_all();
+    synth
+        .speak(&sequence(id, items), &mut sink)
+        .expect("speaks");
+    sink.received
+}
+
+/// Ends the process `pid` and waits until it has exited.
 fn kill(pid: u32) {
     // SAFETY: opening a process by id; the handle is closed below.
-    let process =
-        unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }.expect("opens the host process");
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, pid) }
+        .expect("opens the host process");
     // SAFETY: the handle just opened, with terminate access.
     unsafe { TerminateProcess(process, 1) }.expect("ends the host process");
+    // SAFETY: the handle just opened, with synchronize access.
+    let exited = unsafe { WaitForSingleObject(process, EXIT_TIMEOUT_MS) };
     // SAFETY: the handle opened above, closed once.
-    let _ = unsafe { CloseHandle(process) };
+    unsafe { CloseHandle(process) }.expect("closes the process handle");
+    assert_eq!(exited, WAIT_OBJECT_0, "the host process exits");
 }
 
 #[test]
 fn a_hosted_synthesizer_streams_audio_and_marks_in_order() {
-    let mut synth =
-        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
+    let mut synth = onecore();
     assert!(synth.places_marks(), "OneCore places marks itself");
-    let mut sink = Collect {
-        received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
-    };
-    synth
-        .speak(
-            &sequence(
-                1,
-                vec![
-                    SpeechItem::Text("first".to_owned()),
-                    SpeechItem::Mark(IndexMark(1)),
-                    SpeechItem::Text("second".to_owned()),
-                ],
-            ),
-            &mut sink,
-        )
-        .expect("speaks");
-    let mark = sink
-        .received
+    let received = spoken(
+        &mut synth,
+        1,
+        vec![
+            SpeechItem::Text("first".to_owned()),
+            SpeechItem::Mark(IndexMark(1)),
+            SpeechItem::Text("second".to_owned()),
+        ],
+    );
+    let marks: Vec<usize> = received
         .iter()
-        .position(|item| *item == Received::Mark(IndexMark(1)))
-        .expect("the mark is reported");
+        .enumerate()
+        .filter(|(_, item)| matches!(item, Received::Mark(_)))
+        .map(|(index, _)| index)
+        .collect();
+    let [mark] = marks[..] else {
+        panic!("exactly one mark is reported: {marks:?}");
+    };
+    assert_eq!(received[mark], Received::Mark(IndexMark(1)));
     assert!(
-        sink.received[..mark]
-            .iter()
-            .any(|item| matches!(item, Received::Audio(_)))
-            && sink.received[mark..]
-                .iter()
-                .any(|item| matches!(item, Received::Audio(_))),
-        "the mark falls between the two words' audio: {:?}",
-        sink.received
+        !samples(&received[..mark]).is_empty() && !samples(&received[mark..]).is_empty(),
+        "the mark falls between the two words' audio"
     );
 }
 
 /// `OneCore` speaks a pitch change inside its SSML: the host says so, and a
-/// raised capital is spoken rather than refused.
+/// raised capital is spoken at the raised pitch, neither refused, ignored,
+/// nor read aloud. Each utterance is a new host's first, so the same letter
+/// twice is the same speech, and the raised letter's differing from it is
+/// the markup's doing; and it is shorter than the markup read aloud as
+/// text.
 #[test]
 fn onecore_speaks_a_raised_capital_within_one_utterance() {
-    let mut synth =
-        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
-    assert!(synth.changes_pitch(), "OneCore changes pitch itself");
-    let mut sink = Collect {
-        received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
-    };
-    synth
-        .speak(
-            &sequence(
-                1,
-                vec![
-                    SpeechItem::Pitch(30),
-                    SpeechItem::Text("B".to_owned()),
-                    SpeechItem::Pitch(0),
-                ],
-            ),
-            &mut sink,
-        )
-        .expect("speaks");
+    assert!(onecore().changes_pitch(), "OneCore changes pitch itself");
+    let first = |items| samples(&spoken(&mut onecore(), 1, items));
+    let plain = first(text("B"));
+    assert_eq!(first(text("B")), plain);
+    let raised = first(vec![
+        SpeechItem::Pitch(30),
+        SpeechItem::Text("B".to_owned()),
+        SpeechItem::Pitch(0),
+    ]);
+    assert!(raised != plain, "the pitch markup changes the speech");
+    let read_aloud = first(text("<prosody pitch=\"30%\">B</prosody>"));
     assert!(
-        sink.received
-            .iter()
-            .any(|item| matches!(item, Received::Audio(_))),
-        "the capital is heard"
+        raised.len() < read_aloud.len(),
+        "the markup is not read aloud: {} samples against {}",
+        raised.len(),
+        read_aloud.len()
     );
 }
 
+/// A host killed while it streams an utterance fails that utterance; the
+/// next one is spoken by a new host, which was given the old one's rate:
+/// its speech is exactly that of a host set to the same rate, and not
+/// that of a host left at the default.
 #[test]
 fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_same_settings() {
-    let mut synth =
-        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
     let rate = SettingId::new("rate");
+    let mut synth = onecore();
     synth
         .set_setting(&rate, SettingValue::Number(70))
         .expect("sets the rate");
     let first_pid = synth.process_id().expect("a host is running");
 
+    // The host is ended, and has exited, before the first audio is taken,
+    // and the utterance is long enough that the pipe cannot hold the rest
+    // of it.
     let mut killed = false;
     let mut sink = Collect {
         received: Vec::new(),
@@ -166,9 +224,7 @@ fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_sa
     let result = synth.speak(
         &sequence(
             1,
-            vec![SpeechItem::Text(
-                "a sentence long enough to still be streaming when its host dies".to_owned(),
-            )],
+            text("a sentence long enough to still be streaming when its host dies"),
         ),
         &mut sink,
     );
@@ -177,97 +233,88 @@ fn a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_sa
         "the utterance fails: {result:?}"
     );
 
-    let mut sink = Collect {
-        received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
-    };
-    synth
-        .speak(
-            &sequence(2, vec![SpeechItem::Text("again".to_owned())]),
-            &mut sink,
-        )
-        .expect("the next utterance speaks");
-    assert_ne!(sink.received, []);
+    let again = samples(&spoken(&mut synth, 2, text("again")));
     let second_pid = synth.process_id().expect("a new host is running");
     assert_ne!(first_pid, second_pid);
-    assert_eq!(synth.setting(&rate), Some(SettingValue::Number(70)));
+
+    let mut at_70 = onecore();
+    at_70
+        .set_setting(&rate, SettingValue::Number(70))
+        .expect("sets the rate");
+    assert!(
+        again == samples(&spoken(&mut at_70, 1, text("again"))),
+        "the new host speaks as a host set to the same rate"
+    );
+    assert!(
+        again != samples(&spoken(&mut onecore(), 1, text("again"))),
+        "the rate changes the speech"
+    );
 }
 
 #[test]
 fn a_cancelled_utterance_ends_promptly_and_the_host_carries_on() {
-    let mut synth =
-        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
+    let mut synth = onecore();
+    let pid = synth.process_id().expect("a host is running");
+    let asked_to_stop = Cell::new(None);
     let mut sink = Collect {
         received: Vec::new(),
         cancelled: false,
-        on_audio: || ControlFlow::Break(()),
+        on_audio: || {
+            asked_to_stop.set(Some(Instant::now()));
+            ControlFlow::Break(())
+        },
     };
     synth
         .speak(
             &sequence(
                 1,
-                vec![SpeechItem::Text(
-                    "a long sentence that is cut off after its first chunk of audio".to_owned(),
-                )],
+                text("a long sentence that is cut off after its first chunk of audio"),
             ),
             &mut sink,
         )
         .expect("a cancelled utterance is not a failure");
+    let took = asked_to_stop.get().expect("audio arrived").elapsed();
     assert_eq!(
         sink.received.len(),
         1,
         "nothing is relayed after the cancel"
     );
+    assert!(
+        took <= CANCEL_BUDGET,
+        "the utterance ended {took:?} after the cancel"
+    );
 
-    let mut sink = Collect {
-        received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
-    };
-    synth
-        .speak(
-            &sequence(2, vec![SpeechItem::Text("next".to_owned())]),
-            &mut sink,
-        )
-        .expect("the same host speaks the next utterance");
+    assert_ne!(spoken(&mut synth, 2, text("next")), []);
+    assert_eq!(
+        synth.process_id(),
+        Some(pid),
+        "the same host speaks the next utterance"
+    );
 }
 
 #[test]
 fn an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries_on() {
-    let mut synth =
-        HostedSynth::start(host_exe(), SynthId::new("onecore")).expect("the host starts");
-    let pid = synth.process_id();
+    let mut synth = onecore();
+    let pid = synth.process_id().expect("a host is running");
     let mut sink = Collect {
         received: Vec::new(),
         cancelled: true,
         on_audio: || ControlFlow::Continue(()),
     };
-    let text = "a long paragraph that would take OneCore a while to synthesize, ".repeat(20);
+    let text_ = "a long paragraph that would take OneCore a while to synthesize, ".repeat(20);
     synth
-        .speak(&sequence(1, vec![SpeechItem::Text(text)]), &mut sink)
+        .speak(&sequence(1, text(&text_)), &mut sink)
         .expect("a cancelled utterance is not a failure");
     assert_eq!(
         sink.received,
         [],
         "nothing is relayed for a cancelled utterance"
     );
-    assert_eq!(synth.process_id(), pid, "the host is kept");
+    assert_eq!(synth.process_id(), Some(pid), "the host is kept");
 
     // Nothing of the cancelled utterance is left on the pipe for the next.
-    let mut sink = Collect {
-        received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
-    };
-    synth
-        .speak(
-            &sequence(2, vec![SpeechItem::Text("next".to_owned())]),
-            &mut sink,
-        )
-        .expect("the same host speaks the next utterance");
-    assert_ne!(sink.received, []);
-    assert_eq!(synth.process_id(), pid);
+    assert_ne!(spoken(&mut synth, 2, text("next")), []);
+    assert_eq!(synth.process_id(), Some(pid));
 }
 
 #[test]
@@ -276,7 +323,9 @@ fn espeak_ng_speaks_from_a_folder_with_a_non_ascii_name() {
     // whose name the ANSI code page cannot represent.
     let built = host_exe();
     let folder = std::env::temp_dir().join(format!("verbatim-Zoë-日本-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&folder);
+    if folder.exists() {
+        std::fs::remove_dir_all(&folder).expect("removes an earlier run's folder");
+    }
     copy_tree(
         &built.with_file_name("espeak-ng-data"),
         &folder.join("espeak-ng-data"),
@@ -285,43 +334,117 @@ fn espeak_ng_speaks_from_a_folder_with_a_non_ascii_name() {
     std::fs::copy(&built, &exe).expect("copies the host");
 
     let mut synth = HostedSynth::start(exe, SynthId::new("espeak")).expect("eSpeak NG starts");
-    let mut sink = Collect {
-        received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
-    };
-    synth
-        .speak(
-            &sequence(1, vec![SpeechItem::Text("hello".to_owned())]),
-            &mut sink,
-        )
-        .expect("speaks");
-    assert_ne!(sink.received, []);
+    let received = spoken(&mut synth, 1, text("hello"));
     drop(synth);
-    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::remove_dir_all(&folder).expect("removes the folder");
+    assert!(!samples(&received).is_empty(), "eSpeak NG speaks");
 }
 
+/// A host that died between utterances, and has exited, is found gone
+/// before the next request, which a new host speaks.
 #[test]
 fn a_host_that_died_while_idle_is_replaced_before_the_next_utterance() {
     let mut synth =
         HostedSynth::start(host_exe(), SynthId::new("espeak")).expect("the host starts");
     let first_pid = synth.process_id().expect("a host is running");
     kill(first_pid);
-    // The next request finds the host gone (or reaches it as it dies, and
-    // is sent again), and the utterance is spoken by a new host, not lost.
-    let mut sink = Collect {
+    assert!(
+        !samples(&spoken(&mut synth, 1, text("hello"))).is_empty(),
+        "the utterance is spoken"
+    );
+    let second_pid = synth.process_id().expect("a new host is running");
+    assert_ne!(second_pid, first_pid);
+}
+
+/// Suspends every thread of process `pid`: the process stays alive, so a
+/// request reaches it, but it answers nothing.
+fn suspend(pid: u32) {
+    // SAFETY: a snapshot of the system's threads; the handle is closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
+        .expect("takes a snapshot of the threads");
+    let mut entry = THREADENTRY32 {
+        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).expect("a small struct"),
+        ..THREADENTRY32::default()
+    };
+    let mut suspended = 0;
+    // SAFETY: the snapshot just taken, and an entry whose size is set.
+    let mut more = unsafe { Thread32First(snapshot, &raw mut entry) }.is_ok();
+    while more {
+        if entry.th32OwnerProcessID == pid {
+            // SAFETY: opening a thread by id; the handle is closed below.
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) }
+                .expect("opens the host's thread");
+            // SAFETY: the handle just opened, with suspend access.
+            let previous = unsafe { SuspendThread(thread) };
+            assert_ne!(previous, u32::MAX, "suspends the host's thread");
+            suspended += 1;
+            // SAFETY: the handle opened above, closed once.
+            unsafe { CloseHandle(thread) }.expect("closes the thread handle");
+        }
+        // SAFETY: as for `Thread32First`.
+        more = unsafe { Thread32Next(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the snapshot handle, closed once.
+    unsafe { CloseHandle(snapshot) }.expect("closes the snapshot");
+    assert!(suspended > 0, "the host has threads to suspend");
+}
+
+/// A sink that ends `host` the first time the driver, waiting for the
+/// host's first answer, asks whether the utterance was cancelled, and
+/// collects everything relayed.
+struct EndsTheHost {
+    host: u32,
+    ended: Cell<bool>,
+    received: Vec<Received>,
+}
+
+impl SynthSink for EndsTheHost {
+    fn push_pcm(&mut self, _format: PcmFormat, samples: &[i16]) -> ControlFlow<()> {
+        self.received.push(Received::Audio(samples.to_vec()));
+        ControlFlow::Continue(())
+    }
+
+    fn index_reached(&mut self, mark: IndexMark) {
+        self.received.push(Received::Mark(mark));
+    }
+
+    fn is_cancelled(&self) -> bool {
+        if !self.ended.replace(true) {
+            kill(self.host);
+        }
+        false
+    }
+}
+
+/// A request that reaches a host as it dies, before anything of the
+/// utterance was relayed, is sent once more, to a new host, and the
+/// utterance is spoken whole. The host is alive and has sent nothing when
+/// the request goes out, so the request reaches it; it is suspended, so it
+/// answers nothing, and it is ended while the driver waits for its first
+/// answer. The utterance is then exactly a new host's first utterance of
+/// the same text.
+#[test]
+fn an_utterance_sent_to_a_dying_host_is_sent_again_to_a_new_one() {
+    let espeak =
+        || HostedSynth::start(host_exe(), SynthId::new("espeak")).expect("the host starts");
+    let mut synth = espeak();
+    let first_pid = synth.process_id().expect("a host is running");
+    suspend(first_pid);
+    let mut sink = EndsTheHost {
+        host: first_pid,
+        ended: Cell::new(false),
         received: Vec::new(),
-        cancelled: false,
-        on_audio: || ControlFlow::Continue(()),
     };
     synth
-        .speak(
-            &sequence(1, vec![SpeechItem::Text("hello".to_owned())]),
-            &mut sink,
-        )
+        .speak(&sequence(1, text("hello")), &mut sink)
         .expect("the utterance is spoken");
-    assert_ne!(sink.received, []);
-    assert_ne!(synth.process_id(), Some(first_pid));
+    assert!(sink.ended.get(), "the host was ended during the request");
+    let second_pid = synth.process_id().expect("a new host is running");
+    assert_ne!(second_pid, first_pid);
+    assert!(
+        samples(&sink.received) == samples(&spoken(&mut espeak(), 1, text("hello"))),
+        "the utterance is a new host's first utterance of the same text"
+    );
 }
 
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) {

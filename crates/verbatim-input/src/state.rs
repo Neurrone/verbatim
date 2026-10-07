@@ -976,7 +976,21 @@ mod tests {
         );
         let v = m.on_key(down(V, false), t);
         assert_eq!(v.decision, KeyDecision::Swallow);
-        assert!(v.emitted.is_some());
+        let emitted = v.emitted.expect("emitted");
+        assert_eq!(emitted.gesture.as_str(), "kb:v+verbatim");
+        assert_eq!(emitted.repeat, 0);
+
+        // It is told apart from the extended Insert: with only that one a
+        // modifier, the numpad Insert passes and V is an ordinary key.
+        let config = DecisionConfig {
+            numpad_insert: false,
+            ..DecisionConfig::default()
+        };
+        let mut m = machine(config, &["kb:v+verbatim"]);
+        assert_eq!(m.on_key(down(INSERT, false), t).decision, KeyDecision::Pass);
+        let v = m.on_key(down(V, false), t);
+        assert_eq!(v.decision, KeyDecision::Pass);
+        assert!(v.emitted.is_none());
     }
 
     #[test]
@@ -1077,7 +1091,9 @@ mod tests {
         assert_eq!(m.on_key(caps, t).decision, KeyDecision::Swallow);
         let decision = m.on_key(v, t);
         assert_eq!(decision.decision, KeyDecision::Swallow);
-        assert!(decision.emitted.is_some());
+        let emitted = decision.emitted.expect("emitted");
+        assert_eq!(emitted.gesture.as_str(), "kb:v+verbatim");
+        assert_eq!(emitted.repeat, 0);
     }
 
     #[test]

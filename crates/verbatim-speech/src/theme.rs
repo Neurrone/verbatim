@@ -609,12 +609,16 @@ mod tests {
     /// A presenter of `theme`, with every sound file it names present as a
     /// short WAV.
     fn presenter_of(theme: Theme, options: ThemeOptions) -> ThemePresenter {
-        // A file of its own for each presenter, as tests run in parallel.
+        // A folder of its own for each presenter, as tests run in parallel,
+        // removed once the theme has decoded its sounds.
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let dir = std::env::temp_dir().join("verbatim-speech-theme-tests");
-        std::fs::create_dir_all(&dir).expect("create the sounds folder");
         let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let wav = dir.join(format!("short-{}-{number}.wav", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "verbatim-speech-theme-{}-{number}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&dir).expect("create the sounds folder");
+        let wav = dir.join("short.wav");
         let spec = hound::WavSpec {
             channels: 1,
             sample_rate: 8_000,
@@ -629,6 +633,7 @@ mod tests {
             |file| (file != "absent.wav").then(|| wav.clone()),
             options,
         );
+        std::fs::remove_dir_all(&dir).expect("remove the sounds folder");
         ThemePresenter::new(ThemeHandle::new(active))
     }
 
@@ -991,8 +996,9 @@ mod tests {
             Message::Blank,
         ))]);
         let sequence = presenter.flatten(&blank, UtteranceId(1));
-        let Some(SpeechItem::Sound(cue)) = sequence.items.first() else {
-            panic!("a sound: {sequence:?}");
+        assert_eq!(shape(&sequence), ["sound: blank"]);
+        let [SpeechItem::Sound(cue)] = sequence.items.as_slice() else {
+            panic!("the sound alone: {sequence:?}");
         };
         assert!((cue.gain - 0.4).abs() < 1e-6, "{}", cue.gain);
         assert_eq!(
@@ -1002,9 +1008,19 @@ mod tests {
                 channels: 1
             }
         );
+        assert_eq!(cue.sound.samples(), [1_000]);
 
         presenter.themes.set(without_sounds());
-        assert_eq!(presenter.flatten(&blank, UtteranceId(2)).text(), "blank");
+        assert_eq!(shape(&presenter.flatten(&blank, UtteranceId(2))), ["blank"]);
+    }
+
+    /// The samples of the progress tone at `frequency_hz`, as the default
+    /// theme's 40 ms tone.
+    fn progress_tone(frequency_hz: u32) -> Vec<i16> {
+        Sound::tone(frequency_hz, 40)
+            .expect("a tone")
+            .samples()
+            .to_vec()
     }
 
     #[test]
@@ -1012,11 +1028,25 @@ mod tests {
         let active = presenter_of(Theme::builtin_default(), ThemeOptions::default())
             .themes
             .get();
+        // Browse mode plays the theme's own decoded file, at full gain, and
+        // says nothing.
         let (sound, words) = active.earcon(Earcon::BrowseMode);
-        assert!(sound.is_some() && words.is_none());
-        let (progress, _) = active.earcon(Earcon::Progress(100));
-        let (start, _) = active.earcon(Earcon::Progress(0));
-        assert!(progress.is_some() && start.is_some());
+        let (sound, gain) = sound.expect("browse mode has a sound");
+        let decoded = active
+            .sounds
+            .get(&SoundSource::File("browseMode.wav".to_owned()))
+            .expect("the browse mode file was decoded");
+        assert!(Arc::ptr_eq(&sound, decoded));
+        assert!((gain - 1.0).abs() < 1e-6, "{gain}");
+        assert_eq!(words, None);
+        // A progress tone rises three octaves from 220 Hz at 0 percent.
+        let tone_of = |active: &ActiveTheme, percent| {
+            let (sound, words) = active.earcon(Earcon::Progress(percent));
+            assert_eq!(words, None);
+            sound.expect("a progress tone").0.samples().to_vec()
+        };
+        assert_eq!(tone_of(&active, 100), progress_tone(1_760));
+        assert_eq!(tone_of(&active, 0), progress_tone(220));
 
         // With no sound files loaded, an event whose sound is a file is
         // spoken; tones need no files.
@@ -1024,7 +1054,8 @@ mod tests {
         let (sound, words) = silent.earcon(Earcon::BrowseMode);
         assert!(sound.is_none());
         assert_eq!(words.as_deref(), Some("browse mode"));
-        assert!(silent.earcon(Earcon::Progress(40)).0.is_some());
+        // 40 percent is 1.2 octaves up: 220 Hz times 2 to the 1.2, 505 Hz.
+        assert_eq!(tone_of(&silent, 40), progress_tone(505));
 
         let mut spoken = Theme::new("spoken", "Spoken");
         spoken

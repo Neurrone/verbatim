@@ -175,13 +175,21 @@ fn samples(count: usize, value: i16) -> Vec<i16> {
     vec![value; count]
 }
 
+/// The device sample [`Harness::speak`] writes: 1,000 as 16-bit audio.
+const SPOKEN: f32 = 1_000.0 / 32_768.0;
+
 impl Harness {
     fn speak(&self, id: u64, frames: usize) -> TraceId {
+        self.speak_at(id, frames, 1_000)
+    }
+
+    /// Speaks `frames` frames of the 16-bit sample `value`.
+    fn speak_at(&self, id: u64, frames: usize, value: i16) -> TraceId {
         let trace = TraceId::mint();
         self.source.register(utterance(id), trace);
         assert!(
             self.source
-                .write(utterance(id), PCM, &samples(frames, 1_000))
+                .write(utterance(id), PCM, &samples(frames, value))
                 .is_continue()
         );
         self.source.finish(utterance(id));
@@ -301,6 +309,10 @@ fn cancelling_ends_every_unheard_utterance_and_spares_later_ones() {
     harness.source.register(utterance(2), second);
     harness.play(5);
     assert_eq!(harness.next(), started(1, first));
+    // Five frames played, and the mixer filled the device's queue again:
+    // fifteen frames of the first utterance were written.
+    harness.device.settle();
+    assert_eq!(harness.device.written(), [SPOKEN; 15]);
 
     harness.source.cancel_all();
     assert_eq!(harness.next(), ended(1, first, UtteranceEnding::Cancelled));
@@ -314,17 +326,16 @@ fn cancelling_ends_every_unheard_utterance_and_spares_later_ones() {
     );
 
     // The device's queue was discarded: what follows is the next
-    // utterance's audio straight after the five frames that played.
-    let third = harness.speak(3, 4);
+    // utterance's audio, and nothing of the first is written again.
+    let third = harness.speak_at(3, 4, 2_000);
     harness.play(1);
     assert_eq!(harness.next(), started(3, third));
     harness.play(3);
     assert_eq!(harness.next(), ended(3, third, UtteranceEnding::Completed));
-    let written = harness.device.written();
-    assert!(
-        written.len() >= 14,
-        "the third utterance was written after the cut"
-    );
+    harness.nothing_more();
+    let mut expected = vec![SPOKEN; 15];
+    expected.extend([2_000.0 / 32_768.0; 4]);
+    assert_eq!(harness.device.written(), expected);
 }
 
 #[test]
@@ -333,6 +344,9 @@ fn a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped() {
     let trace = TraceId::mint();
     harness.source.register(utterance(1), trace);
     let _ = harness.source.write(utterance(1), PCM, &samples(20, 1_000));
+    // The device's queue holds ten frames of it, none played.
+    harness.device.settle();
+    assert_eq!(harness.device.written(), [SPOKEN; 10]);
     harness
         .source
         .fail(utterance(1), "synthesis failed".to_owned());
@@ -344,8 +358,12 @@ fn a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped() {
             UtteranceEnding::Failed("synthesis failed".to_owned())
         )
     );
+    // What the device had queued was taken back, and nothing more of the
+    // utterance is written: there is nothing left to play.
     harness.play(20);
     harness.nothing_more();
+    assert_eq!(harness.device.state.0.lock().unwrap().queued, 0);
+    assert_eq!(harness.device.written(), [SPOKEN; 10]);
 }
 
 #[test]
@@ -411,14 +429,21 @@ fn a_failed_device_is_reopened_and_the_utterance_completes_only_once_heard() {
     let trace = harness.speak(1, 10);
     harness.play(4);
     assert_eq!(harness.next(), started(1, trace));
+    // The mixer has seen the four frames play.
+    harness.device.settle();
 
     harness.device.fail.store(true, Ordering::SeqCst);
     harness.device.play(0);
-    // The reopened device is given the frames not yet played and reports
-    // nothing until it has played them.
+    // The reopened device is given exactly the six frames not yet played,
+    // and nothing is reported until it has played them.
     harness.nothing_more();
-    harness.play(20);
+    assert_eq!(harness.device.written(), [SPOKEN; 16]);
+    harness.play(5);
+    harness.nothing_more();
+    harness.play(1);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+    harness.nothing_more();
+    assert_eq!(harness.device.written(), [SPOKEN; 16]);
 }
 
 #[test]
@@ -575,6 +600,50 @@ fn a_sound_in_an_utterance_starts_at_its_place_and_plays_over_what_follows() {
         &harness.device.written(),
         &[speech, speech, speech, both, both, both, both, alone],
     );
+}
+
+#[test]
+fn a_sound_is_mixed_only_with_its_utterances_audio_until_the_utterance_is_finished() {
+    let harness = harness();
+    let trace = TraceId::mint();
+    harness.source.register(utterance(1), trace);
+    // Ten frames, enough to start the device while the utterance is still
+    // being written.
+    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    harness
+        .source
+        .sound(utterance(1), &sound(25, 2_000), 1.0)
+        .expect("the sound converts");
+    harness.play(10);
+    assert_eq!(harness.next(), started(1, trace));
+    // Playback has reached the sound's place, and the next word has not
+    // been written: nothing more is mixed, the sound alone included.
+    harness.device.settle();
+    let speech = level(1_000);
+    let (both, alone) = (level(1_000) + level(2_000), level(2_000));
+    assert_frames(&harness.device.written(), &[speech; 10]);
+
+    // Part of the next word, enough to start the device again: the sound
+    // starts with it, and goes no further than it while the rest has not
+    // been written.
+    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    harness.play(10);
+    harness.device.settle();
+    let mut expected = vec![speech; 10];
+    expected.extend([both; 10]);
+    assert_frames(&harness.device.written(), &expected);
+
+    // The rest of the word is heard under the sound too, and once the
+    // utterance is finished the sound plays on past it.
+    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    harness.source.finish(utterance(1));
+    harness.play(10);
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+    harness.play(5);
+    expected.extend([both; 10]);
+    expected.extend([alone; 5]);
+    assert_frames(&harness.device.written(), &expected);
+    harness.nothing_more();
 }
 
 #[test]

@@ -3,7 +3,8 @@
 //! Spawns `mockapp --backend uia` over `tests/fixtures/tree.json`, then
 //! walks the tree through `verbatim-uia`'s real client (`Uia::element_from_handle`
 //! plus the base cache request) exactly as an outpost would, and asserts the
-//! normalized roles, names, values, and states match the fixture. This is
+//! whole tree read back, every node's role, name, value, whole state set,
+//! and details, and every node's children in order, equals the fixture's. This is
 //! the "provider-level fake" promised by architecture section 13: COM
 //! marshaling, cache requests, and role/state mapping are all exercised for
 //! real, with no actual application.
@@ -12,409 +13,190 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::collections::HashMap;
-
-use verbatim_model::{NodeDetails, NodeSnapshot, Role, State};
+use verbatim_model::{NodeDetails, Role, State, StateSet};
 use verbatim_uia::{NodeIdRegistry, Uia, map};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, TreeScope_Children};
 
-/// One node's expected shape, keyed by name (the fixture id is not visible
-/// to a UIA client, only name/role/value/states are).
-struct Expected {
+/// One node of the tree as UIA reads it, with its children in order.
+#[derive(Debug, PartialEq)]
+struct Node {
+    name: Option<String>,
     role: Role,
-    value: Option<&'static str>,
-    states: &'static [State],
-    absent_states: &'static [State],
-    child_count: usize,
+    value: Option<String>,
+    states: StateSet,
+    /// Every detail but the rectangle: mockapp scripts no geometry (its
+    /// providers answer a zero rectangle, which the client maps to `None`),
+    /// but the root element is hwnd-hosted, so UIA merges the real window's
+    /// rectangle into it.
+    details: NodeDetails,
+    children: Vec<Node>,
 }
 
-#[allow(clippy::too_many_lines)]
-fn expected_tree() -> HashMap<&'static str, Expected> {
-    HashMap::from([
-        (
-            "Mockapp Tree Fixture",
-            Expected {
-                role: Role::Window,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 11,
-            },
-        ),
-        (
-            "Group One",
-            Expected {
-                role: Role::Group,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 7,
-            },
-        ),
-        (
-            "OK",
-            Expected {
-                role: Role::Button,
-                value: None,
-                states: &[State::Focusable],
-                absent_states: &[State::Disabled],
-                child_count: 0,
-            },
-        ),
-        (
-            "Cancel",
-            Expected {
-                role: Role::Button,
-                value: None,
-                states: &[State::Focusable, State::Disabled],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Enable feature",
-            Expected {
-                role: Role::CheckBox,
-                value: None,
-                states: &[State::Focusable, State::Checked],
-                absent_states: &[State::Mixed],
-                child_count: 0,
-            },
-        ),
-        (
-            "Partial",
-            Expected {
-                role: Role::CheckBox,
-                value: None,
-                states: &[State::Focusable, State::Mixed],
-                absent_states: &[State::Checked],
-                child_count: 0,
-            },
-        ),
-        (
-            // A UIA Button element that exposes the Toggle pattern maps to a
-            // toggle button, and its `ToggleState_On` becomes `Pressed`
-            // (never `Checked`) — NVDA's toggle behavior, exercised here
-            // through the real cross-process UIA client, not just the pure
-            // role table.
-            "Wireless",
-            Expected {
-                role: Role::ToggleButton,
-                value: None,
-                states: &[State::Focusable, State::Pressed],
-                absent_states: &[State::Checked],
-                child_count: 0,
-            },
-        ),
-        (
-            // The same control off: no `Pressed`, and still not `Checked`.
-            "Airplane mode",
-            Expected {
-                role: Role::ToggleButton,
-                value: None,
-                states: &[State::Focusable],
-                absent_states: &[State::Pressed, State::Checked],
-                child_count: 0,
-            },
-        ),
-        (
-            "Option A",
-            Expected {
-                role: Role::RadioButton,
-                value: None,
-                states: &[State::Focusable, State::Checked],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Items",
-            Expected {
-                role: Role::List,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 2,
-            },
-        ),
-        (
-            "First",
-            Expected {
-                role: Role::ListItem,
-                value: None,
-                states: &[State::Focusable],
-                absent_states: &[State::Offscreen],
-                child_count: 0,
-            },
-        ),
-        (
-            "Second",
-            Expected {
-                role: Role::ListItem,
-                value: None,
-                states: &[State::Focusable, State::Offscreen],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Choices",
-            Expected {
-                role: Role::ComboBox,
-                value: None,
-                states: &[State::Focusable, State::Expanded],
-                absent_states: &[State::Collapsed],
-                child_count: 1,
-            },
-        ),
-        (
-            "Alpha",
-            Expected {
-                role: Role::MenuItem,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Notes",
-            Expected {
-                role: Role::EditableText,
-                value: Some("Hello world"),
-                states: &[State::Focusable],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Volume",
-            Expected {
-                role: Role::Slider,
-                value: Some("50"),
-                states: &[State::Focusable],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Count",
-            Expected {
-                role: Role::SpinButton,
-                value: Some("3"),
-                states: &[State::Focusable],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Sections",
-            Expected {
-                role: Role::TabControl,
-                value: None,
-                states: &[State::Collapsed],
-                absent_states: &[State::Expanded],
-                child_count: 2,
-            },
-        ),
-        (
-            "General",
-            Expected {
-                role: Role::Tab,
-                value: None,
-                states: &[State::Focusable],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Advanced",
-            Expected {
-                role: Role::Tab,
-                value: None,
-                states: &[State::Focusable],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Learn more",
-            Expected {
-                role: Role::Link,
-                value: None,
-                states: &[State::Focusable],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Main Toolbar",
-            Expected {
-                role: Role::ToolBar,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Ready",
-            Expected {
-                role: Role::StatusBar,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-        (
-            "Popup",
-            Expected {
-                role: Role::Menu,
-                value: None,
-                states: &[],
-                absent_states: &[],
-                child_count: 0,
-            },
-        ),
-    ])
+/// A fixture node with no value or details and no children.
+fn leaf(name: &str, role: Role, states: &[State]) -> Node {
+    Node {
+        name: Some(name.to_owned()),
+        role,
+        value: None,
+        states: states.iter().copied().collect(),
+        details: NodeDetails::default(),
+        children: Vec::new(),
+    }
 }
 
-/// The nodes whose fixture carries detail properties (description, keyboard
-/// shortcut, position in set, set size, level), keyed by name like
-/// [`expected_tree`]. Every node absent from this map must read back with
-/// default (all-`None`) details, so both presence and absence of every M3
-/// detail are asserted across the whole tree. Rectangles are excluded from
-/// the comparison: mockapp scripts no geometry (its providers answer a zero
-/// rectangle, which the client maps to `None`), but the root element is
-/// hwnd-hosted, so UIA merges the real window's rectangle into it.
-fn expected_details() -> HashMap<&'static str, NodeDetails> {
-    HashMap::from([
-        (
-            "OK",
-            NodeDetails {
-                description: Some("Applies the changes and closes the dialog".to_owned()),
-                keyboard_shortcut: Some("Alt+O".to_owned()),
-                ..NodeDetails::default()
-            },
-        ),
-        (
-            "First",
-            NodeDetails {
-                position_in_set: Some(1),
-                set_size: Some(2),
-                ..NodeDetails::default()
-            },
-        ),
-        (
-            "Second",
-            NodeDetails {
-                position_in_set: Some(2),
-                set_size: Some(2),
-                level: Some(1),
-                ..NodeDetails::default()
-            },
-        ),
-    ])
+/// [`leaf`], with children.
+fn parent(name: &str, role: Role, states: &[State], children: Vec<Node>) -> Node {
+    Node {
+        children,
+        ..leaf(name, role, states)
+    }
 }
 
-/// Walks one element and its descendants, comparing against `expected`.
-///
-/// `tolerate_unmatched` is set by the caller for the *window's direct
-/// children* only: a real UIA raw view of an actual `hwnd` can include
-/// host-provided native elements (for example window-chrome furniture
-/// merged in via `HostRawElementProvider`) alongside the fixture's own
-/// children, so the root's child enumeration may legitimately be a superset
-/// of the fixture. Every other node — the root itself, and everything below
-/// the window's direct children — is pure fixture data with no such
-/// merging, so an unmatched name there is a hard failure. The final
-/// `visited == expected.len()` count in the caller still catches a fixture
-/// child that silently failed to appear anywhere.
-fn walk(
-    uia: &Uia,
-    element: &IUIAutomationElement,
-    registry: &NodeIdRegistry,
-    expected: &HashMap<&str, Expected>,
-    details: &HashMap<&str, NodeDetails>,
-    visited: &mut usize,
-    tolerate_unmatched: bool,
-) {
-    let snapshot: NodeSnapshot = map::snapshot_from_cached_element(element, registry);
-    let name = snapshot.name.clone().unwrap_or_default();
-    let Some(expectation) = expected.get(name.as_str()) else {
-        assert!(
-            tolerate_unmatched,
-            "unexpected node in the UIA tree: {snapshot:?} (only the window's direct \
-             children may carry unrecognized, host-provided native elements)"
-        );
-        return;
+/// [`leaf`], with a value.
+fn valued(name: &str, role: Role, value: &str) -> Node {
+    Node {
+        value: Some(value.to_owned()),
+        ..leaf(name, role, &[State::Focusable])
+    }
+}
+
+/// `tree.json` as UIA reports it, every detail the fixture scripts
+/// included, for a window titled `title`. The root's first child is not the fixture's: it is the title
+/// bar of mockapp's frame, which UIA's own proxy for the window adds, and
+/// whose subtree, the frame's buttons, is Windows' and named in the
+/// machine's language, so the walk does not go into it.
+fn expected_tree(title: &str) -> Node {
+    use State::{
+        Checkable, Checked, Collapsed, Disabled, Expanded, Focusable, Mixed, Offscreen, Pressed,
     };
-    *visited += 1;
+    // The title bar's value is the window's title.
+    let title_bar = Node {
+        name: None,
+        role: Role::TitleBar,
+        value: Some(title.to_owned()),
+        states: [Focusable].into_iter().collect(),
+        details: NodeDetails::default(),
+        children: Vec::new(),
+    };
+    parent(
+        "Mockapp Tree Fixture",
+        Role::Window,
+        &[],
+        vec![
+            title_bar,
+            parent(
+                "Group One",
+                Role::Group,
+                &[],
+                vec![
+                    Node {
+                        details: NodeDetails {
+                            description: Some(
+                                "Applies the changes and closes the dialog".to_owned(),
+                            ),
+                            keyboard_shortcut: Some("Alt+O".to_owned()),
+                            ..NodeDetails::default()
+                        },
+                        ..leaf("OK", Role::Button, &[Focusable])
+                    },
+                    leaf("Cancel", Role::Button, &[Focusable, Disabled]),
+                    leaf("Enable feature", Role::CheckBox, &[Focusable, Checked]),
+                    leaf("Partial", Role::CheckBox, &[Focusable, Mixed]),
+                    // A radio button can be checked, as UIA maps its
+                    // selection item pattern.
+                    leaf(
+                        "Option A",
+                        Role::RadioButton,
+                        &[Focusable, Checked, Checkable],
+                    ),
+                    leaf("Wireless", Role::ToggleButton, &[Focusable, Pressed]),
+                    leaf("Airplane mode", Role::ToggleButton, &[Focusable]),
+                ],
+            ),
+            parent(
+                "Items",
+                Role::List,
+                &[],
+                vec![
+                    Node {
+                        details: NodeDetails {
+                            position_in_set: Some(1),
+                            set_size: Some(2),
+                            ..NodeDetails::default()
+                        },
+                        ..leaf("First", Role::ListItem, &[Focusable])
+                    },
+                    Node {
+                        details: NodeDetails {
+                            position_in_set: Some(2),
+                            set_size: Some(2),
+                            level: Some(1),
+                            ..NodeDetails::default()
+                        },
+                        ..leaf("Second", Role::ListItem, &[Focusable, Offscreen])
+                    },
+                ],
+            ),
+            parent(
+                "Choices",
+                Role::ComboBox,
+                &[Focusable, Expanded],
+                vec![leaf("Alpha", Role::MenuItem, &[])],
+            ),
+            valued("Notes", Role::EditableText, "Hello world"),
+            valued("Volume", Role::Slider, "50"),
+            valued("Count", Role::SpinButton, "3"),
+            parent(
+                "Sections",
+                Role::TabControl,
+                &[Collapsed],
+                vec![
+                    leaf("General", Role::Tab, &[Focusable]),
+                    leaf("Advanced", Role::Tab, &[Focusable]),
+                ],
+            ),
+            leaf("Learn more", Role::Link, &[Focusable]),
+            leaf("Main Toolbar", Role::ToolBar, &[]),
+            leaf("Ready", Role::StatusBar, &[]),
+            leaf("Popup", Role::Menu, &[]),
+        ],
+    )
+}
 
-    assert_eq!(
-        snapshot.role, expectation.role,
-        "role mismatch for {name:?}"
-    );
-    assert_eq!(
-        snapshot.value.as_deref(),
-        expectation.value,
-        "value mismatch for {name:?}"
-    );
-    for &state in expectation.states {
-        assert!(
-            snapshot.states.contains(state),
-            "{name:?} is missing expected state {state:?}"
-        );
-    }
-    for &state in expectation.absent_states {
-        assert!(
-            !snapshot.states.contains(state),
-            "{name:?} unexpectedly carries state {state:?}"
-        );
-    }
-
-    // Details: nodes in the details map must read back exactly what the
-    // fixture scripted; every other node must read back all-`None` details.
-    // Rectangles are excluded per `expected_details`'s doc comment.
-    let mut read_details = snapshot.details.clone();
-    read_details.rect = None;
-    let expected_details = details.get(name.as_str()).cloned().unwrap_or_default();
-    assert_eq!(
-        read_details, expected_details,
-        "details mismatch for {name:?}"
-    );
-
-    let cache = uia.base_cache_request().expect("base cache request");
-    // SAFETY: a live client; the condition takes no arguments.
-    let condition = unsafe { uia.client().CreateTrueCondition() }.unwrap();
-    // SAFETY: `element` is a live, cached element on this client's own
-    // apartment thread.
-    let children = unsafe { element.FindAllBuildCache(TreeScope_Children, &condition, &cache) }
-        .expect("FindAllBuildCache");
-    let children = verbatim_uia::elements_of(&children);
-    let count = children.len();
-    // Only the window itself can have host-merged extra children.
-    let is_window = snapshot.role == Role::Window;
-    if is_window {
-        assert!(
-            count >= expectation.child_count,
-            "root reported fewer children ({count}) than the fixture has ({})",
-            expectation.child_count
-        );
+/// Reads `element` and everything below it, but for the frame's title bar,
+/// read alone (see [`expected_tree`]).
+fn walk(uia: &Uia, element: &IUIAutomationElement, registry: &NodeIdRegistry) -> Node {
+    let snapshot = map::snapshot_from_cached_element(element, registry);
+    let mut details = snapshot.details;
+    details.rect = None;
+    let children = if snapshot.role == Role::TitleBar {
+        Vec::new()
     } else {
-        assert_eq!(
-            count, expectation.child_count,
-            "child count mismatch for {name:?}"
-        );
-    }
-    for child in &children {
-        walk(uia, child, registry, expected, details, visited, is_window);
+        let cache = uia.base_cache_request().expect("base cache request");
+        // SAFETY: a live client; the condition takes no arguments.
+        let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
+        // SAFETY: `element` is a live, cached element on this client's own
+        // apartment thread.
+        let children = unsafe { element.FindAllBuildCache(TreeScope_Children, &condition, &cache) }
+            .expect("FindAllBuildCache");
+        verbatim_uia::elements_of(&children)
+            .iter()
+            .map(|child| walk(uia, child, registry))
+            .collect()
+    };
+    Node {
+        name: snapshot.name,
+        role: snapshot.role,
+        value: snapshot.value,
+        states: snapshot.states,
+        details,
+        children,
     }
 }
 
 fn uia_client_reads_the_scripted_tree() {
     let title = common::unique_title("mockapp-uia-tree");
-    let mut app = common::spawn("tree.json", "uia", &title);
+    let app = common::spawn("tree.json", "uia", &title);
     let hwnd = common::find_window(&title);
 
     let uia = Uia::new().expect("Uia::new");
@@ -422,29 +204,10 @@ fn uia_client_reads_the_scripted_tree() {
     let root = uia
         .element_from_handle(hwnd.0 as isize, &cache)
         .expect("element_from_handle");
-
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    let expected = expected_tree();
-    let details = expected_details();
-    let mut visited = 0;
-    walk(
-        &uia,
-        &root,
-        &registry,
-        &expected,
-        &details,
-        &mut visited,
-        true,
-    );
+    assert_eq!(walk(&uia, &root, &registry), expected_tree(&title));
 
-    assert_eq!(
-        visited,
-        expected.len(),
-        "walked {visited} nodes but expected {}",
-        expected.len()
-    );
-
-    app.send("quit");
+    app.quit();
 }
 
 /// Runs this file's tests through the UIA test runner, which explains why

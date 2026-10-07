@@ -265,29 +265,37 @@ fn capture(element: &IUIAutomationElement) -> Option<(Pid, isize, UiaSnapshotFac
     ))
 }
 
+/// The fact the listener forwards for a UIA focus event on `element`, which
+/// carries the base cache request's properties (`Uia::base_cache_request`),
+/// as an event's element does: `None` for an element with no owning
+/// process. Local reads only: a windowless element is in the keyboard focus
+/// window of its own process, if that process still has the focus.
+#[must_use]
+pub fn uia_focus_fact(element: &IUIAutomationElement) -> Option<ListenerFact> {
+    let (pid, hwnd, snapshot) = capture(element)?;
+    let focus_window = if hwnd == 0 {
+        crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)
+    } else {
+        0
+    };
+    Some(ListenerFact {
+        pid,
+        fact: DeliveredFact::UiaFocus {
+            hwnd,
+            focus_window,
+            snapshot,
+        },
+    })
+}
+
 /// Installs the desktop-global UIA focus registration. A failure is reported
 /// as a fault and leaves the MSAA path running on its own.
 fn install_focus_registration(outgoing: &Arc<Outgoing>) -> Option<FocusRegistration> {
     let callback_outgoing = Arc::clone(outgoing);
     let callback = Arc::new(move |element: &IUIAutomationElement| {
         // A cached focus element from the registration's base cache request.
-        if let Some((pid, hwnd, snapshot)) = capture(element) {
-            // A windowless element is in the keyboard focus window of its own
-            // process, if that process still has the focus: a local read.
-            let focus_window = if hwnd == 0 {
-                crate::outpost::window::focus_window_of(pid.0).unwrap_or(0)
-            } else {
-                0
-            };
-            callback_outgoing.fact(
-                pid,
-                DeliveredFact::UiaFocus {
-                    hwnd,
-                    focus_window,
-                    snapshot,
-                },
-                None,
-            );
+        if let Some(ListenerFact { pid, fact }) = uia_focus_fact(element) {
+            callback_outgoing.fact(pid, fact, None);
         }
     });
     match FocusRegistration::new(callback) {

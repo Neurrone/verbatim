@@ -3,7 +3,8 @@
 //! eSpeak NG is built from the vendored source and linked statically (see
 //! `build.rs`); it is GPL version 3 or later, and runs only inside the
 //! synthesizer host process, never in `verbatim.exe`. This driver is
-//! written from eSpeak NG's public C API (`speak_lib.h`).
+//! written from eSpeak NG's public C API (`speak_lib.h`, and `espeak_ng.h`
+//! for seeding its noise).
 //!
 //! eSpeak NG keeps its state in globals, so a process has one: the driver
 //! refuses a second instance. It is used in synchronous mode: `espeak_Synth`
@@ -16,8 +17,16 @@
 //! marks: it says [`SynthDriver::places_marks`] is false, and the speech
 //! manager splits sequences at their marks, which keeps every mark exact
 //! (decision D17). Text is passed as plain UTF-8, not SSML.
+//!
+//! Determinism. eSpeak NG adds noise from a pseudo-random generator it seeds
+//! from the clock when it starts. The driver seeds it with a fixed value
+//! instead, so a new process's speech depends only on what it is asked to
+//! say: the same utterances with the same settings give the same samples.
+//! (The generator's state, like the rest of eSpeak NG's, runs on from one
+//! utterance to the next and survives the driver, so an utterance spoken
+//! again later in the same process need not give the same samples.)
 
-use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_void};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,8 +57,12 @@ const DEFAULT_VARIANT: &str = "max";
 const NO_VARIANT: &str = "none";
 
 /// Audio chunk length requested from eSpeak NG, in milliseconds: short, so
-/// the first chunk arrives quickly and a cancel takes effect soon.
-const CHUNK_MS: c_int = 20;
+/// the first chunk arrives quickly and a cancel takes effect soon. This is
+/// eSpeak NG's shortest; it raises any shorter request to it.
+const CHUNK_MS: c_int = 60;
+
+/// The seed of eSpeak NG's noise generator when the driver starts.
+const NOISE_SEED: c_long = 1;
 
 // From speak_lib.h.
 const AUDIO_OUTPUT_SYNCHRONOUS: c_int = 2;
@@ -107,6 +120,7 @@ unsafe extern "C" {
     fn espeak_SetParameter(parameter: c_int, value: c_int, relative: c_int) -> c_int;
     fn espeak_ListVoices(spec: *const EspeakVoice) -> *const *const EspeakVoice;
     fn espeak_Terminate() -> c_int;
+    fn espeak_ng_SetRandSeed(seed: c_long) -> c_int;
     fn espeak_Synth(
         text: *const c_void,
         size: usize,
@@ -338,6 +352,9 @@ impl EspeakSynth {
             })?;
         // SAFETY: a valid callback for the life of the process.
         unsafe { espeak_SetSynthCallback(on_audio) };
+        // SAFETY: eSpeak NG is initialized; the call only sets the noise
+        // generator's state, which initializing seeded from the clock.
+        unsafe { espeak_ng_SetRandSeed(NOISE_SEED) };
 
         let variant_spec_language = c"variant";
         let variant_spec = EspeakVoice {
@@ -448,7 +465,8 @@ impl EspeakSynth {
 impl Drop for EspeakSynth {
     fn drop(&mut self) {
         // Initialize and terminate are eSpeak NG's supported cycle, so a
-        // later driver in the same process starts from a clean state.
+        // later driver in the same process can start it again (though not
+        // from a clean state: some of its globals survive).
         // SAFETY: eSpeak NG was initialized by this driver, the only one.
         unsafe {
             espeak_Terminate();

@@ -68,13 +68,26 @@ returns, sent as `EM_SETSEL`), `set-text <id> <text>` (replaces a UIA
 text node's text, with `\n` for a line feed and `\\` for a backslash,
 raising no event, as a terminal's buffer changes before a client reads it;
 the terminal tests write lines, discard the oldest, and clear the screen
-with it; UIA only), `stall <ms>`
+with it; UIA only), `take-runtime-id <id> <from>` (node `from` dies:
+its parent no longer lists it, and every call on its elements fails with
+`UIA_E_ELEMENTNOTAVAILABLE`, as on an element that is gone; node `id`
+takes its runtime id, as File Explorer gives a new item the runtime id of
+one it destroyed; raises no event; UIA only), `stall <ms>`
 (blocks the window thread for that long, so every cross-process call into
 the window waits, as with an application that is starting up or busy;
 the window thread prints `stall started` on stdout as it begins and
 `stall ended <us>`, the time in microseconds since the Unix epoch, as it
 ends, so a test waits for the stall itself rather than for a guessed
-time), and `quit`.
+time), `slow <ms>` (every provider call on either backend from then on is
+answered that many milliseconds late, as by an application busy building
+a window, until `slow 0`; acknowledged `applied`), and `quit`.
+
+Every other command is acknowledged on stdout by the window thread once it
+has taken effect, events included: `applied`, or `rejected: <reason>` for a
+command that could not be applied, such as one naming a node the fixture
+lacks, one the backend does not support, or a line that is no command. A
+test waits for that line before it goes on, so it never measures or reads
+the state from before its command, and a typo in a node id fails at once.
 
 Public API is otherwise internal (`mockapp` is a binary, not a library);
 its crate-internal modules are the reviewable surface:
@@ -139,8 +152,8 @@ its crate-internal modules are the reviewable surface:
   (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,
   `IRawElementProviderFragmentRoot`, and pattern-provider method, the text
   pattern's and text range's methods a client reads with, every
-  `IAccessible` and `IDispatch` method), one for `WM_GETOBJECT`, and one
-  for stdin commands applied. A test reads them with two synchronous
+  `IAccessible` and `IDispatch` method), and one for `WM_GETOBJECT`. A
+  test reads them with two synchronous
   window messages to the host window, answered by the same thread that
   runs every provider call, so a read made after a client's call returns
   counts every hit that call caused: `WM_APP + 2` returns the counter
@@ -214,7 +227,7 @@ via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
 `wait_until` with a generous timeout). The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
-`events.rs`, `remote_ops.rs`, `text.rs`, `uia_tree.rs`)
+`events.rs`, `focus_reports.rs`, `remote_ops.rs`, `text.rs`, `uia_tree.rs`)
 run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
@@ -278,6 +291,23 @@ the stall ended, so the read waited longer than the outpost's old 1.5
 second deadline. The
 scripted focus event is raised with `NotifyWinEvent`, so this test too
 needs no real keyboard focus.
+`focus_reports.rs` runs a real outpost in the test process over
+`tests/fixtures/reuse.json` (two lists named alike, as a File Explorer
+folder and its subfolder), through `tests/common/outpost.rs`, the
+outpost harness it shares with `call_counts.rs`: the test hands the
+outpost focus facts as the listener would, and the outpost reads the
+focused element from the test rather than the system. With remote
+operations and without, a focus on an item whose runtime id
+`take-runtime-id` gave it from a dead item is reported under a new node,
+a repeated focus on it keeps that node, and each costs exactly the calls
+pinned there. A focus whose event was captured before its item was
+selected (`select` after the capture, the outpost's read of the focused
+element answering the item fetched afterwards) is reported with the item
+selected, its name and role from the event. And with every provider call
+answered 20 ms late (`slow 20`), a focus queued behind ten selections,
+which wait behind a query for an item's ancestors while mockapp is
+stalled, is handled right after the query and before the selections,
+waiting less than one slow call after the query's answer.
 
 `call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
 over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a

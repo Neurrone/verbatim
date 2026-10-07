@@ -52,65 +52,67 @@ pub(crate) fn root_provider(tree: SharedTree, hwnd: HWND) -> RootProvider {
 
 /// Applies a parsed stdin [`Command`] against `tree` and raises the matching
 /// UIA notification. Runs on the window thread.
-pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) {
+pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> Result<(), String> {
+    let unknown = |id: &str| format!("no node has the id {id}");
     match command {
         Command::Focus(id) => {
-            if let Some(index) = focus_node(tree, &id) {
-                raise_focus(tree, hwnd, index);
-            }
+            let index = focus_node(tree, &id).ok_or_else(|| unknown(&id))?;
+            raise_focus(tree, hwnd, index)?;
         }
         Command::SetFocus(id) => {
-            focus_node(tree, &id);
+            focus_node(tree, &id).ok_or_else(|| unknown(&id))?;
         }
         Command::SetName(id, text) => {
-            if let Some(index) = set_name(tree, &id, text) {
-                raise_property_changed(tree, hwnd, index, UIA_NamePropertyId);
-            }
+            let index = set_name(tree, &id, text).ok_or_else(|| unknown(&id))?;
+            raise_property_changed(tree, hwnd, index, UIA_NamePropertyId)?;
         }
         Command::SetValue(id, text) => {
-            if let Some(index) = set_value(tree, &id, text) {
-                raise_property_changed(tree, hwnd, index, UIA_ValueValuePropertyId);
-            }
+            let index = set_value(tree, &id, text).ok_or_else(|| unknown(&id))?;
+            raise_property_changed(tree, hwnd, index, UIA_ValueValuePropertyId)?;
         }
         Command::Select(id) => {
-            if let Some(index) = select_node(tree, &id) {
-                raise_selection(tree, hwnd, index);
-            }
+            let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
+            raise_selection(tree, hwnd, index)?;
         }
-        Command::Notify(text) => raise_notification(tree, hwnd, &text),
+        Command::Notify(text) => raise_notification(tree, hwnd, &text)?,
         Command::ActiveTextPosition(id, start, end) => {
             let index = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .index_of(&id);
-            if let Some(index) = index.filter(|&index| text::has_text(tree, index)) {
-                raise_active_text_position(tree, hwnd, index, (start, end));
+                .index_of(&id)
+                .ok_or_else(|| unknown(&id))?;
+            if !text::has_text(tree, index) {
+                return Err(format!("the node {id} has no text"));
             }
+            raise_active_text_position(tree, hwnd, index, (start, end))?;
         }
         Command::Caret(id, start, end) => {
             let mut guard = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(index) = guard.index_of(&id) {
-                let length = guard.nodes[index].text.as_ref().map_or(0, Vec::len);
-                guard.nodes[index].selection = (start.min(length), end.min(length));
-            }
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            let length = guard.nodes[index].text.as_ref().map_or(0, Vec::len);
+            guard.nodes[index].selection = (start.min(length), end.min(length));
         }
         Command::SetText(id, text) => {
             let mut guard = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(index) = guard.index_of(&id) {
-                let text: Vec<u16> = text.encode_utf16().collect();
-                let length = text.len();
-                let (start, end) = guard.nodes[index].selection;
-                guard.nodes[index].selection = (start.min(length), end.min(length));
-                guard.nodes[index].text = Some(text);
-            }
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            let text: Vec<u16> = text.encode_utf16().collect();
+            let length = text.len();
+            let (start, end) = guard.nodes[index].selection;
+            guard.nodes[index].selection = (start.min(length), end.min(length));
+            guard.nodes[index].text = Some(text);
         }
+        Command::TakeRuntimeId(id, from) => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take_runtime_id(&id, &from)?,
         // Handled by the window thread before dispatch.
-        Command::Stall(_) | Command::Quit => {}
+        Command::Stall(_) | Command::Slow(_) | Command::Quit | Command::Unrecognized(_) => {}
     }
+    Ok(())
 }
 
 fn focus_node(tree: &SharedTree, id: &str) -> Option<usize> {
@@ -165,19 +167,25 @@ fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
     Some(index)
 }
 
-fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) {
+fn raise_focus(tree: &SharedTree, hwnd: HWND, index: usize) -> Result<(), String> {
     let fragment = props::provider_for(tree.clone(), hwnd, index);
     // `IRawElementProviderFragment` and `IRawElementProviderSimple` are
     // sibling interfaces on the same COM object (both derive only from
     // `IUnknown`), so getting from one to the other is a `QueryInterface`
     // (`cast`), not an upcast (`into`).
-    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
-        return;
-    };
+    let provider = simple(&fragment)?;
     // SAFETY: `provider` is a live COM object for the just-updated node.
-    unsafe {
-        let _ = UiaRaiseAutomationEvent(&provider, UIA_AutomationFocusChangedEventId);
-    }
+    unsafe { UiaRaiseAutomationEvent(&provider, UIA_AutomationFocusChangedEventId) }
+        .map_err(|error| format!("the focus event could not be raised: {error}"))
+}
+
+/// The simple provider of a node's fragment.
+fn simple(
+    fragment: &windows::Win32::UI::Accessibility::IRawElementProviderFragment,
+) -> Result<IRawElementProviderSimple, String> {
+    fragment
+        .cast::<IRawElementProviderSimple>()
+        .map_err(|error| format!("the node's provider is not a simple provider: {error}"))
 }
 
 /// Raises UIA's active text position changed event from the text node at
@@ -187,66 +195,61 @@ fn raise_active_text_position(
     hwnd: HWND,
     index: usize,
     (start, end): (usize, usize),
-) {
+) -> Result<(), String> {
     let fragment = props::provider_for(tree.clone(), hwnd, index);
-    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
-        return;
-    };
+    let provider = simple(&fragment)?;
     let range = text::range_provider(tree, hwnd, index, (start, end));
     // SAFETY: `provider` and `range` are live COM objects for the node.
-    unsafe {
-        let _ = UiaRaiseActiveTextPositionChangedEvent(&provider, &range);
-    }
+    unsafe { UiaRaiseActiveTextPositionChangedEvent(&provider, &range) }
+        .map_err(|error| format!("the active text position event could not be raised: {error}"))
 }
 
-fn raise_selection(tree: &SharedTree, hwnd: HWND, index: usize) {
+fn raise_selection(tree: &SharedTree, hwnd: HWND, index: usize) -> Result<(), String> {
     let fragment = props::provider_for(tree.clone(), hwnd, index);
-    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
-        return;
-    };
+    let provider = simple(&fragment)?;
     // SAFETY: `provider` is a live COM object for the just-selected node.
-    unsafe {
-        let _ = UiaRaiseAutomationEvent(&provider, UIA_SelectionItem_ElementSelectedEventId);
-    }
+    unsafe { UiaRaiseAutomationEvent(&provider, UIA_SelectionItem_ElementSelectedEventId) }
+        .map_err(|error| format!("the selection event could not be raised: {error}"))
 }
 
 /// Raises a UIA `AutomationNotification` from the root provider, carrying
 /// `text` as the display string and a fixed mockapp activity id. Kind and
 /// processing are `Other` and `All` — the values a generic app-initiated
 /// announcement (a snap-layout hint, say) would use.
-fn raise_notification(tree: &SharedTree, hwnd: HWND, text: &str) {
+fn raise_notification(tree: &SharedTree, hwnd: HWND, text: &str) -> Result<(), String> {
     let fragment = props::provider_for(tree.clone(), hwnd, 0);
-    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
-        return;
-    };
+    let provider = simple(&fragment)?;
     let display = windows_core::BSTR::from(text);
     let activity = windows_core::BSTR::from("mockapp-notify");
     // SAFETY: `provider` is a live COM object for the root; the BSTRs live
     // across the call.
     unsafe {
-        let _ = UiaRaiseNotificationEvent(
+        UiaRaiseNotificationEvent(
             &provider,
             NotificationKind_Other,
             NotificationProcessing_All,
             &display,
             &activity,
-        );
+        )
     }
+    .map_err(|error| format!("the notification could not be raised: {error}"))
 }
 
-fn raise_property_changed(tree: &SharedTree, hwnd: HWND, index: usize, property: UIA_PROPERTY_ID) {
+fn raise_property_changed(
+    tree: &SharedTree,
+    hwnd: HWND,
+    index: usize,
+    property: UIA_PROPERTY_ID,
+) -> Result<(), String> {
     let fragment = props::provider_for(tree.clone(), hwnd, index);
-    let Ok(provider) = fragment.cast::<IRawElementProviderSimple>() else {
-        return;
-    };
+    let provider = simple(&fragment)?;
     let old = props::empty_variant();
     let new = props::empty_variant();
     // SAFETY: `provider` is a live COM object for the just-updated node; UIA
     // re-reads the current value via `GetPropertyValue` rather than trusting
     // the old/new payload, so empty placeholders are sufficient here.
-    unsafe {
-        let _ = UiaRaiseAutomationPropertyChangedEvent(&provider, property, &old, &new);
-    }
+    unsafe { UiaRaiseAutomationPropertyChangedEvent(&provider, property, &old, &new) }
+        .map_err(|error| format!("the property change could not be raised: {error}"))
 }
 
 /// Maps a normalized [`Role`] to the UIA control type mockapp serves for it
@@ -311,7 +314,7 @@ mod props {
         NavigateDirection_FirstChild, NavigateDirection_LastChild, NavigateDirection_NextSibling,
         NavigateDirection_Parent, NavigateDirection_PreviousSibling, ToggleState,
         ToggleState_Indeterminate, ToggleState_On, UIA_AccessKeyPropertyId,
-        UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
+        UIA_ControlTypePropertyId, UIA_ControllerForPropertyId, UIA_E_ELEMENTNOTAVAILABLE,
         UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FullDescriptionPropertyId,
         UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
@@ -695,7 +698,23 @@ mod props {
             .ok_or_else(Error::empty)
     }
 
-    pub(super) fn get_runtime_id(index: usize) -> WinResult<*mut SAFEARRAY> {
+    /// Fails as UIA's element-not-available error when node `index` has
+    /// died (`take-runtime-id`), as every call on a gone element does.
+    pub(super) fn alive(tree: &SharedTree, index: usize) -> WinResult<()> {
+        let dead = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[index]
+            .dead;
+        if dead {
+            return Err(Error::from(windows::core::HRESULT(
+                UIA_E_ELEMENTNOTAVAILABLE.cast_signed(),
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn get_runtime_id(tree: &SharedTree, index: usize) -> WinResult<*mut SAFEARRAY> {
         if index == 0 {
             // The hwnd-rooted element derives its runtime id from the window
             // handle automatically; returning null is the documented UIA
@@ -703,7 +722,12 @@ mod props {
             return Ok(std::ptr::null_mut());
         }
         let marker = i32::try_from(UiaAppendRuntimeId).unwrap_or(0);
-        let unique = i32::try_from(index).unwrap_or(0);
+        let runtime_id = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[index]
+            .runtime_id;
+        let unique = i32::try_from(runtime_id).unwrap_or(0);
         let elements = [(&raw const marker).cast(), (&raw const unique).cast()];
         // SAFETY: pointers to two live `i32`s, for a `VT_I4` vector;
         // ownership of the array passes to the caller, matching
@@ -815,7 +839,7 @@ mod handler {
         }
         fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetRuntimeId);
-            props::get_runtime_id(self.index)
+            props::get_runtime_id(&self.tree, self.index)
         }
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
             hits::hit(hits::Method::BoundingRectangle);
@@ -861,14 +885,17 @@ mod handler {
     impl IRawElementProviderSimple_Impl for ChildProvider_Impl {
         fn ProviderOptions(&self) -> WinResult<ProviderOptions> {
             hits::hit(hits::Method::ProviderOptions);
+            props::alive(&self.tree, self.index)?;
             Ok(provider_options())
         }
         fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> WinResult<IUnknown> {
             hits::hit(hits::Method::GetPatternProvider);
+            props::alive(&self.tree, self.index)?;
             get_pattern_provider(&self.tree, self.hwnd, self.index, pattern_id)
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
             hits::hit(hits::Method::GetPropertyValue);
+            props::alive(&self.tree, self.index)?;
             Ok(props::get_property_value(
                 &self.tree,
                 self.hwnd,
@@ -878,6 +905,7 @@ mod handler {
         }
         fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
             hits::hit(hits::Method::HostRawElementProvider);
+            props::alive(&self.tree, self.index)?;
             props::host_raw_element_provider(self.hwnd, self.index)
         }
     }
@@ -885,26 +913,32 @@ mod handler {
     impl IRawElementProviderFragment_Impl for ChildProvider_Impl {
         fn Navigate(&self, direction: NavigateDirection) -> WinResult<IRawElementProviderFragment> {
             hits::hit(hits::Method::Navigate);
+            props::alive(&self.tree, self.index)?;
             props::navigate(&self.tree, self.hwnd, self.index, direction)
         }
         fn GetRuntimeId(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetRuntimeId);
-            props::get_runtime_id(self.index)
+            props::alive(&self.tree, self.index)?;
+            props::get_runtime_id(&self.tree, self.index)
         }
         fn BoundingRectangle(&self) -> WinResult<UiaRect> {
             hits::hit(hits::Method::BoundingRectangle);
+            props::alive(&self.tree, self.index)?;
             Ok(bounding_rectangle())
         }
         fn GetEmbeddedFragmentRoots(&self) -> WinResult<*mut SAFEARRAY> {
             hits::hit(hits::Method::GetEmbeddedFragmentRoots);
+            props::alive(&self.tree, self.index)?;
             Ok(std::ptr::null_mut())
         }
         fn SetFocus(&self) -> WinResult<()> {
             hits::hit(hits::Method::SetFocus);
+            props::alive(&self.tree, self.index)?;
             Ok(())
         }
         fn FragmentRoot(&self) -> WinResult<IRawElementProviderFragmentRoot> {
             hits::hit(hits::Method::FragmentRoot);
+            props::alive(&self.tree, self.index)?;
             Ok(RootProvider {
                 tree: self.tree.clone(),
                 hwnd: self.hwnd,

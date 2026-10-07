@@ -583,6 +583,11 @@ pub fn notification_processing_from_uia(
 mod tests {
     use super::*;
 
+    /// The exact state set holding `states` and nothing else.
+    fn set<const N: usize>(states: [State; N]) -> StateSet {
+        states.into_iter().collect()
+    }
+
     #[test]
     fn known_control_types_map_to_expected_roles() {
         assert_eq!(
@@ -657,15 +662,11 @@ mod tests {
             selected: false,
             ..RawUiaStates::default()
         };
-        let states = states_from_uia(&raw, Role::Pane);
-        assert!(states.contains(State::Focused));
-        assert!(states.contains(State::Focusable));
-        assert!(
-            !states.contains(State::Mixed),
+        assert_eq!(
+            states_from_uia(&raw, Role::Pane),
+            set([State::Focused, State::Focusable]),
             "a non-toggle element must not be reported as half-checked"
         );
-        assert!(!states.contains(State::Expanded));
-        assert!(!states.contains(State::Collapsed));
     }
 
     /// When the pattern is available, the toggle value is honored. A role
@@ -686,21 +687,28 @@ mod tests {
             selected: false,
             ..RawUiaStates::default()
         };
-        assert!(states_from_uia(&base, Role::CheckBox).contains(State::Checked));
+        assert_eq!(
+            states_from_uia(&base, Role::CheckBox),
+            set([State::Focusable, State::Checked])
+        );
 
         let indeterminate = RawUiaStates {
             toggle_state: Some(ToggleState_Indeterminate.0),
             ..base
         };
-        assert!(states_from_uia(&indeterminate, Role::CheckBox).contains(State::Mixed));
+        assert_eq!(
+            states_from_uia(&indeterminate, Role::CheckBox),
+            set([State::Focusable, State::Mixed])
+        );
 
         let off = RawUiaStates {
             toggle_state: Some(0),
             ..base
         };
-        let off_states = states_from_uia(&off, Role::CheckBox);
-        assert!(!off_states.contains(State::Checked));
-        assert!(!off_states.contains(State::Mixed));
+        assert_eq!(
+            states_from_uia(&off, Role::CheckBox),
+            set([State::Focusable])
+        );
     }
 
     /// `ToggleState_On` maps to `State::Pressed` for a `ToggleButton`,
@@ -721,9 +729,10 @@ mod tests {
             ..RawUiaStates::default()
         };
 
-        let toggle_button_states = states_from_uia(&base, Role::ToggleButton);
-        assert!(toggle_button_states.contains(State::Pressed));
-        assert!(!toggle_button_states.contains(State::Checked));
+        assert_eq!(
+            states_from_uia(&base, Role::ToggleButton),
+            set([State::Focusable, State::Pressed])
+        );
     }
 
     #[test]
@@ -741,12 +750,18 @@ mod tests {
             selected: false,
             ..RawUiaStates::default()
         };
-        assert!(states_from_uia(&expanded, Role::Pane).contains(State::Expanded));
+        assert_eq!(
+            states_from_uia(&expanded, Role::Pane),
+            set([State::Focusable, State::Expanded])
+        );
         let collapsed = RawUiaStates {
             expand_state: Some(ExpandCollapseState_Collapsed.0),
             ..expanded
         };
-        assert!(states_from_uia(&collapsed, Role::Pane).contains(State::Collapsed));
+        assert_eq!(
+            states_from_uia(&collapsed, Role::Pane),
+            set([State::Focusable, State::Collapsed])
+        );
     }
 
     #[test]
@@ -764,9 +779,10 @@ mod tests {
             selected: false,
             ..RawUiaStates::default()
         };
-        let states = states_from_uia(&raw, Role::Pane);
-        assert!(states.contains(State::Disabled));
-        assert!(states.contains(State::Offscreen));
+        assert_eq!(
+            states_from_uia(&raw, Role::Pane),
+            set([State::Disabled, State::Offscreen])
+        );
     }
 
     /// `SelectionItemIsSelected` reads as a default `false` on elements
@@ -789,27 +805,28 @@ mod tests {
             selected: true,
             ..RawUiaStates::default()
         };
-        let states = states_from_uia(&base, Role::Pane);
-        assert!(states.contains(State::Selectable));
-        assert!(states.contains(State::Selected));
+        assert_eq!(
+            states_from_uia(&base, Role::Pane),
+            set([State::Focusable, State::Selectable, State::Selected])
+        );
 
         let unselected = RawUiaStates {
             selected: false,
             ..base
         };
-        let states = states_from_uia(&unselected, Role::Pane);
-        assert!(states.contains(State::Selectable));
-        assert!(!states.contains(State::Selected));
+        assert_eq!(
+            states_from_uia(&unselected, Role::Pane),
+            set([State::Focusable, State::Selectable])
+        );
 
         let unavailable = RawUiaStates {
             selection_available: false,
             selected: true,
             ..base
         };
-        let states = states_from_uia(&unavailable, Role::Pane);
-        assert!(!states.contains(State::Selectable));
-        assert!(
-            !states.contains(State::Selected),
+        assert_eq!(
+            states_from_uia(&unavailable, Role::Pane),
+            set([State::Focusable]),
             "a stray selected value without the pattern must be ignored"
         );
     }
@@ -911,11 +928,10 @@ mod tests {
             selected: true,
             ..RawUiaStates::default()
         };
-        let states = states_from_uia(&raw, Role::RadioButton);
-        assert!(states.contains(State::Checked));
-        assert!(states.contains(State::Checkable));
-        assert!(!states.contains(State::Selected));
-        assert!(!states.contains(State::Selectable));
+        assert_eq!(
+            states_from_uia(&raw, Role::RadioButton),
+            set([State::Checkable, State::Checked])
+        );
     }
 
     #[test]
@@ -926,8 +942,11 @@ mod tests {
             toggle_state: Some(0),
             ..RawUiaStates::default()
         };
-        assert!(states_from_uia(&raw, Role::ListItem).contains(State::Checkable));
-        assert!(!states_from_uia(&raw, Role::CheckBox).contains(State::Checkable));
+        assert_eq!(
+            states_from_uia(&raw, Role::ListItem),
+            set([State::Checkable])
+        );
+        assert_eq!(states_from_uia(&raw, Role::CheckBox), StateSet::new());
     }
 
     #[test]
@@ -940,21 +959,24 @@ mod tests {
             data_valid: Some(false),
             ..RawUiaStates::default()
         };
-        let states = states_from_uia(&raw, Role::EditableText);
-        for state in [
-            State::Protected,
-            State::Required,
-            State::ReadOnly,
-            State::InvalidEntry,
-        ] {
-            assert!(states.contains(state), "{state:?}");
-        }
+        assert_eq!(
+            states_from_uia(&raw, Role::EditableText),
+            set([
+                State::Protected,
+                State::Required,
+                State::ReadOnly,
+                State::InvalidEntry,
+            ])
+        );
         let unsupported = RawUiaStates {
             enabled: true,
             data_valid: None,
             ..RawUiaStates::default()
         };
-        assert!(!states_from_uia(&unsupported, Role::EditableText).contains(State::InvalidEntry));
+        assert_eq!(
+            states_from_uia(&unsupported, Role::EditableText),
+            StateSet::new()
+        );
     }
 
     #[test]
@@ -982,8 +1004,7 @@ mod tests {
 
         let mut checked = plain;
         add_legacy_checked_state(&mut checked, Some(LEGACY_STATE_CHECKED));
-        assert!(checked.contains(State::Checkable));
-        assert!(checked.contains(State::Checked));
+        assert_eq!(checked, set([State::Checkable, State::Checked]));
         // An unchecked or unsupported legacy state adds nothing.
         for legacy in [Some(0), None] {
             let mut states = plain;

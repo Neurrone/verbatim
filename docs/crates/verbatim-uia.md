@@ -246,7 +246,9 @@ Public API:
   the group again, so the caller never waits on UIA's removal (which waits
   for running callbacks). Elements that fail to resolve, or on which the
   group cannot be registered (an element that has gone, which NVDA also
-  logs and passes over), are skipped. Dropping a registration unregisters
+  logs and passes over), are skipped. `settle()` waits until every move
+  asked for before it has been made, for a test that measures what the
+  moves cost an application. Dropping a registration unregisters
   and ends its thread. The focus listener holds one registration, the
   desktop-wide selection, menu-opened, and notification subscriptions as
   one group, where it held three registrations, each with its own thread
@@ -265,7 +267,14 @@ Public API:
   once more, all within eight seconds. `probe_server_side_provider`
   answers `None` for a window that never answered, which the outpost
   reads through MSAA for the event at hand without keeping that as the
-  window's answer, as NVDA treats a cancelled probe.
+  window's answer, as NVDA treats a cancelled probe. `probe(hwnd)` gives
+  the same answer as a `Probe`, with how many times the window was asked
+  (1, or 2 when UIA gave up on a busy window first), so a test can show
+  which way the answer came; `PROBE_BUDGET` is the eight seconds. The
+  probe waits for UIA's first-time setup in the process (`ensure_ready`)
+  before it asks: one racing that setup answered "no provider" at once for
+  a window that has one, about one run in five of two probes started
+  together in a fresh process.
 - `console_reports_formatting(hwnd)` and `is_windows_forms(hwnd)` — the
   checks NVDA makes on a window with a provider before using it: whether a
   console's text area reports one visible range with its font (the
@@ -322,7 +331,14 @@ Public API:
   needs Windows to reuse the same window handle value meanwhile; NVDA, which
   compares elements by runtime id and keeps its navigator indefinitely, has
   the same exposure, and `take_touched` reports the nodes issued or looked up
-  since the last call. `init_mta()` joins the multithreaded apartment,
+  since the last call. A runtime id is unique only among live elements: an
+  application can give a dead element's id to a new one (File Explorer
+  did, going back from a subfolder, found 2026-10-07). `reissue` forgets
+  the node a runtime id names, its element and reverse entry included, so
+  the next lookup mints a new node and a query for the old one answers
+  gone; the outpost calls it before reporting a focus whose runtime id
+  names a node whose element no longer has the keyboard focus, or cannot
+  be read. `init_mta()` joins the multithreaded apartment,
   failing on a thread already in a single-threaded one; each call adds an
   initialization that is never undone, since the MTA is pinned for the
   process's life. Role and state mapping in

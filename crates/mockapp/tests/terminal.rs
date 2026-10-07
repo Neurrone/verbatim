@@ -146,7 +146,7 @@ fn remote_and_classic_terminal_tails_agree() {
     common::apply(&mut app, hwnd, r"set-text term hello\nready>");
     let (tail, _) = both(&uia, &anchored(&next, "ready>", "d\n"));
     assert_eq!(tail.found, Found::NotFound);
-    app.send("quit");
+    app.quit();
 }
 
 /// The classic search finds the fingerprint by its text (`FindText`), the
@@ -198,7 +198,7 @@ fn a_fingerprint_found_by_text_is_the_one_found_line_by_line() {
 "
     );
     assert_eq!(tail.count, 5);
-    app.send("quit");
+    app.quit();
 }
 
 /// Calls by kind, in the order `CallCounts` lists them.
@@ -228,8 +228,12 @@ fn measured_read(
     (output, calls, common::read_hits(hwnd))
 }
 
-/// The output of a terminal's reads, and the cost of a read that finds new
-/// lines, pinned exactly: one round trip remotely.
+/// The output of a terminal's reads, and the cost of each read, pinned
+/// exactly.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each read and its pinned cost checked in turn against one running mockapp"
+)]
 fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
     common::init_com();
     let title = common::unique_title(if remote {
@@ -247,7 +251,7 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
     // The baseline, when the terminal gains the focus: nothing is new.
     let (output, baseline_calls, baseline_hits) =
         measured_read(&uia, hwnd, text, &mut terminal, remote, true);
-    assert!(output.is_empty(), "{output:?}");
+    assert_eq!(output, TerminalOutput::default());
 
     // The prompt grows as the user types.
     common::apply(
@@ -258,13 +262,18 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
     let (output, typed_calls, typed_hits) =
         measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(
-        output.changed,
-        Some(LineChange {
-            text: " ls".to_owned(),
-            line: "ready> ls".to_owned(),
-            appended: true,
-            uncertain: 0,
-        })
+        output,
+        TerminalOutput {
+            changed: Some(LineChange {
+                text: " ls".to_owned(),
+                line: "ready> ls".to_owned(),
+                appended: true,
+                uncertain: 0,
+            }),
+            head: Vec::new(),
+            skipped: None,
+            lines: Vec::new(),
+        }
     );
 
     // A command's output: one line and the prompt.
@@ -292,47 +301,78 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         hwnd,
         r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\nnotes.txt\nready> dir\n1\n2\n3\n4\n5\n6\nready>",
     );
-    let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
+    let (output, overflow_calls, overflow_hits) =
+        measured_read(&uia, hwnd, text, &mut terminal, remote, false);
     assert_eq!(
-        output.changed.map(|change| change.text),
-        Some(" dir".to_owned())
+        output,
+        TerminalOutput {
+            changed: Some(LineChange {
+                text: " dir".to_owned(),
+                line: "ready> dir".to_owned(),
+                appended: true,
+                uncertain: 0,
+            }),
+            head: texts(&["1", "2", "3"]),
+            skipped: Some(Skipped::Count(1)),
+            lines: texts(&["5", "6", "ready>"]),
+        }
     );
-    assert_eq!(output.head, texts(&["1", "2", "3"]));
-    assert_eq!(output.skipped, Some(Skipped::Count(1)));
-    assert_eq!(output.lines, texts(&["5", "6", "ready>"]));
 
     // A redraw with the same text: nothing.
-    let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
-    assert!(output.is_empty(), "{output:?}");
+    let (output, redraw_calls, redraw_hits) =
+        measured_read(&uia, hwnd, text, &mut terminal, remote, false);
+    assert_eq!(output, TerminalOutput::default());
 
     // The screen cleared and written to: compared line by line.
     common::apply(&mut app, hwnd, r"set-text term hello\nready>");
-    let (output, _, _) = measured_read(&uia, hwnd, text, &mut terminal, remote, false);
-    assert_eq!(output.lines, texts(&["hello", "ready>"]));
-    app.send("quit");
+    let (output, cleared_calls, cleared_hits) =
+        measured_read(&uia, hwnd, text, &mut terminal, remote, false);
+    assert_eq!(
+        output,
+        TerminalOutput {
+            changed: None,
+            head: Vec::new(),
+            skipped: None,
+            lines: texts(&["hello", "ready>"]),
+        }
+    );
+    app.quit();
 
     let costs = [
         ("baseline", baseline_calls, baseline_hits),
         ("typed", typed_calls, typed_hits),
         ("output line", line_calls, line_hits),
+        ("overflow", overflow_calls, overflow_hits),
+        ("redraw", redraw_calls, redraw_hits),
+        ("cleared", cleared_calls, cleared_hits),
     ];
-    println!("terminal read costs (remote {remote}): {costs:?}");
     // The client's calls: remotely, one program for each read, the
     // baseline's getting the document range itself, which costs the
     // provider the import of the element and its text pattern;
     // classically, one call per provider method. The provider does the
     // same work otherwise.
-    let expected: [(&str, CallCounts, Hits); 3] = if remote {
+    //
+    // A read that finds no new line after a skip, and one that finds the
+    // screen cleared, read twice: the anchor is not where it was, so the
+    // read starts again from the document. The classic read of a cleared
+    // screen then finds the last line by its text.
+    let expected: [(&str, CallCounts, Hits); 6] = if remote {
         [
             ("baseline", uia_calls(1), REMOTE_BASELINE_HITS),
             ("typed", uia_calls(1), TYPED_HITS),
             ("output line", uia_calls(1), LINE_HITS),
+            ("overflow", uia_calls(1), LINE_HITS),
+            ("redraw", uia_calls(2), REMOTE_REDRAW_HITS),
+            ("cleared", uia_calls(2), REMOTE_CLEARED_HITS),
         ]
     } else {
         [
             ("baseline", uia_calls(34), BASELINE_HITS),
             ("typed", uia_calls(30), TYPED_HITS),
             ("output line", uia_calls(43), LINE_HITS),
+            ("overflow", uia_calls(43), LINE_HITS),
+            ("redraw", uia_calls(64), REDRAW_HITS),
+            ("cleared", uia_calls(67), CLEARED_HITS),
         ]
     };
     for ((name, calls, hits), (_, expected_calls, expected_hits)) in costs.iter().zip(expected) {
@@ -402,6 +442,66 @@ const LINE_HITS: &[(&str, u32)] = &[
     ("GetText", 6),
     ("Move", 5),
     ("MoveEndpointByRange", 11),
+];
+
+/// The provider hits of a read that found nothing new after a skip,
+/// classically: the anchor's check, then a read from the document.
+const REDRAW_HITS: &[(&str, u32)] = &[
+    ("DocumentRange", 1),
+    ("Clone", 19),
+    ("CompareEndpoints", 4),
+    ("ExpandToEnclosingUnit", 10),
+    ("GetText", 8),
+    ("Move", 7),
+    ("MoveEndpointByRange", 15),
+];
+
+/// [`REDRAW_HITS`] remotely, with the import of the element and its text
+/// pattern.
+const REMOTE_REDRAW_HITS: &[(&str, u32)] = &[
+    ("ProviderOptions", 2),
+    ("GetPatternProvider", 1),
+    ("GetPropertyValue", 1),
+    ("HostRawElementProvider", 1),
+    ("Navigate", 1),
+    ("DocumentRange", 1),
+    ("Clone", 19),
+    ("CompareEndpoints", 4),
+    ("ExpandToEnclosingUnit", 10),
+    ("GetText", 8),
+    ("Move", 7),
+    ("MoveEndpointByRange", 15),
+];
+
+/// The provider hits of a read that finds the screen cleared, classically:
+/// the anchor's check, the last line found by its text, and a read from the
+/// document.
+const CLEARED_HITS: &[(&str, u32)] = &[
+    ("DocumentRange", 1),
+    ("Clone", 20),
+    ("CompareEndpoints", 4),
+    ("ExpandToEnclosingUnit", 10),
+    ("FindText", 1),
+    ("GetText", 8),
+    ("Move", 7),
+    ("MoveEndpointByUnit", 1),
+    ("MoveEndpointByRange", 15),
+];
+
+/// The provider hits of a read that finds the screen cleared, remotely.
+const REMOTE_CLEARED_HITS: &[(&str, u32)] = &[
+    ("ProviderOptions", 2),
+    ("GetPatternProvider", 1),
+    ("GetPropertyValue", 1),
+    ("HostRawElementProvider", 1),
+    ("Navigate", 1),
+    ("DocumentRange", 1),
+    ("Clone", 23),
+    ("CompareEndpoints", 4),
+    ("ExpandToEnclosingUnit", 11),
+    ("GetText", 9),
+    ("Move", 9),
+    ("MoveEndpointByRange", 16),
 ];
 
 fn terminal_reads_cost_exactly_remote() {

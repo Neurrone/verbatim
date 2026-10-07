@@ -174,18 +174,24 @@ the ratchet's unchanged counts confirm. Caching the state for every
 element instead cost no call but roughly doubled the provider work of every
 focus change, so it is read lazily.
 
-The UIA operations are measured on the test's own thread, making the same
-`verbatim-uia` and `verbatim-uia-rops` calls in the same order as the
-outpost's worker once it has the focused element: the outpost finds that
-element by reading the system's keyboard focus
-(`GetFocusedElementBuildCache`), which a test must not take from the
-desktop it runs on. The test counts that one read where the outpost makes
-it, so the UIA focus counts below are the outpost's whole count; only the
-provider calls of that read are missing from the hits. A UIA focus is
-measured both ways the outpost reads it: with remote operations, the
-default, and with the classic walk (`uia.remote_operations = false` in
-`settings.toml`, or a window whose elements cannot be imported into a
-program). The MSAA operations run through a real outpost.
+Focus changes and navigation steps, UIA and MSAA alike, run through a
+real outpost in the test's process, handed the focus fact or the query as
+the listener and Core hand them. The outpost finds a UIA focus's element
+by reading the system's keyboard focus (`GetFocusedElementBuildCache`),
+which a test must not take from the desktop it runs on, so the test's
+outpost reads it from the test instead
+(`Outpost::with_focused_element_reader`): the element mockapp reports
+focused, found beforehand, counted as the one call the system read is.
+The UIA focus counts below are therefore the outpost's whole count; only
+the provider calls of that one read are missing from the hits. The hits
+are read once the outpost has settled (`Outpost::settle`), so they
+include everything it did for the focus, the move of its focus-following
+property subscription to the new focus too: 1 `HostRawElementProvider`
+and 2 `FragmentRoot` provider calls, made on the subscription's own
+thread and counted as no call. A UIA focus is measured both ways the
+outpost reads it: with remote operations, the default, and with the
+classic walk (`uia.remote_operations = false` in `settings.toml`, or a
+window whose elements cannot be imported into a program).
 
 ### A focus change, UIA, steady state
 
@@ -205,13 +211,38 @@ program). The MSAA operations run through a real outpost.
 - Today, with remote operations: 2 UIA calls, the focused element and one
   `Execute`, which also confirms the focus, finds the nearest window, and
   meets the group the previous focus was in. The `Execute` cost mockapp 88
-  provider calls.
+  provider calls, 91 with the subscription's move.
 - Today, classic: 3 UIA calls: the focused element, its nearest window
   (`NormalizeElementBuildCache`, since the focus fact carries no window of
   its own for an element that is not a window), and one ancestor hop. The
-  last two cost mockapp 95 provider calls.
+  last two cost mockapp 95 provider calls, 98 with the subscription's move.
 - Target: 2, met with remote operations: phase 6 step 2's exit criterion,
   asserted exactly.
+
+### A focus behind other objects' events
+
+Not a count of calls but of what a focus waits for. A failed
+`explorer_folder_window` run on 2026-10-07 had the first focus in a new
+File Explorer window wait 2,589.6 ms in the outpost's queue ("outpost
+queue 2589.6, outpost read 20.8 (84 calls)"). Its flight recorder shows
+what the worker was doing: the MSAA events Explorer raised while it built
+the window, observed in the half second before the focus, state changes
+of tree items (one expanded, its 23 children counted) and a value change,
+reported, and ten more, whose trace ids are missing from the record,
+handled without being reported. Each was read as a full snapshot of an
+object the focus was not on, while Explorer answered slowly. NVDA reads such an event with one call and judges it against the
+focus when it runs. Since then a focus change goes before the events of
+other objects queued ahead of it (`docs/crates/verbatim-outpost.md`, the
+queue), and the events of the focus and of the object focus moves to keep
+their place.
+
+mockapp's `a_focus_is_handled_before_slow_reads_queued_ahead_of_it`
+reproduces it: every provider call answered 20 ms late (`slow 20`), ten
+selections in a list queued behind a query, then a focus. Before the
+change the focus was taken up 611.7 and 610.6 ms after the query was
+answered (two runs), after the ten selections; after it, 35 and 115 µs,
+before them. The test asserts the order exactly and that the focus waits
+less than one of the slow application's calls after the query.
 
 ### A focus change, UIA, cold
 
@@ -221,12 +252,13 @@ program). The MSAA operations run through a real outpost.
 - Today, with remote operations: 2 UIA calls and 1 window message: the
   focused element, the probe, and one `Execute`, which walks up to the
   process's top-level window and stops there, never asking for the
-  desktop's root. 146 provider calls besides the focused-element read.
+  desktop's root. 149 provider calls besides the focused-element read, the
+  subscription's move included.
 - Today, classic: 6 UIA calls and 1 window message: the focused element,
   its nearest window, the probe, and four ancestor hops (the group, the
   window, the desktop's root element, and a hop that finds no parent above
-  the desktop and ends the walk). 160 provider calls besides the
-  focused-element read.
+  the desktop and ends the walk). 163 provider calls besides the
+  focused-element read, the subscription's move included.
 - Target: 2 UIA calls and 1 window message, met. The classic walk could
   still stop at the desktop's root element, which is known locally,
   instead of asking for its parent.
@@ -239,12 +271,13 @@ The focus lands on the list itself, and its selected item is read with it.
   reads the list's selection and the first selected item's cached
   properties.
 - Today, with remote operations: 2 UIA calls, the focused element and one
-  `Execute`. 126 provider calls besides the focused-element read.
+  `Execute`. 129 provider calls besides the focused-element read, the
+  subscription's move included.
 - Today, classic: 5 UIA calls: the focused element, its nearest window,
   one ancestor hop (the window, known from the previous focus), and the
   selected item in two calls (`SelectionPattern2`'s `FirstSelectedItem`
-  and `BuildUpdatedCache` on it). 136 provider calls besides the
-  focused-element read. Through the `Selection` pattern, before, 6 and
+  and `BuildUpdatedCache` on it). 139 provider calls besides the
+  focused-element read, the subscription's move included. Through the `Selection` pattern, before, 6 and
   143 ("A container's selected item" below).
 - Target: 2, met.
 
@@ -254,10 +287,10 @@ The focus moves from one list item to the next.
 
 - Minimum: 2 UIA calls, as for any steady-state focus change.
 - Today, with remote operations: 2 UIA calls, the same as a steady-state
-  focus change, 88 provider calls besides the focused-element read; the
+  focus change, 91 provider calls besides the focused-element read; the
   program stops at the list, which the previous chain holds.
 - Today, classic: 3 UIA calls: the focused element, its nearest window,
-  and one ancestor hop, which meets the list. 95 provider calls besides
+  and one ancestor hop, which meets the list. 98 provider calls besides
   the focused-element read.
 - Target: 2, met.
 
@@ -667,7 +700,11 @@ provider (`tests/fixtures/terminal.json`, `tests/terminal.rs`), whose
   the focus, the baseline (1 call, 2 before). Classically, with
   `uia.remote_operations` off or a provider that cannot run programs, one
   call per provider method: 34 for the baseline of a six-line text, 30 for
-  a grown prompt, 43 for an output line and a new prompt. The provider's
+  a grown prompt, 43 for an output line and a new prompt, 43 for more
+  lines than a read takes, 64 for a read that finds nothing new and reads
+  afresh, and 67 for a cleared screen, whose classic read also finds the
+  last line by its text (`FindText`). Every one of these is pinned, both
+  ways. The provider's
   own work is the same either way, and pinned too: 13 clones, 6 line
   expansions, 6 reads, 5 moves, and 13 other range calls for the output
   line. The lines spoken are read in one call, however many there are, so
