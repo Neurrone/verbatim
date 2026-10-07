@@ -97,7 +97,12 @@ Public API:
   `ROLE_SYSTEM_LIST` — or the client of a `SysListView32` window, it reads
   `accFocus` and redirects to the named child when that child is real and
   different, so a container that fires focus on itself, like the wxWidgets
-  generic list, announces the focused item rather than the container; the
+  generic list, announces the focused item rather than the container; a
+  focus on any other object's own child id 0 is redirected to the child
+  `accFocus` names by id when that child has the focused state, which is
+  how a tree view or tab control raising focus on itself and then on its
+  item announces the item, as NVDA does (`docs/parity.md`, "A control's
+  own focus with a focused child"); the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_snapshot` also uses, so the child-id and child-object forms are
   handled once), `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,

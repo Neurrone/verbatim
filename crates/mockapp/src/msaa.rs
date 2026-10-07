@@ -81,6 +81,37 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
                 NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             }
         }
+        Command::FocusChild(container, child) => {
+            let parent = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&container)
+                .ok_or_else(|| unknown(&container))?;
+            let index = focus_node(tree, &child).ok_or_else(|| unknown(&child))?;
+            let child_id = {
+                let mut guard = tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.simple_children = Some(parent);
+                guard.nodes[parent]
+                    .children
+                    .iter()
+                    .position(|&node| node == index)
+                    .ok_or_else(|| format!("{child} is not a child of {container}"))?
+                    + 1
+            };
+            notify(hwnd, EVENT_OBJECT_FOCUS, parent);
+            // SAFETY: `hwnd` is the mockapp window's own live handle, and
+            // the container's object answers the child id as a simple child.
+            unsafe {
+                NotifyWinEvent(
+                    EVENT_OBJECT_FOCUS,
+                    hwnd,
+                    objid_for(parent),
+                    i32::try_from(child_id).unwrap_or(i32::MAX),
+                );
+            }
+        }
         Command::Select(id) => {
             let index = select_node(tree, &id).ok_or_else(|| unknown(&id))?;
             notify(hwnd, EVENT_OBJECT_SELECTION, index);
@@ -394,6 +425,16 @@ mod handler {
             }
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(windows::Win32::Foundation::E_INVALIDARG))?;
+            if self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .simple_children
+                == Some(self.index)
+            {
+                // A simple child has no object of its own (`focus-child`).
+                return Err(Error::from_hresult(S_FALSE));
+            }
             let accessible: IAccessible = NodeAccessible {
                 tree: self.tree.clone(),
                 hwnd: self.hwnd,
@@ -526,11 +567,28 @@ mod handler {
 
         fn accFocus(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccFocus);
-            let focused = self
-                .tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .focused;
+            let (focused, simple_child) = {
+                let guard = self
+                    .tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let simple_child = (guard.simple_children == Some(self.index))
+                    .then(|| {
+                        let focused = guard.focused?;
+                        guard.nodes[self.index]
+                            .children
+                            .iter()
+                            .position(|&node| node == focused)
+                    })
+                    .flatten();
+                (guard.focused, simple_child)
+            };
+            // A simple child is named by its child id (`focus-child`).
+            if let Some(position) = simple_child {
+                return Ok(VARIANT::from(
+                    i32::try_from(position + 1).unwrap_or(i32::MAX),
+                ));
+            }
             // No node focused yet defaults to the root, matching MSAA
             // convention: a container with no focused descendant reports
             // itself.

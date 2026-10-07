@@ -261,6 +261,10 @@ struct State {
     /// reported within the batch a menu opening belongs to.
     batch_number: u64,
     focused: Option<Object>,
+    /// Whether [`State::focused`] was reached by redirecting a control's
+    /// own focus event to its focused child, whose own event is still to
+    /// come.
+    focus_redirected: bool,
     closed: bool,
 }
 
@@ -435,7 +439,27 @@ impl Intake {
     /// Records the object the worker last reported as the focus: its events
     /// are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
-        self.lock().focused = object;
+        let mut state = self.lock();
+        state.focused = object;
+        state.focus_redirected = false;
+    }
+
+    /// Records that the focus last reported was reached by redirecting a
+    /// control's own focus event to its focused child.
+    pub(super) fn set_focus_redirected(&self) {
+        self.lock().focus_redirected = true;
+    }
+
+    /// Whether a focus event on `object` is the redirected-to child's own,
+    /// arriving after its control's: `object` is the focus, reached by a
+    /// redirect, and no other focus came between. Answers once.
+    pub(super) fn take_redirected_focus(&self, object: &Object) -> bool {
+        let mut state = self.lock();
+        let repeated = state.focus_redirected && state.focused.as_ref() == Some(object);
+        if repeated {
+            state.focus_redirected = false;
+        }
+        repeated
     }
 
     /// The object the worker last reported as the focus.

@@ -1,0 +1,21 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Tree View Fixture",
+  "children": [
+    {
+      "id": "categories",
+      "role": "tree",
+      "name": "Categories",
+      "states": ["focusable"],
+      "keyboard_shortcut": "Alt+i",
+      "children": [
+        { "id": "general", "role": "tree_item", "name": "General", "states": ["focusable", "selectable"] },
+        { "id": "speech", "role": "tree_item", "name": "Speech", "states": ["focusable", "selectable"] },
+        { "id": "theme", "role": "tree_item", "name": "Theme", "states": ["focusable", "selectable"] },
+        { "id": "terminal", "role": "tree_item", "name": "Terminal", "states": ["focusable", "selectable"] },
+        { "id": "input", "role": "tree_item", "name": "Input", "states": ["focusable", "selectable"] }
+      ]
+    }
+  ]
+}

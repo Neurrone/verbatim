@@ -666,6 +666,23 @@ verified.
   but no alert events, so it reports no other alerts.
 - Live regions (browsers). NVDA: in-process IA2 machinery
   ([IA2 usage](nvda/ia2.md)). Verbatim: **not yet (M6)**.
+- A control's own focus with a focused child. A Win32 control taking
+  the focus, such as a tree view (`SysTreeView32`) or a tab control
+  (`SysTabControl32`), raises a focus event on itself (child id 0) and
+  then one on its focused child, both within the application's one
+  `SetFocus` call. NVDA redirects a container's own focus to its
+  `accFocus` child only for lists, but its event pump runs after both
+  events are delivered and tries focus events newest first, so the child
+  wins and the control is spoken only as a new ancestor, without its
+  shortcut: five NVDA transcripts on 2026-10-07, tabbing onto the tree on
+  Verbatim's Theme settings page, all had "Indications: tree view", then
+  the item. Verbatim's outpost could read the control before the child's
+  event reached it, and announced the control itself first. **Matched
+  since 2026-10-07, by a different route**: before reporting an MSAA focus
+  on an object's child id 0, the outpost asks the object's `accFocus`
+  once, and when that names a child by id that has the focused state,
+  reports the child instead, with the object as its ancestor (`mockapp`'s
+  `focus_reports` test and the `theme_panel` scenario).
 
 ## Object navigation and review
 

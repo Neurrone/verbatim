@@ -1300,6 +1300,43 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
 }
 
 #[test]
+fn a_tree_view_taking_the_focus_on_its_item_is_spoken_as_the_items_ancestor() {
+    // A Win32 tree view taking the focus is reported by its focused item,
+    // with the tree as its ancestor (`docs/parity.md`, "A control's own
+    // focus with a focused child"): NVDA says the tree's name and role,
+    // without its shortcut, and then the item.
+    let state = SrState::new();
+    let mut tree = node(630, Role::Tree, Some("Categories"), None, StateSet::new());
+    tree.details.keyboard_shortcut = Some("Alt+i".to_owned());
+    let mut item = tree_item(631, "General", 0);
+    item.details.position_in_set = Some(1);
+    item.details.set_size = Some(5);
+
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![tree]),
+    );
+
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 631, &[630], None),
+            vec![
+                vec![UtteranceSegment::label("Categories"), role(Role::Tree)],
+                vec![
+                    UtteranceSegment::new(SegmentContent::Level(0)),
+                    UtteranceSegment::label("General"),
+                    UtteranceSegment::new(SegmentContent::Position {
+                        position: 1,
+                        set_size: Some(5),
+                    }),
+                ],
+            ]
+        )
+    );
+}
+
+#[test]
 fn an_unnamed_group_ancestor_is_dropped() {
     let state = SrState::new();
     let source = Pid(1);

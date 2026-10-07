@@ -50,7 +50,13 @@ on the machine, a running screen reader included, calls into mockapp in
 response; for the tests that count an operation's calls exactly, which
 hand the focus to the outpost themselves), `set-name <id> <text>`
 and `set-value <id> <text>` (update the tree and raise the matching
-property-change or name/value-change notification), `client-name <text>`
+property-change or name/value-change notification), `focus-child
+<container> <child>` (addresses the container's children as numbered
+simple children from then on, as a Win32 tree view's items are, so its
+`accFocus` names the focused child by child id and its `accChild` has no
+object for them; moves the focus to the child and raises focus on the
+container and then on the child by its child id in one turn of the window
+thread; MSAA-only), `client-name <text>`
 (names the window's client area, the root node, `text`, leaving the
 window's text alone, and raises `EVENT_OBJECT_NAMECHANGE` on the client
 area, as Windows 11 Notepad renames its window as it is first activated;

@@ -50,7 +50,7 @@ const CATEGORIES: [(&str, &str, &str); 6] = [
     ),
     (
         "Text formatting collapsed 4 of 6 level 0",
-        "level 1 spelling error: speech and sound (textError.wav) 1 of 7",
+        "level 1 spelling error: speech and sound (textError.wav) 1 of 12",
         "level 0 Text formatting expanded 4 of 6",
     ),
     (

@@ -1505,6 +1505,23 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "MSAA focus dropped: UIA owns the window");
             return;
         }
+        // A control taking the focus raised focus on itself and then on its
+        // focused child, and the control's event was already reported as
+        // the child (`verbatim_ia2::acquire::snapshot_from_focus_event`):
+        // NVDA handles the two together and reports the child once.
+        if self
+            .context
+            .intake
+            .take_redirected_focus(&Object::Msaa(hwnd, id_object, id_child))
+        {
+            tracing::debug!(
+                hwnd,
+                id_object,
+                id_child,
+                "MSAA focus dropped: already reported from its control's focus"
+            );
+            return;
+        }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_focus_event(
             hwnd,
             id_object,
@@ -1552,6 +1569,9 @@ impl Worker<'_> {
             .msaa_registry
             .key_of(node.id)
             .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child));
+        let redirected = object
+            .as_ref()
+            .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
         self.emit_focus(
             trace,
             observed_at_ms,
@@ -1559,9 +1579,12 @@ impl Worker<'_> {
             Some(hwnd),
             node,
             false,
-            object,
+            object.clone(),
             enrichment,
         );
+        if redirected && self.context.intake.focused() == object {
+            self.context.intake.set_focus_redirected();
+        }
     }
 
     /// A UIA focus fact. What the focus is comes from the event, as NVDA

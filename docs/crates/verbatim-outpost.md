@@ -475,8 +475,14 @@ Implementation notes:
   window drops the fact and the watchdog's moved-on check applies to it.
   Only a fact with neither is reported without window facts, arbitrated
   against this application's own focus window. An MSAA focus fact is
-  read with NVDA's child-0-on-a-list redirect (`snapshot_from_focus_event`) and accepted
-  only when the object or an ancestor has the focused state.
+  read with NVDA's child-0-on-a-list redirect, and the redirect of any
+  control's own focus to a focused child its `accFocus` names
+  (`snapshot_from_focus_event`), and accepted only when the object or an
+  ancestor has the focused state. When a control's focus was reported as
+  its child, the child's own focus event, which the control raised in the
+  same `SetFocus` call, is dropped while the child is still the focus
+  (`Intake::take_redirected_focus`), so the child is reported once, as
+  NVDA reports it.
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
   `read::msaa_enrichment`): the walk stops at the first ancestor in the
   previous focus's chain (the tracking state's `chain`) and splices the
