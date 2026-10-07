@@ -104,11 +104,13 @@ pub(crate) fn expect_notepad_text(scenario: &mut Scenario, timeout: Duration) ->
 /// [`Scenario::open_document`], and returns the announcement.
 ///
 /// The text area is Windows 11 Notepad's UIA document, "Text editor
-/// document", or classic Notepad's Win32 edit control, "Text Editor edit",
-/// as GitHub's Windows Server runners have it; both hold. When Notepad was
+/// document", or classic Notepad's Win32 edit control, "Text Editor edit
+/// multi line", as GitHub's Windows Server runners have it, its
+/// `ES_MULTILINE` style spoken as NVDA speaks it (`docs/parity.md`); both
+/// hold. When Notepad was
 /// not open before, its window comes to the foreground and is announced,
 /// "Notepad" in its title, and then its text area takes the focus and is
-/// announced by its name and role alone. When a Notepad window was already
+/// announced by its name and role, with classic Notepad's "multi line". When a Notepad window was already
 /// open, the harness reports the focus instead
 /// ([`Scenario::take_focus_reported`]): only the text area is reported, as a
 /// query, which speaks its states as well, "focused" among them
@@ -128,8 +130,8 @@ pub(crate) fn expect_notepad_text_area(scenario: &mut Scenario, timeout: Duratio
         .speech()
         .expect_in_order_capturing(&["Notepad", "Text "], timeout);
     assert!(
-        ["Text editor document", "Text Editor edit"].contains(&text_area.as_str()),
-        "Notepad's text area was announced as {text_area:?}, not by its name and role alone"
+        ["Text editor document", "Text Editor edit multi line"].contains(&text_area.as_str()),
+        "Notepad's text area was announced as {text_area:?}, not by its name and role"
     );
     text_area
 }
