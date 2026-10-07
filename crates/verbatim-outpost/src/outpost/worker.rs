@@ -605,7 +605,8 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::ResolveFocus { .. }
-        | Item::CaretOf { .. } => (HANDLING_DEADLINE, None),
+        | Item::CaretOf { .. }
+        | Item::Settle(_) => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -627,6 +628,7 @@ fn describe(item: &Item) -> String {
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::ResolveFocus { attempt, .. } => format!("resolve focus (attempt {attempt})"),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
+        Item::Settle(_) => "settle".to_owned(),
     }
 }
 
@@ -688,7 +690,32 @@ impl Worker<'_> {
                 held,
             } => self.resolve_focus(&runtime_id, trace, attempt, held),
             Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
+            Item::Settle(done) => self.settle(done, trace),
         }
+    }
+
+    /// Answers [`Outpost::settle`](super::Outpost::settle) once nothing
+    /// else is waiting, the follow-ups the entries before it queued
+    /// included: otherwise it goes to the back of the queue again.
+    fn settle(&self, done: std::sync::mpsc::Sender<()>, trace: TraceId) {
+        let context = self.context;
+        if context.intake.busy() {
+            context.intake.push(Entry {
+                item: Item::Settle(done),
+                trace,
+                observed_at_ms: now_ms(),
+                timing: EventTiming::default(),
+            });
+            return;
+        }
+        for registration in [context.focus_properties.get(), context.text_events.get()]
+            .into_iter()
+            .flatten()
+        {
+            registration.settle();
+        }
+        context.outbound.flush();
+        let _ = done.send(());
     }
 
     /// Whether `node_id` is the focus this outpost last reported.
@@ -1692,7 +1719,8 @@ impl Worker<'_> {
         let Ok(cache) = self.context.uia_cache(uia) else {
             return LiveFocus::Unresolved;
         };
-        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| uia.focused_element(&cache)) else {
+        let read = &self.context.focused_element;
+        let Ok(Ok(element)) = uia.within(FOCUS_READ_WAIT, |uia| read(uia, &cache)) else {
             return LiveFocus::Unresolved;
         };
         // `element` was built with the base cache request.
@@ -1776,7 +1804,7 @@ impl Worker<'_> {
         }
         let element = self.client.uia().and_then(|uia| {
             let cache = self.context.uia_cache(uia).ok()?;
-            uia.focused_element(&cache).ok()
+            (self.context.focused_element)(uia, &cache).ok()
         });
         let Some(element) = element.filter(|element| {
             // Built with the base cache request.

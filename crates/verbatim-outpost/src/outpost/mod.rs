@@ -114,7 +114,21 @@ pub(crate) struct Context {
     /// How many of a change's newest lines a terminal read takes
     /// ([`SupervisorToOutpost::TerminalLines`]).
     terminal_lines: std::sync::atomic::AtomicU16,
+    /// How the worker reads the element that has the keyboard focus.
+    focused_element: FocusedElementReader,
 }
+
+/// Reads the UIA element that has the keyboard focus, built with the given
+/// cache request, with the given client, on the worker's thread. An
+/// outpost reads the system's keyboard focus ([`Uia::focused_element`]);
+/// a test that drives a real outpost against an application without taking
+/// the keyboard focus from the desktop it runs on supplies its own
+/// ([`Outpost::with_focused_element_reader`]).
+pub type FocusedElementReader = Arc<
+    dyn Fn(&Uia, &IUIAutomationCacheRequest) -> windows::core::Result<IUIAutomationElement>
+        + Send
+        + Sync,
+>;
 
 /// How an outpost reads its application, fixed for its whole life. The
 /// supervisor passes it on each outpost's command line, from
@@ -275,6 +289,26 @@ impl Outpost {
         target_pid: u32,
         options: OutpostOptions,
     ) -> Self {
+        Self::with_focused_element_reader(pipe, target_pid, options, Arc::new(Uia::focused_element))
+    }
+
+    /// [`Outpost::with_options`], reading the element that has the keyboard
+    /// focus with `focused_element` rather than from the system: for a test
+    /// that hands the outpost a UIA focus in an application that does not
+    /// have the keyboard focus, and measures everything the outpost does
+    /// with it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread cannot be spawned, which means the process is out
+    /// of OS thread resources.
+    #[must_use]
+    pub fn with_focused_element_reader(
+        pipe: Box<dyn Write + Send>,
+        target_pid: u32,
+        options: OutpostOptions,
+        focused_element: FocusedElementReader,
+    ) -> Self {
         let (outbound, writer) = Outbound::start(pipe);
         let id_counter = Arc::new(AtomicU64::new(1));
         let anchor_counter = Arc::new(AtomicU64::new(0));
@@ -301,6 +335,7 @@ impl Outpost {
             terminal_lines: std::sync::atomic::AtomicU16::new(
                 verbatim_model::DEFAULT_TERMINAL_LINES,
             ),
+            focused_element,
         });
         if let Some(registration) = register_focus_properties(&context) {
             let _ = context.focus_properties.set(registration);
@@ -360,6 +395,25 @@ impl Outpost {
             target_pid: Pid(target_pid),
         });
         outpost
+    }
+
+    /// Waits until the worker has handled everything queued before this
+    /// call and every follow-up those entries queued, the focus-following
+    /// subscriptions have made every move the worker asked of them, and
+    /// every message the worker published has been written to the pipe. A
+    /// test that measures what the outpost's handling cost the application,
+    /// or that asserts the outpost said nothing more, waits on this for its
+    /// evidence. Returns early if the worker is abandoned meanwhile.
+    pub fn settle(&self) {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        self.context.push(
+            Item::Settle(done_tx),
+            TraceId::mint(),
+            now_ms(),
+            EventTiming::default(),
+        );
+        // An error means the worker dropped the request, abandoned.
+        let _ = done_rx.recv();
     }
 
     /// Handles one command from Core, on the reader thread. Pings are

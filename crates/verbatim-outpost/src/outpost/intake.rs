@@ -110,6 +110,10 @@ pub(super) enum Item {
         /// follow-up finds its element focused after all.
         held: Option<Box<HeldFocus>>,
     },
+    /// [`Outpost::settle`](super::Outpost::settle): answered once nothing
+    /// else is waiting, the focus-following subscriptions have made every
+    /// move asked of them, and every message published has been written.
+    Settle(std::sync::mpsc::Sender<()>),
 }
 
 /// A UIA focus fact the worker held back as possibly stale
@@ -300,6 +304,12 @@ impl Intake {
         before != state.waiting.len() + state.batch.len()
     }
 
+    /// Whether anything is waiting to be handled, planned or not.
+    pub(super) fn busy(&self) -> bool {
+        let state = self.lock();
+        !state.waiting.is_empty() || !state.batch.is_empty()
+    }
+
     /// Records the object the worker last reported as the focus: its events
     /// are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
@@ -414,7 +424,9 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         // Only the newest caret report for a node matters, and it is never
         // limited: the focus's caret.
         Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
-        Item::Query { .. } | Item::ResolveFocus { .. } => (None, Category::Exempt, 0),
+        Item::Query { .. } | Item::ResolveFocus { .. } | Item::Settle(_) => {
+            (None, Category::Exempt, 0)
+        }
     }
 }
 
