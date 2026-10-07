@@ -277,8 +277,7 @@ text that line and the line before it held) or afresh
 `TailStart::Text`, the element and its text pattern, from which the
 program reads the document range itself, so a fresh read is one round
 trip where the other is two), and says how
-many of the last lines to read and how far up to search (`SEARCH_LINES`,
-256). The answer, a `Tail`, gives the text as the provider gave it,
+many of the last lines to read. The answer, a `Tail`, gives the text as the provider gave it,
 padding and line breaks included, so comparisons are exact and the caller
 trims:
 
@@ -303,17 +302,37 @@ trims:
   the text having scrolled beneath the ranges.
 
 The program reads the anchor's line and the one before it. When the one
-before it differs from the fingerprint, it walks up a line at a time,
-reading each line once, until it finds a line under a line equal to the
-fingerprint's previous one. When that previous line is not blank, the
-line under it is the anchor's line whatever it holds now, as at the
-anchor itself: the last line read is often the one output was still being
-written to (the cursor's line, blank or half written), complete by the
-next read. Under a blank line the line must also equal the fingerprint's
-line (as read, or with the line feed or carriage return and line feed a
-last line gains once more text follows it). The strings compare inside
-the provider (an `Equal` comparison on two strings, verified against
-mockapp). The count is a `Move` by a million lines from the found line,
+before it differs from the fingerprint, it searches the whole text above
+for the fingerprint by its text, with `FindText` backward, nearest first,
+on a range the program made (a copy of a collapsed range with its start
+moved to the text's start: `FindText` on an imported range would move the
+caller's own anchor). There is no bound in lines, decided with Dickson on
+2026-10-07 for a predictable cost (`docs/performance.md`, "A terminal's
+upward search"); only matches are bounded, `SEARCH_MATCHES` (64) of them
+checked before the fingerprint counts as not found. What is sought
+(`Fingerprint::search`), without its trailing white space and line break,
+since Windows Terminal's `FindText` matches neither and threw an exception
+searching for padding:
+
+- When the fingerprint's line before is not blank, that line, above the
+  line before the anchor: a match counts when it starts its line and the
+  line holds exactly the fingerprint's line before, and the line under it
+  is the anchor's line whatever it holds now, as at the anchor itself:
+  the last line read is often the one output was still being written to
+  (the cursor's line, blank or half written), complete by the next read.
+- Otherwise the anchor's line itself, above the anchor: a match counts
+  when it starts its line, the line equals the fingerprint's line (as
+  read, or with the line feed or carriage return and line feed a last
+  line gains once more text follows it), and the line above it holds
+  exactly the fingerprint's blank line before.
+- Two blank lines are not searched for: no text search can find them, and
+  the fingerprint is not found.
+
+The distance up, `Moved(n)`, is counted as a walk line by line would count
+it: the walk to the end of the text from where the fingerprint was found
+less the same walk from the anchor, one more when the anchor is inside its
+line. The strings compare inside the provider (an `Equal` comparison on
+two strings, verified against mockapp). The count is a `Move` by a million lines from the found line,
 and the last line is found from where that walk stopped: the line there,
 or, when the walk stopped past the final line break, the one before; less
 one when the walk ended past the last line's start, as the terminals'
@@ -336,35 +355,33 @@ read one call at a time came back twice or out of order; the outpost sets
 an unsettled read aside, and the text change that disturbed it causes the
 next read.
 The classic implementation makes the same calls one at a time, through
-`verbatim-uia`'s text wrappers, so each is counted, but for one step: it
-searches for a fingerprint whose line before is not blank by its text.
-`FindText` backward for that line, without its padding and line break
-(`Fingerprint::needle`: Windows Terminal matches neither, and threw an
-exception searching for padding), over the lines the walk would read,
-each match taken only when it starts its line and the line holds exactly
-the fingerprint's line before, nearest first; the distance up is the walk
-to the end of the text from where it was found less the same walk from
-the anchor. It finds what the walk finds (mockapp's
-`a_fingerprint_found_by_text_is_the_one_found_line_by_line` checks it
-past lines that hold or start with the same text), and a failed
-`FindText` falls back to the walk. Measured against both terminals with a
-full scrollback on 2026-10-07, it costs 65 calls and 6 to 10 milliseconds
-whether the fingerprint is 10, 100, or 256 lines up, where the walk took
-104, 644, and 1,580 calls and up to 170 milliseconds. The remote program
-keeps the walk: `FindText` on a range the program made itself (a clone,
-or a document range) cost UIA about 3 milliseconds in both terminals,
-against 0.2 on an imported range, and a program cannot search an
-imported range without changing the caller's own; the walk takes 0.5 to
-2.5 milliseconds up to 256 lines. A range from before
+`verbatim-uia`'s text wrappers, so each is counted. Where the provider's
+`FindText` fails, the program fails and the classic implementation
+answers for that call; its `FindText` fails the same way, and it walks up
+from the line before the anchor a line at a time instead, reading each
+line once, up to 256 lines, until it finds a line under a line equal to
+the fingerprint's line before (the anchor's line, under a blank one, must
+also equal the fingerprint's line). Measured against both terminals with a
+full scrollback on 2026-10-07, the search by text costs 6 to 10
+milliseconds classically wherever the fingerprint is, and about 3 more
+remotely for `FindText` on a range the program made (0.2 on an imported
+one, which a program cannot search without changing the caller's own),
+where the walk line by line took 104, 644, and 1,580 calls and up to 170
+milliseconds classically at 10, 100, and 256 lines, and 0.5 to 2.5
+milliseconds remotely up to 256 lines, the bound it then had. A range
+from before
 a terminal switched to or from its alternate screen fails to compare
 with the text; the program then fails, the classic implementation fails
 the same way, and the caller reads afresh.
 
 Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`), the
 two implementations give the same answer afresh, after lines written past
-the anchor, after the oldest lines were discarded beneath it, and after
-the text was cleared, and a read that finds new output costs one round
-trip remotely (`docs/performance.md`, "A terminal output line").
+the anchor, after the oldest lines were discarded beneath it (by 300
+lines, beyond the 256 the search once covered), past matches that are
+part of a longer line or under the wrong line, for an anchor's line under
+a blank line, and after the text was cleared; a provider whose `FindText`
+fails is answered by the walk; and a read that finds new output costs one
+round trip remotely (`docs/performance.md`, "A terminal output line").
 
 ## Layer 3: the caret read
 
@@ -418,9 +435,16 @@ their text and the text before the caret, whose length is the offset.
 Formatting is read by UIA's format unit, as NVDA reads it: from the
 span's start, a copy's end moved one format unit on, cut at the span's
 end, its text's length and each attribute read, until the span's end or
-`MAX_RUNS` (64) stretches. A value of the wrong type, UIA's "not
-supported" or "mixed" sentinel among them, is set to null before it is
-appended, so only plain values come back. Verified on Windows 11 26200
+`MAX_RUNS` (64) stretches. A stretch with an attribute that answers UIA's
+"mixed" (the program's `IsMixedAttribute` test, `verbatim_uia::is_mixed`
+classically) is not appended: it is walked again the same way by words,
+and a mixed word by characters, as NVDA walks a mixed stretch by finer
+units, so a provider whose format unit does not end where an attribute
+changes (Windows Terminal's and the console host's do not, for italics,
+`docs/text-attributes.md`) still has each part read with its own value;
+the 64 stretches bound the whole walk. A value of the wrong type, UIA's
+"not supported" sentinel among them, or "mixed" for a single character,
+is set to null before it is appended, so only plain values come back. Verified on Windows 11 26200
 against Windows 11 Notepad (`RichEditD2DPT`), whose provider runs
 programs and reports a misspelt word's annotation types as an array
 holding 60001, and splits its format units at the error's ends; the
@@ -482,18 +506,26 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
 
 - `text_units` (`UnitsQuery`, `UnitsAnswer`): from the point, an optional
   `Movement` (`By(unit, count)` from the start of the unit containing the
-  point, collapsed before and after as the review cursor moves; or
-  `Document(count)`, to an end, saying it moved when the point was not
-  there), then the unit containing the point reached: its range, its text
-  up to `max_text`, the point's offset in it (zero when the movement was
-  by that unit, landing on its start), and its language (`Culture`, a
-  locale id turned into a BCP 47 tag with
-  `verbatim_uia::text::locale_name`; a mixed or unsupported value is
-  null). With a `count` above one it reads on, a unit at a time from the
-  last one's start, until it has `count`, the text read reaches
-  `max_total`, or a move by one does not move (`ended`: the last unit read
-  is the text's last). That is say-all's batch: twenty lines ahead in
-  one round trip.
+  point, collapsed before it moves as the review cursor moves, and left
+  as the move leaves it, since UIA keeps a collapsed range collapsed when
+  it moves; or `Document(count)`, to an end, saying it moved when the
+  point was not there), then the unit containing the point reached: its
+  range, its text up to `max_text`, the point's offset in it (zero when
+  the movement was by that unit, landing on its start), and its language
+  (`Culture`, a locale id turned into a BCP 47 tag with
+  `verbatim_uia::text::locale_name`; an unsupported value is null). With a
+  `count` above one it reads on, a unit at a time, a collapsed copy of the
+  last one moved by one unit and expanded in place, until it has `count`,
+  the text read reaches `max_total`, or a move by one does not move
+  (`ended`: the last unit read is the text's last). That is say-all's
+  batch: twenty lines ahead in one round trip. The language of a batch is
+  read once, over a range from its first unit's start to its last one's
+  end, and unit by unit only when that answers UIA's "mixed" (both
+  sentinels are told apart, `verbatim_uia::text::Language`), so a batch in
+  one language costs one `Culture` read rather than one per unit.
+  Microsoft's guidance on `ExpandToEnclosingUnit` is that it normalizes a
+  range from its start alone, so a unit is expanded from a copy whose
+  start is the point, never collapsed first.
 - `text_range` (`RangeQuery`, `RangeAnswer`): two points (or one, for
   moving the caret), ordered by comparing them, and the text between them
   read up to a limit or selected. A selection the provider refuses is
@@ -558,6 +590,28 @@ navigation step):
 Two of the design's rules are not implemented yet: marking a window after
 repeated run failures, and retrying a run that exceeds the instruction
 limit with a smaller depth limit. Neither has been seen to happen.
+
+## The instruction limit and counting
+
+UIA lets one run execute 10,000 instructions and stops it past that with
+`Status::InstructionLimitExceeded`, measured against mockapp on Windows
+11 build 26200 (`crates/mockapp/tests/instruction_limit.rs`, which pins
+it). `counting` measures programs against it: `counting::start()` turns it
+on for the thread, every program the thread then runs is run in its
+counting form, and `counting::stop()` returns how many of each program's
+own instructions its run executed. The counting form puts an `Add` of one
+to a register of its own before each instruction, doubles each jump's
+offset less one so the jump lands on the `Add` before its target, and asks
+for the register with the results, so its results and effects are the
+program's; it executes twice as many instructions and two more, and so
+counts only programs under half the limit. It is never on in Verbatim
+itself. Each program's worst case against mockapp is pinned by the same
+test and recorded in `docs/performance.md`, "The instruction limit": every
+one stays under half the limit but the caret read's walk of a span whose
+every format stretch is mixed, about 7,700 at its 64 stretches, which
+runs under it; a run that exceeded it would be answered classically for
+that call. Programs are not resumable (Dickson, 2026-10-07): their work is
+bounded by their queries.
 
 A provider whose process has gone and one that times out
 (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`, both as an

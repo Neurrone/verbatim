@@ -45,6 +45,10 @@ name = "focus_reports"
 harness = false
 
 [[test]]
+name = "instruction_limit"
+harness = false
+
+[[test]]
 name = "remote_ops"
 harness = false
 

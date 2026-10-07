@@ -45,8 +45,7 @@ use windows::core::AgileReference;
 use verbatim_model::{LineChange, MAX_TERMINAL_LINE_BYTES, Skipped, TerminalOutput};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
-    Error as RopsError, Fingerprint, Found, Path, SEARCH_LINES, Tail, TailQuery, TailStart,
-    terminal_tail,
+    Error as RopsError, Fingerprint, Found, Path, Tail, TailQuery, TailStart, terminal_tail,
 };
 
 use crate::text::TextError;
@@ -570,7 +569,6 @@ impl TailSource for UiaTail<'_> {
                 },
             },
             lines_wanted: wanted,
-            search_lines: SEARCH_LINES,
         };
         match self.run(&query) {
             Ok(tail) => Ok(Some(tail)),
@@ -591,7 +589,6 @@ impl TailSource for UiaTail<'_> {
                 pattern: self.pattern,
             },
             lines_wanted: wanted,
-            search_lines: SEARCH_LINES,
         };
         self.run(&query).map_err(|error| text_error(&error))
     }

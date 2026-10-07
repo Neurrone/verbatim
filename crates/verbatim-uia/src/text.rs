@@ -10,6 +10,7 @@
 //! degenerate ones, compared and moved through these.
 
 use windows::Win32::Globalization::LCIDToLocaleName;
+use windows::Win32::System::Variant::VT_I4;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
     IUIAutomationTextRange, IUIAutomationTextRange3, IUIAutomationTextRangeArray,
@@ -233,6 +234,15 @@ pub trait TextRangeExt {
     /// The COM error if the provider fails.
     fn culture(&self) -> windows::core::Result<Option<String>>;
 
+    /// What the range's `Culture` attribute says, telling UIA's "mixed"
+    /// answer apart from no answer, so a caller reading several units can
+    /// ask once for all of them and unit by unit only when they differ.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails.
+    fn language(&self) -> windows::core::Result<Language>;
+
     /// A text attribute's value over the range: UIA's "not supported" or
     /// "mixed" sentinel object when the range has none or several, which
     /// the `variant_*` readers in this crate read as `None`.
@@ -406,15 +416,39 @@ impl TextRangeExt for IUIAutomationTextRange {
     }
 
     fn culture(&self) -> windows::core::Result<Option<String>> {
+        Ok(match self.language()? {
+            Language::Tag(tag) => Some(tag),
+            Language::Mixed | Language::Unknown => None,
+        })
+    }
+
+    fn language(&self) -> windows::core::Result<Language> {
         count(CallKind::Uia);
         // SAFETY: as in `clone_range`; the attribute id is a plain value.
         let value = unsafe { self.GetAttributeValue(UIA_CultureAttributeId) }?;
-        // A mixed or unsupported value is an object, not an integer.
-        let Some(lcid) = variant_i32(&value) else {
-            return Ok(None);
-        };
-        Ok(locale_name(u32::try_from(lcid).unwrap_or(0)))
+        if crate::is_mixed(&value) {
+            return Ok(Language::Mixed);
+        }
+        // An unsupported value is an object, not an integer.
+        if value.vt() != VT_I4 {
+            return Ok(Language::Unknown);
+        }
+        Ok(variant_i32(&value)
+            .and_then(|lcid| locale_name(u32::try_from(lcid).unwrap_or(0)))
+            .map_or(Language::Unknown, Language::Tag))
     }
+}
+
+/// What a range's `Culture` attribute says ([`TextRangeExt::language`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Language {
+    /// One language over the whole range, as a BCP 47 tag.
+    Tag(String),
+    /// UIA's "mixed" answer: the range holds more than one language.
+    Mixed,
+    /// No language: UIA's "not supported" answer, a value that is not a
+    /// locale id, or a locale id Windows does not name.
+    Unknown,
 }
 
 /// The BCP 47 name of a Windows locale id, `None` for none.

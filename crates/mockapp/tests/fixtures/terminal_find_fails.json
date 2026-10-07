@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Terminal Find Fails Fixture",
+  "children": [
+    {
+      "id": "term",
+      "role": "editable_text",
+      "name": "Terminal",
+      "states": ["focusable"],
+      "text": "one\ntwo\nthree\nfour\nfive\nready>",
+      "find_text_fails": true
+    }
+  ]
+}

@@ -17,7 +17,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, TextUnit, TextUnit_Character, UIA_CultureAttributeId,
 };
 
-use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range};
+use verbatim_uia::text::{Endpoint, Language, TextPatternExt, TextRangeExt, caret_range};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
@@ -449,18 +449,61 @@ impl<'t> Program<'t> {
         last
     }
 
-    /// Emits a unit's language: the `Culture` attribute when it is a plain
-    /// integer (a locale id), else null, appended to `languages`.
-    fn culture(b: &mut Builder, range: Reg<kind::TextRange>, languages: Reg<kind::Array>) {
+    /// Emits the units' language, as the classic reads find it: one
+    /// `Culture` read over them all, from `first`'s start to `last`'s end
+    /// (over `first` alone without a `last`), and, only when that answers
+    /// UIA's "mixed" for more than one unit, a read of each of `ranges`,
+    /// appended in order to the returned array, which is otherwise left
+    /// empty. Each value is kept when it is a plain integer (a locale id),
+    /// else set to null.
+    fn languages(
+        &self,
+        b: &mut Builder,
+        first: Reg<kind::TextRange>,
+        last: Option<Reg<kind::TextRange>>,
+        ranges: Reg<kind::Array>,
+    ) -> (Reg<kind::Any>, Reg<kind::Array>) {
         let id = b.int(UIA_CultureAttributeId.0);
-        let value = b.text_range_get_attribute_value(range, id);
+        let whole = match last {
+            Some(last) => {
+                let whole = b.text_range_clone(first);
+                b.text_range_move_endpoint_by_range(whole, self.c.end, last, self.c.end);
+                whole
+            }
+            None => first,
+        };
+        let value = b.text_range_get_attribute_value(whole, id);
+        let per_unit = b.new_array();
+        let mixed = b.is(TypeTest::MixedAttribute, value);
+        let size = b.array_size(ranges);
+        let one = b.uint(1);
+        let several = b.compare(size, one, Comparison::GreaterThan);
+        let apart = b.and(mixed, several);
+        b.if_(apart, |b| {
+            let index = b.new_uint(0);
+            b.while_(
+                |b| b.compare(index, size, Comparison::LessThan),
+                |b| {
+                    let range = b.array_get_at(ranges, index).assume::<kind::TextRange>();
+                    let value = b.text_range_get_attribute_value(range, id);
+                    Self::plain_locale(b, value);
+                    b.array_append(per_unit, value);
+                    b.add_assign(index, one);
+                },
+            );
+        });
+        Self::plain_locale(b, value);
+        (value, per_unit)
+    }
+
+    /// Emits the setting of `value` to null unless it is a plain integer.
+    fn plain_locale(b: &mut Builder, value: Reg<kind::Any>) {
         let plain = b.is(TypeTest::Int, value);
         let other = b.not(plain);
         b.if_(other, |b| {
             let null = b.new_null();
             b.set(value, null);
         });
-        b.array_append(languages, value);
     }
 }
 
@@ -525,9 +568,9 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
             b.text_range_expand_to_enclosing_unit(range, by_unit);
             b.text_range_move_endpoint_by_range(range, c.end, range, c.start);
             let count = b.int(count);
+            // A collapsed range stays collapsed when it moves.
             let went = b.text_range_move(range, by_unit, count);
             b.set(moved, went);
-            b.text_range_move_endpoint_by_range(range, c.end, range, c.start);
             (range, by == query.unit)
         }
     };
@@ -538,16 +581,13 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
     let ranges = b.add_to_results(ranges);
     let texts = b.new_array();
     let texts = b.add_to_results(texts);
-    let languages = b.new_array();
-    let languages = b.add_to_results(languages);
     let first = b.text_range_clone(point);
     b.text_range_expand_to_enclosing_unit(first, unit);
     let text = b.text_range_get_text(first, c.max_text);
     b.array_append(ranges, first);
     b.array_append(texts, text);
-    if query.culture {
-        Program::culture(&mut b, first, languages);
-    }
+    let current = b.new_null().assume::<kind::TextRange>();
+    b.set(current, first);
     let offset = if on_start {
         b.new_uint(0)
     } else {
@@ -561,8 +601,6 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
     let ended = b.new_bool(false);
     let ended = b.add_to_results(ended);
     if query.count > 1 {
-        let current = b.new_null().assume::<kind::TextRange>();
-        b.set(current, first);
         let read = b.new_int(1);
         let wanted = b.int(i32::try_from(query.count).unwrap_or(i32::MAX));
         let total = b.string_size(text);
@@ -571,10 +609,11 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
         b.while_(
             |_| going,
             |b| {
+                // As the classic reads: a collapsed copy moved, which stays
+                // collapsed, then expanded in place.
                 let next = b.text_range_clone(current);
                 b.text_range_move_endpoint_by_range(next, c.end, next, c.start);
                 let went = b.text_range_move(next, unit, c.one);
-                b.text_range_move_endpoint_by_range(next, c.end, next, c.start);
                 let stuck = b.equal(went, c.zero);
                 b.if_(stuck, |b| {
                     let yes = b.bool(true);
@@ -591,26 +630,39 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
                     b.set(going, no);
                     b.break_loop();
                 });
-                let range = b.text_range_clone(next);
-                b.text_range_expand_to_enclosing_unit(range, unit);
-                let text = b.text_range_get_text(range, c.max_text);
-                b.array_append(ranges, range);
+                b.text_range_expand_to_enclosing_unit(next, unit);
+                let text = b.text_range_get_text(next, c.max_text);
+                b.array_append(ranges, next);
                 b.array_append(texts, text);
-                if query.culture {
-                    Program::culture(b, range, languages);
-                }
                 let size = b.string_size(text);
                 b.add_assign(total, size);
-                b.set(current, range);
+                b.set(current, next);
                 b.add_assign(read, c.one);
             },
         );
     }
+    let (language, languages) = if query.culture {
+        let whole = query.count > 1;
+        let (language, languages) = p.languages(&mut b, first, whole.then_some(current), ranges);
+        (
+            Some(b.add_to_results(language)),
+            Some(b.add_to_results(languages)),
+        )
+    } else {
+        (None, None)
+    };
 
     let outcome = b.finish().execute()?;
     let ranges = outcome.get(ranges)?;
     let texts = outcome.get(texts)?;
-    let languages = outcome.get(languages)?;
+    let language = match language {
+        Some(language) => self::language(Some(&outcome.get(language)?)),
+        None => None,
+    };
+    let languages = match languages {
+        Some(languages) => outcome.get(languages)?,
+        None => Vec::new(),
+    };
     let first_offset = usize::try_from(outcome.get(offset)?).unwrap_or(usize::MAX);
     let mut units = Vec::with_capacity(ranges.len());
     for (index, range) in ranges.into_iter().enumerate() {
@@ -625,7 +677,11 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
             range,
             offset: if index == 0 { first_offset } else { 0 },
             text,
-            language: language(languages.get(index)),
+            language: if languages.is_empty() {
+                language.clone()
+            } else {
+                self::language(languages.get(index))
+            },
         });
     }
     if units.is_empty() {
@@ -915,30 +971,27 @@ pub fn text_units_classic(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> 
             (point, moved, false)
         }
         Some(Movement::By(by, count)) => {
-            let range = collapsed_copy(&from)?;
+            // Expanding normalizes from the start alone, so a copy whose
+            // start is the point is enough; a collapsed range stays
+            // collapsed when it moves.
+            let range = starting_at(&from)?;
             range.expand(by)?;
             range.move_endpoint_to(Endpoint::End, &range, Endpoint::Start)?;
             let moved = range.move_by(by, count)?;
-            range.move_endpoint_to(Endpoint::End, &range, Endpoint::Start)?;
             (FoundPoint::collapsed(range), moved, by == query.unit)
         }
     };
     let read = |range: IUIAutomationTextRange| -> Result<UnitText, Error> {
         range.expand(query.unit)?;
         let text = range.text(query.max_text)?;
-        let language = if query.culture {
-            range.culture().ok().flatten()
-        } else {
-            None
-        };
         Ok(UnitText {
             range,
             text,
             offset: 0,
-            language,
+            language: None,
         })
     };
-    let mut first = read(collapsed_copy(&point)?)?;
+    let mut first = read(starting_at(&point)?)?;
     if !on_start {
         let before = first.range.clone_range()?;
         before.move_endpoint_to(Endpoint::End, &point.range, point.endpoint)?;
@@ -949,21 +1002,26 @@ pub fn text_units_classic(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> 
     let mut ended = false;
     if query.count > 1 {
         while let Some(current) = units.last() {
+            // The next unit's start, by moving a collapsed copy: a whole
+            // unit moved stops short of an empty last line, which a
+            // collapsed range reaches. It stays collapsed, so it is
+            // expanded in place.
             let next = current.range.clone_range()?;
             next.move_endpoint_to(Endpoint::End, &next, Endpoint::Start)?;
-            let went = next.move_by(query.unit, 1)?;
-            next.move_endpoint_to(Endpoint::End, &next, Endpoint::Start)?;
-            if went == 0 {
+            if next.move_by(query.unit, 1)? == 0 {
                 ended = true;
                 break;
             }
             if units.len() >= query.count as usize || total >= query.max_total as usize {
                 break;
             }
-            let unit = read(next.clone_range()?)?;
+            let unit = read(next)?;
             total += unit.text.len();
             units.push(unit);
         }
+    }
+    if query.culture {
+        classic_languages(&mut units, query.count > 1)?;
     }
     Ok(UnitsAnswer {
         from,
@@ -972,6 +1030,39 @@ pub fn text_units_classic(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> 
         units,
         ended,
     })
+}
+
+/// Sets each unit's language: one `Culture` read over all of them, from the
+/// first one's start to the last one's end (`whole`, a read ahead; else the
+/// first unit's own range), and a read per unit only when that one answers
+/// "mixed" for more than one unit. A read that fails gives no language, as
+/// UIA's "not supported" does.
+fn classic_languages(units: &mut [UnitText], whole: bool) -> Result<(), Error> {
+    let (Some(first), Some(last)) = (units.first(), units.last()) else {
+        return Ok(());
+    };
+    let language = if whole {
+        let whole = first.range.clone_range()?;
+        whole.move_endpoint_to(Endpoint::End, &last.range, Endpoint::End)?;
+        whole.language()
+    } else {
+        first.range.language()
+    }
+    .unwrap_or(Language::Unknown);
+    match language {
+        Language::Tag(tag) => {
+            for unit in units.iter_mut() {
+                unit.language = Some(tag.clone());
+            }
+        }
+        Language::Mixed if units.len() > 1 => {
+            for unit in units.iter_mut() {
+                unit.language = unit.range.culture().ok().flatten();
+            }
+        }
+        Language::Mixed | Language::Unknown => {}
+    }
+    Ok(())
 }
 
 /// The text between two points read or selected the classic way.
@@ -1016,7 +1107,7 @@ pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> 
 /// [`Error::Uia`] when a call fails.
 pub fn text_location_classic(query: &LocationQuery<'_>) -> Result<LocationAnswer, Error> {
     let at = classic_point(query.target, query.at, &mut None)?;
-    let range = collapsed_copy(&at)?;
+    let range = starting_at(&at)?;
     range.expand(TextUnit_Character)?;
     let rectangles = range.bounding_rectangles()?;
     let location = match rectangles.as_slice() {

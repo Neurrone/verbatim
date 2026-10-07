@@ -24,7 +24,7 @@ use verbatim_model::{CallCounts, LineChange, Skipped, TerminalOutput};
 use verbatim_outpost::terminal::{TailText, Terminal, read};
 use verbatim_uia::{NodeIdRegistry, Uia};
 use verbatim_uia_rops::{
-    Fingerprint, Found, SEARCH_LINES, TailQuery, TailStart, terminal_tail_classic,
+    Fingerprint, Found, Path, TailQuery, TailStart, terminal_tail, terminal_tail_classic,
     terminal_tail_remote,
 };
 use windows::Win32::Foundation::HWND;
@@ -85,7 +85,6 @@ fn anchored<'a>(
             fingerprint: Fingerprint { line, previous },
         },
         lines_wanted: WANTED,
-        search_lines: SEARCH_LINES,
     }
 }
 
@@ -107,7 +106,6 @@ fn remote_and_classic_terminal_tails_agree() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
-        search_lines: SEARCH_LINES,
     };
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(tail.found, Found::Afresh);
@@ -149,11 +147,10 @@ fn remote_and_classic_terminal_tails_agree() {
     app.quit();
 }
 
-/// The classic search finds the fingerprint by its text (`FindText`), the
-/// remote program line by line; both must find the same line, the same
-/// distance up, past lines holding the line before as part of their text
-/// or starting with it.
-fn a_fingerprint_found_by_text_is_the_one_found_line_by_line() {
+/// Both ways find the fingerprint by its text (`FindText`), at the same
+/// line and the same distance up, past lines holding the line before as
+/// part of their text or starting with it.
+fn a_fingerprint_is_found_by_its_text_past_partial_matches() {
     common::init_com();
     let title = common::unique_title("mockapp-terminal-find");
     let mut app = common::spawn("terminal.json", "uia", &title);
@@ -172,7 +169,6 @@ fn a_fingerprint_found_by_text_is_the_one_found_line_by_line() {
     let fresh = TailQuery {
         start: TailStart::Document(&document),
         lines_wanted: WANTED,
-        search_lines: SEARCH_LINES,
     };
     let (tail, last) = both(&uia, &fresh);
     assert_eq!(tail.last_line, "last");
@@ -198,6 +194,183 @@ fn a_fingerprint_found_by_text_is_the_one_found_line_by_line() {
 "
     );
     assert_eq!(tail.count, 5);
+    app.quit();
+}
+
+/// mockapp's text as `set-text` takes it, its line feeds escaped.
+fn escaped(text: &str) -> String {
+    text.replace('\n', "\\n")
+}
+
+/// Lines of eight characters and a line feed each: `prefix` and a
+/// three-digit number, for each number in `numbers`.
+fn numbered(prefix: &str, numbers: std::ops::Range<u32>) -> String {
+    use std::fmt::Write as _;
+    numbers.fold(String::new(), |mut lines, n| {
+        let _ = writeln!(lines, "{prefix} {n:03}");
+        lines
+    })
+}
+
+/// A fingerprint 300 lines above the anchor, beyond the 256 lines the
+/// search once covered, is found by its text, the same both ways, in one
+/// round trip remotely; both ways' cost is pinned.
+fn a_fingerprint_far_up_is_found_and_costs_exactly() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-far");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (_, pattern) = terminal_text(&uia, hwnd);
+
+    // Four hundred lines, a prompt, and the last line, the anchor's.
+    let before = numbered("line", 0..400) + "ready>  \nlastline";
+    common::apply(
+        &mut app,
+        hwnd,
+        &format!("set-text term {}", escaped(&before)),
+    );
+    let document =
+        verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the document range");
+    let fresh = TailQuery {
+        start: TailStart::Document(&document),
+        lines_wanted: WANTED,
+    };
+    let (tail, last) = both(&uia, &fresh);
+    assert_eq!(tail.last_line, "lastline");
+
+    // The oldest 300 lines discarded and 300 written: the anchor's range,
+    // which keeps its place, is now 300 lines below its line.
+    let after =
+        numbered("line", 300..400) + "ready>  \nlastline\n" + &numbered("more", 0..300) + "end";
+    common::apply(
+        &mut app,
+        hwnd,
+        &format!("set-text term {}", escaped(&after)),
+    );
+    let query = anchored(&last, "lastline", "ready>  \n");
+    let (tail, _) = both(&uia, &query);
+    assert_eq!(tail.found, Found::Moved(300));
+    assert_eq!(tail.found_line, "lastline\n");
+    assert_eq!(tail.count, 301);
+    assert_eq!(tail.lines, texts(&["more 298", "more 299", "end"]));
+
+    // The cost: the anchor's two lines, one `FindText` that finds the
+    // prompt, its line checked and the line under it read, the walk to the
+    // end and the last lines read, and the distance found by walking from
+    // the anchor too.
+    let mut costs = Vec::new();
+    for remote in [true, false] {
+        common::reset_hits(hwnd);
+        let _ = verbatim_uia::calls::take();
+        let tail = if remote {
+            terminal_tail_remote(&uia, &query)
+        } else {
+            terminal_tail_classic(&uia, &query)
+        }
+        .expect("the tail");
+        assert_eq!(tail.found, Found::Moved(300));
+        costs.push((verbatim_uia::calls::take(), common::read_hits(hwnd)));
+    }
+    let hits: Hits = &[
+        ("Clone", 19),
+        ("CompareEndpoints", 4),
+        ("ExpandToEnclosingUnit", 9),
+        ("FindText", 1),
+        ("GetText", 8),
+        ("Move", 7),
+        ("MoveEndpointByUnit", 1),
+        ("MoveEndpointByRange", 9),
+    ];
+    let expected: [(CallCounts, Hits); 2] = [(uia_calls(1), hits), (uia_calls(58), hits)];
+    for ((calls, hits), (expected_calls, expected_hits)) in costs.iter().zip(expected) {
+        assert_eq!(
+            (*calls, hits.as_slice()),
+            (expected_calls, expected_hits),
+            "the far search's cost moved; when that is deliberate, update this test and \
+             docs/performance.md together"
+        );
+    }
+    app.quit();
+}
+
+/// A fingerprint whose line before is blank is found by its own line, under
+/// a blank line, the same both ways.
+fn a_fingerprint_under_a_blank_line_is_found_by_its_own_line() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-blank");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (_, pattern) = terminal_text(&uia, hwnd);
+    common::apply(
+        &mut app,
+        hwnd,
+        r"set-text term aaaaaaaa\nbbbbbbbb\n\nready> x",
+    );
+    let document =
+        verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the document range");
+    let fresh = TailQuery {
+        start: TailStart::Document(&document),
+        lines_wanted: WANTED,
+    };
+    let (tail, last) = both(&uia, &fresh);
+    assert_eq!(
+        (tail.before_last.as_str(), tail.last_line.as_str()),
+        ("\n", "ready> x")
+    );
+
+    // Two lines discarded and four written: the nearest "ready> x" is under
+    // another, not a blank line, and is passed over.
+    common::apply(
+        &mut app,
+        hwnd,
+        r"set-text term \nready> x\nready> x\nm1\nm2\nm3",
+    );
+    let (tail, _) = both(&uia, &anchored(&last, "ready> x", "\n"));
+    assert_eq!(tail.found, Found::Moved(2));
+    assert_eq!(tail.found_line, "ready> x\n");
+    assert_eq!(tail.lines, texts(&["m1", "m2", "m3"]));
+
+    // Two blank lines cannot be searched for by text: not found.
+    common::apply(&mut app, hwnd, r"set-text term a\n\n\nb\nc\nd\ne\nf");
+    let (tail, _) = both(&uia, &anchored(&last, "\n", "\n"));
+    assert_eq!(tail.found, Found::NotFound);
+    app.quit();
+}
+
+/// A provider whose `FindText` fails: the remote program fails, and the
+/// classic read, answering instead, walks up line by line and finds what
+/// the search by text finds where `FindText` works.
+fn a_failing_find_text_falls_back_to_the_walk() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-find-fails");
+    let mut app = common::spawn("terminal_find_fails.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let (_, pattern) = terminal_text(&uia, hwnd);
+    common::apply(
+        &mut app,
+        hwnd,
+        r"set-text term one\ntwo\nthree\nfour\nfive\nready> ls\na\nb\nc\nd\nready>",
+    );
+    let document =
+        verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the document range");
+    let fresh = TailQuery {
+        start: TailStart::Document(&document),
+        lines_wanted: WANTED,
+    };
+    let (_, last) = both(&uia, &fresh);
+    common::apply(
+        &mut app,
+        hwnd,
+        r"set-text term three\nfour\nfive\nready> ls\na\nb\nc\nd\nready>\nx\ny\nz",
+    );
+    let query = anchored(&last, "ready>", "d\n");
+    let (tail, path) = terminal_tail(&uia, &query, true).expect("the tail");
+    assert!(matches!(path, Path::Fallback(_)), "{path:?}");
+    assert_eq!(tail.found, Found::Moved(2));
+    assert_eq!(tail.lines, texts(&["x", "y", "z"]));
     app.quit();
 }
 
@@ -362,12 +535,12 @@ fn terminal_reads_report_new_output_and_cost_exactly(remote: bool) {
         ]
     } else {
         [
-            ("baseline", uia_calls(34), BASELINE_HITS),
-            ("typed", uia_calls(30), TYPED_HITS),
-            ("output line", uia_calls(43), LINE_HITS),
-            ("overflow", uia_calls(43), LINE_HITS),
-            ("redraw", uia_calls(64), REDRAW_HITS),
-            ("cleared", uia_calls(67), CLEARED_HITS),
+            ("baseline", uia_calls(31), BASELINE_HITS),
+            ("typed", uia_calls(27), TYPED_HITS),
+            ("output line", uia_calls(39), LINE_HITS),
+            ("overflow", uia_calls(39), LINE_HITS),
+            ("redraw", uia_calls(58), REDRAW_HITS),
+            ("cleared", uia_calls(61), CLEARED_HITS),
         ]
     };
     for ((name, calls, hits), (_, expected_calls, expected_hits)) in costs.iter().zip(expected) {
@@ -395,7 +568,7 @@ const BASELINE_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 5),
     ("Move", 4),
-    ("MoveEndpointByRange", 8),
+    ("MoveEndpointByRange", 5),
 ];
 
 /// The provider hits of the baseline read remotely: the classic read's,
@@ -412,7 +585,7 @@ const REMOTE_BASELINE_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 5),
     ("Move", 4),
-    ("MoveEndpointByRange", 8),
+    ("MoveEndpointByRange", 5),
 ];
 
 /// The provider hits of a read that finds the prompt grown: the anchor's
@@ -424,7 +597,7 @@ const TYPED_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 5),
     ("GetText", 3),
     ("Move", 3),
-    ("MoveEndpointByRange", 7),
+    ("MoveEndpointByRange", 4),
 ];
 
 /// The provider hits of a read that finds an output line and a new prompt:
@@ -436,7 +609,7 @@ const LINE_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 6),
     ("GetText", 6),
     ("Move", 5),
-    ("MoveEndpointByRange", 11),
+    ("MoveEndpointByRange", 7),
 ];
 
 /// The provider hits of a read that found nothing new after a skip,
@@ -448,7 +621,7 @@ const REDRAW_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 10),
     ("GetText", 8),
     ("Move", 7),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// [`REDRAW_HITS`] remotely, with the import of the element and its text
@@ -465,7 +638,7 @@ const REMOTE_REDRAW_HITS: &[(&str, u32)] = &[
     ("ExpandToEnclosingUnit", 10),
     ("GetText", 8),
     ("Move", 7),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
 /// The provider hits of a read that finds the screen cleared, classically:
@@ -480,10 +653,13 @@ const CLEARED_HITS: &[(&str, u32)] = &[
     ("GetText", 8),
     ("Move", 7),
     ("MoveEndpointByUnit", 1),
-    ("MoveEndpointByRange", 15),
+    ("MoveEndpointByRange", 9),
 ];
 
-/// The provider hits of a read that finds the screen cleared, remotely.
+/// The provider hits of a read that finds the screen cleared, remotely: the
+/// classic read's, the fingerprint searched for by its text the same way,
+/// and the import of the element and its text pattern for the read from the
+/// document.
 const REMOTE_CLEARED_HITS: &[(&str, u32)] = &[
     ("ProviderOptions", 2),
     ("GetPatternProvider", 1),
@@ -491,12 +667,14 @@ const REMOTE_CLEARED_HITS: &[(&str, u32)] = &[
     ("HostRawElementProvider", 1),
     ("Navigate", 1),
     ("DocumentRange", 1),
-    ("Clone", 23),
+    ("Clone", 20),
     ("CompareEndpoints", 4),
-    ("ExpandToEnclosingUnit", 11),
-    ("GetText", 9),
-    ("Move", 9),
-    ("MoveEndpointByRange", 16),
+    ("ExpandToEnclosingUnit", 10),
+    ("FindText", 1),
+    ("GetText", 8),
+    ("Move", 7),
+    ("MoveEndpointByUnit", 1),
+    ("MoveEndpointByRange", 9),
 ];
 
 fn terminal_reads_cost_exactly_remote() {
@@ -516,8 +694,20 @@ fn main() {
             remote_and_classic_terminal_tails_agree,
         ),
         (
-            "a_fingerprint_found_by_text_is_the_one_found_line_by_line",
-            a_fingerprint_found_by_text_is_the_one_found_line_by_line,
+            "a_fingerprint_is_found_by_its_text_past_partial_matches",
+            a_fingerprint_is_found_by_its_text_past_partial_matches,
+        ),
+        (
+            "a_fingerprint_far_up_is_found_and_costs_exactly",
+            a_fingerprint_far_up_is_found_and_costs_exactly,
+        ),
+        (
+            "a_fingerprint_under_a_blank_line_is_found_by_its_own_line",
+            a_fingerprint_under_a_blank_line_is_found_by_its_own_line,
+        ),
+        (
+            "a_failing_find_text_falls_back_to_the_walk",
+            a_failing_find_text_falls_back_to_the_walk,
         ),
         (
             "terminal_reads_cost_exactly_remote",

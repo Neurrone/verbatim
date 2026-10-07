@@ -17,7 +17,8 @@ use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VT_ARRAY, VT_BOOL, VT_I4, VT_R8, VariantToStringAlloc,
 };
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UiaGetReservedNotSupportedValue,
+    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UiaGetReservedMixedAttributeValue,
+    UiaGetReservedNotSupportedValue,
 };
 use windows::core::{HRESULT, IUnknown, Interface};
 
@@ -155,6 +156,18 @@ pub fn variant_i32_array(value: &VARIANT) -> Option<Vec<i32>> {
 pub fn is_not_supported(value: &VARIANT) -> bool {
     // SAFETY: a local call that returns UIA's process-wide sentinel.
     let Ok(sentinel) = (unsafe { UiaGetReservedNotSupportedValue() }) else {
+        return false;
+    };
+    IUnknown::try_from(value).is_ok_and(|unknown| unknown == sentinel)
+}
+
+/// Whether `value` is UIA's "mixed" sentinel, which a text attribute read
+/// answers when the attribute's value varies across the range. Local: the
+/// sentinel is UIA's own object in this process.
+#[must_use]
+pub fn is_mixed(value: &VARIANT) -> bool {
+    // SAFETY: a local call that returns UIA's process-wide sentinel.
+    let Ok(sentinel) = (unsafe { UiaGetReservedMixedAttributeValue() }) else {
         return false;
     };
     IUnknown::try_from(value).is_ok_and(|unknown| unknown == sentinel)

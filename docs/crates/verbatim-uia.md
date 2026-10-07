@@ -190,7 +190,10 @@ Public API:
   tag through `LCIDToLocaleName`, `None` when the range mixes languages or
   the provider does not say; `locale_name` makes the tag from a locale
   id, which `verbatim-uia-rops` uses for the `Culture` its programs
-  read), and `attribute` (any text attribute's raw
+  read), `language` (the same read as a `Language`: one tag, UIA's
+  "mixed" answer told apart with `is_mixed`, or no language, so a caller
+  reading several units asks once and unit by unit only when they
+  differ), and `attribute` (any text attribute's raw
   `VARIANT`, UIA's "not supported" or "mixed" sentinel included, for
   milestone M4's formatting), and `attributes`, several attributes' values
   in the order asked in one call (`IUIAutomationTextRange3`'s
@@ -202,7 +205,8 @@ Public API:
   `variant_i32`, `variant_i32_array` for a range's annotation types, a
   single integer or an array of them, `variant_f64`, and
   `variant_optional_bool`) read a value and give `None` for a sentinel or
-  another type. `Endpoint` names a range's start or end, and
+  another type; `is_not_supported` and `is_mixed` tell the two sentinels
+  apart, comparing with UIA's own objects in this process. `Endpoint` names a range's start or end, and
   `uia_text_unit` maps a model `TextUnit` to UIA's, `None` for the
   sentence, which UIA does not have. Every method is a cross-process call,
   counted once: a text range is a provider object in the application, so

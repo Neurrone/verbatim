@@ -156,7 +156,7 @@ impl<K> std::fmt::Debug for Reg<K> {
 }
 
 impl<K> Reg<K> {
-    const fn new(id: OperandId) -> Self {
+    pub(crate) const fn new(id: OperandId) -> Self {
         Self {
             id,
             kind: PhantomData,
@@ -316,7 +316,7 @@ impl Builder {
         self.emit(Instruction::Halt);
         let mut emitted = self.constants;
         emitted.append(&mut self.main);
-        Operation::new(emitted, self.imports, self.results)
+        Operation::new(emitted, self.imports, self.results, self.next_id)
     }
 
     // Constants and constructors.

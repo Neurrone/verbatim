@@ -52,14 +52,18 @@ pub(crate) struct NodeData {
     pub(crate) dead: bool,
 }
 
-/// A text's formatting: stretches that are spelling errors and that are
-/// bold, each a start and an end UTF-16 offset, and whether its `IsItalic`
-/// attribute fails to read.
+/// A text's formatting: stretches that are spelling errors, that are bold,
+/// and that are italic, each a start and an end UTF-16 offset, whether its
+/// `IsItalic` attribute fails to read, whether `FindText` fails, and
+/// stretches in another language, each with its locale id.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Formats {
     pub(crate) spelling_errors: Vec<(usize, usize)>,
     pub(crate) bold: Vec<(usize, usize)>,
+    pub(crate) italic: Vec<(usize, usize)>,
     pub(crate) italic_fails: bool,
+    pub(crate) find_text_fails: bool,
+    pub(crate) cultures: Vec<(usize, usize, i32)>,
 }
 
 /// The whole scripted tree: an arena of [`NodeData`] plus a lookup from
@@ -175,7 +179,10 @@ fn insert(
         formats: Formats {
             spelling_errors: node.spelling_errors,
             bold: node.bold,
+            italic: node.italic,
             italic_fails: node.italic_fails,
+            find_text_fails: node.find_text_fails,
+            cultures: node.cultures,
         },
         parent,
         children: Vec::new(),
@@ -221,7 +228,10 @@ mod tests {
             text: None,
             spelling_errors: Vec::new(),
             bold: Vec::new(),
+            italic: Vec::new(),
             italic_fails: false,
+            find_text_fails: false,
+            cultures: Vec::new(),
             children,
         }
     }
