@@ -59,16 +59,6 @@ pub struct ActiveTheme {
     problems: Vec<ThemeProblem>,
 }
 
-impl Default for ActiveTheme {
-    /// The built-in default theme with no sounds: everything is spoken,
-    /// since an indication whose sound is unavailable is spoken instead.
-    /// Having no sounds is this placeholder's design, so its missing sounds
-    /// are not logged as problems.
-    fn default() -> Self {
-        Self::resolve(Theme::builtin_default(), |_| None, ThemeOptions::default())
-    }
-}
-
 impl ActiveTheme {
     /// Makes `theme` ready: resolves each of the catalogue's indications,
     /// decodes every sound file it names, found through `sound_path` (a file
@@ -77,19 +67,6 @@ impl ActiveTheme {
     /// [`problems`](Self::problems) and logged, and the indications using
     /// it are spoken instead.
     pub fn new(
-        theme: Theme,
-        sound_path: impl Fn(&str) -> Option<PathBuf>,
-        options: ThemeOptions,
-    ) -> Self {
-        let active = Self::resolve(theme, sound_path, options);
-        for problem in &active.problems {
-            warn!(target: "verbatim::speech", theme = %active.theme.id, %problem, "theme sound unavailable");
-        }
-        active
-    }
-
-    /// [`new`](Self::new) without logging its problems.
-    fn resolve(
         theme: Theme,
         sound_path: impl Fn(&str) -> Option<PathBuf>,
         options: ThemeOptions,
@@ -134,6 +111,9 @@ impl ActiveTheme {
                     reason,
                 }),
             }
+        }
+        for problem in &problems {
+            warn!(target: "verbatim::speech", theme = %theme.id, %problem, "theme sound unavailable");
         }
         Self {
             theme,
@@ -269,7 +249,7 @@ struct Decision<'a> {
 /// A shared, switchable handle on the active theme: the presenter reads it
 /// for every utterance, and the settings dialog switches it, so the next
 /// thing spoken uses the theme chosen. Cheap to clone.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ThemeHandle {
     active: Arc<RwLock<Arc<ActiveTheme>>>,
 }
@@ -318,7 +298,7 @@ impl ThemeHandle {
 /// ("comma"), or, with no name, as itself; its description replaces it
 /// where one is asked for and the table has one. An index mark becomes a
 /// mark item where it stands.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ThemePresenter {
     themes: ThemeHandle,
 }
@@ -616,8 +596,14 @@ mod tests {
         }
     }
 
+    /// The built-in default theme with no sound files: every indication
+    /// whose sound is a file is spoken.
+    fn without_sounds() -> ActiveTheme {
+        ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default())
+    }
+
     fn plain() -> ThemePresenter {
-        ThemePresenter::default()
+        ThemePresenter::new(ThemeHandle::new(without_sounds()))
     }
 
     /// A presenter of `theme`, with every sound file it names present as a
@@ -1017,7 +1003,7 @@ mod tests {
             }
         );
 
-        presenter.themes.set(ActiveTheme::default());
+        presenter.themes.set(without_sounds());
         assert_eq!(presenter.flatten(&blank, UtteranceId(2)).text(), "blank");
     }
 
@@ -1034,7 +1020,7 @@ mod tests {
 
         // With no sound files loaded, an event whose sound is a file is
         // spoken; tones need no files.
-        let silent = ActiveTheme::default();
+        let silent = without_sounds();
         let (sound, words) = silent.earcon(Earcon::BrowseMode);
         assert!(sound.is_none());
         assert_eq!(words.as_deref(), Some("browse mode"));

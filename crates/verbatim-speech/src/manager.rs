@@ -58,7 +58,7 @@ use crate::driver::{
 use crate::events::SpeechEvents;
 use crate::registry::SynthRegistry;
 use crate::settings::{SettingId, SettingValue, SynthChoice, SynthId};
-use crate::theme::{Presenter, ThemeHandle, ThemePresenter};
+use crate::theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
 use crate::trim::{Piece, Trimmer};
 
 /// The mint counter for utterance ids, process-wide.
@@ -120,11 +120,15 @@ pub struct SpeechManagerConfig {
     pub mixer: Arc<Mixer>,
     /// Optional observer for each utterance's milestones and ending.
     pub events: Option<Arc<dyn SpeechEvents>>,
+    /// The theme speech and events are reported with from the start: the
+    /// configured one, its sounds loaded. [`SpeechManager::themes`] switches
+    /// it later.
+    pub theme: ActiveTheme,
     /// The presentation stage flattening utterances (decision D12);
-    /// `None` selects a [`ThemePresenter`] of the manager's own
-    /// [`ThemeHandle`] ([`SpeechManager::themes`]), which starts with the
-    /// built-in default theme and no sounds until one is set.
-    pub theme: Option<Box<dyn Presenter>>,
+    /// `None` selects a [`ThemePresenter`] of the active theme, which is
+    /// what Verbatim uses. A test may present otherwise; events are still
+    /// reported with the active theme.
+    pub presenter: Option<Box<dyn Presenter>>,
 }
 
 /// Commands the queue thread accepts, from the manager, the settings host, and
@@ -253,16 +257,16 @@ impl SpeechManager {
     /// Returns [`SynthError::Unavailable`] when no registered synthesizer can
     /// start.
     pub fn new(config: SpeechManagerConfig) -> Result<Self, SynthError> {
+        let themes = ThemeHandle::new(config.theme);
+        let theme = presenter_or_theme(config.presenter, &themes);
         let SpeechManagerConfig {
             registry,
             initial_synth,
             saved_settings,
             mixer,
             events,
-            theme,
+            ..
         } = config;
-        let themes = ThemeHandle::default();
-        let theme = theme.unwrap_or_else(|| Box::new(ThemePresenter::new(themes.clone())));
         // Every ending passes through the waiters on its way to the
         // observer, so a caller can wait for an utterance to be heard.
         let waiters = Arc::new(Waiters::default());
@@ -386,9 +390,7 @@ impl SpeechManager {
             .send(QueueEvent::Speak(id, Box::new(utterance)));
     }
 
-    /// The handle on the active theme, which the settings dialog switches
-    /// and the shell sets at startup (an [`ActiveTheme`](crate::ActiveTheme)
-    /// made from the theme the configuration names).
+    /// The handle on the active theme, which the settings dialog switches.
     #[must_use]
     pub fn themes(&self) -> ThemeHandle {
         self.themes.clone()
@@ -517,6 +519,15 @@ impl SpeechManager {
             persist,
         )
     }
+}
+
+/// The presentation stage: `presenter` when one is given, otherwise a
+/// [`ThemePresenter`] of the active theme `themes` holds.
+fn presenter_or_theme(
+    presenter: Option<Box<dyn Presenter>>,
+    themes: &ThemeHandle,
+) -> Box<dyn Presenter> {
+    presenter.unwrap_or_else(|| Box::new(ThemePresenter::new(themes.clone())))
 }
 
 /// Adds the source events' sounds play on at once, whose utterances (the

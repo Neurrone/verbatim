@@ -103,17 +103,14 @@ pub(crate) fn configured(store: &ConfigStore) -> (LoadedTheme, ThemeOptions) {
     (loaded, options)
 }
 
-/// Makes `loaded` the active theme with `options`: decodes its sounds,
-/// found in its own directory or the shared `sounds_dir`; sets it on the
-/// speech manager, so the next thing spoken uses it; and tells the reducer
-/// what it wants fetched. Every problem found loading it is logged.
-pub(crate) fn activate(
-    manager: &SpeechManager,
-    commands: &Sender<ShellCommand>,
+/// Makes `loaded` ready to present with `options`: decodes its sounds,
+/// found in its own directory or the shared `sounds_dir`. Every problem
+/// found loading it is logged.
+pub(crate) fn prepare(
     loaded: &LoadedTheme,
     sounds_dir: &Path,
     options: ThemeOptions,
-) {
+) -> ActiveTheme {
     for problem in &loaded.problems {
         tracing::warn!(theme = %loaded.theme.id, %problem, "theme problem");
     }
@@ -122,13 +119,33 @@ pub(crate) fn activate(
         |file| loaded.sound_path(file, sounds_dir),
         options,
     );
-    let fetches = active.fetches();
-    tracing::info!(theme = %loaded.theme.id, ?options, ?fetches, "theme in use");
-    manager.themes().set(active);
+    tracing::info!(theme = %loaded.theme.id, ?options, fetches = ?active.fetches(), "theme in use");
+    active
+}
+
+/// Tells the reducer what `theme` wants fetched (`Input::Fetches`).
+pub(crate) fn send_fetches(commands: &Sender<ShellCommand>, theme: &ActiveTheme) {
     if commands
-        .send(ShellCommand::Input(Box::new(Input::Fetches(fetches))))
+        .send(ShellCommand::Input(Box::new(Input::Fetches(
+            theme.fetches(),
+        ))))
         .is_err()
     {
         tracing::debug!("the reducer thread is gone; the theme's fetches are not sent");
     }
+}
+
+/// Makes `loaded` the active theme with `options` ([`prepare`]): sets it
+/// on the speech manager, so the next thing spoken uses it, and tells the
+/// reducer what it wants fetched.
+pub(crate) fn activate(
+    manager: &SpeechManager,
+    commands: &Sender<ShellCommand>,
+    loaded: &LoadedTheme,
+    sounds_dir: &Path,
+    options: ThemeOptions,
+) {
+    let active = prepare(loaded, sounds_dir, options);
+    send_fetches(commands, &active);
+    manager.themes().set(active);
 }

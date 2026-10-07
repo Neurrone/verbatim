@@ -12,13 +12,13 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
 use verbatim_model::{
-    FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechPriority, TraceId, Utterance,
-    UtteranceEnding, UtteranceId, UtteranceSegment,
+    FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechPriority, Theme, ThemeOptions,
+    TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
-    IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents, SpeechItem,
-    SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsHost, SynthDriver,
-    SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
+    ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents,
+    SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsHost,
+    SynthDriver, SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -207,7 +207,8 @@ fn control_manager() -> ControlHarness {
         saved_settings: Box::new(|_| Vec::new()),
         mixer: Arc::clone(&mixer),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
-        theme: None,
+        theme: theme_without_sounds(),
+        presenter: None,
     })
     .expect("pipeline starts");
 
@@ -221,12 +222,18 @@ fn control_manager() -> ControlHarness {
     }
 }
 
+/// The built-in default theme, with no sound files to play: the pipeline
+/// tests hear words alone.
+fn theme_without_sounds() -> ActiveTheme {
+    ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default())
+}
+
 fn recv_started(started: &Receiver<String>) -> String {
     started.recv_timeout(STEP_TIMEOUT).expect("synth started")
 }
 
 fn capture_manager(
-    theme: Option<Box<dyn Presenter>>,
+    presenter: Option<Box<dyn Presenter>>,
 ) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
     let log: CaptureLog = CaptureSynth::new().log();
     let log_for_factory = Arc::clone(&log);
@@ -248,7 +255,8 @@ fn capture_manager(
         saved_settings: Box::new(|_| Vec::new()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
-        theme,
+        theme: theme_without_sounds(),
+        presenter,
     })
     .expect("pipeline starts");
     (manager, log, recorder)
@@ -742,7 +750,8 @@ fn settings_manager(
         }),
         mixer: mixer(),
         events: None,
-        theme: None,
+        theme: theme_without_sounds(),
+        presenter: None,
     })
 }
 
@@ -928,7 +937,8 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         saved_settings: Box::new(|_| Vec::new()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
-        theme: None,
+        theme: theme_without_sounds(),
+        presenter: None,
     })
     .expect("pipeline starts");
 
