@@ -1,8 +1,8 @@
 //! Common Controls version 6 for mockapp's real controls: its manifest
 //! (`mockapp.exe.manifest`, embedded as resource 2 by `build.rs`) as an
 //! activation context, active while a control is made, so the process
-//! otherwise keeps the classic controls its edit control's tests were
-//! written against.
+//! otherwise keeps the classic controls: its edit control is the classic
+//! one unless the fixture asks for version 6's.
 
 use windows::Win32::Foundation::{HANDLE, HMODULE, INVALID_HANDLE_VALUE};
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
@@ -42,8 +42,9 @@ unsafe extern "system" {
 
 /// Common Controls version 6, active on this thread while this lives:
 /// mockapp's manifest (`mockapp.exe.manifest`, resource 2) as an
-/// activation context. Only the tree view is made in it; the rest of the
-/// process keeps the classic controls.
+/// activation context. The tree view and the list view are made in it,
+/// and the edit control when the fixture asks; the rest of the process
+/// keeps the classic controls.
 pub(crate) struct CommonControls6 {
     context: HANDLE,
     cookie: usize,

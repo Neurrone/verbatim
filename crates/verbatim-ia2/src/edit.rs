@@ -239,17 +239,17 @@ impl EditControl {
         } else {
             self.send(EM_LINEFROMCHAR, offset as usize, 0)?
         };
-        Ok(u32::try_from(line).unwrap_or(0))
+        Ok(u32::try_from(int_answer(line)).unwrap_or(0))
     }
 
     /// The offset where line `line` starts, `None` past the last line
-    /// (`EM_LINEINDEX`).
+    /// (`EM_LINEINDEX`, which answers -1 there).
     ///
     /// # Errors
     ///
     /// When the control does not answer or is gone.
     pub fn line_start(&self, line: u32) -> EditResult<Option<u32>> {
-        Ok(u32::try_from(self.send(EM_LINEINDEX, line as usize, 0)?).ok())
+        Ok(u32::try_from(int_answer(self.send(EM_LINEINDEX, line as usize, 0)?)).ok())
     }
 
     /// How many code units the line containing `offset` has, without its
@@ -259,7 +259,7 @@ impl EditControl {
     ///
     /// When the control does not answer or is gone.
     pub fn line_length(&self, offset: u32) -> EditResult<u32> {
-        Ok(u32::try_from(self.send(EM_LINELENGTH, offset as usize, 0)?).unwrap_or(0))
+        Ok(u32::try_from(int_answer(self.send(EM_LINELENGTH, offset as usize, 0)?)).unwrap_or(0))
     }
 
     /// How many lines the control has (`EM_GETLINECOUNT`).
@@ -268,7 +268,7 @@ impl EditControl {
     ///
     /// When the control does not answer or is gone.
     pub fn line_count(&self) -> EditResult<u32> {
-        Ok(u32::try_from(self.send(EM_GETLINECOUNT, 0, 0)?).unwrap_or(1))
+        Ok(u32::try_from(int_answer(self.send(EM_GETLINECOUNT, 0, 0)?)).unwrap_or(1))
     }
 
     /// How many code units the text has (`EM_GETTEXTLENGTHEX` from rich edit
@@ -452,6 +452,22 @@ fn window(hwnd: isize) -> HWND {
     HWND(hwnd as *mut c_void)
 }
 
+/// The `int` a line message (`EM_LINEINDEX`, `EM_LINEFROMCHAR`,
+/// `EM_LINELENGTH`, `EM_GETLINECOUNT`) answers, from the message's
+/// pointer-sized result: its low 32 bits, as a signed number. The classic
+/// edit control sign-extends its answer into the result, so a -1 reads as
+/// -1, but Common Controls version 6's edit control, which Windows Forms
+/// text boxes are, zero-extends it, so the same -1 reads as 4294967295
+/// unless it is cut back to 32 bits. Read whole, that made the line after
+/// the last one start at offset 4294967295, and the last line end there.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the answer is an int in the result's low 32 bits"
+)]
+fn int_answer(result: isize) -> i32 {
+    result as i32
+}
+
 /// An offset as a message parameter.
 fn param(value: u32) -> isize {
     isize::try_from(value).unwrap_or(isize::MAX)
@@ -631,6 +647,17 @@ mod tests {
         assert_eq!(edit_api_version("RichEdit20"), Some(2));
         assert_eq!(edit_api_version("RICHEDIT50W"), Some(5));
         assert_eq!(edit_api_version("Button"), None);
+    }
+
+    #[test]
+    fn a_line_messages_answer_is_its_low_32_bits_signed() {
+        assert_eq!(int_answer(-1), -1, "the classic control's -1");
+        assert_eq!(
+            int_answer(0xFFFF_FFFF),
+            -1,
+            "Common Controls 6's -1, zero-extended"
+        );
+        assert_eq!(int_answer(10), 10);
     }
 
     #[test]

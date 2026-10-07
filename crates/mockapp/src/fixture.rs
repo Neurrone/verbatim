@@ -119,6 +119,8 @@ struct RawNode {
     #[serde(default)]
     state_images: bool,
     #[serde(default)]
+    edit_version_6: bool,
+    #[serde(default)]
     children: Vec<RawNode>,
 }
 
@@ -216,6 +218,10 @@ pub(crate) struct FixtureNode {
     /// Whether a real tree view gives its items state images, as
     /// applications that draw their own check boxes do.
     pub(crate) state_images: bool,
+    /// Whether, on the MSAA backend, the edit control holding the node's
+    /// text is Common Controls version 6's, as a Windows Forms text box is,
+    /// rather than the classic one.
+    pub(crate) edit_version_6: bool,
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -235,6 +241,21 @@ impl FixtureNode {
             }
         }
         taken
+    }
+
+    /// Whether the first node with text, depth first, the one the MSAA
+    /// backend's edit control holds, asks for Common Controls version 6's
+    /// edit control.
+    pub(crate) fn edit_version_6(&self) -> bool {
+        self.first_text().is_some_and(|node| node.edit_version_6)
+    }
+
+    /// The first node with text, depth first.
+    fn first_text(&self) -> Option<&FixtureNode> {
+        if self.text.is_some() {
+            return Some(self);
+        }
+        self.children.iter().find_map(FixtureNode::first_text)
     }
 }
 
@@ -320,6 +341,7 @@ fn convert(
         window_class: raw.window_class,
         columns: raw.columns,
         state_images: raw.state_images,
+        edit_version_6: raw.edit_version_6,
         children,
     })
 }

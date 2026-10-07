@@ -58,11 +58,15 @@ unchecked, or checked or partly checked by the item's `checked` or
 item's `expanded` state expands it, and `selected` selects it. mockapp's
 manifest (`mockapp.exe.manifest`, embedded by `build.rs` as resource 2,
 not the process's own) declares Common Controls version 6, whose tree
-view maps MSAA child ids to items; the tree view alone is made in an
-activation context built from it, so the edit control stays the classic
-one its tests were written against (the version 6 edit control answered
-a line read past the last line break differently, which those tests did
-not cover and which is left for a test of its own). A test
+view maps MSAA child ids to items; the tree view and the list view are
+made in an activation context built from it, and the edit control is the
+classic one unless the node with the text sets `edit_version_6`, which
+makes it Common Controls version 6's, as a Windows Forms text box is
+(`tests/fixtures/text_version_6.json`). The two answer `EM_LINEINDEX` for
+the line after the last differently: the classic control's -1 is
+sign-extended into the message's result, and version 6's is zero-extended,
+4294967295, so a client must read the answer's low 32 bits. `text.rs`
+pins both answers and reads both controls alike. A test
 reaches the items through the control's messages, which take plain
 integers (`tests/common/tree_view.rs`), and gives the scripted root the
 focused state, so a focus handed to an outpost passes NVDA's
@@ -302,7 +306,15 @@ The cross-process integration tests in `tests/` spawn the compiled binary
 via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
-`wait_until` with a generous timeout). The test files that use UIA as a
+`wait_until` with a generous timeout). Before it starts its first
+`mockapp`, a test process puts itself in a kill-on-close job of its own
+(`contain_children`), so every `mockapp` it starts ends with it however it
+ends: a panic in a callback the system calls aborts the process without
+running `MockApp`'s drop, and a `mockapp` left running would keep the
+standard error it inherited open, on which `cargo test` then waits
+forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
+that starts a `mockapp` and panics where the panic cannot unwind, and
+asserts that the subprocess's standard error closes promptly. The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
 `events.rs`, `focus_reports.rs`, `instruction_limit.rs`, `remote_ops.rs`,
 `terminal.rs`, `text.rs`, `uia_tree.rs`)
@@ -310,7 +322,22 @@ run through `tests/common/harness.rs` instead of libtest (`harness =
 false`): it runs and reports the tests as libtest does, then ends the
 process without running DLL detach code, because `UIAutomationCore.dll`'s
 own detach code sometimes hangs or crashes in a process that has connected
-to providers; the file's comment gives the evidence. `uia_tree.rs` and `msaa_tree.rs` walk
+to providers; the file's comment gives the evidence. The two that pin
+the calls mockapp's providers answer, `call_counts.rs` and `terminal.rs`,
+run each test isolated (`harness::run_isolated`): the runner starts the
+binary again for each test, with `--isolated-test` and its name, on a
+new desktop made for it, and reports its result. A provider cannot tell
+which client called it (UIA's calls reach it from UI Automation's own
+threads in mockapp, with nothing of the client's identity), and other
+clients call mockapp at times of their own: a screen reader or another
+test agent answering its window's creation, and this binary's other
+tests, whose desktop-wide registrations read every new window. A window
+and its events are seen only from its own desktop, so on its own desktop
+the test is the only client. The outpost those tests run
+(`tests/common/outpost.rs`) reads arbitration's time from the test,
+which stands still unless the test moves it on (`pass_time`), so a
+window's verdict of no UIA provider runs out, and its probe's
+`WM_GETOBJECT` is made, only where the test says. `uia_tree.rs` and `msaa_tree.rs` walk
 a rich scripted tree through each real client stack and assert normalized
 roles, names, values, states, and detail properties match the fixture —
 every node's details must read back exactly what was scripted, and

@@ -24,11 +24,20 @@
 //! window's own answer, so a busy window that has a provider is not
 //! reported as having none ([`verbatim_uia::has_server_side_provider`]).
 //!
+//! The renewal is by time because nothing else can drive it: an
+//! application that starts answering the probe raises no event, as a
+//! provider is created on demand when the window is asked for one. The time
+//! is read from the arbitrator's [`Clock`], the system's by default, so a
+//! test that counts an operation's calls sets the time itself
+//! ([`Arbitrator::set_clock`]) and the probe is renewed exactly when the test
+//! says, not when the test happens to have taken half a second.
+//!
 //! The worker drops MSAA events whose window arbitrates to UIA and UIA events
 //! whose window does not, so the two backends never both announce the same
 //! change.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
@@ -40,6 +49,10 @@ pub use verbatim_ia2::class::normalize_class_name;
 /// How long a probe that found no UIA provider is trusted before the window
 /// is probed again: NVDA's `isUIAWindow` cache period.
 pub const NEGATIVE_VERDICT_LIFETIME: Duration = Duration::from_millis(500);
+
+/// What time it is, for the lifetime of a kept verdict: [`Instant::now`]
+/// unless a test sets its own ([`Arbitrator::set_clock`]).
+pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 /// A kept probe result.
 #[derive(Clone, Copy, Debug)]
@@ -74,6 +87,8 @@ pub struct Arbitrator {
     /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
     /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
+    /// The time a verdict is recorded and checked at.
+    clock: Clock,
 }
 
 impl Default for Arbitrator {
@@ -98,7 +113,22 @@ impl Arbitrator {
             bad_classes,
             cache: HashMap::new(),
             forced: None,
+            clock: Arc::new(Instant::now),
         }
+    }
+
+    /// Reads the time from `clock` from now on, in place of the system's:
+    /// for a test that decides when a verdict of no provider runs out.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
+    }
+
+    /// The time by the arbitrator's clock, which a verdict's lifetime is
+    /// measured in, and [`renew_probes_since`](Self::renew_probes_since)
+    /// takes.
+    #[must_use]
+    pub fn now(&self) -> Instant {
+        (self.clock)()
     }
 
     /// Sets a `SetBackendOverride` command's forced backend: `Some(true)`
@@ -112,7 +142,7 @@ impl Arbitrator {
     /// window is destroyed, a non-UIA verdict for
     /// [`NEGATIVE_VERDICT_LIFETIME`].
     pub fn record_probe(&mut self, hwnd: isize, is_uia: bool) {
-        self.record_probe_at(hwnd, is_uia, Instant::now());
+        self.record_probe_at(hwnd, is_uia, self.now());
     }
 
     fn record_probe_at(&mut self, hwnd: isize, is_uia: bool, now: Instant) {
@@ -125,8 +155,8 @@ impl Arbitrator {
     }
 
     /// Restarts, from `now`, the lifetime of every non-UIA verdict probed at
-    /// or after `since`: the worker calls this when it finishes an entry
-    /// that started at `since`. A slow read can outlast the lifetime of the
+    /// or after `since`, both read with [`now`](Self::now): the worker calls
+    /// this when it finishes an entry that started at `since`. A slow read can outlast the lifetime of the
     /// verdict it relied on, and the MSAA and UIA facts for one focus must
     /// both see the same verdict, or a re-probe between them lets both
     /// backends announce it.
@@ -169,7 +199,7 @@ impl Arbitrator {
     /// probe found no provider longer ago than [`NEGATIVE_VERDICT_LIFETIME`].
     #[must_use]
     pub fn verdict(&self, hwnd: isize, classes: &WindowClasses) -> Option<bool> {
-        self.verdict_at(hwnd, classes, Instant::now())
+        self.verdict_at(hwnd, classes, self.now())
     }
 
     fn verdict_at(&self, hwnd: isize, classes: &WindowClasses, now: Instant) -> Option<bool> {
@@ -398,6 +428,26 @@ mod tests {
             Some(true),
             "a provider, once found, is kept"
         );
+    }
+
+    #[test]
+    fn a_verdict_of_no_provider_runs_out_by_the_arbitrators_clock() {
+        let start = Instant::now();
+        let time = Arc::new(std::sync::Mutex::new(start));
+        let mut arb = Arbitrator::new(&[]);
+        let read = Arc::clone(&time);
+        arb.set_clock(Arc::new(move || {
+            *read
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }));
+        let classes = top("SomeUnknownClass");
+        arb.record_probe(42, false);
+        *time.lock().unwrap() =
+            start + NEGATIVE_VERDICT_LIFETIME.saturating_sub(Duration::from_millis(1));
+        assert_eq!(arb.verdict(42, &classes), Some(false));
+        *time.lock().unwrap() = start + NEGATIVE_VERDICT_LIFETIME;
+        assert_eq!(arb.verdict(42, &classes), None);
     }
 
     #[test]

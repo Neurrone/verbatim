@@ -91,7 +91,12 @@ Public API:
   none is trusted for only `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's
   cache period) and then repeated: a busy or starting application answers
   the probe late or not at all, and the probe then reports no provider for
-  a window that has one. Both class lists are
+  a window that has one. The renewal is by time because no event says a
+  window has begun to answer the probe. The time is the arbitrator's
+  `Clock`, the system's unless `Arbitrator::set_clock` sets another, and
+  `Arbitrator::now` reads it, for the worker's renewal of the verdicts an
+  entry probed; `Outpost::set_arbitration_clock` sets an outpost's, for a
+  test that counts calls and decides when a probe is made again. Both class lists are
   lifted from NVDA and pinned by unit tests naming their exact NVDA source
   locations, so a future NVDA sync is a diff of two lists: the bad list is
   `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and the

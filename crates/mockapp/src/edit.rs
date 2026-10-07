@@ -20,12 +20,21 @@ use windows::core::{PCWSTR, w};
 const EDIT_CLASS: PCWSTR = w!("EDIT");
 
 /// Creates the edit control inside `parent`, holding `text` (UTF-16, with
-/// bare line feeds).
+/// bare line feeds): the classic one, or with `version_6` Common Controls
+/// version 6's, as a Windows Forms text box is. Both are of the class
+/// `Edit` and answer the same messages, but not always alike: past the last
+/// line, `EM_LINEINDEX` answers -1 from the classic control sign-extended
+/// into the result and from version 6's zero-extended.
 ///
 /// # Errors
 ///
-/// The window creation's error.
-pub(crate) fn create(parent: HWND, text: &[u16]) -> windows::core::Result<HWND> {
+/// The window creation's error, or the activation context's.
+pub(crate) fn create(parent: HWND, text: &[u16], version_6: bool) -> windows::core::Result<HWND> {
+    let _common_controls = if version_6 {
+        Some(crate::common_controls::CommonControls6::activate()?)
+    } else {
+        None
+    };
     let mut contents = Vec::with_capacity(text.len() + 1);
     for &unit in text {
         if unit == u16::from(b'\n') {

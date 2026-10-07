@@ -249,6 +249,7 @@ mod tests {
             window_class: None,
             columns: Vec::new(),
             state_images: false,
+            edit_version_6: false,
             children,
         }
     }

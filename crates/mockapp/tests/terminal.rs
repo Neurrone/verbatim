@@ -1064,7 +1064,7 @@ fn backspace_says_what_it_deleted_without_caret_events_classic() {
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
-    harness::run(&[
+    harness::run_isolated(&[
         (
             "a_backward_move_counted_forward_still_counts_the_rows",
             a_backward_move_counted_forward_still_counts_the_rows,

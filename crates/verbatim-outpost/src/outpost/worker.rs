@@ -526,6 +526,7 @@ fn run_entry(
     let description = describe(&entry.item);
     let trace = entry.trace;
     let started = Instant::now();
+    let arbitration_started = context.arbitrator().now();
     let handled = catch_unwind(AssertUnwindSafe(|| {
         let mut worker = Worker {
             context,
@@ -541,9 +542,11 @@ fn run_entry(
             worker.handle(entry);
         }
     }));
-    context
-        .arbitrator()
-        .renew_probes_since(started, Instant::now());
+    {
+        let mut arbitrator = context.arbitrator();
+        let finished = arbitrator.now();
+        arbitrator.renew_probes_since(arbitration_started, finished);
+    }
     // Calls made after the entry's last publish, or by an entry that
     // published nothing: they belong to no trace.
     let unpublished = take_calls();

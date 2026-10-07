@@ -76,11 +76,12 @@ fn main() -> ExitCode {
 fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut root = fixture::load(&cli.fixture)?;
     let native = root.take_native();
+    let edit_version_6 = root.edit_version_6();
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
     let backend = match cli.backend {
         BackendArg::Uia => Backend::Uia,
         BackendArg::Msaa => Backend::Msaa,
     };
-    window::run(backend, tree, &native, &cli.title, cli.show)?;
+    window::run(backend, tree, &native, edit_version_6, &cli.title, cli.show)?;
     Ok(())
 }

@@ -427,6 +427,14 @@ impl Outpost {
         let _ = done_rx.recv();
     }
 
+    /// Reads the time for arbitration's kept verdicts from `clock` from now
+    /// on, in place of the system's ([`Arbitrator::set_clock`]): a test
+    /// that counts an operation's calls decides when a window's verdict of
+    /// no UIA provider runs out and its probe is made again.
+    pub fn set_arbitration_clock(&self, clock: crate::arbitration::Clock) {
+        self.context.arbitrator().set_clock(clock);
+    }
+
     /// Handles one command from Core, on the reader thread. Pings are
     /// answered here; everything that reads the application is queued for
     /// the worker.

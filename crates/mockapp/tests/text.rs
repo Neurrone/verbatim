@@ -42,7 +42,7 @@ use verbatim_uia_rops::{
     text_location_remote, text_range_classic, text_range_remote, text_units_classic,
     text_units_remote,
 };
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, WPARAM};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, TextUnit_Word};
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
@@ -1137,11 +1137,42 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
     app.quit();
 }
 
+/// What `EM_LINEINDEX` answers for the line after the last, line 3 of
+/// "alpha beta", "gamma", and the empty last line: -1, which the classic
+/// edit control sign-extends into the message's result.
+const CLASSIC_PAST_LAST_LINE: isize = -1;
+
+/// The same -1 from Common Controls version 6's edit control, as a Windows
+/// Forms text box answers it: zero-extended into the result.
+const VERSION_6_PAST_LAST_LINE: isize = 0xFFFF_FFFF;
+
 fn edit_control_text_reads_moves_and_answers_caret_keys() {
+    edit_control_text("text.json", CLASSIC_PAST_LAST_LINE);
+}
+
+/// Common Controls version 6's edit control, read as the classic one is,
+/// though it answers a line past the last differently.
+fn version_6_edit_control_text_reads_moves_and_answers_caret_keys() {
+    edit_control_text("text_version_6.json", VERSION_6_PAST_LAST_LINE);
+}
+
+/// The edit control mockapp makes for `fixture`'s "Notes" text, whose
+/// `EM_LINEINDEX` answers `past_last_line` for the line after the last,
+/// read by lines, words, characters, and paragraphs, and its caret keys
+/// answered.
+fn edit_control_text(fixture: &str, past_last_line: isize) {
+    use windows::Win32::UI::Controls::EM_LINEINDEX;
+    use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
     common::init_com();
     let title = common::unique_title("mockapp-text-edit");
-    let mut app = common::spawn("text.json", "msaa", &title);
+    let mut app = common::spawn(fixture, "msaa", &title);
     let hwnd = common::find_window(&title);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }
+        .expect("mockapp's edit control");
+    // SAFETY: EM_LINEINDEX takes and answers plain integers.
+    let answer = unsafe { SendMessageW(edit, EM_LINEINDEX, Some(WPARAM(3)), None) }.0;
+    assert_eq!(answer, past_last_line, "the line after the last");
     let mut source = edit_notes(hwnd);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
@@ -1471,6 +1502,10 @@ fn main() {
         (
             "edit_control_text_reads_moves_and_answers_caret_keys",
             edit_control_text_reads_moves_and_answers_caret_keys,
+        ),
+        (
+            "version_6_edit_control_text_reads_moves_and_answers_caret_keys",
+            version_6_edit_control_text_reads_moves_and_answers_caret_keys,
         ),
         (
             "uia_say_all_speaks_by_sentence_without_a_sentence_unit",
