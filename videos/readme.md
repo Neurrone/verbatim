@@ -103,7 +103,9 @@ price, so it is shorter than the Price column.
    back, "A", and numpad 2 pressed three times gives the character code,
    65, then in hexadecimal.
 4. Verbatim+F9 marks the start of the Apple row ("Start marked"),
-   Shift+numpad 3 moves to its last character ("0"), and Verbatim+F10
+   Shift+numpad 3 moves to its end, its line break, which is named
+   ("carriage return"), numpad 1 moves back to its last character
+   ("0"), and Verbatim+F10
    pressed twice copies from the mark to the review cursor: "Copied to
    clipboard", then the row. Control+End moves to the empty last line,
    Control+V pastes the copy there, and Home and numpad 8 read the pasted

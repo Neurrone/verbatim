@@ -1157,8 +1157,22 @@ verified.
   focus after its caret event, such as one made with the mouse; Verbatim
   reports those that keys make. **Different:** Verbatim never swallows and resends the key,
   so what Backspace deleted is worked out from Core's copy of the caret's
-  line rather than read before the key; a backspace over a line break says
-  nothing. NVDA's `caretMovementFailed` event is not offered. **Different:**
+  line rather than read before the key; a backspace over a line break
+  names the kind of break the text was last seen to use, which is what
+  NVDA reads, since a text uses one kind throughout, and says nothing
+  when Core has seen no line break in it yet. A line break a unit lands on
+  is named as NVDA names it, **matched since 2026-10-07** ("A line break
+  as a character" in [Editable text and
+  terminals](nvda/editable-text-and-terminals.md)): End and Right Arrow
+  at a line's end say "carriage return"; the review cursor's end of line
+  is the line's last character, its break included, "carriage return" in
+  Windows 11 Notepad and "line feed" in a standard edit control, and
+  moving by character crosses each character of the break; Backspace
+  over a line break says "carriage return" in Notepad and "line feed" in
+  a standard edit control (the `notepad_editing` and
+  `notepad_review_cursor` scenarios). A terminal's row is cells, as
+  before, with no line break to land on. NVDA's `caretMovementFailed`
+  event is not offered. **Different:**
   a caret event alone is not evidence when the caret's position is known,
   since an application's late caret event can belong to an earlier key; the
   position, the characters either side of the caret, or the selection must
@@ -1228,20 +1242,11 @@ verified.
   value reviewed as flat text) ends a line at a carriage return and line
   feed, either alone (Windows 11 Notepad's bare carriage return), or
   Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
-- A line break spoken on its own. NVDA names the line-break character a
-  unit lands on: End at the end of a line says "carriage return" in
-  Windows 11 Notepad and in a standard edit control, the review cursor's
-  end of line and next character there say "carriage return" in Notepad
-  and "line feed" in a standard edit control, and Backspace over a line
-  break says what it deleted (NVDA transcripts, 2026-10-07). Verbatim
-  says "blank" for a caret or review position on a line break, keeps the
-  review cursor's end of line on the line's last character, and says
-  nothing for a Backspace over a line break (see the caret entry above).
-  **Different, awaiting a decision**: Verbatim's choice is written into
-  `verbatim-core` but was never recorded against NVDA. A related detail:
-  in a standard edit control NVDA's review bottom (Shift+Numpad 9) is the
-  last line with text, while Verbatim's, like NVDA's in Notepad, is the
-  empty line after a final line break.
+- The review cursor's bottom in a standard edit control. NVDA's review
+  bottom (Shift+Numpad 9) there is the last line with text, while
+  Verbatim's, like NVDA's in Windows 11 Notepad, is the empty line after a
+  final line break (NVDA transcripts, 2026-10-07). **Different, not yet
+  decided.**
 - Browse mode, quick nav, pass-through rules, virtual-buffer
   equivalent: **not yet (M6)**; references
   [Browse mode](nvda/browse-mode.md), [Virtual buffers](nvda/virtual-buffers.md).

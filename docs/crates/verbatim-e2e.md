@@ -317,10 +317,12 @@ taking the caret to the top (Notepad can restore a caret position from an
 earlier session), and save what they edited, in the teardown too.
 `notepad_editing` moves the caret by character, word, and line, selects
 and unselects with Shift, types with character echo, and deletes with
-Backspace and Delete, each step's speech asserted exactly.
+Backspace and Delete, and hears End and Backspace name the line break
+they meet, each step's speech asserted exactly.
 `notepad_review_cursor` reads by line, word, and character with the numpad
 review keys, keeps column 8 down a text table through a shorter row,
-reaches a line's ends and the text's top, and copies a range with
+reaches a line's ends, the end being its named line break, and the
+text's top, and copies a range with
 Verbatim+F9 and Verbatim+F10 pressed twice, checked by pasting it.
 `notepad_say_all` reads with Verbatim+Down Arrow, presses Control while
 the second line plays, and checks that the caret was left on that line and

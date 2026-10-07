@@ -23,8 +23,9 @@
 //!    between them keeps the third press from counting with the earlier
 //!    two, which a press within half a second of them would.
 //! 4. Verbatim+F9 marks the start of the row, Shift+numpad 3 moves to its
-//!    end, and Verbatim+F10 pressed twice copies the row. Pasted at the end
-//!    of the text, the copy is read back with numpad 8.
+//!    end, its line break ("carriage return"), numpad 1 back to its last
+//!    character ("0"), and Verbatim+F10 pressed twice copies the row.
+//!    Pasted at the end of the text, the copy is read back with numpad 8.
 //!
 //! Single presses are sent as gestures. Presses that count, the spelling,
 //! the description, the character code, and the copy, are real key presses
@@ -117,7 +118,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
 
     // The row marked, copied, pasted at the end, and read back.
     review(scenario, "kb:verbatim+f9", "Start marked");
-    review(scenario, "kb:shift+numpad3", "0");
+    review(scenario, "kb:shift+numpad3", "carriage return");
+    review(scenario, "kb:numpad1", "0");
     press_hearing(
         scenario,
         &["insert+f10", "insert+f10"],

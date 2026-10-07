@@ -63,6 +63,48 @@ does not move any cursor itself.
   control's text where possible to suppress phantom echo from
   autocomplete rewriting).
 
+### A line break as a character
+
+NVDA's text units include each line's line break: a line's text runs up
+to and including the break that ends it, and the character unit is one
+UTF-16 code unit, so a carriage return and line feed are two characters
+(`_getCharacterOffsets` in `textInfos/offsets.py`; the standard edit
+control's lines in `NVDAObjects/window/edit.py` extend to the next line's
+start). A line break is therefore something a character unit can land
+on, and NVDA names it like any other character spoken on its own.
+
+- How it is named. A unit of one character is spelled
+  (`getTextInfoSpeech` in `speech/speech.py` spells a character or word
+  unit whose text is one character, keeping whitespace as it is), and
+  spelling names a character by the symbol table: in
+  `locale/en/symbols.dic`, a carriage return is "carriage return" and a
+  line feed "line feed". A unit of more than one character that is only
+  spaces and line breaks is "blank" instead (`isBlank`), as is a unit
+  with no text at all, such as the end of the text.
+- The caret. End lands on the line's line break, so NVDA says "carriage
+  return", both in Windows 11 Notepad, whose UIA text breaks lines with a
+  carriage return alone, and in a standard edit control, whose lines end
+  with a carriage return and line feed (End lands on the carriage
+  return). Right Arrow onto the end of a line says the same. On the
+  text's last line, which has no break, End lands at the end of the text
+  and says "blank".
+- The review cursor. End of line (Shift+Numpad 3) moves to the line's
+  last character, its line break included: "carriage return" in Notepad,
+  "line feed" in a standard edit control. Next character moves onto the
+  break from the line's last letter, and at the line's last character
+  says "Right" and that character again, since review movement by
+  character stays within the line (`script_review_nextCharacter` and
+  `script_review_endOfLine` in `globalCommands.py`).
+- Backspace. NVDA reads the character before the caret before it sends
+  the key, so at a line's start it reads the line break it is about to
+  delete. It turns a carriage return and line feed into a line feed
+  before speaking (`_backspaceScriptHelper` in `editableText.py`), so
+  Backspace over a line break says "carriage return" in Notepad and "line
+  feed" in a standard edit control.
+
+NVDA transcripts on 2026-10-07 confirmed each of these in Windows 11
+Notepad and a standard edit control.
+
 ## The per-control text backend ladder
 
 "An edit control" is not one thing; NVDA maintains a ladder of text

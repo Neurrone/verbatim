@@ -26,6 +26,79 @@ pub(crate) fn line_content(text: &str, grid: bool) -> &str {
     }
 }
 
+/// The line break that ends a line's `text`, when it has one.
+pub(crate) fn line_break(text: &str) -> Option<&str> {
+    let content = text.trim_end_matches(is_line_break);
+    (content.len() < text.len()).then(|| &text[content.len()..])
+}
+
+/// The characters of a line's `text` as the caret and the review cursor
+/// meet them, each a byte range, in order: the grapheme clusters of its
+/// content, then each character of the line break that ends it on its own,
+/// as NVDA's character unit has them (`docs/nvda/editable-text-and-terminals.md`,
+/// "A line break as a character"), so a carriage return and line feed are
+/// two characters. In a terminal (`grid`) the row's padding and line break
+/// are not characters: past its text is a blank cell.
+pub(crate) fn characters(text: &str, grid: bool) -> Vec<Range<usize>> {
+    let content = line_content(text, grid);
+    let mut characters = verbatim_text::graphemes(content);
+    if !grid {
+        let end = content.len();
+        characters.extend(
+            text[end..]
+                .char_indices()
+                .map(|(index, c)| end + index..end + index + c.len_utf8()),
+        );
+    }
+    characters
+}
+
+/// The character ([`characters`]) of a line's `text` starting at or
+/// containing byte `offset`: a line break when the offset is on one, and
+/// `None` past the last (the end of the text, or a blank cell past a
+/// terminal row's text).
+pub(crate) fn character_at(text: &str, offset: usize, grid: bool) -> Option<&str> {
+    characters(text, grid)
+        .into_iter()
+        .find(|range| range.start <= offset && offset < range.end)
+        .map(|range| &text[range])
+}
+
+/// The character ([`characters`]) of a line's `text` before the one at
+/// byte `offset`, or `None` at the line's start.
+pub(crate) fn previous_character(text: &str, offset: usize, grid: bool) -> Option<Range<usize>> {
+    characters(text, grid)
+        .into_iter()
+        .take_while(|range| range.start < offset)
+        .last()
+}
+
+/// The character ([`characters`]) of a line's `text` after the one at byte
+/// `offset`, or `None` at the line's last.
+pub(crate) fn next_character(text: &str, offset: usize, grid: bool) -> Option<Range<usize>> {
+    characters(text, grid)
+        .into_iter()
+        .find(|range| range.start > offset)
+}
+
+/// `offset` as a position on a line's `text` a cursor can rest at: a
+/// character boundary, on the line's content or its line break, but never
+/// past the line's last character ([`characters`]) when the line has a
+/// break, and in a terminal never past the end of the row's text.
+pub(crate) fn position_in(text: &str, offset: usize, grid: bool) -> usize {
+    let content = line_content(text, grid);
+    let offset = boundary(text, offset);
+    if offset <= content.len() {
+        offset
+    } else if grid {
+        content.len()
+    } else {
+        characters(text, grid)
+            .last()
+            .map_or(content.len(), |last| offset.min(last.start))
+    }
+}
+
 /// The width of a terminal row in cells: its text without the line break,
 /// padding included, so the review cursor can move across the blank cells
 /// at its end.
@@ -62,13 +135,6 @@ pub(crate) fn previous_grapheme(content: &str, offset: usize) -> Option<Range<us
         .into_iter()
         .take_while(|range| range.start < offset)
         .last()
-}
-
-/// The grapheme cluster after the one at `offset`, or `None` at the last.
-pub(crate) fn next_grapheme(content: &str, offset: usize) -> Option<Range<usize>> {
-    verbatim_text::graphemes(content)
-        .into_iter()
-        .find(|range| range.start > offset)
 }
 
 /// The column of `offset` in `content`: terminal cells before it in a
@@ -174,13 +240,18 @@ pub(crate) fn word_segments(word: &str, language: Option<&str>) -> Vec<Utterance
 
 /// The segments for one character spoken on its own: by its name, raised
 /// in pitch when a capital (the presentation stage decides both), or
-/// "blank" for none or a line break.
+/// "blank" for none. A line break is a character with a name, "carriage
+/// return" or "line feed" (`docs/nvda/editable-text-and-terminals.md`, "A
+/// line break as a character"); a carriage return and line feed met as one
+/// grapheme cluster are named by the carriage return, the character the
+/// cluster starts with.
 pub(crate) fn character_segments(
     character: Option<&str>,
     language: Option<&str>,
 ) -> Vec<UtteranceSegment> {
     match character {
-        Some(character) if !character.is_empty() && !character.chars().all(is_line_break) => {
+        Some(character) if !character.is_empty() => {
+            let character = if character == "\r\n" { "\r" } else { character };
             vec![in_language(
                 SegmentContent::Character(character.to_owned()),
                 language,
@@ -416,6 +487,35 @@ mod tests {
     }
 
     #[test]
+    fn each_character_of_a_line_break_is_a_character_of_its_own() {
+        // A standard edit control's break: two characters.
+        assert_eq!(characters("ab\r\n", false), vec![0..1, 1..2, 2..3, 3..4]);
+        assert_eq!(character_at("ab\r\n", 2, false), Some("\r"));
+        assert_eq!(character_at("ab\r\n", 3, false), Some("\n"));
+        // Windows 11 Notepad's: one.
+        assert_eq!(character_at("ab\r", 2, false), Some("\r"));
+        // The text's last line has no break, so its end has no character.
+        assert_eq!(character_at("ab", 2, false), None);
+        // A terminal row's break and padding are not characters.
+        assert_eq!(characters("ab  \r\n", true), vec![0..1, 1..2]);
+        assert_eq!(character_at("ab  \r\n", 2, true), None);
+        assert_eq!(line_break("ab\r\n"), Some("\r\n"));
+        assert_eq!(line_break("ab"), None);
+    }
+
+    #[test]
+    fn a_position_rests_on_a_line_break_but_not_past_it() {
+        assert_eq!(position_in("ab\r\n", 3, false), 3);
+        assert_eq!(position_in("ab\r\n", 4, false), 3);
+        assert_eq!(position_in("ab\r", 9, false), 2);
+        assert_eq!(position_in("ab", 9, false), 2);
+        assert_eq!(position_in("ab  \r\n", 5, true), 2);
+        assert_eq!(previous_character("ab\r\n", 3, false), Some(2..3));
+        assert_eq!(next_character("ab\r\n", 1, false), Some(2..3));
+        assert_eq!(next_character("ab\r\n", 3, false), None);
+    }
+
+    #[test]
     fn an_offset_inside_a_character_moves_back_to_its_start() {
         assert_eq!(boundary("a中b", 2), 1);
         assert_eq!(boundary("a中b", 4), 4);
@@ -474,9 +574,18 @@ mod tests {
     }
 
     #[test]
-    fn a_line_break_or_nothing_is_a_blank_character() {
+    fn a_line_break_is_a_named_character_and_nothing_is_blank() {
+        let character = |text: &str| {
+            vec![UtteranceSegment::new(SegmentContent::Character(
+                text.into(),
+            ))]
+        };
+        assert_eq!(character_segments(Some("\r"), None), character("\r"));
+        assert_eq!(character_segments(Some("\n"), None), character("\n"));
+        // A carriage return and line feed met as one cluster.
+        assert_eq!(character_segments(Some("\r\n"), None), character("\r"));
         assert_eq!(
-            character_segments(Some("\r\n"), None),
+            character_segments(None, None),
             vec![UtteranceSegment::new(SegmentContent::Message(
                 Message::Blank
             ))]
