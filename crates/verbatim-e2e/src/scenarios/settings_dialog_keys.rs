@@ -32,11 +32,12 @@ use crate::scenario::Scenario;
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
 /// The Speech page's controls from the Change button to the rate slider,
-/// in Tab order, as each announces itself.
-const TO_RATE: [&str; 3] = [
-    "Change... button Alt+h",
-    "Voice combo box English (Great Britain) collapsed Alt+v",
-    "Variant combo box Max collapsed Alt+a",
+/// in Tab order, as each announces itself: the Change button after the
+/// "Synthesizer" group box it sits in, entered from the category list.
+const TO_RATE: [&[&str]; 3] = [
+    &["Synthesizer grouping", "Change... button Alt+h"],
+    &["Voice combo box English (Great Britain) collapsed Alt+v"],
+    &["Variant combo box Max collapsed Alt+a"],
 ];
 
 /// The controls after the rate slider, in Tab order.
@@ -60,7 +61,7 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
 pub(crate) fn open_at_rate(scenario: &mut Scenario, rate: u32) {
     super::open_speech_settings(scenario);
     for control in TO_RATE {
-        press(scenario, "tab", &[control]);
+        press(scenario, "tab", control);
     }
     press(scenario, "tab", &[&format!("Rate slider {rate} Alt+r")]);
 }
@@ -122,7 +123,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     );
     press(scenario, "control+tab", &["Terminal 3 of 3"]);
     press(scenario, "control+tab", &["Speech 1 of 3"]);
-    press(scenario, "tab", &["Change... button Alt+h"]);
+    press(
+        scenario,
+        "tab",
+        &["Synthesizer grouping", "Change... button Alt+h"],
+    );
     press(
         scenario,
         "control+shift+tab",

@@ -35,12 +35,12 @@ use crate::scenario::Scenario;
 const CATEGORIES: [(&str, &str, &str); 6] = [
     (
         "Roles collapsed 1 of 6 level 0",
-        "level 1 window: speech 1 of 52",
+        "level 1 window: speech 1 of 71",
         "level 0 Roles expanded 1 of 6",
     ),
     (
         "States collapsed 2 of 6 level 0",
-        "level 1 selected: speech 1 of 17",
+        "level 1 selected: speech 1 of 19",
         "level 0 States expanded 2 of 6",
     ),
     (
@@ -125,7 +125,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // "expanded", as NVDA says it for a Win32 tree view item. Each
     // category is expanded to hear its first indication, then left by
     // going back to it, collapsing it, and moving down to the next.
-    press(scenario, &["rightarrow"], &["expanded", "52 items"]);
+    press(scenario, &["rightarrow"], &["expanded", "71 items"]);
     for (index, (_, first, expanded)) in CATEGORIES.iter().enumerate() {
         let keys: &[&str] = if index == 0 {
             &["downarrow"]

@@ -54,14 +54,16 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // since its window is its whole world: object navigation must report
     // the edge rather than land on the slider again. Tab reaches it after
     // the Change button and the voice and variant boxes.
+    // The Change button is spoken after the "Synthesizer" group box it
+    // sits in, entered from the category list.
     for heard in [
-        "Change... button Alt+h",
-        "Voice combo box English (Great Britain) collapsed Alt+v",
-        "Variant combo box Max collapsed Alt+a",
-        "Rate slider 80 Alt+r",
+        &["Synthesizer grouping", "Change... button Alt+h"][..],
+        &["Voice combo box English (Great Britain) collapsed Alt+v"],
+        &["Variant combo box Max collapsed Alt+a"],
+        &["Rate slider 80 Alt+r"],
     ] {
         scenario.send_keys(&["tab"]).expect("sends tab");
-        scenario.speech().expect(&[heard]);
+        scenario.speech().expect(heard);
     }
     navigate(scenario, "kb:verbatim+numpad6", "No next");
     navigate(scenario, "kb:verbatim+numpad4", "No previous");

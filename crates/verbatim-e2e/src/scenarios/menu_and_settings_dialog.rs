@@ -33,29 +33,34 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut crate::registry::Scenar
         "Categories: list Alt+c",
         "Speech 1 of 3",
     ]);
-    let walk: [(&[&str], &str); 15] = [
-        (&["tab"], "Change... button Alt+h"),
+    // The Change button sits in the "Synthesizer" group box, entered from
+    // the category list, which is spoken before it.
+    let walk: [(&[&str], &[&str]); 15] = [
         (
             &["tab"],
-            "Voice combo box English (Great Britain) collapsed Alt+v",
+            &["Synthesizer grouping", "Change... button Alt+h"],
         ),
-        (&["downarrow"], "English (Scotland)"),
-        (&["uparrow"], "English (Great Britain)"),
-        (&["tab"], "Variant combo box Max collapsed Alt+a"),
-        (&["tab"], "Rate slider 80 Alt+r"),
-        (&["uparrow"], "79"),
-        (&["downarrow"], "80"),
-        (&["downarrow"], "81"),
-        (&["tab"], "Pitch slider 50 Alt+p"),
-        (&["tab"], "Inflection slider 80 Alt+i"),
-        (&["tab"], "Volume slider 100 Alt+o"),
-        (&["tab"], "OK button"),
-        (&["tab"], "Cancel button"),
-        (&["tab"], "Apply button Alt+a"),
+        (
+            &["tab"],
+            &["Voice combo box English (Great Britain) collapsed Alt+v"],
+        ),
+        (&["downarrow"], &["English (Scotland)"]),
+        (&["uparrow"], &["English (Great Britain)"]),
+        (&["tab"], &["Variant combo box Max collapsed Alt+a"]),
+        (&["tab"], &["Rate slider 80 Alt+r"]),
+        (&["uparrow"], &["79"]),
+        (&["downarrow"], &["80"]),
+        (&["downarrow"], &["81"]),
+        (&["tab"], &["Pitch slider 50 Alt+p"]),
+        (&["tab"], &["Inflection slider 80 Alt+i"]),
+        (&["tab"], &["Volume slider 100 Alt+o"]),
+        (&["tab"], &["OK button"]),
+        (&["tab"], &["Cancel button"]),
+        (&["tab"], &["Apply button Alt+a"]),
     ];
     for (keys, heard) in walk {
         scenario.send_keys(keys).expect("sends the keys");
-        scenario.speech().expect(&[heard]);
+        scenario.speech().expect(heard);
     }
     super::close_settings_to_desktop(scenario);
 }

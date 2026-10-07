@@ -35,7 +35,14 @@ fn expect_active(scenario: &mut Scenario, synthesizer: &str) {
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::open_speech_settings(scenario);
     expect_active(scenario, "espeak");
-    press(scenario, "tab", &["Change... button Alt+h"]);
+    // The Change button sits in the "Synthesizer" group box, spoken as the
+    // focus enters it: from the category list, from the Voice box with
+    // Shift+Tab, and on returning from the synthesizer dialog.
+    press(
+        scenario,
+        "tab",
+        &["Synthesizer grouping", "Change... button Alt+h"],
+    );
     press(
         scenario,
         "space",
@@ -48,7 +55,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(
         scenario,
         "enter",
-        &["Verbatim Settings: Speech dialog", "Change... button Alt+h"],
+        &[
+            "Verbatim Settings: Speech dialog",
+            "Synthesizer grouping",
+            "Change... button Alt+h",
+        ],
     );
     press(
         scenario,
@@ -57,7 +68,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     );
     expect_active(scenario, "onecore");
 
-    press(scenario, "shift+tab", &["Change... button Alt+h"]);
+    press(
+        scenario,
+        "shift+tab",
+        &["Synthesizer grouping", "Change... button Alt+h"],
+    );
     press(
         scenario,
         "space",
@@ -70,7 +85,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(
         scenario,
         "enter",
-        &["Verbatim Settings: Speech dialog", "Change... button Alt+h"],
+        &[
+            "Verbatim Settings: Speech dialog",
+            "Synthesizer grouping",
+            "Change... button Alt+h",
+        ],
     );
     press(
         scenario,

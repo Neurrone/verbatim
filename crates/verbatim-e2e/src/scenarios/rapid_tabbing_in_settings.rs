@@ -19,8 +19,10 @@
 //! end state, not the path. The evidence the burst is over is Core
 //! receiving the focus on the Change button, and then Verbatim having
 //! handled the burst's last key and being idle. Every utterance until then
-//! but the last must end cut off, none heard in full, whatever its text;
-//! the last is the Change button's announcement, exactly, heard in full.
+//! but the last two must end cut off, none heard in full, whatever its
+//! text; the last two are the Change button's announcement, exactly, heard
+//! in full: the group box it sits in, "Synthesizer grouping", entered from
+//! the category list, then the button.
 //! The report of the current navigator object must then be exactly the
 //! Change button, which proves the final focus won, and its answer proves
 //! the outpost still answers queries.
@@ -44,8 +46,9 @@ const FOCUS_TIMEOUT: Duration = Duration::from_secs(15);
 /// The control the burst ends on, by name.
 const LAST_CONTROL: &str = "Change...";
 
-/// The burst's final announcement: the control it ends on.
-const FINAL: &str = "Change... button Alt+h";
+/// The burst's final announcement: the group box the control it ends on
+/// sits in, entered from the category list, and the control.
+const FINAL: [&str; 2] = ["Synthesizer grouping", "Change... button Alt+h"];
 
 /// Waits on `events` until Core receives a focus on the node named `name`.
 fn wait_for_focus_on(events: &mut ControlClient, name: &str) {
@@ -81,17 +84,19 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.send_keys(&burst).expect("sends the burst");
     wait_for_focus_on(&mut events, LAST_CONTROL);
     let said = scenario.take_until_idle();
-    let Some((last, passed)) = said.split_last() else {
-        panic!("the burst said nothing");
-    };
+    assert!(said.len() >= FINAL.len(), "the burst said only {said:?}");
+    let (passed, last) = said.split_at(said.len() - FINAL.len());
+    let last_texts: Vec<&str> = last.iter().map(|heard| heard.text.as_str()).collect();
     assert_eq!(
-        last.text, FINAL,
+        last_texts, FINAL,
         "the burst's final announcement, after {passed:?}"
     );
     for heard in passed {
         scenario.speech().expect_ended(heard, Ending::Cancelled);
     }
-    scenario.speech().expect_ended(last, Ending::Completed);
+    for heard in last {
+        scenario.speech().expect_ended(heard, Ending::Completed);
+    }
 
     scenario
         .send_gesture("kb:verbatim+numpad5")
