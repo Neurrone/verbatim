@@ -1873,3 +1873,34 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
   where NVDA only speaks it.
 - Whether the say-all demonstration's Windows Forms text box is
   acceptable for reading by sentence.
+
+### Decisions and work scheduled on 2026-10-07
+
+- Settings pages wait for Apply, OK, or Control+S; Speech and Theme are
+  the exceptions and apply as they change, since their changes are heard
+  at once. The Terminal page, and every page added later, waits for
+  Apply.
+- Line breaks are named as NVDA names them ("carriage return", "line
+  feed"); Verbatim+V says "Verbatim" and then "Context menu", as NVDA
+  does; the default theme plays the error sound for a spelling error.
+- Everything a demonstration shows is also covered by an end-to-end test,
+  unless that is impossible, which is brought to Dickson to decide.
+- Scheduled, in order:
+  1. A systematic parity sweep, so bugs stop being found by accident:
+     for every NVDA command and speech rule Verbatim implements, NVDA and
+     Verbatim are compared with `cargo xtask nvda capture --verbatim` at
+     the boundaries (document ends, empty lines, lines of only white
+     space, punctuation-only words, selections across lines, and each
+     control type: UIA and MSAA, edit controls, terminals, lists, trees,
+     dialogs), and every difference is fixed with a test or recorded in
+     `docs/parity.md`.
+  2. Links in text: the formatting stage reports links (UIA's link
+     attribute or a link element in the range), checked against what
+     Windows Terminal exposes for its hyperlinks.
+  3. A typed space at the end of a terminal's line is spoken when typed,
+     using the outpost's knowledge of which trailing white space is real.
+  4. The terminal flood: why reporting slowed the console host 5.68 times
+     under load, and the run whose speech did not account for every line.
+  5. A dialog's text through MSAA costs 14 calls: measure its wall-clock
+     cost against NVDA's, then reduce it.
+  6. An audit of demonstrations against end-to-end coverage.
