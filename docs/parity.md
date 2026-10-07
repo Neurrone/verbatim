@@ -1129,6 +1129,30 @@ verified.
   Forms text box (a standard edit control) both read one sentence per
   utterance; NVDA also queues an empty utterance for the empty line after
   the text's final line break, which Verbatim leaves out.
+- Say-all speaking without pauses. NVDA: every unit say-all reads
+  passes through `SpeechWithoutPauses`, which speaks up to the unit's last
+  sentence end (a full stop, exclamation mark, or question mark after a
+  non-space, with one optional closing quotation mark or parenthesis, then
+  whitespace) and holds what follows back to start the next utterance; ten
+  units in a row with no sentence end are spoken together, and each unit's
+  caret callback stays where its text starts ([Speech](nvda/speech.md),
+  "Say-all speaks without pauses"). So in Windows 11 Notepad, whose UIA
+  text has no sentence unit and is read by line, "written in Rust." and
+  "It is informed by NVDA" on one line are separate utterances (measured
+  2026-10-07). Verbatim: **matched since 2026-10-07**: Core splits every
+  unit say-all reads with `verbatim_text::last_pause`, holds the rest back
+  with its unit's mark, and speaks a sentence that runs from one line to
+  the next in one utterance with the second line's index mark where its
+  text starts, so the caret moves to the second line when its words start
+  playing and a key leaves it on the line whose words were playing. The
+  same rule's cases are matched: no abbreviation list ("Dr. " ends a
+  sentence), no split at a decimal point or after an ellipsis, blank units
+  counted among the ten. **Unverified** against an NVDA transcript of a
+  sentence running across lines. With eSpeak NG, which places no marks of
+  its own, the speech manager synthesizes the parts on either side of a
+  mark separately, so such a sentence is spoken in two synthesis calls
+  where NVDA's eSpeak NG driver speaks it in one; OneCore speaks it in
+  one.
 - Structured utterances vs flat strings. NVDA: command-laden flat
   sequences. Verbatim: **different (D12)** — typed spans flattened
   by a theme at the last stage.

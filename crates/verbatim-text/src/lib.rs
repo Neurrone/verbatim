@@ -16,6 +16,8 @@
 //!   tabs is one segment, so a position anywhere in it belongs to the same
 //!   word, as in NVDA.
 //! - Sentences ([`Segmenter::sentences`]) follow Unicode's sentence rules.
+//! - Speech without pauses ([`last_pause`]) splits text after its last
+//!   sentence end, as say-all speaks it.
 //! - Lines ([`lines`], [`line_at`]) end at any line break
 //!   ([`is_line_break`]): a carriage return and line feed together, either
 //!   alone, or Unicode's line and paragraph separators.
@@ -197,6 +199,44 @@ impl Segmenter {
     }
 }
 
+/// Where `text` splits for speech without pauses: the byte offset just
+/// past its last sentence end and the whitespace after it, or `None` when
+/// it has no sentence end (`docs/nvda/speech.md`, "Say-all speaks without
+/// pauses"). Say-all speaks the text before the offset now and holds back
+/// the rest to speak with what follows it.
+///
+/// A sentence end is a full stop, exclamation mark, or question mark that
+/// directly follows a character that is neither whitespace nor one of
+/// those marks, with at most one closing quotation mark or parenthesis
+/// after it, and then whitespace or the end of the text. There is no list
+/// of abbreviations: "Dr. Smith" splits after "Dr. ". A decimal point is
+/// followed by a numeral, and the last full stop of an ellipsis follows
+/// another, so neither is a sentence end.
+#[must_use]
+pub fn last_pause(text: &str) -> Option<usize> {
+    let is_terminator = |c: char| matches!(c, '.' | '!' | '?');
+    let is_closing = |c: char| matches!(c, '"' | '\'' | '\u{201D}' | '\u{2019}' | ')');
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    (1..chars.len()).rev().find_map(|index| {
+        let (_, mark) = chars[index];
+        let (_, before) = chars[index - 1];
+        if !is_terminator(mark) || before.is_whitespace() || is_terminator(before) {
+            return None;
+        }
+        let mut next = index + 1;
+        if chars.get(next).is_some_and(|&(_, c)| is_closing(c)) {
+            next += 1;
+        }
+        if chars.get(next).is_some_and(|&(_, c)| !c.is_whitespace()) {
+            return None;
+        }
+        while chars.get(next).is_some_and(|&(_, c)| c.is_whitespace()) {
+            next += 1;
+        }
+        Some(chars.get(next).map_or(text.len(), |&(offset, _)| offset))
+    })
+}
+
 /// The shared jieba segmenter, with its built-in dictionary.
 fn jieba() -> &'static Jieba {
     static JIEBA: OnceLock<Jieba> = OnceLock::new();
@@ -247,6 +287,65 @@ mod tests {
 
     fn texts<'a>(text: &'a str, ranges: &[Range<usize>]) -> Vec<&'a str> {
         ranges.iter().map(|range| &text[range.clone()]).collect()
+    }
+
+    /// `text` split where speech without pauses splits it.
+    fn split(text: &str) -> Option<(&str, &str)> {
+        last_pause(text).map(|offset| text.split_at(offset))
+    }
+
+    #[test]
+    fn a_line_splits_after_its_last_sentence_end() {
+        assert_eq!(
+            split("written in Rust. It is informed by NVDA"),
+            Some(("written in Rust. ", "It is informed by NVDA"))
+        );
+        // Only the last sentence end splits; the whitespace after it,
+        // however long, goes before the split.
+        assert_eq!(split("One. Two!  Three"), Some(("One. Two!  ", "Three")));
+        assert_eq!(split("Is it?\tYes"), Some(("Is it?\t", "Yes")));
+        // A sentence end at the end of the text leaves nothing after it.
+        assert_eq!(split("It ends here."), Some(("It ends here.", "")));
+        assert_eq!(split("It ends here.  "), Some(("It ends here.  ", "")));
+        assert_eq!(split("no sentence end"), None);
+        assert_eq!(split(""), None);
+    }
+
+    #[test]
+    fn abbreviations_split_and_decimals_do_not() {
+        // No list of abbreviations: each is a sentence end.
+        assert_eq!(split("Ask Dr. Smith"), Some(("Ask Dr. ", "Smith")));
+        assert_eq!(split("say e.g. this"), Some(("say e.g. ", "this")));
+        // A decimal point is followed by a numeral.
+        assert_eq!(split("pi is 3.14 or so"), None);
+        assert_eq!(split("It is 3.5. Then"), Some(("It is 3.5. ", "Then")));
+    }
+
+    #[test]
+    fn a_mark_needs_a_word_before_it() {
+        // An ellipsis's last full stop follows another.
+        assert_eq!(split("wait... and see"), None);
+        assert_eq!(split("Really?! Yes"), None);
+        // A mark after whitespace, or opening the text, is no sentence end.
+        assert_eq!(split("a . b"), None);
+        assert_eq!(split(". b"), None);
+    }
+
+    #[test]
+    fn one_closing_character_may_follow_the_mark() {
+        assert_eq!(
+            split("He said \"stop.\" Then"),
+            Some(("He said \"stop.\" ", "Then"))
+        );
+        assert_eq!(split("(see above.) Then"), Some(("(see above.) ", "Then")));
+        assert_eq!(
+            split("It\u{2019}s \u{2018}done.\u{2019} Then"),
+            Some(("It\u{2019}s \u{2018}done.\u{2019} ", "Then"))
+        );
+        // Two closing characters are not a sentence end.
+        assert_eq!(split("(he said \"stop.\") Then"), None);
+        // The ideographic full stop is not one of the marks.
+        assert_eq!(split("\u{4F60}\u{597D}\u{3002}\u{518D}"), None);
     }
 
     #[test]

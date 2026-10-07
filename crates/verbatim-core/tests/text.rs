@@ -1391,7 +1391,7 @@ fn reached(mark: SpeechMark) -> Input {
 
 #[test]
 fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
-    let mut state = editing("first\n", 0);
+    let mut state = editing("First.\n", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
     assert!(effects.contains(&Effect::KeepDisplayOn(true)));
     let first = request(&effects);
@@ -1418,13 +1418,13 @@ fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
             by_line.query_id,
             TextReply::Chunks {
                 moved: 0,
-                chunks: vec![line("first\n", 100, 0)],
+                chunks: vec![line("First.\n", 100, 0)],
             },
         ),
     );
     let pieces = say_all_pieces(&effects);
     assert_eq!(pieces.len(), 1);
-    assert_eq!(pieces[0].1, "first");
+    assert_eq!(pieces[0].1, "First.");
     // Little is left to speak, so the next batch is read at once, a line on
     // from the last line read.
     let next = request(&effects);
@@ -1452,7 +1452,7 @@ fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
             next.query_id,
             TextReply::Chunks {
                 moved: 0,
-                chunks: vec![line("first\n", 100, 0)],
+                chunks: vec![line("First.\n", 100, 0)],
             },
         ),
     );
@@ -1472,7 +1472,7 @@ fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
     );
     let last = TextChunk {
         last: true,
-        ..line("three", 102, 0)
+        ..line("Three.", 102, 0)
     };
     let effects = reduce(
         &mut state,
@@ -1480,7 +1480,7 @@ fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
             request_of(&effects),
             TextReply::Chunks {
                 moved: 0,
-                chunks: vec![line("one\n", 100, 0), line("two\n", 101, 0), last],
+                chunks: vec![line("One.\n", 100, 0), line("Two.\n", 101, 0), last],
             },
         ),
     );
@@ -1488,7 +1488,7 @@ fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
     // so nothing more is asked for.
     let pieces = say_all_pieces(&effects);
     let texts: Vec<&str> = pieces.iter().map(|(_, text)| text.as_str()).collect();
-    assert_eq!(texts, ["one", "two"]);
+    assert_eq!(texts, ["One.", "Two."]);
     assert_eq!(effects.len(), 2, "nothing but the two pieces: {effects:?}");
     // Reaching the first moves the caret there and hands on the third,
     // with its own mark.
@@ -1499,7 +1499,7 @@ fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
     );
     let third = say_all_pieces(&effects);
     assert_eq!(third.len(), 1);
-    assert_eq!(third[0].1, "three");
+    assert_eq!(third[0].1, "Three.");
     assert_eq!(effects.len(), 2, "{effects:?}");
     // Reaching the second moves the caret on.
     let effects = reduce(&mut state, &reached(pieces[1].0));
@@ -1535,7 +1535,9 @@ fn say_all_reads_the_next_batch_when_fewer_than_ten_pieces_are_left() {
     );
     // Twelve lines to speak: two with speech, ten buffered, which is not
     // yet fewer than ten.
-    let chunks: Vec<TextChunk> = (0..12).map(|index| line("a b\n", 100 + index, 0)).collect();
+    let chunks: Vec<TextChunk> = (0..12)
+        .map(|index| line("A b.\n", 100 + index, 0))
+        .collect();
     let effects = reduce(
         &mut state,
         &completed(request_of(&effects), TextReply::Chunks { moved: 0, chunks }),
@@ -1661,6 +1663,208 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
             movement: None,
             unit: TextUnit::Line,
         })
+    );
+}
+
+/// One part of a say-all utterance: an index mark, or text.
+#[derive(Debug, PartialEq)]
+enum Said {
+    Mark(SpeechMark),
+    Text(String),
+}
+
+/// Every say-all utterance among `effects`, each as its marks and texts in
+/// order, checked to be marked as read by say-all and to open with a mark.
+/// Any other speech fails the test, so none is skipped unchecked.
+fn say_all_utterances(effects: &[Effect]) -> Vec<Vec<Said>> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => {
+                assert!(utterance.say_all, "{utterance:?} is read by say-all");
+                let said: Vec<Said> = utterance
+                    .segments
+                    .iter()
+                    .map(|segment| match &segment.content {
+                        SegmentContent::Mark(mark) => Said::Mark(*mark),
+                        SegmentContent::Text(text) => Said::Text(text.clone()),
+                        _ => panic!("say-all speech is marks and text: {utterance:?}"),
+                    })
+                    .collect();
+                assert!(
+                    matches!(said.first(), Some(Said::Mark(_))),
+                    "an utterance opens with a mark: {said:?}"
+                );
+                Some(said)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The texts of an utterance, without its marks.
+fn texts_of(said: &[Said]) -> Vec<&str> {
+    said.iter()
+        .filter_map(|part| match part {
+            Said::Text(text) => Some(text.as_str()),
+            Said::Mark(_) => None,
+        })
+        .collect()
+}
+
+/// The marks of an utterance, in order.
+fn marks_of(said: &[Said]) -> Vec<SpeechMark> {
+    said.iter()
+        .filter_map(|part| match part {
+            Said::Mark(mark) => Some(*mark),
+            Said::Text(_) => None,
+        })
+        .collect()
+}
+
+/// The caret move among `effects`, if there is one.
+fn caret_move(effects: &[Effect]) -> Option<TextPoint> {
+    let moves: Vec<TextPoint> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Text(TextRequest {
+                op: TextOp::MoveCaret(point),
+                ..
+            }) => Some(*point),
+            _ => None,
+        })
+        .collect();
+    assert!(moves.len() <= 1, "one caret move at most: {effects:?}");
+    moves.first().copied()
+}
+
+/// Starts say-all from the caret of a document with no sentence unit,
+/// answering its first read with `chunks`, and returns the effects.
+fn say_all_by_line(state: &mut SrState, chunks: Vec<TextChunk>) -> Vec<Effect> {
+    let effects = reduce(state, &command(ReviewCommand::SayAllFromCaret, 0));
+    let effects = reduce(
+        state,
+        &completed(
+            request_of(&effects),
+            TextReply::UnsupportedUnit(TextUnit::Sentence),
+        ),
+    );
+    reduce(
+        state,
+        &completed(request_of(&effects), TextReply::Chunks { moved: 0, chunks }),
+    )
+}
+
+#[test]
+fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_lines() {
+    let mut state = editing("x\n", 0);
+    let last = TextChunk {
+        last: true,
+        ..line("line.\n", 102, 0)
+    };
+    let effects = say_all_by_line(
+        &mut state,
+        vec![
+            line(
+                "Verbatim is written in Rust. It is informed by NVDA\n",
+                100,
+                0,
+            ),
+            line("but not constrained by it. A last\n", 101, 0),
+            last,
+        ],
+    );
+    // The first line up to its sentence end, then the sentence that runs
+    // on to the second line spoken whole, with the second line's mark
+    // where its text starts; the text's end was read, so nothing more is
+    // asked for.
+    let utterances = say_all_utterances(&effects);
+    assert_eq!(utterances.len(), 2, "{effects:?}");
+    assert_eq!(effects.len(), 2, "{effects:?}");
+    let [first, second] = [&utterances[0], &utterances[1]];
+    assert!(matches!(first.as_slice(), [Said::Mark(_), Said::Text(_)]));
+    assert_eq!(texts_of(first), ["Verbatim is written in Rust. "]);
+    assert!(matches!(
+        second.as_slice(),
+        [Said::Mark(_), Said::Text(_), Said::Mark(_), Said::Text(_)]
+    ));
+    assert_eq!(
+        texts_of(second),
+        ["It is informed by NVDA ", "but not constrained by it. "]
+    );
+
+    // The first line reached: the caret moves to its start, and the last
+    // utterance is handed on, the text held back at the end spoken with
+    // the last line.
+    let effects = reduce(&mut state, &reached(marks_of(first)[0]));
+    assert_eq!(
+        caret_move(&effects),
+        Some(TextPoint::At(TextPosition::at(TextAnchor(100))))
+    );
+    let third = say_all_utterances(&effects);
+    assert_eq!(third.len(), 1);
+    assert_eq!(effects.len(), 2, "{effects:?}");
+    assert!(matches!(
+        third[0].as_slice(),
+        [Said::Mark(_), Said::Text(_), Said::Mark(_), Said::Text(_)]
+    ));
+    assert_eq!(texts_of(&third[0]), ["A last ", "line."]);
+    // The rest of the first line: the caret stays on the first line.
+    let effects = reduce(&mut state, &reached(marks_of(second)[0]));
+    assert_eq!(effects, vec![]);
+    // The second line's text starts: the caret moves to its start.
+    let effects = reduce(&mut state, &reached(marks_of(second)[1]));
+    assert_eq!(
+        caret_move(&effects),
+        Some(TextPoint::At(TextPosition::at(TextAnchor(101))))
+    );
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    // The last utterance starts with the rest of the second line: the
+    // caret stays there, and a key stops say-all with it there.
+    let effects = reduce(&mut state, &reached(marks_of(&third[0])[0]));
+    assert_eq!(effects, vec![]);
+    let effects = reduce(&mut state, &Input::SpeechCancelled);
+    assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
+    assert_eq!(reduce(&mut state, &reached(marks_of(&third[0])[1])), vec![]);
+}
+
+#[test]
+fn say_all_speaks_ten_lines_with_no_sentence_end_together() {
+    let mut state = editing("x\n", 0);
+    // Twelve lines with no sentence end, the fifth blank, which says
+    // nothing but counts among the ten.
+    let mut chunks: Vec<TextChunk> = (0..12)
+        .map(|index| {
+            let text = if index == 4 {
+                "\n".to_owned()
+            } else {
+                format!("word {index}\n")
+            };
+            line(&text, 100 + index, 0)
+        })
+        .collect();
+    chunks[11].last = true;
+    let effects = say_all_by_line(&mut state, chunks);
+    let utterances = say_all_utterances(&effects);
+    assert_eq!(utterances.len(), 2, "{effects:?}");
+    assert_eq!(effects.len(), 2, "{effects:?}");
+    // The first ten lines, the blank one silent, each with its mark.
+    assert_eq!(
+        texts_of(&utterances[0]),
+        [
+            "word 0 ", "word 1 ", "word 2 ", "word 3 ", "word 5 ", "word 6 ", "word 7 ", "word 8 ",
+            "word 9",
+        ]
+    );
+    assert_eq!(marks_of(&utterances[0]).len(), 9);
+    // The rest, spoken when the text ends.
+    assert_eq!(texts_of(&utterances[1]), ["word 10 ", "word 11"]);
+    assert_eq!(marks_of(&utterances[1]).len(), 2);
+    // Each line's mark moves the caret to that line's start.
+    let effects = reduce(&mut state, &reached(marks_of(&utterances[0])[4]));
+    assert_eq!(
+        caret_move(&effects),
+        Some(TextPoint::At(TextPosition::at(TextAnchor(105))))
     );
 }
 

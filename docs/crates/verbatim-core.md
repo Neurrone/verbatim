@@ -522,15 +522,27 @@ later batch a unit on from the last chunk read, so a batch where the
 provider runs remote operations is one round trip for tens of seconds of
 speech. The batch's pieces wait in a buffer in the state
 (`SayAll::buffer`, shared chunks, bounded by the outpost's limit on a
-batch's text) and are handed to speech one at a time, two ahead of
-playback (the one playing and the next), each in its own utterance starting
-with its own index mark. When playback reaches a mark, say-all from the
-caret asks the outpost to move the caret there (and the review cursor
-follows the caret as usual), say-all from the review cursor leaves the
-review cursor at that point, whose line the next review command reads, and
-the next piece is handed on. The next batch is read once fewer than 10
-pieces (`LOW_WATER`) are left to speak, handed out and buffered together,
-so at most one read is in flight and the buffer holds under two batches.
+batch's text). Every unit read is spoken without pauses
+(`docs/nvda/speech.md`, "Say-all speaks without pauses"): an utterance
+runs to the last sentence end in a unit (`verbatim_text::last_pause`), and
+the rest of the unit is held back (`SayAll::held`) to open the next one, so
+a line holding the end of one sentence and the start of the next is
+spoken in two utterances and a sentence that runs on to the next line in
+one; ten units in a row with no sentence end (`MAX_HELD`, blank ones
+counted) are spoken together, as is what is held back when the text ends.
+Each unit's start has an index mark where its text starts in its
+utterance, and each utterance opens with a mark, which for an utterance
+opening with the rest of a unit moves nothing. Utterances are handed to
+speech one at a time, two ahead of playback (the one playing and the
+next). A space stands for the line break between two units' text in one
+utterance. When playback reaches a unit's mark, say-all from the caret
+asks the outpost to move the caret to the unit's start (and the review
+cursor follows the caret as usual), say-all from the review cursor leaves
+the review cursor at that point, whose line the next review command
+reads; when it reaches an utterance's opening mark, the next utterance is
+handed on. The next batch is read once fewer than 10 utterances
+(`LOW_WATER`) are left to speak, handed out and buffered together, so at
+most one read is in flight and the buffer holds under two batches.
 The choice and the measurements behind it are in `docs/performance.md`,
 "Say-all".
 Blank pieces are not spoken. The display is kept on while it reads

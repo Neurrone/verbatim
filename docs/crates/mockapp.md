@@ -301,8 +301,14 @@ must not take): lines, words, and characters read; movement stopping at
 the empty last line; a position inside a chunk resolved through its text;
 UIA's missing sentence unit and the edit control's paragraph in its place;
 a page unsupported; UIA's language on a chunk; and a caret key answered
-with the word it reached and with a selection reported as selected. Its
-caret wait never waits: every test moves mockapp's caret first, and the
+with the word it reached and with a selection reported as selected. It
+also runs Core's say-all over UIA text, which has no sentence unit, its
+text requests answered by the text module against mockapp
+(`uia_say_all_speaks_by_sentence_without_a_sentence_unit`): a line holding
+one sentence's end and the next one's start is spoken as two utterances,
+the sentence running on to the next line as one with that line's mark
+where its words start, and mockapp's caret is moved to each line's start
+as its mark is reached. Its caret wait never waits: every test moves mockapp's caret first, and the
 wait panics if called. `call_counts.rs` pins a caret move and a caret
 report on both stacks this way too (`docs/performance.md`).
 `slow_application.rs` runs a real
