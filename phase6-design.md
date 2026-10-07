@@ -1917,3 +1917,12 @@ tests, are recorded into `videos/demos/`; test recordings are kept in
   5. A dialog's text through MSAA costs 14 calls: measure its wall-clock
      cost against NVDA's, then reduce it.
   6. An audit of demonstrations against end-to-end coverage.
+  7. Remote operations everywhere they help (Dickson, 2026-10-07): every
+     UIA path that makes a sequence of calls (the review cursor's
+     commands, say-all, which reads several pieces ahead per call, object
+     navigation, report focus, a dialog's text, selection reads, and any
+     other the audit finds) runs as a named remote operation behind one
+     entry point with the classic fallback, with call counts pinned on
+     both paths and the wall-clock gain measured. NVDA uses remote
+     operations only for browse mode's heading search and some Word
+     operations.
