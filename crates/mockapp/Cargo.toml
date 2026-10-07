@@ -33,6 +33,11 @@ harness = false
 name = "call_counts"
 harness = false
 
+# This one runs itself as a subprocess, which its own `main` recognizes.
+[[test]]
+name = "child_cleanup"
+harness = false
+
 [[test]]
 name = "controller_for"
 harness = false

@@ -13,6 +13,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -66,9 +67,70 @@ pub fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Puts this test process in a job of its own that ends every process in
+/// it when this process ends, once, before its first child is started: every
+/// child it starts from then on, `mockapp` included, is in that job from its
+/// first instruction.
+///
+/// [`MockApp`]'s drop ends its process when a test fails by unwinding, but a
+/// test process can end without unwinding: a panic in a callback the system
+/// calls (a `WinEvent` hook's, a UIA handler's) cannot unwind and aborts the
+/// process, and the harness ends its process with `TerminateProcess`
+/// (`harness.rs`). A `mockapp` left running then keeps the standard error it
+/// inherited open, and `cargo test`, which reads that to its end, waits for
+/// it forever. With the job, the system ends every child when the job's one
+/// handle closes, which it does as this process ends, however it ends.
+///
+/// # Panics
+///
+/// Panics if the job cannot be made, or this process cannot be put in it:
+/// a child started then could outlive the test.
+pub fn contain_children() {
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    /// The job's handle, held, never closed, for the life of this process.
+    static JOB: OnceLock<usize> = OnceLock::new();
+    JOB.get_or_init(|| {
+        // SAFETY: no attributes and no name: a new unnamed job, whose
+        // handle is not inheritable, so no child holds it open.
+        let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+            .unwrap_or_else(|error| panic!("the tests' job could not be made: {error}"));
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: `limits` is the structure the information class names,
+        // its size given.
+        unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&raw const limits).cast(),
+                u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
+                    .expect("the structure's size fits"),
+            )
+        }
+        .unwrap_or_else(|error| {
+            panic!("the tests' job could not be set to end its processes: {error}")
+        });
+        // SAFETY: the pseudo-handle of this process; no preconditions.
+        let this_process = unsafe { GetCurrentProcess() };
+        // SAFETY: the job handle made above and this process's handle. A
+        // process already in a job (cargo's) is put in this one nested
+        // inside it.
+        unsafe { AssignProcessToJobObject(job, this_process) }
+            .unwrap_or_else(|error| panic!("the test process could not join its job: {error}"));
+        job.0 as usize
+    });
+}
+
 /// A running `mockapp` child process: killed on drop so a failing assertion
 /// (which unwinds past the rest of the test) never leaves a window behind
-/// to confuse the next test or a developer's desktop.
+/// to confuse the next test or a developer's desktop; and in this process's
+/// job ([`contain_children`]), so it ends with this process however that
+/// ends.
 pub struct MockApp {
     child: Child,
     stdin: ChildStdin,
@@ -197,6 +259,7 @@ pub fn now_us() -> u64 {
 /// guard. Panics with a clear message if the process never becomes ready.
 #[must_use]
 pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
+    contain_children();
     let exe = env!("CARGO_BIN_EXE_mockapp");
     let mut child = Command::new(exe)
         .arg("--fixture")
@@ -227,22 +290,23 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
         }
     });
 
-    match rx.recv_timeout(WAIT_TIMEOUT) {
-        Ok(line) if line == "ready" => {}
-        Ok(other) => panic!("mockapp's first stdout line was {other:?}, not \"ready\""),
-        Err(_) => {
-            let _ = child.kill();
-            panic!(
-                "mockapp did not print \"ready\" within {WAIT_TIMEOUT:?} (title {title:?}, fixture {fixture:?})"
-            );
-        }
-    }
-
-    MockApp {
+    // The guard first, so a mockapp that never becomes ready is ended with
+    // it.
+    let app = MockApp {
         child,
         stdin,
         lines: rx,
         title: title.to_owned(),
+    };
+    match app.lines.recv_timeout(WAIT_TIMEOUT) {
+        Ok(line) if line == "ready" => app,
+        Ok(other) => panic!("mockapp's first stdout line was {other:?}, not \"ready\""),
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+            "mockapp did not print \"ready\" within {WAIT_TIMEOUT:?} (title {title:?}, fixture {fixture:?})"
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => panic!(
+            "mockapp closed its output before printing \"ready\" (title {title:?}, fixture {fixture:?})"
+        ),
     }
 }
 

@@ -292,7 +292,15 @@ The cross-process integration tests in `tests/` spawn the compiled binary
 via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
 (`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
-`wait_until` with a generous timeout). The test files that use UIA as a
+`wait_until` with a generous timeout). Before it starts its first
+`mockapp`, a test process puts itself in a kill-on-close job of its own
+(`contain_children`), so every `mockapp` it starts ends with it however it
+ends: a panic in a callback the system calls aborts the process without
+running `MockApp`'s drop, and a `mockapp` left running would keep the
+standard error it inherited open, on which `cargo test` then waits
+forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
+that starts a `mockapp` and panics where the panic cannot unwind, and
+asserts that the subprocess's standard error closes promptly. The test files that use UIA as a
 client (`arbitration.rs`, `call_counts.rs`, `controller_for.rs`,
 `events.rs`, `focus_reports.rs`, `instruction_limit.rs`, `remote_ops.rs`,
 `terminal.rs`, `text.rs`, `uia_tree.rs`)
