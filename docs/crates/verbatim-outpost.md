@@ -198,7 +198,8 @@ Public API:
   MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
   menu-popup, menu and switcher end, and alert), and desktop-wide UIA
   subscriptions for the events NVDA registers globally on Windows 11: an
-  element selected, a menu opened, and notifications, and only then
+  element selected, a menu opened, and notifications, registered together
+  as one event handler group on the desktop's root element, and only then
   announces `Ready`, so focus and menus are seen from the moment it does
   (announcing first lost a menu opened right after start, found
   2026-10-06). The event thread (`EventThread::spawn`) likewise returns

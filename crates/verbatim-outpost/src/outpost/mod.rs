@@ -525,7 +525,7 @@ fn register_focus_properties(context: &Arc<Context>) -> Option<Registration> {
         properties: FOCUS_PROPERTIES.to_vec(),
         callback,
     };
-    match Registration::new(subscription, Scope::Nothing) {
+    match Registration::new(vec![subscription], Scope::Nothing) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(
@@ -567,7 +567,7 @@ fn register_text_events(context: &Arc<Context>) -> Option<Registration> {
         ],
         callback,
     };
-    match Registration::new(subscription, Scope::Nothing) {
+    match Registration::new(vec![subscription], Scope::Nothing) {
         Ok(registration) => Some(registration),
         Err(error) => {
             fault(context, format!("UIA text subscription failed: {error}"));

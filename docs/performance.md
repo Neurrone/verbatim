@@ -704,3 +704,25 @@ the client, so no operation's call count changed.
   for a starting application's answer as it was.
 - Creating a client: 0.038 ms at the median before, 0.036 after.
 
+### Event handler groups
+
+Every `verbatim_uia::Registration` now registers its subscriptions as one
+`IUIAutomationEventHandlerGroup`, with one `AddEventHandlerGroup` call per
+element of its scope, as NVDA registers its handlers. The focus listener's
+three desktop-wide subscriptions (an element selected, a menu opened, and
+notifications) became one registration with one thread and one client,
+where they were three of each. A registration runs on its own thread, so
+it makes no counted call on the worker's; what it costs the application
+is the provider calls UIA makes while registering, now pinned by the
+ratchet (`uia_event_registrations_cost_exactly`), the same with remote
+operations on or off.
+
+- The listener's registration: none of mockapp's provider calls, before
+  and after. Registering it took 18.5 ms at the median (24.9 at the 95th
+  percentile) as three registrations and 9.9 ms (11.9) as one group, 30
+  runs each.
+- An outpost's focus-following property subscription moved to a focus
+  inside a group (the focus, the group, and the window): 2
+  `HostRawElementProvider` and 5 `FragmentRoot` provider calls, and 1.19
+  ms at the median before, 1.15 after, as one group per element.
+

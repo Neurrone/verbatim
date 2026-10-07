@@ -229,7 +229,8 @@ that `select` is observed by a selection `verbatim_uia::Registration` (with
 the delivered element's mapped snapshot carrying its name and `Selected`
 state) and by the WinEvent hook as `WinEventKind::Selection`, and that
 `notify` is observed by a notification `verbatim_uia::Registration` with its
-full payload — property, value, selection, and notification changes are
+full payload, and that one registration of all three, one event handler
+group, hears each — property, value, selection, and notification changes are
 used rather than focus, so the tests never depend on real keyboard focus
 or `SetForegroundWindow` succeeding, and pass headless on GitHub
 `windows-latest` runners. `controller_for.rs` selects items with `select`
@@ -277,5 +278,8 @@ does, reading the calls from the event's or reply's timing. The UIA ones
 run on the test's own thread, making the same `verbatim-uia` calls in the
 same order as the outpost's worker once it has the element: the outpost
 finds a UIA focus's element by reading the system's keyboard focus, which
-a test must not take. On a mismatch the test prints every measured count,
+a test must not take. Event registrations, which run on a registration's
+own thread, are pinned by the provider calls they cost mockapp: the focus
+listener's desktop-wide group and an outpost's focus-following property
+subscription. On a mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

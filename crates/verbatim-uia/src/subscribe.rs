@@ -1,28 +1,33 @@
 //! UIA event subscriptions: property changes, automation events (an element
-//! selected, a menu opened), and notifications, each over a [`Scope`] that
-//! can be moved later.
+//! selected, a menu opened), and notifications, over a [`Scope`] that can be
+//! moved later.
 //!
-//! Each [`Registration`] owns its own thread, apartment, client, and handler.
-//! Moving it ([`Registration::retarget`]) removes everything its client
-//! registered and registers again on the new scope, on that thread, so the
-//! caller never waits: removing a UIA handler waits for its running
-//! callbacks to finish, which is why callbacks must never wait on whoever
-//! moves the subscription. Dropping a registration unregisters and ends its
-//! thread. Every handler is registered with the base cache request, so the
-//! element arrives with its properties prefetched and the callback reads
-//! them without a cross-process call.
+//! Each [`Registration`] owns its own thread, apartment, client, and
+//! handlers, and registers all of its subscriptions as one event handler
+//! group (`IUIAutomationEventHandlerGroup`): the handlers are added to the
+//! group, which is local, and the group is registered on each element of
+//! the scope in one `AddEventHandlerGroup` call, as NVDA registers its
+//! handlers. Moving it ([`Registration::retarget`]) removes everything its
+//! client registered and registers the group again on the new scope, on
+//! that thread, so the caller never waits: removing a UIA handler waits for
+//! its running callbacks to finish, which is why callbacks must never wait
+//! on whoever moves the subscription. Dropping a registration unregisters
+//! and ends its thread. Every handler is registered with the base cache
+//! request, so the element arrives with its properties prefetched and the
+//! callback reads them without a cross-process call.
 
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation5, IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationEventHandler,
-    IUIAutomationNotificationEventHandler, IUIAutomationPropertyChangedEventHandler,
-    NotificationKind, NotificationProcessing, TreeScope, TreeScope_Element, TreeScope_Subtree,
-    UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_IsEnabledPropertyId,
-    UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId,
-    UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    IUIAutomation6, IUIAutomationCacheRequest, IUIAutomationElement, IUIAutomationEventHandler,
+    IUIAutomationEventHandlerGroup, IUIAutomationNotificationEventHandler,
+    IUIAutomationPropertyChangedEventHandler, NotificationKind, NotificationProcessing, TreeScope,
+    TreeScope_Element, TreeScope_Subtree, UIA_EVENT_ID,
+    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId,
+    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
+    UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -113,26 +118,29 @@ pub enum Subscription {
     },
 }
 
-/// A live subscription. Dropping it unregisters and ends its thread.
+/// A live subscription: one or more [`Subscription`]s registered together
+/// as one event handler group. Dropping it unregisters and ends its thread.
 pub struct Registration {
     retarget: Option<mpsc::Sender<Scope>>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Registration {
-    /// Subscribes to `subscription` over `scope`, returning once registered.
+    /// Subscribes to every one of `subscriptions` over `scope`, as one event
+    /// handler group, returning once registered.
     ///
     /// # Errors
     ///
-    /// Returns the COM error if the client, cache request, or handler cannot
-    /// be created. An element of the scope that cannot be resolved is skipped
-    /// rather than failing the registration.
-    pub fn new(subscription: Subscription, scope: Scope) -> windows::core::Result<Self> {
+    /// Returns the COM error if the client, cache request, or a handler
+    /// cannot be created. An element of the scope that cannot be resolved,
+    /// or on which the group cannot be registered, is skipped rather than
+    /// failing the registration.
+    pub fn new(subscriptions: Vec<Subscription>, scope: Scope) -> windows::core::Result<Self> {
         let (retarget_tx, retarget_rx) = mpsc::channel::<Scope>();
         let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
         let join = thread::Builder::new()
             .name("verbatim-uia-subscription".to_owned())
-            .spawn(move || run(subscription, &scope, &ready_tx, &retarget_rx))
+            .spawn(move || run(subscriptions, &scope, &ready_tx, &retarget_rx))
             .map_err(|e| {
                 windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
             })?;
@@ -181,24 +189,17 @@ enum Handler {
     ),
     Event(IUIAutomationEventHandler, UIA_EVENT_ID),
     Events(IUIAutomationEventHandler, Vec<UIA_EVENT_ID>),
-    Notifications(IUIAutomationNotificationEventHandler, IUIAutomation5),
+    Notifications(IUIAutomationNotificationEventHandler),
 }
 
-fn run(
-    subscription: Subscription,
-    scope: &Scope,
-    ready: &mpsc::Sender<windows::core::Result<()>>,
-    retarget: &mpsc::Receiver<Scope>,
-) {
-    let setup = (|| -> windows::core::Result<(Uia, IUIAutomationCacheRequest, Handler)> {
-        let uia = Uia::new()?;
-        let cache = uia.base_cache_request()?;
-        let handler = match subscription {
+impl Handler {
+    fn of(subscription: Subscription) -> Self {
+        match subscription {
             Subscription::Properties {
                 properties,
                 callback,
-            } => Handler::Properties(handlers::PropertyHandler { callback }.into(), properties),
-            Subscription::Event { event, callback } => Handler::Event(
+            } => Self::Properties(handlers::PropertyHandler { callback }.into(), properties),
+            Subscription::Event { event, callback } => Self::Event(
                 handlers::EventHandler {
                     callback: Arc::new(move |element, _| callback(element)),
                 }
@@ -206,89 +207,156 @@ fn run(
                 event,
             ),
             Subscription::Events { events, callback } => {
-                Handler::Events(handlers::EventHandler { callback }.into(), events)
+                Self::Events(handlers::EventHandler { callback }.into(), events)
             }
-            Subscription::Notifications { callback } => Handler::Notifications(
-                handlers::NotificationHandler { callback }.into(),
-                uia.client().cast()?,
-            ),
-        };
-        Ok((uia, cache, handler))
+            Subscription::Notifications { callback } => {
+                Self::Notifications(handlers::NotificationHandler { callback }.into())
+            }
+        }
+    }
+
+    /// Adds this handler to `group`, listening over `tree_scope` with
+    /// `cache`. Local: nothing is registered until the group is.
+    fn add_to(
+        &self,
+        group: &IUIAutomationEventHandlerGroup,
+        tree_scope: TreeScope,
+        cache: &IUIAutomationCacheRequest,
+    ) -> windows::core::Result<()> {
+        match self {
+            // SAFETY: the group, cache, and handler are live and owned by
+            // this thread; the property slice outlives the call.
+            Self::Properties(handler, properties) => unsafe {
+                group.AddPropertyChangedEventHandler(tree_scope, cache, handler, properties)
+            },
+            // SAFETY: as above.
+            Self::Event(handler, event) => unsafe {
+                group.AddAutomationEventHandler(*event, tree_scope, cache, handler)
+            },
+            Self::Events(handler, events) => events.iter().try_for_each(|event| {
+                // SAFETY: as above.
+                unsafe { group.AddAutomationEventHandler(*event, tree_scope, cache, handler) }
+            }),
+            // SAFETY: as above.
+            Self::Notifications(handler) => unsafe {
+                group.AddNotificationEventHandler(tree_scope, cache, handler)
+            },
+        }
+    }
+}
+
+/// What a registration's thread holds: its client, also as
+/// `IUIAutomation6` for the event handler groups, the cache request, and the
+/// handlers.
+struct Parts {
+    uia: Uia,
+    client: IUIAutomation6,
+    cache: IUIAutomationCacheRequest,
+    handlers: Vec<Handler>,
+}
+
+fn run(
+    subscriptions: Vec<Subscription>,
+    scope: &Scope,
+    ready: &mpsc::Sender<windows::core::Result<()>>,
+    retarget: &mpsc::Receiver<Scope>,
+) {
+    let setup = (|| -> windows::core::Result<Parts> {
+        let uia = Uia::new()?;
+        Ok(Parts {
+            client: uia.client().cast()?,
+            cache: uia.base_cache_request()?,
+            handlers: subscriptions.into_iter().map(Handler::of).collect(),
+            uia,
+        })
     })();
-    let (uia, cache, handler) = match setup {
+    let parts = match setup {
         Ok(parts) => parts,
         Err(error) => {
             let _ = ready.send(Err(error));
             return;
         }
     };
-    register(&uia, &cache, &handler, scope);
+    register(&parts, scope);
     let _ = ready.send(Ok(()));
     while let Ok(mut scope) = retarget.recv() {
         // Only the newest scope matters: skip any that queued up behind it.
         while let Ok(newer) = retarget.try_recv() {
             scope = newer;
         }
-        // SAFETY: removing this thread's own client's registrations.
+        // SAFETY: removing this thread's own client's registrations. One on
+        // an element that has gone since is forgotten by UIA itself, as NVDA
+        // notes.
         unsafe {
-            let _ = uia.client().RemoveAllEventHandlers();
+            let _ = parts.uia.client().RemoveAllEventHandlers();
         }
-        register(&uia, &cache, &handler, &scope);
+        register(&parts, &scope);
     }
     // SAFETY: as above, before teardown.
     unsafe {
-        let _ = uia.client().RemoveAllEventHandlers();
+        let _ = parts.uia.client().RemoveAllEventHandlers();
     }
 }
 
-/// Registers `handler` on every element of `scope`.
-fn register(uia: &Uia, cache: &IUIAutomationCacheRequest, handler: &Handler, scope: &Scope) {
-    let targets: Vec<(IUIAutomationElement, TreeScope)> = match scope {
-        Scope::Nothing => Vec::new(),
-        Scope::Windows(hwnds) => hwnds
-            .iter()
-            .filter_map(|&hwnd| uia.element_from_handle(hwnd, cache).ok())
-            .map(|element| (element, TreeScope_Subtree))
-            .collect(),
-        // SAFETY: `cache` is a live cache request owned by this thread.
-        Scope::Desktop => unsafe { uia.client().GetRootElementBuildCache(cache) }
-            .ok()
-            .map(|root| (root, TreeScope_Subtree))
-            .into_iter()
-            .collect(),
-        Scope::Elements(elements) => elements
-            .iter()
-            .filter_map(|agile| agile.resolve().ok())
-            .map(|element| (element, TreeScope_Element))
-            .collect(),
+/// Registers the handlers, as one group, on every element of `scope`.
+fn register(parts: &Parts, scope: &Scope) {
+    let Parts {
+        uia,
+        client,
+        cache,
+        handlers,
+    } = parts;
+    let (targets, tree_scope): (Vec<IUIAutomationElement>, TreeScope) = match scope {
+        Scope::Nothing => (Vec::new(), TreeScope_Element),
+        Scope::Windows(hwnds) => (
+            hwnds
+                .iter()
+                .filter_map(|&hwnd| uia.element_from_handle(hwnd, cache).ok())
+                .collect(),
+            TreeScope_Subtree,
+        ),
+        Scope::Desktop => (
+            // SAFETY: `cache` is a live cache request owned by this thread.
+            unsafe { uia.client().GetRootElementBuildCache(cache) }
+                .ok()
+                .into_iter()
+                .collect(),
+            TreeScope_Subtree,
+        ),
+        Scope::Elements(elements) => (
+            elements
+                .iter()
+                .filter_map(|agile| agile.resolve().ok())
+                .collect(),
+            TreeScope_Element,
+        ),
     };
-    for (element, tree_scope) in targets {
-        // Each call takes the element, cache, and handler, live and owned by
-        // this thread's client.
-        let _ = match handler {
-            // SAFETY: as above; the property slice outlives the call.
-            Handler::Properties(handler, properties) => unsafe {
-                uia.client().AddPropertyChangedEventHandlerNativeArray(
-                    &element, tree_scope, cache, handler, properties,
-                )
-            },
-            // SAFETY: as above.
-            Handler::Event(handler, event) => unsafe {
-                uia.client()
-                    .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler)
-            },
-            Handler::Events(handler, events) => events.iter().try_for_each(|event| {
-                // SAFETY: as above.
-                unsafe {
-                    uia.client()
-                        .AddAutomationEventHandler(*event, &element, tree_scope, cache, handler)
-                }
-            }),
-            // SAFETY: as above.
-            Handler::Notifications(handler, client5) => unsafe {
-                client5.AddNotificationEventHandler(&element, tree_scope, cache, handler)
-            },
-        };
+    if targets.is_empty() {
+        return;
+    }
+    let group = (|| -> windows::core::Result<IUIAutomationEventHandlerGroup> {
+        // SAFETY: a local call on this thread's live client.
+        let group = unsafe { client.CreateEventHandlerGroup() }?;
+        for handler in handlers {
+            handler.add_to(&group, tree_scope, cache)?;
+        }
+        Ok(group)
+    })();
+    let group = match group {
+        Ok(group) => group,
+        Err(error) => {
+            tracing::warn!(%error, "a UIA event handler group could not be built");
+            return;
+        }
+    };
+    for element in targets {
+        // SAFETY: the element and group are live and owned by this thread's
+        // client.
+        if let Err(error) = unsafe { client.AddEventHandlerGroup(&element, &group) } {
+            // As NVDA logs it and goes on: the element has most likely gone,
+            // and nothing is registered on it.
+            tracing::debug!(%error, "a UIA event handler group could not be registered");
+        }
     }
 }
 

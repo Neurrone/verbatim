@@ -58,14 +58,19 @@ use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{Anchors, CaretSignal, TextSource, caret_report, perform};
 use verbatim_uia::map::{snapshot_from_cached_element, with_legacy_checked_state};
 use verbatim_uia::{
-    AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, NodeIdRegistry, Uia,
+    AncestorStops, AncestorWalk, CACHED_PROPERTIES, ElementExt, FOCUS_PROPERTIES, NodeIdRegistry,
+    Registration, Scope, Subscription, Uia,
 };
 use verbatim_uia_rops::{
     FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
     navigation_step,
 };
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{IUIAutomationCacheRequest, IUIAutomationElement};
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationCacheRequest, IUIAutomationElement, UIA_MenuOpenedEventId,
+    UIA_SelectionItem_ElementSelectedEventId,
+};
+use windows::core::AgileReference;
 
 /// The fixture's nodes, by their index in mockapp's tree (depth first, the
 /// root at 0): mockapp answers `WM_GETOBJECT` for index `i` at object id
@@ -1154,6 +1159,73 @@ fn uia_navigation_steps_cost_exactly() {
     drop(app);
 }
 
+/// What registering for events costs mockapp. A registration is made on its
+/// own thread and is the same with remote operations on or off, so it
+/// makes no counted call on this thread either way; what it costs is the
+/// provider calls UIA makes while registering, pinned here: the focus
+/// listener's desktop-wide group (an element selected, a menu opened, and
+/// notifications), and an outpost's focus-following property subscription
+/// moved to a focus, `First` inside the group `Settings`.
+fn uia_event_registrations_cost_exactly() {
+    let title = common::unique_title("mockapp-counts-uia-registrations");
+    let app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+
+    let (registration, cost) = under_test.measure(hwnd, |_| {
+        Registration::new(
+            vec![
+                Subscription::Event {
+                    event: UIA_SelectionItem_ElementSelectedEventId,
+                    callback: Arc::new(|_| {}),
+                },
+                Subscription::Event {
+                    event: UIA_MenuOpenedEventId,
+                    callback: Arc::new(|_| {}),
+                },
+                Subscription::Notifications {
+                    callback: Arc::new(|_, _, _, _, _| {}),
+                },
+            ],
+            Scope::Desktop,
+        )
+        .expect("the listener's registration")
+    });
+    drop(registration);
+    ratchet.check(
+        "UIA desktop-wide registration, one group",
+        &cost,
+        calls(0, 0, 0),
+        &[],
+    );
+
+    let followed = ["First", "Settings", "Mockapp Counts Fixture"]
+        .iter()
+        .map(|name| AgileReference::new(under_test.element(name)).expect("an agile reference"))
+        .collect();
+    let (registration, cost) = under_test.measure(hwnd, |_| {
+        Registration::new(
+            vec![Subscription::Properties {
+                properties: FOCUS_PROPERTIES.to_vec(),
+                callback: Arc::new(|_, _| {}),
+            }],
+            Scope::Elements(followed),
+        )
+        .expect("the focus-following registration")
+    });
+    drop(registration);
+    ratchet.check(
+        "UIA focus-following registration",
+        &cost,
+        calls(0, 0, 0),
+        &[("HostRawElementProvider", 2), ("FragmentRoot", 5)],
+    );
+
+    ratchet.finish();
+    drop(app);
+}
+
 /// A caret key's wait that never waits: the caret has already moved.
 struct AlreadyMoved;
 
@@ -1952,6 +2024,10 @@ fn main() {
         (
             "uia_navigation_steps_cost_exactly",
             uia_navigation_steps_cost_exactly,
+        ),
+        (
+            "uia_event_registrations_cost_exactly",
+            uia_event_registrations_cost_exactly,
         ),
     ]);
 }

@@ -35,7 +35,7 @@ fn uia_set_name_raises_a_property_changed_event() {
     let seen = Arc::new(Mutex::new(Vec::<i32>::new()));
     let seen_cb = seen.clone();
     let _registration = Registration::new(
-        Subscription::Properties {
+        vec![Subscription::Properties {
             properties: FOCUS_PROPERTIES.to_vec(),
             callback: Arc::new(move |_element, property_id| {
                 seen_cb
@@ -43,7 +43,7 @@ fn uia_set_name_raises_a_property_changed_event() {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push(property_id);
             }),
-        },
+        }],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");
@@ -101,7 +101,7 @@ fn uia_set_value_raises_a_property_changed_event() {
     let seen = Arc::new(Mutex::new(Vec::<i32>::new()));
     let seen_cb = seen.clone();
     let _registration = Registration::new(
-        Subscription::Properties {
+        vec![Subscription::Properties {
             properties: FOCUS_PROPERTIES.to_vec(),
             callback: Arc::new(move |_element, property_id| {
                 seen_cb
@@ -109,7 +109,7 @@ fn uia_set_value_raises_a_property_changed_event() {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push(property_id);
             }),
-        },
+        }],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");
@@ -138,7 +138,7 @@ fn uia_select_raises_a_selection_event() {
     let registry =
         verbatim_uia::NodeIdRegistry::new(Arc::new(std::sync::atomic::AtomicU64::new(1)));
     let _registration = Registration::new(
-        Subscription::Event {
+        vec![Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element| {
                 let snapshot = verbatim_uia::map::snapshot_from_cached_element(element, &registry);
@@ -147,7 +147,7 @@ fn uia_select_raises_a_selection_event() {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push(snapshot);
             }),
-        },
+        }],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");
@@ -183,7 +183,7 @@ fn uia_notify_raises_a_notification_event() {
     let seen = Arc::new(Mutex::new(Vec::<SeenNotification>::new()));
     let seen_cb = seen.clone();
     let _registration = Registration::new(
-        Subscription::Notifications {
+        vec![Subscription::Notifications {
             callback: Arc::new(move |_element, kind, processing, display, activity| {
                 seen_cb
                     .lock()
@@ -195,7 +195,7 @@ fn uia_notify_raises_a_notification_event() {
                         activity,
                     ));
             }),
-        },
+        }],
         Scope::Windows(vec![hwnd.0 as isize]),
     )
     .expect("Registration::new");
@@ -212,6 +212,59 @@ fn uia_notify_raises_a_notification_event() {
                     && display.as_deref() == Some("Window snapped to the left")
                     && activity.as_deref() == Some("mockapp-notify")
             })
+    });
+
+    app.send("quit");
+}
+
+/// One registration of several subscriptions, as the focus listener makes,
+/// is one event handler group, and each of its handlers hears its own
+/// events.
+fn uia_one_group_delivers_each_of_its_subscriptions() {
+    let title = common::unique_title("mockapp-events-uia-group");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+
+    let seen = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let note = |what: &'static str| {
+        let seen = Arc::clone(&seen);
+        move || {
+            seen.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(what);
+        }
+    };
+    let (property, selection, notification) =
+        (note("property"), note("selection"), note("notification"));
+    let _registration = Registration::new(
+        vec![
+            Subscription::Properties {
+                properties: FOCUS_PROPERTIES.to_vec(),
+                callback: Arc::new(move |_, _| property()),
+            },
+            Subscription::Event {
+                event: UIA_SelectionItem_ElementSelectedEventId,
+                callback: Arc::new(move |_| selection()),
+            },
+            Subscription::Notifications {
+                callback: Arc::new(move |_, _, _, _, _| notification()),
+            },
+        ],
+        Scope::Windows(vec![hwnd.0 as isize]),
+    )
+    .expect("Registration::new");
+
+    app.send("set-name btn1 Renamed");
+    app.send("select item1");
+    app.send("notify Done");
+
+    common::wait_until("a property change, a selection, and a notification", || {
+        let seen = seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ["property", "selection", "notification"]
+            .iter()
+            .all(|what| seen.contains(what))
     });
 
     app.send("quit");
@@ -356,6 +409,10 @@ fn main() {
         (
             "uia_notify_raises_a_notification_event",
             uia_notify_raises_a_notification_event,
+        ),
+        (
+            "uia_one_group_delivers_each_of_its_subscriptions",
+            uia_one_group_delivers_each_of_its_subscriptions,
         ),
         (
             "msaa_set_name_raises_a_name_change_win_event",
