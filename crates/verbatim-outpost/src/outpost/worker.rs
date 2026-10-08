@@ -1371,52 +1371,8 @@ impl Worker<'_> {
         if read::window_uses_uia(self.context, hwnd) {
             return; // UIA owns this window.
         }
-        // The caret, a text selection, or the text of the focus, when it is
-        // an edit control: reported from the control's messages, without
-        // reading its MSAA object (whose value is its whole text).
-        let client = Object::Msaa(hwnd, OBJID_CLIENT.0, CHILDID_SELF);
-        let of_focus = self.context.intake.focused() == Some(client);
-        match kind {
-            WinEventKind::Caret | WinEventKind::TextSelectionChange => {
-                if of_focus {
-                    let node_id =
-                        self.context
-                            .msaa_registry
-                            .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                    if !self.check_open_watch(node_id, true) {
-                        self.caret_of(node_id, trace, observed_at_ms, false);
-                    }
-                } else if let Some(node_id) = self.watched_edit(hwnd) {
-                    // A caret key's watch on an edit control Core took as
-                    // its focus from a focus-now answer.
-                    self.check_open_watch(node_id, true);
-                }
-                return;
-            }
-            WinEventKind::ValueChange
-                if of_focus
-                    && id_object == OBJID_CLIENT.0
-                    && id_child == CHILDID_SELF
-                    && verbatim_ia2::edit::edit_api_version(
-                        &crate::arbitration::normalize_class_name(&window_class_name(hwnd)),
-                    )
-                    .is_some() =>
-            {
-                let node_id =
-                    self.context
-                        .msaa_registry
-                        .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                self.check_open_watch(node_id, false);
-                self.emit(
-                    trace,
-                    observed_at_ms,
-                    Backend::Msaa,
-                    Some(hwnd),
-                    NormalizedEvent::TextChanged { node_id },
-                );
-                return;
-            }
-            _ => {}
+        if self.edit_event(kind, (hwnd, id_object, id_child), trace, observed_at_ms) {
+            return;
         }
         let Some(object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child) else {
             return;
@@ -1472,6 +1428,63 @@ impl Worker<'_> {
             _ => return,
         };
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+    }
+
+    /// The caret, a text selection, or the text of the focus, when it is an
+    /// edit control: reported from the control's messages, without reading
+    /// its MSAA object (whose value is its whole text). Whether the event
+    /// was one of these, and so handled.
+    fn edit_event(
+        &mut self,
+        kind: WinEventKind,
+        (hwnd, id_object, id_child): (isize, i32, i32),
+        trace: TraceId,
+        observed_at_ms: u64,
+    ) -> bool {
+        let client = Object::Msaa(hwnd, OBJID_CLIENT.0, CHILDID_SELF);
+        let of_focus = self.context.intake.focused() == Some(client);
+        match kind {
+            WinEventKind::Caret | WinEventKind::TextSelectionChange => {
+                if of_focus {
+                    let node_id =
+                        self.context
+                            .msaa_registry
+                            .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                    if !self.check_open_watch(node_id, true) {
+                        self.caret_of(node_id, trace, observed_at_ms, false);
+                    }
+                } else if let Some(node_id) = self.watched_edit(hwnd) {
+                    // A caret key's watch on an edit control Core took as
+                    // its focus from a focus-now answer.
+                    self.check_open_watch(node_id, true);
+                }
+                true
+            }
+            WinEventKind::ValueChange
+                if of_focus
+                    && id_object == OBJID_CLIENT.0
+                    && id_child == CHILDID_SELF
+                    && verbatim_ia2::edit::edit_api_version(
+                        &crate::arbitration::normalize_class_name(&window_class_name(hwnd)),
+                    )
+                    .is_some() =>
+            {
+                let node_id =
+                    self.context
+                        .msaa_registry
+                        .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                self.check_open_watch(node_id, false);
+                self.emit(
+                    trace,
+                    observed_at_ms,
+                    Backend::Msaa,
+                    Some(hwnd),
+                    NormalizedEvent::TextChanged { node_id },
+                );
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The number of children of `node`, a Win32 tree view item at
