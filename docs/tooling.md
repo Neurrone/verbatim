@@ -973,9 +973,16 @@ to the agent at a scenario's start (it is not the foreground process, nor
 started by it, and there is a foreground window, the desktop's), and the
 foreground lock never expires on this machine
 (`SPI_GETFOREGROUNDLOCKTIMEOUT` reads 2147483647 ms, where Windows'
-default is 200000). So a local run is reliable only while nothing else
-injects input on the desktop; `phase6-design.md`, "Test isolation and the
-foreground lock (2026-10-08)", has the evidence and the options.
+default is 200000). So the harness no longer relies on the right for its
+own windows: `Scenario::launch_titled`, which launches mockapp and the
+Windows Forms text box, opens the window minimized and inactive and then
+restores it and sets it as the foreground, as Notepad's documents have
+always been brought forward, which works whatever input came last. Only
+`system_information_tree`'s msinfo32 still opens in front
+(`Scenario::launch_target`), and the console host and Windows Terminal
+scenarios, so those still need the agent's input to have come last;
+`phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
+has the evidence.
 
 **Windows 11 Notepad restores tabs from its previous session.** Notepad
 keeps the tabs of a window that was closed, rather than whose tabs were

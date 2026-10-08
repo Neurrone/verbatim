@@ -147,7 +147,13 @@ scenario runs (see `docs/tooling.md`).
 and the input methods above:
 
 - `launch_titled(command, args, title, owner_exits)` starts a program
-  whose window carries `title` and waits for it to take the foreground;
+  whose window carries `title`, its first window minimized and inactive,
+  then restores that window and sets it as the foreground, as its taskbar
+  button does, and waits for it to take the foreground, so the launch does
+  not depend on the agent having injected the last input (`docs/tooling.md`,
+  "Windows' foreground lock keeps launched applications behind");
+  `launch_target`, for msinfo32, opens its window in front as
+  `launch_titled` did before 2026-10-08;
   `launch_console(command, args, title)` starts a console program with its
   console window titled from its first frame (the launch's console title),
   which the console host scenarios use; `launch_target` refuses to run when
