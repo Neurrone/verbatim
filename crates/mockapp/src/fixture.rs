@@ -125,7 +125,12 @@ struct RawNode {
     #[serde(default)]
     edit_version_6: bool,
     #[serde(default)]
-    children: Vec<RawNode>,
+    /// Kept as JSON values, each made a node only when it is converted:
+    /// deserializing a node's many fields takes a large stack frame in a
+    /// debug build (about 17 KB), and nested inside its parent's, sixty
+    /// levels overflowed the main thread's 1 MB stack, where parsing JSON
+    /// values nests in small frames.
+    children: Vec<serde_json::Value>,
 }
 
 /// A text's other formatting, each a list of stretches, as UTF-16 offsets
@@ -278,7 +283,12 @@ impl FixtureNode {
 /// duplicate node id.
 pub(crate) fn load(path: &Path) -> Result<FixtureNode, FixtureError> {
     let text = std::fs::read_to_string(path).map_err(FixtureError::Io)?;
-    let raw: RawNode = serde_json::from_str(&text).map_err(FixtureError::Json)?;
+    parse(&text)
+}
+
+/// The fixture `text` describes.
+fn parse(text: &str) -> Result<FixtureNode, FixtureError> {
+    let raw: RawNode = serde_json::from_str(text).map_err(FixtureError::Json)?;
     let mut seen_ids = std::collections::HashSet::new();
     let root = convert(raw, &mut seen_ids)?;
     check_controlled(&root, &seen_ids)?;
@@ -323,6 +333,7 @@ fn convert(
     }
     let mut children = Vec::with_capacity(raw.children.len());
     for child in raw.children {
+        let child: RawNode = serde_json::from_value(child).map_err(FixtureError::Json)?;
         children.push(convert(child, seen_ids)?);
     }
     Ok(FixtureNode {
@@ -425,6 +436,42 @@ pub(crate) fn state_from_fixture_str(name: &str) -> Option<State> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixture of `depth` groups, each the only child of the one before,
+    /// around one button.
+    fn nested(depth: usize) -> String {
+        use std::fmt::Write as _;
+        let mut text = String::new();
+        for level in 0..depth {
+            let _ = write!(
+                text,
+                "{{\"id\":\"n{level}\",\"role\":\"group\",\"children\":["
+            );
+        }
+        text.push_str("{\"id\":\"leaf\",\"role\":\"button\"}");
+        for _ in 0..depth {
+            text.push_str("]}");
+        }
+        text
+    }
+
+    #[test]
+    fn a_fixture_nested_as_deep_as_json_allows_loads_on_the_main_threads_stack() {
+        // Each level is an object and its children's array, so 63 levels
+        // and the leaf are 127 nested containers, within the 128 that
+        // serde_json parses; the main thread's stack is 1 MB on Windows.
+        let text = nested(63);
+        let loaded = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(move || {
+                let root = parse(&text).expect("the fixture parses");
+                crate::tree::Tree::build(root).nodes.len()
+            })
+            .expect("a thread")
+            .join()
+            .expect("the fixture loads without overflowing the stack");
+        assert_eq!(loaded, 64);
+    }
 
     #[test]
     fn every_role_name_maps_to_its_role() {
