@@ -45,8 +45,10 @@ Public API:
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `NotForeground`;
     `Absent`; `AllMinimized`, where a cloaked window, kept but not shown,
-    counts as not shown), `MinimizeAll` (the taskbar's Show Desktop command,
-    a wait until every window that can be minimized is, then the desktop
+    counts as not shown), `MinimizeAll` (the taskbar's Minimize All command,
+    and a minimize sent to each window it is to minimize, since the
+    taskbar's command misses a window it has not taken in yet; then a wait
+    until every window that can be minimized is, then the desktop
     brought to the foreground), `CloseWindows` (an ordinary close
     request to every visible window whose title contains some text, then a
     wait for them to go), and `TakeForeignTerminalWindows` (every Windows

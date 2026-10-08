@@ -568,10 +568,9 @@ Implementation notes:
   (`own_element_focused`): if it is the fact's element and has the
   keyboard focus, read live, the focus is reported from it at once, as
   NVDA accepts a UIA focus event whose own element has the keyboard focus
-  (`shouldAllowUIAFocusEvent`); Windows 11 Notepad, starting up, answered
-  the focused element read with a stand-in for one to three seconds while
-  its text area, a window of its own, had the focus (`phase6-design.md`,
-  "Notepad at launch and the outposts' loose ends"). Otherwise the focus has most
+  (`shouldAllowUIAFocusEvent`), where the outpost had held the focus back
+  and read again (`phase6-design.md`, "Notepad at launch and the
+  outposts' loose ends"). Otherwise the focus has most
   likely moved on (NVDA 2027.1 drops a focus event whose element no longer
   has the keyboard focus), but an application still starting can answer
   with a stand-in, so the fact is held back and reported only if a

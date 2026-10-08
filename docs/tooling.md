@@ -985,10 +985,17 @@ the document, and the folders the harness made for Explorer and terminal
 windows, each named with `verbatim-e2e-`; nothing without that marker in
 its name is ever deleted. None of this runs if the test process itself is
 killed outright (Ctrl+C, a CI job cancellation). The next launch then
-sweeps: every process the agent launched that is still running is ended
-by its own handle (`EndLaunched`), harness windows and Notepad harness
-tabs are closed, and harness files and folders in `target/e2e-stage` are
-deleted, before the desktop is minimized. A stray guest-side process is
+sweeps: Notepad harness tabs are closed as tabs first, since a Windows 11
+Notepad ended by its handle keeps its tabs and opens them again next
+time, without their documents, behind a "Cannot find the file" dialog
+that blocks closing them; then every process the agent launched that is
+still running is ended by its own handle (`EndLaunched`), harness windows
+are closed, and harness files and folders in `target/e2e-stage` are
+deleted, before the desktop is minimized. A launch that fails after
+opening its Notepad document closes that tab and deletes the document
+before it reports the failure. Minimizing sends each window a minimize of
+its own besides the taskbar's Minimize All, which misses a window the
+taskbar has not taken in yet, such as the document opened just before. A stray guest-side process is
 also cleared by restoring a checkpoint (`cargo xtask vm restore`).
 
 **A gesture sent immediately after launch can silently do nothing.** The

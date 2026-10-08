@@ -194,9 +194,14 @@ fn started_and_ready(events: &Receiver<OutpostMessage>, target_pid: Pid) -> Outp
 fn an_application_whose_outposts_crashed_repeatedly_is_reported_not_watched() {
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
-    let supervisor =
-        Supervisor::with_executable(events_tx, OutpostOptions::default(), exe.clone(), LIMIT)
-            .expect("the supervisor starts");
+    let supervisor = Supervisor::with_executable(
+        events_tx,
+        OutpostOptions::default(),
+        exe.clone(),
+        LIMIT,
+        std::sync::Arc::default(),
+    )
+    .expect("the supervisor starts");
     match next(&events) {
         OutpostMessage::ListenerReady { replacement: false } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),

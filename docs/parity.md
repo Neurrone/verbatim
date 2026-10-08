@@ -1143,10 +1143,8 @@ verified.
     event's element is a window of its own, the outpost reads that
     window's element and accepts the focus at once if it is the event's
     element and has the keyboard focus, read live, which is exactly
-    NVDA's check (**matched since 2026-10-08**): Windows 11 Notepad,
-    starting up, answered the focused-element read with a stand-in while
-    its text area had the focus, and its focus was held back and announced
-    one to three seconds late (mockapp's
+    NVDA's check (**matched since 2026-10-08**); before, such a focus was
+    held back and read again (mockapp's
     `a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in`).
     A windowless element is still held back as above, since only its own
     window's element can be read without NVDA's event element.

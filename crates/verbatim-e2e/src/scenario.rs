@@ -233,12 +233,13 @@ impl Scenario {
     /// settings, from the desktop every scenario starts from, with
     /// `document` open in Windows 11 Notepad when there is one.
     ///
-    /// In order: ends every process the agent launched for an earlier run
+    /// In order: closes the Notepad harness tabs an earlier run left, as
+    /// tabs, and ends every process the agent launched for an earlier run
     /// that is still running, by its own handle; stages the binaries and
     /// writes the settings (runner-direct mode); closes any window an
     /// earlier run left open by its harness title (a Notepad harness tab as
     /// a tab) and deletes the harness files it left; opens `document`
-    /// ([`Document`]); minimizes every
+    /// ([`Document`]), and closes it again if the launch fails after; minimizes every
     /// window, as Show Desktop does, and waits until they are and the
     /// desktop is in front; starts the recording, when recording; creates the
     /// event Verbatim sets when it is ready, launches it, and waits for the
@@ -268,8 +269,13 @@ impl Scenario {
 
         // An earlier run that ended without its cleanup can have left its
         // Verbatim running from the stage, which staging would then fail to
-        // overwrite: everything the agent launched is ended first.
+        // overwrite: everything the agent launched is ended first. A Notepad
+        // an earlier run left has its harness tabs closed as tabs before
+        // that: Windows 11 Notepad ended by its handle keeps its tabs, and
+        // opens them again next time, without their documents, which the
+        // sweep deletes.
         let mut agent = AgentClient::connect(&agent_addr)?;
+        close_notepad_tabs(&mut agent, DOCUMENT_MARKER)?;
         let ended = agent.end_launched()?;
         if ended > 0 {
             println!("ended {ended} process(es) an earlier run left running");
@@ -325,6 +331,7 @@ impl Scenario {
         }
         let (minimized, desktop) = agent.minimize_all(MINIMIZE_TIMEOUT)?;
         if !minimized {
+            close_documents(&mut agent, &opened)?;
             return Err(io::Error::other(format!(
                 "not every window was minimized within {MINIMIZE_TIMEOUT:?}: {}",
                 describe_foreground(&desktop)
@@ -333,9 +340,15 @@ impl Scenario {
         let dumps_before = crash_dumps(&mut agent);
 
         let mut recording = if crate::recording::enabled() {
-            Some(Recording::start(&mut agent, &run_dir).map_err(|error| {
-                io::Error::other(format!("the recording could not start: {error}"))
-            })?)
+            match Recording::start(&mut agent, &run_dir) {
+                Ok(recording) => Some(recording),
+                Err(error) => {
+                    close_documents(&mut agent, &opened)?;
+                    return Err(io::Error::other(format!(
+                        "the recording could not start: {error}"
+                    )));
+                }
+            }
         } else {
             None
         };
@@ -360,6 +373,7 @@ impl Scenario {
                 if let Some(recording) = &mut recording {
                     recording.stop(&mut agent)?;
                 }
+                close_documents(&mut agent, &opened)?;
                 return Err(error);
             }
         };
@@ -381,6 +395,7 @@ impl Scenario {
                 if let Some(recording) = &mut recording {
                     recording.stop(&mut agent)?;
                 }
+                close_documents(&mut agent, &opened)?;
                 return Err(error);
             }
         };
@@ -1686,11 +1701,13 @@ fn crash_dumps(agent: &mut AgentClient) -> Option<Vec<String>> {
 ///
 /// Returns an error naming anything that could not be cleaned up.
 fn sweep_leftovers(agent: &mut AgentClient, directory: &str) -> io::Result<()> {
+    // Tabs first, as tabs: a Notepad ended by its handle keeps them for its
+    // next session, without their documents, which are deleted below.
+    close_notepad_tabs(agent, DOCUMENT_MARKER)?;
     let ended = agent.end_launched()?;
     if ended > 0 {
         println!("ended {ended} process(es) an earlier run left running");
     }
-    close_notepad_tabs(agent, DOCUMENT_MARKER)?;
     let remaining = agent.close_windows(DOCUMENT_MARKER, CLOSE_TIMEOUT)?;
     if remaining > 0 {
         return Err(io::Error::other(format!(
@@ -1854,12 +1871,30 @@ fn close_notepad_tabs(agent: &mut AgentClient, marker: &str) -> io::Result<()> {
         )?;
         if !gone {
             return Err(io::Error::other(format!(
-                "Notepad's tab {:?} did not close within {CLOSE_TIMEOUT:?}: {}",
+                "Notepad's tab {:?} did not close within {CLOSE_TIMEOUT:?} (a tab Notepad restored from an earlier session whose document is gone shows a \"Cannot find the file\" dialog, which blocks closing it; dismiss it and close the tab): {}",
                 window.title,
                 describe_foreground(&desktop)
             )));
         }
     }
+}
+
+/// Closes the harness documents a launch opened, as tabs, and deletes them,
+/// for a launch that fails after opening them: left open, Notepad would be
+/// ended by its handle at the next launch and keep them for its next
+/// session. Fails when a tab does not close.
+fn close_documents(agent: &mut AgentClient, opened: &[Launched]) -> io::Result<()> {
+    if opened.iter().all(|launched| launched.document.is_none()) {
+        return Ok(());
+    }
+    close_notepad_tabs(agent, DOCUMENT_MARKER)?;
+    for document in opened
+        .iter()
+        .filter_map(|launched| launched.document.as_deref())
+    {
+        agent.delete_file(document)?;
+    }
+    Ok(())
 }
 
 /// Connects to a just-launched, ready Verbatim: the command connection,

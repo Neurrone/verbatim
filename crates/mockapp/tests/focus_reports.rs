@@ -355,14 +355,13 @@ fn a_focus_is_handled_before_slow_reads_queued_ahead_of_it() {
     app.quit();
 }
 
-/// Windows 11 Notepad, starting up, raised a UIA focus event on its text
-/// area, a window of its own, while the focused element read still
-/// answered a stand-in for a while: the focus was held back, and announced
-/// one to three seconds late (`phase6-design.md`, "Live caret event
-/// checks"). NVDA accepts a UIA focus whose own element has the keyboard
-/// focus, read live; so the outpost reads the event's own window's element
-/// and reports the focus at once, though the focused element read answers
-/// another element of the application.
+/// An application can raise a UIA focus event on an element that is a
+/// window of its own, as Windows 11 Notepad's text area is, while the
+/// focused element read answers another of its elements: the outpost held
+/// such a focus back and read again. NVDA accepts a UIA focus whose own
+/// element has the keyboard focus, read live; so the outpost reads the
+/// event's own window's element and reports the focus at once, though the
+/// focused element read answers another element of the application.
 fn a_windowed_focus_is_reported_though_the_focused_element_read_answers_a_stand_in() {
     let title = common::unique_title("mockapp-stand-in");
     let mut app = common::spawn("small.json", "uia", &title);

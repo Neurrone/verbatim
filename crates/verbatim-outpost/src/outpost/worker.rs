@@ -1769,7 +1769,7 @@ impl Worker<'_> {
                     .uia_registry
                     .existing_id(&event.parts.runtime_id)
                 {
-                    text_reads::forget_no_text(self.context, node_id);
+                    text_reads::text_event_from(self.context, node_id, element.as_ref());
                     if !self.check_open_watch(node_id, true) {
                         self.caret_of(node_id, trace, observed_at_ms, false);
                     }
@@ -1781,7 +1781,8 @@ impl Worker<'_> {
                 return self.active_text_position(event, (trace, observed_at_ms));
             }
             UiaKind::TextChanged => {
-                return self.text_changed(&event.parts.runtime_id, hwnd, (trace, observed_at_ms));
+                let changed = (&event.parts.runtime_id[..], element.as_ref());
+                return self.text_changed(changed, hwnd, (trace, observed_at_ms));
             }
             _ => {}
         }
@@ -1824,14 +1825,14 @@ impl Worker<'_> {
     /// for a terminal, has its new output read.
     fn text_changed(
         &mut self,
-        runtime_id: &[i32],
+        (runtime_id, element): (&[i32], Option<&IUIAutomationElement>),
         hwnd: Option<isize>,
         (trace, observed_at_ms): (TraceId, u64),
     ) {
         let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) else {
             return;
         };
-        text_reads::forget_no_text(self.context, node_id);
+        text_reads::text_event_from(self.context, node_id, element);
         self.check_open_watch(node_id, false);
         if self.focused_terminal(node_id) {
             self.terminal_output(node_id, trace, observed_at_ms);
@@ -2549,9 +2550,7 @@ impl Worker<'_> {
     /// that window's element is read and is the focus if it is the same
     /// element and has the keyboard focus, read live: NVDA accepts a UIA
     /// focus event whose own element has the keyboard focus
-    /// (`shouldAllowUIAFocusEvent`), whatever the focused element read says,
-    /// and an application starting up, Windows 11 Notepad among them,
-    /// answers the focused element read with a stand-in for a while.
+    /// (`shouldAllowUIAFocusEvent`), whatever the focused element read says.
     fn live_focus_element(&mut self, runtime_id: &[i32], own_window: isize) -> LiveFocus {
         let Some(uia) = self.client.uia() else {
             return LiveFocus::Unresolved;

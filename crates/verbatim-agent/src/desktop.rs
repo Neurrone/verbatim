@@ -27,8 +27,8 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GW_OWNER, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_CLOSE, WM_COMMAND,
-    WS_MINIMIZEBOX,
+    PostMessageW, SW_MINIMIZE, SW_RESTORE, SetForegroundWindow, ShowWindow, ShowWindowAsync,
+    WM_CLOSE, WM_COMMAND, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
 
@@ -114,7 +114,13 @@ pub fn wait_for(condition: &WindowCondition, timeout: Duration) -> (bool, Foregr
 /// gives the desktop the foreground: the state every scenario starts from.
 /// Minimizing leaves the foreground on the window that had it, minimized,
 /// so the desktop's window, Program Manager, is then brought forward with
-/// `SetForegroundWindow`, injecting no input. Waits up to `timeout` for
+/// `SetForegroundWindow`, injecting no input. The taskbar's command
+/// minimizes only the windows the taskbar has taken in, which a window
+/// opened moments before, such as the Notepad document a scenario opens
+/// just before, may not yet be (found 2026-10-08: that window stayed
+/// restored and the run failed), so each window the command is to minimize
+/// is also sent a minimize of its own (`ShowWindowAsync`, which never waits
+/// on the window's thread). Waits up to `timeout` for
 /// every window that can be minimized to be ([`WindowCondition::AllMinimized`]),
 /// and then for the desktop to hold the foreground. Returns whether both
 /// held, and the desktop then.
@@ -128,6 +134,14 @@ pub fn minimize_all(timeout: Duration) -> (bool, ForegroundInfo) {
         unsafe {
             let _ = PostMessageW(Some(taskbar), WM_COMMAND, WPARAM(MINIMIZE_ALL), LPARAM(0));
         }
+    }
+    for window in top_level_windows()
+        .into_iter()
+        .filter(|&window| minimizable(window) && !is_minimized(window) && !is_cloaked(window))
+    {
+        // SAFETY: tolerates any handle; the minimize is posted to the
+        // window's thread, and its answer is not waited for.
+        let _ = unsafe { ShowWindowAsync(window, SW_MINIMIZE) };
     }
     let (minimized, desktop) = wait_for(&WindowCondition::AllMinimized, timeout);
     if !minimized {

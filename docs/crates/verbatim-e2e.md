@@ -42,9 +42,11 @@ every scenario, recorded or not, and recording changes nothing else:
    `Settings::for_e2e`'s fixed settings, with the scenario's own change
    applied. In remote mode (`REMOTE_ENV`), `cargo xtask vm deploy` has
    staged the guest, and the settings are written through the agent.
-2. Sweeps what an earlier run left: every process the agent launched that
-   still runs is ended by its own handle (`EndLaunched`), Windows 11
-   Notepad's harness tabs are closed as tabs, other windows titled with
+2. Sweeps what an earlier run left: Windows 11 Notepad's harness tabs are
+   closed as tabs first (a Notepad ended by its handle keeps its tabs for
+   its next session, without their documents), then every process the
+   agent launched that still runs is ended by its own handle
+   (`EndLaunched`), other windows titled with
    `DOCUMENT_MARKER` are closed, and harness files and folders in the run
    directory are deleted. Anything that will not go fails the launch.
 3. Opens the scenario's Windows 11 Notepad document, when its definition
@@ -54,7 +56,9 @@ every scenario, recorded or not, and recording changes nothing else:
    process are the scenario's own. Opened before Verbatim starts, the
    window's first-showing rename from "Notepad" to the document cannot
    race Verbatim's announcement of it.
-4. Minimizes every window, as the taskbar's Show Desktop does, waits until
+4. Minimizes every window, as the taskbar's Show Desktop does, and each
+   one directly too, since the taskbar misses a window it has not taken
+   in yet, such as the document opened in step 3; waits until
    every window that can be minimized is (cloaked windows, which are not
    shown, aside), and brings the desktop, Program Manager, to the
    foreground, all through the agent and with no input injected.

@@ -188,11 +188,37 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
 /// only an element with text does: NVDA fetches the pattern afresh for every
 /// focus, and an application whose provider was not ready when it was
 /// fetched (it then answers no pattern) has its text read once it says it
-/// has text. A pattern found is kept.
-pub(super) fn forget_no_text(context: &Context, node_id: NodeId) {
+/// has text. A pattern found is kept. Returns whether an answer of no
+/// pattern was forgotten.
+pub(super) fn forget_no_text(context: &Context, node_id: NodeId) -> bool {
     let mut patterns = context.patterns();
-    if patterns.get(&node_id.number()).is_some_and(Option::is_none) {
+    let forgotten = patterns.get(&node_id.number()).is_some_and(Option::is_none);
+    if forgotten {
         patterns.remove(&node_id.number());
+    }
+    forgotten
+}
+
+/// As a caret or text event of `node_id` arrives from `element`, its
+/// sender: forgets an answer of no text pattern ([`forget_no_text`]), and
+/// then keeps `element` as the node's, so the pattern is fetched from the
+/// element that raised the event. The element kept may have been UIA's
+/// stand-in for a window whose provider did not answer in time, which has
+/// the window's runtime id and no text pattern: a short read of a starting
+/// Windows 11 Notepad's focused element has answered with it.
+pub(super) fn text_event_from(
+    context: &Context,
+    node_id: NodeId,
+    element: Option<&windows::Win32::UI::Accessibility::IUIAutomationElement>,
+) {
+    if !forget_no_text(context, node_id) {
+        return;
+    }
+    if let (Some(element), Some(runtime_id)) =
+        (element, context.uia_registry.runtime_id_of(node_id))
+    {
+        // The same node: the registry knows it by this runtime id.
+        let _ = context.uia_registry.id_for_element(&runtime_id, element);
     }
 }
 
