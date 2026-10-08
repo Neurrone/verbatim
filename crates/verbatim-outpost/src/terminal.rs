@@ -99,6 +99,8 @@ pub struct ScreenText {
     pub document_rows: Option<u32>,
     /// Whether the text held still while it was read.
     pub settled: bool,
+    /// Whether the terminal's view moved while it was read.
+    pub view_moved: bool,
     /// The text's first row.
     pub first_row: String,
     /// The caret's line, when the caret was read with the screen, as the
@@ -119,6 +121,7 @@ impl From<&Screen> for ScreenText {
             old_last_row: screen.old_last_row.clone(),
             document_rows: screen.document_rows,
             settled: screen.settled,
+            view_moved: screen.view_moved,
             first_row: screen.first_row.clone(),
             caret_line: screen
                 .caret
@@ -209,7 +212,7 @@ pub fn read_new<S: ScreenSource>(
         u32::try_from(memory.screen.len()).unwrap_or(u32::MAX)
     });
     let screen = source.read(earlier, seen, head_wanted)?;
-    let unsettled = !screen.settled && earlier.is_some();
+    let unsettled = earlier.is_some_and(|old| !trusted(old, &screen));
     if unsettled && mode != ReadMode::Cancel {
         return Ok(Found::Unsettled);
     }
@@ -313,6 +316,30 @@ pub fn read_new<S: ScreenSource>(
         }
     }
     Ok(Found::Output(output, remembered))
+}
+
+/// Whether a read after `old` can be trusted: its text held still, and
+/// either its view did not move or the old screen's last line is still on
+/// the row it was on, or only grew there (output was being written to it).
+/// Output that scrolls the view leaves every row it scrolled where it was,
+/// so the rows read are rows the terminal showed, and those below them are
+/// read next time. The console host moving its view down a row for each
+/// line written into a scroll region above a footer redraws the footer
+/// lower and writes over the row it left, so a read whose range was taken
+/// before the move has lost the footer, which the next read would find as
+/// new. During a flood in the console host the view moves under nearly
+/// every read, so distrusting them all left the flood unread until it
+/// ended, losing its first lines and the anchor.
+fn trusted(old: &Memory, screen: &ScreenText) -> bool {
+    if !screen.settled {
+        return false;
+    }
+    let Some(last) = old.screen.last().filter(|_| screen.view_moved) else {
+        return true;
+    };
+    screen.shift.is_some()
+        && verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']))
+            .starts_with(last.as_str())
 }
 
 /// A focused terminal's memory and reading state, kept by the worker
@@ -522,6 +549,7 @@ impl ScreenSource for UiaScreen<'_> {
             document_rows = ?screen.document_rows,
             alternate = screen.alternate,
             settled = screen.settled,
+            view_moved = screen.view_moved,
             top = screen.top_row.trim_end(),
             "terminal screen timing"
         );

@@ -1184,8 +1184,16 @@ finds it.
   start is heard. Not found by its text, the rows of the whole text are
   counted. A screen whose top row read differently from its text, or
   changed by the end of the read, or whose walks to the text's end
-  disagree, or whose view moved, was written to while it was read, and is
-  not trusted (`settled` false).
+  disagree, was written to while it was read, and is not trusted
+  (`settled` false). Nor is one whose view moved while it was read
+  (`view_moved`) unless the old screen's last line is still on its row,
+  as it was or grown: output scrolling the view leaves every row where it
+  was, and the rows below the read are read next time, while a footer
+  below a scroll region in the console host is drawn a row lower as the
+  view moves and its old row written over, so such a read has lost the
+  footer. During a flood in the console host the view moves under nearly
+  every read, so distrusting every read whose view moved would leave a
+  flood unread until it ended, losing its first lines and the anchor.
 - `read_new` turns a read into a `TerminalOutput` with the pure screen
   diff (`terminal::screen`). The old screen's lines that scrolled off its
   top are set aside, and the rest are lined up with the new screen: where

@@ -23,6 +23,8 @@ struct Sim {
     alternate: bool,
     /// Whether the next read is disturbed.
     disturbed: bool,
+    /// Whether the terminal's view moves under the next read.
+    view_moved: bool,
 }
 
 fn padded(text: &str) -> String {
@@ -37,6 +39,7 @@ impl Sim {
             capacity,
             alternate: false,
             disturbed: false,
+            view_moved: false,
         };
         sim.push(rows);
         sim
@@ -125,6 +128,7 @@ impl ScreenSource for Sim {
             },
             alternate: self.alternate || start == 0,
             settled: !std::mem::take(&mut self.disturbed),
+            view_moved: std::mem::take(&mut self.view_moved),
             ..ScreenText::default()
         };
         if let Some(memory) = anchor {
@@ -314,6 +318,33 @@ fn a_disturbed_read_is_set_aside() {
     );
     let (output, _) = read(&mut sim, Some(&memory));
     assert_eq!(output.lines, ["b"]);
+}
+
+#[test]
+fn a_read_whose_view_output_scrolled_is_trusted() {
+    let mut sim = Sim::new(3, 100, &["a", "b", "c"]);
+    let (_, memory) = read(&mut sim, None);
+    sim.push(&["d", "e"]);
+    sim.view_moved = true;
+    let (output, _) = read(&mut sim, Some(&memory));
+    assert_eq!(output.lines, ["d", "e"]);
+}
+
+#[test]
+fn a_read_whose_view_moved_over_a_footer_redrawn_lower_is_set_aside() {
+    let mut sim = Sim::new(3, 100, &["ready>", "one", "status: busy"]);
+    let (_, memory) = read(&mut sim, None);
+    // A line written into the scroll region above the footer: the view
+    // moves down a row, the footer is drawn on the new last row, and the
+    // line is written over the row the footer left.
+    let footer = sim.rows.pop().expect("the footer");
+    sim.push(&["a"]);
+    sim.rows.push(footer);
+    sim.view_moved = true;
+    assert_eq!(
+        read_new(&mut sim, Some(&memory), ReadMode::Change, HEAD).unwrap(),
+        Found::Unsettled
+    );
 }
 
 #[test]

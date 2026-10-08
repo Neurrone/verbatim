@@ -23,7 +23,10 @@
 //!
 //! A screen read while the terminal wrote to it is marked unsettled: its
 //! top row read on its own differs from the screen's text, or changed by
-//! the end of the read, or the terminal's view moved while it was read.
+//! the end of the read. Whether the terminal's view moved while it was
+//! read is reported on its own, for the caller to judge: output scrolling
+//! the view leaves the rows read where they were, while a terminal that
+//! redraws a fixed row lower as it moves its view does not.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Character,
@@ -178,8 +181,13 @@ pub struct Screen {
     /// How many rows the whole text holds, counted when an anchor was
     /// sought and not found (an anchor of two blank rows is not sought).
     pub document_rows: Option<u32>,
-    /// Whether the text held still while it was read.
+    /// Whether the text held still while it was read: its top row and the
+    /// walks to its end.
     pub settled: bool,
+    /// Whether the terminal's view moved while it was read: the first
+    /// visible range started elsewhere at the end of the read, so the rows
+    /// read are no longer all on screen.
+    pub view_moved: bool,
     /// The caret and its line, when the query asked for them.
     pub caret: Option<CaretAnswer>,
     /// A range at the start of the screen's top row, for the next read's
@@ -546,9 +554,9 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     let top_after = b.text_range_get_text(after, c.all);
     let top_after = b.add_to_results(top_after);
     // The screen still where the terminal shows it: a terminal that moved
-    // its view while it was read (the console host moves its view down a
-    // row for each line written into a scroll region above a footer) gave
-    // the text of rows it no longer shows.
+    // its view while it was read gave the text of rows it no longer shows
+    // (output scrolling the view, or the console host moving its view down
+    // a row for each line written into a scroll region above a footer).
     let view_moved = b.new_bool(false);
     let view_moved = b.add_to_results(view_moved);
     let ranges_after = b.text_pattern_get_visible_ranges(pattern);
@@ -571,9 +579,8 @@ pub fn terminal_screen_remote(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Scr
     let shift = outcome.get(shift)?;
     let document_rows = outcome.get(document_rows)?;
     Ok(Screen {
-        settled: is_settled(&text, &top_row, &top_after)
-            && outcome.get(walks_agree)?
-            && !outcome.get(view_moved)?,
+        settled: is_settled(&text, &top_row, &top_after) && outcome.get(walks_agree)?,
+        view_moved: outcome.get(view_moved)?,
         text,
         top_row,
         next_row: string_of(&outcome, next_text)?,
@@ -773,12 +780,11 @@ pub fn terminal_screen_classic(_uia: &Uia, query: &ScreenQuery<'_>) -> Result<Sc
     }
     let top_after = text_of(&row(&top)?)?;
     // The screen still where the terminal shows it, as the program checks.
-    let view_moved = match query.pattern.visible_ranges()?.into_iter().next() {
+    answer.view_moved = match query.pattern.visible_ranges()?.into_iter().next() {
         Some(first) => first.compare_endpoints(Endpoint::Start, &screen, Endpoint::Start)? != 0,
         None => false,
     };
-    answer.settled =
-        is_settled(&answer.text, &answer.top_row, &top_after) && walks_agree && !view_moved;
+    answer.settled = is_settled(&answer.text, &answer.top_row, &top_after) && walks_agree;
     if let Some(caret) = &query.caret {
         answer.caret = Some(caret_line_classic(caret)?);
     }
