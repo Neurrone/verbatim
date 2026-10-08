@@ -11,9 +11,10 @@
 //! starts. Say-all hands speech two utterances ahead of the one playing
 //! (`docs/performance.md`, "Say-all"), so once the second line has started,
 //! the third is queued. Control then cuts both off, as any key does, and
-//! say-all stops: the third line is never heard. Home speaks the first
-//! character of the caret's line, the second line's, and numpad 8 reads
-//! the line there, since the review cursor follows the caret.
+//! say-all stops: the third line is never heard. The caret was left at
+//! the start of the second line, so Right Arrow speaks that line's second
+//! character, and numpad 8 reads the line there, since the review cursor
+//! follows the caret.
 
 use std::io;
 
@@ -54,10 +55,6 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, FIRST);
-    scenario
-        .send_keys(&["control+home"])
-        .expect("sends control+home");
-    scenario.speech().expect(&[FIRST]);
 
     scenario
         .send_gesture("kb:verbatim+downarrow")
@@ -71,10 +68,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         scenario.speech().expect_ended(heard, Ending::Cancelled);
     }
 
-    // The caret is on the line speech stopped in, and the review cursor
-    // follows it there.
-    scenario.send_keys(&["home"]).expect("sends home");
-    scenario.speech().expect(&["M"]);
+    // The caret is at the start of the line speech stopped in, and the
+    // review cursor follows it there.
+    scenario.send_keys(&["rightarrow"]).expect("sends rightarrow");
+    scenario.speech().expect(&["o"]);
     scenario.send_gesture("kb:numpad8").expect("sends numpad 8");
     scenario.speech().expect(&[SECOND_FIRST_PART]);
 }

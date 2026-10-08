@@ -68,13 +68,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // The text box, and the line at its caret, at the top of the
     // new document.
     super::text_box::expect_announced(scenario, NAME, super::text_box::BOX_NAME, "Name    Qty");
-    // The caret to the top; the review cursor follows it there.
-    scenario
-        .send_keys(&["control+home"])
-        .expect("sends control+home");
-    scenario.speech().expect(&["Name    Qty"]);
-
-    // The current line, then the next word, the quantity column.
+    // The review cursor starts at the caret, at the top: the current
+    // line, then the next word, the quantity column.
     review(scenario, "kb:numpad8", "Name    Qty");
     review(scenario, "kb:numpad6", "Qty");
 
@@ -140,13 +135,8 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // Notepad's text area, and the line at its caret, at the top of the
     // new document.
     super::expect_notepad_in_front(scenario, NAME, "Name    Qty");
-    // The caret to the top; the review cursor follows it there.
-    scenario
-        .send_keys(&["control+home"])
-        .expect("sends control+home");
-    scenario.speech().expect(&["Name    Qty"]);
-
-    // The current line, then the next word, the quantity column.
+    // The review cursor starts at the caret, at the top: the current
+    // line, then the next word, the quantity column.
     review(scenario, "kb:numpad8", "Name    Qty");
     review(scenario, "kb:numpad6", "Qty");
 

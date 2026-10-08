@@ -14,7 +14,8 @@
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! editor, which moves its caret; Verbatim waits for evidence that it did
 //! and reads the caret back, so each assertion is on what the caret really
-//! reached. The caret starts at the top. Notepad's document is saved at
+//! reached. The caret starts at the top, where Control+Home moves nothing
+//! and so says nothing. Notepad's document is saved at
 //! the end, and by cleanup when the body failed part-way.
 
 use std::io;
@@ -70,7 +71,12 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         super::text_box::BOX_NAME,
         "alpha beta gamma",
     );
-    press(scenario, "control+home", &["alpha beta gamma"]);
+    // Control+Home at the top moves nothing, so it says nothing, a
+    // deliberate difference from NVDA (`docs/parity.md`, "Text, documents,
+    // terminals"): Right Arrow, pressed next, is the first key heard.
+    scenario
+        .send_keys(&["control+home"])
+        .expect("sends control+home");
     press(scenario, "rightarrow", &["l"]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "downarrow", &["delta epsilon"]);
@@ -111,7 +117,12 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// The scenario in Windows 11 Notepad.
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, "alpha beta gamma");
-    press(scenario, "control+home", &["alpha beta gamma"]);
+    // Control+Home at the top moves nothing, so it says nothing, a
+    // deliberate difference from NVDA (`docs/parity.md`, "Text, documents,
+    // terminals"): Right Arrow, pressed next, is the first key heard.
+    scenario
+        .send_keys(&["control+home"])
+        .expect("sends control+home");
     press(scenario, "rightarrow", &["l"]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "downarrow", &["delta epsilon"]);

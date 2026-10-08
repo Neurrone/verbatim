@@ -93,12 +93,9 @@ pub(crate) fn notepad_setup(scenario: &mut Scenario) -> io::Result<ScenarioState
 /// The scenario in the Windows Forms text box.
 pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::text_box::expect_announced(scenario, NAME, super::text_box::BOX_NAME, ROWS[0].0);
-    scenario
-        .send_keys(&["control+home"])
-        .expect("sends control+home");
-    scenario.speech().expect(&[ROWS[0].0]);
 
-    // The current word, then the next ones across the header row.
+    // The review cursor starts at the caret, at the top: the current
+    // word, then the next ones across the header row.
     review(scenario, "kb:numpad5", "Fruit");
     review(scenario, "kb:numpad6", "Color");
     review(scenario, "kb:numpad6", "Price");
@@ -132,12 +129,9 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// The scenario in Windows 11 Notepad.
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, ROWS[0].0);
-    scenario
-        .send_keys(&["control+home"])
-        .expect("sends control+home");
-    scenario.speech().expect(&[ROWS[0].0]);
 
-    // The current word, then the next ones across the header row.
+    // The review cursor starts at the caret, at the top: the current
+    // word, then the next ones across the header row.
     review(scenario, "kb:numpad5", "Fruit");
     review(scenario, "kb:numpad6", "Color");
     review(scenario, "kb:numpad6", "Price");
